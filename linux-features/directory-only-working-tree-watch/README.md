@@ -99,7 +99,7 @@ interpreter, and runs the already-open descriptor as `/proc/self/fd/3
 admission snapshot and the public capability layer consumes the same evidence.
 The downstream report shim from #1336 is therefore removed; import refusal
 still degrades to the preserved Parcel route (worker) or original local watch
-(src bundle) instead of crashing.
+(bootstrap companion bundle) instead of crashing.
 
 The Nix `PT_INTERP` relocation from #1332 remains necessary for upstream
 `@parcel/watcher`, which still owns the disabled-feature and unqualified-root

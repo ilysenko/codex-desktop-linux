@@ -102,7 +102,7 @@ const CURRENT_WORKER_LOCAL_FILE_WATCH = [
   "a({reason:`disposed`})}}}",
 ].join("");
 
-const CURRENT_SRC_LOCAL_FILE_WATCH = [
+const CURRENT_BOOTSTRAP_LOCAL_FILE_WATCH = [
   "async startFileWatch(e){let t=gb(),n=!1,r=await this.platformPath(),",
   "a=(0,c.watch)(this.getFileSystemPath(e.path),{recursive:e.recursive},(t,n)=>{",
   "let a=n==null?null:r.join(e.path,...n.split(this.runsInsideWsl?",
@@ -122,7 +122,7 @@ const CURRENT_WORKER_REMOTE_FILE_WATCH = [
   "finally{a()}}}}",
 ].join("");
 
-const CURRENT_SRC_REMOTE_FILE_WATCH = [
+const CURRENT_BOOTSTRAP_REMOTE_FILE_WATCH = [
   "async startFileWatch(e){let t=await this.startFileWatchSession({onChange:e.onChange,",
   "path:e.path,watchId:e.watchId});return{coverage:t.coverage,path:t.path,closed:t.closed,",
   "dispose:async()=>{await t.dispose()}}}",
@@ -167,13 +167,13 @@ function currentWorkerSource(route = CURRENT_PARCEL_ROUTE) {
   ].join("");
 }
 
-function currentSrcSource() {
+function currentBootstrapSource() {
   return [
     "var CurrentSrcRemote=class{",
-    CURRENT_SRC_REMOTE_FILE_WATCH,
+    CURRENT_BOOTSTRAP_REMOTE_FILE_WATCH,
     "};var are=class{runsInsideWsl;workspaceRoot=new SrcRoot(this);hostConfig={id:`local`,display_name:`Local`," +
       "kind:`local`};id=`local`;isLocal=!0;",
-    CURRENT_SRC_LOCAL_FILE_WATCH,
+    CURRENT_BOOTSTRAP_LOCAL_FILE_WATCH,
     "};",
   ].join("");
 }
@@ -182,7 +182,7 @@ function currentBundlePair(t, overrides = {}) {
   const extractedDir = tempDirectory(t, "directory-watch-current-contract-");
   const buildDir = path.join(extractedDir, ".vite", "build");
   const sources = new Map([
-    ["src-Cz_uUmVl.js", overrides.src ?? currentSrcSource()],
+    ["bootstrap-current.js", overrides.bootstrap ?? currentBootstrapSource()],
     ["worker.js", overrides.worker ?? currentWorkerSource()],
     ...Object.entries(overrides.extra ?? {}),
   ]);
@@ -376,15 +376,15 @@ test("feature patch reports drift instead of patching an ambiguous bundle", () =
   assert.equal(descriptor.status(result, []).status, "skipped-optional");
 });
 
-test("bundle discovery patches the current src and worker copies", (t) => {
+test("bundle discovery patches the current bootstrap companion and worker copies", (t) => {
   const extractedDir = tempDirectory(t, "directory-watch-bundle-");
   const buildDir = path.join(extractedDir, ".vite", "build");
   writeFile(path.join(buildDir, "unrelated.js"), "const unrelated=true;");
   const targets = [
-    path.join(buildDir, "src-Cz_uUmVl.js"),
+    path.join(buildDir, "bootstrap-current.js"),
     path.join(buildDir, "worker.js"),
   ];
-  writeFile(targets[0], currentSrcSource());
+  writeFile(targets[0], currentBootstrapSource());
   writeFile(targets[1], currentWorkerSource());
 
   const discovery = findLocalFileWatchBundles(
@@ -404,7 +404,7 @@ test("bundle discovery patches the current src and worker copies", (t) => {
   assert.equal(first.matched, 2);
   assert.equal(first.changed, 2);
   assert.deepEqual(first.targets, [
-    path.join(".vite", "build", "src-Cz_uUmVl.js"),
+    path.join(".vite", "build", "bootstrap-current.js"),
     path.join(".vite", "build", "worker.js"),
   ]);
   for (const target of targets) {
@@ -506,7 +506,7 @@ test("bundle discovery rejects a Parcel route outside worker.js without changing
   }
 });
 
-test("bundle discovery rejects copies outside the current src and worker pair", (t) => {
+test("bundle discovery rejects copies outside the current companion and worker pair", (t) => {
   const extractedDir = tempDirectory(t, "directory-watch-ambiguous-");
   const buildDir = path.join(extractedDir, ".vite", "build");
   for (const name of ["src-first.js", "src-second.js", "worker.js"]) {
@@ -536,21 +536,21 @@ test("patches the pristine current bundle contract and accepts only its exact co
   assert.equal(first.matched, 2);
   assert.equal(first.changed, 2);
   assert.deepEqual(first.targets, [
-    path.join(".vite", "build", "src-Cz_uUmVl.js"),
+    path.join(".vite", "build", "bootstrap-current.js"),
     path.join(".vite", "build", "worker.js"),
   ]);
 
   const completed = readBundlePair(candidate);
   assert.notDeepEqual(completed, pristine);
   const worker = completed.get("worker.js");
-  const src = completed.get("src-Cz_uUmVl.js");
+  const bootstrap = completed.get("bootstrap-current.js");
   assert.equal(worker.split(PARCEL_WATCH_MARKER).length - 1, 1);
   assert.match(worker, new RegExp(`function ${HELPER_NAME}\\(`, "u"));
-  assert.match(src, new RegExp(`function ${HELPER_NAME}\\(`, "u"));
+  assert.match(bootstrap, new RegExp(`function ${HELPER_NAME}\\(`, "u"));
   assert.ok(worker.includes(CURRENT_WATCHBOUND_ROUTE));
   assert.ok(worker.includes(CURRENT_PARCEL_HELPER));
   assert.ok(worker.includes(CURRENT_WORKER_REMOTE_FILE_WATCH));
-  assert.ok(src.includes(CURRENT_SRC_REMOTE_FILE_WATCH));
+  assert.ok(bootstrap.includes(CURRENT_BOOTSTRAP_REMOTE_FILE_WATCH));
   assert.ok(worker.includes(":t.startFileWatch(n)"));
   assert.equal(completed.get("unrelated.js"), pristine.get("unrelated.js"));
 
@@ -577,10 +577,10 @@ test("rejects markers outside the exact current Watchbound handoff", (t) => {
       },
     },
     {
-      name: "marker in the src bundle",
+      name: "marker in the bootstrap companion bundle",
       overrides: {
         worker: currentWorkerSource(unmarkedHandoff),
-        src: `/*${PARCEL_WATCH_MARKER}*/${currentSrcSource()}`,
+        bootstrap: `/*${PARCEL_WATCH_MARKER}*/${currentBootstrapSource()}`,
       },
     },
     {
@@ -667,13 +667,13 @@ test("rejects missing, duplicate, and partial current contracts", (t) => {
     currentWorkerSource(),
     normalizedSettings(),
   ).source;
-  const completedSrc = patchWorkerSource(
-    currentSrcSource(),
+  const completedBootstrap = patchWorkerSource(
+    currentBootstrapSource(),
     normalizedSettings(),
   ).source;
   const staleSettings = { ...normalizedSettings(), maxWatches: 4096 };
   const staleWorker = patchWorkerSource(currentWorkerSource(), staleSettings).source;
-  const staleSrc = patchWorkerSource(currentSrcSource(), staleSettings).source;
+  const staleBootstrap = patchWorkerSource(currentBootstrapSource(), staleSettings).source;
   const workerOriginalIndex = completedWorker.indexOf("var Que=class{");
   const workerHelper = completedWorker.slice(0, workerOriginalIndex);
   const workerWithoutHelper = completedWorker.slice(workerOriginalIndex);
@@ -706,42 +706,42 @@ test("rejects missing, duplicate, and partial current contracts", (t) => {
           "const GIT_QUERY_TIMEOUT_MS = 5000;",
           "const GIT_QUERY_TIMEOUT_MS = 5001;",
         ),
-        src: completedSrc,
+        bootstrap: completedBootstrap,
       },
     },
     {
       name: "missing completed helper",
       overrides: {
         worker: workerWithoutHelper,
-        src: completedSrc,
+        bootstrap: completedBootstrap,
       },
     },
     {
       name: "duplicate completed helper",
       overrides: {
         worker: `${workerHelper}${completedWorker}`,
-        src: completedSrc,
+        bootstrap: completedBootstrap,
       },
     },
     {
       name: "one completed bundle plus one pristine bundle",
       overrides: {
         worker: completedWorker,
-        src: currentSrcSource(),
+        bootstrap: currentBootstrapSource(),
       },
     },
     {
       name: "duplicate completed marker",
       overrides: {
         worker: `/*${PARCEL_WATCH_MARKER}*/${completedWorker}`,
-        src: completedSrc,
+        bootstrap: completedBootstrap,
       },
     },
     {
       name: "missing completed marker",
       overrides: {
         worker: completedWorker.replace(`/*${PARCEL_WATCH_MARKER}*/`, ""),
-        src: completedSrc,
+        bootstrap: completedBootstrap,
       },
     },
     {
@@ -751,28 +751,28 @@ test("rejects missing, duplicate, and partial current contracts", (t) => {
           `${HELPER_NAME}(this,e,`,
           `missing${HELPER_NAME}(this,e,`,
         ),
-        src: completedSrc,
+        bootstrap: completedBootstrap,
       },
     },
     {
       name: "duplicate completed branch",
       overrides: {
         worker: completedWorker.replace(workerBranch, `${workerBranch}${workerBranch}`),
-        src: completedSrc,
+        bootstrap: completedBootstrap,
       },
     },
     {
       name: "completed route retargeted to a different local class",
       overrides: {
         worker: completedWorker.replace("let e=new Que", "let e=new OtherHost"),
-        src: completedSrc,
+        bootstrap: completedBootstrap,
       },
     },
     {
       name: "stale completed settings",
       overrides: {
         worker: staleWorker,
-        src: staleSrc,
+        bootstrap: staleBootstrap,
       },
     },
   ];
@@ -857,10 +857,10 @@ test("restores both current bundles after injected writes and permits retry", (t
 
 test("rejects non-lossless UTF-8 bundles without changing their bytes", (t) => {
   const candidate = currentBundlePair(t);
-  const srcPath = path.join(candidate.buildDir, "src-Cz_uUmVl.js");
-  fs.appendFileSync(srcPath, Buffer.from([0xff]));
+  const bootstrapPath = path.join(candidate.buildDir, "bootstrap-current.js");
+  fs.appendFileSync(bootstrapPath, Buffer.from([0xff]));
   const before = new Map(
-    ["src-Cz_uUmVl.js", "worker.js"].map((name) => [
+    ["bootstrap-current.js", "worker.js"].map((name) => [
       name,
       fs.readFileSync(path.join(candidate.buildDir, name)),
     ]),
@@ -890,7 +890,7 @@ test("rejects non-lossless UTF-8 bundles without changing their bytes", (t) => {
 test("keeps transaction byte oracles private from injected writers", (t) => {
   const candidate = currentBundlePair(t);
   const before = new Map(
-    ["src-Cz_uUmVl.js", "worker.js"].map((name) => [
+    ["bootstrap-current.js", "worker.js"].map((name) => [
       name,
       fs.readFileSync(path.join(candidate.buildDir, name)),
     ]),
@@ -921,7 +921,7 @@ test("keeps transaction byte oracles private from injected writers", (t) => {
 test("keeps transaction byte oracles private from injected readers", (t) => {
   const candidate = currentBundlePair(t);
   const before = new Map(
-    ["src-Cz_uUmVl.js", "worker.js"].map((name) => [
+    ["bootstrap-current.js", "worker.js"].map((name) => [
       name,
       fs.readFileSync(path.join(candidate.buildDir, name)),
     ]),
@@ -1041,8 +1041,8 @@ test("reports failed-integrity when rollback cannot prove original current bundl
     /rollback byte verification failed.*rollback write also failed: simulated rollback failure/u,
   );
   assert.equal(
-    fs.readFileSync(path.join(candidate.buildDir, "src-Cz_uUmVl.js"), "utf8"),
-    before.get("src-Cz_uUmVl.js"),
+    fs.readFileSync(path.join(candidate.buildDir, "bootstrap-current.js"), "utf8"),
+    before.get("bootstrap-current.js"),
   );
   assert.equal(
     fs.readFileSync(path.join(candidate.buildDir, "worker.js"), "utf8"),
