@@ -276,23 +276,25 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
 
   try {
     const registerPattern = new RegExp(
-      `function (${IDENT})\\(e,t,n\\)\\{[\\s\\S]{0,500}?;` +
-        `(?:if\\(process\\.platform===\`win32\`&&${IDENT}\\(e\\)\\)return ${IDENT}\\(e,${IDENT}\\);)?` +
-        `if\\((${IDENT})\\(e\\)\\)return (${IDENT})\\(e\\)(?:\\|\\|${IDENT}\\(e\\))?\\?(${IDENT})\\(e,(${IDENT}),n\\?\\.bareModifierTrigger\\):null;`,
+      `function (?<register>${IDENT})\\(e,t,n\\)\\{[\\s\\S]{0,500}?;` +
+        `if\\(process\\.platform===\`win32\`&&${IDENT}\\(e\\)\\)return ${IDENT}\\(e,(?<windowsCallbacks>${IDENT})\\);` +
+        `if\\((?<bareModifierTest>${IDENT})\\(e\\)\\|\\|(?<darwinSpecialTest>${IDENT})\\(e\\)\\)return ` +
+        `${IDENT}\\(e\\)\\|\\|\\k<darwinSpecialTest>\\(e\\)\\?${IDENT}\\(e,(?<callbacks>${IDENT}),n\\?\\.bareModifierTrigger\\):null;`,
       "u",
     );
     const registerMatch = source.match(registerPattern);
     if (registerMatch == null) {
       throw new Error("global shortcut registration function was not found");
     }
-    const registerFunction = registerMatch[1];
-    const bareModifierTestFunction = registerMatch[2];
-    const bareModifierSupportFunction = registerMatch[3];
+    const registerFunction = registerMatch.groups.register;
+    const bareModifierTestFunction = registerMatch.groups.bareModifierTest;
     const registerFunctionPattern = escapeRegexLiteral(registerFunction);
     let patched = replaceUnique(
       source,
       registerPattern,
-      (original, _functionName, _bareTest, _bareSupport, _bareRegister, callbacksVar) => {
+      (original, ...args) => {
+        const groups = args.at(-1);
+        const callbacksVar = groups.callbacks;
         const ownershipCallbacksPattern = new RegExp(
           `let (${IDENT})=n\\?\\.ownership,(${IDENT})=t\\.onReleased,(${IDENT})=t\\.onCancelled,(${IDENT})=\\1==null\\?t:\\{` +
             `onPressed:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&t\\.onPressed\\(\\)\\},` +

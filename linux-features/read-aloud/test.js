@@ -1044,21 +1044,11 @@ test("assistant render patch covers the current shared assistant message call", 
 test("assistant runtime descriptor targets current shared assistant bundles", () => {
   const descriptor = featurePatches.find((patch) => patch.id === "assistant-runtime");
   assert.ok(descriptor);
-  assert.equal(
-    descriptor.pattern.test(
-      "conversation-blocks-BSHPwQLO.js",
-    ),
-    true,
-  );
-  for (const legacyName of [
-    "index-current.js",
-    "local-conversation-thread-current.js",
-    "app-initial-BHB6SClA.js",
-    "app-initial~app-main~onboarding-page-zcfEkMl-.js",
-    "app-initial~app-main~onboarding-page~hotkey-window-thread-page~editor-diff-page~thread-app-~current.js",
-  ]) {
-    assert.equal(descriptor.pattern.test(legacyName), false, legacyName);
-  }
+  assert.equal(descriptor.pattern.test("sites-end-resource-current.js"), true);
+  assert.equal(descriptor.assetMatch(
+    "const partition={collapsibleUnits:[],persistentUnits:[]};return (0,Q.jsx)(Ov,{item:n,assistantCopyText:p,conversationId:o})",
+  ), true);
+  assert.equal(descriptor.assetMatch("const unrelated=true"), false);
 });
 
 test("webview runtime descriptor targets the official app bootstrap", () => {
@@ -1075,7 +1065,7 @@ test("assistant runtime descriptor fails soft and atomically when the current re
     fs.mkdirSync(assetsDir, { recursive: true });
     const assetPath = path.join(
       assetsDir,
-      "conversation-blocks-BSHPwQLO.js",
+      "sites-end-resource-current.js",
     );
     const source = "console.log(`assistant render contract moved`);";
     fs.writeFileSync(assetPath, source);
@@ -1090,7 +1080,7 @@ test("assistant runtime descriptor fails soft and atomically when the current re
     assert.equal(fs.readFileSync(assetPath, "utf8"), source);
     assert.equal(report.patches.length, 1);
     assert.equal(report.patches[0].status, "skipped-optional");
-    assert.match(report.patches[0].reason, /Could not find assistant message render call/);
+    assert.match(report.patches[0].reason, /current primary thread assistant bundle/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1103,11 +1093,11 @@ test("assistant runtime descriptor reports applied then already-applied for the 
     fs.mkdirSync(assetsDir, { recursive: true });
     const assetPath = path.join(
       assetsDir,
-      "conversation-blocks-BSHPwQLO.js",
+      "sites-end-resource-current.js",
     );
     fs.writeFileSync(
       assetPath,
-      "return (0,DX.jsx)(Jft,{item:n,assistantCopyText:_,conversationId:l,renderCodeBlocksAsWritingBlocks:ie})",
+      "const partition={collapsibleUnits:[],persistentUnits:[]};return (0,DX.jsx)(Jft,{item:n,assistantCopyText:_,conversationId:l,renderCodeBlocksAsWritingBlocks:ie})",
     );
     const descriptor = featurePatches.find((patch) => patch.id === "assistant-runtime");
     const descriptors = normalizePatchDescriptors([

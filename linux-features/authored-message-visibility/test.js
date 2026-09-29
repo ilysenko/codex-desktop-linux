@@ -10,10 +10,10 @@ const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-fe
 const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
-// Verbatim partition and classifier from signed official Linux 26.908.40834.
-const fixture = "function kG(e,{keepMcpAppEntriesPersistent:t=!1,mcpServerStatuses:n,renderMcpApps:r=!1}={}){let i=[],a=[],o=[],s=[],c=null;for(let l of e){if(l.kind===`standalone`&&l.item.item.type===`worked-for`){c=l.item.item;continue}if(l.kind===`standalone`&&l.item.item.type===`realtime-transcript`){a.length===0?s.push(l):(a.push(l),o.push(l));continue}a.push(l),AG({unit:l,keepMcpAppEntriesPersistent:t,mcpServerStatuses:n,renderMcpApps:r})?o.push(l):i.push(l)}return{collapsibleUnits:i,expandedUnits:a,persistentUnits:o,preToggleUnits:s,workedForItem:c}}function AG({unit:e,keepMcpAppEntriesPersistent:t,mcpServerStatuses:n,renderMcpApps:r}){if(e.kind!==`standalone`)return!1;let i=e.item.item;return i.type===`dynamic-tool-call`&&Mh(i)||t&&r&&i.type===`mcp-tool-call`&&jG({item:i,mcpServerStatuses:n})?!0:i.type===`user-message`&&(i.steeringStatus!=null||i.hookFeedback===!0)}";
+// Verbatim partition and classifier from signed official Linux 26.928.20755.
+const fixture = "function xO(e,{keepMcpAppEntriesPersistent:t=!1,mcpServerStatuses:n,renderMcpApps:r=!1}={}){let i=[],a=[],o=[],s=[],c=null;for(let l of e){if(l.kind===`standalone`&&l.item.item.type===`worked-for`){c=l.item.item;continue}if(l.kind===`standalone`&&l.item.item.type===`realtime-transcript`){a.length===0?s.push(l):(a.push(l),o.push(l));continue}a.push(l),SO({unit:l,keepMcpAppEntriesPersistent:t,mcpServerStatuses:n,renderMcpApps:r})?o.push(l):i.push(l)}return{collapsibleUnits:i,expandedUnits:a,persistentUnits:o,preToggleUnits:s,workedForItem:c}}function SO({unit:e,keepMcpAppEntriesPersistent:t,mcpServerStatuses:n,renderMcpApps:r}){if(e.kind!==`standalone`)return!1;let i=e.item.item;return i.type===`assistant-message`&&Vi(i)||i.type===`dynamic-tool-call`&&qh(i)||t&&r&&i.type===`mcp-tool-call`&&CO({item:i,mcpServerStatuses:n})?!0:i.type===`user-message`&&(i.steeringStatus!=null||i.hookFeedback===!0)}";
 function partition(source, units, options) {
-  return vm.runInNewContext(source + ";kG", { Mh: item => item.interactive, jG: ({item}) => item.interactive })(units, options);
+  return vm.runInNewContext(source + ";xO", { Vi: item => item.final, qh: item => item.interactive, CO: ({item}) => item.interactive })(units, options);
 }
 const unit = (type, id, extra = {}) => ({kind:"standalone",item:{item:{type,id,...extra}}});
 const ids = units => Array.from(units, unit => unit.item.item.id);
@@ -67,12 +67,12 @@ test("feature registration, unique asset selection and enabled drift enforcement
     fs.writeFileSync(config,JSON.stringify({enabled:["authored-message-visibility"]}));
     const loaded = loadLinuxFeaturePatchDescriptors(options);
     assert.equal(loaded.length,1);
-    const file = path.join(assets,"conversation-blocks-newHash.js");
+    const file = path.join(assets,"sites-end-resource-newHash.js");
     for (const scenario of ["valid","already","missing","drift","ambiguous"]) {
       for (const name of fs.readdirSync(assets)) fs.unlinkSync(path.join(assets,name));
       const source = scenario === "already" ? apply(fixture) : scenario === "drift" ? fixture.replace("hookFeedback===!0","hookFeedback===!1") : fixture;
       if (scenario !== "missing") fs.writeFileSync(file,source);
-      if (scenario === "ambiguous") fs.writeFileSync(path.join(assets,"conversation-blocks-other.js"),source);
+      if (scenario === "ambiguous") fs.writeFileSync(path.join(assets,"sites-end-resource-other.js"),source);
       const report = createPatchReport(); report.enabledFeatures=["authored-message-visibility"];
       captureWarnings(() => applyWebviewAssetPatchDescriptors(temp,loaded,{},report));
       if (["valid","already"].includes(scenario)) {

@@ -17,7 +17,7 @@ const CODEX_MICRO_SERVICE_PATTERN =
 const CODEX_MICRO_GATE_CONTRACTS = [
   {
     description: "Codex Micro app-shell gates",
-    gateCount: 4,
+    gateCount: 3,
     routeCount: 0,
     anchor: (source) =>
       source.includes("codex-micro-onboarding-host-")
@@ -25,7 +25,7 @@ const CODEX_MICRO_GATE_CONTRACTS = [
   },
   {
     description: "Codex Micro settings-page gates",
-    gateCount: 1,
+    gateCount: 2,
     routeCount: 3,
     anchor: (source) =>
       source.includes("codex-micro-bridge-")

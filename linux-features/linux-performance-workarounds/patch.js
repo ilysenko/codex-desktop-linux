@@ -38,7 +38,7 @@ module.exports = [
     phase: "webview-asset",
     order: 20_120,
     ciPolicy: "optional",
-    pattern: /^app-primary-[^.]+\.css$/,
+    pattern: /^[A-Za-z0-9_-]+\.css$/,
     assetMatch: matchesLinuxMarkdownAnimationPerformanceContract,
     missingDescription: "streaming Markdown animation stylesheet",
     skipDescription: "Markdown animation performance workaround",

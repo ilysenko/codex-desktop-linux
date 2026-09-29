@@ -24,13 +24,13 @@ const currentProjectSource = [
   "const prioritySortId=`sidebarElectron.sortMenu.priority`;",
   "const updatedSortId=`sidebarElectron.sortMenu.updated`;",
   "const manualSortId=`sidebarElectron.sortMenu.manual`;",
-  "let A=fon({groups:D,items:f}),{chatSortMode:j,projectSortMode:M}=t(xH),N=p5o({groups:A,projectOrder:jm(t,_u.PROJECT_ORDER)});",
+  "let{chatSortMode:j,projectSortMode:M}=t(xH),N=p5o({groups:fon({groups:D,items:f}),projectOrder:jm(t,_u.PROJECT_ORDER)});",
 ].join("");
 
 const officialLinuxProjectSource = [
   "function A6i(e,t){return e}",
   "function O8o({groups:e,projectOrder:t}){return A6i(e,t)}",
-  "let A=fon({groups:D,items:f}),{chatSortMode:j,projectSortMode:M}=t(IH),N=O8o({groups:A,projectOrder:Dm(t,yu.PROJECT_ORDER)});",
+  "let{chatSortMode:j,projectSortMode:M}=t(IH),N=O8o({groups:fon({groups:D,items:f}),projectOrder:Dm(t,yu.PROJECT_ORDER)});",
 ].join("");
 
 function captureWarns(fn) {
@@ -165,7 +165,7 @@ test("patch passes the selected project sort mode into the group sorter", () => 
   );
 });
 
-test("patch matches the official 26.803.81509 project sorter semantically", () => {
+test("patch matches the current official project sorter semantically", () => {
   const patched = applyPatchTwice(officialLinuxProjectSource);
 
   assert.match(
@@ -174,7 +174,7 @@ test("patch matches the official 26.803.81509 project sorter semantically", () =
   );
   assert.match(
     patched,
-    /O8o\(\{groups:A,projectOrder:Dm\(t,yu\.PROJECT_ORDER\),items:f,sortMode:M\}\)/,
+    /O8o\(\{groups:fon\(\{groups:D,items:f\}\),projectOrder:Dm\(t,yu\.PROJECT_ORDER\),items:f,sortMode:M\}\)/,
   );
 });
 

@@ -815,11 +815,21 @@ function applyAssistantAssetPatch(source) {
   return patched;
 }
 
+function matchesAssistantRuntimeContract(source) {
+  const primaryThreadPartition =
+    source.includes("collapsibleUnits:") && source.includes("persistentUnits:");
+  return primaryThreadPartition && (
+    source.includes(`globalThis.${HELPER_MARKER}?.(`) ||
+    ASSISTANT_RENDER_CANDIDATE_PATTERN.test(source)
+  );
+}
+
 module.exports = {
   applyAppMainRoutePatch,
   applyGeneralSettingsPatch,
   applyGeneralSettingsWrapperPatch,
   applyAssistantRenderPatch,
+  matchesAssistantRuntimeContract,
   applyIndexRuntimePatch,
   applyMainBundlePatch,
   applySettingsAssetPatch,
@@ -851,7 +861,8 @@ module.exports = {
       phase: "webview-asset",
       order: 20620,
       ciPolicy: "optional",
-      pattern: /^conversation-blocks-[A-Za-z0-9_-]+\.js$/,
+      pattern: /^[A-Za-z0-9_-]+\.js$/,
+      assetMatch: matchesAssistantRuntimeContract,
       missingDescription: "current primary thread assistant bundle",
       skipDescription: "read aloud assistant runtime patch",
       apply: applyAssistantAssetPatch,

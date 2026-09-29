@@ -7,12 +7,12 @@ const comparatorPattern = new RegExp(
 );
 
 function currentLocalTimestamp(task, mode) {
-  return `${task}.conversation==null?${task}.at:${mode}===\`updated_at\`?${task}.conversation.recencyAt??${task}.conversation.updatedAt:${task}.conversation.createdAt`;
+  return `${task}.summary==null?${task}.at:${mode}===\`updated_at\`?${task}.summary.recencyAt??${task}.summary.updatedAt:${task}.summary.createdAt`;
 }
 
 function patchedLocalTimestamp(task, mode) {
   return currentLocalTimestamp(task, mode) +
-    `??(/^local:[\\da-f]{8}-[\\da-f]{4}-7[\\da-f]{3}-[89ab][\\da-f]{3}-[\\da-f]{12}$/i.test(${task}.key)?Number.parseInt(${task}.key.slice(6).replaceAll(\`-\`,\`\`).slice(0,12),16):${task}.conversation.recencyAt??${task}.conversation.updatedAt)`;
+    `??(/^local:[\\da-f]{8}-[\\da-f]{4}-7[\\da-f]{3}-[89ab][\\da-f]{3}-[\\da-f]{12}$/i.test(${task}.key)?Number.parseInt(${task}.key.slice(6).replaceAll(\`-\`,\`\`).slice(0,12),16):${task}.summary.recencyAt??${task}.summary.updatedAt)`;
 }
 
 function comparatorContracts(source) {

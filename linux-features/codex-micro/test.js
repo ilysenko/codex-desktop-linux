@@ -22,7 +22,7 @@ const {
 const [appShellContract, settingsPageContract, settingsContract, debugPanelContract] =
   CODEX_MICRO_GATE_CONTRACTS;
 
-function appShellSource(gates = 4) {
+function appShellSource(gates = 3) {
   return [
     "const onboarding=`codex-micro-onboarding-host-current.js`",
     "const service=`codexMicro.currentService`",
@@ -39,6 +39,7 @@ function settingsPageSource() {
     "const bridge=`codex-micro-bridge-current.js`",
     "const routes=[`/settings/codex-micro`,`/settings/codex-micro`,`/settings/codex-micro`]",
     "const enabled=gg(`3207467860`)",
+    "const dictation=gg(`3207467860`)",
   ].join(";");
 }
 
@@ -117,7 +118,7 @@ test("Codex Micro feature gate patches every current callsite", () => {
 test("Codex Micro feature gate rejects incomplete or drifted contracts", () => {
   const marker = `!0/*${CODEX_MICRO_GATE_MARKER}*/`;
   const cases = {
-    incomplete: appShellSource(3),
+    incomplete: appShellSource(2),
     member: appShellSource().replace(
       "gg(`3207467860`)",
       "gates.gg(`3207467860`)",

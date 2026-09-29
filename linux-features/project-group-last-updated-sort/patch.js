@@ -20,32 +20,21 @@ function escapeRegExp(value) {
 
 function currentSorterCallPattern(sorterName) {
   return new RegExp(
-    String.raw`${escapeRegExp(sorterName)}\(\{groups:(${identifier}),projectOrder:(${identifier}\(${identifier},${identifier}\.PROJECT_ORDER\))\}\)`,
+    String.raw`${escapeRegExp(sorterName)}\(\{groups:(${identifier}\(\{groups:${identifier},items:(${identifier})\}\)),projectOrder:(${identifier}\(${identifier},${identifier}\.PROJECT_ORDER\))\}\)`,
     "g",
   );
 }
 
 function patchedSorterCallPattern(sorterName) {
   return new RegExp(
-    String.raw`${escapeRegExp(sorterName)}\(\{groups:(${identifier}),projectOrder:(${identifier}\(${identifier},${identifier}\.PROJECT_ORDER\)),items:(${identifier}),sortMode:(${identifier})\}\)`,
+    String.raw`${escapeRegExp(sorterName)}\(\{groups:${identifier}\(\{groups:${identifier},items:${identifier}\}\),projectOrder:${identifier}\(${identifier},${identifier}\.PROJECT_ORDER\),items:${identifier},sortMode:${identifier}\}\)`,
     "g",
   );
 }
 
 function projectSortModeBefore(source, callIndex) {
-  const prefix = source.slice(Math.max(0, callIndex - 300), callIndex);
+  const prefix = source.slice(Math.max(0, callIndex - 1500), callIndex);
   const matches = [...prefix.matchAll(new RegExp(String.raw`projectSortMode:(${identifier})`, "g"))];
-  return matches.length === 1 ? matches[0][1] : null;
-}
-
-function projectItemsBefore(source, callIndex, groupsVar) {
-  const prefix = source.slice(Math.max(0, callIndex - 500), callIndex);
-  const matches = [...prefix.matchAll(
-    new RegExp(
-      String.raw`${escapeRegExp(groupsVar)}=${identifier}\(\{groups:${identifier},items:(${identifier})\}\)`,
-      "g",
-    ),
-  )];
   return matches.length === 1 ? matches[0][1] : null;
 }
 
@@ -81,8 +70,7 @@ function applyProjectGroupLastUpdatedSortPatch(source) {
     return source;
   }
 
-  const groupsVar = currentCalls[0][1];
-  const itemsVar = projectItemsBefore(source, currentCalls[0].index, groupsVar);
+  const itemsVar = currentCalls[0][2];
   const sortMode = projectSortModeBefore(source, currentCalls[0].index);
   if (itemsVar == null || sortMode == null) {
     console.warn(

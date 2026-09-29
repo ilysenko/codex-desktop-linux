@@ -19,7 +19,7 @@ const {
 } = require("./patch.js");
 
 const currentProjectSource =
-  "function CQr(e,t){switch(e.kind){case`local`:return e.conversation==null?e.at:t===`updated_at`?e.conversation.recencyAt??e.conversation.updatedAt:e.conversation.createdAt;case`remote`:return((t===`updated_at`?e.task.updated_at??e.task.created_at:e.task.created_at??e.task.updated_at)??0)*1e3}}";
+  "function d4n(e,t){switch(e.kind){case`local`:return e.summary==null?e.at:t===`updated_at`?e.summary.recencyAt??e.summary.updatedAt:e.summary.createdAt;case`remote`:return((t===`updated_at`?e.task.updated_at??e.task.created_at:e.task.created_at??e.task.updated_at)??0)*1e3}}";
 
 function captureWarns(fn) {
   const originalWarn = console.warn;
@@ -91,13 +91,13 @@ test("populated local conversations recover Created time from UUIDv7 keys", () =
     key: "local:019e0000-0000-7000-8000-000000000001",
     kind: "local",
     at: 900,
-    conversation: { recencyAt: 400 },
+    summary: { recencyAt: 400 },
   };
   const newer = {
     key: "local:019f0000-0000-7000-8000-000000000002",
     kind: "local",
     at: 1,
-    conversation: { recencyAt: 100 },
+    summary: { recencyAt: 100 },
   };
 
   assert.ok(timestamp(newer, "created_at") > timestamp(older, "created_at"));
@@ -110,11 +110,11 @@ test("explicit, pending, legacy, invalid, and remote timestamps retain upstream 
     key: "local:019e0000-0000-7000-8000-000000000001",
     kind: "local",
     at: 900,
-    conversation: { recencyAt: 400, updatedAt: 300 },
+    summary: { recencyAt: 400, updatedAt: 300 },
   };
 
-  assert.equal(timestamp({ ...local, conversation: { ...local.conversation, createdAt: 123 } }, "created_at"), 123);
-  assert.equal(timestamp({ ...local, conversation: null }, "created_at"), 900);
+  assert.equal(timestamp({ ...local, summary: { ...local.summary, createdAt: 123 } }, "created_at"), 123);
+  assert.equal(timestamp({ ...local, summary: null }, "created_at"), 900);
   assert.equal(timestamp({ ...local, key: "local:legacy-id" }, "created_at"), 400);
   assert.equal(
     timestamp({ ...local, key: "local:019e0000-0000-7000-7000-000000000001" }, "created_at"),
@@ -132,7 +132,7 @@ test("explicit, pending, legacy, invalid, and remote timestamps retain upstream 
 
 test("semantic comparator matching is independent of minified aliases", () => {
   const renamed = currentProjectSource
-    .replace("CQr(e,t)", "createdComparator(task,mode)")
+    .replace("d4n(e,t)", "createdComparator(task,mode)")
     .replaceAll("e.", "task.")
     .replaceAll("t===", "mode===");
   const timestamp = timestampFunction(renamed);
@@ -140,7 +140,7 @@ test("semantic comparator matching is independent of minified aliases", () => {
     timestamp({
       key: "local:019e0000-0000-7000-8000-000000000001",
       kind: "local",
-      conversation: {},
+      summary: {},
     }, "created_at"),
     Number.parseInt("019e00000000", 16),
   );

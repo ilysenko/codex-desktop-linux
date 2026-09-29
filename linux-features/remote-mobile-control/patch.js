@@ -1389,14 +1389,14 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
       `(?<conversation>[A-Za-z_$][\\w$]*),\\{)`;
   const callerContract =
     `(?=canUseProjectlessWorkspace:!(?<classifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\),[\\s\\S]{0,1000}?` +
-    `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\?\`detailed\`:null)`;
+    `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\|\\|[A-Za-z_$][\\w$]*\\?\`detailed\`:null)`;
   const pristineCallerMatches = [...source.matchAll(new RegExp(callerPrefix + callerContract, "gu"))];
   const patchedCallerPattern = new RegExp(
     callerPrefix +
       `codexLinuxRemoteMobileHost:(?<patchedClassifier>[A-Za-z_$][\\w$]*)\\(\\k<manager>\\.getHostId\\(\\)\\)&&` +
       `\\k<conversation>\\.mode===\`durable\`,` +
       `(?=canUseProjectlessWorkspace:!\\k<patchedClassifier>\\(\\k<manager>\\.getHostId\\(\\)\\),[\\s\\S]{0,1000}?` +
-      `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\?\`detailed\`:null)`,
+      `reasoningSummaryOverride:\\k<manager>\\.getDefaultFeatureOverride\\(\`concurrent_reasoning_summaries\`\\)===!0\\|\\|[A-Za-z_$][\\w$]*\\?\`detailed\`:null)`,
     "gu",
   );
   const patchedCallerMatches = [...source.matchAll(patchedCallerPattern)];
