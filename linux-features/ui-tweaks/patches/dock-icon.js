@@ -21,6 +21,12 @@ function sameAliases(...aliases) {
 
 function mainPatterns(state) {
   const linux = state === "patched" ? "&&process\\.platform!==`linux`" : "";
+  const spaceDark = state === "patched"
+    ? "process\\.platform===`linux`\\?\\k<codexDark>:\\k<resource>\\(\\k<theme>\\.spaceDark\\)"
+    : "\\k<resource>\\(\\k<theme>\\.spaceDark\\)";
+  const spaceLight = state === "patched"
+    ? "process\\.platform===`linux`\\?\\k<codexLight>:\\k<resource>\\(\\k<theme>\\.spaceLight\\)"
+    : "\\k<resource>\\(\\k<theme>\\.spaceLight\\)";
   const packaged = state === "patched"
     ? "(?<electron>[A-Za-z_$][\\w$]*)\\.app\\.isPackaged\\|\\|process\\.platform===`linux`\\?\\k<helper>\\(\\k<arg>\\):null"
     : "(?<electron>[A-Za-z_$][\\w$]*)\\.app\\.isPackaged\\?\\(0,(?<path>[A-Za-z_$][\\w$]*)\\.join\\)\\(process\\.resourcesPath,\\k<arg>\\):null";
@@ -34,12 +40,18 @@ function mainPatterns(state) {
     ? `if\\((?<arg>${identifier})===\`app-default\`&&process\\.platform!==\`linux\`&&(?<build>${identifier})!==(?:${identifier})\\.(?:${identifier})\\.Dev\\)`
     : `if\\((?<arg>${identifier})===\`app-default\`&&(?<build>${identifier})!==(?:${identifier})\\.(?:${identifier})\\.Dev\\)`;
   const applyTail = state === "patched"
-    ? `if\\((?<image>${identifier})\\.isEmpty\\(\\)\\)return;if\\(process\\.platform!==\`linux\`&&\\((?<arg>${identifier})===\`codex-system\`\\|\\|\\k<arg>===\`space-system\`\\)\\)\\{let\\{width:(?<width>${identifier}),height:(?<height>${identifier})\\}=\\k<image>\\.getSize\\(\\),(?<inset>${identifier})=Math\\.round\\(\\k<width>/128\\);\\k<image>=\\k<image>\\.crop\\(\\{x:\\k<inset>,y:\\k<inset>,width:\\k<width>-\\k<inset>\\*2,height:\\k<height>-\\k<inset>\\*2\\}\\)\\}if\\(process\\.platform===\`linux\`\\)\\{let codexLinuxIconSelection=\\k<arg>===\`codex-system\`\\?\\((?<electron>${identifier})\\.nativeTheme\\.shouldUseDarkColorsForSystemIntegratedUI\\?\`codex-dark\`:\`codex-light\`\\):\`chatgpt\`;globalThis\\.codexLinuxDockIconImage=\\k<image>;for\\(let (?<window>${identifier}) of \\k<electron>\\.BrowserWindow\\.getAllWindows\\(\\)\\)\\k<window>\\.isDestroyed\\(\\)\\|\\|\\k<window>\\.setIcon\\(\\k<image>\\);(?<trayState>${identifier})!=null&&!\\k<trayState>\\.tray\\.isDestroyed\\(\\)&&\\k<trayState>\\.tray\\.setImage\\(\\k<image>\\);let codexLinuxSyncScript=${dockIconResourceHelper}\\(\`sync-desktop-icon\\.sh\`\\);if\\((?<exists>${identifier})\\.existsSync\\(codexLinuxSyncScript\\)\\)try\\{let (?<child>${identifier})=require\\(\`node:child_process\`\\)\\.spawn\\(codexLinuxSyncScript,\\[codexLinuxIconSelection\\],\\{detached:!0,stdio:\\[\`pipe\`,\`ignore\`,\`ignore\`\\]\\}\\);\\k<child>\\.on\\(\`error\`,\\(\\)=>\\{\\}\\),\\k<child>\\.stdin\\.on\\(\`error\`,\\(\\)=>\\{\\}\\),\\k<child>\\.stdin\\.end\\(\\k<image>\\.toPNG\\(\\)\\),\\k<child>\\.unref\\(\\)\\}catch\\((?:${identifier})\\)\\{\\}return\\}\\k<electron>\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}`
+    ? `if\\((?<image>${identifier})\\.isEmpty\\(\\)\\)return;if\\(process\\.platform!==\`linux\`&&\\((?<arg>${identifier})===\`codex-system\`\\|\\|\\k<arg>===\`space-system\`\\)\\)\\{let\\{width:(?<width>${identifier}),height:(?<height>${identifier})\\}=\\k<image>\\.getSize\\(\\),(?<inset>${identifier})=Math\\.round\\(\\k<width>/128\\);\\k<image>=\\k<image>\\.crop\\(\\{x:\\k<inset>,y:\\k<inset>,width:\\k<width>-\\k<inset>\\*2,height:\\k<height>-\\k<inset>\\*2\\}\\)\\}if\\(process\\.platform===\`linux\`\\)\\{let codexLinuxIconSelection=\\k<arg>===\`codex-system\`\\|\\|\\k<arg>===\`space-system\`\\?\\((?<electron>${identifier})\\.nativeTheme\\.shouldUseDarkColorsForSystemIntegratedUI\\?\`codex-dark\`:\`codex-light\`\\):\`chatgpt\`;globalThis\\.codexLinuxDockIconImage=\\k<image>;for\\(let (?<window>${identifier}) of \\k<electron>\\.BrowserWindow\\.getAllWindows\\(\\)\\)\\k<window>\\.isDestroyed\\(\\)\\|\\|\\k<window>\\.setIcon\\(\\k<image>\\);(?<trayState>${identifier})!=null&&!\\k<trayState>\\.tray\\.isDestroyed\\(\\)&&\\k<trayState>\\.tray\\.setImage\\(\\k<image>\\);let codexLinuxSyncScript=${dockIconResourceHelper}\\(\`sync-desktop-icon\\.sh\`\\);if\\((?<exists>${identifier})\\.existsSync\\(codexLinuxSyncScript\\)\\)try\\{let (?<child>${identifier})=require\\(\`node:child_process\`\\)\\.spawn\\(codexLinuxSyncScript,\\[codexLinuxIconSelection\\],\\{detached:!0,stdio:\\[\`pipe\`,\`ignore\`,\`ignore\`\\]\\}\\);\\k<child>\\.on\\(\`error\`,\\(\\)=>\\{\\}\\),\\k<child>\\.stdin\\.on\\(\`error\`,\\(\\)=>\\{\\}\\),\\k<child>\\.stdin\\.end\\(\\k<image>\\.toPNG\\(\\)\\),\\k<child>\\.unref\\(\\)\\}catch\\((?:${identifier})\\)\\{\\}return\\}\\k<electron>\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}`
     : `if\\(!(?<image>${identifier})\\.isEmpty\\(\\)\\)\\{if\\((?<arg>${identifier})===\`codex-system\`\\|\\|\\k<arg>===\`space-system\`\\)\\{let\\{width:(?<width>${identifier}),height:(?<height>${identifier})\\}=\\k<image>\\.getSize\\(\\),(?<inset>${identifier})=Math\\.round\\(\\k<width>/128\\);\\k<image>=\\k<image>\\.crop\\(\\{x:\\k<inset>,y:\\k<inset>,width:\\k<width>-\\k<inset>\\*2,height:\\k<height>-\\k<inset>\\*2\\}\\)\\}(?<electron>${identifier})\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}\\}`;
 
   return {
     preview: new RegExp(
-      `function (?<owner>${identifier})\\((?<arg>${identifier})\\)\\{if\\(process\\.platform!==\`darwin\`${linux}\\)return null;let (?<theme>${identifier})=(?<themeHelper>${identifier})\\(\\k<arg>\\),(?<defaultIcon>${identifier})=(?<resource>${identifier})\\(`,
+      `function (?<owner>${identifier})\\((?<arg>${identifier})\\)\\{if\\(process\\.platform!==\`darwin\`${linux}\\)return null;let (?<theme>${identifier})=(?<themeHelper>${identifier})\\(\\k<arg>\\),(?<defaultIcon>${identifier})=(?<resource>${identifier})\\(\`\\$\\{(?<iconName>${identifier})\\(\\k<arg>\\)\\}\\.png\`\\),(?<codexDark>${identifier})=\\k<resource>\\(\\k<theme>\\.dark\\),(?<codexLight>${identifier})=\\k<resource>\\(\\k<theme>\\.light\\),(?<spaceDark>${identifier})=${spaceDark},(?<spaceLight>${identifier})=${spaceLight};return \\k<defaultIcon>==null\\|\\|\\k<codexDark>==null\\|\\|\\k<codexLight>==null\\|\\|\\k<spaceDark>==null\\|\\|\\k<spaceLight>==null\\?null:\\{appDefault:\\k<defaultIcon>,codexDark:\\k<codexDark>,codexLight:\\k<codexLight>,spaceDark:\\k<spaceDark>,spaceLight:\\k<spaceLight>\\}\\}`,
+      "g",
+    ),
+    resourceName: new RegExp(
+      state === "patched"
+        ? `(?<resourceName>${identifier})=\\((?<preference>${identifier}),(?<dark>${identifier})\\)=>\\{switch\\(\\k<preference>\\)\\{case\`app-default\`:return null;case\`codex-system\`:return \\k<dark>\\?(?<theme>${identifier})\\.dark:\\k<theme>\\.light;case\`space-system\`:return process\\.platform===\`linux\`\\?\\k<dark>\\?\\k<theme>\\.dark:\\k<theme>\\.light:\\k<dark>\\?\\k<theme>\\.spaceDark:\\k<theme>\\.spaceLight\\}\\}`
+        : `(?<resourceName>${identifier})=\\((?<preference>${identifier}),(?<dark>${identifier})\\)=>\\{switch\\(\\k<preference>\\)\\{case\`app-default\`:return null;case\`codex-system\`:return \\k<dark>\\?(?<theme>${identifier})\\.dark:\\k<theme>\\.light;case\`space-system\`:return \\k<dark>\\?\\k<theme>\\.spaceDark:\\k<theme>\\.spaceLight\\}\\}`,
       "g",
     ),
     appInfo: state === "patched"
@@ -111,6 +123,7 @@ function mainContract(source, state) {
     sameAliases(groups.appInfo.path, groups.windowResource.path ?? groups.appInfo.path) &&
     sameAliases(groups.appInfo.exists, groups.windowResource.exists, groups.applyTail.exists ?? groups.appInfo.exists) &&
     sameAliases(groups.applyPrefix.apply, groups.update.apply, groups.theme.apply) &&
+    sameAliases(groups.resourceName.resourceName, groups.update.resourceName) &&
     sameAliases(groups.applyPrefix.arg, groups.applyDefaultGate.arg, groups.applyTail.arg) &&
     sameAliases(groups.update.update, groups.theme.update, groups.windowRegistration.update ?? groups.update.update) &&
     sameAliases(groups.update.isMac, groups.theme.isMac) &&
@@ -148,10 +161,11 @@ function applyDockIconMainPatch(source) {
   let patchedSource = source;
   patchedSource = patchedSource.replace(
     current.contract.preview[0],
-    current.contract.preview[0].replace(
-      "process.platform!==`darwin`",
-      "process.platform!==`darwin`&&process.platform!==`linux`",
-    ),
+    `function ${groups.preview.owner}(${groups.preview.arg}){if(process.platform!==\`darwin\`&&process.platform!==\`linux\`)return null;let ${groups.preview.theme}=${groups.preview.themeHelper}(${groups.preview.arg}),${groups.preview.defaultIcon}=${groups.preview.resource}(\`\${${groups.preview.iconName}(${groups.preview.arg})}.png\`),${groups.preview.codexDark}=${groups.preview.resource}(${groups.preview.theme}.dark),${groups.preview.codexLight}=${groups.preview.resource}(${groups.preview.theme}.light),${groups.preview.spaceDark}=process.platform===\`linux\`?${groups.preview.codexDark}:${groups.preview.resource}(${groups.preview.theme}.spaceDark),${groups.preview.spaceLight}=process.platform===\`linux\`?${groups.preview.codexLight}:${groups.preview.resource}(${groups.preview.theme}.spaceLight);return ${groups.preview.defaultIcon}==null||${groups.preview.codexDark}==null||${groups.preview.codexLight}==null||${groups.preview.spaceDark}==null||${groups.preview.spaceLight}==null?null:{appDefault:${groups.preview.defaultIcon},codexDark:${groups.preview.codexDark},codexLight:${groups.preview.codexLight},spaceDark:${groups.preview.spaceDark},spaceLight:${groups.preview.spaceLight}}}`,
+  );
+  patchedSource = patchedSource.replace(
+    current.contract.resourceName[0],
+    `${groups.resourceName.resourceName}=(${groups.resourceName.preference},${groups.resourceName.dark})=>{switch(${groups.resourceName.preference}){case\`app-default\`:return null;case\`codex-system\`:return ${groups.resourceName.dark}?${groups.resourceName.theme}.dark:${groups.resourceName.theme}.light;case\`space-system\`:return process.platform===\`linux\`?${groups.resourceName.dark}?${groups.resourceName.theme}.dark:${groups.resourceName.theme}.light:${groups.resourceName.dark}?${groups.resourceName.theme}.spaceDark:${groups.resourceName.theme}.spaceLight}}`,
   );
   patchedSource = patchedSource.replace(
     current.contract.appInfo[0],
@@ -173,7 +187,7 @@ function applyDockIconMainPatch(source) {
   const trayState = groups.trayState.trayState;
   patchedSource = patchedSource.replace(
     current.contract.applyTail[0],
-    `if(${tail.image}.isEmpty())return;if(process.platform!==\`linux\`&&(${tail.arg}===\`codex-system\`||${tail.arg}===\`space-system\`)){let{width:${tail.width},height:${tail.height}}=${tail.image}.getSize(),${tail.inset}=Math.round(${tail.width}/128);${tail.image}=${tail.image}.crop({x:${tail.inset},y:${tail.inset},width:${tail.width}-${tail.inset}*2,height:${tail.height}-${tail.inset}*2})}if(process.platform===\`linux\`){let codexLinuxIconSelection=${tail.arg}===\`codex-system\`?(${tail.electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?\`codex-dark\`:\`codex-light\`):\`chatgpt\`;globalThis.codexLinuxDockIconImage=${tail.image};for(let ${tail.width} of ${tail.electron}.BrowserWindow.getAllWindows())${tail.width}.isDestroyed()||${tail.width}.setIcon(${tail.image});${trayState}!=null&&!${trayState}.tray.isDestroyed()&&${trayState}.tray.setImage(${tail.image});let codexLinuxSyncScript=${dockIconResourceHelper}(\`sync-desktop-icon.sh\`);if(${groups.appInfo.exists}.existsSync(codexLinuxSyncScript))try{let ${tail.height}=require(\`node:child_process\`).spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:[\`pipe\`,\`ignore\`,\`ignore\`]});${tail.height}.on(\`error\`,()=>{}),${tail.height}.stdin.on(\`error\`,()=>{}),${tail.height}.stdin.end(${tail.image}.toPNG()),${tail.height}.unref()}catch(${tail.arg}){}return}${tail.electron}.app.dock?.setIcon(${tail.image})}`,
+    `if(${tail.image}.isEmpty())return;if(process.platform!==\`linux\`&&(${tail.arg}===\`codex-system\`||${tail.arg}===\`space-system\`)){let{width:${tail.width},height:${tail.height}}=${tail.image}.getSize(),${tail.inset}=Math.round(${tail.width}/128);${tail.image}=${tail.image}.crop({x:${tail.inset},y:${tail.inset},width:${tail.width}-${tail.inset}*2,height:${tail.height}-${tail.inset}*2})}if(process.platform===\`linux\`){let codexLinuxIconSelection=${tail.arg}===\`codex-system\`||${tail.arg}===\`space-system\`?(${tail.electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?\`codex-dark\`:\`codex-light\`):\`chatgpt\`;globalThis.codexLinuxDockIconImage=${tail.image};for(let ${tail.width} of ${tail.electron}.BrowserWindow.getAllWindows())${tail.width}.isDestroyed()||${tail.width}.setIcon(${tail.image});${trayState}!=null&&!${trayState}.tray.isDestroyed()&&${trayState}.tray.setImage(${tail.image});let codexLinuxSyncScript=${dockIconResourceHelper}(\`sync-desktop-icon.sh\`);if(${groups.appInfo.exists}.existsSync(codexLinuxSyncScript))try{let ${tail.height}=require(\`node:child_process\`).spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:[\`pipe\`,\`ignore\`,\`ignore\`]});${tail.height}.on(\`error\`,()=>{}),${tail.height}.stdin.on(\`error\`,()=>{}),${tail.height}.stdin.end(${tail.image}.toPNG()),${tail.height}.unref()}catch(${tail.arg}){}return}${tail.electron}.app.dock?.setIcon(${tail.image})}`,
   );
   patchedSource = patchedSource.replace(
     current.contract.update[0],

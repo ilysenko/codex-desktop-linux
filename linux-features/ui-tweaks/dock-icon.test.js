@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const {
   enabledLinuxFeatureInstallPlan,
@@ -86,6 +87,47 @@ function captureWarns(fn) {
   } finally {
     console.warn = originalWarn;
   }
+}
+
+function evaluateLinuxPreviews(patchedSource, payloadDir) {
+  const preview = patchedSource.match(
+    /function (?<owner>[A-Za-z_$][\w$]*)\((?<arg>[A-Za-z_$][\w$]*)\)\{if\(process\.platform!==`darwin`&&process\.platform!==`linux`\)return null;let (?<theme>[A-Za-z_$][\w$]*)=(?<themeHelper>[A-Za-z_$][\w$]*)\(\k<arg>\),(?<defaultIcon>[A-Za-z_$][\w$]*)=(?<resource>[A-Za-z_$][\w$]*)\(`\$\{(?<iconName>[A-Za-z_$][\w$]*)\(\k<arg>\)\}\.png`\),(?<codexDark>[A-Za-z_$][\w$]*)=\k<resource>\(\k<theme>\.dark\),(?<codexLight>[A-Za-z_$][\w$]*)=\k<resource>\(\k<theme>\.light\),(?<spaceDark>[A-Za-z_$][\w$]*)=process\.platform===`linux`\?\k<codexDark>:\k<resource>\(\k<theme>\.spaceDark\),(?<spaceLight>[A-Za-z_$][\w$]*)=process\.platform===`linux`\?\k<codexLight>:\k<resource>\(\k<theme>\.spaceLight\);return [^}]+\}\}/,
+  );
+  assert.ok(preview, "expected one complete patched preview function");
+  const sandbox = {
+    process: { platform: "linux" },
+    [preview.groups.themeHelper]: () => ({
+      dark: "icon-codex-dark-color.png",
+      light: "icon-codex-light.png",
+      spaceDark: "icon-space-dark.png",
+      spaceLight: "icon-space-light.png",
+    }),
+    [preview.groups.iconName]: () => "icon-chatgpt",
+    [preview.groups.resource]: (name) => {
+      const resource = path.join(payloadDir, name);
+      return fs.existsSync(resource) ? fs.readFileSync(resource, "utf8") : null;
+    },
+  };
+  vm.runInNewContext(`${preview[0]};result=${preview.groups.owner}(\"prod\")`, sandbox);
+  return sandbox.result;
+}
+
+function evaluateLinuxRuntimeResourceNames(patchedSource) {
+  const resourceName = patchedSource.match(
+    /(?<owner>[A-Za-z_$][\w$]*)=\((?<preference>[A-Za-z_$][\w$]*),(?<dark>[A-Za-z_$][\w$]*)\)=>\{switch\(\k<preference>\)\{case`app-default`:return null;case`codex-system`:return \k<dark>\?(?<theme>[A-Za-z_$][\w$]*)\.dark:\k<theme>\.light;case`space-system`:return process\.platform===`linux`\?\k<dark>\?\k<theme>\.dark:\k<theme>\.light:\k<dark>\?\k<theme>\.spaceDark:\k<theme>\.spaceLight\}\}/,
+  );
+  assert.ok(resourceName, "expected one complete patched runtime resource-name function");
+  const sandbox = {
+    process: { platform: "linux" },
+    [resourceName.groups.theme]: {
+      dark: "icon-codex-dark-color.png",
+      light: "icon-codex-light.png",
+      spaceDark: "icon-space-dark.png",
+      spaceLight: "icon-space-light.png",
+    },
+  };
+  vm.runInNewContext(`${resourceName[0]};result=${resourceName.groups.owner}`, sandbox);
+  return sandbox.result;
 }
 
 function dockConfig(enabled) {
@@ -209,7 +251,40 @@ test("main patch restores official previews and synchronizes Linux windows and t
   assert.match(patched, /U9\.tray\.setImage\(r\)/);
   assert.match(patched, /globalThis\.codexLinuxDockIconImage/);
   assert.match(patched, /spawn\(codexLinuxSyncScript/);
+  assert.match(patched, /===`codex-system`\|\|e===`space-system`\?/);
   assert.equal(applyDockIconMainPatch(patched), patched);
+});
+
+test("main patch keeps Linux previews and runtime usable without Space resources", () => {
+  const { root, install, result } = runStage();
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    const payload = path.join(install, "resources", "dock-icon");
+    assert.equal(fs.existsSync(path.join(payload, "icon-space-dark.png")), false);
+    assert.equal(fs.existsSync(path.join(payload, "icon-space-light.png")), false);
+
+    const patched = applyDockIconMainPatch(currentMainSource);
+    const previews = evaluateLinuxPreviews(patched, payload);
+    assert.deepEqual({ ...previews }, {
+      appDefault: "official-icon",
+      codexDark: fs.readFileSync(path.resolve(__dirname, "../../assets/codex-linux.png"), "utf8"),
+      codexLight: fs.readFileSync(path.resolve(__dirname, "../../assets/codex-linux.png"), "utf8"),
+      spaceDark: fs.readFileSync(path.resolve(__dirname, "../../assets/codex-linux.png"), "utf8"),
+      spaceLight: fs.readFileSync(path.resolve(__dirname, "../../assets/codex-linux.png"), "utf8"),
+    });
+
+    const resourceName = evaluateLinuxRuntimeResourceNames(patched);
+    assert.equal(resourceName("app-default", false), null);
+    assert.equal(resourceName("codex-system", false), "icon-codex-light.png");
+    assert.equal(resourceName("codex-system", true), "icon-codex-dark-color.png");
+    assert.equal(resourceName("space-system", false), "icon-codex-light.png");
+    assert.equal(resourceName("space-system", true), "icon-codex-dark-color.png");
+
+    fs.rmSync(path.join(payload, "icon-codex-light.png"));
+    assert.equal(evaluateLinuxPreviews(patched, payload), null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("main patch captures every minified alias and preserves their contract relationships", () => {
@@ -248,6 +323,7 @@ test("main patch rejects drift at every official-package insertion point byte-id
     "function Gme(e){if(process.platform!==`darwin`)return null",
     "function g_(e){if(e==null)return null;let t=d.app.isPackaged?(0,g.join)(process.resourcesPath,e):null",
     "O=e=>{if(!d.app.isPackaged)return null;let t=(0,g.join)(process.resourcesPath,e);return(0,y.existsSync)(t)?t:null}",
+    "ee=(e,t)=>{switch(e){case`app-default`:return null;case`codex-system`:return t?F.dark:F.light;case`space-system`:return t?F.spaceDark:F.spaceLight}}",
     "L=e=>{if(I){",
     "R=()=>{if(!_)return;",
     "if(_){R();let e=()=>",
@@ -258,6 +334,7 @@ test("main patch rejects drift at every official-package insertion point byte-id
     "function Gme(e){if(process.platform!==`darwin`&&process.platform!==`linux`)return null",
     "function codexLinuxDockIconResourcePath",
     "O=e=>{if(!d.app.isPackaged&&process.platform!==`linux`)return null",
+    "ee=(e,t)=>{switch(e){case`app-default`:return null;case`codex-system`:return t?F.dark:F.light;case`space-system`:return process.platform===`linux`?t?F.dark:F.light:t?F.spaceDark:F.spaceLight}}",
     "L=function codexLinuxApplyDockIcon",
     "R=()=>{if(!_&&process.platform!==`linux`)return;",
     "if(_||process.platform===`linux`){R();let e=()=>",
@@ -312,6 +389,22 @@ test("main and settings repairs apply to unique semantic anchors in the signed b
   assert.equal(applyDockIconMainPatch(mainPatched), mainPatched);
   assert.match(mainPatched, /function codexLinuxDockIconResourcePath/);
   assert.match(mainPatched, /function codexLinuxApplyDockIcon/);
+
+  const { root, install, result } = runStage();
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    const payload = path.join(install, "resources", "dock-icon");
+    const previews = evaluateLinuxPreviews(mainPatched, payload);
+    assert.notEqual(previews, null);
+    assert.equal(previews.appDefault, "official-icon");
+    assert.equal(previews.codexDark, previews.spaceDark);
+    assert.equal(previews.codexLight, previews.spaceLight);
+    const resourceName = evaluateLinuxRuntimeResourceNames(mainPatched);
+    assert.equal(resourceName("space-system", false), "icon-codex-light.png");
+    assert.equal(resourceName("space-system", true), "icon-codex-dark-color.png");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 
   const settingsDescriptor = descriptors.find((descriptor) =>
     descriptor.id.endsWith("settings-row"),
