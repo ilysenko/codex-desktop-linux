@@ -21,6 +21,7 @@ const {
   applySettingsSectionsNavPatch,
   applySettingsSharedNavPatch,
   descriptors: featurePatches,
+  matchesAssistantRuntimeContract,
 } = require("./patch.js");
 const {
   applyWebviewAssetPatchDescriptors,
@@ -987,15 +988,28 @@ test("main handler downloads setup files atomically", async () => {
   }
 });
 
-test("assistant render patch adds an explicit read aloud button under the message", () => {
-  const source = "return (0,$.jsx)(Ov,{item:n,alwaysShowActions:M,assistantCopyText:p,turnId:m,autoReviewStats:y,hookStats:b,completedThreadGoal:x,after:g,conversationId:o,cwd:u,forceCodeBlockWordWrap:V,hasArtifacts:F,onAddSelectedTextToChat:H,onFileLinkOpen:v,onFork:D,renderCodeBlocksAsWritingBlocks:V})";
-  const patched = twice(applyAssistantRenderPatch, source);
-  assert.match(patched, /codex-linux-read-aloud-button/);
-  assert.match(patched, /codex-linux-read-aloud-icon/);
-  assert.match(patched, /viewBox:"0 0 24 24"/);
+function assistantRenderFixture({ jsxVar = "$", component = "Vb" } = {}) {
+  const sourceTurnCall = `(0,${jsxVar}.jsx)(${component},{item:o,alwaysShowActions:ge,assistantCopyText:a,sourceTurnId:T,savedContentResponseId:E,after:A,compactAttachment:M,electronAfter:N,autoReviewStats:L,hookStats:R,completedThreadGoal:te,conversationId:p,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:s,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,trailingActions:fe})`;
+  const liveTurnCall = `(0,${jsxVar}.jsx)(${component},{item:n,showShimmer:we,alwaysShowActions:ge,assistantCopyText:w,turnId:T,savedContentResponseId:E,autoReviewStats:L,hookStats:R,completedThreadGoal:te,after:A,compactAttachment:M,electronAfter:N,conversationId:p,getVisualizeTurnTriggerType:m,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:i,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,allowCopyWhileStreaming:Fe,additionalActions:ce,trailingActions:fe,persistentAdditionalActions:de})`;
+  const prefix = "const partition={collapsibleUnits:[],persistentUnits:[]}";
+  return {
+    liveTurnCall,
+    prefix,
+    source: `${prefix};${sourceTurnCall};${liveTurnCall}`,
+    sourceTurnCall,
+  };
+}
+
+test("assistant render patch atomically adds buttons to the current two-call topology", () => {
+  const fixture = assistantRenderFixture();
+  const patched = twice(applyAssistantRenderPatch, fixture.source);
+  assert.equal((patched.match(/codex-linux-read-aloud-button/g) ?? []).length, 2);
+  assert.equal((patched.match(/codex-linux-read-aloud-icon/g) ?? []).length, 2);
+  assert.equal((patched.match(/viewBox:"0 0 24 24"/g) ?? []).length, 2);
   assert.doesNotMatch(patched, /children:"Read aloud"/);
-  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,p,o,e\.currentTarget\)/);
-  assert.match(patched, /\$\.Fragment/);
+  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(o,a,p,e\.currentTarget\)/);
+  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,w,p,e\.currentTarget\)/);
+  assert.equal(matchesAssistantRuntimeContract(patched), true);
 });
 
 test("assistant render patch ignores normalized assistant items without render props", () => {
@@ -1007,12 +1021,12 @@ test("assistant render patch ignores normalized assistant items without render p
 });
 
 test("assistant render patch still warns when an assistant render candidate drifts", () => {
-  const source = "return (0,Q.jsx)(Ov,{item:n,assistantCopyText:p,conversationId:o,renderOptions:{writingBlocks:V}})";
+  const source = "return (0,Q.jsx)(Ov,{item:n,assistantCopyText:p,conversationId:o,renderCodeBlocksAsWritingBlocks:V})";
   const { result: patched, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
 
   assert.equal(patched, source);
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /Could not find assistant message render call/);
+  assert.match(warnings[0], /Could not find complete assistant message render call set/);
 });
 
 test("assistant render patch ignores the current shared component definition", () => {
@@ -1023,31 +1037,73 @@ test("assistant render patch ignores the current shared component definition", (
   assert.deepEqual(warnings, []);
 });
 
-test("assistant render patch preserves the current JSX runtime alias", () => {
-  const source = "return (0,Q.jsx)(Ov,{item:n,alwaysShowActions:M,assistantCopyText:p,turnId:m,autoReviewStats:y,hookStats:b,completedThreadGoal:x,after:g,conversationId:o,cwd:u,forceCodeBlockWordWrap:V,hasArtifacts:F,onAddSelectedTextToChat:H,onFileLinkOpen:v,onFork:D,renderCodeBlocksAsWritingBlocks:V})";
-  const patched = twice(applyAssistantRenderPatch, source);
+test("assistant render patch preserves the current JSX runtime alias across both calls", () => {
+  const patched = twice(applyAssistantRenderPatch, assistantRenderFixture({ jsxVar: "Q" }).source);
 
-  assert.match(patched, /Q\.Fragment/);
-  assert.match(patched, /\(0,Q\.jsx\)\("button"/);
-  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,p,o,e\.currentTarget\)/);
+  assert.equal((patched.match(/Q\.Fragment/g) ?? []).length, 2);
+  assert.equal((patched.match(/\(0,Q\.jsx\)\("button"/g) ?? []).length, 2);
 });
 
-test("assistant render patch covers the current shared assistant message call", () => {
-  const source = "return (0,t8.jsx)(K6c,{item:n,alwaysShowActions:re,assistantCopyText:b,turnId:x,processTargets:S,autoReviewStats:A,hookStats:j,threadDetailLevel:p,completedThreadGoal:M,after:T,electronAfter:E,conversationId:d,getVisualizeTurnTriggerType:f,cwd:g,hostId:_,reportEntityType:v,markdownMediaCacheKey:e,projectlessOutputDirectory:de,forceCodeBlockWordWrap:we,hasArtifacts:fe,onAddResponseTextAnnotation:r,onFileLinkOpen:k,onFork:B,renderCodeBlocksAsWritingBlocks:we,showActionRow:ie,showTimestampWithoutActions:ae,timestampHoverOnly:oe,showProcessBadges:i,allowCopyWhileStreaming:q})";
-  const patched = twice(applyAssistantRenderPatch, source);
+test("assistant render patch ignores unrelated JSX calls beside the complete topology", () => {
+  const fixture = assistantRenderFixture();
+  const unrelated = `(0,$.jsx)(Other,{item:q,label:"Preview",conversationId:s})`;
+  const source = `${fixture.source};${unrelated}`;
+  const patched = applyAssistantRenderPatch(source);
 
-  assert.match(patched, /t8\.Fragment/);
-  assert.match(patched, /\(0,t8\.jsx\)\("button"/);
-  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,b,d,e\.currentTarget\)/);
+  assert.equal((patched.match(/codex-linux-read-aloud-button/g) ?? []).length, 2);
+  assert.equal(patched.endsWith(unrelated), true);
+});
+
+test("assistant render patch rejects a missing current render call without modifying the asset", () => {
+  const fixture = assistantRenderFixture();
+  const source = `${fixture.prefix};${fixture.liveTurnCall}`;
+  const { result, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
+
+  assert.equal(result, source);
+  assert.equal(matchesAssistantRuntimeContract(source), false);
+  assert.equal(warnings.length, 1);
+});
+
+test("assistant render patch rejects an additional assistant-shaped call without modifying the asset", () => {
+  const fixture = assistantRenderFixture();
+  const source = `${fixture.source};(0,$.jsx)(Other,{item:q,assistantCopyText:r,conversationId:s})`;
+  const { result, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
+
+  assert.equal(result, source);
+  assert.equal(matchesAssistantRuntimeContract(source), false);
+  assert.equal(warnings.length, 1);
+});
+
+test("assistant render patch rejects duplicate topology roles without modifying the asset", () => {
+  const fixture = assistantRenderFixture();
+  const source = `${fixture.source};${fixture.sourceTurnCall}`;
+  const { result, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
+
+  assert.equal(result, source);
+  assert.equal(matchesAssistantRuntimeContract(source), false);
+  assert.equal(warnings.length, 1);
+});
+
+test("assistant render patch rejects mixed patched and unpatched topology without modifying the asset", () => {
+  const fixture = assistantRenderFixture();
+  const patched = applyAssistantRenderPatch(fixture.source);
+  const firstWrapperStart = patched.indexOf("(0,$.jsxs)($.Fragment");
+  const secondWrapperSeparator = patched.indexOf(";(0,$.jsxs)($.Fragment", firstWrapperStart);
+  assert.notEqual(firstWrapperStart, -1);
+  assert.notEqual(secondWrapperSeparator, -1);
+  const mixed = `${patched.slice(0, firstWrapperStart)}${fixture.sourceTurnCall}${patched.slice(secondWrapperSeparator)}`;
+  const { result, warnings } = captureWarnings(() => applyAssistantRenderPatch(mixed));
+
+  assert.equal(result, mixed);
+  assert.equal(matchesAssistantRuntimeContract(mixed), false);
+  assert.equal(warnings.length, 1);
 });
 
 test("assistant runtime descriptor targets current shared assistant bundles", () => {
   const descriptor = featurePatches.find((patch) => patch.id === "assistant-runtime");
   assert.ok(descriptor);
   assert.equal(descriptor.pattern.test("sites-end-resource-current.js"), true);
-  assert.equal(descriptor.assetMatch(
-    "const partition={collapsibleUnits:[],persistentUnits:[]};return (0,Q.jsx)(Ov,{item:n,assistantCopyText:p,conversationId:o})",
-  ), true);
+  assert.equal(descriptor.assetMatch(assistantRenderFixture({ jsxVar: "Q" }).source), true);
   assert.equal(descriptor.assetMatch("const unrelated=true"), false);
 });
 
@@ -1095,10 +1151,7 @@ test("assistant runtime descriptor reports applied then already-applied for the 
       assetsDir,
       "sites-end-resource-current.js",
     );
-    fs.writeFileSync(
-      assetPath,
-      "const partition={collapsibleUnits:[],persistentUnits:[]};return (0,DX.jsx)(Jft,{item:n,assistantCopyText:_,conversationId:l,renderCodeBlocksAsWritingBlocks:ie})",
-    );
+    fs.writeFileSync(assetPath, assistantRenderFixture({ jsxVar: "DX", component: "Jft" }).source);
     const descriptor = featurePatches.find((patch) => patch.id === "assistant-runtime");
     const descriptors = normalizePatchDescriptors([
       { ...descriptor, featureId: "read-aloud", sourceKind: "feature" },
@@ -1110,7 +1163,7 @@ test("assistant runtime descriptor reports applied then already-applied for the 
     applyWebviewAssetPatchDescriptors(root, descriptors, {}, secondReport);
 
     const patched = fs.readFileSync(assetPath, "utf8");
-    assert.match(patched, /codex-linux-read-aloud-button/);
+    assert.equal((patched.match(/codex-linux-read-aloud-button/g) ?? []).length, 2);
     assert.doesNotMatch(patched, /codexLinuxReadAloudVersion/);
     assert.equal(firstReport.patches[0].status, "applied");
     assert.equal(secondReport.patches[0].status, "already-applied");

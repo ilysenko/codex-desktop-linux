@@ -32,8 +32,45 @@ const GENERAL_SETTINGS_CHILDREN_WITH_ROW =
   `children:[S,C,w,T,${GENERAL_SETTINGS_ROW_CALL},D,O,k,A,j,M,N,P,L]`;
 const GENERAL_SETTINGS_CHILDREN_WITH_OLD_ROW =
   `children:[S,C,w,T,D,O,k,${GENERAL_SETTINGS_ROW_CALL},A,j,M,N,P,L]`;
-const ASSISTANT_RENDER_CANDIDATE_PATTERN =
-  /\.(?:jsx|jsxs)\)\([A-Za-z_$][\w$]*,\{(?=[^{}]{0,2500}\bitem:)(?=[^{}]{0,2500}\bassistantCopyText:)(?=[^{}]{0,2500}\bconversationId:)/u;
+const ASSISTANT_RENDER_SHARED_PROPS = [
+  "item",
+  "alwaysShowActions",
+  "assistantCopyText",
+  "savedContentResponseId",
+  "after",
+  "compactAttachment",
+  "electronAfter",
+  "autoReviewStats",
+  "hookStats",
+  "completedThreadGoal",
+  "conversationId",
+  "cwd",
+  "hostId",
+  "reportEntityType",
+  "markdownMediaCacheKey",
+  "projectlessOutputDirectory",
+  "outputFileLinks",
+  "forceCodeBlockWordWrap",
+  "hasArtifacts",
+  "onAddResponseTextAnnotation",
+  "onNavigateResponseTextAnnotation",
+  "onFileLinkOpen",
+  "onFork",
+  "renderCodeBlocksAsWritingBlocks",
+  "showActionRow",
+  "showTimestampHeader",
+  "showTimestampWithoutActions",
+  "timestampHoverOnly",
+  "trailingActions",
+];
+const ASSISTANT_RENDER_LIVE_PROPS = [
+  "turnId",
+  "showShimmer",
+  "getVisualizeTurnTriggerType",
+  "allowCopyWhileStreaming",
+  "additionalActions",
+  "persistentAdditionalActions",
+];
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
@@ -158,34 +195,101 @@ function ensureReadAloudRuntime(source) {
   return `${source}\n${readAloudRuntimeSource()}`;
 }
 
-function applyAssistantRenderPatch(source) {
-  if (source.includes(`globalThis.${HELPER_MARKER}?.(`)) {
-    return source;
+function countOccurrences(source, needle) {
+  let count = 0;
+  let offset = 0;
+  while ((offset = source.indexOf(needle, offset)) !== -1) {
+    count += 1;
+    offset += needle.length;
   }
+  return count;
+}
+
+function inspectAssistantRenderContract(source) {
   const jsxCallPattern =
     /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{(?=[^{}]*\bitem:)(?=[^{}]*\bassistantCopyText:)(?=[^{}]*\bconversationId:)([^{}]*)\}\)/g;
   const readProp = (props, name) =>
     new RegExp(`(?:^|,)${name}:([A-Za-z_$][\\w$]*)`).exec(props)?.[1] ?? null;
-  const patched = source.replace(
-    jsxCallPattern,
-    (match, jsxVar, _component, props) => {
-      const itemVar = readProp(props, "item");
-      const copyVar = readProp(props, "assistantCopyText");
-      const conversationVar = readProp(props, "conversationId");
-      if (itemVar == null || copyVar == null || conversationVar == null) {
-        return match;
+  const candidates = Array.from(source.matchAll(jsxCallPattern), (match) => {
+    const props = match[3];
+    const propNames = new Set(
+      Array.from(props.matchAll(/(?:^|,)([A-Za-z_$][\w$]*):/g), (prop) => prop[1]),
+    );
+    let role = null;
+    if (ASSISTANT_RENDER_SHARED_PROPS.every((name) => propNames.has(name))) {
+      if (propNames.has("sourceTurnId") && !propNames.has("turnId")) {
+        role = "source-turn";
+      } else if (
+        !propNames.has("sourceTurnId") &&
+        ASSISTANT_RENDER_LIVE_PROPS.every((name) => propNames.has(name))
+      ) {
+        role = "live-turn";
       }
-      return `(0,${jsxVar}.jsxs)(${jsxVar}.Fragment,{children:[${match},${readAloudButtonRowSource(jsxVar, itemVar, copyVar, conversationVar, "e")}]})`;
-    },
-  );
-  if (patched !== source) {
-    return patched;
+    }
+    const itemVar = readProp(props, "item");
+    const copyVar = readProp(props, "assistantCopyText");
+    const conversationVar = readProp(props, "conversationId");
+    const replacement =
+      itemVar == null || copyVar == null || conversationVar == null
+        ? null
+        : `(0,${match[1]}.jsxs)(${match[1]}.Fragment,{children:[${match[0]},${readAloudButtonRowSource(match[1], itemVar, copyVar, conversationVar, "e")}]})`;
+    return {
+      component: match[2],
+      end: match.index + match[0].length,
+      jsxVar: match[1],
+      match: match[0],
+      replacement,
+      role,
+      start: match.index,
+    };
+  });
+  const roles = new Map(candidates.map((candidate) => [candidate.role, candidate]));
+  const completeSet =
+    candidates.length === 2 &&
+    roles.size === 2 &&
+    roles.has("source-turn") &&
+    roles.has("live-turn") &&
+    candidates.every(
+      (candidate) =>
+        candidate.replacement != null &&
+        candidate.jsxVar === candidates[0].jsxVar &&
+        candidate.component === candidates[0].component,
+    );
+  if (!completeSet) {
+    return { candidates, state: "invalid" };
   }
 
-  if (ASSISTANT_RENDER_CANDIDATE_PATTERN.test(source)) {
-    warn("Could not find assistant message render call", "read aloud assistant render patch");
+  const wrapped = candidates.map((candidate) => source.includes(candidate.replacement));
+  const helperCount = countOccurrences(source, `globalThis.${HELPER_MARKER}?.(`);
+  if (wrapped.every((value) => !value) && helperCount === 0) {
+    return { candidates, state: "unpatched" };
   }
-  return source;
+  if (wrapped.every(Boolean) && helperCount === candidates.length) {
+    return { candidates, state: "patched" };
+  }
+  return { candidates, state: "invalid" };
+}
+
+function applyAssistantRenderPatch(source) {
+  const contract = inspectAssistantRenderContract(source);
+  if (contract.state === "patched") {
+    return source;
+  }
+  if (contract.state !== "unpatched") {
+    if (
+      contract.candidates.length > 0 ||
+      source.includes(`globalThis.${HELPER_MARKER}?.(`)
+    ) {
+      warn("Could not find complete assistant message render call set", "read aloud assistant render patch");
+    }
+    return source;
+  }
+
+  let patched = source;
+  for (const candidate of [...contract.candidates].reverse()) {
+    patched = `${patched.slice(0, candidate.start)}${candidate.replacement}${patched.slice(candidate.end)}`;
+  }
+  return patched;
 }
 
 function applySettingsPatch(source) {
@@ -796,12 +900,9 @@ function applySettingsAssetPatch(extractedDir) {
 }
 
 function applyWebviewPatch(source) {
+  const contract = inspectAssistantRenderContract(source);
   const assistantPatched = applyAssistantRenderPatch(source);
-  const alreadyHasButton = source.includes(`globalThis.${HELPER_MARKER}?.(`);
-  if (assistantPatched === source && !alreadyHasButton) {
-    if (!ASSISTANT_RENDER_CANDIDATE_PATTERN.test(source)) {
-      warn("Could not find assistant message render call", "read aloud assistant render patch");
-    }
+  if (assistantPatched === source && contract.state !== "patched") {
     return source;
   }
   return applyIndexRuntimePatch(assistantPatched);
@@ -818,10 +919,7 @@ function applyAssistantAssetPatch(source) {
 function matchesAssistantRuntimeContract(source) {
   const primaryThreadPartition =
     source.includes("collapsibleUnits:") && source.includes("persistentUnits:");
-  return primaryThreadPartition && (
-    source.includes(`globalThis.${HELPER_MARKER}?.(`) ||
-    ASSISTANT_RENDER_CANDIDATE_PATTERN.test(source)
-  );
+  return primaryThreadPartition && inspectAssistantRenderContract(source).state !== "invalid";
 }
 
 module.exports = {
