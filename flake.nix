@@ -1065,7 +1065,8 @@
             node ${sourceRoot}/scripts/ci/validate-patch-report.js \
               "$app/.codex-linux/patch-report.json" \
               --require-enabled-feature nix-store-bundled-marketplace-permissions \
-              --require-applied feature:nix-store-bundled-marketplace-permissions:bundled-marketplace-staging-copy-permissions
+              --require-applied feature:nix-store-bundled-marketplace-permissions:bundled-marketplace-staging-copy-permissions \
+              --require-applied feature:nix-store-bundled-marketplace-permissions:executor-plugin-copy-permissions
             ''}
             test -x ${pkgs.pipewire}/lib/alsa-lib/libasound_module_pcm_pipewire.so
             ! grep -q 'LD_LIBRARY_PATH=' ${package}/bin/codex-desktop

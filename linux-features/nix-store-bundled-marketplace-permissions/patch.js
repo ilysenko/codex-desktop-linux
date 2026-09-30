@@ -2,10 +2,12 @@
 
 const { mainBundlePatch } = require("../../scripts/patches/descriptor.js");
 
-const PATCH_MARKER = "codex-linux-bundled-marketplace-staging-copy-permissions-v2";
+const STAGING_PATCH_MARKER = "codex-linux-bundled-marketplace-staging-copy-permissions-v3";
+const EXECUTOR_PATCH_MARKER = "codex-linux-executor-plugin-copy-permissions-v1";
+const HELPER_MARKER = "codex-linux-bundled-plugin-copy-permissions-helper-v1";
 const IDENT = "[A-Za-z_$][\\w$]*";
 
-const HELPER_SOURCE = `/* ${PATCH_MARKER} */
+const HELPER_SOURCE = `/* ${HELPER_MARKER} */
 async function codexLinuxMakeBundledPluginStageNodesWritable(fs,destination){
   let stat;
   try{stat=await fs.lstat(destination)}catch(error){if(error?.code==="ENOENT")return;throw error}
@@ -55,11 +57,19 @@ function stagingCopyContracts(source) {
 }
 
 function applyBundledMarketplaceStagingCopyPermissions(source) {
-  if (source.includes(PATCH_MARKER)) return source;
+  if (source.includes(STAGING_PATCH_MARKER)) return source;
   const contracts = stagingCopyContracts(source);
   if (contracts.length !== 1) {
     throw new Error(`bundled marketplace staging copy contract matched ${contracts.length} times`);
   }
+  const { match } = contracts[0];
+  const [, fsName, , destinationName] = match;
+  const replacement = `/* ${STAGING_PATCH_MARKER} */try{${match[0]}}finally{await codexLinuxMakeBundledPluginStageNodesWritable(${fsName}.default,${destinationName})}`;
+  return replaceCopyWithWritableRepair(source, match, replacement);
+}
+
+function applyExecutorPluginCopyPermissions(source) {
+  if (source.includes(EXECUTOR_PATCH_MARKER)) return source;
   const executorCopies = [...source.matchAll(new RegExp(
     `await (${IDENT})\\.default\\.cp\\((${IDENT})\\.cwd,(${IDENT}),\\{recursive:!0\\}\\)`, "g",
   ))].filter(match => {
@@ -71,32 +81,36 @@ function applyBundledMarketplaceStagingCopyPermissions(source) {
   if (executorCopies.length !== 1) {
     throw new Error(`executor plugin copy contract matched ${executorCopies.length} times`);
   }
-  const { match } = contracts[0];
-  const [, fsName, , destinationName] = match;
-  const replacement = `try{${match[0]}}finally{await codexLinuxMakeBundledPluginStageNodesWritable(${fsName}.default,${destinationName})}`;
   const executor = executorCopies[0];
   const writable = `codexLinuxMakeBundledPluginStageNodesWritable(${executor[1]}.default,${executor[3]})`;
   // Repair an old read-only cache before cp tries to unlink its files, and
   // repair newly copied Nix modes before upstream writes .mcp.json.
-  const executorReplacement = `await (async()=>{await ${writable};try{${executor[0]}}finally{await ${writable}}})()`;
-  let patched = source;
-  for (const edit of [
-    { index: match.index, before: match[0], after: replacement },
-    { index: executor.index, before: executor[0], after: executorReplacement },
-  ].sort((a, b) => b.index - a.index)) {
-    patched = patched.slice(0, edit.index) + edit.after + patched.slice(edit.index + edit.before.length);
-  }
-  return `${HELPER_SOURCE}${patched}`;
+  const replacement = `/* ${EXECUTOR_PATCH_MARKER} */await (async()=>{await ${writable};try{${executor[0]}}finally{await ${writable}}})()`;
+  return replaceCopyWithWritableRepair(source, executor, replacement);
+}
+
+function replaceCopyWithWritableRepair(source, match, replacement) {
+  const patched = source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
+  return source.includes(HELPER_MARKER) ? patched : `${HELPER_SOURCE}${patched}`;
 }
 
 module.exports = {
-  PATCH_MARKER,
+  STAGING_PATCH_MARKER,
+  EXECUTOR_PATCH_MARKER,
+  HELPER_MARKER,
   applyBundledMarketplaceStagingCopyPermissions,
+  applyExecutorPluginCopyPermissions,
   descriptors: [mainBundlePatch({
     id: "bundled-marketplace-staging-copy-permissions",
     ciPolicy: "optional",
     enforceWhenEnabled: false,
     order: 20_170,
     apply: applyBundledMarketplaceStagingCopyPermissions,
+  }), mainBundlePatch({
+    id: "executor-plugin-copy-permissions",
+    ciPolicy: "optional",
+    enforceWhenEnabled: false,
+    order: 20_171,
+    apply: applyExecutorPluginCopyPermissions,
   })],
 };
