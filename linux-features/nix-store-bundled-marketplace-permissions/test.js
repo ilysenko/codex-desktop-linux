@@ -25,7 +25,8 @@ const {
 const FEATURE_ID = "nix-store-bundled-marketplace-permissions";
 const DESCRIPTOR_ID = `feature:${FEATURE_ID}:bundled-marketplace-staging-copy-permissions`;
 const FIXTURE = `async function Mne(source,destination){if(S.default.platform===\`darwin\`){await ditto(\`ditto\`,[source,destination]);return}if(S.default.platform!==\`win32\`){await y.default.cp(source,destination,{recursive:!0,verbatimSymlinks:!0});return}let{copyDirectoryAllowDecryptedDestinationOnEncryptionFailure:copy}=await Promise.resolve().then(()=>require("./windows-file-copy-Bw9CB6bJ.js"));await copy({copy:()=>y.default.cp(source,destination,{recursive:!0,verbatimSymlinks:!0}),destination,source})}
-async function copyPlugins(source,destination){const staging=\`openai-bundled.staging-\${randomUUID()}\`;const target=\`\${staging}/plugin\`;await Mne(source,target);return destination}`;
+async function copyPlugins(source,destination){const staging=\`openai-bundled.staging-\${randomUUID()}\`;const target=\`\${staging}/plugin\`;await Mne(source,target);return destination}
+async function executor({executorPluginRoot:destination,resourcesPath:resources}){let config=await lookup(resources);return config==null?null:(await y.default.cp(config.cwd,destination,{recursive:!0}),config.env={CODEX_APP_TOOLS_CALLER_HOST_ID:hostId},await y.default.writeFile(join(destination,\`.mcp.json\`),\`{}\`,\`utf8\`),destination)}`;
 
 function fakeFs({ cpError = null, chmodError = null, missing = false } = {}) {
   const nodes = new Map([
@@ -199,4 +200,41 @@ test("missing copied destination is harmless and repair errors propagate", async
   const repairError = new Error("chmod failed");
   const failing = fakeFs({ chmodError: repairError });
   await assert.rejects(materialize(patched, failing.fs)("source", "destination"), repairError);
+});
+
+test("executor refresh repairs an existing read-only cache and copied Nix modes", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nix-executor-permissions-"));
+  t.after(() => {
+    for (const directory of [root, ...fs.readdirSync(root).map(name => path.join(root, name))]) {
+      if (fs.statSync(directory).isDirectory()) fs.chmodSync(directory, 0o755);
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const source = path.join(root, "source");
+  const destination = path.join(root, "destination");
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, "plugin.json"), "new", { mode: 0o444 });
+  fs.chmodSync(source, 0o555);
+  fs.mkdirSync(destination);
+  fs.writeFileSync(path.join(destination, "plugin.json"), "old", { mode: 0o444 });
+  fs.chmodSync(destination, 0o555);
+  const context = {
+    y: { default: fs.promises }, lookup: async () => ({ cwd: source }),
+    hostId: "local", join: path.join,
+  };
+  vm.runInNewContext(`${applyBundledMarketplaceStagingCopyPermissions(FIXTURE)};globalThis.copyExecutor=executor`, context);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await context.copyExecutor({ executorPluginRoot: destination, resourcesPath: "resources" });
+    assert.equal(fs.readFileSync(path.join(destination, "plugin.json"), "utf8"), "new");
+    assert.equal(fs.readFileSync(path.join(destination, ".mcp.json"), "utf8"), "{}");
+    assert.ok(fs.statSync(destination).mode & 0o200);
+  }
+  assert.equal(fs.statSync(source).mode & 0o222, 0);
+});
+
+test("executor copy contract drift and duplication fail closed", () => {
+  assert.throws(() => applyBundledMarketplaceStagingCopyPermissions(
+    FIXTURE.replace("CODEX_APP_TOOLS_CALLER_HOST_ID", "CHANGED")), /executor plugin copy contract matched 0/);
+  const executor = FIXTURE.slice(FIXTURE.indexOf("async function executor("));
+  assert.throws(() => applyBundledMarketplaceStagingCopyPermissions(FIXTURE + executor), /executor plugin copy contract matched 2/);
 });

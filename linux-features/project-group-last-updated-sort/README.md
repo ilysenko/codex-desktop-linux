@@ -11,6 +11,10 @@ This feature makes `Last updated` sort both project groups and their task rows
 by recency. `Priority` and `Manual order` keep upstream's saved project-group
 ordering behavior.
 
+The current sidebar supplies thread references and a separate recency getter.
+The feature reuses that getter for project ordering; it does not assume that
+references contain task objects or timestamps.
+
 The feature is disabled by default because it intentionally changes upstream
 sidebar semantics. Enable it in `linux-features/features.json`:
 

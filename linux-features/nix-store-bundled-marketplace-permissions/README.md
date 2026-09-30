@@ -18,6 +18,11 @@ harmless, and lets chmod errors propagate. It neither changes source-store
 permissions nor scans/removes old staging directories or runtime marketplace
 data. Existing leaked staging data must be cleaned up manually.
 
+The Local Work executor also copies the bundled app-tools plugin into
+`executor-plugins`. That specific destination is made owner-writable before
+refreshing it and after copying, so an existing read-only cache can be updated
+and upstream can write its generated `.mcp.json`. The Nix store is untouched.
+
 Upstream-contract drift is best-effort for package consumers: the patch report
 records `skipped-optional`, the build warns, and an otherwise unchanged ASAR is
 preserved byte-for-byte. Repository CI still requires the descriptor to apply

@@ -6,7 +6,7 @@ const currentGroupSorterPattern = new RegExp(
   "g",
 );
 const patchedGroupSorterPattern = new RegExp(
-  String.raw`function (${identifier})\(\{groups:e,items:t,projectOrder:n,sortMode:codexLinuxProjectSortMode\}\)\{if\(codexLinuxProjectSortMode!==\`updated_at\`\)return (${identifier})\(e,n\);`,
+  String.raw`function (${identifier})\(\{groups:e,getRecencyAt:t,projectOrder:n,sortMode:codexLinuxProjectSortMode\}\)\{if\(codexLinuxProjectSortMode!==\`updated_at\`\)return (${identifier})\(e,n\);`,
   "g",
 );
 
@@ -27,7 +27,7 @@ function currentSorterCallPattern(sorterName) {
 
 function patchedSorterCallPattern(sorterName) {
   return new RegExp(
-    String.raw`${escapeRegExp(sorterName)}\(\{groups:${identifier}\(\{groups:${identifier},items:${identifier}\}\),projectOrder:${identifier}\(${identifier},${identifier}\.PROJECT_ORDER\),items:${identifier},sortMode:${identifier}\}\)`,
+    String.raw`${escapeRegExp(sorterName)}\(\{groups:${identifier}\(\{groups:${identifier},items:${identifier}\}\),projectOrder:${identifier}\(${identifier},${identifier}\.PROJECT_ORDER\),getRecencyAt:${identifier},sortMode:${identifier}\}\)`,
     "g",
   );
 }
@@ -39,7 +39,7 @@ function projectSortModeBefore(source, callIndex) {
 }
 
 function patchedGroupSorter(sorterName, orderFunction) {
-  return `function ${sorterName}({groups:e,items:t,projectOrder:n,sortMode:codexLinuxProjectSortMode}){if(codexLinuxProjectSortMode!==\`updated_at\`)return ${orderFunction}(e,n);let r=new Map(t.map(e=>[e.task.key,e.recencyAt]));return e.map((e,t)=>({group:e,index:t,recencyAt:e.threadKeys.reduce((e,t)=>Math.max(e,r.get(t)??0),e.projectUpdatedAt??0)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e)}`;
+  return `function ${sorterName}({groups:e,getRecencyAt:t,projectOrder:n,sortMode:codexLinuxProjectSortMode}){if(codexLinuxProjectSortMode!==\`updated_at\`)return ${orderFunction}(e,n);return e.map((e,n)=>({group:e,index:n,recencyAt:e.threadKeys.reduce((e,n)=>Math.max(e,t(n)??0),e.projectUpdatedAt??0)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e)}`;
 }
 
 function applyProjectGroupLastUpdatedSortPatch(source) {
@@ -70,9 +70,16 @@ function applyProjectGroupLastUpdatedSortPatch(source) {
     return source;
   }
 
+  // The current sidebar stores references, not task/recency records. Reuse
+  // the same recency getter that upstream uses for the adjacent chat sorter.
   const itemsVar = currentCalls[0][2];
+  const nextCall = source.slice(currentCalls[0].index + currentCalls[0][0].length);
+  const recencyContract = nextCall.match(new RegExp(
+    String.raw`^,${identifier}=${identifier}\(\{explicitChatThreadKeys:${identifier},getRecencyAt:(${identifier}),items:(${identifier}),projectGroups:${identifier},projectlessThreadIds:`,
+  ));
+  const recencyGetter = recencyContract?.[2] === itemsVar ? recencyContract[1] : null;
   const sortMode = projectSortModeBefore(source, currentCalls[0].index);
-  if (itemsVar == null || sortMode == null) {
+  if (recencyGetter == null || sortMode == null) {
     console.warn(
       "WARN: Could not find current project group sorting insertion points - skipping project group Last updated sort feature patch",
     );
@@ -80,7 +87,7 @@ function applyProjectGroupLastUpdatedSortPatch(source) {
   }
 
   const call = currentCalls[0][0];
-  const patchedCall = `${call.slice(0, -2)},items:${itemsVar},sortMode:${sortMode}})`;
+  const patchedCall = `${call.slice(0, -2)},getRecencyAt:${recencyGetter},sortMode:${sortMode}})`;
   return source
     .replace(currentSorters[0][0], patchedGroupSorter(sorterName, orderFunction))
     .replace(call, patchedCall);

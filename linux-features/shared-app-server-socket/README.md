@@ -17,6 +17,10 @@ PATH` byte tunnel and its existing WebSocket transport. Other local clients use
 the same stock proxy command to attach to the Unix socket and receive the normal
 WebSocket `/rpc` byte stream. Closing Desktop stops the authority.
 
+Only the host whose ID is `local` uses the shared authority. The upstream
+`durable` cloud host also has local kind metadata, but retains its own transport
+and never tries to claim this socket.
+
 The bundled CLI may publish the requested socket as a symlink to a private
 socket directory. Startup, attached CLI verification, and orphan cleanup
 validate the alias and its target, including ownership, directory permissions,

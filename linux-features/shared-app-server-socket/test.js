@@ -1737,6 +1737,26 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.match(patched, /supportsReconnect\(\)\{return!0\}/);
 });
 
+test("durable hosts retain their upstream transport even when kind is local", () => {
+  const patched = applySharedAppServerSocketPatch(syntheticBundle());
+  const factory = patched.slice(patched.indexOf("function b5(e)"), patched.indexOf("function afterFactory"));
+  class Bridge {}
+  class Cloud {}
+  class Local {}
+  const context = {
+    process: { env: { CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET: "/test/socket" } },
+    CodexLinuxSharedAppServerSocketTransport: Bridge,
+    _C: () => null,
+    n: { no: () => false, Tn: Cloud, Cn: Local },
+    x5: config => config.id === "durable" ? "wss://example.test" : null,
+    vbe: () => null,
+  };
+  vm.runInNewContext(`${factory};globalThis.create=b5`, context);
+  assert.ok(context.create({ hostConfig: { kind: "local", id: "local" } }) instanceof Bridge);
+  assert.ok(context.create({ hostConfig: { kind: "local", id: "durable" } }) instanceof Cloud);
+  assert.ok(context.create({ hostConfig: { kind: "local", id: "other" } }) instanceof Local);
+});
+
 test("patch rejects retired, duplicate, and mixed transport layouts", () => {
   const current = syntheticBundle();
   const patched = applySharedAppServerSocketPatch(current);

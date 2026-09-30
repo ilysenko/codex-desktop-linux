@@ -115,7 +115,7 @@ function applySharedAppServerSocketPatch(source) {
   const insertionIndex = insertionMatch.index + insertionMatch[0].length;
   const patchedFactory =
     factorySource.slice(0, insertionIndex) +
-    `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&e.hostConfig.kind===\`local\`)return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${getConfigOverrides});` +
+    `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&e.hostConfig.kind===\`local\`&&e.hostConfig.id===\`local\`)return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${getConfigOverrides});` +
     factorySource.slice(insertionIndex);
   return source.slice(0, factoryStart) + classSource + patchedFactory + source.slice(factoryEnd);
 }

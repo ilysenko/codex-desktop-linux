@@ -24,13 +24,13 @@ const currentProjectSource = [
   "const prioritySortId=`sidebarElectron.sortMenu.priority`;",
   "const updatedSortId=`sidebarElectron.sortMenu.updated`;",
   "const manualSortId=`sidebarElectron.sortMenu.manual`;",
-  "let{chatSortMode:j,projectSortMode:M}=t(xH),N=p5o({groups:fon({groups:D,items:f}),projectOrder:jm(t,_u.PROJECT_ORDER)});",
+  "let{chatSortMode:j,projectSortMode:M}=t(xH),N=p5o({groups:fon({groups:D,items:f}),projectOrder:jm(t,_u.PROJECT_ORDER)}),chats=chatSorter({explicitChatThreadKeys:mirror,getRecencyAt:recency,items:f,projectGroups:D,projectlessThreadIds:ids});",
 ].join("");
 
 const officialLinuxProjectSource = [
   "function A6i(e,t){return e}",
   "function O8o({groups:e,projectOrder:t}){return A6i(e,t)}",
-  "let{chatSortMode:j,projectSortMode:M}=t(IH),N=O8o({groups:fon({groups:D,items:f}),projectOrder:Dm(t,yu.PROJECT_ORDER)});",
+  "let{chatSortMode:j,projectSortMode:M}=t(IH),N=O8o({groups:fon({groups:D,items:f}),projectOrder:Dm(t,yu.PROJECT_ORDER)}),chats=chatSorter({explicitChatThreadKeys:mirror,getRecencyAt:recency,items:f,projectGroups:D,projectlessThreadIds:ids});",
 ].join("");
 
 function captureWarns(fn) {
@@ -115,17 +115,17 @@ test("Last updated sorts project groups by their newest task", () => {
     { projectId: "tapas", threadKeys: ["tapas-task"] },
   ];
   const items = [
-    { task: { key: "nix-task" }, recencyAt: 1 },
-    { task: { key: "delta-task" }, recencyAt: 2 },
-    { task: { key: "multi-task" }, recencyAt: 3 },
-    { task: { key: "chezmoi-task" }, recencyAt: 4 },
-    { task: { key: "tapas-task" }, recencyAt: 5 },
+    { key: "nix-task", recencyAt: 1 },
+    { key: "delta-task", recencyAt: 2 },
+    { key: "multi-task", recencyAt: 3 },
+    { key: "chezmoi-task", recencyAt: 4 },
+    { key: "tapas-task", recencyAt: 5 },
   ];
   const projectOrder = ["nix", "delta", "multi", "chezmoi", "tapas"];
 
   assert.deepEqual(
     Array.from(
-      sortProjectGroups({ groups, items, projectOrder, sortMode: "updated_at" }),
+      sortProjectGroups({ groups, getRecencyAt: key => items.find(item => item.key === key)?.recencyAt, projectOrder, sortMode: "updated_at" }),
       (group) => group.projectId,
     ),
     ["tapas", "chezmoi", "multi", "delta", "nix"],
@@ -140,15 +140,15 @@ test("non-updated modes preserve the upstream saved project order", () => {
     { projectId: "older", threadKeys: ["older-task"] },
   ];
   const items = [
-    { task: { key: "newer-task" }, recencyAt: 2 },
-    { task: { key: "older-task" }, recencyAt: 1 },
+    { key: "newer-task", recencyAt: 2 },
+    { key: "older-task", recencyAt: 1 },
   ];
   const projectOrder = ["older", "newer"];
 
   for (const sortMode of ["manual", "priority"]) {
     assert.deepEqual(
       Array.from(
-        sortProjectGroups({ groups, items, projectOrder, sortMode }),
+        sortProjectGroups({ groups, getRecencyAt: key => items.find(item => item.key === key)?.recencyAt, projectOrder, sortMode }),
         (group) => group.projectId,
       ),
       ["older", "newer"],
@@ -156,11 +156,36 @@ test("non-updated modes preserve the upstream saved project order", () => {
   }
 });
 
+test("current sidebar references use upstream recency without task objects", () => {
+  const sort = evaluateGroupSorter(applyPatchTwice(currentProjectSource));
+  const groups = [
+    { projectId: "old", threadKeys: ["old", "missing"] },
+    { projectId: "new", threadKeys: ["new"] },
+    { projectId: "empty", threadKeys: [], projectUpdatedAt: 5 },
+  ];
+  const timestamps = new Map([["old", 1], ["new", 9]]);
+  const sorted = sort({ groups, getRecencyAt: key => timestamps.get(key), sortMode: "updated_at" });
+  assert.deepEqual(Array.from(sorted, group => group.projectId), ["new", "empty", "old"]);
+  assert.equal(sorted[0], groups[1]);
+  assert.deepEqual(groups.map(group => group.projectId), ["old", "new", "empty"]);
+});
+
+test("missing or mismatched recency contract fails closed", () => {
+  for (const source of [
+    currentProjectSource.replace("getRecencyAt:recency", "unknown:recency"),
+    currentProjectSource.replace("getRecencyAt:recency,items:f", "getRecencyAt:recency,items:other"),
+  ]) {
+    const { value, warnings } = captureWarns(() => applyProjectGroupLastUpdatedSortPatch(source));
+    assert.equal(value, source);
+    assert.equal(warnings.length, 1);
+  }
+});
+
 test("patch passes the selected project sort mode into the group sorter", () => {
   const patched = applyPatchTwice(currentProjectSource);
   assert.ok(
     patched.includes(
-      "projectOrder:jm(t,_u.PROJECT_ORDER),items:f,sortMode:M",
+      "projectOrder:jm(t,_u.PROJECT_ORDER),getRecencyAt:recency,sortMode:M",
     ),
   );
 });
@@ -170,11 +195,11 @@ test("patch matches the current official project sorter semantically", () => {
 
   assert.match(
     patched,
-    /function O8o\(\{groups:e,items:t,projectOrder:n,sortMode:codexLinuxProjectSortMode\}\)/,
+    /function O8o\(\{groups:e,getRecencyAt:t,projectOrder:n,sortMode:codexLinuxProjectSortMode\}\)/,
   );
   assert.match(
     patched,
-    /O8o\(\{groups:fon\(\{groups:D,items:f\}\),projectOrder:Dm\(t,yu\.PROJECT_ORDER\),items:f,sortMode:M\}\)/,
+    /O8o\(\{groups:fon\(\{groups:D,items:f\}\),projectOrder:Dm\(t,yu\.PROJECT_ORDER\),getRecencyAt:recency,sortMode:M\}\)/,
   );
 });
 
