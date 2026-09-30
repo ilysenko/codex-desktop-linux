@@ -150,6 +150,21 @@ test("official Linux validation runs fully on every pull request but not hourly"
   );
   assert.match(dockFeatureAlone, /"enabled": \["ui-tweaks"\]/);
   assert.match(dockFeatureAlone, /"dockIcon": \{ "enabled": true \}/);
+  assert.match(dockFeatureAlone, /EXPECTED_RELEASE_ID: \$\{\{ inputs\.release_id \}\}/);
+  assert.match(dockFeatureAlone, /EXPECTED_VERSION: \$\{\{ inputs\.version \}\}/);
+  assert.match(
+    dockFeatureAlone,
+    /EXPECTED_REPOSITORY_PATH: \$\{\{ inputs\.amd64_repository_path \}\}/,
+  );
+  assert.match(dockFeatureAlone, /EXPECTED_SHA256: \$\{\{ inputs\.amd64_sha256 \}\}/);
+  assert.match(dockFeatureAlone, /process\.env\.GITHUB_EVENT_NAME === "workflow_dispatch"/);
+  assert.match(dockFeatureAlone, /metadata\.version !== process\.env\.EXPECTED_VERSION/);
+  assert.match(
+    dockFeatureAlone,
+    /metadata\.repositoryPath !== process\.env\.EXPECTED_REPOSITORY_PATH/,
+  );
+  assert.match(dockFeatureAlone, /metadata\.sha256 !== process\.env\.EXPECTED_SHA256/);
+  assert.match(dockFeatureAlone, /Dock icon package does not match the dispatched campaign/);
   assert.match(
     dockFeatureAlone,
     /--require-applied feature:ui-tweaks:appearance-dock-icon-main-process/,

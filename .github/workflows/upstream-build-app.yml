@@ -352,6 +352,10 @@ jobs:
           CODEX_INSTALL_DIR: ${{ github.workspace }}/codex-app-dock-icon
           CODEX_PATCH_REPORT_JSON: ${{ github.workspace }}/dock-icon-report/patch-report.json
           CODEX_TARGET_ARCH: amd64
+          EXPECTED_RELEASE_ID: ${{ inputs.release_id }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_REPOSITORY_PATH: ${{ inputs.amd64_repository_path }}
+          EXPECTED_SHA256: ${{ inputs.amd64_sha256 }}
         run: |
           set -euo pipefail
           cat > "$CODEX_LINUX_FEATURES_CONFIG" <<'JSON'
@@ -374,6 +378,17 @@ jobs:
             --metadata upstream/amd64.json \
             --key-base64 assets/openai-codex-linux-repository-key.gpg.base64 \
             --arch amd64)"
+          node - upstream/amd64.json <<'NODE'
+          const fs = require("node:fs");
+          const metadata = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (process.env.GITHUB_EVENT_NAME === "workflow_dispatch"
+              && (metadata.version !== process.env.EXPECTED_VERSION
+                || metadata.repositoryPath !== process.env.EXPECTED_REPOSITORY_PATH
+                || metadata.sha256 !== process.env.EXPECTED_SHA256
+                || !/^[0-9a-f]{64}$/.test(process.env.EXPECTED_RELEASE_ID))) {
+            throw new Error("Dock icon package does not match the dispatched campaign");
+          }
+          NODE
           ./install.sh "$package"
           node scripts/ci/validate-patch-report.js "$CODEX_PATCH_REPORT_JSON" \
             --require-enabled-feature ui-tweaks \
