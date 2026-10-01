@@ -27,6 +27,26 @@ const KEYSYM_CONTROL_L: i32 = 0xffe3;
 const KEYSYM_V: i32 = b'v' as i32;
 static REQUEST_NONCE: AtomicU64 = AtomicU64::new(1);
 
+
+async fn register_host_app_id(connection: &Connection, app_id: &str) -> Result<()> {
+    let registry_proxy = Proxy::new(
+        connection,
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.host.portal.Registry",
+    )
+    .await
+    .context("Failed to create portal registry proxy")?;
+
+    let options: HashMap<&str, Value<'_>> = HashMap::new();
+
+    // Register associates this D-Bus connection with your desktop app ID.
+    // If it was already registered on this connection, ignore the error.
+    let _: Result<(), _> = registry_proxy.call("Register", &(app_id, options)).await;
+
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(error) = run().await {
@@ -344,6 +364,14 @@ async fn create_remote_desktop_session(
     connection: &Connection,
     proxy: &Proxy<'_>,
 ) -> Result<OwnedObjectPath> {
+    // Register the app ID before invoking any portal methods.
+    // The string MUST match the basename of your .desktop file (e.g., "codex-desktop")
+    let app_id = std::env::var("CHROME_DESKTOP")
+        .unwrap_or_else(|_| "codex-desktop".to_string())
+        .replace(".desktop", "");
+
+    register_host_app_id(connection, &app_id).await?;
+
     let (request_path, mut response_stream) =
         portal_request_stream(connection, "paste_create").await?;
     let session_token = request_token("paste_session");
@@ -430,6 +458,15 @@ async fn start_remote_desktop_session(
 }
 
 async fn create_session(connection: &Connection, proxy: &Proxy<'_>) -> Result<OwnedObjectPath> {
+
+    // Register the app ID before invoking any portal methods.
+    // The string MUST match the basename of your .desktop file (e.g., "codex-desktop")
+    let app_id = std::env::var("CHROME_DESKTOP")
+        .unwrap_or_else(|_| "codex-desktop".to_string())
+        .replace(".desktop", "");
+
+    register_host_app_id(connection, &app_id).await?;
+
     let (request_path, mut response_stream) =
         portal_request_stream(connection, "dictation_create").await?;
     let session_token = request_token("dictation_session");
