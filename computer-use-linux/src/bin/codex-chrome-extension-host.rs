@@ -344,7 +344,7 @@ impl HostState {
 
 fn try_reserve_queue_bytes(counter: &AtomicUsize, bytes: usize, max_bytes: usize) -> bool {
     counter
-        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current
                 .checked_add(bytes)
                 .filter(|total| *total <= max_bytes)
