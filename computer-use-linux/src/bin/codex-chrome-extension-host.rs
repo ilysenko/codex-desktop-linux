@@ -343,13 +343,19 @@ impl HostState {
 }
 
 fn try_reserve_queue_bytes(counter: &AtomicUsize, bytes: usize, max_bytes: usize) -> bool {
-    counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            current
-                .checked_add(bytes)
-                .filter(|total| *total <= max_bytes)
-        })
-        .is_ok()
+    let mut current = counter.load(Ordering::Acquire);
+    loop {
+        let Some(total) = current
+            .checked_add(bytes)
+            .filter(|total| *total <= max_bytes)
+        else {
+            return false;
+        };
+        match counter.compare_exchange_weak(current, total, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -2468,6 +2474,39 @@ while True:
         drop(healthy_frame);
         assert_eq!(stalled_queued_bytes.load(Ordering::Acquire), 0);
         assert_eq!(healthy_queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn queue_byte_reservation_enforces_bounds_and_overflow() {
+        let counter = AtomicUsize::new(7);
+
+        assert!(try_reserve_queue_bytes(&counter, 3, 10));
+        assert_eq!(counter.load(Ordering::Acquire), 10);
+        assert!(!try_reserve_queue_bytes(&counter, 1, 10));
+        assert_eq!(counter.load(Ordering::Acquire), 10);
+
+        let counter = AtomicUsize::new(usize::MAX);
+        assert!(!try_reserve_queue_bytes(&counter, 1, usize::MAX));
+        assert_eq!(counter.load(Ordering::Acquire), usize::MAX);
+    }
+
+    #[test]
+    fn concurrent_queue_byte_reservations_never_exceed_the_limit() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut workers = Vec::new();
+        for _ in 0..32 {
+            let counter = Arc::clone(&counter);
+            workers.push(thread::spawn(move || {
+                try_reserve_queue_bytes(&counter, 1, 16)
+            }));
+        }
+
+        let accepted = workers
+            .into_iter()
+            .map(|worker| usize::from(worker.join().unwrap()))
+            .sum::<usize>();
+        assert_eq!(accepted, 16);
+        assert_eq!(counter.load(Ordering::Acquire), 16);
     }
 
     #[test]

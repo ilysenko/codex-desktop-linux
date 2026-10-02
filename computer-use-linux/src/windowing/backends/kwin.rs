@@ -423,11 +423,7 @@ impl KwinWindowCallback {
 
 fn temporary_kwin_plugin_name() -> Result<String> {
     let pid = std::process::id();
-    let sequence = KWIN_PLUGIN_SEQUENCE
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-            value.checked_add(1)
-        })
-        .map_err(|_| anyhow::anyhow!("temporary KWin plugin sequence exhausted"))?;
+    let sequence = next_kwin_plugin_sequence(&KWIN_PLUGIN_SEQUENCE)?;
     let mut nonce = [0_u8; 16];
     getrandom::fill(&mut nonce).map_err(|error| {
         anyhow::anyhow!("failed to generate temporary KWin plugin nonce: {error}")
@@ -437,6 +433,19 @@ fn temporary_kwin_plugin_name() -> Result<String> {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     Ok(format!("codex_kwin_window_query_{pid}_{sequence}_{nonce}"))
+}
+
+fn next_kwin_plugin_sequence(counter: &AtomicU64) -> Result<u64> {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        let next = current
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("temporary KWin plugin sequence exhausted"))?;
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return Ok(current),
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 fn write_kwin_window_script(
@@ -1151,6 +1160,19 @@ mod adapter_tests {
             kwin_window_id_from_uuid(bare),
             kwin_window_id_from_uuid(braced_upper)
         );
+    }
+
+    #[test]
+    fn kwin_plugin_sequence_returns_unique_values_and_rejects_overflow() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+
+        assert_eq!(next_kwin_plugin_sequence(&counter).unwrap(), u64::MAX - 1);
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+        assert_eq!(
+            next_kwin_plugin_sequence(&counter).unwrap_err().to_string(),
+            "temporary KWin plugin sequence exhausted"
+        );
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
     }
 
     #[test]
