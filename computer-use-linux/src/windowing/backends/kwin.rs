@@ -424,7 +424,7 @@ impl KwinWindowCallback {
 fn temporary_kwin_plugin_name() -> Result<String> {
     let pid = std::process::id();
     let sequence = KWIN_PLUGIN_SEQUENCE
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
         .map_err(|_| anyhow::anyhow!("temporary KWin plugin sequence exhausted"))?;
