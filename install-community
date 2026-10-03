@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+FEATURES_ROOT="$REPO_DIR/linux-features"
+CONFIG_PATH="${CODEX_LINUX_FEATURES_CONFIG:-$FEATURES_ROOT/features.json}"
+
+if command -v python3 >/dev/null 2>&1 \
+    && { [[ -n "${DISPLAY:-}" ]] || [[ -n "${WAYLAND_DISPLAY:-}" ]]; } \
+    && python3 "$REPO_DIR/scripts/feature-picker.py" --probe >/dev/null 2>&1; then
+    exec python3 "$REPO_DIR/scripts/feature-picker.py" \
+        --features-root "$FEATURES_ROOT" \
+        --config "$CONFIG_PATH" \
+        --repo-root "$REPO_DIR" \
+        --install
+fi
+
+printf '[installer] Graphical GTK4 installer unavailable; using terminal guided install.\n' >&2
+export CODEX_BOOTSTRAP_INSTALL_DEPS=1
+export CODEX_BOOTSTRAP_INSTALL_NATIVE=1
+exec bash "$REPO_DIR/scripts/bootstrap-wizard.sh"

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | 简体中文
+  <a href="README.md">English</a> | 简体中文 | <a href="README.fa.md">فارسی</a>
 </p>
 
 `codex-desktop` 是 OpenAI 官方 Linux ChatGPT 桌面应用的非官方社区发行版。
@@ -72,7 +72,23 @@ make bootstrap-native
 make install-native
 ```
 
-需要先选择可选扩展时：
+若要使用图形化引导安装器，请运行仓库中的独立入口：
+
+```bash
+./install-community
+```
+
+（`make guided-install` 调用同一个入口。）安装器属于仓库安装流程本身，
+不是一个可选 Linux 扩展。在支持 GTK4/PyGObject 的桌面环境中，它会依次
+完成扩展选择、安装选项、配置确认以及带实时日志的构建/安装进度。依赖扩展
+会自动选中；与当前选择冲突的扩展会被禁用，并显示原因。
+
+图形化安装器不会修改扩展实现或扩展设置。它只更新被启用的扩展列表以及
+gitignored 的 `linux-features/features.json` 中属于安装器自己的偏好，
+已有扩展设置会保持不变。无论是否包含自动更新器，原生输出始终保持
+`codex-desktop` 软件包身份并安装到 `/opt/codex-desktop`。
+
+如果只想配置扩展而暂不安装，仍然使用：
 
 ```bash
 make setup-native

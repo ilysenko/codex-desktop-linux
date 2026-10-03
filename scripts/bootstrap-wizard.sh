@@ -1121,6 +1121,77 @@ maybe_run_install_steps() {
     fi
 }
 
+# Prefer the smart GTK4 feature picker when available. It resolves dependencies
+# while the user selects features and immediately disables conflicting choices.
+smart_feature_picker_available() {
+    truthy "${CODEX_BOOTSTRAP_NO_GUI:-0}" && return 1
+    [ -t 0 ] || return 1
+    [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    [ -r "$SCRIPT_DIR/feature-picker.py" ] || return 1
+    python3 "$SCRIPT_DIR/feature-picker.py" --probe >/dev/null 2>&1
+}
+
+apply_feature_picker_selection() {
+    local feature_lines="$1"
+    local selected="$2"
+    local -a all_ids=()
+    declare -A enabled_now=()
+    declare -A selected_set=()
+    local id title flag
+
+    while IFS=$'\t' read -r id title flag; do
+        [ -n "$id" ] || continue
+        all_ids+=("$id")
+        [ "$flag" = "1" ] && enabled_now["$id"]=1
+    done <<< "$feature_lines"
+
+    while IFS= read -r id; do
+        [ -n "$id" ] && selected_set["$id"]=1
+    done <<< "$selected"
+
+    local -a enable_ids=() disable_ids=()
+    for id in "${all_ids[@]}"; do
+        if [ -n "${selected_set[$id]:-}" ]; then
+            [ -z "${enabled_now[$id]:-}" ] && enable_ids+=("$id")
+        else
+            [ -n "${enabled_now[$id]:-}" ] && disable_ids+=("$id")
+        fi
+    done
+
+    if [ "${#enable_ids[@]}" -eq 0 ] && [ "${#disable_ids[@]}" -eq 0 ]; then
+        info "Feature config unchanged."
+        return 0
+    fi
+
+    local enable_csv disable_csv
+    enable_csv="$(IFS=,; echo "${enable_ids[*]}")"
+    disable_csv="$(IFS=,; echo "${disable_ids[*]}")"
+    run_feature_config_python "$enable_csv" "$disable_csv" "1"
+    print_safe_disable_guidance "$disable_csv"
+}
+
+prompt_for_feature_changes_smart_gui() {
+    local feature_lines selected status=0
+    feature_lines="$(run_feature_config_python "" "" "0" "tsv")" || return 1
+    [ -n "$feature_lines" ] || return 1
+
+    selected="$(python3 "$SCRIPT_DIR/feature-picker.py" \
+        --features-root "$FEATURES_ROOT" \
+        --config "$(feature_config_path)")" || status=$?
+
+    if [ "$status" -eq 2 ]; then
+        info "Feature selection cancelled; config unchanged."
+        return 0
+    fi
+    if [ "$status" -ne 0 ]; then
+        warn "Smart GTK feature picker failed; falling back to the basic picker."
+        return 1
+    fi
+
+    apply_feature_picker_selection "$feature_lines" "$selected"
+}
+
 # True when an interactive GUI checklist can be shown: a graphical session,
 # a dialog helper (zenity/kdialog), python3 for feature discovery, and the user
 # has not opted out via CODEX_BOOTSTRAP_NO_GUI.
@@ -1227,9 +1298,14 @@ prompt_for_feature_changes() {
         return
     fi
 
-    # Prefer a graphical checklist when the environment supports it; the explicit
-    # CODEX_LINUX_FEATURES / CODEX_LINUX_DISABLE_FEATURES env selectors and the
-    # terminal prompt remain the fallback for headless or no-GUI sessions.
+    # Prefer the smart GTK picker when available. The existing zenity/kdialog
+    # checklist and terminal selectors remain conservative fallbacks.
+    if [ -z "$enable_raw$disable_raw" ] && smart_feature_picker_available; then
+        if prompt_for_feature_changes_smart_gui; then
+            prompt_package_updater_mode
+            return
+        fi
+    fi
     if [ -z "$enable_raw$disable_raw" ] && gui_feature_picker_available; then
         if prompt_for_feature_changes_gui; then
             prompt_package_updater_mode

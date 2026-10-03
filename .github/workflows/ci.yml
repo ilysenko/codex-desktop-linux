@@ -24,8 +24,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends ripgrep
       - name: Shell syntax
         run: |
-          bash -n install.sh launcher/start.sh.template scripts/lib/*.sh
+          bash -n install.sh install-community launcher/start.sh.template scripts/lib/*.sh
+          bash -n scripts/bootstrap-wizard.sh scripts/install-deps.sh
           bash -n scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/build-appimage.sh
+      - name: Guided installer tests
+        run: python3 scripts/feature-picker.test.py
       - name: Node tests
         run: |
           node --test scripts/ci/*.test.js

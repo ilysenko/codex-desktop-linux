@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  English | <a href="README.zh-CN.md">简体中文</a>
+  English | <a href="README.zh-CN.md">简体中文</a> | <a href="README.fa.md">فارسی</a>
 </p>
 
 `codex-desktop` is an unofficial, community-maintained distribution of
@@ -16,9 +16,9 @@ repackages the signed upstream Linux payload, adds disabled-by-default Linux
 features, and produces deb, RPM, pacman, AppImage, and Nix outputs.
 
 The custom application appears in desktop menus as **ChatGPT Community** and
-uses an icon marked with a blue `C`. Its package, command, and installation
-identity remain `codex-desktop` and `/opt/codex-desktop`, so it is easy to
-distinguish from OpenAI's separate **ChatGPT** package.
+uses an icon marked with a blue `C`. Its package and command are
+`codex-desktop`, and its installation root is `/opt/codex-desktop`, so it is
+easy to distinguish from OpenAI's separate **ChatGPT** package.
 
 OpenAI's signed Linux `.deb` is the only upstream source. The official
 Electron runtime, native modules, bundled `codex` and `rg`, code-mode host,
@@ -77,7 +77,27 @@ If the dependencies are already installed, use:
 make install-native
 ```
 
-To choose optional features before installing:
+For the graphical guided installer, run the standalone repository entrypoint:
+
+```bash
+./install-community
+```
+
+(`make guided-install` invokes the same entrypoint.) The installer is part of
+the repository setup experience, not an optional Linux feature. On desktops
+with GTK4/PyGObject it walks through feature selection, installation options,
+review, and build/install progress with a live log. Required features are
+selected automatically; conflicting choices are disabled with the reason kept
+visible.
+
+The graphical installer does not modify feature implementations or feature
+settings. It updates only the enabled-feature list and its own installer
+preferences in the gitignored `linux-features/features.json`; any existing
+feature settings are preserved unchanged. Native output always keeps the
+repository identity `codex-desktop` under `/opt/codex-desktop`, whether or not
+the automatic updater is included.
+
+To configure features without installing yet, keep using:
 
 ```bash
 make setup-native
