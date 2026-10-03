@@ -245,6 +245,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `pet-overlay` | Linux avatar overlay 定位和 compositor hints | [文档](linux-features/pet-overlay/README.md) |
 | `preferred-editor-file-links` | 单击源代码链接时使用所选编辑器打开 | [文档](linux-features/preferred-editor-file-links/README.md) |
 | `project-group-last-updated-sort` | 对 project group 和 task 应用 Last updated 排序 | [文档](linux-features/project-group-last-updated-sort/README.md) |
+| `project-source-filter` | 按 ChatGPT 或 Work 来源筛选 ChatGPT 模式中的 Projects 列表 | [文档](linux-features/project-source-filter/README.md) |
 | `project-task-sort` | 恢复 alternate Projects 的 Created 排序 | [文档](linux-features/project-task-sort/README.md) |
 | `read-aloud` | 为 assistant response 添加 Linux 朗读控件 | [文档](linux-features/read-aloud/README.md) |
 | `read-aloud-mcp` | 让 agent 通过 Linux Read Aloud backend 发声 | [文档](linux-features/read-aloud-mcp/README.md) |
