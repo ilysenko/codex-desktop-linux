@@ -141,6 +141,9 @@ function detectPackageFormat(tokens, env) {
   if (override) {
     return override;
   }
+  if (tokenMatches(tokens, ["gentoo"])) {
+    return "ebuild";
+  }
   if (tokenMatches(tokens, PACMAN_IDS)) {
     return "pacman";
   }
@@ -172,6 +175,9 @@ function detectPackageManager(tokens, env, versionMajorValue, atomic) {
   const override = normalizeToken(env.CODEX_LINUX_TARGET_PACKAGE_MANAGER);
   if (override) {
     return override;
+  }
+  if (tokenMatches(tokens, ["gentoo"])) {
+    return "emerge";
   }
   if (tokenMatches(tokens, PACMAN_IDS)) {
     return "pacman";

@@ -6,8 +6,8 @@ NEXT_APP_DIR ?= $(CURDIR)/codex-app-next
 REBUILD_REPORT_DIR ?= $(CURDIR)/dist-next/rebuild
 UPSTREAM_DEB ?=
 PACKAGE_NAME := codex-desktop
-PACKAGE_WITH_UPDATER ?= 1
 PACKAGE_FORMAT_DETECTOR := $(CURDIR)/scripts/lib/detect-package-format.sh
+PACKAGE_WITH_UPDATER ?= $(if $(filter ebuild,$(shell "$(PACKAGE_FORMAT_DETECTOR)")),0,1)
 MAX_BUILD_THREADS ?= 0
 MAX_BUILD_THREADS_VALUE := $(strip $(MAX_BUILD_THREADS))
 MAX_BUILD_THREADS_ENABLED := $(filter-out 0,$(MAX_BUILD_THREADS_VALUE))
@@ -17,15 +17,16 @@ DEB_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)_*.deb
 RPM_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)-*.rpm
 PACMAN_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)-[0-9]*.pkg.tar.*
 .DEFAULT_GOAL := help
+.PHONY: native-preflight
 
 UPSTREAM_ARG = $(if $(strip $(UPSTREAM_DEB)),"$(UPSTREAM_DEB)",)
 
 define resolve_package_format
 format="$$("$(PACKAGE_FORMAT_DETECTOR)")"; \
-case "$$format" in deb|rpm|pacman) ;; *) echo 'No supported native package format found.' >&2; exit 1 ;; esac
+case "$$format" in deb|rpm|pacman|ebuild) ;; *) echo 'No supported native package format found.' >&2; exit 1 ;; esac
 endef
 
-.PHONY: help check test ci-pr ci-all build-updater maybe-build-updater build-native-feature-helpers update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native guided-install bootstrap-native install-native update-native rebuild-next run-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
+.PHONY: help check test ci-pr ci-all build-updater maybe-build-updater build-native-feature-helpers update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native guided-install bootstrap-native install-native update-native rebuild-next run-app deb rpm pacman gentoo appimage package install service-enable service-status clean-dist clean-state
 
 help:
 	@printf '\nChatGPT Community from the official OpenAI Linux package\n\n'
@@ -37,7 +38,7 @@ help:
 	@printf '  %-20s %s\n' 'make guided-install' 'Choose features, then build, package, and install'
 	@printf '  %-20s %s\n' 'make bootstrap-native' 'Install build dependencies, build, package, install'
 	@printf '  %-20s %s\n' 'make install-native' 'Build, package, and install for this distro'
-	@printf '  %-20s %s\n' 'make deb|rpm|pacman' 'Build a native package in dist/'
+	@printf '  %-20s %s\n' 'make deb|rpm|pacman|gentoo' 'Build a native package in dist/'
 	@printf '  %-20s %s\n' 'make appimage' 'Build the AppImage in dist/'
 	@printf '  %-20s %s\n' 'make ci-all' 'Run the complete local CI suite'
 	@printf '\nVariables:\n  UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb\n  PACKAGE_WITH_UPDATER=0\n  MAX_BUILD_THREADS=8\n\n'
@@ -93,11 +94,14 @@ setup-native:
 guided-install:
 	./install-community
 
-bootstrap-native:
+native-preflight:
+	@if [ "$$($(PACKAGE_FORMAT_DETECTOR))" = ebuild ]; then PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" bash scripts/build-gentoo.sh --preflight; fi
+
+bootstrap-native: native-preflight
 	bash scripts/install-deps.sh
 	PATH="$$HOME/.cargo/bin:$$PATH" $(MAKE) install-native
 
-install-native:
+install-native: native-preflight
 	$(MAKE) build-native-feature-helpers
 	$(MAKE) build-app
 	$(MAKE) package
@@ -126,12 +130,16 @@ pacman: maybe-build-updater
 appimage:
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" ./scripts/build-appimage.sh
 
+gentoo:
+	PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" APP_DIR_OVERRIDE="$(APP_DIR)" bash scripts/build-gentoo.sh
+
 package:
 	@$(resolve_package_format); \
 	case "$$format" in \
 	  deb) $(MAKE) deb PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ;; \
 	  rpm) $(MAKE) rpm PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ;; \
 	  pacman) $(MAKE) pacman PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ;; \
+	  ebuild) $(MAKE) gentoo PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" ;; \
 	esac
 
 install:
@@ -141,6 +149,7 @@ install:
 	  deb) artifact="$${DEB:-$$(latest '$(DEB_GLOB)')}"; [ -n "$$artifact" ]; "$(CURDIR)/scripts/sudo-with-alert.sh" dpkg -i "$$artifact" ;; \
 	  rpm) artifact="$${RPM:-$$(latest '$(RPM_GLOB)')}"; [ -n "$$artifact" ]; if command -v dnf >/dev/null; then "$(CURDIR)/scripts/sudo-with-alert.sh" dnf install -y "$$artifact"; else "$(CURDIR)/scripts/sudo-with-alert.sh" rpm -Uvh "$$artifact"; fi ;; \
 	  pacman) artifact="$${PKG:-$$(latest '$(PACMAN_GLOB)')}"; [ -n "$$artifact" ]; "$(CURDIR)/scripts/sudo-with-alert.sh" pacman -U --noconfirm "$$artifact" ;; \
+	  ebuild) bash "$(CURDIR)/scripts/install-gentoo.sh" "$(CURDIR)/dist/gentoo/repository" ;; \
 	  *) echo 'No supported package manager found.' >&2; exit 1 ;; \
 	esac
 

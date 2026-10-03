@@ -7,7 +7,7 @@ Community**; the package, command, and installation directory remain
 
 ## Fast native install
 
-On a supported Debian/Ubuntu, Fedora, openSUSE, Arch-derived, or compatible
+On a supported Debian/Ubuntu, Fedora, openSUSE, Arch-derived, Gentoo, or compatible
 distribution:
 
 ```bash
@@ -125,6 +125,84 @@ The build checks control metadata, architecture, required payload, and records
 the computed SHA-256. It does not independently prove the file's provenance,
 because signed repository discovery is intentionally skipped for explicit
 local input.
+
+## Gentoo local ebuild
+
+The canonical entry remains `make bootstrap-native`. On Gentoo it selects a
+Portage-managed local ebuild rather than `.deb`, even if `dpkg-deb` is present:
+
+```bash
+mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-dev/tmp"
+export TMPDIR="${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-dev/tmp"
+make bootstrap-native UPSTREAM_DEB=/absolute/path/chatgpt_<version>_amd64.deb
+```
+
+The first Gentoo implementation supports glibc hosts, the default empty feature config and
+defaults to `PACKAGE_WITH_UPDATER=0`. Enabled features or an explicitly enabled
+updater are rejected before installing dependencies. Portage owns the files in
+`/opt/codex-desktop`, `/usr/bin/codex-desktop`, and the community desktop entry
+and icon. It does not install the official `chatgpt` identity or maintainer
+scripts. The application is selected in Portage's world set so depclean does
+not remove it. Update by rerunning the same Make command with the latest signed
+stable package.
+
+The regular-user builder stages the existing shared native layout, revalidates
+its input provenance against the pinned signed stable index (including explicit
+local deb input), and generates `dist/gentoo/repository/`. `make gentoo` performs
+this packaging step alone after `make build-app`. The generated ebuild unpacks
+its Manifest-checked local DISTDIR payload into Portage's image directory; it does not
+run `make`, download upstream sources, invoke sudo, or bypass Portage.
+
+Dependency installation and repository deployment use the same
+`scripts/sudo-with-alert.sh` mechanism as other native formats. Installation
+deploys a dedicated generated repository to `/var/db/repos/codex-desktop-local`
+and registers `/etc/portage/repos.conf/codex-desktop-local.conf`. It creates
+package-scoped keyword/license files named `codex-desktop-local` under
+`package.accept_keywords` and `package.license`; global Portage policy is not
+changed. Unmanaged files at these exact paths are never overwritten.
+
+The repository's scripts and ebuild template are MIT-licensed. This does not
+relicense OpenAI's application payload or its third-party components. Their
+license files are preserved. The generated ebuild declares `MIT` plus
+`all-rights-reserved` conservatively for the application, and restricts binary
+redistribution/mirroring. These are local build artifacts, not published
+community binary releases.
+
+To verify or remove the native package:
+
+```bash
+portageq match / app-misc/codex-desktop
+/usr/bin/codex-desktop --diagnose
+sudo emerge --unmerge app-misc/codex-desktop
+```
+
+A user-local AppImage command or desktop entry may still shadow the native
+entry. The package installer preserves these user files; use the explicit
+`/usr/bin/codex-desktop` path to test the native installation. User profiles,
+proxy settings, and a `CODEX_CLI_PATH` override are independent of package
+ownership. Both installations normally share the upstream profile, so exit
+one before launching the other.
+
+After unmerging, the dedicated local repository and its three generated
+Portage configuration files can be removed if no longer needed. Existing
+repositories and global Portage configuration are not part of this cleanup.
+
+For a stable-only dependency audit, after generating the local repository:
+
+```bash
+bash scripts/sudo-with-alert.sh env TMPDIR="$TMPDIR" \
+  bash tests/gentoo_stable_dependencies.sh dist/gentoo/repository
+```
+
+This read-only emerge plan runs in a transient mount namespace/chroot with a
+separate Portage configuration and no host VDB. It allows only stable `::gentoo`
+dependencies; only the local application gets a scoped testing keyword. A
+stable-version stage3/toolchain baseline is recorded as `package.provided` to
+avoid trying to bootstrap Gentoo from zero. Documentation tooling uses the
+temporary `dev-python/pillow -truetype` source-bootstrap setting in this isolated
+configuration; no host USE settings change. It tests dependency visibility and
+resolution, not compilation of the stable libraries or runtime on a separately
+installed stable Gentoo system. Scratch is removed when the audit exits.
 
 ## Native helper builds
 

@@ -182,6 +182,16 @@ function packageProfile(target) {
   const ids = new Set([id, ...target.distro.idLike]);
   const versionMajor = target.distro.versionMajor;
 
+  if (ids.has("gentoo")) {
+    return {
+      id: "gentoo",
+      label: "Gentoo / Portage",
+      packageManager: "emerge",
+      format: "local ebuild",
+      notes: "Portage-managed prebuilt payload; manual updates with make bootstrap-native",
+    };
+  }
+
   if (ids.has("nixos") || ids.has("nix")) {
     return {
       id: "nix",

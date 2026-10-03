@@ -22,6 +22,8 @@ bash -n install.sh launcher/start.sh.template scripts/install-deps.sh \
   scripts/rebuild-candidate.sh scripts/select-latest-package.sh \
   tests/install_deps_pacman_rust_matrix.sh
 bash -n scripts/lib/*.sh scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/build-appimage.sh
+bash -n scripts/build-gentoo.sh scripts/install-gentoo.sh
+node --test scripts/gentoo-native.test.js
 
 assert_contains packaging/linux/codex-desktop.desktop '^Name=ChatGPT Community$'
 assert_contains packaging/linux/codex-desktop.desktop '^Comment=Community Linux distribution based on OpenAI ChatGPT$'

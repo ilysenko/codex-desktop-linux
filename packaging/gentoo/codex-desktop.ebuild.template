@@ -1,0 +1,107 @@
+# Copyright 2026 ChatGPT Community for Linux Maintainers
+# Distributed under the repository's MIT license. Upstream payload licenses
+# remain separate and are preserved under /opt/codex-desktop.
+
+EAPI=8
+inherit xdg
+
+DESCRIPTION="ChatGPT Community from the signed official OpenAI Linux payload"
+HOMEPAGE="https://github.com/ilysenko/codex-desktop-linux"
+# A local-only ebuild. The regular-user builder verifies signed APT metadata
+# before generating this payload; Portage verifies its DIST Manifest digest.
+SRC_URI="__PAYLOAD__"
+S="${WORKDIR}"
+LICENSE="all-rights-reserved MIT"
+SLOT="0"
+KEYWORDS="~__ARCH__"
+RESTRICT="fetch bindist mirror strip"
+BDEPEND="app-arch/xz-utils"
+IDEPEND="dev-util/desktop-file-utils x11-misc/shared-mime-info"
+RDEPEND="
+	app-shells/bash
+	sys-apps/coreutils
+	sys-apps/findutils
+	sys-apps/grep
+	sys-apps/sed
+	sys-libs/glibc
+	virtual/zlib
+	virtual/udev
+	app-arch/xz-utils
+	dev-libs/expat
+	dev-libs/glib:2
+	dev-libs/nspr
+	dev-libs/nss
+	dev-libs/openssl:0/3
+	dev-libs/libusb:1
+	app-crypt/tpm2-tss
+	media-libs/alsa-lib
+	media-libs/libglvnd
+	media-libs/mesa
+	net-print/cups
+	app-accessibility/at-spi2-core
+	x11-libs/cairo
+	x11-libs/gdk-pixbuf:2
+	x11-libs/gtk+:3
+	x11-libs/libdrm
+	x11-libs/libnotify
+	x11-libs/libX11
+	x11-libs/libxcb
+	x11-libs/libXcomposite
+	x11-libs/libXdamage
+	x11-libs/libXext
+	x11-libs/libXfixes
+	x11-libs/libxkbcommon
+	x11-libs/libXrandr
+	x11-libs/pango
+	x11-misc/xdg-utils
+"
+QA_PREBUILT="opt/codex-desktop/*"
+# GTK3 is the required Linux UI backend. Qt shims are optional alternatives.
+# Preserve upstream's foreign/Android/musl Node prebuilds, but do not turn them
+# into host dependencies. Native glibc binaries remain checked by Portage.
+REQUIRES_EXCLUDE="
+	opt/codex-desktop/libqt5_shim.so
+	opt/codex-desktop/libqt6_shim.so
+	opt/codex-desktop/resources/app.asar.unpacked/*/prebuilds/android-*
+	opt/codex-desktop/resources/app.asar.unpacked/*/prebuilds/*musl*
+"
+if [[ ${ARCH} == amd64 ]]; then
+	REQUIRES_EXCLUDE+=" opt/codex-desktop/resources/app.asar.unpacked/*/prebuilds/*-arm*"
+elif [[ ${ARCH} == arm64 ]]; then
+	REQUIRES_EXCLUDE+="
+		opt/codex-desktop/resources/app.asar.unpacked/*/prebuilds/*-x64*
+		opt/codex-desktop/resources/app.asar.unpacked/*/prebuilds/*-arm/*
+	"
+fi
+
+pkg_nofetch() {
+	eerror "This payload is built locally; run make bootstrap-native in codex-desktop-linux."
+}
+
+src_prepare() {
+	# Preserve the signed official binaries and already accepted ASAR exactly.
+	default
+}
+
+src_install() {
+	cp -a --no-preserve=ownership "${S}/opt" "${S}/usr" "${S}/etc" "${D}/" || die
+	# Bundled resources must never be stripped, recompressed or relocated.
+	dostrip -x /opt/codex-desktop
+	docompress -x /opt/codex-desktop
+}
+
+pkg_preinst() {
+	local exe
+	for exe in /proc/[0-9]*/exe; do
+		[[ $(readlink "${exe}" 2>/dev/null) == "$(readlink -m "${EROOT}/opt/codex-desktop/ChatGPT")" ]] &&
+			die "Exit ChatGPT Community before replacing its native installation"
+	done
+	xdg_pkg_preinst
+}
+
+pkg_postinst() {
+	xdg_pkg_postinst
+	elog "Launch ChatGPT Community with /usr/bin/codex-desktop."
+	elog "User-local AppImage launchers may still shadow this command."
+	elog "Update with make bootstrap-native; this package omits the updater."
+}
