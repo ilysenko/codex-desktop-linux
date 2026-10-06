@@ -37,6 +37,8 @@ const REMOTE_CONTROL_FEATURE_SYNC_MARKER = "codexLinuxRemoteControlFeatureSyncEn
 const REMOTE_CONTROL_LOAD_GATE_NEEDLE =
   /function ([A-Za-z_$][\w$]*)\(\)\{return ([A-Za-z_$][\w$]*)\(`1042620455`\)\}/u;
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
+const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
+  "codexLinuxRemoteMobileConversationHydration";
 const REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER = "codexLinuxRemoteControlEnablementBridge";
 const REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER = "codexLinuxRemoteControlEnableForHostParams";
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
@@ -1072,6 +1074,89 @@ function applyLinuxRemoteMobileActiveStatusPatch(source) {
   );
 }
 
+function remoteMobileConversationHydrationGuardPattern({ patched = false, flags = "u" } = {}) {
+  const marker = patched
+    ? `/\\*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}\\*/`
+    : "";
+  const hostGuard = patched
+    ? "this\\.manager\\.getHostId\\(\\)!==`durable`&&this\\.manager\\.getHostId\\(\\)!==`local`\\|\\|"
+    : "this\\.manager\\.getHostId\\(\\)!==`durable`\\|\\|";
+  const methodGuard = patched
+    ? `(?<notification>${DEVICE_KEY_IDENT})\\.method!==\`turn/started\`&&` +
+      `\\k<notification>\\.method!==\`turn/completed\`&&` +
+      `\\(this\\.manager\\.getHostId\\(\\)!==\`local\`\\|\\|` +
+      `\\k<notification>\\.method!==\`item/started\`&&` +
+      `\\k<notification>\\.method!==\`item/completed\`\\)`
+    : `(?<notification>${DEVICE_KEY_IDENT})\\.method!==\`turn/started\`&&` +
+      `\\k<notification>\\.method!==\`turn/completed\``;
+  return new RegExp(
+    `if\\(${marker}${hostGuard}${methodGuard}\\|\\|` +
+      `this\\.context\\.threadStore\\.conversations\\.has\\((?<conversation>${DEVICE_KEY_IDENT})\\)\\|\\|` +
+      `this\\.context\\.threadStore\\.isConversationSuppressed\\(\\k<conversation>\\)\\)return!1;`,
+    flags,
+  );
+}
+
+function remoteMobileConversationHydrationContract(source) {
+  const pristineMatches = [
+    ...source.matchAll(remoteMobileConversationHydrationGuardPattern({ flags: "gu" })),
+  ];
+  const patchedMatches = [
+    ...source.matchAll(remoteMobileConversationHydrationGuardPattern({ patched: true, flags: "gu" })),
+  ];
+  const markerCount = source.split(REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER).length - 1;
+  const state = markerCount === 0 && pristineMatches.length === 1 && patchedMatches.length === 0
+    ? "pristine"
+    : markerCount === 1 && pristineMatches.length === 0 && patchedMatches.length === 1
+      ? "patched"
+      : null;
+  if (state == null) return null;
+
+  const match = state === "pristine" ? pristineMatches[0] : patchedMatches[0];
+  const lifecycle = source.slice(match.index, match.index + 4_096);
+  if (
+    lifecycle.split("this.context.threadStore.hydrateActiveThread(").length - 1 !== 1 ||
+    lifecycle.split("this.buffer.release(").length - 1 !== 1 ||
+    lifecycle.split("Failed to discover cloud thread from turn").length - 1 !== 1
+  ) {
+    return null;
+  }
+  return { match, state };
+}
+
+function matchesRemoteMobileConversationHydrationContract(source) {
+  return remoteMobileConversationHydrationContract(source) != null;
+}
+
+function applyLinuxRemoteMobileConversationHydrationPatch(source) {
+  const contract = remoteMobileConversationHydrationContract(source);
+  if (contract == null) {
+    if (
+      source.includes(REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER) ||
+      source.includes("Failed to discover cloud thread from turn") ||
+      source.includes("Received item/completed for unknown conversation")
+    ) {
+      console.warn(
+        "WARN: Could not find unique complete conversation-hydration lifecycle - skipping Linux remote mobile hydration patch",
+      );
+    }
+    return source;
+  }
+  if (contract.state === "patched") return source;
+
+  const { conversation, notification } = contract.match.groups;
+  const replacement =
+    `if(/*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}*/` +
+    "this.manager.getHostId()!==`durable`&&this.manager.getHostId()!==`local`||" +
+    `${notification}.method!==\`turn/started\`&&${notification}.method!==\`turn/completed\`&&` +
+    `(this.manager.getHostId()!==\`local\`||${notification}.method!==\`item/started\`&&` +
+    `${notification}.method!==\`item/completed\`)||` +
+    `this.context.threadStore.conversations.has(${conversation})||` +
+    `this.context.threadStore.isConversationSuppressed(${conversation}))return!1;`;
+  return source.slice(0, contract.match.index) + replacement +
+    source.slice(contract.match.index + contract.match[0].length);
+}
+
 function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
   const logMarker = "Reasoning summary turn-start config resolved";
   const logIndexes = [...source.matchAll(new RegExp(escapeRegExp(logMarker), "gu"))].map(
@@ -1290,6 +1375,17 @@ module.exports = [
     apply: applyLinuxRemoteMobileReasoningSummaryPatch,
   },
   {
+    id: "linux-remote-mobile-conversation-hydration",
+    phase: "webview-asset",
+    pattern: /^app-shared-[^.]+\.js$/,
+    assetMatch: matchesRemoteMobileConversationHydrationContract,
+    order: 20_151,
+    ciPolicy: "optional",
+    missingDescription: "app-server conversation hydration lifecycle",
+    skipDescription: "Linux remote-mobile conversation hydration patch",
+    apply: applyLinuxRemoteMobileConversationHydrationPatch,
+  },
+  {
     id: "linux-remote-terminal-status-recovery",
     phase: "webview-asset",
     pattern: REMOTE_CONTROL_APP_INITIAL_ASSET_PATTERN,
@@ -1358,6 +1454,8 @@ module.exports.hasLinuxRemoteMobileLocalAppServerRemoteControlPatch =
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch;
 module.exports.applyLinuxRemoteMobileChromeBridgePatch = applyLinuxRemoteMobileChromeBridgePatch;
 module.exports.applyLinuxRemoteMobileReasoningSummaryPatch = applyLinuxRemoteMobileReasoningSummaryPatch;
+module.exports.applyLinuxRemoteMobileConversationHydrationPatch =
+  applyLinuxRemoteMobileConversationHydrationPatch;
 module.exports.applyLinuxRemoteTerminalStatusRecoveryPatch = applyLinuxRemoteTerminalStatusRecoveryPatch;
 module.exports.applyLinuxRemoteControlStatusReadGuardPatch = applyLinuxRemoteControlStatusReadGuardPatch;
 module.exports.applyLinuxRemoteControlStatusWaitPatch = applyLinuxRemoteControlStatusWaitPatch;

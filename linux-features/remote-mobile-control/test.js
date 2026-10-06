@@ -33,6 +33,7 @@ const {
   applyLinuxRemoteControlEnablementBridgePatch,
   applyLinuxRemoteMobileActiveStatusPatch,
   applyLinuxRemoteMobileAppServerRemoteControlPatch,
+  applyLinuxRemoteMobileConversationHydrationPatch,
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch,
   applyLinuxRemoteMobileChromeBridgePatch,
   applyLinuxRemoteMobileReasoningSummaryPatch,
@@ -69,6 +70,7 @@ const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
 const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = "app-primary-a0bff570446b.js";
 const CURRENT_REMOTE_REASONING_SUMMARY_ASSET = "app-shared-5c3eff50f08d.js";
+const CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET = CURRENT_REMOTE_REASONING_SUMMARY_ASSET;
 const VALID_DEVICE_KEY_NONCE = Buffer.alloc(32, 1).toString("base64url");
 const VALID_DEVICE_KEY_DIGEST = Buffer.alloc(32, 2).toString("base64url");
 
@@ -135,6 +137,7 @@ test("remote mobile README assigns every descriptor to one control topology", ()
     ["linux-remote-control-client-revoke-setup-reset", "mobile-host"],
     ["linux-remote-connections-refresh", "shared-boundary"],
     ["linux-remote-mobile-reasoning-summary-none", "mobile-host"],
+    ["linux-remote-mobile-conversation-hydration", "mobile-host"],
     ["linux-remote-terminal-status-recovery", "mobile-host"],
     ["linux-remote-control-status-read-guard", "shared-boundary"],
     ["linux-remote-control-status-wait", "shared-boundary"],
@@ -401,6 +404,13 @@ function syntheticCurrentAppServerManagerSignalsBundle() {
   return [
     "function Of({resumeState:a,threadRuntimeStatus:o,threadSummary:r}){return{threadRuntimeStatus:a===`needs_resume`||o?.type===`notLoaded`?r?.threadRuntimeStatus??o??null:o??r?.threadRuntimeStatus??null,resumeState:a}}",
     "class T{onNotification(e){this.resumeNotificationBuffer.buffer(e);this.threadStartedNotificationDeferral.bufferNotification(e)}}",
+  ].join("");
+}
+
+function syntheticCurrentConversationHydrationBundle() {
+  return [
+    "class NotificationBuffer{buffers=new Map;begin(e){this.buffers.has(e)||this.buffers.set(e,[])}buffer(e,t){let n=e.notification.params.threadId,r=this.buffers.get(n);return r!=null&&(r.push({delivery:e,shouldIgnore:t}),!0)}release(e,t,n){let r=this.buffers.get(e);this.buffers.delete(e);for(let e of r??[])n(e.delivery,e.shouldIgnore)}discard(e){this.buffers.delete(e)}}",
+    "class HydrationLifecycle{manager;context;schedule;buffer=new NotificationBuffer;pending=new Map;constructor(e,t,n){this.manager=e,this.context=t,this.schedule=n}bufferNotification(e,t){let{notification:n}=e,r=n.params.threadId;if(r==null)return!1;let i=r,a=this.pending.get(i);if(a!=null)return a.ignored.add(t),this.buffer.buffer(e,t);if(this.manager.getHostId()!==`durable`||n.method!==`turn/started`&&n.method!==`turn/completed`||this.context.threadStore.conversations.has(i)||this.context.threadStore.isConversationSuppressed(i))return!1;let o={ignored:new Set([t]),cancelRetry:null};return this.pending.set(i,o),this.buffer.begin(i),this.buffer.buffer(e,t),this.hydrate(i,o,!1),!0}discard(e){this.pending.get(e)?.cancelRetry?.(),this.pending.delete(e),this.buffer.discard(e)}hydrate(e,t,n){let r=()=>this.pending.get(e)===t&&!this.context.threadStore.isConversationSuppressed(e)&&Array.from(t.ignored).some(e=>!e?.());if(this.pending.get(e)===t){if(!r()){this.discard(e);return}this.context.threadStore.hydrateActiveThread(e,r).then(i=>{if(this.pending.get(e)===t){if(!r())this.discard(e);else if(i){this.pending.delete(e);this.buffer.release(e,[],({notification:e},t)=>this.manager.onNotification(e.method,e.params,null,t))}else n?this.discard(e):t.cancelRetry=this.schedule(()=>this.hydrate(e,t,!0),1e3)}}).catch(n=>{this.pending.get(e)===t&&this.discard(e),this.manager.logger.debug(`Failed to discover cloud thread from turn`,{safe:{},sensitive:{conversationId:e,error:n}})})}}}",
   ].join("");
 }
 
@@ -1001,6 +1011,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-control-client-revoke-setup-reset",
       "feature:remote-mobile-control:linux-remote-connections-refresh",
       "feature:remote-mobile-control:linux-remote-mobile-reasoning-summary-none",
+      "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
       "feature:remote-mobile-control:linux-remote-terminal-status-recovery",
       "feature:remote-mobile-control:linux-remote-control-status-read-guard",
       "feature:remote-mobile-control:linux-remote-control-status-wait",
@@ -1026,6 +1037,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "webview-asset",
       "webview-asset",
       "webview-asset",
+      "webview-asset",
     ]);
 
     const reasoningSummaryDescriptor = descriptors.find((descriptor) =>
@@ -1034,6 +1046,47 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.ok(reasoningSummaryDescriptor);
     assert.equal(reasoningSummaryDescriptor.pattern.test(CURRENT_REMOTE_REASONING_SUMMARY_ASSET), true);
     assert.equal(reasoningSummaryDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+
+    const hydrationDescriptor = descriptors.find((descriptor) =>
+      descriptor.id === "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration"
+    );
+    assert.ok(hydrationDescriptor);
+    assert.equal(hydrationDescriptor.pattern.test(CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET), true);
+    assert.equal(hydrationDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+    const hydrationOwner = syntheticCurrentConversationHydrationBundle();
+    const patchedHydrationOwner = applyLinuxRemoteMobileConversationHydrationPatch(hydrationOwner);
+    assert.equal(
+      hydrationDescriptor.assetMatch(
+        hydrationOwner,
+        CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET,
+        {},
+      ),
+      true,
+    );
+    assert.equal(
+      hydrationDescriptor.assetMatch(
+        patchedHydrationOwner,
+        CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET,
+        {},
+      ),
+      true,
+    );
+    assert.equal(
+      hydrationDescriptor.assetMatch(
+        hydrationOwner + hydrationOwner,
+        CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET,
+        {},
+      ),
+      false,
+    );
+    assert.equal(
+      hydrationDescriptor.assetMatch(
+        "class Unrelated{}",
+        CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET,
+        {},
+      ),
+      false,
+    );
 
     const visibilityDescriptor = descriptors.find((descriptor) =>
       descriptor.id === "feature:remote-mobile-control:linux-remote-control-visibility"
@@ -1177,6 +1230,132 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_LOAD_GATE_ASSET), true);
 
   });
+});
+
+test("Linux remote-mobile hydration buffers local turn and item notifications in order", async () => {
+  const source = syntheticCurrentConversationHydrationBundle();
+  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
+  assert.notEqual(patched, source);
+  assert.match(patched, /codexLinuxRemoteMobileConversationHydration/u);
+  assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
+
+  const context = { module: { exports: null } };
+  vm.runInNewContext(`${patched};module.exports=HydrationLifecycle;`, context);
+  const HydrationLifecycle = context.module.exports;
+  const conversations = new Map();
+  const hydrateCalls = new Map();
+  const pendingHydrations = new Map();
+  const replayed = [];
+  const threadStore = {
+    conversations,
+    hydrateActiveThread(threadId) {
+      hydrateCalls.set(threadId, (hydrateCalls.get(threadId) ?? 0) + 1);
+      return new Promise((resolve) => pendingHydrations.set(threadId, () => {
+        conversations.set(threadId, { items: [] });
+        resolve(true);
+      }));
+    },
+    isConversationSuppressed: () => false,
+  };
+  const manager = {
+    getHostId: () => "local",
+    logger: { debug() {} },
+    onNotification(method, params) {
+      replayed.push(method);
+      if (method !== "item/started" && method !== "item/completed") return;
+      const conversation = conversations.get(params.threadId);
+      const existing = conversation.items.findIndex((item) => item.id === params.item.id);
+      const item = { ...params.item, completed: method === "item/completed" };
+      if (existing === -1) conversation.items.push(item);
+      else conversation.items[existing] = item;
+    },
+  };
+  const lifecycle = new HydrationLifecycle(manager, { threadStore }, (callback) => {
+    const timer = setTimeout(callback, 0);
+    return () => clearTimeout(timer);
+  });
+  const threadId = "thread-local-ordered";
+  const notifications = [
+    { method: "turn/started", params: { threadId, turn: { id: "turn-1" } } },
+    { method: "item/started", params: { threadId, turnId: "turn-1", item: { id: "item-1" } } },
+    { method: "item/completed", params: { threadId, turnId: "turn-1", item: { id: "item-1" } } },
+    { method: "turn/completed", params: { threadId, turn: { id: "turn-1" } } },
+  ];
+
+  for (const notification of notifications) {
+    assert.equal(lifecycle.bufferNotification({ notification }, undefined), true);
+  }
+  assert.equal(hydrateCalls.get(threadId), 1);
+  assert.deepEqual(replayed, []);
+
+  pendingHydrations.get(threadId)();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(replayed, notifications.map(({ method }) => method));
+  assert.deepEqual(conversations.get(threadId).items, [{ id: "item-1", completed: true }]);
+
+  const completedOnlyThreadId = "thread-local-completed-only";
+  assert.equal(lifecycle.bufferNotification({
+    notification: {
+      method: "item/completed",
+      params: {
+        threadId: completedOnlyThreadId,
+        turnId: "turn-2",
+        item: { id: "item-without-start" },
+      },
+    },
+  }, undefined), true);
+  assert.equal(hydrateCalls.get(completedOnlyThreadId), 1);
+  pendingHydrations.get(completedOnlyThreadId)();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(conversations.get(completedOnlyThreadId).items, [
+    { id: "item-without-start", completed: true },
+  ]);
+});
+
+test("Linux remote-mobile hydration leaves durable discovery notification scope unchanged", () => {
+  const patched = applyLinuxRemoteMobileConversationHydrationPatch(
+    syntheticCurrentConversationHydrationBundle(),
+  );
+  const context = { module: { exports: null } };
+  vm.runInNewContext(`${patched};module.exports=HydrationLifecycle;`, context);
+  const HydrationLifecycle = context.module.exports;
+  const hydration = new HydrationLifecycle({
+    getHostId: () => "durable",
+    logger: { debug() {} },
+  }, {
+    threadStore: {
+      conversations: new Map(),
+      hydrateActiveThread: () => new Promise(() => {}),
+      isConversationSuppressed: () => false,
+    },
+  }, () => () => {});
+
+  assert.equal(hydration.bufferNotification({
+    notification: { method: "item/completed", params: { threadId: "thread-durable" } },
+  }, undefined), false);
+  assert.equal(hydration.bufferNotification({
+    notification: { method: "turn/started", params: { threadId: "thread-durable" } },
+  }, undefined), true);
+});
+
+test("Linux remote-mobile hydration rejects missing, duplicate, and partial lifecycle drift", () => {
+  const source = syntheticCurrentConversationHydrationBundle();
+  const drifted = [
+    source.replace("this.context.threadStore.hydrateActiveThread(", "this.context.threadStore.loadThread("),
+    source + source,
+    source.replace(
+      "if(this.manager.getHostId()!==`durable`",
+      "if(/*codexLinuxRemoteMobileConversationHydration*/this.manager.getHostId()!==`durable`",
+    ),
+  ];
+
+  for (const candidate of drifted) {
+    const { result, warnings } = captureWarnings(() =>
+      applyLinuxRemoteMobileConversationHydrationPatch(candidate)
+    );
+    assert.equal(result, candidate);
+    assert.match(warnings.join("\n"), /unique complete conversation-hydration lifecycle/u);
+  }
 });
 
 test("Linux remote-control feature patch updates the device-key provider", () => {
