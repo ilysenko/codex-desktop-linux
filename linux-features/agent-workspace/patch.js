@@ -1929,9 +1929,9 @@ const PATCHED_SETTINGS_ICON_PATTERN = new RegExp(
     `"agent-workspaces":\\1,worktrees:`,
 );
 const CURRENT_SETTINGS_PRELOAD_SLUGS =
-  "`hooks-settings`,`local-environments`,`worktrees`,`data-controls`";
+  "`hooks-settings`,`local-environments`,`worktrees`,`archived-chats`";
 const PATCHED_SETTINGS_PRELOAD_SLUGS =
-  "`hooks-settings`,`local-environments`,`agent-workspaces`,`worktrees`,`data-controls`";
+  "`hooks-settings`,`local-environments`,`agent-workspaces`,`worktrees`,`archived-chats`";
 const CURRENT_SETTINGS_POLICY_PATTERN =
   /"local-environments":([A-Za-z_$][\w$]*|`codexLocal`),"mcp-settings":/;
 const PATCHED_SETTINGS_POLICY_PATTERN =

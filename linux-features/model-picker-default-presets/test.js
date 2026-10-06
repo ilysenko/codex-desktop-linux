@@ -96,30 +96,28 @@ function localComposerFixture(name = "LocalComposer") {
   return [
     `function ${name}(available,serverConfig,conversationId,manualSelection){`,
     "let host={hostId:`local`,cwd:`/repo`},hostId=host.hostId;",
-    "modelsForPicker(available);let{setDefaultModelAndReasoningEffort:setDefault}=selection;",
+    "modelsForPicker(available);let{setDefaultModelAndReasoningEffort:setDefault}=selection,draftSelection=null;",
     "let He=available.find(Wqr),Ue=Power(available,{includeUltraInSlider:true,sliderModelsConfig:serverConfig,stripGptPrefix:true}),",
     "Ge=Ue,Ke=zae(Ge,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
-    "let scratch=(0,React.useRef)(null),choose=function(e,t){return(draft?.selectModelAndReasoningEffort??select)(e,t,()=>{})};",
-    "let selected=manualSelection?choose(`gpt-5.6-sol`,`high`):null;",
     "picker({resetContextKey:JSON.stringify([conversationId,hostId,host.cwd])});",
-    "composer.mode.local.model.custom;let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
+    "composer.mode.local.model.custom;let scratch=(0,React.useRef)(null),choose=function(e,t,n){let callback=()=>{};return draftSelection==null?select(normalize(e),t,callback,n):draftSelection.selectModelAndReasoningEffort(normalize(e),t,callback)};",
+    "function normalize(e){return e}let selected=manualSelection?choose(`gpt-5.6-sol`,`high`):null;",
+    "let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "render({onSelectDefault:reset});",
     "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
     "function Next(){}",
   ].join("");
 }
 
-function existingChatStateFixture(cleanupName = "p6a", stateName = "q8a") {
+function existingChatStateFixture(stateName = "q8a") {
   return [
-    `function ${cleanupName}(e,t){e.get($1,t.target)===t.selection&&(e.set($1,t.target,null),e.get(Q1,t.target)===t.selection&&e.set(Q1,t.target,null),t.target[0]===\"default\"&&e.get(m6a)===t.selection&&e.set(m6a,null))}`,
     `function ${stateName}(e,t,n){`,
-    "let i=e,host={authMethod:t??`chatgpt`},isChatGptAuth=host?.authMethod===`chatgpt`,",
-    "a=n??[`conversation`,`thread`],hasManagedNewThreadSettings=false,",
+    "let store=e,host={authMethod:t??`chatgpt`},isChatGptAuth=host?.authMethod===`chatgpt`,",
+    "target=n??[`conversation`,`thread`],hasManagedNewThreadSettings=false,",
     "setModelAndReasoningEffortForNextTurn=()=>true,",
     "error=Error(`No conversation available for next-turn model update`),",
-    "G=()=>true,",
-    "de=(t,n,r)=>{let o=r?.serviceTier===void 0?void 0:r.serviceTier;",
-    "return d6a(i,a,{model:t,reasoningEffort:n,serviceTier:o},()=>G(t,n,`current`,o))};",
+    "de=async(t,n,r)=>{let i=target,o={model:t,reasoningEffort:n,serviceTier:r?.serviceTier};",
+    "store.set($1,i,o),await Promise.resolve(!0).finally(()=>{store.get($1,i)===o&&store.set($1,i,null)});return o};",
     "return{hasManagedNewThreadSettings:hasManagedNewThreadSettings,",
     "setModelAndReasoningEffortForNextTurn:setModelAndReasoningEffortForNextTurn,",
     "setModelAndReasoningEffort:de,error}}",
@@ -705,7 +703,7 @@ test("local composer uses configured pairs and lowers only its config threshold"
   ]);
 });
 
-test("existing chats retain configured optimistic selections until another selection replaces them", () => {
+test("existing chats retain configured optimistic selections until another selection replaces them", async () => {
   const presets = context([
     { model: "gpt-5.6-sol", effort: "medium", default: true },
     { model: "gpt-5.6-sol", effort: "xhigh" },
@@ -732,66 +730,51 @@ test("existing chats retain configured optimistic selections until another selec
   };
   const globals = {
     $1: "pending",
-    Q1: "optimistic",
-    m6a: "default",
-    d6a: (_store, _target, selection) => selection,
     store,
   };
-  const configured = evaluate(
+  const configured = await evaluate(
     patched,
     "q8a(store).setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
     { ...globals },
   );
   const target = ["conversation", "thread"];
-  store.set("pending", target, configured);
-  store.set("optimistic", target, configured);
-  evaluate(patched, "p6a(store,{selection,target:['conversation','thread']})", {
-    ...globals,
-    selection: configured,
-  });
-  assert.equal(store.get("pending", target), null);
-  assert.strictEqual(store.get("optimistic", target), configured);
+  assert.strictEqual(store.get("pending", target), configured);
 
-  const translatedConfigured = evaluate(
+  const translatedConfigured = await evaluate(
     patched,
     "q8a(store).setModelAndReasoningEffort('gpt-5.6-sol','standard')",
     { ...globals },
   );
   assert.equal(translatedConfigured.codexLinuxKeepOptimisticSelection, true);
 
-  const nonChatGptConfigured = evaluate(
+  const nonChatGptConfigured = await evaluate(
     patched,
     "q8a(store,'api-key').setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
     { ...globals },
   );
   assert.equal(nonChatGptConfigured.codexLinuxKeepOptimisticSelection, false);
 
-  const newThreadConfigured = evaluate(
+  const newThreadConfigured = await evaluate(
     patched,
     "q8a(store,undefined,['default','local','/repo']).setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
     { ...globals },
   );
   assert.equal(newThreadConfigured.codexLinuxKeepOptimisticSelection, false);
 
-  const manual = evaluate(
+  const manual = await evaluate(
     patched,
     "q8a(store).setModelAndReasoningEffort('gpt-6-astra','standard')",
     { ...globals },
   );
-  store.set("pending", target, manual);
-  store.set("optimistic", target, manual);
-  evaluate(patched, "p6a(store,{selection,target:['conversation','thread']})", {
-    ...globals,
-    selection: manual,
-  });
-  assert.equal(store.get("optimistic", target), null);
+  assert.equal(manual.codexLinuxKeepOptimisticSelection, false);
+  assert.equal(store.get("pending", target), null);
 });
 
 test("existing-chat patch fails closed on drift, duplicate, and partial states", () => {
   const presets = context([{ model: "gpt-5.6-sol", effort: "medium", default: true }]);
   for (const source of [
     "function unrelated(){}",
-    existingChatStateFixture("pOne", "qOne") + existingChatStateFixture("pTwo", "qTwo"),
+    existingChatStateFixture("qOne") + existingChatStateFixture("qTwo"),
     `${EXISTING_CHAT_OPTIMISTIC_MARKER};${existingChatStateFixture()}`,
   ]) {
     const { result, warnings } = withCapturedWarnings(() =>

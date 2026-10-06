@@ -102,7 +102,8 @@ function mountAnimations(source) {
     const initialVar = controller[2];
     if (!ownerSource.includes("@container/app-shell-tab")) continue;
     const assignmentPattern = new RegExp(
-      `(?:let |,)${escapeRegExp(initialVar)}=(?<expression>!1|(?<animate>[A-Za-z_$][\\w$]*)\\?(?<collapsed>[A-Za-z_$][\\w$]*):!1),`,
+      `(?:let |,)${escapeRegExp(initialVar)}=(?<expression>!1|(?<animate>[A-Za-z_$][\\w$]*)&&` +
+        `(?<presence>[A-Za-z_$][\\w$]*)\\?\\.initial!==!1\\?(?<collapsed>[A-Za-z_$][\\w$]*):!1),`,
       "u",
     );
     const assignment = assignmentPattern.exec(ownerSource);
@@ -112,6 +113,7 @@ function mountAnimations(source) {
       if (!/animateLayout:[A-Za-z_$][\w$]*(?:[,}])/u.test(ownerSource)) continue;
     } else {
       if (!new RegExp(`animateLayout:${escapeRegExp(assignment.groups.animate)}(?:[,}])`, "u").test(ownerSource)) continue;
+      if (!new RegExp(`\\(0,${JS_IDENT}\\.useContext\\)\\(${JS_IDENT}\\)`, "u").test(ownerSource)) continue;
       const collapsedVar = assignment.groups.collapsed;
       const collapsedSelection = ownerSource.match(
         new RegExp(

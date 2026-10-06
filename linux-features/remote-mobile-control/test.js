@@ -35,7 +35,6 @@ const {
   applyLinuxRemoteMobileAppServerRemoteControlPatch,
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch,
   applyLinuxRemoteMobileChromeBridgePatch,
-  applyLinuxRemoteMobileConversationHydrationPatch,
   applyLinuxRemoteMobileReasoningSummaryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxRemoteControlStatusReadGuardPatch,
@@ -136,7 +135,6 @@ test("remote mobile README assigns every descriptor to one control topology", ()
     ["linux-remote-control-client-revoke-setup-reset", "mobile-host"],
     ["linux-remote-connections-refresh", "shared-boundary"],
     ["linux-remote-mobile-reasoning-summary-none", "mobile-host"],
-    ["linux-remote-mobile-conversation-hydration", "mobile-host"],
     ["linux-remote-terminal-status-recovery", "mobile-host"],
     ["linux-remote-control-status-read-guard", "shared-boundary"],
     ["linux-remote-control-status-wait", "shared-boundary"],
@@ -148,8 +146,7 @@ test("remote mobile README assigns every descriptor to one control topology", ()
   assert.equal(documented.size, rows.length, "topology table must not repeat descriptor ids");
   assert.deepEqual([...documented.keys()].sort(), descriptorIds.sort());
   assert.deepEqual([...documented].sort(), [...expected].sort());
-  assert.match(readme, /`applyLinuxRemoteControlSshInstallActionPatch`[\s\S]*`remote-ssh`/);
-  assert.match(readme, /`applyLinuxRemoteControlSshInstallReleasePatch`[\s\S]*`remote-ssh`/);
+  assert.match(readme, /retired upstream SSH installer/);
   assert.match(readme, /`set-experimental-feature-enablement-for-host`/);
   assert.match(readme, /`refresh-remote-connections`/);
   assert.match(readme, /`get-global-state`/);
@@ -342,15 +339,6 @@ function syntheticMobileSetupDialogCopyBundle() {
   ].join("");
 }
 
-function syntheticSshInstallSettingsBundle() {
-  return [
-    "function pn({action:e,disabled:t,hostId:n,installCodexPending:r,onAuthenticate:i,onInstallCodex:a,onReconnect:o,onRestart:s}){if(e==null)return null;switch(e.kind){case`install-codex`:return{disabled:t,label:e.label,loading:r,loadingLabel:e.loadingLabel,renderInElectronOnly:!0,tooltipText:e.tooltipText,onClick:()=>a(n)};case`login`:return{label:e.label,onClick:()=>i(n)};case`restart`:return{label:e.label,onClick:s};case`reconnect`:return{label:e.label,onClick:o};case`settings`:return null}}",
-    "let et=R(`install-remote-codex`),vt=(e,t,n)=>{globalThis.__states.push({hostId:e,state:t,error:n})},bt=e=>{et.mutate({hostId:e},{onSuccess:t=>{let{state:n,error:r}=t;vt(e,n,r)}})};",
-    "function un(e){let{connection:n,disabled:r,installCodexPending:i,onAuthenticate:a,onInstallCodex:s,onReconnect:c,onRestart:l}=e,{appServerVersion:p,error:m,installedCodexVersion:h,state:g}=De(n.hostId),_=n.displayName,j=Ne(),E=!1;let D=(n.kind||!E)&&(m?.code===`remote-codex-not-found`||m?.code===`update-required`),M;return M=j==null||D?null:pn({action:j.action,disabled:r,hostId:n.hostId,installCodexPending:i,onReconnect:c,onRestart:l,onAuthenticate:a,onInstallCodex:s}),M}",
-    "function nr(e,t){return e.displayName.localeCompare(t.displayName)}",
-  ].join("");
-}
-
 function syntheticLegacyWslAppServerLaunchBundle() {
   return "var Uz=`Codex Desktop`,Wz=[`-c`,`features.code_mode_host=true`,`app-server`,`--analytics-default-enabled`],Gz={appServerVersion:`current`};";
 }
@@ -416,24 +404,6 @@ function syntheticCurrentAppServerManagerSignalsBundle() {
   ].join("");
 }
 
-function syntheticCurrentRemoteNotificationLifecycleBundle() {
-  return [
-    "function Ul(e){return e}",
-    "function Of({resumeState:a,threadRuntimeStatus:o,threadSummary:r}){return{threadRuntimeStatus:a===`needs_resume`||o?.type===`notLoaded`?r?.threadRuntimeStatus??o??null:o??r?.threadRuntimeStatus??null,resumeState:a}}",
-    "function xm(e,t,n,r){let i=e.items.find(e=>e.id===t);return i?i.type===n?i:(r.error(`Item has unexpected type`,{safe:{itemId:t,type:i.type,expectedType:n},sensitive:{}}),null):(r.error(`Item not found in turn state`,{safe:{itemId:t},sensitive:{}}),null)}",
-    "function Sm(e,t){let n=e.items.findIndex(e=>e.id===t.id);n>=0?e.items[n]=t:e.items.push(t)}",
-    "function $dt(e,t,n,r){let{manager:i,notificationContext:a,createId:o}=e;switch(t.method){case`turn/started`:{let{threadId:n,turn:r}=t.params,s=Ul(n),c=a.threadStore.conversations.get(s);if(c==null){i.logger.error(`Received turn/started for unknown conversation`,{safe:{conversationId:s},sensitive:{}});break}i.updateConversationState(s,e=>{let t=e.turns.find(e=>e.turnId===r.id);t==null&&(t={turnId:r.id,status:r.status,items:[]},e.turns.push(t)),t.status=r.status});break}case`turn/completed`:{let{threadId:o,turn:s}=t.params,c=Ul(o);if(!a.threadStore.conversations.has(c)){a.unread.discardTurn(c,s.id),i.logger.error(`Received turn/completed for unknown conversation`,{safe:{conversationId:c},sensitive:{}});break}i.updateConversationState(c,e=>{let t=e.turns.find(e=>e.turnId===s.id);t&&(t.status=s.status,e.automationCapability=n)});break}}}",
-    "function Sdt(e,t,n){let{manager:r,notificationContext:i,createId:a}=e;switch(t.method){case`item/started`:{let{item:o,threadId:s,turnId:c,startedAtMs:l}=t.params,u=Ul(s);if(!i.threadStore.conversations.has(u)){r.logger.error(`Received item/started for unknown conversation`,{safe:{conversationId:u},sensitive:{}});break}r.updateConversationState(u,e=>{let t=e.turns.find(e=>e.turnId===c);t&&Sm(t,{...o,completed:!1,startedAtMs:l})});break}case`item/completed`:{let{item:o,threadId:s,turnId:c,completedAtMs:l}=t.params;let u=Ul(s);if(o.type===`commandExecution`&&i.itemStreamState.clearItemTerminalInputBuffer(u,o.id),i.threadStore.conversations.get(u)==null){r.logger.error(`Received item/completed for unknown conversation`,{safe:{conversationId:u},sensitive:{}});break}r.updateConversationState(u,t=>{let s=t.turns.find(e=>e.turnId===c);if(!s)return;let d={...o,completed:!0,completedAtMs:l};Sm(s,d)});break}}}",
-    "function bn(e,t){return{method:e,params:t}}function tLn(e,t,n,r,o){let a=bn(t,n),u=a.method===`turn/completed`&&r?.threadId===a.params.threadId&&r.turnId===a.params.turn.id?r:null,s={notification:a,automationCapability:u},{manager:c,notificationContext:l}=e;if(!(l.streamState.shouldIgnoreThreadMutationAsFollower(a.method,a.params,`notification`)||l.resumeNotificationBuffer.buffer(s,o)||l.threadStartedNotificationDeferral.bufferNotification(s,o)||o?.())){switch(a.method){case`turn/started`:case`turn/completed`:if($dt(e,a,u,o)===`deferred`)return;break;case`item/started`:case`item/completed`:if(Sdt(e,a,u)===`deferred`)return;break}l.events.emitNotification(a)}}",
-  ].join("");
-}
-
-function syntheticCurrentRemoteNotificationReductionBundle() {
-  const source = syntheticCurrentRemoteNotificationLifecycleBundle();
-  return source.slice(0, source.indexOf("function Of(")) +
-    source.slice(source.indexOf("function xm("));
-}
-
 function syntheticRemoteTerminalStatusBundle() {
   return [
     "function LQt({hasInProgressSideChat:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){return e?`loading`:i?.type===`systemError`?`error`:i?.type===`active`?`loading`:r===`needs_resume`?`idle`:n?`error`:t===!0?`loading`:`idle`}",
@@ -441,26 +411,6 @@ function syntheticRemoteTerminalStatusBundle() {
     "var IQt,AQt,OQt=e((()=>{G(),Lr(),Tt(),Ni(),kt(),IQt=s(V,(e,{get:t})=>{let n=t(rr,e);return LQt({hasInProgressSideChat:t(Qw,e),isResponseInProgress:t(ki,e),resumeState:t(si,e)??(n==null?null:`needs_resume`),threadRuntimeStatus:t(Or,e)??n?.threadRuntimeStatus??null,latestTurnHasSystemError:t(Ui,e)===!0})}),AQt=s(V,(e,{get:t})=>RQt({pendingRequestType:t(wr,e)?.type??null,requests:t(fi,e),resumeState:t(si,e),threadRuntimeStatus:t(Or,e)}))}))",
   ].join("");
 }
-
-test("runtime-status recovery accepts only one current thread-summary fallback", () => {
-  const current = "let x={threadRuntimeStatus:a===`needs_resume`||o?.type===`notLoaded`?r?.threadRuntimeStatus??o??null:o??r?.threadRuntimeStatus??null,resumeState:a}";
-  const legacy = "function Of(e,h){e.resumeState===`needs_resume`&&(e.threadRuntimeStatus=h)}";
-  const nearMiss = "let x={threadRuntimeStatus:a===`needs_resume`?r?.threadRuntimeStatus??null:o,resumeState:a}";
-
-  const accepted = captureWarnings(() =>
-    applyLinuxRemoteMobileConversationHydrationPatch(current),
-  );
-  assert.equal(accepted.result, current);
-  assert.equal(accepted.warnings.some((warning) => warning.includes("runtime-status fallback")), false);
-
-  for (const source of [legacy, nearMiss, current + current]) {
-    const { result, warnings } = captureWarnings(() =>
-      applyLinuxRemoteMobileConversationHydrationPatch(source),
-    );
-    assert.equal(result, source);
-    assert.ok(warnings.some((warning) => warning.includes("one current thread/list runtime-status fallback")));
-  }
-});
 
 function syntheticAppServerManagerStatusBundle() {
   return [
@@ -1051,7 +1001,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-control-client-revoke-setup-reset",
       "feature:remote-mobile-control:linux-remote-connections-refresh",
       "feature:remote-mobile-control:linux-remote-mobile-reasoning-summary-none",
-      "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration",
       "feature:remote-mobile-control:linux-remote-terminal-status-recovery",
       "feature:remote-mobile-control:linux-remote-control-status-read-guard",
       "feature:remote-mobile-control:linux-remote-control-status-wait",
@@ -1063,7 +1012,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "main-bundle",
       "main-bundle",
       "extracted-app:post-webview",
-      "webview-asset",
       "webview-asset",
       "webview-asset",
       "webview-asset",
@@ -1925,12 +1873,15 @@ test("Linux mobile setup dialog copy does not refer to Mac-only setup", () => {
   assert.equal(applyLinuxRemoteControlCopyPatch(patched), patched);
 });
 
-test("Linux remote-control settings UX patch applies settings copy and SSH install actions", () => {
-  const source = syntheticRemoteConnectionsSettingsCopyBundle() + syntheticSshInstallSettingsBundle();
+test("Linux remote-control settings UX preserves the retired upstream SSH installer", () => {
+  const retiredInstallAction =
+    "function ro({action:e,disabled:t,hostId:n,onAuthenticate:r,onReconnect:i,onRestart:a}){if(e==null)return null;switch(e.kind){case`install-codex`:return null;case`login`:return{label:e.label,onClick:()=>r(n)};case`restart`:return{label:e.label,onClick:a};case`reconnect`:return{label:e.label,onClick:i};case`settings`:return null}}";
+  const source = syntheticRemoteConnectionsSettingsCopyBundle() + retiredInstallAction;
   const patched = applyLinuxRemoteControlSettingsUxPatch(source);
 
   assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteControlSshInstallActions/);
+  assert.match(patched, /case`install-codex`:return null/);
+  assert.doesNotMatch(patched, /codexLinuxRemoteControlSshInstall/);
   assert.match(patched, /Control this Linux desktop/);
   assert.match(patched, /Devices that can control this Linux desktop/);
   assert.match(patched, /Keep this Linux desktop awake/);
@@ -1938,107 +1889,6 @@ test("Linux remote-control settings UX patch applies settings copy and SSH insta
   assert.doesNotMatch(patched, /Control this Mac/);
   assert.doesNotMatch(patched, /this Mac/);
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
-});
-
-test("Linux remote-control SSH install sends the local Desktop app-server version for fresh installs", () => {
-  const source = syntheticSshInstallSettingsBundle();
-  const patched = applyLinuxRemoteControlSettingsUxPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteControlSshInstallRelease/);
-  assert.match(patched, /codexLinuxRemoteControlSshInstallDefaultRelease/);
-  assert.match(patched, /De\(`local`\)/);
-  assert.match(patched, /release=codexLinuxRemoteControlSshInstallResolvedRelease/);
-  assert.match(patched, /onClick:\(\)=>a\(n,codexLinuxRemoteControlSshInstallReleaseTarget\)/);
-
-  const context = {
-    $: { c: () => [] },
-    __mutations: [],
-    __states: [],
-    globalThis: null,
-    w: "Restart",
-    ee: () => ({}),
-    fn: () => null,
-    dn: ({ error, state }) => ({
-      isRestartAvailableNotice: false,
-      statusError: error,
-      statusState: state,
-    }),
-    Ne: () => ({
-      action: {
-        kind: "install-codex",
-        label: "Install Codex",
-        loadingLabel: "Installing",
-      },
-    }),
-    oe: () => true,
-    De: (hostId) =>
-      hostId === "local"
-        ? { appServerVersion: "0.136.0", error: null, installedCodexVersion: null, state: "connected" }
-        : {
-            appServerVersion: null,
-            error: { code: "remote-codex-not-found" },
-            installedCodexVersion: null,
-            state: "error",
-          },
-    R: () => ({
-      mutate(request, options) {
-        context.__mutations.push(request);
-        options.onSuccess({ state: "connected", error: null });
-      },
-    }),
-  };
-  context.globalThis = context;
-  vm.runInNewContext(`${patched};let action=un({connection:{hostId:'remote-ssh:dev',displayName:'dev'},disabled:false,installCodexPending:false,onAuthenticate(){},onEdit(){},onInstallCodex:bt,onLogoutConnection(){},onRemove(){},onShowDetails(){},onToggleConnection(){}});action.onClick();`, context);
-
-  assert.deepEqual(JSON.parse(JSON.stringify(context.__mutations)), [{ hostId: "remote-ssh:dev", release: "0.136.0" }]);
-  assert.deepEqual(JSON.parse(JSON.stringify(context.__states)), [{ hostId: "remote-ssh:dev", state: "connected", error: null }]);
-  assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
-});
-
-test("Linux remote-control SSH install prefers update-required minRequiredVersion", () => {
-  const patched = applyLinuxRemoteControlSettingsUxPatch(syntheticSshInstallSettingsBundle());
-  const context = {
-    $: { c: () => [] },
-    __mutations: [],
-    __states: [],
-    globalThis: null,
-    w: "Restart",
-    ee: () => ({}),
-    fn: () => null,
-    dn: ({ error, state }) => ({
-      isRestartAvailableNotice: false,
-      statusError: error,
-      statusState: state,
-    }),
-    Ne: () => ({
-      action: {
-        kind: "install-codex",
-        label: "Update Codex",
-        loadingLabel: "Updating",
-      },
-    }),
-    oe: () => true,
-    De: (hostId) =>
-      hostId === "local"
-        ? { appServerVersion: "0.136.0", error: null, installedCodexVersion: null, state: "connected" }
-        : {
-            appServerVersion: "0.130.0",
-            error: { code: "update-required", currentVersion: "0.130.0", minRequiredVersion: "0.137.0" },
-            installedCodexVersion: "0.130.0",
-            state: "error",
-          },
-    R: () => ({
-      mutate(request, options) {
-        context.__mutations.push(request);
-        options.onSuccess({ state: "connected", error: null });
-      },
-    }),
-  };
-  context.globalThis = context;
-  vm.runInNewContext(`${patched};let action=un({connection:{hostId:'remote-ssh:dev',displayName:'dev'},disabled:false,installCodexPending:false,onAuthenticate(){},onEdit(){},onInstallCodex:bt,onLogoutConnection(){},onRemove(){},onShowDetails(){},onToggleConnection(){}});action.onClick();`, context);
-
-  assert.deepEqual(JSON.parse(JSON.stringify(context.__mutations)), [{ hostId: "remote-ssh:dev", release: "0.137.0" }]);
 });
 
 test("Linux remote-control settings UX patch bypasses outbound tab hide gate on Linux", () => {
@@ -2154,178 +2004,6 @@ test("Linux remote mobile Chrome bridge patch warns when browser-client needles 
 
   assert.equal(result, source);
   assert.ok(warnings.some((warning) => warning.includes("backend allowlist needles")));
-});
-
-test("Linux remote mobile hydration buffers and replays late notifications", async () => {
-  const source = syntheticCurrentRemoteNotificationLifecycleBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteMobilePendingNotifications/);
-  assert.match(patched, /codexLinuxRemoteMobileHydrateUnknownConversation/);
-  assert.doesNotMatch(patched, /Received (?:turn|item)\/(?:started|completed) for unknown conversation/);
-  assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
-
-  const context = {
-    CIn() {},
-    module: { exports: {} },
-  };
-  vm.runInNewContext(`${patched};module.exports={onNotification:tLn};`, context);
-  const { onNotification } = context.module.exports;
-
-  let releaseHydration;
-  const hydrationReady = new Promise((resolve) => {
-    releaseHydration = resolve;
-  });
-  const errors = [];
-  const emitted = [];
-  let hydrationCalls = 0;
-  const conversations = new Map();
-  const manager = {
-    getHostId() {
-      return "local";
-    },
-    logger: {
-      error(message) {
-        errors.push(message);
-      },
-    },
-    updateConversationState(conversationId, update) {
-      update(conversations.get(conversationId));
-    },
-  };
-  const notificationContext = {
-    events: {
-      emitNotification(notification) {
-        emitted.push(notification.method);
-      },
-    },
-    itemStreamState: {
-      clearItemTerminalInputBuffer() {},
-    },
-    resumeNotificationBuffer: {
-      buffer() {
-        return false;
-      },
-    },
-    streamState: {
-      shouldIgnoreThreadMutationAsFollower() {
-        return false;
-      },
-    },
-    threadStartedNotificationDeferral: {
-      bufferNotification() {
-        return false;
-      },
-    },
-    threadStore: {
-      conversations,
-      async hydrateActiveThread(threadId) {
-        hydrationCalls += 1;
-        await hydrationReady;
-        conversations.set(threadId, { mode: "default", turns: [] });
-      },
-    },
-    unread: {
-      discardTurn() {},
-    },
-  };
-  const reductionContext = {
-    automationTurns: {
-      delete() {},
-    },
-    createId() {},
-    manager,
-    notificationContext,
-  };
-  manager.onNotification = (method, params, automationCapability = null, notificationCallback) =>
-    onNotification(reductionContext, method, params, automationCapability, notificationCallback);
-  const callbackCalls = new Map();
-  const callback = (name, result = false) => () => {
-    callbackCalls.set(name, (callbackCalls.get(name) ?? 0) + 1);
-    return result;
-  };
-  const completionCapability = {
-    automationKind: "scheduled",
-    threadId: "thread-late",
-    turnId: "turn-1",
-  };
-  const notifications = [
-    ["turn/started", { threadId: "thread-late", turn: { id: "turn-1", status: "inProgress" } }, null, callback("initiating")],
-    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage" }, startedAtMs: 10 }, null, callback("buffered-started")],
-    ["item/started", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-suppressed", type: "agentMessage" }, startedAtMs: 11 }, null, callback("buffered-suppressed", true)],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-1", type: "agentMessage", text: "started then completed" }, completedAtMs: 20 }, null, callback("buffered-completed")],
-    ["item/completed", { threadId: "thread-late", turnId: "turn-1", item: { id: "item-2", type: "agentMessage", text: "completed without started" }, completedAtMs: 21 }, null, callback("buffered-completed-without-start")],
-    ["turn/completed", { threadId: "thread-late", turn: { id: "turn-1", status: "completed" } }, completionCapability, callback("buffered-turn-completed")],
-  ];
-
-  for (const [method, params, automationCapability, notificationCallback] of notifications) {
-    manager.onNotification(method, params, automationCapability, notificationCallback);
-  }
-
-  assert.equal(hydrationCalls, 1);
-  assert.equal(conversations.has("thread-late"), false);
-  assert.deepEqual(emitted, []);
-  assert.deepEqual([...callbackCalls], [["initiating", 1]]);
-
-  releaseHydration();
-  await hydrationReady;
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(
-    emitted,
-    notifications
-      .filter(([, params]) => params.item?.id !== "item-suppressed")
-      .map(([method]) => method),
-  );
-  assert.deepEqual([...callbackCalls], [
-    ["initiating", 1],
-    ["buffered-started", 1],
-    ["buffered-suppressed", 1],
-    ["buffered-completed", 1],
-    ["buffered-completed-without-start", 1],
-    ["buffered-turn-completed", 1],
-  ]);
-  assert.deepEqual(errors, []);
-  const hydratedConversation = conversations.get("thread-late");
-  assert.equal(hydratedConversation.turns.length, 1);
-  assert.equal(hydratedConversation.turns[0].status, "completed");
-  assert.equal(hydratedConversation.automationCapability, completionCapability);
-  assert.deepEqual(
-    Array.from(hydratedConversation.turns[0].items, (item) => ({
-      completed: item.completed,
-      id: item.id,
-      text: item.text,
-    })),
-    [
-      { completed: true, id: "item-1", text: "started then completed" },
-      { completed: true, id: "item-2", text: "completed without started" },
-    ],
-  );
-});
-
-test("Linux remote mobile hydration recovery rejects partial lifecycle drift", () => {
-  const source = syntheticCurrentRemoteNotificationLifecycleBundle().replace(
-    "Received item/started for unknown conversation",
-    "Received late item/started for unknown conversation",
-  );
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteMobileConversationHydrationPatch(source));
-
-  assert.doesNotMatch(result, /codexLinuxRemoteMobilePendingNotifications/);
-  assert.doesNotMatch(result, /codexLinuxRemoteMobileHydrateUnknownConversation/);
-  assert.ok(warnings.some((warning) => warning.includes("complete current remote notification recovery lifecycle")));
-});
-
-test("Linux remote mobile hydration rejects a current dispatcher without its callback byte-identically", () => {
-  const source = syntheticCurrentRemoteNotificationReductionBundle()
-    .replace("function tLn(e,t,n,r,o)", "function tLn(e,t,n,r)")
-    .replace("||o?.()", "");
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteMobileConversationHydrationPatch(source));
-
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("complete current remote notification recovery lifecycle")));
 });
 
 test("Linux remote-control status guard skips slow remote SSH status reads", async () => {
@@ -2538,19 +2216,16 @@ test("Linux remote-control status wait ignores matching atom initializer decoys"
   );
 });
 
-test("Linux remote-control settings UX patch warns when SSH release handling drifts after partial patching", () => {
-  const source = (syntheticRemoteConnectionsSettingsCopyBundle() + syntheticSshInstallSettingsBundle()).replace(
-    "installedCodexVersion:h",
-    "installedVersion:h",
-  );
+test("Linux remote-control settings UX patch does not require retired SSH installer anchors", () => {
+  const source = syntheticRemoteConnectionsSettingsCopyBundle();
   const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
 
   assert.notEqual(result, source);
   assert.match(result, /Control this Linux desktop/);
-  assert.ok(warnings.some((warning) => warning.includes("SSH install release needles")));
+  assert.deepEqual(warnings, []);
 });
 
-test("remote mobile feature patch report records feature metadata and partial warnings", () => {
+test("remote mobile feature patch report records feature metadata", () => {
   withTempFeatureRoot(["remote-mobile-control"], (root) => {
     const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-report-"));
     try {
@@ -2590,10 +2265,7 @@ test("remote mobile feature patch report records feature metadata and partial wa
       );
       fs.writeFileSync(
         path.join(assetsDir, "remote-connections-settings-test.js"),
-        (syntheticRemoteConnectionsSettingsCopyBundle() + syntheticSshInstallSettingsBundle()).replace(
-          "installedCodexVersion:h",
-          "installedVersion:h",
-        ),
+        syntheticRemoteConnectionsSettingsCopyBundle(),
       );
       fs.writeFileSync(
         path.join(assetsDir, OLD_APP_SERVER_MANAGER_ASSET),
@@ -2617,8 +2289,8 @@ test("remote mobile feature patch report records feature metadata and partial wa
       );
       assert.equal(settingsPatch.sourceKind, "feature");
       assert.equal(settingsPatch.featureId, "remote-mobile-control");
-      assert.equal(settingsPatch.status, "applied-with-warnings");
-      assert.ok(settingsPatch.warnings.some((warning) => warning.includes("SSH install release needles")));
+      assert.equal(settingsPatch.status, "already-applied");
+      assert.equal(settingsPatch.warnings, undefined);
 
       const enablementBridgePatch = report.patches.find(
         (patch) =>
