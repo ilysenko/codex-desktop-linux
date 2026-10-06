@@ -1,0 +1,16 @@
+{
+  "id": "start-minimized-to-tray",
+  "title": "Start Minimized to Tray",
+  "description": "Add opt-in General settings to start hidden in the existing Linux system tray, with a login-autostart-only option.",
+  "defaultEnabled": false,
+  "runtimeHooks": {
+    "launcher": {
+      "source": "launcher-hook.sh",
+      "name": "login.sh",
+      "mode": "0755"
+    }
+  },
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
