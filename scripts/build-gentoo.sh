@@ -10,10 +10,18 @@ PACKAGE_WITH_UPDATER="${PACKAGE_WITH_UPDATER:-0}"
 ICON_SOURCE="$(resolve_package_icon_source)"
 DESKTOP_TEMPLATE="$REPO_DIR/packaging/linux/codex-desktop.desktop"
 
-preflight() {
+check_updater_mode() {
     if package_with_updater_enabled; then
         error 'Gentoo requires PACKAGE_WITH_UPDATER=0; Portage owns native updates'
     fi
+}
+if [ "${1:-}" = --preflight-bootstrap ]; then
+    # Bootstrap must not depend on Node, which install-deps installs next.
+    check_updater_mode
+    exit 0
+fi
+preflight() {
+    check_updater_mode
     local enabled
     enabled="$(node "$SCRIPT_DIR/lib/linux-features.js" --enabled)"
     [ -z "$enabled" ] || error 'The initial Gentoo ebuild supports only the default empty feature configuration'
@@ -21,6 +29,17 @@ preflight() {
 preflight
 [ "${1:-}" != --preflight ] || exit 0
 ensure_app_layout
+node - "$APP_DIR" <<'NODE'
+const fs = require('fs'), path = require('path');
+const root = process.argv[2];
+const read = name => JSON.parse(fs.readFileSync(path.join(root, '.codex-linux', name)));
+const b = read('build-info.json'), s = read('linux-features-staged.json'), p = read('patch-report.json');
+const arrays = [b.linuxFeatures?.enabled, s.resources, s.runtimeHooks, p.enabledFeatures];
+if (arrays.some(a => !Array.isArray(a) || a.length) || !Array.isArray(p.patches) ||
+    p.patches.some(x => x.sourceKind === 'feature')) {
+  throw new Error('Gentoo requires an empty staged feature snapshot; rebuild the application with the default configuration');
+}
+NODE
 arch="$(official_payload_deb_architecture)"
 case "$(uname -m):$arch" in
     x86_64:amd64|aarch64:arm64|arm64:arm64) ;;

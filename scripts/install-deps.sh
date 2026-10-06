@@ -124,7 +124,7 @@ install_emerge() {
     local atom
     for atom in app-shells/bash app-misc/ca-certificates net-misc/curl \
         app-arch/dpkg dev-vcs/git app-crypt/gnupg dev-build/make \
-        '>=net-libs/nodejs-20[npm]' dev-lang/python sys-apps/util-linux app-arch/xz-utils; do
+        '>=net-libs/nodejs-22.12.0[npm]' dev-lang/python sys-apps/util-linux app-arch/xz-utils; do
         if [ -z "$(portageq match / "$atom")" ]; then
             missing+=("$atom")
         fi
@@ -172,5 +172,9 @@ done
 
 node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
 [ "$node_major" -ge 20 ] || fail "Node.js 20 or newer is required; found $(node --version)"
+if [ "$manager" = emerge ]; then
+    node -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>22||(major===22&&minor>=12)?0:1)' ||
+        fail "Gentoo ASAR tooling requires Node.js 22.12.0 or newer; found $(node --version)"
+fi
 
 info "ready: node $(node --version), architecture $(uname -m)"

@@ -57,6 +57,11 @@ cd codex-desktop-linux
 | NixOS 或其他 Nix 系统 | `nix run github:ilysenko/codex-desktop-linux` | 构建并运行 flake；参阅 [Nix](docs/nix.md) |
 | Atomic 桌面或其他发行版 | `make build-app && make appimage` | 生成不含原生更新器的本地 AppImage |
 
+Gentoo 的应用合并会忽略 `EMERGE_DEFAULT_OPTS`，从生成的 ebuild 安装载荷，而非复用
+二进制包缓存；不会修改全局 Portage 配置。
+Gentoo 本地 ebuild 安装路径已在 OpenRC 环境测试，尚未测试 Gentoo systemd
+环境；验证范围见[Gentoo 原生安装说明](docs/native-setup.md#gentoo-local-ebuild)。
+
 推荐的原生安装命令：
 
 ```bash

@@ -5,6 +5,11 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 FEATURES_ROOT="$REPO_DIR/linux-features"
 CONFIG_PATH="${CODEX_LINUX_FEATURES_CONFIG:-$FEATURES_ROOT/features.json}"
 
+if [ "$(bash "$REPO_DIR/scripts/lib/detect-package-format.sh")" = ebuild ]; then
+    printf '[installer] Gentoo currently supports default features only; running the canonical terminal bootstrap.\n' >&2
+    exec make -C "$REPO_DIR" bootstrap-native
+fi
+
 if command -v python3 >/dev/null 2>&1 \
     && { [[ -n "${DISPLAY:-}" ]] || [[ -n "${WAYLAND_DISPLAY:-}" ]]; } \
     && python3 "$REPO_DIR/scripts/feature-picker.py" --probe >/dev/null 2>&1; then

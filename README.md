@@ -61,6 +61,11 @@ cd codex-desktop-linux
 | NixOS or another Nix system | `nix run github:ilysenko/codex-desktop-linux` | Builds and runs the flake output; see [Nix](docs/nix.md) |
 | Atomic desktops or another distribution | `make build-app && make appimage` | Produces a local AppImage without the native updater |
 
+Gentoo's application merge ignores `EMERGE_DEFAULT_OPTS` to install through the
+generated ebuild rather than reuse a binary package. Global Portage settings are unchanged.
+Gentoo's local ebuild path has been tested on OpenRC; a Gentoo systemd
+environment has not been tested. See [Gentoo validation scope](docs/native-setup.md#gentoo-local-ebuild).
+
 The recommended native installation is:
 
 ```bash

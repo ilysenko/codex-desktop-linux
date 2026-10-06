@@ -1,6 +1,20 @@
 #!/bin/bash
 # Stable-only dependency resolution in an empty VDB, including build-host deps.
 set -Eeuo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib/gentoo-audit.sh"
+gentoo_chroot_profile() {
+    local repository profile
+    repository="$(realpath "$1")"
+    profile="$(realpath "$2")"
+    case "$profile" in
+        "$repository"/profiles/*) printf '/var/db/repos/gentoo/%s\n' "${profile#"$repository"/}" ;;
+        *) echo 'Stable audit requires a profile inside the Gentoo repository' >&2; return 1 ;;
+    esac
+}
+if [ "${1:-}" = --map-profile ]; then
+    gentoo_chroot_profile "$2" "$3"
+    exit
+fi
 [ "$(id -u)" -eq 0 ] || { echo 'Run via scripts/sudo-with-alert.sh' >&2; exit 1; }
 
 if [ "${1:-}" = --namespace ]; then
@@ -14,7 +28,7 @@ if [ "${1:-}" = --namespace ]; then
         mount --bind "$source" "$target"
         mount -o remount,bind,ro "$target"
     done
-    for name in bin sbin lib lib64; do ln -s "$(readlink "/$name")" "$root/$name"; done
+    gentoo_audit_usr_layout "$root"
     mknod -m 0666 "$root/dev/null" c 1 3
     mknod -m 0666 "$root/dev/zero" c 1 5
     mknod -m 0666 "$root/dev/random" c 1 8
@@ -55,7 +69,7 @@ PY
     resolve --onlydeps "=app-misc/codex-desktop-$version::codex-desktop-local"
     echo '[gentoo-stable] Bootstrap build dependencies'
     resolve app-shells/bash app-misc/ca-certificates net-misc/curl app-arch/dpkg \
-        dev-vcs/git app-crypt/gnupg dev-build/make '>=net-libs/nodejs-20[npm]' \
+        dev-vcs/git app-crypt/gnupg dev-build/make '>=net-libs/nodejs-22.12.0[npm]' \
         dev-lang/python sys-apps/util-linux app-arch/xz-utils
     echo '[gentoo-stable] Both stable ::gentoo dependency plans succeeded'
     exit 0
@@ -64,8 +78,8 @@ fi
 repository="$(realpath "${1:?Usage: gentoo_stable_dependencies.sh /path/to/generated/repository}")"
 arch="$(portageq envvar ARCH)"
 chost="$(portageq envvar CHOST)"
-gentoo="$(portageq get_repo_path / gentoo)"
-profile="$(readlink -f /etc/portage/make.profile)"
+gentoo="$(realpath "$(portageq get_repo_path / gentoo)")"
+profile="$(gentoo_chroot_profile "$gentoo" /etc/portage/make.profile)"
 export TMPDIR="${TMPDIR:-/var/tmp}"
 scratch="$(mktemp -d "$TMPDIR/gentoo-stable-deps.XXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT

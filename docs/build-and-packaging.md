@@ -10,7 +10,8 @@ for updater/native helper release builds. Install common dependencies with:
 bash scripts/install-deps.sh
 ```
 
-The dependency installer supports apt, dnf/dnf5, zypper, and pacman. On
+The dependency installer supports apt, dnf/dnf5, zypper, pacman, and Gentoo
+Portage. On
 rpm-ostree systems, build inside Toolbox or Distrobox and copy the resulting
 AppImage or native package out. Debian-derived systems use the pinned
 NodeSource keyring when a newer Node.js is required; the script never pipes a
@@ -95,6 +96,7 @@ First build `codex-app/`, then choose an output:
 make deb
 make rpm
 make pacman
+make gentoo
 make appimage
 ```
 
@@ -120,9 +122,14 @@ of an insecure automatic fallback.
 
 ### Package selection and installation
 
-`make package` detects deb, RPM, or pacman from `/etc/os-release` and available
+`make package` detects deb, RPM, pacman, or a Gentoo local ebuild from
+`/etc/os-release` and available
 tools. `make install` selects the newest matching artifact from `dist/` and
-uses the distribution package manager. Build and install can also be split:
+uses the distribution package manager. Gentoo defaults to a manual-update local
+ebuild with no enabled features; its payload is independently checked against
+signed stable metadata before Portage installation. See
+[Gentoo local ebuild](native-setup.md#gentoo-local-ebuild) for restrictions and
+validation scope. Build and install can also be split:
 
 ```bash
 make build-app
@@ -161,7 +168,7 @@ launcher still enforces the sandbox policy.
 | `make install-native` | Build helpers/app/package and install for this distro |
 | `make update-native` | Fast-forward the checkout and perform a native reinstall |
 | `make run-app` | Run the generated app tree |
-| `make deb\|rpm\|pacman\|appimage` | Build a specific artifact |
+| `make deb\|rpm\|pacman\|gentoo\|appimage` | Build a specific artifact |
 | `make clean-dist` | Remove generated package outputs |
 | `make clean-state` | Remove updater config/state/cache; rollback is lost |
 
@@ -172,7 +179,7 @@ launcher still enforces the sandbox policy.
 | `UPSTREAM_DEB` | signed stable discovery | Use an explicitly trusted local official package |
 | `APP_DIR` | `./codex-app` | Generated active app directory |
 | `NEXT_APP_DIR` | `./codex-app-next` | Side-by-side candidate directory |
-| `PACKAGE_WITH_UPDATER` | `1` | Include the native updater when supported |
+| `PACKAGE_WITH_UPDATER` | `1` (`0` on Gentoo) | Include the native updater when supported |
 | `PACKAGE_VERSION` | upstream-derived | Override wrapper package version for release work |
 | `MAX_BUILD_THREADS` | `0` | Limit Cargo and package-compression jobs; `0` uses tool defaults |
 | `CODEX_LINUX_FEATURES_CONFIG` | local or example config | Select the feature configuration |

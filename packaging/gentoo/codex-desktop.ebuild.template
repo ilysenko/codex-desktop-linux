@@ -24,6 +24,7 @@ RDEPEND="
 	sys-apps/grep
 	sys-apps/sed
 	sys-libs/glibc
+	sys-devel/gcc[cxx]
 	virtual/zlib
 	virtual/udev
 	app-arch/xz-utils
@@ -36,7 +37,7 @@ RDEPEND="
 	app-crypt/tpm2-tss
 	media-libs/alsa-lib
 	media-libs/libglvnd
-	media-libs/mesa
+	media-libs/mesa[opengl(+),gbm(+)]
 	net-print/cups
 	app-accessibility/at-spi2-core
 	x11-libs/cairo
@@ -101,6 +102,13 @@ pkg_preinst() {
 
 pkg_postinst() {
 	xdg_pkg_postinst
+	# Match other native formats: apply the profile immediately when AppArmor
+	# is active. Never reload host policy while installing into another ROOT.
+	if [[ ${ROOT} == / ]] && command -v aa-enabled >/dev/null 2>&1 &&
+		command -v apparmor_parser >/dev/null 2>&1 && aa-enabled >/dev/null 2>&1; then
+		apparmor_parser -r -W -T "${EROOT}/etc/apparmor.d/codex-desktop" >/dev/null 2>&1 ||
+			ewarn "Could not reload codex-desktop AppArmor policy; reload it before sandboxed launch"
+	fi
 	elog "Launch ChatGPT Community with /usr/bin/codex-desktop."
 	elog "User-local AppImage launchers may still shadow this command."
 	elog "Update with make bootstrap-native; this package omits the updater."

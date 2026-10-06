@@ -17,7 +17,8 @@ resolve it through signed stable APT metadata rather than trusting the moving
 4. If no core or feature ASAR descriptor is active, `resources/app.asar` is
    never unpacked and its SHA-256 must equal upstream. Otherwise a temporary
    copy is patched, deterministically repacked, and reported.
-5. Package builders transform the same staged tree into deb, RPM, pacman, or
+5. Package builders transform the same staged tree into deb, RPM, pacman, a
+   local Gentoo ebuild/payload, or
    AppImage output. Nix extracts the architecture-specific official package
    directly and wraps its ELF runtime.
 

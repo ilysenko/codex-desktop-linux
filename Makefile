@@ -17,7 +17,7 @@ DEB_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)_*.deb
 RPM_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)-*.rpm
 PACMAN_GLOB := $(CURDIR)/dist/$(PACKAGE_NAME)-[0-9]*.pkg.tar.*
 .DEFAULT_GOAL := help
-.PHONY: native-preflight
+.PHONY: native-preflight native-bootstrap-preflight
 
 UPSTREAM_ARG = $(if $(strip $(UPSTREAM_DEB)),"$(UPSTREAM_DEB)",)
 
@@ -97,7 +97,10 @@ guided-install:
 native-preflight:
 	@if [ "$$($(PACKAGE_FORMAT_DETECTOR))" = ebuild ]; then PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" bash scripts/build-gentoo.sh --preflight; fi
 
-bootstrap-native: native-preflight
+native-bootstrap-preflight:
+	@if [ "$$($(PACKAGE_FORMAT_DETECTOR))" = ebuild ]; then PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" bash scripts/build-gentoo.sh --preflight-bootstrap; fi
+
+bootstrap-native: native-bootstrap-preflight
 	bash scripts/install-deps.sh
 	PATH="$$HOME/.cargo/bin:$$PATH" $(MAKE) install-native
 
@@ -131,7 +134,7 @@ appimage:
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" ./scripts/build-appimage.sh
 
 gentoo:
-	PACKAGE_WITH_UPDATER="$(PACKAGE_WITH_UPDATER)" APP_DIR_OVERRIDE="$(APP_DIR)" bash scripts/build-gentoo.sh
+	PACKAGE_WITH_UPDATER="$(if $(filter file default undefined,$(origin PACKAGE_WITH_UPDATER)),0,$(PACKAGE_WITH_UPDATER))" APP_DIR_OVERRIDE="$(APP_DIR)" bash scripts/build-gentoo.sh
 
 package:
 	@$(resolve_package_format); \

@@ -139,11 +139,18 @@ make bootstrap-native UPSTREAM_DEB=/absolute/path/chatgpt_<version>_amd64.deb
 
 The first Gentoo implementation supports glibc hosts, the default empty feature config and
 defaults to `PACKAGE_WITH_UPDATER=0`. Enabled features or an explicitly enabled
-updater are rejected before installing dependencies. Portage owns the files in
+updater are rejected before building the application. The updater-mode check
+precedes dependency installation; feature checks run after Node is available.
+On Gentoo, `./install-community` uses this canonical terminal bootstrap instead
+of the graphical feature wizard. Gentoo requires Node.js 22.12.0 or newer with
+npm for the default ASAR tooling. Portage owns the files in
 `/opt/codex-desktop`, `/usr/bin/codex-desktop`, and the community desktop entry
 and icon. It does not install the official `chatgpt` identity or maintainer
 scripts. The application is selected in Portage's world set so depclean does
-not remove it. Update by rerunning the same Make command with the latest signed
+not remove it. The application merge ignores `EMERGE_DEFAULT_OPTS` and disables
+binary-package reuse/fetching so it installs the verified local payload through
+the generated ebuild; this does not change global Portage configuration.
+Update by rerunning the same Make command with the latest signed
 stable package.
 
 The regular-user builder stages the existing shared native layout, revalidates
@@ -160,6 +167,11 @@ and registers `/etc/portage/repos.conf/codex-desktop-local.conf`. It creates
 package-scoped keyword/license files named `codex-desktop-local` under
 `package.accept_keywords` and `package.license`; global Portage policy is not
 changed. Unmanaged files at these exact paths are never overwritten.
+All protected targets are checked before deployment begins. Repository,
+configuration, and newly introduced distfiles are staged beside their targets;
+a failed deployment or Portage invocation restores the previous generation.
+Concurrent installers are serialized, and recovery copies are retained if
+restoration itself fails.
 
 The repository's scripts and ebuild template are MIT-licensed. This does not
 relicense OpenAI's application payload or its third-party components. Their
@@ -203,6 +215,12 @@ temporary `dev-python/pillow -truetype` source-bootstrap setting in this isolate
 configuration; no host USE settings change. It tests dependency visibility and
 resolution, not compilation of the stable libraries or runtime on a separately
 installed stable Gentoo system. Scratch is removed when the audit exits.
+
+The stable-only audit was run once on 2026-10-03 for official package
+`26.930.31730` against that day's Gentoo tree and machine state, before the
+subsequent `emerge -uvDN @world`; it has not been rerun for the updated host or
+newer official packages. Local install/launch testing uses OpenRC and KDE Plasma
+Wayland; a Gentoo systemd environment has not been tested.
 
 ## Native helper builds
 
