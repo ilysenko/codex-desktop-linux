@@ -113,6 +113,46 @@ parallel sessions.
 In the desktop menu, the custom build is **ChatGPT Community** with a blue `C`;
 the unqualified **ChatGPT** entry is OpenAI's package.
 
+## Sign-in fails with Cloudflare WARP
+
+The browser callback may show:
+
+```text
+Token exchange failed: error sending request for url (https://auth.openai.com/oauth/token)
+Error code: token_exchange_failed
+```
+
+[Issue #1557](https://github.com/ilysenko/codex-desktop-linux/issues/1557)
+reports this failure on Fedora 44 with bundled codex-cli 0.160.1 while
+Cloudflare WARP runs in `DnsOverHttps` mode. On the reporter's machine, sign-in
+succeeded with WARP disconnected and failed again with WARP connected.
+The error alone does not establish a DNS failure or its exact cause.
+
+If your network permits temporarily disconnecting WARP, try the workaround
+reported in that issue:
+
+1. Disconnect WARP:
+
+   ```bash
+   warp-cli disconnect
+   ```
+
+2. Retry and complete sign-in in **ChatGPT Community**.
+3. Reconnect WARP after the sign-in attempt, even if it still fails:
+
+   ```bash
+   warp-cli connect
+   ```
+
+The bundled CLI and sign-in implementation come from the official OpenAI
+package. The reporter filed the underlying connection problem in
+[openai/codex#51405](https://github.com/openai/codex/issues/51405).
+
+If the workaround does not help, include the application, bundled CLI, and
+WARP versions, the WARP mode, whether sign-in works with WARP disconnected,
+and relevant connection error messages in a follow-up report. Remove tokens
+and personal information from any shared diagnostics.
+
 ## AppImage opens from Flatpak Chrome but the extension cannot connect
 
 The optional `flatpak-chrome-native-messaging` feature supports the
