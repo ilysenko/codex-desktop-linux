@@ -19,6 +19,13 @@ function runPackageCommon(script, appDir, sourceRoot = repoRoot) {
   ].join("\n")], { encoding: "utf8" });
 }
 
+function copyFeatureHelpers(sourceRoot, targetRoot) {
+  fs.mkdirSync(path.join(targetRoot, "scripts/lib"), { recursive: true });
+  for (const name of ["linux-features.js", "gentoo-dependencies.js"]) {
+    fs.copyFileSync(path.join(sourceRoot, "scripts/lib", name), path.join(targetRoot, "scripts/lib", name));
+  }
+}
+
 test("updater binary source recovers the Linux deleted-path marker", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-updater-deleted-path-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -210,11 +217,7 @@ test("update-builder carries the shared feature compatibility registry", (t) => 
     JSON.parse(fs.readFileSync(path.join(builder, "linux-features/compatibility.json"), "utf8")),
     JSON.parse(fs.readFileSync(path.join(repoRoot, "linux-features/compatibility.json"), "utf8")),
   );
-  fs.mkdirSync(path.join(builder, "scripts/lib"), { recursive: true });
-  fs.copyFileSync(
-    path.join(repoRoot, "scripts/lib/linux-features.js"),
-    path.join(builder, "scripts/lib/linux-features.js"),
-  );
+  copyFeatureHelpers(repoRoot, builder);
   assert.equal(
     childProcess.execFileSync(
       process.execPath,
@@ -237,11 +240,7 @@ test("update-builder preserves enabled local features for future rebuilds", (t) 
   const sourceRoot = path.join(root, "source");
   const featuresRoot = path.join(sourceRoot, "linux-features");
   const builder = path.join(root, "builder");
-  fs.mkdirSync(path.join(sourceRoot, "scripts/lib"), { recursive: true });
-  fs.copyFileSync(
-    path.join(repoRoot, "scripts/lib/linux-features.js"),
-    path.join(sourceRoot, "scripts/lib/linux-features.js"),
-  );
+  copyFeatureHelpers(repoRoot, sourceRoot);
   fs.mkdirSync(path.join(featuresRoot, "local/selected-feature"), { recursive: true });
   fs.mkdirSync(path.join(featuresRoot, "local/disabled-feature"), { recursive: true });
   fs.mkdirSync(path.join(featuresRoot, "selected-feature"));
@@ -268,10 +267,7 @@ test("update-builder preserves enabled local features for future rebuilds", (t) 
   assert.equal(fs.existsSync(path.join(builder, "linux-features/selected-feature")), false);
   assert.equal(fs.existsSync(path.join(builder, "linux-features/local/disabled-feature")), false);
   fs.mkdirSync(path.join(builder, "scripts/lib"), { recursive: true });
-  fs.copyFileSync(
-    path.join(sourceRoot, "scripts/lib/linux-features.js"),
-    path.join(builder, "scripts/lib/linux-features.js"),
-  );
+  copyFeatureHelpers(sourceRoot, builder);
   assert.equal(
     childProcess.execFileSync(
       process.execPath,

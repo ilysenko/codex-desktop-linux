@@ -15,8 +15,17 @@ LICENSE="all-rights-reserved MIT"
 SLOT="0"
 KEYWORDS="~__ARCH__"
 RESTRICT="fetch bindist mirror strip"
-BDEPEND="app-arch/xz-utils"
-IDEPEND="dev-util/desktop-file-utils x11-misc/shared-mime-info"
+BDEPEND="
+	app-arch/tar
+	app-arch/xz-utils
+__FEATURE_BDEPEND__
+"
+__FEATURE_DEPEND_BLOCK__
+IDEPEND="
+	dev-util/desktop-file-utils
+	x11-misc/shared-mime-info
+__FEATURE_IDEPEND__
+"
 RDEPEND="
 	app-shells/bash
 	sys-apps/coreutils
@@ -55,6 +64,7 @@ RDEPEND="
 	x11-libs/libXrandr
 	x11-libs/pango
 	x11-misc/xdg-utils
+__FEATURE_RDEPEND__
 "
 QA_PREBUILT="opt/codex-desktop/*"
 # GTK3 is the required Linux UI backend. Qt shims are optional alternatives.
@@ -77,6 +87,13 @@ fi
 
 pkg_nofetch() {
 	eerror "This payload is built locally; run make bootstrap-native in codex-desktop-linux."
+}
+
+src_unpack() {
+	# This is an accepted binary image, not source to permission-normalize.
+	# Default unpack applies the build user's umask and chmod-lite afterwards.
+	# Preserve declared resource modes, but never restore archive ownership.
+	tar --no-same-owner --same-permissions -xJf "${DISTDIR}/${A}" -C "${WORKDIR}" || die
 }
 
 src_prepare() {

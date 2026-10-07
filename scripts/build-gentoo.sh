@@ -22,24 +22,13 @@ if [ "${1:-}" = --preflight-bootstrap ]; then
 fi
 preflight() {
     check_updater_mode
-    local enabled
-    enabled="$(node "$SCRIPT_DIR/lib/linux-features.js" --enabled)"
-    [ -z "$enabled" ] || error 'The initial Gentoo ebuild supports only the default empty feature configuration'
+    node "$SCRIPT_DIR/lib/gentoo-feature-support.js" --preflight >/dev/null
 }
 preflight
 [ "${1:-}" != --preflight ] || exit 0
 ensure_app_layout
-node - "$APP_DIR" <<'NODE'
-const fs = require('fs'), path = require('path');
-const root = process.argv[2];
-const read = name => JSON.parse(fs.readFileSync(path.join(root, '.codex-linux', name)));
-const b = read('build-info.json'), s = read('linux-features-staged.json'), p = read('patch-report.json');
-const arrays = [b.linuxFeatures?.enabled, s.resources, s.runtimeHooks, p.enabledFeatures];
-if (arrays.some(a => !Array.isArray(a) || a.length) || !Array.isArray(p.patches) ||
-    p.patches.some(x => x.sourceKind === 'feature')) {
-  throw new Error('Gentoo requires an empty staged feature snapshot; rebuild the application with the default configuration');
-}
-NODE
+feature_plan="$(node "$SCRIPT_DIR/lib/gentoo-feature-support.js" "$APP_DIR")"
+printf '%s\n' "$feature_plan" | python3 "$SCRIPT_DIR/lib/validate-gentoo-dependencies.py"
 arch="$(official_payload_deb_architecture)"
 case "$(uname -m):$arch" in
     x86_64:amd64|aarch64:arm64|arm64:arm64) ;;
@@ -68,11 +57,25 @@ process.stdout.write(m.version);
 NODE
 )"
 staging="$scratch/staging"
+PACKAGE_VERSION="$version"
 stage_common_package_files "$staging"
 write_launcher_stub "$staging"
 mkdir -p "$staging/usr/share/doc/codex-desktop-$version"
 cp "$REPO_DIR/LICENSE" "$staging/usr/share/doc/codex-desktop-$version/LICENSE.wrapper"
+stage_linux_feature_package_resources "$staging" ebuild
+run_linux_feature_package_hooks "$staging" ebuild
 normalize_package_payload_permissions "$staging"
+node "$SCRIPT_DIR/lib/gentoo-feature-support.js" --restore-permissions "$staging/opt/$PACKAGE_NAME"
+restore_linux_feature_package_resource_permissions "$staging" ebuild
+# Hooks are user-space staging operations, never Portage/root lifecycle code.
+# Reject roots that src_install would otherwise silently omit.
+for staged_root in "$staging"/* "$staging"/.[!.]* "$staging"/..?*; do
+    [ -e "$staged_root" ] || [ -L "$staged_root" ] || continue
+    case "$(basename "$staged_root")" in
+        opt|usr|etc) ;;
+        *) error "Unsupported Gentoo package staging root: $staged_root" ;;
+    esac
+done
 
 repository="$scratch/repository"
 package="$repository/app-misc/codex-desktop"
@@ -86,8 +89,16 @@ payload_sha="$(sha256sum "$scratch/payload.tar.xz" | cut -d ' ' -f 1)"
 payload="codex-desktop-$version-$arch-payload-$payload_sha.tar.xz"
 payload_uri="codex-desktop-\${PV}-$arch-payload-$payload_sha.tar.xz"
 mv "$scratch/payload.tar.xz" "$scratch/$payload"
-sed -e "s/__ARCH__/$arch/g" -e "s/__PAYLOAD__/$payload_uri/g" \
-    "$REPO_DIR/packaging/gentoo/codex-desktop.ebuild.template" > "$package/codex-desktop-$version.ebuild"
+printf '%s\n' "$feature_plan" > "$scratch/feature-plan.json"
+node - "$SCRIPT_DIR/lib/gentoo-feature-support.js" \
+    "$REPO_DIR/packaging/gentoo/codex-desktop.ebuild.template" "$scratch/feature-plan.json" \
+    "$arch" "$payload_uri" > "$package/codex-desktop-$version.ebuild" <<'NODE'
+const fs = require('node:fs');
+const [helper, template, plan, arch, payload] = process.argv.slice(2);
+process.stdout.write(require(helper).renderGentooEbuild(
+  fs.readFileSync(template, 'utf8'), JSON.parse(fs.readFileSync(plan)), arch, payload,
+));
+NODE
 printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">\n<pkgmetadata><upstream><remote-id type="github">ilysenko/codex-desktop-linux</remote-id></upstream></pkgmetadata>\n' > "$package/metadata.xml"
 node - "$package" "$scratch/$payload" <<'NODE'
 const fs = require('fs'), path = require('path'), crypto = require('crypto');

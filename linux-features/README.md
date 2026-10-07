@@ -140,7 +140,7 @@ wrapper process that remains alive through the matching after-exit hooks.
 `packageResources` stage feature-owned regular files outside the app directory
 for native packages. Their targets cannot overlap the packaged app directory,
 and their quoted octal modes cannot include special permission bits.
-`packageDependencies` adds per-format runtime dependencies. Both apply only
+`packageDependencies` adds deb/RPM/pacman/ebuild runtime dependencies. Both apply only
 while their feature is enabled; see the architecture document for the field
 contract. Native package builds also strictly validate the current enabled set
 and require it to match the staged app's `.codex-linux/build-info.json`; rebuild
@@ -149,6 +149,10 @@ the app after changing the feature config.
 `packageHooks` run after declarative native package resources are staged and
 receive `PACKAGE_FORMAT`,
 `PACKAGE_ROOT`, `PACKAGE_NAME`, `PACKAGE_VERSION`, and `APP_DIR`.
+They are regular-user build-time hooks, not privileged installation scripts.
+Gentoo additionally requires an audited `gentoo.supported` declaration and
+separates bootstrap/build/runtime/install dependencies; see the
+[Gentoo feature contract](../docs/linux-features-architecture.md#gentoo-feature-contract).
 
 Feature patching uses only `entrypoints.patchDescriptors`. Descriptor modules
 may export an array directly or `{ descriptors: [...] }`; `.patches`,

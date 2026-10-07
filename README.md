@@ -63,6 +63,9 @@ cd codex-desktop-linux
 
 Gentoo's application merge ignores `EMERGE_DEFAULT_OPTS` to install through the
 generated ebuild rather than reuse a binary package. Global Portage settings are unchanged.
+Gentoo has a phase-aware dependency and package-resource framework for future
+audited features; no repository feature is declared supported yet. See the
+[Gentoo feature contract](docs/linux-features-architecture.md#gentoo-feature-contract).
 Gentoo's local ebuild path has been tested on OpenRC; a Gentoo systemd
 environment has not been tested. See [Gentoo validation scope](docs/native-setup.md#gentoo-local-ebuild).
 

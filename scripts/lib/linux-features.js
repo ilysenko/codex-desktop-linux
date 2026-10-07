@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { validateGentooAtom } = require("./gentoo-dependencies.js");
 
 const FEATURE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const LOCAL_FEATURES_DIR = "local";
@@ -28,7 +29,7 @@ const RUNTIME_HOOK_DIRS = {
 };
 const STAGED_FEATURE_MANIFEST_RELATIVE_PATH = ".codex-linux/linux-features-staged.json";
 const BUILD_INFO_RELATIVE_PATH = ".codex-linux/build-info.json";
-const SUPPORTED_PACKAGE_FORMATS = new Set(["deb", "rpm", "pacman"]);
+const SUPPORTED_PACKAGE_FORMATS = new Set(["deb", "rpm", "pacman", "ebuild"]);
 const PACKAGE_DEPENDENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9+._:@()=<>~\/-]*$/;
 const RPM_ELF_DEPENDENCY_SUFFIX = "%{codex_elf_suffix}";
 const PACKAGE_PATH_COMPONENT_PATTERN = /^(?!-)(?!\.\.?$)[A-Za-z0-9._+@:-]+$/;
@@ -1055,16 +1056,14 @@ function stageEnabledLinuxFeatureInstall(appDir, options = {}) {
 }
 
 function enabledLinuxFeaturePackageHooks(options = {}) {
-  const packageFormat = options.packageFormat ?? null;
+  const packageFormat = options.packageFormat == null ? null : normalizePackageFormat(options.packageFormat);
   const selectedOptions = options.appDir == null
     ? options
     : packageFeatureOptions(options.appDir, options);
   const hooks = [];
   for (const feature of loadEnabledLinuxFeatures(selectedOptions)) {
     for (const [index, entry] of normalizeEntryList(feature.manifest.packageHooks, "packageHook", feature).entries()) {
-      const formats = entry.formats == null
-        ? []
-        : normalizeFeatureIdList(entry.formats, "packageHook formats", feature.id);
+      const formats = normalizePackageFormats(entry.formats, feature.id, `package hook ${index + 1}`);
       if (packageFormat != null && formats.length > 0 && !formats.includes(packageFormat)) {
         continue;
       }
@@ -1158,6 +1157,11 @@ function normalizePackageDependencies(feature) {
     }
     const normalized = [];
     for (const entry of entries) {
+      if (format === "ebuild") {
+        validateGentooAtom(entry, `Linux feature '${feature.id}' ebuild package dependency`);
+        if (!normalized.includes(entry)) normalized.push(entry);
+        continue;
+      }
       const dependencyToken = typeof entry === "string"
         && format === "rpm"
         && entry.endsWith(RPM_ELF_DEPENDENCY_SUFFIX)

@@ -137,10 +137,13 @@ export TMPDIR="${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-dev/tmp"
 make bootstrap-native UPSTREAM_DEB=/absolute/path/chatgpt_<version>_amd64.deb
 ```
 
-The first Gentoo implementation supports glibc hosts, the default empty feature config and
-defaults to `PACKAGE_WITH_UPDATER=0`. Enabled features or an explicitly enabled
-updater are rejected before building the application. The updater-mode check
-precedes dependency installation; feature checks run after Node is available.
+The Gentoo implementation supports glibc hosts and defaults to
+`PACKAGE_WITH_UPDATER=0`. Only features explicitly audited with
+`gentoo.supported: true` are accepted; none of the repository features has this
+declaration yet, so the supported repository configuration remains empty.
+Unsupported features or an explicitly enabled updater are rejected before
+building the application. The updater-mode check precedes dependency
+installation; feature checks run after Node is available.
 On Gentoo, `./install-community` uses this canonical terminal bootstrap instead
 of the graphical feature wizard. Gentoo requires Node.js 22.12.0 or newer with
 npm for the default ASAR tooling. Portage owns the files in
@@ -159,6 +162,28 @@ local deb input), and generates `dist/gentoo/repository/`. `make gentoo` perform
 this packaging step alone after `make build-app`. The generated ebuild unpacks
 its Manifest-checked local DISTDIR payload into Portage's image directory; it does not
 run `make`, download upstream sources, invoke sudo, or bypass Portage.
+Binary-payload extraction explicitly preserves modes rather than using the
+source-oriented default `unpack` permission normalization; archive ownership
+is not restored.
+
+The [Gentoo feature contract](linux-features-architecture.md#gentoo-feature-contract)
+separates regular-user `bootstrap` dependencies from the generated ebuild's
+`BDEPEND`, `DEPEND`, `RDEPEND`, and `IDEPEND`. Bootstrap resolves enabled feature
+build tools before `make install-native` compiles helpers or stages the app;
+these tools do not become package runtime dependencies. Version, slot/subslot,
+and unconditional USE constraints are supported, and the host's EAPI 8 Portage
+parser validates all declared atoms. Masks, keywords, licenses, and USE policy
+for feature dependencies are not automatically relaxed. Direct
+`make install-native` assumes bootstrap tools are already installed.
+Gentoo packaging requires Python with Portage, as supplied on a Gentoo host.
+
+Audited features may use `packageResources` and ordinary user-space
+`packageHooks` with `formats: ["ebuild"]`. External resources must be below
+`usr/` or `etc/`, outside `/opt/codex-desktop`; their modes survive packaging
+and Portage's image copy. Hooks run after resource staging and before permission
+normalization, not as root during merge. A hook failure or unsupported staging
+root rejects packaging. No feature hook is embedded in `pkg_*`, and this
+framework does not add updater services or systemd-dependent integration.
 
 Dependency installation and repository deployment use the same
 `scripts/sudo-with-alert.sh` mechanism as other native formats. Installation

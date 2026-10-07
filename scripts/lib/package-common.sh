@@ -973,6 +973,7 @@ stage_update_builder_bundle() {
         candidate-promotion.py \
         install-helpers.sh \
         linux-features.js \
+        gentoo-dependencies.js \
         linux-features.sh \
         linux-target-context.js \
         package-common.sh \

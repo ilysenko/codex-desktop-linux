@@ -136,6 +136,28 @@ install_emerge() {
     fi
 }
 
+install_emerge_feature_dependencies() {
+    local plan atoms atom
+    local -a missing=()
+    plan="$(node "$SCRIPT_DIR/lib/gentoo-feature-support.js" --preflight)"
+    printf '%s\n' "$plan" | python3 "$SCRIPT_DIR/lib/validate-gentoo-dependencies.py"
+    atoms="$(printf '%s\n' "$plan" | node -e 'let input="";process.stdin.on("data",c=>input+=c).on("end",()=>console.log(JSON.parse(input).dependencies.bootstrap.join("\n")))')"
+    while IFS= read -r atom; do
+        [ -n "$atom" ] || continue
+        if [ -z "$(portageq match / "$atom")" ]; then
+            missing+=("$atom")
+        fi
+    done <<< "$atoms"
+    if [ "${#missing[@]}" -gt 0 ]; then
+        # Unlike --noreplace, allow replacement when an installed package does
+        # not meet a feature's version, slot or USE requirements. Do not weaken
+        # the user's keyword/license/USE policy or add these tools to world.
+        run_privileged emerge --oneshot --update "${missing[@]}"
+    else
+        info 'Gentoo feature build dependencies already installed; skipping emerge.'
+    fi
+}
+
 install_rust() {
     cargo_works_for_build && rustc_works_for_build && return 0
 
@@ -175,6 +197,7 @@ node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
 if [ "$manager" = emerge ]; then
     node -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>22||(major===22&&minor>=12)?0:1)' ||
         fail "Gentoo ASAR tooling requires Node.js 22.12.0 or newer; found $(node --version)"
+    install_emerge_feature_dependencies
 fi
 
 info "ready: node $(node --version), architecture $(uname -m)"

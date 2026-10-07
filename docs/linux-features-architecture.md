@@ -65,8 +65,9 @@ Manifest fields:
 | `resources` | Declarative files copied into the app tree |
 | `runtimeHooks` | Launcher environment and lifecycle extensions |
 | `packageResources` | Declarative files outside the app tree in native packages |
-| `packageDependencies` | deb/RPM/pacman runtime dependency mapping |
+| `packageDependencies` | deb/RPM/pacman/ebuild runtime dependency mapping |
 | `packageHooks` | Narrow native-package staging operations |
+| `gentoo` | Audited Gentoo support and phase-specific dependency mapping |
 | `requires` | Other feature IDs that must be enabled |
 | `conflicts` | Feature IDs that cannot be enabled together |
 
@@ -175,10 +176,75 @@ writing into it.
 ## Native package extensions
 
 `packageResources` place feature-owned files outside the app directory;
-`packageDependencies` map runtime dependencies for deb/RPM/pacman; package hooks
+`packageDependencies` map runtime dependencies for deb/RPM/pacman/ebuild; package hooks
 perform the remaining narrowly scoped staging work. Targets must stay inside
 the package root and cannot overlap the packaged app tree. Special permission
 bits are rejected.
+
+### Gentoo feature contract
+
+Gentoo support is opt-in per feature and separate from the disabled-by-default
+user configuration. Do not mark a feature supported without its adjacent tests,
+an official-bundle build, and acceptance for the environments it claims.
+This foundation declares no repository feature supported and adds no
+systemd-specific integration.
+
+```json
+{
+  "gentoo": {
+    "supported": true,
+    "dependencies": {
+      "bootstrap": ["dev-lang/rust"],
+      "BDEPEND": [],
+      "DEPEND": [],
+      "RDEPEND": [">=net-libs/nodejs-22.12.0[npm]"],
+      "IDEPEND": []
+    }
+  },
+  "packageResources": [{
+    "source": "assets/70-example.rules",
+    "target": "usr/lib/udev/rules.d/70-example.rules",
+    "mode": "0644",
+    "formats": ["ebuild"]
+  }],
+  "packageHooks": [{"source": "package.sh", "formats": ["ebuild"]}]
+}
+```
+
+| Phase | Consumer |
+|---|---|
+| `bootstrap` | `make bootstrap-native`, before regular-user helper/app/package builds; omitted from ebuild metadata |
+| `BDEPEND` | Portage build-host tools needed for the local payload's `src_*` phases |
+| `DEPEND` | Portage target build libraries/headers for `src_*` phases |
+| `RDEPEND` | Installed application/feature runtime dependencies |
+| `IDEPEND` | Portage merge/unmerge tools, not persistent runtime dependencies |
+
+Helpers are compiled outside Portage. Put their build tools in `bootstrap`, not
+only in `BDEPEND`; the binary-payload ebuild does not rebuild helpers. Do not
+invent an install dependency for a build-time staging hook. Extra Portage
+phases are available for audited packaging needs, not an implicit compile or
+root hook extension.
+
+Each phase is an array of individual EAPI 8 atoms. Supported constraints include
+version comparisons, `=` version prefixes, slot/subslot and slot operators, and
+fixed positive/negative USE requirements with defaults. Bootstrap atoms do not
+accept slot rebuild operators. Dependency expression groups, blockers,
+repository selectors, conditional USE, whitespace and shell expansion are
+not accepted. Unknown phases and malformed atoms fail closed; the Gentoo host
+also checks atoms with Portage's parser. Lists are enabled-only, sorted and
+deduplicated within each phase. The array shorthand `gentoo.dependencies: [...]`
+and `packageDependencies.ebuild: [...]` both contribute to `RDEPEND` only.
+
+The existing package resource/hook engine handles `ebuild` alongside other
+native formats. Gentoo external resources must be below `usr/` or `etc/`;
+app-internal files belong in `resources`. Hook scripts run under the builder's
+user with `PACKAGE_FORMAT=ebuild`, `PACKAGE_VERSION`, `PACKAGE_ROOT`,
+`PACKAGE_STAGING_ROOT`, `PACKAGE_NAME`, `APP_DIR` and `PACKAGE_APP_DIR`. They run
+after declarative resources and are never installed as Portage lifecycle code.
+Files in the app snapshot must match the enabled resources/hooks and declared
+modes; changed selections, stale ownership and failed enabled patches require
+a rebuild. Disabling a feature removes its external resources from the next
+payload, leaving Portage to unmerge the obsolete owned files.
 
 Native Rust helpers are built once as project release components. They must not
 be rebuilt merely because a new official application package appeared. Delete
