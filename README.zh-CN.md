@@ -280,6 +280,11 @@ GNOME 辅助功能开启。它不会自动启动；详见 [Linux Computer Use](d
 ChatGPT account rollout 和 server-side 功能仍由 OpenAI 控制。重新构建本项目
 不会解锁账号功能。
 
+如需输入 CSS 字体 fallback 列表，可启用可选的
+[`ui-tweaks` 自定义字体输入](linux-features/ui-tweaks/README.md#appearancecustomfontinput)，
+在外观设置的字体菜单中切换系统字体列表与手填字体栈。这个子选项默认关闭，
+需在本地 feature settings 中启用后重新构建。
+
 ## 配置可选扩展
 
 推荐使用向导：

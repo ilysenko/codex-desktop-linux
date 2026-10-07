@@ -22,6 +22,18 @@
   },
   "officialBundleAuditScenarios": [
     {
+      "name": "custom-font-input",
+      "settings": {
+        "tweaks": {
+          "appearance": {
+            "customFontInput": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    },
+    {
       "name": "extended-ui-font-size",
       "settings": {
         "tweaks": {
@@ -36,6 +48,9 @@
   ],
   "tweaks": {
     "appearance": {
+      "customFontInput": {
+        "enabled": false
+      },
       "dockIcon": {
         "enabled": false
       },

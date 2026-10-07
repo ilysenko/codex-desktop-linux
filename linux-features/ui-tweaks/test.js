@@ -10,6 +10,7 @@ const test = require("node:test");
 require("./suggested-prompts.test.js");
 require("./dock-icon.test.js");
 require("./gentoo-support.test.js");
+require("./custom-font-input.test.js");
 
 const {
   discoverLinuxFeatureManifests,
@@ -270,6 +271,7 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:home-suggested-prompts-work-page", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
+        ["feature:ui-tweaks:appearance-custom-font-input", "webview-asset", "optional"],
       ],
     );
     const modelPickerDescriptors = descriptors.filter((descriptor) =>

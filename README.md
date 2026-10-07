@@ -306,6 +306,12 @@ With `shared-app-server-socket` enabled and Desktop running, use
 Account rollouts and server-side ChatGPT features remain controlled by OpenAI.
 Rebuilding this project does not unlock an account rollout.
 
+For CSS font fallback lists, the optional
+[`ui-tweaks` custom font input](linux-features/ui-tweaks/README.md#appearancecustomfontinput)
+adds a switch between installed-font lists and manual font-stack entry in
+Appearance. This nested tweak is disabled by default and must be enabled in
+local feature settings before rebuilding.
+
 ## Configure optional features
 
 The recommended editor is the setup wizard:
