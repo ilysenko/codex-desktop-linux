@@ -966,12 +966,25 @@ function copyPackageIntoReservation(sourceDir, targetDir, identity) {
   // Linux procfs resolves this path through the already-open directory
   // descriptor. A concurrent rename of the public target pathname therefore
   // cannot redirect package bytes into a replacement directory.
-  fs.cpSync(sourceDir, `/proc/self/fd/${identity.descriptor}/.`, {
-    recursive: true,
-    dereference: false,
-    errorOnExist: true,
-    force: false,
-  });
+  const reservationRoot = `/proc/self/fd/${identity.descriptor}`;
+  // The root already exists because mkdir reserved it. Node 26.10+ correctly
+  // rejects that root with errorOnExist, so copy its missing children instead.
+  for (const entry of fs.readdirSync(sourceDir)) {
+    const destination = path.join(reservationRoot, entry);
+    // Older Node versions may merge an existing directory even with
+    // errorOnExist. Refuse existing entries before invoking the copy API.
+    if (fs.lstatSync(destination, { throwIfNoEntry: false }) != null) {
+      throw Object.assign(new Error(
+        `Watchbound package reservation entry already exists: ${destination}`,
+      ), { code: "EEXIST" });
+    }
+    fs.cpSync(path.join(sourceDir, entry), destination, {
+      recursive: true,
+      dereference: false,
+      errorOnExist: true,
+      force: false,
+    });
+  }
   assertHeldDirectoryIdentity(
     identity,
     `Watchbound package reservation descriptor identity changed during copy: ${targetDir}`,

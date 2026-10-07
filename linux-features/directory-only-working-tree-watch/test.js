@@ -1951,6 +1951,61 @@ test("Watchbound package-set commit rolls back an injected partial failure", asy
   );
 });
 
+test("the default package commit copies nested and hidden entries into its reservation", (t) => {
+  const workspace = tempDirectory(t, "watchbound-package-reserved-entries-");
+  const sourceDir = path.join(workspace, "source");
+  const targetDir = path.join(workspace, "target");
+  const nativeBytes = Buffer.from([0, 255, 127, 10]);
+  writeFile(path.join(sourceDir, ".metadata"), "metadata\n");
+  writeFile(path.join(sourceDir, "lib", "nested", "owned"), "owned\n", 0o755);
+  writeFile(path.join(sourceDir, "native.node"), nativeBytes);
+  fs.mkdirSync(path.join(sourceDir, "empty"));
+  let reservation;
+
+  commitPackageDirectoryNoReplace(sourceDir, targetDir, (identity) => {
+    reservation = identity;
+    assert.deepEqual(fs.readdirSync(targetDir), []);
+  });
+
+  const after = fs.lstatSync(targetDir, { bigint: true });
+  assert.equal(after.dev, reservation.dev);
+  assert.equal(after.ino, reservation.ino);
+  assert.deepEqual(fs.readdirSync(targetDir).sort(), [
+    ".metadata", "empty", "lib", "native.node",
+  ]);
+  assert.equal(fs.readFileSync(path.join(targetDir, ".metadata"), "utf8"), "metadata\n");
+  assert.equal(
+    fs.readFileSync(path.join(targetDir, "lib", "nested", "owned"), "utf8"),
+    "owned\n",
+  );
+  assert.equal(fs.statSync(path.join(targetDir, "lib", "nested", "owned")).mode & 0o777, 0o755);
+  assert.deepEqual(fs.readFileSync(path.join(targetDir, "native.node")), nativeBytes);
+  assert.deepEqual(fs.readdirSync(path.join(targetDir, "empty")), []);
+});
+
+test("the default package commit atomically refuses an empty destination", (t) => {
+  const workspace = tempDirectory(t, "watchbound-package-empty-no-replace-");
+  const sourceDir = path.join(workspace, "source");
+  const targetDir = path.join(workspace, "target");
+  writeFile(path.join(sourceDir, "owned"), "owned\n");
+  fs.mkdirSync(targetDir);
+  const targetIdentity = fs.lstatSync(targetDir, { bigint: true });
+  let reserved = false;
+
+  assert.throws(
+    () => commitPackageDirectoryNoReplace(sourceDir, targetDir, () => {
+      reserved = true;
+    }),
+    (error) => error?.code === "EEXIST",
+  );
+
+  const after = fs.lstatSync(targetDir, { bigint: true });
+  assert.equal(reserved, false);
+  assert.equal(after.dev, targetIdentity.dev);
+  assert.equal(after.ino, targetIdentity.ino);
+  assert.deepEqual(fs.readdirSync(targetDir), []);
+});
+
 test("the default package commit atomically refuses an existing destination", (t) => {
   const workspace = tempDirectory(t, "watchbound-package-no-replace-");
   const sourceDir = path.join(workspace, "source");
@@ -1975,6 +2030,48 @@ test("the default package commit atomically refuses an existing destination", (t
   assert.equal(after.ino, targetIdentity.ino);
   assert.equal(fs.readFileSync(path.join(targetDir, "foreign"), "utf8"), "preserve\n");
   assert.equal(fs.existsSync(path.join(targetDir, "owned")), false);
+});
+
+test("the default package copy refuses existing reservation entries", async (t) => {
+  for (const kind of ["file", "directory", "symlink"]) {
+    await t.test(kind, (t) => {
+      const workspace = tempDirectory(t, "watchbound-package-entry-no-replace-");
+      const sourceDir = path.join(workspace, "source");
+      const targetDir = path.join(workspace, "target");
+      const conflictPath = path.join(targetDir, "lib");
+      const foreignDir = path.join(workspace, "foreign");
+      writeFile(path.join(sourceDir, "lib", "owned"), "owned\n");
+      writeFile(path.join(foreignDir, "foreign-owner"), "preserve\n");
+      let conflictIdentity;
+      let markerPath;
+
+      assert.throws(
+        () => commitPackageDirectoryNoReplace(sourceDir, targetDir, () => {
+          if (kind === "file") {
+            markerPath = conflictPath;
+            writeFile(markerPath, "preserve\n");
+          } else if (kind === "directory") {
+            markerPath = path.join(conflictPath, "foreign-owner");
+            writeFile(markerPath, "preserve\n");
+          } else {
+            markerPath = path.join(foreignDir, "foreign-owner");
+            fs.symlinkSync(foreignDir, conflictPath, "dir");
+          }
+          conflictIdentity = fs.lstatSync(conflictPath, { bigint: true });
+        }),
+        (error) => error?.code === "EEXIST",
+      );
+
+      const after = fs.lstatSync(conflictPath, { bigint: true });
+      assert.equal(after.dev, conflictIdentity.dev);
+      assert.equal(after.ino, conflictIdentity.ino);
+      assert.equal(fs.readFileSync(markerPath, "utf8"), "preserve\n");
+      if (kind !== "file") {
+        assert.equal(fs.existsSync(path.join(conflictPath, "owned")), false);
+      }
+      assert.deepEqual(fs.readdirSync(foreignDir), ["foreign-owner"]);
+    });
+  }
 });
 
 test("the default package commit rejects a swapped reservation before copying", (t) => {
@@ -2013,11 +2110,16 @@ test("the default package commit verifies reservation identity after copying", (
   const movedTarget = path.join(workspace, "moved-target");
   const markerPath = path.join(targetDir, "foreign-owner");
   writeFile(path.join(sourceDir, "owned"), "owned\n");
+  writeFile(path.join(sourceDir, "nested", "owned"), "nested\n");
   const originalCpSync = fs.cpSync;
+  let swapped = false;
   fs.cpSync = (...args) => {
     originalCpSync(...args);
-    fs.renameSync(targetDir, movedTarget);
-    writeFile(markerPath, "preserve\n");
+    if (!swapped) {
+      swapped = true;
+      fs.renameSync(targetDir, movedTarget);
+      writeFile(markerPath, "preserve\n");
+    }
   };
 
   try {
@@ -2036,6 +2138,8 @@ test("the default package commit verifies reservation identity after copying", (
   assert.equal(fs.readFileSync(markerPath, "utf8"), "preserve\n");
   assert.equal(fs.existsSync(path.join(targetDir, "owned")), false);
   assert.equal(fs.readFileSync(path.join(movedTarget, "owned"), "utf8"), "owned\n");
+  assert.equal(fs.existsSync(path.join(targetDir, "nested")), false);
+  assert.equal(fs.readFileSync(path.join(movedTarget, "nested", "owned"), "utf8"), "nested\n");
 });
 
 test("the default package copy remains bound to a moved reservation", (t) => {
@@ -2045,10 +2149,15 @@ test("the default package copy remains bound to a moved reservation", (t) => {
   const movedTarget = path.join(workspace, "moved-target");
   const markerPath = path.join(targetDir, "foreign-owner");
   writeFile(path.join(sourceDir, "owned"), "owned\n");
+  writeFile(path.join(sourceDir, "nested", "owned"), "nested\n");
   const originalCpSync = fs.cpSync;
+  let swapped = false;
   fs.cpSync = (...args) => {
-    fs.renameSync(targetDir, movedTarget);
-    writeFile(markerPath, "preserve\n");
+    if (!swapped) {
+      swapped = true;
+      fs.renameSync(targetDir, movedTarget);
+      writeFile(markerPath, "preserve\n");
+    }
     originalCpSync(...args);
   };
 
@@ -2068,6 +2177,46 @@ test("the default package copy remains bound to a moved reservation", (t) => {
   assert.equal(fs.readFileSync(markerPath, "utf8"), "preserve\n");
   assert.equal(fs.existsSync(path.join(targetDir, "owned")), false);
   assert.equal(fs.readFileSync(path.join(movedTarget, "owned"), "utf8"), "owned\n");
+  assert.equal(fs.existsSync(path.join(targetDir, "nested")), false);
+  assert.equal(fs.readFileSync(path.join(movedTarget, "nested", "owned"), "utf8"), "nested\n");
+});
+
+test("the default package-set commit rolls back a partially copied reservation", async (t) => {
+  const fixture = packageFixtureManifest(t);
+  const extractedDir = tempDirectory(t, "watchbound-package-copy-rollback-");
+  writeExtractedAppRuntime(extractedDir);
+  const firstTarget = packageTarget(extractedDir, fixture.manifest.packages.targets.x64.name);
+  const originalCpSync = fs.cpSync;
+  let injected = false;
+  fs.cpSync = (source, target, options) => {
+    originalCpSync(source, target, options);
+    if (
+      target.startsWith("/proc/self/fd/") &&
+      path.basename(path.dirname(source)) === "watchbound-node"
+    ) {
+      injected = true;
+      assert.equal(fs.existsSync(firstTarget), true);
+      assert.equal(fs.lstatSync(target).isFile(), true);
+      throw Object.assign(new Error("injected reserved-entry copy failure"), {
+        code: "EIO",
+      });
+    }
+  };
+
+  try {
+    await assert.rejects(
+      stageWatchboundPackages(packageStageOptions(extractedDir, fixture, {
+        arch: "x64",
+        materializePackage: fixtureMaterializer(fixture),
+      })),
+      /injected reserved-entry copy failure/u,
+    );
+  } finally {
+    fs.cpSync = originalCpSync;
+  }
+
+  assert.equal(injected, true);
+  assert.deepEqual(fs.readdirSync(extractedDir), ["package.json"]);
 });
 
 test("package reservation identity ambiguity is failed-integrity", async (t) => {
