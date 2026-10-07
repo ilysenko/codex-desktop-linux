@@ -6,7 +6,8 @@ Browser Use 会在独立的 `node_repl` 进程中执行网络和 DOM 辅助操�
 连接和标签页列表正常，但导航或 DOM 命令在 Browser Use 网络检查上超时。
 
 这个默认关闭的功能仅会在子进程未显式设置对应代理族时，
-从直接父进程继承：
+从直接父进程继承；如果父进程是已验证的随包 `@oai/cua-repl` 启动器，
+还会从其直接上级的随包 app-server 补齐缺失配置：
 
 - `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 和 `NO_PROXY`
 - 上述变量的小写形式
@@ -50,8 +51,10 @@ NODE_USE_ENV_PROXY=1 \
 走哪条路由；Chrome、Electron 或 v2rayN 的分流规则仍需单独配置。
 
 代理 URL 可能包含凭据。启用后，同一用户下的 Browser Use 辅助进程会获得
-父 app-server 已经拥有的这些变量，wrapper 不会记录变量值。如果无法
-读取 `/proc/<parent>/environ`，将直接使用子进程原有环境运行官方程序。
+父 app-server 已经拥有的这些变量，wrapper 不会记录变量值。
+只跨过脚本路径及两级可执行文件路径均匹配的随包 CUA 启动器，
+不搜索任意祖先进程。子进程和直接父进程的显式配置优先，包括显式空值。
+如果无法读取进程环境，就保留现有配置。
 
 该功能不会设置 `BROWSER_USE_SECURITY_MODE`，也不会关闭或绕过 site-status、
 URL policy 和用户授权检查。

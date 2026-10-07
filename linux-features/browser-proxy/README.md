@@ -7,8 +7,10 @@ connected while navigation and DOM commands then wait on Browser Use network
 checks that cannot reach their endpoint.
 
 This opt-in feature wraps the bundled helper and copies only these variables
-from its immediate app-server parent when the helper did not receive a member
-of the corresponding proxy family:
+from its immediate parent when the helper did not receive a member of the
+corresponding proxy family. If that parent is the verified bundled
+`@oai/cua-repl` launcher, missing configuration is also recovered from its
+immediate app-server parent:
 
 - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`
 - their lower-case equivalents
@@ -58,8 +60,11 @@ Chrome, Electron, or the proxy application's routing rules.
 Proxy URLs can contain credentials. Enabling this feature makes the selected
 proxy variables available to the same-user Browser Use helper, just as they
 are already available to its Codex app-server parent. Values are never logged.
-If `/proc/<parent>/environ` cannot be read, the wrapper runs the original
-helper with its existing environment.
+The wrapper verifies the CUA launcher path and both executable paths before
+crossing that one intermediary; it never searches arbitrary ancestors.
+Child and direct-parent proxy families retain priority, including explicitly
+empty values. If a process environment cannot be read, existing configuration
+is preserved.
 
 The feature does not set `BROWSER_USE_SECURITY_MODE`, disable ambient network
 controls, or bypass Browser Use site-status, URL-policy, or consent checks.
