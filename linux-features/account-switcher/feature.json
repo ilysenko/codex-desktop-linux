@@ -3,6 +3,29 @@
   "title": "Account Switcher",
   "description": "Remember encrypted ChatGPT logins and switch accounts from the profile menu without restarting the desktop app.",
   "defaultEnabled": false,
-  "conflicts": ["shared-app-server-socket"],
-  "entrypoints": { "patchDescriptors": "./patch.js" }
+  "conflicts": [
+    "shared-app-server-socket"
+  ],
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "packageDependencies": {
+    "deb": [
+      "libsecret-tools"
+    ],
+    "rpm": [
+      "libsecret"
+    ],
+    "pacman": [
+      "libsecret"
+    ]
+  },
+  "gentoo": {
+    "dependencies": {
+      "RDEPEND": [
+        "app-crypt/libsecret"
+      ]
+    },
+    "supported": true
+  }
 }

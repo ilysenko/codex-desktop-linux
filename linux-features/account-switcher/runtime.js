@@ -2,17 +2,52 @@
 
 // Self-contained: the patch embeds this function in the official main bundle.
 // Nothing here runs until a user opens the account switcher.
-function createAccountSwitcher({ electron, clients, home, reload }) {
+function createAccountSwitcher({ electron, clients, home, reload, runSecretTool }) {
   const fs = require("node:fs");
   const path = require("node:path");
   const crypto = require("node:crypto");
-  const { dialog, safeStorage, shell, Menu } = electron;
+  // Owl exposes a safeStorage getter whose native binding is not shipped.
+  // Do not access it, including via destructuring or optional chaining.
+  const { dialog, shell, Menu } = electron;
   const root = path.join(home, ".community-account-switcher");
   const vaultPath = path.join(root, "accounts.json");
   const authPath = path.join(home, "auth.json");
   class SwitcherError extends Error {}
   let menuOpen = false;
   let busy = false;
+  let encryptionKey;
+
+  async function secretTool(args, input = "") {
+    if (runSecretTool) return runSecretTool(args, input);
+    return new Promise((resolve, reject) => {
+      const child = require("node:child_process").spawn("secret-tool", args, { stdio: ["pipe", "pipe", "ignore"] });
+      const chunks = [];
+      let size = 0;
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new SwitcherError("Unlock your Secret Service keyring and try again. The request timed out."));
+      }, 60_000);
+      child.on("error", error => {
+        clearTimeout(timer);
+        reject(new SwitcherError(error.code === "ENOENT"
+          ? "Install secret-tool (libsecret-tools on Debian/Ubuntu, libsecret on Arch/Fedora) to remember accounts."
+          : "The system keyring could not be accessed. Unlock your Secret Service keyring and try again."));
+      });
+      child.stdout.on("data", chunk => {
+        size += chunk.length;
+        if (size > 4096) {
+          child.kill();
+          reject(new SwitcherError("The system keyring returned an invalid response."));
+        } else chunks.push(chunk);
+      });
+      child.stdin.on("error", () => {});
+      child.stdin.end(input);
+      child.on("close", code => {
+        clearTimeout(timer);
+        resolve({ code, stdout: Buffer.concat(chunks).toString("utf8") });
+      });
+    });
+  }
 
   function choose(entries, window) {
     return new Promise(resolve => {
@@ -60,12 +95,44 @@ function createAccountSwitcher({ electron, clients, home, reload }) {
     }
   }
 
-  function encryptionReady() {
-    if (!safeStorage.isEncryptionAvailable() || safeStorage.getSelectedStorageBackend?.() === "basic_text") {
-      throw new SwitcherError("Unlock your system keyring to use the account switcher. Plaintext storage is disabled.");
-    }
+  async function encryptionReady() {
     fs.mkdirSync(root, { mode: 0o700, recursive: true });
     privatePath(root, true);
+    if (encryptionKey) return;
+    const profile = crypto.createHash("sha256").update(fs.realpathSync(home)).digest("hex");
+    const attributes = ["application", "codex-desktop", "feature", "account-switcher", "profile", profile];
+    const lookup = await secretTool(["lookup", ...attributes]);
+    let key = lookup.stdout.trim();
+    if (lookup.code === 1 && !key) {
+      // Never replace a lost key while an encrypted vault still exists.
+      if (fs.existsSync(vaultPath)) throw new SwitcherError("The saved-account key is unavailable. Unlock or restore your Secret Service keyring; the vault was left unchanged.");
+      key = crypto.randomBytes(32).toString("hex");
+      const stored = await secretTool(["store", "--label=ChatGPT Community account switcher", ...attributes], key);
+      if (stored.code !== 0) throw new SwitcherError("Unlock your Secret Service keyring to remember accounts. No plaintext fallback is used.");
+      // Verify persistence before writing any encrypted credentials.
+      const verified = await secretTool(["lookup", ...attributes]);
+      if (verified.code !== 0 || verified.stdout.trim() !== key) throw new SwitcherError("The system keyring could not retain the account key. No credentials were saved.");
+    } else if (lookup.code !== 0) {
+      throw new SwitcherError("Unlock your Secret Service keyring to remember accounts. No plaintext fallback is used.");
+    }
+    if (!/^[a-f0-9]{64}$/.test(key)) throw new SwitcherError("The saved-account key is invalid. The vault was left unchanged.");
+    encryptionKey = Buffer.from(key, "hex");
+  }
+
+  function encrypt(text) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", encryptionKey, iv);
+    const ciphertext = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+    return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+  }
+
+  function decrypt(buffer) {
+    try {
+      if (buffer.length < 29) throw new Error();
+      const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey, buffer.subarray(0, 12));
+      decipher.setAuthTag(buffer.subarray(12, 28));
+      return Buffer.concat([decipher.update(buffer.subarray(28)), decipher.final()]).toString("utf8");
+    } catch { throw new SwitcherError("The saved accounts could not be decrypted. Check your Secret Service keyring; the vault was left unchanged."); }
   }
 
   function identity(text) {
@@ -92,16 +159,16 @@ function createAccountSwitcher({ electron, clients, home, reload }) {
     return { id, accountId: auth.tokens.account_id, userId, title: title.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 220) };
   }
 
-  function load() {
-    encryptionReady();
+  async function load() {
+    await encryptionReady();
     let parsed;
     try { parsed = JSON.parse(readPrivate(vaultPath)); }
     catch (error) { if (error.code === "ENOENT") return []; throw error; }
-    if (parsed.version !== 1 || !Array.isArray(parsed.accounts) || parsed.accounts.length > 20) throw new SwitcherError("Invalid saved account storage.");
+    if (parsed.version !== 2 || !Array.isArray(parsed.accounts) || parsed.accounts.length > 20) throw new SwitcherError("Invalid or unsupported saved account storage. The vault was left unchanged.");
     const ids = new Set();
     return parsed.accounts.map(record => {
       if (typeof record.encrypted !== "string") throw new SwitcherError("Invalid saved account storage.");
-      const text = safeStorage.decryptString(Buffer.from(record.encrypted, "base64"));
+      const text = decrypt(Buffer.from(record.encrypted, "base64"));
       const info = identity(text);
       if (info.id !== record.id || ids.has(info.id)) throw new SwitcherError("Invalid saved account identity.");
       ids.add(info.id);
@@ -111,12 +178,12 @@ function createAccountSwitcher({ electron, clients, home, reload }) {
 
   function save(accounts) {
     if (accounts.length > 20) throw new SwitcherError("At most 20 accounts can be remembered. Forget an account first.");
-    writePrivate(vaultPath, JSON.stringify({ version: 1, accounts }));
+    writePrivate(vaultPath, JSON.stringify({ version: 2, accounts }));
   }
 
   function remember(accounts, text) {
     const info = identity(text);
-    const record = { ...info, encrypted: safeStorage.encryptString(text).toString("base64") };
+    const record = { ...info, encrypted: encrypt(text).toString("base64") };
     const next = accounts.filter(account => account.id !== info.id);
     next.push(record);
     next.sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
@@ -177,7 +244,7 @@ function createAccountSwitcher({ electron, clients, home, reload }) {
     await assertIdle();
     const previous = await readCurrent(client);
     remember(accounts, previous); // Capture any tokens refreshed since the menu opened.
-    const selected = safeStorage.decryptString(Buffer.from(record.encrypted, "base64"));
+    const selected = decrypt(Buffer.from(record.encrypted, "base64"));
     try { await restore(client, selected); }
     catch {
       try { await restore(client, previous); }
@@ -230,7 +297,7 @@ function createAccountSwitcher({ electron, clients, home, reload }) {
     if (menuOpen) return;
     menuOpen = true;
     try {
-      let accounts = load();
+      let accounts = await load();
       const current = await readCurrent(client);
       const active = identity(current).id;
       accounts = remember(accounts, current);

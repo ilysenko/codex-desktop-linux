@@ -10,7 +10,7 @@ const vm = require("node:vm");
 const { spawn, execFileSync } = require("node:child_process");
 const { createAccountSwitcher } = require("./runtime");
 const { applyMain, applyUi } = require("./patch");
-const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features");
+const { loadLinuxFeaturePatchDescriptors, enabledLinuxFeaturePackagePlan } = require("../../scripts/lib/linux-features");
 
 function credentials(name) {
   const token = claims => `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
@@ -28,9 +28,7 @@ function fixture(t, options = {}) {
   const vault = path.join(home, ".community-account-switcher/accounts.json");
   fs.writeFileSync(authPath, credentials("first"), { mode: 0o600 });
   const key = crypto.randomBytes(32);
-  const safeStorage = {
-    isEncryptionAvailable: () => options.encryption !== false,
-    getSelectedStorageBackend: () => options.backend ?? "kwallet6",
+  const cipher = {
     encryptString: text => {
       const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
       const data = Buffer.concat([cipher.update(text), cipher.final()]);
@@ -82,7 +80,7 @@ function fixture(t, options = {}) {
       }
     },
   };
-  const electron = { safeStorage, dialog, shell: { openExternal: async url => calls.push(url) }, Menu: {
+  const electron = { get safeStorage() { throw new Error("No such binding was linked: electron_browser_safe_storage"); }, dialog, shell: { openExternal: async url => calls.push(url) }, Menu: {
     buildFromTemplate: template => ({ popup: ({ callback }) => {
       menus.push(template);
       const selectable = template.filter(item => item.value !== undefined && item.enabled !== false);
@@ -91,15 +89,28 @@ function fixture(t, options = {}) {
       callback();
     } }),
   }};
-  const runtime = createAccountSwitcher({ electron, clients: () => [client], home, reload: () => { reloaded++; } });
+  const keyringCalls = [];
+  let savedKey = options.keyInitiallyMissing ? null : key.toString("hex");
+  const runSecretTool = async (args, input) => {
+    keyringCalls.push({ args, input });
+    if (options.missingExecutable) { const e = new Error("sensitive test error"); e.code = "ENOENT"; throw e; }
+    if (options.keyringUnavailable) return { code: 2, stdout: "" };
+    if (args[0] === "store") {
+      if (options.storeFails) return { code: 1, stdout: "" };
+      if (!options.keyRetainFails) savedKey = input;
+      return { code: 0, stdout: "" };
+    }
+    return { code: savedKey ? 0 : 1, stdout: options.malformedKey ? "invalid" : savedKey ?? "" };
+  };
+  const runtime = createAccountSwitcher({ electron, clients: () => [client], home, reload: () => { reloaded++; }, runSecretTool });
   return {
-    home, authPath, vault, safeStorage, dialogs, menus, choices, calls, runtime, client,
+    home, authPath, vault, cipher, keyringCalls, dialogs, menus, choices, calls, runtime, client,
     open: async response => { choices.push(response); await runtime.open(client); },
     seedSecond: () => {
       const stored = JSON.parse(fs.readFileSync(vault));
       const text = credentials("second");
       const id = crypto.createHash("sha256").update(JSON.stringify(["user-second", "account-second"])).digest("hex");
-      stored.accounts.push({ id, encrypted: safeStorage.encryptString(text).toString("base64") });
+      stored.accounts.push({ id, encrypted: cipher.encryptString(text).toString("base64") });
       fs.writeFileSync(vault, JSON.stringify(stored));
     },
     failSecondRestart: () => { restartFails = true; },
@@ -120,7 +131,7 @@ test("feature is opt-in, has both contracts and rejects a shared server", t => {
   assert.throws(() => loadLinuxFeaturePatchDescriptors(options), /conflict/);
 });
 
-for (const options of [{ encryption: false }, { backend: "basic_text" }]) {
+for (const options of [{ keyringUnavailable: true }, { keyInitiallyMissing: true, storeFails: true }]) {
   test(`rejects unsafe encryption ${JSON.stringify(options)}`, async t => {
     const f = fixture(t, options);
     await f.open(1);
@@ -141,6 +152,75 @@ test("cancel stores only encrypted tokens, with private permissions", async t =>
   assert.ok(!stored.includes("access_token"));
   assert.equal(fs.statSync(f.vault).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.dirname(f.vault)).mode & 0o777, 0o700);
+});
+
+test("creates and verifies a profile-specific Secret Service key without putting it in argv", async t => {
+  const f = fixture(t, { keyInitiallyMissing: true });
+  await f.open(3);
+  assert.equal(f.dialogs.length, 0);
+  assert.equal(JSON.parse(fs.readFileSync(f.vault)).version, 2);
+  assert.deepEqual(f.keyringCalls.map(call => call.args[0]), ["lookup", "store", "lookup"]);
+  const stored = f.keyringCalls[1];
+  assert.match(stored.input, /^[a-f0-9]{64}$/);
+  assert.ok(!JSON.stringify(stored.args).includes(stored.input));
+  assert.ok(!JSON.stringify(f.keyringCalls).includes("private-refresh-first"));
+  assert.equal(stored.args.at(-1), crypto.createHash("sha256").update(fs.realpathSync(f.home)).digest("hex"));
+});
+
+for (const options of [{ malformedKey: true }, { keyInitiallyMissing: true, keyRetainFails: true }]) {
+  test(`keyring failure leaves credentials unchanged ${JSON.stringify(options)}`, async t => {
+    const f = fixture(t, options);
+    await f.open(3);
+    assert.equal(fs.existsSync(f.vault), false);
+    assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
+    assert.equal(f.menus.length, 0);
+    assert.match(f.dialogs.at(-1).detail, /key/);
+  });
+}
+
+test("missing key never replaces an existing vault; corrupted ciphertext is rejected", async t => {
+  const f = fixture(t, { keyInitiallyMissing: true });
+  fs.mkdirSync(path.dirname(f.vault), { mode: 0o700 });
+  fs.writeFileSync(f.vault, '{"version":2,"accounts":[]}', { mode: 0o600 });
+  await f.open(3);
+  assert.deepEqual(f.keyringCalls.map(call => call.args[0]), ["lookup"]);
+  assert.match(f.dialogs.at(-1).detail, /key is unavailable/);
+  const g = fixture(t);
+  await g.open(3);
+  const saved = JSON.parse(fs.readFileSync(g.vault));
+  const ciphertext = Buffer.from(saved.accounts[0].encrypted, "base64");
+  ciphertext[15] ^= 1;
+  saved.accounts[0].encrypted = ciphertext.toString("base64");
+  const corrupted = JSON.stringify(saved);
+  fs.writeFileSync(g.vault, corrupted);
+  await g.open(3);
+  assert.equal(fs.readFileSync(g.vault, "utf8"), corrupted);
+  assert.match(g.dialogs.at(-1).detail, /could not be decrypted/);
+});
+
+test("missing secret-tool reports the dependency without touching login credentials", t => {
+  const f = fixture(t);
+  const program = `const {createAccountSwitcher}=require(${JSON.stringify(path.join(__dirname, "runtime.js"))});
+    const dialogs=[];const runtime=createAccountSwitcher({home:process.argv[1],clients:()=>[],reload(){},
+      electron:{dialog:{showMessageBox:async o=>dialogs.push(o.detail)},Menu:{},shell:{}}});
+    runtime.open({}).then(()=>process.stdout.write(JSON.stringify(dialogs)));`;
+  const result = execFileSync(process.execPath, ["-e", program, f.home], { env: { ...process.env, PATH: "" }, timeout: 5_000 });
+  assert.match(JSON.parse(result)[0], /Install secret-tool/);
+  assert.equal(fs.existsSync(f.vault), false);
+  assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
+});
+
+test("native package plans declare the Secret Service CLI dependency", t => {
+  const f = fixture(t);
+  const config = path.join(f.home, "features.json");
+  fs.writeFileSync(config, JSON.stringify({ enabled: ["account-switcher"] }));
+  for (const [format, dependency] of [["deb", "libsecret-tools"], ["rpm", "libsecret"], ["pacman", "libsecret"]]) {
+    const plan = enabledLinuxFeaturePackagePlan({ packageFormat: format, featuresConfigPath: config });
+    assert.ok(plan.dependencies.includes(dependency), format);
+    assert.equal(plan.resources.length, 0);
+  }
+  const gentoo = require("../../scripts/lib/gentoo-feature-support").gentooFeaturePlan({ featuresConfigPath: config });
+  assert.deepEqual(gentoo.dependencies.RDEPEND, ["app-crypt/libsecret"]);
 });
 
 test("switches to a saved account and restores refreshed current credentials later", async t => {
@@ -348,4 +428,40 @@ test("official main and both profile layouts patch uniquely and remain valid Jav
       assert.equal(apply(invalid), invalid);
     }
   }
+});
+
+test("official Owl runtime encrypts and reopens a vault through real Secret Service", {
+  skip: !process.env.CODEX_ACCOUNT_SWITCHER_NATIVE_APP || !process.env.CODEX_ACCOUNT_SWITCHER_ASAR_CLI,
+  timeout: 30_000,
+}, t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "account-native-"));
+  const app = process.env.CODEX_ACCOUNT_SWITCHER_NATIVE_APP;
+  const home = path.join(dir, "home"), profile = path.join(dir, "profile");
+  const probe = path.join(dir, "app"), source = path.join(dir, "source");
+  fs.mkdirSync(path.join(probe, "resources"), { recursive: true });
+  fs.mkdirSync(source);
+  t.after(() => {
+    if (fs.existsSync(home)) {
+      const id = crypto.createHash("sha256").update(fs.realpathSync(home)).digest("hex");
+      try { execFileSync("secret-tool", ["clear", "application", "codex-desktop", "feature", "account-switcher", "profile", id], { stdio: "ignore", timeout: 5_000 }); } catch {}
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  fs.copyFileSync(path.join(app, "ChatGPT"), path.join(probe, "ChatGPT"));
+  fs.chmodSync(path.join(probe, "ChatGPT"), 0o755);
+  for (const name of fs.readdirSync(app)) {
+    if (["ChatGPT", "resources", "start.sh", ".codex-linux"].includes(name)) continue;
+    fs.symlinkSync(path.join(app, name), path.join(probe, name));
+  }
+  for (const name of ["owl-app.ini", "owl-electron-app.json"]) fs.copyFileSync(path.join(app, "resources", name), path.join(probe, "resources", name));
+  fs.copyFileSync(path.join(__dirname, "native-probe.js"), path.join(source, "probe.js"));
+  fs.writeFileSync(path.join(source, "package.json"), JSON.stringify({ name: "account-native-probe", version: "1.0.0", main: "probe.js" }));
+  execFileSync(process.execPath, [process.env.CODEX_ACCOUNT_SWITCHER_ASAR_CLI, "pack", source, path.join(probe, "resources/app.asar")], { stdio: "pipe", timeout: 5_000 });
+  const result = path.join(dir, "result.json");
+  execFileSync(path.join(probe, "ChatGPT"), [`--user-data-dir=${profile}`], {
+    env: { ...process.env, TMPDIR: process.env.XDG_RUNTIME_DIR || "/tmp", CODEX_HOME: home, CODEX_ELECTRON_USER_DATA_PATH: profile,
+      ACCOUNT_SWITCHER_PROBE_RUNTIME: path.join(__dirname, "runtime.js"), ACCOUNT_SWITCHER_PROBE_RESULT: result },
+    stdio: "pipe", timeout: 20_000,
+  });
+  assert.deepEqual(JSON.parse(fs.readFileSync(result)), { menus: 2, encryptedVault: true, errors: [] });
 });

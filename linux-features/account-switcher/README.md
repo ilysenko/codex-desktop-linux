@@ -36,11 +36,17 @@ desktop app against that home while changing accounts.
   existing login is stored only in the keyring/secret store, sign in again in
   the new build first. Existing keyring entries are not migrated or deleted.
 - The active `CODEX_HOME/auth.json` remains the upstream credential file.
-  Inactive credentials are encrypted using Electron `safeStorage` and stored
-  in `CODEX_HOME/.community-account-switcher/accounts.json`. The file is mode
-  `0600`, its directory `0700`. Email, account identifiers and labels are local
-  metadata; OAuth tokens are encrypted. Symlinked or public credential files,
-  corrupt vaults, unavailable encryption, and `basic_text` storage are rejected.
+  Inactive credentials are encrypted with AES-256-GCM and stored in
+  `CODEX_HOME/.community-account-switcher/accounts.json`. A random 256-bit key
+  is stored in the system Secret Service through `secret-tool`, under attributes
+  for this feature and a hash of the canonical Codex home. The key travels over
+  the tool's standard input/output, never in arguments, logs, or the vault.
+  The file is mode `0600`, its directory `0700`. Email, account identifiers and
+  labels are local metadata; OAuth tokens are encrypted. Symlinked or public
+  credential files, corrupt vaults, unavailable keyrings, lost keys, and modified
+  ciphertext are rejected. An existing vault is never overwritten with a new key.
+  The official Owl runtime does not ship Electron's native `safeStorage` binding;
+  this feature deliberately does not access that API.
 - The currently active account is remembered when the menu opens and again
   before switching, preserving refreshed tokens. A failed switch restores its
   previous credential file and reconnects. If recovery also fails, saved logins
@@ -55,14 +61,35 @@ upstream credential-store selection applies again and may select an older login
 from the system keyring.
 
 If a saved refresh token has expired or been revoked, use **Add account…** to
-sign in again. An unlocked system keyring (e.g. KWallet or Secret Service) is
-required; the feature never falls back to an unencrypted account vault.
+sign in again. An unlocked Secret Service provider (e.g. GNOME Keyring,
+KeePassXC with Secret Service enabled, or a configured KDE provider) is required;
+the feature never falls back to an unencrypted account vault. Native deb/RPM/
+pacman/Gentoo packages declare the CLI dependency and Nix adds it to the runtime
+path. Source builds and AppImage need `secret-tool` on the host (`libsecret-tools`
+on Debian/Ubuntu; `libsecret` on Arch/Fedora). On KDE, KWallet itself must expose
+Secret Service, or a separate provider must be active.
+
+Vault format 2 uses Secret Service encryption. Earlier experimental format-1
+vaults are rejected and preserved; sign in again using a fresh profile to test
+this version. This feature does not clear system keyring entries when disabled.
 
 ## Validation
 
 ```bash
-node --test linux-features/account-switcher/test.js
+test_tmp="${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-dev/tmp"
+mkdir -p "$test_tmp"
+TMPDIR="$test_tmp" node --test linux-features/account-switcher/test.js
 ```
+
+Set `CODEX_ACCOUNT_SWITCHER_NATIVE_APP` to an extracted official application
+root and `CODEX_ACCOUNT_SWITCHER_ASAR_CLI` to `@electron/asar/bin/asar.mjs` to also
+run the native Owl regression test. This requires a graphical session and an
+unlocked Secret Service provider. It generates a disposable probe, uses synthetic
+credentials, verifies key persistence and vault decryption in fresh switcher
+instances, exits only its own process, and clears only its own test key.
+Do not set a long build `TMPDIR` when launching a desktop app: Chromium's socket
+path must fit the Unix-domain socket limit. Use `TMPDIR="$XDG_RUNTIME_DIR"` for
+interactive launches instead.
 
 Set `CODEX_ACCOUNT_SWITCHER_CLI` to the extracted official `resources/codex` to
 also check credential-file decoding and the idle-check protocol in a disposable,
