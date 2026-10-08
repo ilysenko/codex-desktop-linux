@@ -1,0 +1,8 @@
+{
+  "id": "account-switcher",
+  "title": "Account Switcher",
+  "description": "Remember encrypted ChatGPT logins and switch accounts from the profile menu without restarting the desktop app.",
+  "defaultEnabled": false,
+  "conflicts": ["shared-app-server-socket"],
+  "entrypoints": { "patchDescriptors": "./patch.js" }
+}

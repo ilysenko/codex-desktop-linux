@@ -254,6 +254,7 @@ requirements, known limitations, configuration, and tests.
 
 | Feature ID | Purpose | Documentation |
 |---|---|---|
+| `account-switcher` | Experimental encrypted ChatGPT login switching from the profile menu; shares local chats and settings | [Docs](linux-features/account-switcher/README.md) |
 | `agent-workspace` | Agent-workspace settings and bridge for hidden desktop environments | [Docs](linux-features/agent-workspace/README.md) |
 | `api-key-model-visibility` | Show models reported by API-key authenticated compatible providers | [Docs](linux-features/api-key-model-visibility/README.md) |
 | `api-key-service-tier` | Fast/service-tier UI for API-key authenticated compatible providers | [Docs](linux-features/api-key-service-tier/README.md) |
