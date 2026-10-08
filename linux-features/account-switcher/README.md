@@ -24,7 +24,8 @@ desktop app against that home while changing accounts.
 - Switching does not quit or relaunch Electron. It reconnects the local
   app server and reloads desktop windows so account-specific UI caches refresh.
 - Pending app-server requests and active loaded tasks on connected hosts block
-  switching. New renderer requests are rejected during the credential change.
+  switching. Task checks use upstream's ready-checked request wrapper, including
+  lazy hosted connections, before starting OAuth. New renderer requests are rejected during the credential change.
   This is not an interprocess lock for external CLI clients or automation.
 - Local chats, projects, settings, and plugin configuration remain shared in
   the same profile. Cloud chats, usage, and account permissions follow the login.
@@ -86,7 +87,11 @@ root and `CODEX_ACCOUNT_SWITCHER_ASAR_CLI` to `@electron/asar/bin/asar.mjs` to a
 run the native Owl regression test. This requires a graphical session and an
 unlocked Secret Service provider. It generates a disposable probe, uses synthetic
 credentials, verifies key persistence and vault decryption in fresh switcher
-instances, exits only its own process, and clears only its own test key.
+instances, and exercises **Add account** with the official connection class's
+request/subscription methods and an initially disconnected hosted connection.
+The probe uses a synthetic transport and intercepts the browser launch, then
+cancels OAuth; it does not log in to real accounts. It exits only its own process
+and clears only its own test key.
 Do not set a long build `TMPDIR` when launching a desktop app: Chromium's socket
 path must fit the Unix-domain socket limit. Use `TMPDIR="$XDG_RUNTIME_DIR"` for
 interactive launches instead.

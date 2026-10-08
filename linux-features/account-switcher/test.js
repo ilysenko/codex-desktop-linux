@@ -42,6 +42,7 @@ function fixture(t, options = {}) {
   };
   const dialogs = [], menus = [], choices = [], calls = [];
   let reloaded = 0, notification, active = "first", restartFails = false;
+  let ready = options.lazyConnection !== true;
   const dialog = { showMessageBox: async settings => {
     dialogs.push(settings);
     if (settings.signal) {
@@ -57,6 +58,7 @@ function fixture(t, options = {}) {
   }};
   const client = {
     hostConfig: { id: "local", kind: "local" },
+    ensureReady: async () => { ready = true; calls.push("ensureReady"); },
     getPendingRequestCount: () => options.pending ?? 0,
     getAuthenticatedPrincipal: async () => ({ accountId: `account-${active}`, userId: `user-${active}` }),
     clearAuthTokenCache: () => calls.push("clearCache"),
@@ -68,6 +70,7 @@ function fixture(t, options = {}) {
     },
     registerInternalNotificationHandler: callback => { notification = callback; return () => { notification = undefined; }; },
     sendInternalRequest: async request => {
+      if (!ready) throw new Error("Codex app-server is not available");
       calls.push(request.method);
       if (options.rpcFails) return { error: { message: "upstream-secret" } };
       switch (request.method) {
@@ -79,6 +82,12 @@ function fixture(t, options = {}) {
         default: throw new Error(`unexpected request: ${request.method}`);
       }
     },
+  };
+  client.sendAppServerRequest = async (method, params) => {
+    await client.ensureReady();
+    const response = await client.sendInternalRequest({ method, params });
+    if (response.error) throw new Error("sensitive upstream error");
+    return response.result;
   };
   const electron = { get safeStorage() { throw new Error("No such binding was linked: electron_browser_safe_storage"); }, dialog, shell: { openExternal: async url => calls.push(url) }, Menu: {
     buildFromTemplate: template => ({ popup: ({ callback }) => {
@@ -276,6 +285,27 @@ test("successful official login remembers the new account without logging out th
   assert.ok(!f.calls.includes("account/logout"));
 });
 
+test("adding an account initializes a lazy backend before checking tasks and starting OAuth", async t => {
+  const f = fixture(t, { lazyConnection: true });
+  await f.open(1);
+  assert.equal(f.dialogs.filter(dialog => dialog.type === "error").length, 0);
+  assert.ok(f.calls.includes("account/login/start"));
+  assert.ok(f.calls.includes("account/login/cancel"));
+  assert.ok(f.calls.indexOf("ensureReady") < f.calls.indexOf("thread/loaded/list"));
+  assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
+});
+
+test("login setup errors name the phase without exposing upstream error details", async t => {
+  const f = fixture(t);
+  f.client.registerInternalNotificationHandler = () => { throw new Error("private-error-token"); };
+  await f.open(1);
+  const detail = f.dialogs.at(-1).detail;
+  assert.match(detail, /subscribing to login completion/);
+  assert.ok(!detail.includes("private-error-token"));
+  assert.ok(!f.calls.includes("account/login/start"));
+  assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
+});
+
 test("refuses an unexpected OAuth destination and restores current login", async t => {
   const f = fixture(t, { authUrl: "https://example.invalid/steal" });
   await f.open(1);
@@ -406,6 +436,14 @@ test("latest bundled CLI decodes the isolated OAuth file and supports the idle-c
   const account = await request("account/read", { refreshToken: false });
   assert.equal(account.error, undefined);
   assert.equal(account.result.account, null);
+  // Generate and immediately cancel only this disposable server's OAuth flow.
+  // Never launch a browser or send real account credentials in this test.
+  const login = await request("account/login/start", { type: "chatgpt", appBrand: "chatgpt", useHostedLoginSuccessPage: true });
+  assert.ok(!login.error, "The bundled server must accept the browser-login parameters");
+  assert.equal(login.result.type, "chatgpt");
+  assert.equal(new URL(login.result.authUrl).hostname, "auth.openai.com");
+  const cancelled = await request("account/login/cancel", { loginId: login.result.loginId });
+  assert.ok(!cancelled.error, "The disposable login flow must cancel successfully");
 });
 
 // Use exact current signed-bundle fixtures when supplied by local or CI validation.
@@ -430,7 +468,7 @@ test("official main and both profile layouts patch uniquely and remain valid Jav
   }
 });
 
-test("official Owl runtime encrypts and reopens a vault through real Secret Service", {
+test("official Owl request wrappers initialize lazy connections before OAuth and reopen an encrypted vault", {
   skip: !process.env.CODEX_ACCOUNT_SWITCHER_NATIVE_APP || !process.env.CODEX_ACCOUNT_SWITCHER_ASAR_CLI,
   timeout: 30_000,
 }, t => {
@@ -460,8 +498,9 @@ test("official Owl runtime encrypts and reopens a vault through real Secret Serv
   const result = path.join(dir, "result.json");
   execFileSync(path.join(probe, "ChatGPT"), [`--user-data-dir=${profile}`], {
     env: { ...process.env, TMPDIR: process.env.XDG_RUNTIME_DIR || "/tmp", CODEX_HOME: home, CODEX_ELECTRON_USER_DATA_PATH: profile,
-      ACCOUNT_SWITCHER_PROBE_RUNTIME: path.join(__dirname, "runtime.js"), ACCOUNT_SWITCHER_PROBE_RESULT: result },
+      ACCOUNT_SWITCHER_PROBE_RUNTIME: process.env.CODEX_ACCOUNT_SWITCHER_PROBE_RUNTIME || path.join(__dirname, "runtime.js"), ACCOUNT_SWITCHER_PROBE_RESULT: result,
+      ACCOUNT_SWITCHER_PROBE_NATIVE_APP: app },
     stdio: "pipe", timeout: 20_000,
   });
-  assert.deepEqual(JSON.parse(fs.readFileSync(result)), { menus: 2, encryptedVault: true, errors: [] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(result)), { menus: 3, encryptedVault: true, errors: [], openedLogin: 1, readyChecks: 5 });
 });

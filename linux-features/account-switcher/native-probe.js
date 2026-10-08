@@ -17,22 +17,63 @@ electron.app.whenReady().then(async () => {
   } });
   fs.writeFileSync(path.join(home, "auth.json"), auth, { mode: 0o600 });
   const errors = [];
-  let menus = 0;
-  const client = { getAuthenticatedPrincipal: async () => ({ accountId: "native-probe", userId: "native-probe" }) };
+  let menus = 0, openedLogin = 0, selectAdd = false, readyChecks = 0;
+  const bundles = path.join(process.env.ACCOUNT_SWITCHER_PROBE_NATIVE_APP, "resources/app.asar/.vite/build");
+  const bootstrap = require(path.join(bundles, fs.readdirSync(bundles).find(name => /^bootstrap-.*\.js$/.test(name))));
+  const classes = Object.values(bootstrap).filter(value => typeof value === "function"
+    && value.prototype?.sendAppServerRequest && value.prototype?.registerInternalNotificationHandler
+    && value.prototype?.getPendingRequestCount);
+  if (classes.length !== 1) throw Error("Native connection contract drifted");
+  const makeClient = id => {
+    // Keep upstream's actual request wrappers, pending counts and subscription
+    // methods; substitute only transport/identity, without real credentials.
+    const client = Object.create(classes[0].prototype);
+    Object.assign(client, {
+      options: { hostId: id, hostConfig: { id, kind: id === "local" ? "local" : "cloud" }, transport: { kind: id === "local" ? "stdio" : "websocket" } },
+      connection: id === "local" ? {} : null,
+      internalNotificationHandlers: new Set(), internalResponseHandlers: new Map(),
+      clientRequestQueue: { size: 0, updatePeakPendingRequestCount() {} },
+      backendAuth: { beginAccountChange() {}, finishAccountChange() {} },
+      configuration: { handleSuccessfulRequest() {} },
+      getAuthenticatedPrincipal: async () => ({ accountId: "native-probe", userId: "native-probe" }),
+      ensureReady: async () => { readyChecks++; client.connection = {}; },
+      clearAuthTokenCache() {}, restart: async () => {},
+      messageDelivery: { sendMessage: request => {
+        if (!client.connection) throw Error("Codex app-server is not available");
+        let result;
+        switch (request.method) {
+          case "thread/loaded/list": result = { data: [], nextCursor: null }; break;
+          case "account/login/start": result = { type: "chatgpt", loginId: "probe-login", authUrl: "https://auth.openai.com/oauth/authorize?probe=1" }; break;
+          case "account/login/cancel": result = {}; break;
+          case "account/read": result = { account: null }; break;
+          default: throw Error("Unexpected probe method");
+        }
+        queueMicrotask(() => {
+          const handler = client.internalResponseHandlers.get(String(request.id));
+          client.internalResponseHandlers.delete(String(request.id));
+          handler.resolve({ id: request.id, result });
+        });
+      } },
+    });
+    return client;
+  };
+  const client = makeClient("local"), lazy = makeClient("durable");
   const api = {
     // An old implementation triggers the actual missing Owl binding here.
     get safeStorage() { return electron.safeStorage; },
-    dialog: { showMessageBox: async options => { errors.push(options.detail); return { response: 0 }; } },
-    shell: electron.shell,
-    Menu: { buildFromTemplate: () => ({ popup: ({ callback }) => { menus++; callback(); } }) },
+    dialog: { showMessageBox: async options => { if (options.type === "error") errors.push(options.detail); return { response: 0 }; } },
+    shell: { openExternal: async () => { openedLogin++; } },
+    Menu: { buildFromTemplate: template => ({ popup: ({ callback }) => { menus++; if (selectAdd) template.find(item => item.value === "add").click(); callback(); } }) },
   };
   for (let attempt = 0; attempt < 2; attempt++) {
     // A fresh instance must retrieve the persisted key and decrypt the vault.
-    await createAccountSwitcher({ electron: api, clients: () => [client], home, reload() {} }).open(client);
+    await createAccountSwitcher({ electron: api, clients: () => [client, lazy], home, reload() {} }).open(client);
   }
+  selectAdd = true;
+  await createAccountSwitcher({ electron: api, clients: () => [client, lazy], home, reload() {} }).open(client);
   const vault = path.join(home, ".community-account-switcher/accounts.json");
   const encryptedVault = fs.existsSync(vault) && !fs.readFileSync(vault, "utf8").includes("synthetic-probe-secret");
-  fs.writeFileSync(process.env.ACCOUNT_SWITCHER_PROBE_RESULT, JSON.stringify({ menus, encryptedVault, errors }), { mode: 0o600 });
+  fs.writeFileSync(process.env.ACCOUNT_SWITCHER_PROBE_RESULT, JSON.stringify({ menus, encryptedVault, errors, openedLogin, readyChecks }), { mode: 0o600 });
 }).catch(() => {
   fs.writeFileSync(process.env.ACCOUNT_SWITCHER_PROBE_RESULT, JSON.stringify({ probeFailed: true }), { mode: 0o600 });
 }).finally(() => electron.app.quit()); // Only this disposable probe exits.

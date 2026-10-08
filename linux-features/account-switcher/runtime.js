@@ -16,6 +16,7 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
   let menuOpen = false;
   let busy = false;
   let encryptionKey;
+  let stage = "account storage";
 
   async function secretTool(args, input = "") {
     if (runSecretTool) return runSecretTool(args, input);
@@ -192,12 +193,23 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
   }
 
   async function rpc(client, method, params) {
-    const response = await client.sendInternalRequest({ id: `community-account:${crypto.randomUUID()}`, method, params }, { timeoutMs: 15_000 });
-    if (response.error || response.result == null) throw new SwitcherError("The app server could not complete the account operation.");
-    return response.result;
+    // The registry also contains lazy connections (including durable). Raw
+    // sendInternalRequest does not initialize their transport. Use the same
+    // ready-checked wrapper as upstream's account and thread callers.
+    stage = method === "account/login/start" ? "starting browser login"
+      : method === "account/login/cancel" ? "cancelling browser login"
+        : method === "account/read" ? "checking account activation" : "checking active tasks";
+    try {
+      const result = await client.sendAppServerRequest(method, params, undefined, { timeoutMs: 15_000 });
+      if (result == null) throw new Error();
+      return result;
+    } catch {
+      throw new SwitcherError(`The app server could not complete the operation while ${stage}. No login credentials were printed.`);
+    }
   }
 
   async function assertIdle() {
+    stage = "checking backend connections";
     for (const client of clients()) {
       if (client.getPendingRequestCount() !== 0) throw new SwitcherError("Wait for pending requests and active tasks to finish before switching accounts.");
       let cursor = null;
@@ -219,6 +231,7 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
   }
 
   async function readCurrent(client) {
+    stage = "verifying the current login";
     const text = readPrivate(authPath);
     const info = identity(text);
     const principal = await client.getAuthenticatedPrincipal();
@@ -229,6 +242,7 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
   }
 
   async function restore(client, text) {
+    stage = "reconnecting the account";
     const info = identity(text);
     writePrivate(authPath, text);
     client.clearAuthTokenCache();
@@ -262,6 +276,7 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
     let loginId, completed = false, resolveLogin;
     const completion = new Promise(resolve => { resolveLogin = resolve; });
     let early;
+    stage = "subscribing to login completion";
     const stop = client.registerInternalNotificationHandler(message => {
       if (message.method !== "account/login/completed") return;
       if (loginId == null) { early = message.params; return; }
@@ -274,7 +289,9 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
       const url = new URL(login.authUrl);
       if (login.type !== "chatgpt" || typeof loginId !== "string" || url.protocol !== "https:" || url.hostname !== "auth.openai.com") throw new SwitcherError("Unsupported ChatGPT login response.");
       if (early?.loginId === loginId) resolveLogin(early);
+      stage = "opening the login browser";
       await shell.openExternal(url.href);
+      stage = "displaying the login dialog";
       const result = await Promise.race([
         completion,
         dialog.showMessageBox({ type: "info", title: "ChatGPT Community", message: "Sign in to another ChatGPT account in your browser.", detail: "Your current login is remembered. Cancel returns to it.", buttons: ["Cancel"], cancelId: 0, signal: controller.signal }).then(() => null),
@@ -284,6 +301,10 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
       remember(accounts, await readCurrent(client));
       completed = true;
       reload();
+    } catch (error) {
+      // Preserve the failing phase before rollback performs other operations.
+      if (error instanceof SwitcherError) throw error;
+      throw new SwitcherError(`Account operation failed while ${stage}; no login credentials were printed.`);
     } finally {
       controller.abort(); stop();
       if (!completed) {
@@ -296,6 +317,7 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
   async function open(client, window, locale = "en") {
     if (menuOpen) return;
     menuOpen = true;
+    stage = "account storage";
     try {
       let accounts = await load();
       const current = await readCurrent(client);
@@ -333,7 +355,7 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
       }
     } catch (error) {
       // Never include upstream error text, decrypted credentials, or OAuth URLs.
-      const message = error instanceof SwitcherError ? error.message : "Account operation failed. Check your private credential file and system keyring; no credentials were printed.";
+      const message = error instanceof SwitcherError ? error.message : `Account operation failed while ${stage}; no login credentials were printed.`;
       await dialog.showMessageBox({ type: "error", title: "ChatGPT Community", message: "Account switcher", detail: message, buttons: ["OK"] });
     } finally { busy = false; menuOpen = false; }
   }
