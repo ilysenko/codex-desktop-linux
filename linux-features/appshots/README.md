@@ -22,10 +22,14 @@ to `computer-use-linux`, core patch modules, default patch flow, or packaged
 runtime hooks.
 
 For window metadata and AT-SPI text, the feature shells out to the bundled
-Linux Computer Use backend's existing `windows` and `state` commands. For the
-screenshot, it uses an available desktop screenshot CLI such as `grim`,
-`spectacle`, `gnome-screenshot`, `maim`, `scrot`, or ImageMagick `import`, then
-crops the image to the focused window bounds in Electron.
+Linux Computer Use backend's existing `windows` and `state` commands. For X11
+and i3, it first asks ImageMagick `import` to capture the selected window by
+its X11 window ID, which also works when the window is outside the primary
+root-screenshot bounds. A direct window image uses its own image bounds,
+not the window's desktop coordinates. If that is unavailable, or for other
+desktop backends, it uses an available desktop screenshot CLI such as `grim`, `spectacle`,
+`gnome-screenshot`, `maim`, `scrot`, or ImageMagick `import`, then crops the
+image to the focused window bounds in Electron.
 
 Privacy and correctness constraints:
 
