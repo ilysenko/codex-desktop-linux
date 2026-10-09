@@ -19,8 +19,11 @@ electron.app.whenReady().then(async () => {
   const errors = [];
   let menus = 0, openedLogin = 0, selectAdd = false, readyChecks = 0;
   const bundles = path.join(process.env.ACCOUNT_SWITCHER_PROBE_NATIVE_APP, "resources/app.asar/.vite/build");
-  const bootstrap = require(path.join(bundles, fs.readdirSync(bundles).find(name => /^bootstrap-.*\.js$/.test(name))));
-  const classes = Object.values(bootstrap).filter(value => typeof value === "function"
+  const modules = fs.readdirSync(bundles).filter(name => name.endsWith(".js") &&
+    ["async sendAppServerRequest(", "registerInternalNotificationHandler(", "getPendingRequestCount("].every(anchor => fs.readFileSync(path.join(bundles, name), "utf8").includes(anchor)));
+  if (modules.length !== 1) throw Error("Native connection module contract drifted");
+  const connectionModule = require(path.join(bundles, modules[0]));
+  const classes = Object.values(connectionModule).filter(value => typeof value === "function"
     && value.prototype?.sendAppServerRequest && value.prototype?.registerInternalNotificationHandler
     && value.prototype?.getPendingRequestCount);
   if (classes.length !== 1) throw Error("Native connection contract drifted");
@@ -29,7 +32,7 @@ electron.app.whenReady().then(async () => {
     // methods; substitute only transport/identity, without real credentials.
     const client = Object.create(classes[0].prototype);
     Object.assign(client, {
-      options: { hostId: id, hostConfig: { id, kind: id === "local" ? "local" : "cloud" }, transport: { kind: id === "local" ? "stdio" : "websocket" } },
+      options: { hostId: id, hostConfig: { id, kind: "local" }, transport: { kind: id === "local" ? "stdio" : "websocket" } },
       connection: id === "local" ? {} : null,
       internalNotificationHandlers: new Set(), internalResponseHandlers: new Map(),
       clientRequestQueue: { size: 0, updatePeakPendingRequestCount() {} },
@@ -42,7 +45,10 @@ electron.app.whenReady().then(async () => {
         if (!client.connection) throw Error("Codex app-server is not available");
         let result;
         switch (request.method) {
-          case "thread/loaded/list": result = { data: [], nextCursor: null }; break;
+          case "thread/loaded/list":
+            if (id === "durable") throw Error("Gateway rejects thread/loaded/list with -32601");
+            result = { data: [], nextCursor: null }; break;
+          case "thread/list": result = { data: [], nextCursor: null }; break;
           case "account/login/start": result = { type: "chatgpt", loginId: "probe-login", authUrl: "https://auth.openai.com/oauth/authorize?probe=1" }; break;
           case "account/login/cancel": result = {}; break;
           case "account/read": result = { account: null }; break;

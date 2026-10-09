@@ -25,7 +25,12 @@ desktop app against that home while changing accounts.
   app server and reloads desktop windows so account-specific UI caches refresh.
 - Pending app-server requests and active loaded tasks on connected hosts block
   switching. Task checks use upstream's ready-checked request wrapper, including
-  lazy hosted connections, before starting OAuth. New renderer requests are rejected during the credential change.
+  lazy hosted connections, before starting OAuth. Local/remote servers use
+  `thread/loaded/list` and `thread/read`. The durable cloud gateway does not
+  support `thread/loaded/list`; it uses runtime statuses from all pages of
+  `thread/list`, including archived chats. Active cloud tasks in another window
+  or app also block switching. Unknown statuses or failed checks block switching.
+  New renderer requests are rejected during the credential change.
   This is not an interprocess lock for external CLI clients or automation.
 - Local chats, projects, settings, and plugin configuration remain shared in
   the same profile. Cloud chats, usage, and account permissions follow the login.

@@ -204,7 +204,8 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
       if (result == null) throw new Error();
       return result;
     } catch {
-      throw new SwitcherError(`The app server could not complete the operation while ${stage}. No login credentials were printed.`);
+      const host = client.hostConfig.id === "durable" ? "cloud" : client.hostConfig.id === "local" ? "local" : "remote";
+      throw new SwitcherError(`The ${host} app server could not complete ${method} while ${stage}. No login credentials were printed.`);
     }
   }
 
@@ -212,20 +213,30 @@ function createAccountSwitcher({ electron, clients, home, reload, runSecretTool 
     stage = "checking backend connections";
     for (const client of clients()) {
       if (client.getPendingRequestCount() !== 0) throw new SwitcherError("Wait for pending requests and active tasks to finish before switching accounts.");
-      let cursor = null;
-      const seen = new Set();
-      for (;;) {
-        const page = await rpc(client, "thread/loaded/list", { cursor, limit: 100 });
-        if (!Array.isArray(page.data)) throw new SwitcherError("Unable to verify that tasks are idle.");
-        for (const threadId of page.data) {
-          const { thread } = await rpc(client, "thread/read", { threadId, includeTurns: false });
-          if (!["idle", "notLoaded", "systemError"].includes(thread?.status?.type)) {
-            throw new SwitcherError("Finish or stop active tasks before switching accounts.");
+      // The durable gateway implements thread/list, but rejects
+      // thread/loaded/list with JSON-RPC -32601. Its catalog includes runtime
+      // status, so inspect both archived and unarchived pages without reading
+      // chat contents. Other hosts keep the local loaded-thread protocol.
+      const cloud = client.hostConfig.id === "durable";
+      for (const archived of cloud ? [false, true] : [false]) {
+        let cursor = null;
+        const seen = new Set();
+        for (;;) {
+          const page = await rpc(client, cloud ? "thread/list" : "thread/loaded/list",
+            { cursor, limit: 100, ...(cloud ? { archived } : {}) });
+          if (!Array.isArray(page.data)) throw new SwitcherError("Unable to verify that tasks are idle.");
+          for (const entry of page.data) {
+            const thread = cloud ? entry : (await rpc(client, "thread/read", { threadId: entry, includeTurns: false })).thread;
+            if (!["idle", "notLoaded", "systemError"].includes(thread?.status?.type)) {
+              throw new SwitcherError(cloud
+                ? "Finish or stop active cloud tasks before switching accounts, including tasks running in other windows or apps."
+                : "Finish or stop active tasks before switching accounts.");
+            }
           }
+          if (page.nextCursor == null) break;
+          if (typeof page.nextCursor !== "string" || seen.has(page.nextCursor) || seen.size >= 100) throw new SwitcherError("Unable to verify that tasks are idle.");
+          seen.add(page.nextCursor); cursor = page.nextCursor;
         }
-        if (page.nextCursor == null) break;
-        if (typeof page.nextCursor !== "string" || seen.has(page.nextCursor) || seen.size >= 100) throw new SwitcherError("Unable to verify that tasks are idle.");
-        seen.add(page.nextCursor); cursor = page.nextCursor;
       }
     }
   }
