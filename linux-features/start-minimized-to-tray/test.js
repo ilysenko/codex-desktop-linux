@@ -14,39 +14,30 @@ const {
   LABEL_IDS, LABEL_TRANSLATIONS, DESCRIPTION_IDS, DESCRIPTION_TRANSLATIONS,
 } = require("./patch.js");
 
-// The current upstream startup contract, with Electron services supplied by
-// the harness. This exercises the actual patched control flow and handlers.
-const windowModeFixture = 'class MessageHandler{setPrimaryWindowMode(e,t){let n=g.BrowserWindow.fromWebContents(e);if(!n||n.isDestroyed())return;let r=this.windowManager.getPrimaryWindow();if(!r||r.isDestroyed()||r.id!==n.id)return;let i=RAe(t);if((0,W.default)(this.primaryWindowMode,t)){i!=null&&this.showPrimaryWindow(n);return}if(this.primaryWindowMode=t,i!=null){this.primaryWindowRestoreBounds??={bounds:n.getNormalBounds(),wasMaximized:n.isMaximized(),wasFullScreen:n.isFullScreen()},n.isFullScreen()&&n.setFullScreen(!1),n.isMaximized()&&n.unmaximize(),n.setResizable(!0);let e=g.screen.getDisplayMatching(n.getNormalBounds()).workAreaSize,t=process.platform===`win32`?{width:Math.max(0,n.getBounds().width-n.getContentBounds().width),height:Math.max(0,n.getBounds().height-n.getContentBounds().height)}:{width:0,height:0},r={width:e.width-t.width,height:e.height-t.height},a={width:Math.min(i.width,r.width),height:Math.min(i.height,r.height)},o=process.platform===`win32`,s=o&&(a.width>=r.width*VY||a.height>=r.height*VY),c=this.windowManager.getPrimaryMinimumSize();n.setMaximizable(o),n.setFullScreenable(!1),n.setMinimumSize(Math.min(c.width,a.width),Math.min(c.height,a.height)),n.setSize(a.width,a.height),s||n.center(),this.showPrimaryWindow(n),s&&n.maximize();return}if(n.setResizable(!0),n.setMaximizable(!0),n.setFullScreenable(!0),this.primaryWindowRestoreBounds){let{bounds:e,wasMaximized:t,wasFullScreen:r}=this.primaryWindowRestoreBounds;this.primaryWindowRestoreBounds=null;let i=this.windowManager.getPrimaryMinimumSize();n.setMinimumSize(i.width,i.height);let a={...e,width:Math.max(e.width,i.width),height:Math.max(e.height,i.height)};n.isMaximized()&&n.unmaximize(),n.setBounds(a),t&&n.maximize(),r&&n.setFullScreen(!0)}this.windowManager.syncPrimaryMinimumSize(),this.showPrimaryWindow(n)}showPrimaryWindow(e){e.isVisible()||(e.show(),e.focus())}}';
-
+// Current upstream startup contract. The feature delegates hidden-window
+// behavior to the native background-launch path after verifying tray readiness.
 function startupFixture() {
-  return windowModeFixture + `class WindowManager{install(window,maximized){maximized&&window.once(\`ready-to-show\`,()=>{window.isDestroyed()||window.maximize()})}}
-async function startup(){let V=await m.O({moduleDir:__dirname}),unused=0;
+  return `async function startup(e={isBackgroundLaunch:!1}){let V=await m.O({moduleDir:__dirname}),unused=0;
 let options={canHideLastWindowToTray:Z9,isRemoteHostedPIPEnabled:noop};
-let Ke=process.env.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,qe=(e,t=!0)=>{if(!t){e.showInactive();return}e.isMinimized()&&e.restore(),e.show(),e.focus()},Je=async e=>{if(xe)try{U.hotkeyWindowLifecycleManager.hide();let t=U.getPrimaryWindow()??await Ce(\`/\`);if(t==null)return;qe(t)}catch(e){throw e}};
-let We={deepLinks:{queueProcessArgs:()=>!0}};w(e=>{let n=!1;if(We.deepLinks.queueProcessArgs(e)){n&&Je();return}Je()});
-let Ye=async(e,t)=>{if(!xe)return null;U.hotkeyWindowLifecycleManager.hide();let n=U.getPrimaryWindow(),r=n??await Ce(e);return r==null?null:(qe(r),r)},Qe=()=>setup;
+let Ye=process.env.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,Xe=(e,t=!0)=>{if(!t){e.showInactive();return}e.isMinimized()&&e.restore(),e.show(),e.focus()},Ze=async()=>{U.hotkeyWindowLifecycleManager.hide();let e=U.getPrimaryWindow()??await U.ensureWindow({background:!1});e!=null&&Xe(e)},Qe=()=>setup;
 (L||process.platform===\`linux\`)&&Qe();
-let st=await U.ensureWindow();st!=null&&(qe(st,!Ke),_e.handleInitialWindowVisible());
-await beforeFinish?.(Je,Ye);
-let gt=st;gt==null?gt=await U.ensureWindow():gt.isDestroyed()&&(gt=null);
-gt&&(st??_e.handleInitialWindowVisible(),gt!==st&&qe(gt,!Ke));xe=!0;
-return {secondInstance:Je,trayOpen:Ye};}`;
+let ut=await U.ensureWindow({background:e.isBackgroundLaunch});ut?.once(\`show\`,()=>{_e.handleInitialWindowVisible()}),ut!=null&&!e.isBackgroundLaunch&&(Xe(ut,!Ye),_e.handleInitialWindowVisible());
+let trayOpen=async()=>Ze();w(args=>{We.deepLinks.queueProcessArgs(args)&&Ze()});await beforeFinish?.(Ze,trayOpen);return {secondInstance:Ze,trayOpen}}`;
 }
-
 async function runStartup({ preference = true, onlyOnBoot = false, env = {}, cgroup = "0::/user.slice/app.slice/app-codex.scope\n", platform = "linux", argv = ["ChatGPT"], ready = true, existing = false, setup = Promise.resolve(), beforeFinish = null, background = false } = {}) {
   const calls = [];
   const mockWindow = {
     show: () => calls.push("show"), showInactive: () => calls.push("showInactive"),
     focus: () => calls.push("focus"), restore: () => calls.push("restore"),
-    isDestroyed: () => false, isMinimized: () => false,
+    isDestroyed: () => false, isMinimized: () => false, once: () => {},
   };
   let primary = existing ? mockWindow : null;
   const U = {
     windowManager: {},
     getPrimaryWindow: () => primary,
-    ensureWindow: async () => {
-      if (primary) { primary.show(); primary.focus(); }
-      else primary = mockWindow;
+    ensureWindow: async ({ background = false } = {}) => {
+      if (primary && !background) { primary.show(); primary.focus(); }
+      else if (!primary) primary = mockWindow;
       return primary;
     },
     hotkeyWindowLifecycleManager: { hide: () => calls.push("hideHotkey") },
@@ -63,8 +54,9 @@ async function runStartup({ preference = true, onlyOnBoot = false, env = {}, cgr
       return cgroup;
     } }; },
     U, Z9: () => ready, setup, beforeFinish,
-    L: platform === "win32", xe: false, noop: () => {}, __dirname: "/bundle",
-    Ce: async () => mockWindow, _e: { handleInitialWindowVisible: () => calls.push("attribution") },
+    L: platform === "win32", noop: () => {}, __dirname: "/bundle",
+    We: { deepLinks: { queueProcessArgs: () => true } },
+    _e: { handleInitialWindowVisible: () => calls.push("attribution") },
     setTimeout, clearTimeout,
     w: callback => { context.secondInstanceArgs = callback; },
   };
@@ -214,7 +206,7 @@ test("a queued second-instance deep link also reveals the hidden window", async 
   assert.deepEqual(calls, ["hideHotkey", "show", "focus"]);
   const normal = await runStartup({ preference: false });
   normal.secondInstanceArgs(["ChatGPT", "codex://threads/123"]);
-  assert.deepEqual(normal.calls, ["show", "focus", "attribution"]);
+  assert.deepEqual(normal.calls, ["show", "focus", "attribution", "hideHotkey", "show", "focus"]);
 });
 
 test("tray and second-instance activation reveal an existing hidden window before host readiness", async () => {
@@ -223,99 +215,7 @@ test("tray and second-instance activation reveal an existing hidden window befor
     assert.deepEqual(calls, ["hideHotkey", "show", "focus"]);
   }
   const { calls } = await runStartup({ preference: false, beforeFinish: (second) => second() });
-  assert.deepEqual(calls, ["show", "focus", "attribution"]);
-});
-
-test("saved maximization waits for explicit reveal instead of showing a hidden startup window", () => {
-  const Manager = vm.runInNewContext(`${applyMainPatch(startupFixture())};WindowManager`, {setTimeout,clearTimeout});
-  for (const hidden of [true, false]) {
-    const events = new Map(), calls = [];
-    const window = { once: (name, callback) => events.set(name, callback), isDestroyed:()=>false,
-      isVisible:()=>!hidden, maximize:()=>calls.push("maximize") };
-    const manager = new Manager(); manager.codexLinuxStartMinimized = hidden;
-    manager.install(window, true);
-    events.get("ready-to-show")();
-    assert.deepEqual(calls, hidden ? [] : ["maximize"]);
-    if (hidden) { events.get("show")(); assert.deepEqual(calls, ["maximize"]); }
-  }
-});
-
-function windowModeHarness(hidden, initiallyVisible = !hidden) {
-  const calls = [], events = new Map();
-  let visible = initiallyVisible, destroyed = false, maximized = true;
-  const window = {
-    id: 1, isDestroyed: () => destroyed, isVisible: () => visible,
-    once: (name, callback) => { events.set(name, [...(events.get(name) ?? []), callback]); },
-    show: () => { calls.push("show"); visible = true; }, focus: () => calls.push("focus"),
-    getNormalBounds: () => ({ x: 0, y: 0, width: 1000, height: 700 }),
-    isMaximized: () => maximized, isFullScreen: () => false,
-    unmaximize: () => { calls.push("unmaximize"); maximized = false; },
-    maximize: () => { calls.push("maximize"); maximized = true; visible = true; },
-    setFullScreen: () => { calls.push("fullscreen"); visible = true; },
-  };
-  for (const method of ["setResizable", "setMaximizable", "setFullScreenable", "setMinimumSize", "setSize", "center", "setBounds"]) {
-    window[method] = () => calls.push(method);
-  }
-  const manager = { codexLinuxStartMinimized: hidden, getPrimaryWindow: () => window,
-    getPrimaryMinimumSize: () => ({ width: 500, height: 500 }),
-    syncPrimaryMinimumSize: () => calls.push("syncPrimaryMinimumSize") };
-  const context = {
-    g: { BrowserWindow: { fromWebContents: () => window }, screen: { getDisplayMatching: () => ({ workAreaSize: { width: 1280, height: 800 } }) } },
-    W: { default: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
-    RAe: mode => mode.mode === "onboarding" ? { width: 1090, height: 760 } : null,
-    VY: 0.9, process: { platform: "linux" }, setTimeout, clearTimeout,
-  };
-  const Handler = vm.runInNewContext(`${applyMainPatch(startupFixture())};MessageHandler`, context);
-  const handler = new Handler(); handler.windowManager = manager;
-  const emit = name => { const callbacks = events.get(name) ?? []; events.delete(name); callbacks.forEach(fn => fn()); };
-  return { handler, calls, events,
-    setMode: mode => handler.setPrimaryWindowMode({}, mode),
-    reveal: () => { manager.codexLinuxStartMinimized = false; visible = true; emit("show"); },
-    close: () => { destroyed = true; emit("closed"); } };
-}
-
-test("late renderer app/onboarding mode never reveals or resizes the hidden startup window", () => {
-  for (const mode of [{ mode: "app" }, { mode: "onboarding", onboardingVariant: "v2" }]) {
-    const h = windowModeHarness(true);
-    h.setMode(mode);
-    assert.deepEqual(h.calls, []);
-    assert.equal(h.handler.primaryWindowMode, undefined);
-    h.reveal();
-    assert.deepEqual(JSON.parse(JSON.stringify(h.handler.primaryWindowMode)), mode);
-    assert.ok(h.calls.includes(mode.mode === "app" ? "syncPrimaryMinimumSize" : "setSize"));
-    assert.equal(h.calls.includes("show"), false);
-    h.setMode({ mode: "app" });
-    assert.ok(h.calls.includes("syncPrimaryMinimumSize"));
-  }
-});
-
-test("mode updates coalesce until reveal, including transitions from saved onboarding geometry", () => {
-  const h = windowModeHarness(true);
-  h.handler.primaryWindowRestoreBounds = { bounds: { x: 0, y: 0, width: 1000, height: 700 }, wasMaximized: true, wasFullScreen: true };
-  h.setMode({ mode: "onboarding" });
-  h.setMode({ mode: "app" });
-  assert.deepEqual(h.calls, []);
-  assert.equal(h.events.get("show").length, 1);
-  h.reveal();
-  assert.ok(h.calls.includes("maximize"));
-  assert.ok(h.calls.includes("fullscreen"));
-  assert.equal(h.calls.includes("setSize"), false);
-  assert.equal(h.handler.codexLinuxStartMinimizedWindowMode, null);
-});
-
-test("disabled feature state preserves the renderer mode behavior and destroyed windows discard deferred state", () => {
-  const visible = windowModeHarness(false);
-  visible.setMode({ mode: "app" });
-  assert.deepEqual(visible.calls, ["setResizable", "setMaximizable", "setFullScreenable", "syncPrimaryMinimumSize"]);
-  const normalHidden = windowModeHarness(false, false);
-  normalHidden.setMode({ mode: "app" });
-  assert.deepEqual(normalHidden.calls.slice(-2), ["show", "focus"]);
-  const closed = windowModeHarness(true);
-  closed.setMode({ mode: "app" });
-  closed.close();
-  assert.equal(closed.handler.codexLinuxStartMinimizedWindowMode, null);
-  closed.reveal();
-  assert.deepEqual(closed.calls, []);
+  assert.deepEqual(calls, ["show", "focus", "attribution", "hideHotkey", "show", "focus"]);
 });
 
 test("disabled/unset/invalid preference, non-Linux, files, and URIs preserve visible startup", async () => {
@@ -341,26 +241,6 @@ test("failed or unavailable tray leaves the window visible", async () => {
   }
 });
 
-test("activation during startup cancels the hidden decision before final reveal", async () => {
-  // A second-instance activation arrives while asynchronous tray setup waits.
-  let activate;
-  let finishTray;
-  const setup = new Promise(resolve => { finishTray = resolve; });
-  const patched = applyMainPatch(startupFixture()).replace("let codexLinuxStartMinimizedTraySetup=", "activate=()=>Je();let codexLinuxStartMinimizedTraySetup=");
-  const calls = [];
-  const window = { show:()=>calls.push("show"), focus:()=>{}, isMinimized:()=>false, isDestroyed:()=>false };
-  const context = { process:{platform:"linux",argv:["ChatGPT"],env:{}},m:{O:async()=>({globalState:{getStored:key=>key===SETTINGS_KEY}})},
-    U:{windowManager:{},ensureWindow:async()=>window,getPrimaryWindow:()=>null,hotkeyWindowLifecycleManager:{hide(){}}},
-    Z9:()=>true,L:false,xe:false,setup,noop(){},__dirname:"/",_e:{handleInitialWindowVisible(){}},
-    setTimeout,clearTimeout,beforeFinish:null,w(){},set activate(value){activate=value;} };
-  const running = vm.runInNewContext(`${patched};startup()`,context);
-  await new Promise(resolve=>setImmediate(resolve));
-  await activate();
-  finishTray();
-  await running;
-  assert.deepEqual(calls,["show"]);
-});
-
 test("tray wait is bounded and clears the timer on success or failure", async () => {
   assert.equal(await codexLinuxStartMinimizedTrayReady(Promise.resolve(), () => true, 10), true);
   assert.equal(await codexLinuxStartMinimizedTrayReady(Promise.reject(Error()), () => false, 10), false);
@@ -376,18 +256,37 @@ function captureWarnings(callback) {
 test("main patch is idempotent, preserves aliases, and fails closed on absent/ambiguous contracts", () => {
   const source = startupFixture(), patched = applyMainPatch(source);
   assert.equal(applyMainPatch(patched), patched);
-  const renamed = source.replaceAll("Ke", "bgAlias").replaceAll("qe", "showAlias").replaceAll("U.", "serviceAlias.");
+  const renamed = source.replaceAll("Ye", "bgAlias").replaceAll("Xe", "showAlias").replaceAll("U.", "serviceAlias.");
   assert.notEqual(applyMainPatch(renamed), renamed);
+  const patchedRelationships = [
+    "let codexLinuxStartMinimizedPreferences=codexLinuxStartMinimizedPreference(V.globalState);",
+    "let codexLinuxStartMinimized=codexLinuxStartMinimizedPreferences.requested;",
+    "console.info(`[start-minimized-to-tray] startup preference`,codexLinuxStartMinimizedPreferences);",
+    "let codexLinuxStartMinimizedTraySetup=(L||process.platform===`linux`)?Qe():null;",
+    "if(codexLinuxStartMinimized){let ready=await codexLinuxStartMinimizedTrayReady(codexLinuxStartMinimizedTraySetup,Z9);",
+    "console.info(`[start-minimized-to-tray] tray readiness`,{ready});",
+    "codexLinuxStartMinimized=codexLinuxStartMinimized&&ready;e.isBackgroundLaunch=e.isBackgroundLaunch||codexLinuxStartMinimized/*codexLinuxStartMinimizedNativeBackground*/",
+    "let ut=await U.ensureWindow({background:e.isBackgroundLaunch});",
+    "ut?.once(`show`,()=>{_e.handleInitialWindowVisible()}),",
+    "ut!=null&&!e.isBackgroundLaunch&&(Xe(ut,!Ye),_e.handleInitialWindowVisible())",
+  ];
+  for (const relationship of patchedRelationships) {
+    for (const drift of [patched.replace(relationship, ""), `${patched}${relationship}`]) {
+      const result = captureWarnings(() => applyMainPatch(drift));
+      assert.equal(result.value, drift);
+      assert.equal(result.warnings.length, 1, relationship);
+    }
+  }
   for (const drift of [source + source, patched + source, patched + patched,
-    patched.replace("if(this.windowManager.codexLinuxStartMinimized===!0", "if(this.windowManager.codexLinuxStartMinimized===!1"),
+    source + `function codexLinuxStartMinimizedTrayReady(){}`,
+    patched.replace("codexLinuxStartMinimizedNativeBackground", "changedNativeBackground"),
     patched.replace("codexLinuxStartMinimizedPreference(V.globalState)", "codexLinuxStartMinimizedPreference(other.globalState)"),
     patched.replace("only-on-boot", "changed-boot-key"),
-    source.replace("CODEX_ELECTRON_START_IN_BACKGROUND", "CHANGED"),
-    source.replace("canHideLastWindowToTray", "changed"), source.replace("gt!==st", "gt===st"),
-    source.replace("moduleDir:__dirname", "moduleDir:changed"), source.replace("Ye=async", "Ye=changed"),
-    source.replace("setPrimaryWindowMode(e,t){", "setPrimaryWindowMode(e,other){"),
-    source.replace("this.windowManager.syncPrimaryMinimumSize()", "this.windowManager.changed()"),
-    source.replace("window.maximize()", "window.show()")]) {
+    source.replace("canHideLastWindowToTray", "changed"),
+    source.replace("moduleDir:__dirname", "moduleDir:changed"),
+    source.replace("ensureWindow({background:e.isBackgroundLaunch})", "ensureWindow()"),
+    source.replace("handleInitialWindowVisible", "changedInitialWindowVisible"),
+    source.replace("(L||process.platform===`linux`)&&Qe();", "Qe();")]) {
     const result = captureWarnings(() => applyMainPatch(drift));
     assert.equal(result.value, drift);
     assert.equal(result.warnings.length, 1);

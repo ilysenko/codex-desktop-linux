@@ -1,0 +1,18 @@
+{
+  "id": "global-dictation-gnome",
+  "title": "GNOME Global Dictation Companion",
+  "description": "Opt-in, helper-authenticated GNOME Shell Ctrl+V companion for Global Dictation; requires manual extension activation.",
+  "defaultEnabled": false,
+  "requires": ["global-dictation"],
+  "resources": [
+    {
+      "source": "extension",
+      "target": ".codex-linux/features/global-dictation-gnome/extension",
+      "mode": "0644"
+    }
+  ],
+  "runtimeHooks": {
+
+    "prelaunch": { "source": "install-extension.sh", "name": "install-extension.sh", "mode": "0755" }
+  }
+}

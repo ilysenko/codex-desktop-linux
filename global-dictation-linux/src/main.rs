@@ -9,6 +9,7 @@ use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use zbus::{
+    proxy::{CacheProperties, MethodFlags},
     zvariant::{OwnedObjectPath, OwnedValue, Value},
     Connection, Proxy,
 };
@@ -18,6 +19,11 @@ const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const SHORTCUTS_INTERFACE: &str = "org.freedesktop.portal.GlobalShortcuts";
 const REQUEST_INTERFACE: &str = "org.freedesktop.portal.Request";
 const REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
+const GNOME_SERVICE: &str = "org.chatgpt.Community.Dictation";
+const GNOME_PATH: &str = "/org/chatgpt/Community/Dictation";
+const GNOME_INTERFACE: &str = "org.chatgpt.Community.Dictation1";
+const GNOME_TIMEOUT: Duration = Duration::from_secs(2);
+const GNOME_GUIDANCE: &str = "Enable the ChatGPT Community dictation GNOME extension (compatible version 1) and try again; RemoteDesktop fallback is disabled";
 const SHORTCUT_ID: &str = "global-dictation";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const DEVICE_KEYBOARD: u32 = 1;
@@ -27,6 +33,11 @@ const KEYSYM_CONTROL_L: i32 = 0xffe3;
 const KEYSYM_V: i32 = b'v' as i32;
 static REQUEST_NONCE: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PasteBackend {
+    RemoteDesktop,
+    Gnome,
+}
 
 async fn register_host_app_id(connection: &Connection, app_id: &str) -> Result<()> {
     let registry_proxy = Proxy::new(
@@ -258,6 +269,7 @@ async fn run_portal_on(connection: &Connection, trigger: &str) -> Result<()> {
         .await
         .context("failed to subscribe to shortcut deactivation")?;
 
+    let backend = detect_paste_backend(connection).await;
     emit("ready")?;
     let mut pressed = false;
     let mut commands = BufReader::new(tokio::io::stdin()).lines();
@@ -281,7 +293,7 @@ async fn run_portal_on(connection: &Connection, trigger: &str) -> Result<()> {
             command = commands.next_line() => {
                 match command.context("failed to read helper command")? {
                     Some(command) if command == "paste" => {
-                        let result = paste_through_portal(connection, &mut paste_session).await;
+                        let result = paste_with_backend(connection, &mut paste_session, backend).await;
                         match result {
                             Ok(()) => emit("paste-ok")?,
                             Err(error) => {
@@ -304,6 +316,71 @@ async fn run_portal_on(connection: &Connection, trigger: &str) -> Result<()> {
         close_session(connection, &session).await;
     }
     close_session(connection, &session).await;
+    Ok(())
+}
+
+async fn detect_paste_backend(connection: &Connection) -> PasteBackend {
+    // Discovery never activates the extension or requests input permissions.
+    // Keep this choice for the helper lifetime to avoid unexpected consent prompts.
+    match tokio::time::timeout(GNOME_TIMEOUT, probe_gnome_companion(connection)).await {
+        Ok(Ok(_)) => PasteBackend::Gnome,
+        _ => PasteBackend::RemoteDesktop,
+    }
+}
+
+async fn paste_with_backend(
+    connection: &Connection,
+    session: &mut Option<OwnedObjectPath>,
+    backend: PasteBackend,
+) -> Result<()> {
+    match backend {
+        PasteBackend::RemoteDesktop => paste_through_portal(connection, session).await,
+        PasteBackend::Gnome => paste_through_gnome(connection)
+            .await
+            .context(GNOME_GUIDANCE),
+    }
+}
+
+async fn probe_gnome_companion(connection: &Connection) -> Result<Proxy<'_>> {
+    // GetNameOwner does not activate services. Pin both calls to this owner so a
+    // replacement cannot receive Paste after a different owner's version check.
+    let bus = zbus::fdo::DBusProxy::new(connection).await?;
+    let owner = bus
+        .get_name_owner(GNOME_SERVICE.try_into()?)
+        .await
+        .context("GNOME dictation companion is unavailable")?;
+    let proxy: Proxy<'_> = zbus::proxy::Builder::new(connection)
+        .destination(owner)?
+        .path(GNOME_PATH)?
+        .interface(GNOME_INTERFACE)?
+        .cache_properties(CacheProperties::No)
+        .build()
+        .await?;
+    let version: u32 = proxy
+        .call_with_flags("GetVersion", MethodFlags::NoAutoStart.into(), &())
+        .await
+        .context("GNOME dictation companion version probe failed")?
+        .context("GNOME dictation companion returned no version reply")?;
+    if version != 1 {
+        bail!("GNOME dictation companion version {version} is unsupported (expected 1)");
+    }
+    Ok(proxy)
+}
+
+async fn paste_through_gnome(connection: &Connection) -> Result<()> {
+    let proxy = tokio::time::timeout(GNOME_TIMEOUT, probe_gnome_companion(connection))
+        .await
+        .context("GNOME dictation companion probe timed out")??;
+    // Never retry: a timeout or error may occur after input was already submitted.
+    let reply: Option<()> = tokio::time::timeout(
+        GNOME_TIMEOUT,
+        proxy.call_with_flags("Paste", MethodFlags::NoAutoStart.into(), &()),
+    )
+    .await
+    .context("GNOME dictation Paste timed out; input may already have been submitted")?
+    .context("GNOME dictation Paste failed; input may already have been submitted")?;
+    reply.context("GNOME dictation companion returned no Paste reply")?;
+    // Success acknowledges event submission, not delivery to the focused app.
     Ok(())
 }
 
@@ -458,7 +535,6 @@ async fn start_remote_desktop_session(
 }
 
 async fn create_session(connection: &Connection, proxy: &Proxy<'_>) -> Result<OwnedObjectPath> {
-
     // Register the app ID before invoking any portal methods.
     // The string MUST match the basename of your .desktop file (e.g., "codex-desktop")
     let app_id = std::env::var("CHROME_DESKTOP")
@@ -666,10 +742,11 @@ mod tests {
     };
 
     use super::{
-        bind_shortcut, create_session, parse_args, paste_through_portal, portal_key,
-        portal_trigger, request_path, signal_matches, DEVICE_KEYBOARD, KEYSYM_CONTROL_L, KEYSYM_V,
-        KEY_PRESSED, KEY_RELEASED, PORTAL_PATH, PORTAL_SERVICE, REQUEST_INTERFACE,
-        SHORTCUTS_INTERFACE, SHORTCUT_ID,
+        bind_shortcut, create_session, detect_paste_backend, parse_args, paste_with_backend,
+        portal_key, portal_trigger, probe_gnome_companion, request_path, signal_matches,
+        PasteBackend, DEVICE_KEYBOARD, GNOME_GUIDANCE, GNOME_PATH, GNOME_SERVICE, GNOME_TIMEOUT,
+        KEYSYM_CONTROL_L, KEYSYM_V, KEY_PRESSED, KEY_RELEASED, PORTAL_PATH, PORTAL_SERVICE,
+        REQUEST_INTERFACE, SHORTCUTS_INTERFACE, SHORTCUT_ID,
     };
 
     const TEST_SESSION: &str = "/org/freedesktop/portal/desktop/session/test/global_dictation";
@@ -678,6 +755,7 @@ mod tests {
     struct TestBus {
         child: Child,
         address: String,
+        activation_dir: Option<std::path::PathBuf>,
     }
 
     impl TestBus {
@@ -693,7 +771,56 @@ mod tests {
                 .next()
                 .expect("test D-Bus daemon did not print an address")
                 .expect("failed to read test D-Bus address");
-            Self { child, address }
+            Self {
+                child,
+                address,
+                activation_dir: None,
+            }
+        }
+
+        fn start_with_activatable_companion() -> Self {
+            let cache = std::env::var_os("XDG_CACHE_HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::path::PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cache")
+                });
+            let dir = cache.join("codex-desktop-dev").join(format!(
+                "dictation-bus-{}-{}",
+                std::process::id(),
+                super::REQUEST_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.display().to_string();
+            let xml_path = path.replace('&', "&amp;").replace('<', "&lt;");
+            std::fs::write(
+                dir.join(format!("{GNOME_SERVICE}.service")),
+                format!(
+                    "[D-BUS Service]\nName={GNOME_SERVICE}\nExec=/bin/touch \"{path}/activated\"\n"
+                ),
+            )
+            .unwrap();
+            let config = dir.join("bus.conf");
+            std::fs::write(&config, format!(
+                "<busconfig><type>session</type><listen>unix:tmpdir={xml_path}</listen><servicedir>{xml_path}</servicedir><policy context=\"default\"><allow user=\"*\"/><allow own=\"*\"/><allow send_destination=\"*\"/><allow receive_sender=\"*\"/></policy></busconfig>"
+            )).unwrap();
+            let mut child = Command::new("dbus-daemon")
+                .arg("--config-file")
+                .arg(config)
+                .args(["--print-address=1", "--nofork"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let address = BufReader::new(child.stdout.take().unwrap())
+                .lines()
+                .next()
+                .unwrap()
+                .unwrap();
+            Self {
+                child,
+                address,
+                activation_dir: Some(dir),
+            }
         }
     }
 
@@ -701,6 +828,9 @@ mod tests {
         fn drop(&mut self) {
             let _ = self.child.kill();
             let _ = self.child.wait();
+            if let Some(dir) = &self.activation_dir {
+                let _ = std::fs::remove_dir_all(dir);
+            }
         }
     }
 
@@ -866,6 +996,100 @@ mod tests {
             self.key_events.lock().unwrap().push((keysym, state));
             Ok(())
         }
+    }
+
+    #[derive(Clone)]
+    struct FakeCompanion {
+        version: u32,
+        runtime: tokio::runtime::Handle,
+        version_delay: Duration,
+        paste_delay: Duration,
+        version_error: bool,
+        paste_error: bool,
+        probes: Arc<Mutex<u32>>,
+        pastes: Arc<Mutex<u32>>,
+    }
+
+    impl Default for FakeCompanion {
+        fn default() -> Self {
+            Self {
+                version: 1,
+                runtime: tokio::runtime::Handle::current(),
+                version_delay: Duration::ZERO,
+                paste_delay: Duration::ZERO,
+                version_error: false,
+                paste_error: false,
+                probes: Arc::default(),
+                pastes: Arc::default(),
+            }
+        }
+    }
+
+    #[zbus::interface(name = "org.chatgpt.Community.Dictation1")]
+    impl FakeCompanion {
+        async fn get_version(&self) -> zbus::fdo::Result<u32> {
+            *self.probes.lock().unwrap() += 1;
+            let delay = self.version_delay;
+            self.runtime
+                .spawn(async move { tokio::time::sleep(delay).await })
+                .await
+                .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+            if self.version_error {
+                return Err(zbus::fdo::Error::Failed("probe rejected".into()));
+            }
+            Ok(self.version)
+        }
+
+        async fn paste(&self) -> zbus::fdo::Result<()> {
+            *self.pastes.lock().unwrap() += 1;
+            let delay = self.paste_delay;
+            self.runtime
+                .spawn(async move { tokio::time::sleep(delay).await })
+                .await
+                .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+            if self.paste_error {
+                return Err(zbus::fdo::Error::Failed("paste rejected".into()));
+            }
+            Ok(())
+        }
+    }
+
+    async fn companion_server(bus: &TestBus, companion: FakeCompanion) -> Connection {
+        Builder::address(bus.address.as_str())
+            .unwrap()
+            .name(GNOME_SERVICE)
+            .unwrap()
+            .serve_at(GNOME_PATH, companion)
+            .unwrap()
+            .build()
+            .await
+            .unwrap()
+    }
+
+    async fn remote_server(bus: &TestBus, remote: FakeRemoteDesktop) -> Connection {
+        Builder::address(bus.address.as_str())
+            .unwrap()
+            .name(PORTAL_SERVICE)
+            .unwrap()
+            .serve_at(PORTAL_PATH, remote)
+            .unwrap()
+            .build()
+            .await
+            .unwrap()
+    }
+
+    async fn bus_client(bus: &TestBus) -> Connection {
+        Builder::address(bus.address.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap()
+    }
+
+    fn assert_no_remote_paste(remote: &FakeRemoteDesktop, session: &Option<OwnedObjectPath>) {
+        assert!(session.is_none());
+        assert_eq!(*remote.create_count.lock().unwrap(), 0);
+        assert!(remote.key_events.lock().unwrap().is_empty());
     }
 
     fn validate_paste_session(session: &OwnedObjectPath) -> zbus::fdo::Result<()> {
@@ -1059,8 +1283,12 @@ mod tests {
             .unwrap();
         let mut session = None;
 
-        paste_through_portal(&client, &mut session).await.unwrap();
-        paste_through_portal(&client, &mut session).await.unwrap();
+        paste_with_backend(&client, &mut session, PasteBackend::RemoteDesktop)
+            .await
+            .unwrap();
+        paste_with_backend(&client, &mut session, PasteBackend::RemoteDesktop)
+            .await
+            .unwrap();
 
         assert_eq!(*create_count.lock().unwrap(), 1);
         assert_eq!(
@@ -1076,6 +1304,254 @@ mod tests {
                 (KEYSYM_CONTROL_L, KEY_RELEASED),
             ]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn startup_detection_prefers_companion_without_remote_session() {
+        let bus = TestBus::start();
+        let remote = FakeRemoteDesktop::default();
+        let _portal = remote_server(&bus, remote.clone()).await;
+        let companion = FakeCompanion::default();
+        let _extension = companion_server(&bus, companion.clone()).await;
+        let client = bus_client(&bus).await;
+        let mut session = None;
+        let backend = detect_paste_backend(&client).await;
+        assert_eq!(backend, PasteBackend::Gnome);
+        assert_eq!(*companion.pastes.lock().unwrap(), 0);
+        assert_no_remote_paste(&remote, &session);
+        for _ in 0..2 {
+            paste_with_backend(&client, &mut session, backend)
+                .await
+                .unwrap();
+        }
+        assert_eq!(*companion.probes.lock().unwrap(), 3);
+        assert_eq!(*companion.pastes.lock().unwrap(), 2);
+        assert_no_remote_paste(&remote, &session);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn absent_companion_detection_and_selected_gnome_never_activate_service() {
+        let bus = TestBus::start_with_activatable_companion();
+        let remote = FakeRemoteDesktop::default();
+        let _portal = remote_server(&bus, remote.clone()).await;
+        let client = bus_client(&bus).await;
+        let dbus = zbus::fdo::DBusProxy::new(&client).await.unwrap();
+        assert!(dbus
+            .list_activatable_names()
+            .await
+            .unwrap()
+            .iter()
+            .any(|name| name.as_str() == GNOME_SERVICE));
+        let mut session = None;
+        assert_eq!(
+            detect_paste_backend(&client).await,
+            PasteBackend::RemoteDesktop
+        );
+        assert_no_remote_paste(&remote, &session);
+        let error = paste_with_backend(&client, &mut session, PasteBackend::Gnome)
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("companion is unavailable"));
+        assert!(error.to_string().contains(GNOME_GUIDANCE));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!bus
+            .activation_dir
+            .as_ref()
+            .unwrap()
+            .join("activated")
+            .exists());
+        assert_no_remote_paste(&remote, &session);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn incompatible_companion_never_receives_paste() {
+        let bus = TestBus::start();
+        let remote = FakeRemoteDesktop::default();
+        let _portal = remote_server(&bus, remote.clone()).await;
+        let client = bus_client(&bus).await;
+        let mut session = None;
+        for version in [0, 2] {
+            let companion = FakeCompanion {
+                version,
+                ..FakeCompanion::default()
+            };
+            let server = companion_server(&bus, companion.clone()).await;
+            let error = paste_with_backend(&client, &mut session, PasteBackend::Gnome)
+                .await
+                .unwrap_err();
+            assert!(format!("{error:#}").contains("unsupported (expected 1)"));
+            assert!(error.to_string().contains(GNOME_GUIDANCE));
+            assert_eq!(*companion.pastes.lock().unwrap(), 0);
+            assert_no_remote_paste(&remote, &session);
+            server.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn companion_errors_and_timeouts_never_fall_back_or_retry() {
+        let bus = TestBus::start();
+        let remote = FakeRemoteDesktop::default();
+        let _portal = remote_server(&bus, remote.clone()).await;
+        let client = bus_client(&bus).await;
+        let mut session = None;
+        for (companion, expected, pastes) in [
+            (
+                FakeCompanion {
+                    version_error: true,
+                    ..FakeCompanion::default()
+                },
+                "version probe failed",
+                0,
+            ),
+            (
+                FakeCompanion {
+                    version_delay: GNOME_TIMEOUT * 2,
+                    ..FakeCompanion::default()
+                },
+                "probe timed out",
+                0,
+            ),
+            (
+                FakeCompanion {
+                    paste_error: true,
+                    ..FakeCompanion::default()
+                },
+                "Paste failed",
+                1,
+            ),
+            (
+                FakeCompanion {
+                    paste_delay: GNOME_TIMEOUT * 2,
+                    ..FakeCompanion::default()
+                },
+                "Paste timed out",
+                1,
+            ),
+        ] {
+            let server = companion_server(&bus, companion.clone()).await;
+            let started = tokio::time::Instant::now();
+            let error = paste_with_backend(&client, &mut session, PasteBackend::Gnome)
+                .await
+                .unwrap_err();
+            assert!(started.elapsed() < GNOME_TIMEOUT + Duration::from_secs(1));
+            assert!(format!("{error:#}").contains(expected));
+            assert!(error.to_string().contains(GNOME_GUIDANCE));
+            assert_eq!(*companion.probes.lock().unwrap(), 1);
+            assert_eq!(*companion.pastes.lock().unwrap(), pastes);
+            assert_no_remote_paste(&remote, &session);
+            server.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn companion_disappearance_and_reappearance_use_current_owner() {
+        let bus = TestBus::start();
+        let remote = FakeRemoteDesktop::default();
+        let _portal = remote_server(&bus, remote.clone()).await;
+        let client = bus_client(&bus).await;
+        let mut session = None;
+        let old = FakeCompanion::default();
+        let old_server = companion_server(&bus, old.clone()).await;
+        let backend = detect_paste_backend(&client).await;
+        assert_eq!(backend, PasteBackend::Gnome);
+        paste_with_backend(&client, &mut session, backend)
+            .await
+            .unwrap();
+        old_server.release_name(GNOME_SERVICE).await.unwrap();
+        let error = paste_with_backend(&client, &mut session, backend)
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("companion is unavailable"));
+        let new = FakeCompanion::default();
+        let _new_server = companion_server(&bus, new.clone()).await;
+        assert_ne!(old_server.unique_name(), _new_server.unique_name());
+        paste_with_backend(&client, &mut session, backend)
+            .await
+            .unwrap();
+        assert_eq!(*old.pastes.lock().unwrap(), 1);
+        assert_eq!(*new.probes.lock().unwrap(), 1);
+        assert_eq!(*new.pastes.lock().unwrap(), 1);
+        assert_no_remote_paste(&remote, &session);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn probed_proxy_is_pinned_to_unique_owner() {
+        let bus = TestBus::start();
+        let client = bus_client(&bus).await;
+        let old_server = companion_server(&bus, FakeCompanion::default()).await;
+        let proxy = tokio::time::timeout(GNOME_TIMEOUT, probe_gnome_companion(&client))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            proxy.destination().as_str(),
+            old_server.unique_name().unwrap().as_str()
+        );
+        old_server.close().await.unwrap();
+        let new = FakeCompanion::default();
+        let _new_server = companion_server(&bus, new.clone()).await;
+        let result: zbus::Result<()> = proxy.call("Paste", &()).await;
+        assert!(result.is_err());
+        assert_eq!(*new.pastes.lock().unwrap(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn startup_remote_choice_is_lazy_and_stable_when_companion_appears() {
+        let bus = TestBus::start();
+        let remote = FakeRemoteDesktop::default();
+        let _portal = remote_server(&bus, remote.clone()).await;
+        let client = bus_client(&bus).await;
+        let mut session = None;
+        let backend = detect_paste_backend(&client).await;
+        assert_eq!(backend, PasteBackend::RemoteDesktop);
+        assert_no_remote_paste(&remote, &session);
+        let companion = FakeCompanion::default();
+        let _extension = companion_server(&bus, companion.clone()).await;
+        paste_with_backend(&client, &mut session, backend)
+            .await
+            .unwrap();
+        assert_eq!(*remote.create_count.lock().unwrap(), 1);
+        assert_eq!(remote.key_events.lock().unwrap().len(), 4);
+        assert_eq!(*companion.probes.lock().unwrap(), 0);
+        assert_eq!(*companion.pastes.lock().unwrap(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn startup_probe_failure_selects_remote_without_input() {
+        let bus = TestBus::start();
+        let remote = FakeRemoteDesktop::default();
+        let _portal = remote_server(&bus, remote.clone()).await;
+        let client = bus_client(&bus).await;
+        for companion in [
+            FakeCompanion {
+                version: 0,
+                ..FakeCompanion::default()
+            },
+            FakeCompanion {
+                version: 2,
+                ..FakeCompanion::default()
+            },
+            FakeCompanion {
+                version_error: true,
+                ..FakeCompanion::default()
+            },
+            FakeCompanion {
+                version_delay: GNOME_TIMEOUT * 2,
+                ..FakeCompanion::default()
+            },
+        ] {
+            let server = companion_server(&bus, companion.clone()).await;
+            let started = tokio::time::Instant::now();
+            assert_eq!(
+                detect_paste_backend(&client).await,
+                PasteBackend::RemoteDesktop
+            );
+            assert!(started.elapsed() < GNOME_TIMEOUT + Duration::from_secs(1));
+            assert_eq!(*companion.probes.lock().unwrap(), 1);
+            assert_eq!(*companion.pastes.lock().unwrap(), 0);
+            assert_no_remote_paste(&remote, &None);
+            server.close().await.unwrap();
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1102,7 +1578,7 @@ mod tests {
             .unwrap();
         let mut session = None;
 
-        let error = paste_through_portal(&client, &mut session)
+        let error = paste_with_backend(&client, &mut session, PasteBackend::RemoteDesktop)
             .await
             .unwrap_err();
 

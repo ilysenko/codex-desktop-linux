@@ -6,12 +6,12 @@ const CURRENT_CHROME_MAPPING = "case`win32`:case`linux`:return`application-menu`
 const PATCHED_CHROME_MAPPING = "case`win32`:return`application-menu`;case`linux`:return`native`";
 
 const currentWindowOptionsPattern = new RegExp(
-  `(${IDENT})===\\\`win32\\\`\\|\\|\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\),(\\.\\.\\.(${IDENT})===\\\`quickChat\\\`\\?\\{resizable:!0\\}:\\{\\})\\}`,
+  `(${IDENT})===\\\`win32\\\`\\|\\|\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}`,
   "g",
 );
 const patchedWindowOptionsPattern = new RegExp(
-  `(${IDENT})===\\\`win32\\\`\\?\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\),(\\.\\.\\.(${IDENT})===\\\`quickChat\\\`\\?\\{resizable:!0\\}:\\{\\})\\}:` +
-    `\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`,\\4\\}`,
+  `(${IDENT})===\\\`win32\\\`\\?\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}:` +
+    `\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`\\}`,
   "g",
 );
 const currentZoomOverlayPattern = new RegExp(
@@ -23,11 +23,11 @@ const patchedZoomOverlayPattern = new RegExp(
   "g",
 );
 const currentOverlaySyncPattern = new RegExp(
-  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`&&process\\.platform!==\\\`linux\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`quickChat\\\`&&\\2!==\\\`detached\\\`\\)return;`,
+  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`&&process\\.platform!==\\\`linux\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`detached\\\`\\)return;`,
   "g",
 );
 const patchedOverlaySyncPattern = new RegExp(
-  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`quickChat\\\`&&\\2!==\\\`detached\\\`\\)return;`,
+  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`detached\\\`\\)return;`,
   "g",
 );
 
@@ -89,9 +89,9 @@ function applyFramelessTitlebarMainPatch(source) {
   const patched = source
     .replace(
       currentWindowOptionsPattern,
-      (_match, platform, overlayHelper, zoom, quickChatOptions) =>
-        `${platform}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelper}(${zoom}),${quickChatOptions}}:` +
-        `${platform}===\`linux\`?{titleBarStyle:\`hidden\`,${quickChatOptions}}`,
+      (_match, platform, overlayHelper, zoom) =>
+        `${platform}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelper}(${zoom})}:` +
+        `${platform}===\`linux\`?{titleBarStyle:\`hidden\`}`,
     )
     .replace(
       currentZoomOverlayPattern,
@@ -101,7 +101,7 @@ function applyFramelessTitlebarMainPatch(source) {
     .replace(
       currentOverlaySyncPattern,
       (_match, windowAlias, windowTypeAlias) =>
-        `installApplicationMenuTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if(process.platform!==\`win32\`||${windowTypeAlias}!==\`primary\`&&${windowTypeAlias}!==\`quickChat\`&&${windowTypeAlias}!==\`detached\`)return;`,
+        `installApplicationMenuTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if(process.platform!==\`win32\`||${windowTypeAlias}!==\`primary\`&&${windowTypeAlias}!==\`detached\`)return;`,
     );
 
   if (framelessTitlebarMainContract(patched) !== "patched") {

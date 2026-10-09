@@ -57,14 +57,15 @@ cd codex-desktop-linux
 | Fedora | `make bootstrap-native` | Builds and installs an RPM |
 | openSUSE | `make bootstrap-native` | Builds and installs an RPM |
 | Arch, Manjaro, EndeavourOS | `make bootstrap-native` | Builds and installs a pacman package |
-| Gentoo | `make bootstrap-native` | Builds a local ebuild and installs through Portage; default features only, no updater |
+| Gentoo | `make bootstrap-native` | Builds a local ebuild and installs through Portage; supports `ui-tweaks`, no updater |
 | NixOS or another Nix system | `nix run github:ilysenko/codex-desktop-linux` | Builds and runs the flake output; see [Nix](docs/nix.md) |
 | Atomic desktops or another distribution | `make build-app && make appimage` | Produces a local AppImage without the native updater |
 
 Gentoo's application merge ignores `EMERGE_DEFAULT_OPTS` to install through the
 generated ebuild rather than reuse a binary package. Global Portage settings are unchanged.
-Gentoo has a phase-aware dependency and package-resource framework for future
-audited features; no repository feature is declared supported yet. See the
+Gentoo has a phase-aware dependency and package-resource framework for audited
+features. `ui-tweaks` is supported and remains disabled by default; other
+repository features require their own support declarations. See the
 [Gentoo feature contract](docs/linux-features-architecture.md#gentoo-feature-contract).
 Gentoo's local ebuild path has been tested on OpenRC; a Gentoo systemd
 environment has not been tested. See [Gentoo validation scope](docs/native-setup.md#gentoo-local-ebuild).
@@ -273,6 +274,7 @@ requirements, known limitations, configuration, and tests.
 | `flatpak-chrome-native-messaging` | Bridge the official Chrome extension into Flatpak Google Chrome | [Docs](linux-features/flatpak-chrome-native-messaging/README.md) |
 | `frameless-titlebar` | Hide official Linux overlay buttons for compositor-managed decorations | [Docs](linux-features/frameless-titlebar/README.md) |
 | `global-dictation` | X11 and XDG portal global dictation hotkeys | [Docs](linux-features/global-dictation/README.md) |
+| `global-dictation-gnome` | Optional GNOME Shell paste companion without RemoteDesktop sessions; requires `global-dictation` and explicit extension activation | [Docs](linux-features/global-dictation-gnome/README.md) |
 | `linux-performance-workarounds` | Measured renderer workarounds for affected systems | [Docs](linux-features/linux-performance-workarounds/README.md) |
 | `mcp-helper-reaper` | Reap orphaned MCP helpers without touching live sessions | [Docs](linux-features/mcp-helper-reaper/README.md) |
 | `model-picker-default-presets` | Configure ordered model/effort pairs behind ChatGPT Default | [Docs](linux-features/model-picker-default-presets/README.md) |
@@ -295,6 +297,20 @@ requirements, known limitations, configuration, and tests.
 | `tray-usage` | Show usage remaining in the Linux system-tray menu | [Docs](linux-features/tray-usage/README.md) |
 | `ui-tweaks` | Optional visual and interaction customizations | [Docs](linux-features/ui-tweaks/README.md) |
 
+For GNOME Wayland dictation without RemoteDesktop permission prompts, select
+both `global-dictation` and `global-dictation-gnome` with `make setup-native`,
+then rebuild/install. The first app launch installs the companion for the current
+user; log out/in and explicitly enable it with
+`gnome-extensions enable global-dictation-gnome@chatgpt-community.local`.
+Restart the app/helper after enabling the extension. The helper automatically
+checks the companion's version at startup: a compatible enabled extension selects
+GNOME; otherwise it selects RemoteDesktop. This choice stays fixed until restart.
+Once GNOME is selected, paste errors never fall back to RemoteDesktop or retry.
+The build feature only ships/installs the companion; a manually installed compatible
+extension is also detected. Shortcut approval still uses GlobalShortcuts.
+Disabling the build feature does not uninstall the user extension; see its
+[activation and removal instructions](linux-features/global-dictation-gnome/README.md).
+
 The optional Computer Use backend provides `guard-accessibility` for an
 explicit foreground GNOME accessibility hold-open. It never starts
 automatically; see [Linux Computer Use](docs/linux-computer-use.md).
@@ -305,6 +321,12 @@ With `shared-app-server-socket` enabled and Desktop running, use
 
 Account rollouts and server-side ChatGPT features remain controlled by OpenAI.
 Rebuilding this project does not unlock an account rollout.
+
+For CSS font fallback lists, the optional
+[`ui-tweaks` custom font input](linux-features/ui-tweaks/README.md#appearancecustomfontinput)
+adds a switch between installed-font lists and manual font-stack entry in
+Appearance. This nested tweak is disabled by default and must be enabled in
+local feature settings before rebuilding.
 
 ## Configure optional features
 

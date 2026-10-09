@@ -371,7 +371,7 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
   assert.match(patched, /codexLinuxAppshotCropWithImageMagick/);
   assert.ok(
     patched.indexOf("await codexLinuxAppshotCropWithImageMagick") <
-      patched.indexOf("codexLinuxAppshotCropNativeImage(o,d,s)"),
+      patched.indexOf("codexLinuxAppshotCropNativeImage(o,d,c.source===`imagemagick-window`?null:s)"),
   );
   assert.match(patched, /\[linux-appshots\]/);
   assert.match(patched, /codexLinuxAppshotCropRects/);
@@ -1086,6 +1086,41 @@ test("AppShots restores ChatGPT after successful and failed Hyprland capture", a
   assert.deepEqual(trace, ["verify-captured-target", "restore-failed:256"]);
 });
 
+test("AppShots prefers direct X11 window capture before root screenshot fallback", () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
+  const context = vm.createContext({
+    process: { env: {}, pid: 101, platform: "linux" },
+    require() {
+      throw new Error("No module access expected");
+    },
+  });
+
+  vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
+
+  const directCapture = context.codexLinuxAppshotScreenshotCommands({
+    backend: "x11",
+    window_id: 0x200,
+  })[0];
+  assert.equal(directCapture.source, "imagemagick-window");
+  assert.deepEqual(Array.from(directCapture.programs), ["import", "/usr/bin/import"]);
+  assert.deepEqual(Array.from(directCapture.args), ["-window", "0x200"]);
+  assert.equal(directCapture.output, "append");
+  for (const window_id of [0, -1, NaN, 1.5, "invalid", Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(
+      context.codexLinuxAppshotScreenshotCommands({ backend: "x11", window_id })[0].source,
+      "grim",
+    );
+  }
+  assert.equal(
+    context.codexLinuxAppshotScreenshotCommands({
+      backend: "wayland",
+      window_id: 0x200,
+    })[0].source,
+    "grim",
+  );
+});
+
 test("AppShots captures accessibility and pixels concurrently", async () => {
   const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
   const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
@@ -1196,13 +1231,15 @@ test("AppShots serializes capture transactions", async () => {
   await context.codexLinuxAppshotCaptureQueue;
 });
 
-test("AppShots capture uses and removes its private temporary directory", async () => {
+test("AppShots preserves window captures and cleans private temporary directories", async () => {
   const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
   const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-private-capture-"));
   const captureDirs = [];
   const chmodModes = [];
   let failCaptures = false;
+  let failDirectCapture = false;
+  const cropArgs = [];
 
   assert.ok(helperStart >= 0);
 
@@ -1224,6 +1261,14 @@ test("AppShots capture uses and removes its private temporary directory", async 
         callback(new Error("Expected capture failure"), "", "expected failure");
         return;
       }
+      if (program.endsWith("import") && args[1] === "0x200") {
+        if (failDirectCapture) callback(new Error("Direct capture unavailable"), "", "");
+        else {
+          fs.writeFileSync(args.at(-1), "window source");
+          callback(null, "", "");
+        }
+        return;
+      }
       if (program.endsWith("grim")) {
         fs.writeFileSync(args.at(-1), "source");
         callback(null, "", "");
@@ -1234,6 +1279,7 @@ test("AppShots capture uses and removes its private temporary directory", async 
         return;
       }
       if (program.endsWith("convert")) {
+        cropArgs.push(args[2]);
         fs.writeFileSync(args.at(-1), "crop");
         callback(null, "", "");
         return;
@@ -1276,6 +1322,44 @@ test("AppShots capture uses and removes its private temporary directory", async 
     assert.match(result?.dataURL ?? "", /^data:image\/png;base64,/);
     assert.equal(captureDirs.length, 1);
     assert.equal(fs.existsSync(captureDirs[0]), false);
+
+    for (const backend of ["x11", "i3"]) {
+      const direct = await context.codexLinuxAppshotScreenshot(
+        { backend, window_id: 0x200, bounds: { x: 20, y: 30, width: 50, height: 40 } },
+        [],
+      );
+      assert.equal(direct.width, 100);
+      assert.equal(direct.height, 100);
+      assert.equal(cropArgs.at(-1), "100x100+0+0");
+      assert.match(direct.source, /^imagemagick-window:/);
+    }
+    failDirectCapture = true;
+    const fallback = await context.codexLinuxAppshotScreenshot(
+      { backend: "x11", window_id: 0x200, bounds: { x: 20, y: 30, width: 50, height: 40 } },
+      [],
+    );
+    assert.equal(fallback.width, 50);
+    assert.equal(fallback.height, 40);
+    assert.equal(cropArgs.at(-1), "50x40+20+30");
+    assert.match(fallback.source, /^grim:/);
+
+    const nativeCrops = [];
+    const nativeImage = {
+      createFromPath: () => ({
+        getSize: () => ({ width: 100, height: 100 }),
+        crop: (rect) => {
+          nativeCrops.push({ ...rect });
+          return { getSize: () => ({ width: rect.width, height: rect.height }) };
+        },
+      }),
+    };
+    const native = context.codexLinuxAppshotCropNativeImage(nativeImage, "source.png", null);
+    assert.equal(native.width, 100);
+    assert.equal(native.height, 100);
+    assert.deepEqual(nativeCrops, [{ x: 0, y: 0, width: 100, height: 100 }]);
+    assert.equal(context.codexLinuxAppshotCropNativeImage({
+      createFromPath: () => ({ getSize: () => ({ width: NaN, height: NaN }) }),
+    }, "invalid.png", null), null);
 
     failCaptures = true;
     const failedResult = await context.codexLinuxAppshotScreenshot(

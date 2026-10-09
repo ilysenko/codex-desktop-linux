@@ -31,22 +31,22 @@ function officialMainFixture() {
   return [
     "function A9(e=1){return{color:O9,symbolColor:l.nativeTheme.shouldUseDarkColors?LTe:ITe,height:Math.round(FTe*e)}}",
     "setWindowZoom(e,t){let n=l.BrowserWindow.fromWebContents(e),r=n&&this.windowAppearances.get(n.id);",
-    "n==null||r!==`primary`&&r!==`quickChat`||(process.platform===`darwin`?n.setWindowButtonPosition(k9(t)):",
+    "n==null||r!==`primary`||(process.platform===`darwin`?n.setWindowButtonPosition(k9(t)):",
     "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(A9(t))))}",
-    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`quickChat`&&t!==`detached`)return;",
+    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`detached`)return;",
     "let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(A9(this.windowZooms.get(e.id)))};return l.nativeTheme.on(`updated`,n),n(),()=>{l.nativeTheme.off(`updated`,n)}}",
-    "case`quickChat`:case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`}:",
-    "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r),...e===`quickChat`?{resizable:!0}:{}}:{titleBarStyle:`default`}",
+    "case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`}:",
+    "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r)}:{titleBarStyle:`default`}",
   ].join("");
 }
 
 function aliasedMainFixture() {
   return [
     "setWindowZoom(contents,zoom){let window=l.BrowserWindow.fromWebContents(contents),appearance=window&&this.windowAppearances.get(window.id);",
-    "window==null||appearance!==`primary`&&appearance!==`quickChat`||(process.platform===`darwin`?window.setWindowButtonPosition(k9(zoom)):",
+    "window==null||appearance!==`primary`||(process.platform===`darwin`?window.setWindowButtonPosition(k9(zoom)):",
     "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(window.id,zoom),window.setTitleBarOverlay(overlay(zoom))))}",
-    "installApplicationMenuTitleBarOverlaySync(window,windowType){if(process.platform!==`win32`&&process.platform!==`linux`||windowType!==`primary`&&windowType!==`quickChat`&&windowType!==`detached`)return;}",
-    "platform===`win32`||platform===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:overlay(zoom),...windowType===`quickChat`?{resizable:!0}:{}}:{titleBarStyle:`default`}",
+    "installApplicationMenuTitleBarOverlaySync(window,windowType){if(process.platform!==`win32`&&process.platform!==`linux`||windowType!==`primary`&&windowType!==`detached`)return;}",
+    "platform===`win32`||platform===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:overlay(zoom)}:{titleBarStyle:`default`}",
   ].join("");
 }
 
@@ -90,13 +90,13 @@ test("main-process patch removes Linux titleBarOverlay and is idempotent", () =>
   assert.equal(framelessTitlebarMainContract(patched), "patched");
   assert.equal(applyFramelessTitlebarMainPatch(patched), patched);
   assert.match(patched, /n===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:A9\(r\)/);
-  assert.match(patched, /n===`linux`\?\{titleBarStyle:`hidden`,\.\.\.e===`quickChat`\?\{resizable:!0\}:\{\}\}/);
+  assert.match(patched, /n===`linux`\?\{titleBarStyle:`hidden`\}/);
   assert.doesNotMatch(patched, /n===`win32`\|\|n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay/);
   assert.match(patched, /process\.platform===`win32`&&\(this\.windowZooms\.set\(n\.id,t\),n\.setTitleBarOverlay\(A9\(t\)\)\)/);
   assert.doesNotMatch(patched, /process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set/);
   assert.match(
     patched,
-    /installApplicationMenuTitleBarOverlaySync\(e,t\)\{if\(process\.platform!==`win32`\|\|t!==`primary`&&t!==`quickChat`&&t!==`detached`\)return;/,
+    /installApplicationMenuTitleBarOverlaySync\(e,t\)\{if\(process\.platform!==`win32`\|\|t!==`primary`&&t!==`detached`\)return;/,
   );
   assert.match(patched, /titleBarStyle:`hiddenInset`/);
 });
@@ -106,11 +106,11 @@ test("main-process patch preserves current minified aliases", () => {
   const patched = applyFramelessTitlebarMainPatch(source);
   assert.notEqual(patched, source);
   assert.match(patched, /platform===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:overlay\(zoom\)/);
-  assert.match(patched, /platform===`linux`\?\{titleBarStyle:`hidden`,\.\.\.windowType===`quickChat`\?\{resizable:!0\}:\{\}\}/);
+  assert.match(patched, /platform===`linux`\?\{titleBarStyle:`hidden`\}/);
   assert.match(patched, /this\.windowZooms\.set\(window\.id,zoom\),window\.setTitleBarOverlay\(overlay\(zoom\)\)/);
   assert.match(
     patched,
-    /installApplicationMenuTitleBarOverlaySync\(window,windowType\)\{if\(process\.platform!==`win32`\|\|windowType!==`primary`&&windowType!==`quickChat`&&windowType!==`detached`\)return;/,
+    /installApplicationMenuTitleBarOverlaySync\(window,windowType\)\{if\(process\.platform!==`win32`\|\|windowType!==`primary`&&windowType!==`detached`\)return;/,
   );
   assert.equal(applyFramelessTitlebarMainPatch(patched), patched);
 });
@@ -126,7 +126,7 @@ test("main-process patch rejects incomplete, duplicate, and mixed contracts byte
   const current = officialMainFixture();
   const patched = applyFramelessTitlebarMainPatch(current);
   const sources = [
-    current.replace("titleBarOverlay:A9(r),", ""),
+    current.replace("titleBarOverlay:A9(r)", "changed:A9(r)"),
     current.replace("installApplicationMenuTitleBarOverlaySync", "installTitleBarOverlaySync"),
     current.replace("(process.platform===`win32`||process.platform===`linux`)", "(process.platform===`win32`)"),
     patched.replace("n===`linux`?{titleBarStyle:`hidden`", "n===`linux`?{titleBarStyle:`default`"),
@@ -135,8 +135,8 @@ test("main-process patch rejects incomplete, duplicate, and mixed contracts byte
     patched + patched,
     current + patched,
     current.replace(
-      "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r),...e===`quickChat`?{resizable:!0}:{}}",
-      "n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r),...e===`quickChat`?{resizable:!0}:{}}:n===`linux`?{titleBarStyle:`hidden`,...e===`quickChat`?{resizable:!0}:{}}",
+      "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r)}",
+      "n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r)}:n===`linux`?{titleBarStyle:`hidden`}",
     ),
   ];
 

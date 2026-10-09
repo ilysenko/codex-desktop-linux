@@ -26,6 +26,48 @@ function copyFeatureHelpers(sourceRoot, targetRoot) {
   }
 }
 
+for (const [fileMode, directoryMode] of [[0o644, 0o755], [0o600, 0o700], [0o755, 0o755]]) {
+  test(`package permission restoration traverses directory resources with mode ${fileMode.toString(8)}`, (t) => {
+    const base = path.join(os.homedir(), ".cache/codex-desktop-dev");
+    fs.mkdirSync(base, { recursive: true });
+    const root = fs.mkdtempSync(path.join(base, "codex-package-directory-mode-"));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const app = path.join(root, "opt/codex-desktop");
+    const featuresRoot = path.join(root, "linux-features");
+    const featureDir = path.join(featuresRoot, "fixture");
+    const target = ".codex-linux/features/fixture/extension";
+    fs.mkdirSync(path.join(featureDir, "extension/nested"), { recursive: true });
+    fs.writeFileSync(path.join(featureDir, "extension/extension.js"), "companion source\n");
+    fs.writeFileSync(path.join(featureDir, "extension/nested/metadata.json"), "{}\n");
+    fs.writeFileSync(path.join(featureDir, "README.md"), "Fixture\n");
+    fs.writeFileSync(path.join(featureDir, "feature.json"), JSON.stringify({
+      id: "fixture", title: "Fixture", description: "Directory mode regression", defaultEnabled: false,
+      resources: [{ source: "extension", target, mode: fileMode.toString(8) }],
+    }));
+    const featuresConfigPath = path.join(featuresRoot, "features.json");
+    fs.writeFileSync(featuresConfigPath, JSON.stringify({ enabled: ["fixture"] }));
+    require("./linux-features.js").stageEnabledLinuxFeatureInstall(app, { featuresRoot, featuresConfigPath });
+    runPackageCommon([
+      "PACKAGE_NAME=codex-desktop",
+      `normalize_package_payload_permissions ${JSON.stringify(root)}`,
+      `restore_linux_feature_payload_permissions ${JSON.stringify(root)}`,
+    ].join("\n"), app);
+    for (const relative of ["", "nested"]) {
+      assert.equal(fs.statSync(path.join(app, target, relative)).mode & 0o777, directoryMode);
+    }
+    for (const [relative, content] of [["extension.js", "companion source\n"], ["nested/metadata.json", "{}\n"]]) {
+      const file = path.join(app, target, relative);
+      assert.equal(fs.statSync(file).mode & 0o777, fileMode);
+      assert.equal(fs.readFileSync(file, "utf8"), content);
+    }
+    const archive = path.join(root, "payload.tar");
+    childProcess.execFileSync("tar", ["-cf", archive, "-C", root, "opt"]);
+    const entries = childProcess.execFileSync("tar", ["-tf", archive], { encoding: "utf8" });
+    assert.match(entries, /extension\/extension\.js/);
+    assert.match(entries, /extension\/nested\/metadata\.json/);
+  });
+}
+
 test("updater binary source recovers the Linux deleted-path marker", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-updater-deleted-path-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

@@ -9,7 +9,10 @@ not read `/dev/input` or require elevated permissions.
 
 X11 requires `xinput`, `xmodmap`, and `xdotool` at runtime. Wayland requires a
 desktop portal backend that implements `org.freedesktop.portal.GlobalShortcuts`
-and `org.freedesktop.portal.RemoteDesktop`.
+and, by default, `org.freedesktop.portal.RemoteDesktop`. On GNOME Wayland,
+the separately selected [`global-dictation-gnome`](../global-dictation-gnome/README.md)
+companion replaces RemoteDesktop paste with an explicitly enabled Shell
+extension. GlobalShortcuts is still required for hotkey registration.
 
 Enable the feature in `linux-features/features.json` before rebuilding:
 
@@ -29,7 +32,18 @@ The desktop portal may ask for shortcut approval on first use and keyboard
 access when the first result is pasted into another application. The helper
 reuses that keyboard session until the hotkey registration is stopped. If the
 required portal interfaces are unavailable, the feature fails without changing
-the macOS or Windows paths.
+the macOS or Windows paths. At startup the helper automatically probes the
+GNOME companion's D-Bus API with a two-second timeout. Version 1 selects GNOME;
+a missing, disabled, incompatible, failed or timed-out companion selects
+RemoteDesktop, without opening an input session during discovery. The choice
+stays fixed until the helper restarts. Each GNOME paste rechecks the current
+unique owner's version and submits Ctrl+V through that authorized extension;
+subsequent errors never fall back to RemoteDesktop or automatically retry.
+No RemoteDesktop session is opened in GNOME mode; GlobalShortcuts may still
+request shortcut approval. The optional `global-dictation-gnome` feature only
+ships/installs the companion, not selects the backend: manually installed
+compatible companions are detected too. Restart the app/helper after enabling
+the extension. X11 paste is unchanged.
 
 Wayland shortcuts must contain at least one modifier and one key. Modifier-only
 shortcuts cannot be represented by the XDG shortcut format and are rejected

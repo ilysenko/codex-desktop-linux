@@ -157,8 +157,8 @@ function syntheticCurrentSettingsMetadata() {
 function syntheticCurrentAppInitialBundle() {
   return [
     "function render(e){return currentRouteMap[e.slug]}",
-    'var currentRouteMap={"general-settings":BN(async()=>(await Y(async()=>{let{GeneralSettings:e}=await import(`./general-settings-TbWU8D8b.js`);return{GeneralSettings:e}},__vite__mapDeps([1,2]),import.meta.url)).GeneralSettings),',
-    'import:BN(async()=>(await Y(async()=>{let{ImportSettings:e}=await import(`./import-settings-DmsueF_s.js`);return{ImportSettings:e}},__vite__mapDeps([3]),import.meta.url)).ImportSettings)};',
+    'var generalRoute=BN(async()=>(await Y(async()=>{let{GeneralSettings:e}=await import(`./general-settings-TbWU8D8b.js`);return{GeneralSettings:e}},__vite__mapDeps([1,2]),import.meta.url)).GeneralSettings),',
+    'currentRouteMap={billing:BN(Billing),"general-settings":generalRoute,notifications:BN(async()=>(await Y(async()=>{let{NotificationsSettingsPage:e}=await import(`./notifications-settings-DmsueF_s.js`);return{NotificationsSettingsPage:e}},__vite__mapDeps([3]),import.meta.url)).NotificationsSettingsPage)};',
     syntheticCurrentSettingsMetadata(),
     syntheticCurrentSettingsCatalog(),
   ].join("");
@@ -180,7 +180,7 @@ function syntheticCurrentSettingsVisibility() {
     'var it={"linux-desktop":{component:H},"general-settings":{component:H},"local-environments":{component:H,commandAsset:F,navigation:{assets:{16:F,20:H},ariaHidden:!1}},worktrees:{component:F,commandAsset:H,navigation:{assets:{16:H,20:F},ariaHidden:!1}},environments:{component:H},"mcp-settings":{component:H},connections:{component:H}};',
     "function visible(S){switch(S.slug){case`computer-use`:return!0;case`browser-use`:return!0;case`appearance`:return!0;case`pets`:case`git-settings`:case`worktrees`:case`local-environments`:case`environments`:return!0;case`data-controls`:return!0;case`linux-desktop`:case`general-settings`:case`agent`:case`personalization`:return!0;}}",
     "function loading(r){switch(r){case`browser-use`:return!1;case`hooks-settings`:case`mcp-settings`:return!1}}",
-    "var preload=[`hooks-settings`,`local-environments`,`worktrees`,`archived-chats`,`voice`];",
+    "var preload=[`hooks-settings`,`local-environments`,`worktrees`,`storage`,`archived-chats`,`voice`];",
     'var policy={"local-environments":`codexLocal`,"mcp-settings":`codexOrWorkLocal`,worktrees:`codexLocal`};',
   ].join("");
 }
@@ -1623,6 +1623,16 @@ test("settings asset patches add navigation, route, visibility, and title", () =
     /"agent-workspaces":BN\(async\(\)=>\(await Y\(async\(\)=>\{let\{default:e\}=await import\(`\.\/agent-workspaces-linux\.js`\);return\{default:e\}\},\[\],import\.meta\.url\)\)\.default\),"general-settings":/,
   );
   assert.equal(applyAgentWorkspaceSettingsIndexPatch(currentAppMain), currentAppMain);
+  assert.throws(
+    () => applyAgentWorkspaceSettingsIndexPatch(
+      shared.replace("general-settings-TbWU8D8b.js", "general-preferences-TbWU8D8b.js"),
+    ),
+    /could not add agent workspace settings route/,
+  );
+  assert.throws(
+    () => applyAgentWorkspaceSettingsIndexPatch(shared + shared),
+    /could not add agent workspace settings route/,
+  );
 
   const catalog = applyAgentWorkspaceSettingsCatalogPatch(currentAppMain);
   assert.match(catalog, /local-environments\.agent-workspaces\.worktrees/);
@@ -1650,7 +1660,7 @@ test("settings asset patches add navigation, route, visibility, and title", () =
     settingsVisibility,
     /case`worktrees`:case`local-environments`:case`agent-workspaces`:case`environments`:return!0/,
   );
-  assert.match(settingsVisibility, /`local-environments`,`agent-workspaces`,`worktrees`,`archived-chats`/);
+  assert.match(settingsVisibility, /`local-environments`,`agent-workspaces`,`worktrees`,`storage`,`archived-chats`/);
   assert.match(settingsVisibility, /"local-environments":`codexLocal`,"agent-workspaces":`codexLocal`,"mcp-settings":/);
   assert.equal(applyAgentWorkspaceSettingsPagePatch(settingsVisibility), settingsVisibility);
 });

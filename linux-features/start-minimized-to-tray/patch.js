@@ -61,86 +61,111 @@ function unique(source, pattern) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+function hasExactlyOne(source, value) {
+  return source.split(value).length === 2;
+}
+
+function hasCompleteMainPatch(source, state) {
+  if (!state) return false;
+  const afterState = source.slice(state.index);
+  const background = unique(afterState, new RegExp(
+    `let (${ID})=process\\.env\\.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,(${ID})=`,
+    "g",
+  ));
+  const trayReady = unique(afterState, new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"));
+  const traySetup = unique(source, new RegExp(
+    `let codexLinuxStartMinimizedTraySetup=\\((${ID})\\|\\|process\\.platform===\`linux\`\\)\\?(${ID})\\(\\):null;`,
+    "g",
+  ));
+  const startup = unique(source, new RegExp(
+    `if\\(codexLinuxStartMinimized\\)\\{let ready=await ${MAIN_MARKER}\\(codexLinuxStartMinimizedTraySetup,(${ID})\\);` +
+      "console\\.info\\(\\`\\[start-minimized-to-tray\\] tray readiness\\`,\\{ready\\}\\);" +
+      `codexLinuxStartMinimized=codexLinuxStartMinimized&&ready;(${ID})\\.isBackgroundLaunch=` +
+      "\\2\\.isBackgroundLaunch\\|\\|codexLinuxStartMinimized/\\*codexLinuxStartMinimizedNativeBackground\\*/\\}" +
+      `let (${ID})=await (${ID})\\.ensureWindow\\(\\{background:\\2\\.isBackgroundLaunch\\}\\);` +
+      "\\3\\?\\.once\\(\\`show\\`,\\(\\)=>\\{(" + ID + ")\\.handleInitialWindowVisible\\(\\)\\}\\)," +
+      "\\3!=null&&!\\2\\.isBackgroundLaunch&&\\((" + ID + ")\\(\\3,!(" + ID + ")\\),\\5\\.handleInitialWindowVisible\\(\\)\\)",
+    "g",
+  ));
+  if (!background || !trayReady || !traySetup || !startup) return false;
+  const [, readyVar, startupVar, windowVar, servicesVar, attributionVar, showVar, backgroundVar] = startup;
+  if (readyVar !== trayReady[1] || showVar !== background[2] || backgroundVar !== background[1]) return false;
+
+  const relationships = [
+    `let codexLinuxStartMinimizedPreferences=codexLinuxStartMinimizedPreference(${state[1]}.globalState);`,
+    "let codexLinuxStartMinimized=codexLinuxStartMinimizedPreferences.requested;",
+    "console.info(`[start-minimized-to-tray] startup preference`,codexLinuxStartMinimizedPreferences);",
+    traySetup[0],
+    `if(codexLinuxStartMinimized){let ready=await ${MAIN_MARKER}(codexLinuxStartMinimizedTraySetup,${readyVar});`,
+    "console.info(`[start-minimized-to-tray] tray readiness`,{ready});",
+    `codexLinuxStartMinimized=codexLinuxStartMinimized&&ready;${startupVar}.isBackgroundLaunch=` +
+      `${startupVar}.isBackgroundLaunch||codexLinuxStartMinimized/*codexLinuxStartMinimizedNativeBackground*/`,
+    `let ${windowVar}=await ${servicesVar}.ensureWindow({background:${startupVar}.isBackgroundLaunch});`,
+    `${windowVar}?.once(\`show\`,()=>{${attributionVar}.handleInitialWindowVisible()}),`,
+    `${windowVar}!=null&&!${startupVar}.isBackgroundLaunch&&(${showVar}(${windowVar},!${backgroundVar}),` +
+      `${attributionVar}.handleInitialWindowVisible())`,
+  ];
+  return relationships.every((relationship) => hasExactlyOne(source, relationship)) &&
+    hasExactlyOne(source, codexLinuxStartMinimizedTrayReady.toString()) &&
+    hasExactlyOne(source, codexLinuxStartMinimizedAutostart.toString()) &&
+    hasExactlyOne(source, codexLinuxStartMinimizedPreference.toString());
+}
+
 function applyMainPatch(source) {
-  const background = unique(source, new RegExp(`let (${ID})=process\\.env\\.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,(${ID})=`, "g"));
   const state = unique(source, new RegExp(`let (${ID})=await ${ID}\\.${ID}\\(\\{moduleDir:__dirname\\}\\),`, "g"));
-  if (source.includes(`function ${MAIN_MARKER}(`)) {
-    if (!background || !state ||
-        source.split(codexLinuxStartMinimizedTrayReady.toString()).length !== 2 ||
-        source.split(codexLinuxStartMinimizedAutostart.toString()).length !== 2 ||
-        source.split(codexLinuxStartMinimizedPreference.toString()).length !== 2 ||
-        source.split(`codexLinuxStartMinimizedPreference(${state[1]}.globalState)`).length !== 2 ||
-        source.split("let codexLinuxStartMinimized=").length !== 2 ||
-        source.split("if(this.codexLinuxStartMinimized===!0").length !== 2 ||
-        source.split("if(this.windowManager.codexLinuxStartMinimized===!0").length !== 2 ||
-        source.split("let codexLinuxStartMinimizedTraySetup=").length !== 2) {
-      console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
-    }
+  if (hasCompleteMainPatch(source, state)) {
     return source;
   }
-  const trayReady = unique(source.slice(state?.index ?? 0), new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"));
-  const traySetup = unique(source, new RegExp(`\\((${ID})\\|\\|process\\.platform===\`linux\`\\)&&(${ID})\\(\\);`, "g"));
-  const first = unique(source, new RegExp(`let (${ID})=await (${ID})\\.ensureWindow\\(\\);\\1!=null&&\\((${ID})\\(\\1,!(${ID})\\),(${ID})\\.handleInitialWindowVisible\\(\\)\\)`, "g"));
-  const last = unique(source, new RegExp(`(${ID})!==(${ID})&&(${ID})\\(\\1,!(${ID})\\)`, "g"));
-  const maximize = unique(source, new RegExp(`(${ID})&&(${ID})\\.once\\(\`ready-to-show\`,\\(\\)=>\\{\\2\\.isDestroyed\\(\\)\\|\\|\\2\\.maximize\\(\\)\\}\\)`, "g"));
-  const windowMode = unique(source, new RegExp(`setPrimaryWindowMode\\((${ID}),(${ID})\\)\\{let (${ID})=(${ID})\\.BrowserWindow\\.fromWebContents\\(\\1\\);if\\(!\\3\\|\\|\\3\\.isDestroyed\\(\\)\\)return;let (${ID})=this\\.windowManager\\.getPrimaryWindow\\(\\);if\\(!\\5\\|\\|\\5\\.isDestroyed\\(\\)\\|\\|\\5\\.id!==\\3\\.id\\)return;`, "g"));
-  if (!background || !state || !trayReady || !traySetup || !first || !last || !maximize || !windowMode ||
-      first[3] !== background[2] || first[4] !== background[1] ||
-      last[2] !== first[1] || last[3] !== first[3] || last[4] !== first[4]) {
+  if (source.includes(MAIN_MARKER) || source.includes("codexLinuxStartMinimized")) {
+    console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
+    return source;
+  }
+  if (!state) {
     console.warn("WARN: Start minimized to tray startup contract missing or ambiguous");
     return source;
   }
-  const visibility = `${first[5]}.handleInitialWindowVisible()`;
-  const windowModeEnd = findMatchingBrace(source, source.indexOf("{", windowMode.index));
-  const windowModeBody = source.slice(windowMode.index, windowModeEnd + 1);
-  if (!unique(windowModeBody, new RegExp(`let ${ID}=${ID}\\(${escapeRegExp(windowMode[2])}\\);if\\(`, "g")) ||
-      !windowModeBody.includes(`this.showPrimaryWindow(${windowMode[3]})`) ||
-      !windowModeBody.includes("this.windowManager.syncPrimaryMinimumSize()")) {
-    console.warn("WARN: Start minimized to tray window mode contract missing or ambiguous");
+  const afterState = source.slice(state.index);
+  const background = unique(afterState, new RegExp(
+    `let (${ID})=process\\.env\\.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,(${ID})=`,
+    "g",
+  ));
+  const trayReady = unique(afterState, new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"));
+  const traySetup = unique(source, new RegExp(`\\((${ID})\\|\\|process\\.platform===\`linux\`\\)&&(${ID})\\(\\);`, "g"));
+  const startupWindow = unique(source, new RegExp(
+    `let (${ID})=await (${ID})\\.ensureWindow\\(\\{background:(${ID})\\.isBackgroundLaunch\\}\\);` +
+      `\\1\\?\\.once\\(\`show\`,\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),` +
+      `\\1!=null&&!\\3\\.isBackgroundLaunch&&\\((${ID})\\(\\1,!(${ID})\\),\\4\\.handleInitialWindowVisible\\(\\)\\)`,
+    "g",
+  ));
+  if (!background || !trayReady || !traySetup || !startupWindow) {
+    console.warn("WARN: Start minimized to tray startup contract missing or ambiguous");
     return source;
   }
-  const attribution = `${first[1]}??${visibility}`;
-  const activations = unique(source, new RegExp(`(${ID})=async (${ID})=>\\{if\\((${ID})\\)try\\{${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
-  const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{if\\(!${activations?.[3] ?? "__missing"}\\)return null;${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
-  const queuedActivation = unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{(${ID})&&${activations?.[1] ?? "__missing"}\\(\\);return\\}`, "g"));
-  if (!activations || !trayActivation || !queuedActivation || source.split(attribution).length !== 2) {
-    console.warn("WARN: Start minimized to tray activation contract missing or ambiguous");
-    return source;
-  }
-  let patched = source.replace(background[0],
-    `let codexLinuxStartMinimizedPreferences=codexLinuxStartMinimizedPreference(${state[1]}.globalState);let codexLinuxStartMinimized=codexLinuxStartMinimizedPreferences.requested,codexLinuxStartMinimizedRequested=codexLinuxStartMinimized;console.info(\`[start-minimized-to-tray] startup preference\`,codexLinuxStartMinimizedPreferences);${background[0]}`);
-  patched = patched.replace(traySetup[0],
-    `let codexLinuxStartMinimizedTraySetup=(${traySetup[1]}||process.platform===\`linux\`)?${traySetup[2]}():null;`);
-  patched = patched.replace(first[0],
-    `if(codexLinuxStartMinimized){let ready=await ${MAIN_MARKER}(codexLinuxStartMinimizedTraySetup,${trayReady[1]});console.info(\`[start-minimized-to-tray] tray readiness\`,{ready});codexLinuxStartMinimized=codexLinuxStartMinimized&&ready}` +
-    `${first[2]}.windowManager.codexLinuxStartMinimized=codexLinuxStartMinimized;` +
-    `let ${first[1]}=codexLinuxStartMinimized?(${first[2]}.getPrimaryWindow()??await ${first[2]}.ensureWindow()):await ${first[2]}.ensureWindow();${first[1]}!=null&&!codexLinuxStartMinimized&&(${first[3]}(${first[1]},!${first[4]}),${visibility})`);
-  patched = patched.replace(last[0], `!codexLinuxStartMinimized&&${last[0]}`);
-  patched = patched.replace(attribution, `codexLinuxStartMinimized||(${attribution})`);
-  // Electron maximize() reveals even a show:false window. Preserve saved
-  // maximization, but apply it only when the user reveals the hidden window.
-  patched = patched.replace(maximize[0],
-    `${maximize[1]}&&${maximize[2]}.once(\`ready-to-show\`,()=>{if(${maximize[2]}.isDestroyed())return;if(this.codexLinuxStartMinimized===!0&&!${maximize[2]}.isVisible()){${maximize[2]}.once(\`show\`,()=>{${maximize[2]}.isDestroyed()||${maximize[2]}.maximize()});return}${maximize[2]}.maximize()})`);
-  // The authenticated renderer asynchronously requests app/onboarding mode.
-  // Upstream applies geometry and reveals the window even after cold startup.
-  // Defer the whole operation (including maximize/fullscreen) until a reveal,
-  // keeping only the latest mode and leaving subsequent requests unchanged.
-  const [webContents, mode, window] = windowMode.slice(1, 4);
-  patched = patched.replace(windowMode[0], windowMode[0] +
-    `if(this.windowManager.codexLinuxStartMinimized===!0&&!${window}.isVisible()){let pending=this.codexLinuxStartMinimizedWindowMode;if(pending?.window===${window}){pending.mode=${mode};return}this.codexLinuxStartMinimizedWindowMode={window:${window},webContents:${webContents},mode:${mode}};${window}.once(\`show\`,()=>{let pending=this.codexLinuxStartMinimizedWindowMode;if(pending?.window!==${window})return;this.codexLinuxStartMinimizedWindowMode=null;this.setPrimaryWindowMode(pending.webContents,pending.mode)});${window}.once(\`closed\`,()=>{if(this.codexLinuxStartMinimizedWindowMode?.window===${window})this.codexLinuxStartMinimizedWindowMode=null});return}`);
-  // A hidden renderer can delay host readiness. Explicit activation must still
-  // reveal the already-created window without enabling other startup services.
-  patched = patched.replace(activations[0], activations[0]
-    .replace("=>{", `=>{codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`)
-    .replace(`if(${activations[3]})`, `if(${activations[3]}||codexLinuxStartMinimizedRequested&&${first[2]}.getPrimaryWindow()!=null)`));
-  patched = patched.replace(trayActivation[0], trayActivation[0]
-    .replace("=>{", `=>{codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`)
-    .replace(`if(!${activations[3]})`, `if(!${activations[3]}&&(!codexLinuxStartMinimizedRequested||${first[2]}.getPrimaryWindow()==null))`));
-  patched = patched.replace(queuedActivation[0], queuedActivation[0]
-    .replace(`${queuedActivation[1]}&&`, `(${queuedActivation[1]}||codexLinuxStartMinimizedRequested)&&`));
+
+  const [startupNeedle, windowVar, servicesVar, startupVar, attributionVar, showVar, backgroundVar] = startupWindow;
+  let patched = source.replace(
+    background[0],
+    `let codexLinuxStartMinimizedPreferences=codexLinuxStartMinimizedPreference(${state[1]}.globalState);` +
+      "let codexLinuxStartMinimized=codexLinuxStartMinimizedPreferences.requested;" +
+      `console.info(\`[start-minimized-to-tray] startup preference\`,codexLinuxStartMinimizedPreferences);${background[0]}`,
+  );
+  patched = patched.replace(
+    traySetup[0],
+    `let codexLinuxStartMinimizedTraySetup=(${traySetup[1]}||process.platform===\`linux\`)?${traySetup[2]}():null;`,
+  );
+  patched = patched.replace(
+    startupNeedle,
+    `if(codexLinuxStartMinimized){let ready=await ${MAIN_MARKER}(codexLinuxStartMinimizedTraySetup,${trayReady[1]});` +
+      "console.info(`[start-minimized-to-tray] tray readiness`,{ready});" +
+      `codexLinuxStartMinimized=codexLinuxStartMinimized&&ready;${startupVar}.isBackgroundLaunch=` +
+      `${startupVar}.isBackgroundLaunch||codexLinuxStartMinimized/*codexLinuxStartMinimizedNativeBackground*/}` +
+      `let ${windowVar}=await ${servicesVar}.ensureWindow({background:${startupVar}.isBackgroundLaunch});` +
+      `${windowVar}?.once(\`show\`,()=>{${attributionVar}.handleInitialWindowVisible()}),` +
+      `${windowVar}!=null&&!${startupVar}.isBackgroundLaunch&&(${showVar}(${windowVar},!${backgroundVar}),` +
+      `${attributionVar}.handleInitialWindowVisible())`,
+  );
   return `${codexLinuxStartMinimizedAutostart.toString()}\n${codexLinuxStartMinimizedPreference.toString()}\n${codexLinuxStartMinimizedTrayReady.toString()}\n${patched}`;
 }
-
 function settingsContract(source) {
   const owner = unique(source, new RegExp(`function (${ID})\\((${ID})\\)\\{.{0,300}?\\{platform:(${ID})\\}=(${ID})\\(\\),(${ID})=(${ID})\\((${ID})\\.macMenuBarEnabled\\);if\\(\\3!==\`macOS\`\\)return null;`, "g"));
   if (!owner) return null;

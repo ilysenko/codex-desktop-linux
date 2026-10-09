@@ -1,0 +1,7 @@
+{
+  "uuid": "global-dictation-gnome@chatgpt-community.local",
+  "name": "ChatGPT Community Global Dictation",
+  "description": "Helper-authenticated Ctrl+V companion; opt-in and no clipboard access.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 1
+}

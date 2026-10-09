@@ -1105,6 +1105,24 @@ function assertRelativeTarget(target) {
   return resolved;
 }
 
+function restoreMode(target, mode) {
+  const stat = fs.lstatSync(target);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Linux feature staged artifact must not be a symbolic link: ${target}`);
+  }
+  // Resource modes describe files; readable directories also need traversal.
+  const directoryMode = mode |
+    ((mode & 0o400) ? 0o100 : 0) |
+    ((mode & 0o040) ? 0o010 : 0) |
+    ((mode & 0o004) ? 0o001 : 0);
+  fs.chmodSync(target, stat.isDirectory() ? directoryMode : mode);
+  if (stat.isDirectory()) {
+    for (const name of fs.readdirSync(target)) {
+      restoreMode(path.join(target, name), mode);
+    }
+  }
+}
+
 for (const entry of entries) {
   if (entry == null || typeof entry !== "object") {
     throw new Error("Linux feature staged file entry must be an object");
@@ -1116,7 +1134,7 @@ for (const entry of entries) {
   if (!fs.existsSync(target)) {
     throw new Error(`Linux feature staged file is missing from package payload: ${entry.target}`);
   }
-  fs.chmodSync(target, Number.parseInt(entry.mode, 8));
+  restoreMode(target, Number.parseInt(entry.mode, 8));
 }
 NODE
     then

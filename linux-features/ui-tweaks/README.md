@@ -5,6 +5,14 @@ customizations. It is disabled by default and is intended as a shared place for
 future visual tweaks that are useful to some Linux users but should not affect
 the baseline app.
 
+The Portage-managed Gentoo package supports this feature, audited on amd64
+OpenRC; Gentoo ARM64 and systemd runtime environments have not been tested. Its
+existing launcher cleanup hook is included in the payload, with
+`sys-apps/util-linux` declared in `gentoo.dependencies.RDEPEND` for `flock`.
+This runtime dependency is omitted when `ui-tweaks` is disabled. No additional
+bootstrap or Portage build/merge tools are required, and no separate native
+helper or updater is added. Other feature support requires its own Gentoo audit.
+
 Enable it in the local, gitignored feature config:
 
 ```json
@@ -19,6 +27,7 @@ Enable it in the local, gitignored feature config:
 | --- | --- | --- | --- |
 | `appearance.dockIcon` | `patches/dock-icon.js` | Exposes the upstream Dock icon selector and synchronizes the selected icon across Linux windows, tray, and supported desktop launchers. | `tweaks.appearance.dockIcon.enabled` |
 | `appearance.uiFontSize` | `patches/ui-font-size.js` | Raises the upstream 16 px UI font-size maximum to a configurable value. | `tweaks.appearance.uiFontSize.enabled`, `tweaks.appearance.uiFontSize.max` |
+| `appearance.customFontInput` | `patches/custom-font-input.js` | Adds a switch between installed fonts and a manually entered CSS font-family stack. | `tweaks.appearance.customFontInput.enabled` |
 | `home.suggestedPrompts` | `patches/suggested-prompts.js` | Exposes the upstream Suggested Prompts setting and enables generated project-aware cards on Home. | `tweaks.home.suggestedPrompts.enabled` |
 | `modelPicker.showModelsByDefault` | `patches/model-picker-model-list.js` | Opens the advanced picker by default and shows model choices inline instead of hiding them behind the compact Power slider and a nested Model submenu. | `tweaks.modelPicker.showModelsByDefault.enabled` |
 | `reasoning.keepEffortLabelsEnglish` | `patches/reasoning-effort-labels.js` | Keeps reasoning effort values in English in the Simplified Chinese UI while leaving the surrounding interface translated. | `tweaks.reasoning.keepEffortLabelsEnglish.enabled` |
@@ -139,6 +148,62 @@ Config keys:
   official 11–16 px range.
 - `max`: integer from `17` through `64`; invalid values warn and fall back to
   `24`.
+
+### `appearance.customFontInput`
+
+Adds an **Enter font stack manually** switch inside each upstream Appearance
+font menu. Turn it on to enter a CSS font-family value or fallback list, then
+press Enter or select **Use custom font value** to apply it. Turn it off to
+return to the installed-font list. Switching input modes does not apply or
+discard the saved font. The code font list retains upstream monospace filtering.
+
+The same picker serves UI, code, and content fonts in the light and dark themes.
+For example, a UI or content stack can be:
+
+```text
+"IBM Plex Sans", "Noto Sans CJK SC", "Noto Sans", sans-serif
+```
+
+A separate code font stack can be:
+
+```text
+"JetBrains Mono", "Noto Sans Mono CJK SC", monospace
+```
+
+Font values use upstream theme settings and persistence. Applying a manual value
+also clears the selected font-face override through the upstream handler. Clear
+the input or choose **System** to restore the default; content fonts use **Same
+as UI font** instead. The input-mode switch is local to the mounted picker and
+starts with the installed-font list when the Appearance page opens. When font
+enumeration returns no list, manual input remains available and the mode switch
+is disabled because there is no list to select.
+
+This tweak is independently disabled by default. Enable it in the local,
+gitignored feature config, then rebuild:
+
+```json
+{
+  "enabled": ["ui-tweaks"],
+  "settings": {
+    "ui-tweaks": {
+      "tweaks": {
+        "appearance": {
+          "customFontInput": {
+            "enabled": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Only the font-picker renderer is patched. No font assets, font enumeration
+helper, theme schema, or global CSS override is added. Upstream applies the
+complete font stack through its UI, code, and content CSS variables and appends
+its existing defaults. The patch locates the picker by semantic markers and
+rejects missing, duplicated, or changed contracts instead of changing an
+unrelated platform gate.
 
 ### `home.suggestedPrompts`
 

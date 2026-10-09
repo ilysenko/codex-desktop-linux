@@ -53,14 +53,14 @@ cd codex-desktop-linux
 | Fedora | `make bootstrap-native` | 构建并安装 RPM |
 | openSUSE | `make bootstrap-native` | 构建并安装 RPM |
 | Arch、Manjaro、EndeavourOS | `make bootstrap-native` | 构建并安装 pacman 软件包 |
-| Gentoo | `make bootstrap-native` | 构建本地 ebuild 并通过 Portage 安装；仅默认功能、不含更新器 |
+| Gentoo | `make bootstrap-native` | 构建本地 ebuild 并通过 Portage 安装；支持 `ui-tweaks`，不含更新器 |
 | NixOS 或其他 Nix 系统 | `nix run github:ilysenko/codex-desktop-linux` | 构建并运行 flake；参阅 [Nix](docs/nix.md) |
 | Atomic 桌面或其他发行版 | `make build-app && make appimage` | 生成不含原生更新器的本地 AppImage |
 
 Gentoo 的应用合并会忽略 `EMERGE_DEFAULT_OPTS`，从生成的 ebuild 安装载荷，而非复用
 二进制包缓存；不会修改全局 Portage 配置。
-Gentoo 已提供分阶段依赖和包资源框架，供后续逐项审查并接入功能；目前尚未将任何
-仓库功能声明为已支持。字段约定见[Gentoo 功能契约](docs/linux-features-architecture.md#gentoo-feature-contract)。
+Gentoo 已提供分阶段依赖和包资源框架；现已支持 `ui-tweaks`，且仍默认关闭。
+其他仓库功能需单独审查并声明支持。字段约定见[Gentoo 功能契约](docs/linux-features-architecture.md#gentoo-feature-contract)。
 Gentoo 本地 ebuild 安装路径已在 OpenRC 环境测试，尚未测试 Gentoo systemd
 环境；验证范围见[Gentoo 原生安装说明](docs/native-setup.md#gentoo-local-ebuild)。
 
@@ -249,6 +249,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `flatpak-chrome-native-messaging` | 将官方 Chrome 扩展连接到 Flatpak Google Chrome | [文档](linux-features/flatpak-chrome-native-messaging/README.md) |
 | `frameless-titlebar` | 隐藏官方 Linux overlay 按钮，改由 compositor 管理窗口装饰 | [文档](linux-features/frameless-titlebar/README.md) |
 | `global-dictation` | X11 / XDG portal 全局听写快捷键 | [文档](linux-features/global-dictation/README.md) |
+| `global-dictation-gnome` | 无需 RemoteDesktop 会话的可选 GNOME Shell 粘贴扩展；依赖 `global-dictation`，必须显式启用扩展 | [文档](linux-features/global-dictation-gnome/README.md) |
 | `linux-performance-workarounds` | 针对受影响系统的 renderer workaround | [文档](linux-features/linux-performance-workarounds/README.md) |
 | `mcp-helper-reaper` | 安全清理孤立 MCP helper | [文档](linux-features/mcp-helper-reaper/README.md) |
 | `model-picker-default-presets` | 配置 ChatGPT Default 的有序 model/effort 组合 | [文档](linux-features/model-picker-default-presets/README.md) |
@@ -271,6 +272,17 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `tray-usage` | 在 Linux 系统托盘菜单显示剩余用量 | [文档](linux-features/tray-usage/README.md) |
 | `ui-tweaks` | 可选 UI 与交互自定义 | [文档](linux-features/ui-tweaks/README.md) |
 
+若要在 GNOME Wayland 下听写时避免 RemoteDesktop 权限提示，请通过
+`make setup-native` 同时选择 `global-dictation` 和 `global-dictation-gnome`，
+然后重新构建并安装。首次启动应用会为当前用户安装配套扩展；注销并重新登录后，
+显式执行 `gnome-extensions enable global-dictation-gnome@chatgpt-community.local`。
+启用扩展后请重启应用/helper。helper 会在启动时自动检查配套扩展的版本：
+已启用且兼容时选择 GNOME，否则选择 RemoteDesktop；此选择在重启前保持不变。
+一旦选择 GNOME，粘贴错误不会回退到 RemoteDesktop，也不会自动重试。
+构建功能仅负责分发和安装配套扩展；手动安装的兼容扩展也会被自动检测。
+快捷键授权仍使用 GlobalShortcuts。关闭构建功能不会卸载用户扩展；详见
+[启用与移除说明](linux-features/global-dictation-gnome/README.md)。
+
 可选的 Computer Use backend 提供 `guard-accessibility` 命令，可显式在前台保持
 GNOME 辅助功能开启。它不会自动启动；详见 [Linux Computer Use](docs/linux-computer-use.md)。
 
@@ -280,6 +292,11 @@ GNOME 辅助功能开启。它不会自动启动；详见 [Linux Computer Use](d
 
 ChatGPT account rollout 和 server-side 功能仍由 OpenAI 控制。重新构建本项目
 不会解锁账号功能。
+
+如需输入 CSS 字体 fallback 列表，可启用可选的
+[`ui-tweaks` 自定义字体输入](linux-features/ui-tweaks/README.md#appearancecustomfontinput)，
+在外观设置的字体菜单中切换系统字体列表与手填字体栈。这个子选项默认关闭，
+需在本地 feature settings 中启用后重新构建。
 
 ## 配置可选扩展
 

@@ -410,7 +410,7 @@ function syntheticCurrentAppServerManagerSignalsBundle() {
 function syntheticCurrentConversationHydrationBundle() {
   return [
     "class NotificationBuffer{buffers=new Map;begin(e){this.buffers.has(e)||this.buffers.set(e,[])}buffer(e,t){let n=e.notification.params.threadId,r=this.buffers.get(n);return r!=null&&(r.push({delivery:e,shouldIgnore:t}),!0)}release(e,t,n){let r=this.buffers.get(e);this.buffers.delete(e);for(let e of r??[])n(e.delivery,e.shouldIgnore)}discard(e){this.buffers.delete(e)}}",
-    "class HydrationLifecycle{manager;context;schedule;buffer=new NotificationBuffer;pending=new Map;constructor(e,t,n){this.manager=e,this.context=t,this.schedule=n}bufferNotification(e,t){let{notification:n}=e,r=n.params.threadId;if(r==null)return!1;let i=r,a=this.pending.get(i);if(a!=null)return a.ignored.add(t),this.buffer.buffer(e,t);if(this.manager.getHostId()!==`durable`||n.method!==`turn/started`&&n.method!==`turn/completed`||this.context.threadStore.conversations.has(i)||this.context.threadStore.isConversationSuppressed(i))return!1;let o={ignored:new Set([t]),cancelRetry:null};return this.pending.set(i,o),this.buffer.begin(i),this.buffer.buffer(e,t),this.hydrate(i,o,!1),!0}discard(e){this.pending.get(e)?.cancelRetry?.(),this.pending.delete(e),this.buffer.discard(e)}hydrate(e,t,n){let r=()=>this.pending.get(e)===t&&!this.context.threadStore.isConversationSuppressed(e)&&Array.from(t.ignored).some(e=>!e?.());if(this.pending.get(e)===t){if(!r()){this.discard(e);return}this.context.threadStore.hydrateActiveThread(e,r).then(i=>{if(this.pending.get(e)===t){if(!r())this.discard(e);else if(i){this.pending.delete(e);this.buffer.release(e,[],({notification:e},t)=>this.manager.onNotification(e.method,e.params,null,t))}else n?this.discard(e):t.cancelRetry=this.schedule(()=>this.hydrate(e,t,!0),1e3)}}).catch(n=>{this.pending.get(e)===t&&this.discard(e),this.manager.logger.debug(`Failed to discover cloud thread from turn`,{safe:{},sensitive:{conversationId:e,error:n}})})}}}",
+    "class HydrationLifecycle{manager;context;schedule;buffer=new NotificationBuffer;pending=new Map;constructor(e,t,n){this.manager=e,this.context=t,this.schedule=n}bufferNotification(e,t){let{notification:n}=e,r=n.params.threadId;if(r==null)return!1;let i=r,a=this.pending.get(i);return a==null?this.manager.getHostId()!==`durable`||n.method!==`turn/started`&&n.method!==`turn/completed`||this.context.threadStore.conversations.has(i)||this.context.threadStore.isConversationSuppressed(i)?!1:(this.beginDiscovery(i,t),this.buffer.buffer(e,t)):(a.ignored.add(t),this.buffer.buffer(e,t))}beginDiscovery(e,t){let n={ignored:new Set([t]),cancelRetry:null};this.pending.set(e,n),this.buffer.begin(e),this.hydrate(e,n,!1)}discard(e){this.pending.get(e)?.cancelRetry?.(),this.pending.delete(e),this.buffer.discard(e)}hydrate(e,t,n){let r=()=>this.pending.get(e)===t&&!this.context.threadStore.isConversationSuppressed(e)&&Array.from(t.ignored).some(e=>!e?.());if(this.pending.get(e)===t){if(!r()){this.discard(e);return}this.context.threadStore.hydrateActiveThread(e,r).then(i=>{if(this.pending.get(e)===t){if(!r())this.discard(e);else if(i){this.pending.delete(e);this.buffer.release(e,[],({notification:e},t)=>this.manager.onNotification(e.method,e.params,null,t))}else n?this.discard(e):t.cancelRetry=this.schedule(()=>this.hydrate(e,t,!0),1e3)}}).catch(n=>{this.pending.get(e)===t&&this.discard(e),this.manager.logger.debug(`Failed to discover thread from event`,{safe:{},sensitive:{conversationId:e,error:n}})})}}}",
   ].join("");
 }
 
@@ -424,12 +424,9 @@ function syntheticRemoteTerminalStatusBundle() {
 
 function syntheticAppServerManagerStatusBundle() {
   return [
-    "var z={error(){}};",
-    "var bO={};",
-    "function wO(e,t){return e.bump(t)}",
-    "function TO(e,t,n){return e.current(t)===n}",
-    "function PO(e,t,n){return e.set(bO,t,n)}",
-    "function SO(e,t){let n=t.getHostId();if(NO(n))return;let r=wO(e,n),i=e.get(bO,n);t.addNotificationCallback(`remoteControl/status/changed`,({params:t})=>{TO(e,n,r)&&PO(e,n,t)}),t.sendRequest(`remoteControl/status/read`,void 0).then(t=>{e.get(bO,n)===i&&TO(e,n,r)&&PO(e,n,t)}).catch(t=>{TO(e,n,r)&&z.error(`Failed to read remote-control status`,{safe:{},sensitive:{error:t}})})}",
+    "var z={error(){}},bO={},aO={};",
+    "function NO(){return!1}function PO(e){return e}function TO(e,t,n){n?.status===`connected`&&e.set(aO,t,!1),e.set(bO,t,n)}",
+    "function SO(e,t,n,r){if(NO(t))return()=>{};let i=new AbortController,a=()=>!i.signal.aborted&&(r?.()??!0),o=e.get(bO,t),s=n.subscribe({type:`notification`,key:{hostId:t},methods:`remoteControl/status/changed`,listener:({params:n})=>{a()&&TO(e,t,n)}}),c,l=()=>{i.signal.aborted||(i.abort(),s[Symbol.dispose](),c?.[Symbol.dispose]())};return s.onRpcBroken(l),s.then(e=>{if(!a()){e[Symbol.dispose]();return}c=e,e.onRpcBroken(l)},l),PO(n.sendRequest(`remoteControl/status/read`,void 0),i.signal).then(n=>{e.get(bO,t)===o&&a()&&TO(e,t,n)}).catch(e=>{a()&&z.error(`Failed to read remote-control status`,{safe:{},sensitive:{error:e}})}),l}",
   ].join("");
 }
 
@@ -1344,8 +1341,8 @@ test("Linux remote-mobile hydration rejects missing, duplicate, and partial life
     source.replace("this.context.threadStore.hydrateActiveThread(", "this.context.threadStore.loadThread("),
     source + source,
     source.replace(
-      "if(this.manager.getHostId()!==`durable`",
-      "if(/*codexLinuxRemoteMobileConversationHydration*/this.manager.getHostId()!==`durable`",
+      "return a==null?this.manager.getHostId()!==`durable`",
+      "return a==null?/*codexLinuxRemoteMobileConversationHydration*/this.manager.getHostId()!==`durable`",
     ),
   ];
 
@@ -2185,7 +2182,7 @@ test("Linux remote mobile Chrome bridge patch warns when browser-client needles 
   assert.ok(warnings.some((warning) => warning.includes("backend allowlist needles")));
 });
 
-test("Linux remote-control status guard skips slow remote SSH status reads", async () => {
+test("Linux remote-control status guard patches the current subscription lifecycle", async () => {
   const source = syntheticAppServerManagerStatusBundle();
   const patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
 
@@ -2196,23 +2193,14 @@ test("Linux remote-control status guard skips slow remote SSH status reads", asy
   const context = {
     module: { exports: {} },
     navigator: { userAgent: "X11; Linux x86_64" },
-    NO: () => false,
+    AbortController,
     Promise,
-    z: { error() {} },
+    Symbol,
   };
   vm.runInNewContext(`${patched};module.exports={SO,bO};`, context);
   const { SO } = context.module.exports;
-  const generations = new Map();
   const values = new Map();
   const store = {
-    bump(hostId) {
-      const next = (generations.get(hostId) ?? 0) + 1;
-      generations.set(hostId, next);
-      return next;
-    },
-    current(hostId) {
-      return generations.get(hostId);
-    },
     get(_atom, hostId) {
       return values.get(hostId) ?? null;
     },
@@ -2222,14 +2210,15 @@ test("Linux remote-control status guard skips slow remote SSH status reads", asy
   };
 
   let remoteRequests = 0;
-  SO(store, {
-    getHostId: () => "remote-ssh-discovered:dev",
-    addNotificationCallback() {},
+  SO(store, "remote-ssh-discovered:dev", {
+    subscribe() {
+      throw new Error("remote host must return before subscription");
+    },
     sendRequest() {
       remoteRequests += 1;
       return Promise.resolve({ status: "enabled" });
     },
-  });
+  }, undefined);
   assert.equal(remoteRequests, 0);
   const disabledStatus = values.get("remote-ssh-discovered:dev");
   assert.equal(disabledStatus.status, "disabled");
@@ -2237,18 +2226,51 @@ test("Linux remote-control status guard skips slow remote SSH status reads", asy
   assert.equal(disabledStatus.accessRequired, false);
 
   let localRequests = 0;
-  SO(store, {
-    getHostId: () => "local",
-    addNotificationCallback() {},
+  const subscription = {
+    [Symbol.dispose]() {},
+    onRpcBroken() {},
+    then(resolve) {
+      resolve(this);
+    },
+  };
+  SO(store, "local", {
+    subscribe() {
+      return subscription;
+    },
     sendRequest(method) {
       localRequests += 1;
       assert.equal(method, "remoteControl/status/read");
       return Promise.resolve({ status: "enabled" });
     },
-  });
+  }, undefined);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(localRequests, 1);
   assert.equal(values.get("local").status, "enabled");
+});
+
+test("Linux remote-control status guard fails closed on marker-only, partial, duplicate, ambiguous, and mixed contracts", () => {
+  const source = syntheticAppServerManagerStatusBundle();
+  const patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
+  const helper = "function codexLinuxRemoteControlShouldReadStatus(e){return !(typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`)&&typeof e==`string`&&(e.startsWith(`remote-ssh`)||e.startsWith(`remote-control:`)))}";
+  const guard = "codexLinuxRemoteControlStatusReadGuard=codexLinuxRemoteControlShouldReadStatus(t);";
+  const disabled = "if(!codexLinuxRemoteControlStatusReadGuard){e.set(bO,t,{status:`disabled`,available:!1,accessRequired:!1});return()=>{}}";
+  for (const drift of [
+    "function codexLinuxRemoteControlShouldReadStatus(){}",
+    source + "function codexLinuxRemoteControlShouldReadStatus(){}",
+    patched.replace(helper, ""),
+    patched.replace(guard, ""),
+    patched.replace(disabled, ""),
+    patched + helper,
+    patched + guard,
+    patched + disabled,
+    source + source,
+    patched + patched,
+    patched + source,
+  ]) {
+    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlStatusReadGuardPatch(drift));
+    assert.equal(result, drift);
+    assert.equal(warnings.length, 1, drift.slice(0, 120));
+  }
 });
 
 test("Linux remote-control status guard skips remote-control environment status reads", () => {
@@ -2373,7 +2395,7 @@ test("Linux remote terminal status recovery escapes current minified function al
   );
 });
 
-test("Linux remote-control status wait supports the current 26.901.20858 app bundle", () => {
+test("Linux remote-control status wait supports the current app bundle", () => {
   const source = syntheticCurrentStatusWaitBundle();
   const patched = applyLinuxRemoteControlStatusWaitPatch(source);
 

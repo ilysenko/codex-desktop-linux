@@ -8,8 +8,11 @@ const classifierPrefix =
   String.raw`function (?<classifier>${identifier})\(\{unit:(?<unit>${identifier}),keepMcpAppEntriesPersistent:(?<keep>${identifier}),mcpServerStatuses:(?<statuses>${identifier}),renderMcpApps:(?<render>${identifier})\}\)\{if\(\k<unit>\.kind!==\`standalone\`\)return!1;let (?<item>${identifier})=\k<unit>\.item\.item;return `;
 const classifierTools =
   String.raw`\|\|\k<item>\.type===\`dynamic-tool-call\`&&${identifier}\(\k<item>\)\|\|\k<keep>&&\k<render>&&\k<item>\.type===\`mcp-tool-call\`&&${identifier}\(\{item:\k<item>,mcpServerStatuses:\k<statuses>\}\)\?!0:`;
+const classifierLeadingTool =
+  String.raw`\k<item>\.type===\`mcp-tool-call\`&&${identifier}\(\k<item>\)\|\|`;
 const currentPattern = new RegExp(
   classifierPrefix +
+    classifierLeadingTool +
     String.raw`\k<item>\.type===\`assistant-message\`&&(?<assistantFilter>${identifier})\(\k<item>\)` +
     classifierTools +
     String.raw`\k<item>\.type===\`user-message\`&&\(\k<item>\.steeringStatus!=null\|\|\k<item>\.hookFeedback===!0\)\}`,
@@ -17,6 +20,7 @@ const currentPattern = new RegExp(
 );
 const patchedPattern = new RegExp(
   classifierPrefix +
+    classifierLeadingTool +
     String.raw`\k<item>\.type===\`assistant-message\`` +
     classifierTools +
     String.raw`\k<item>\.type===\`user-message\`\}`,

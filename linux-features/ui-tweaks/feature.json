@@ -3,6 +3,12 @@
   "title": "UI Tweaks",
   "description": "Optional UI customization patches for ChatGPT Community.",
   "defaultEnabled": false,
+  "gentoo": {
+    "supported": true,
+    "dependencies": {
+      "RDEPEND": ["sys-apps/util-linux"]
+    }
+  },
   "entrypoints": {
     "patchDescriptors": "./patch.js",
     "stageHook": "./stage.sh"
@@ -15,6 +21,18 @@
     }
   },
   "officialBundleAuditScenarios": [
+    {
+      "name": "custom-font-input",
+      "settings": {
+        "tweaks": {
+          "appearance": {
+            "customFontInput": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    },
     {
       "name": "extended-ui-font-size",
       "settings": {
@@ -30,6 +48,9 @@
   ],
   "tweaks": {
     "appearance": {
+      "customFontInput": {
+        "enabled": false
+      },
       "dockIcon": {
         "enabled": false
       },
