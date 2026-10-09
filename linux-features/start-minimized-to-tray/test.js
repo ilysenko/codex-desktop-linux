@@ -258,7 +258,27 @@ test("main patch is idempotent, preserves aliases, and fails closed on absent/am
   assert.equal(applyMainPatch(patched), patched);
   const renamed = source.replaceAll("Ye", "bgAlias").replaceAll("Xe", "showAlias").replaceAll("U.", "serviceAlias.");
   assert.notEqual(applyMainPatch(renamed), renamed);
+  const patchedRelationships = [
+    "let codexLinuxStartMinimizedPreferences=codexLinuxStartMinimizedPreference(V.globalState);",
+    "let codexLinuxStartMinimized=codexLinuxStartMinimizedPreferences.requested;",
+    "console.info(`[start-minimized-to-tray] startup preference`,codexLinuxStartMinimizedPreferences);",
+    "let codexLinuxStartMinimizedTraySetup=(L||process.platform===`linux`)?Qe():null;",
+    "if(codexLinuxStartMinimized){let ready=await codexLinuxStartMinimizedTrayReady(codexLinuxStartMinimizedTraySetup,Z9);",
+    "console.info(`[start-minimized-to-tray] tray readiness`,{ready});",
+    "codexLinuxStartMinimized=codexLinuxStartMinimized&&ready;e.isBackgroundLaunch=e.isBackgroundLaunch||codexLinuxStartMinimized/*codexLinuxStartMinimizedNativeBackground*/",
+    "let ut=await U.ensureWindow({background:e.isBackgroundLaunch});",
+    "ut?.once(`show`,()=>{_e.handleInitialWindowVisible()}),",
+    "ut!=null&&!e.isBackgroundLaunch&&(Xe(ut,!Ye),_e.handleInitialWindowVisible())",
+  ];
+  for (const relationship of patchedRelationships) {
+    for (const drift of [patched.replace(relationship, ""), `${patched}${relationship}`]) {
+      const result = captureWarnings(() => applyMainPatch(drift));
+      assert.equal(result.value, drift);
+      assert.equal(result.warnings.length, 1, relationship);
+    }
+  }
   for (const drift of [source + source, patched + source, patched + patched,
+    source + `function codexLinuxStartMinimizedTrayReady(){}`,
     patched.replace("codexLinuxStartMinimizedNativeBackground", "changedNativeBackground"),
     patched.replace("codexLinuxStartMinimizedPreference(V.globalState)", "codexLinuxStartMinimizedPreference(other.globalState)"),
     patched.replace("only-on-boot", "changed-boot-key"),

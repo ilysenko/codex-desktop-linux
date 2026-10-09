@@ -2248,6 +2248,31 @@ test("Linux remote-control status guard patches the current subscription lifecyc
   assert.equal(values.get("local").status, "enabled");
 });
 
+test("Linux remote-control status guard fails closed on marker-only, partial, duplicate, ambiguous, and mixed contracts", () => {
+  const source = syntheticAppServerManagerStatusBundle();
+  const patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
+  const helper = "function codexLinuxRemoteControlShouldReadStatus(e){return !(typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`)&&typeof e==`string`&&(e.startsWith(`remote-ssh`)||e.startsWith(`remote-control:`)))}";
+  const guard = "codexLinuxRemoteControlStatusReadGuard=codexLinuxRemoteControlShouldReadStatus(t);";
+  const disabled = "if(!codexLinuxRemoteControlStatusReadGuard){e.set(bO,t,{status:`disabled`,available:!1,accessRequired:!1});return()=>{}}";
+  for (const drift of [
+    "function codexLinuxRemoteControlShouldReadStatus(){}",
+    source + "function codexLinuxRemoteControlShouldReadStatus(){}",
+    patched.replace(helper, ""),
+    patched.replace(guard, ""),
+    patched.replace(disabled, ""),
+    patched + helper,
+    patched + guard,
+    patched + disabled,
+    source + source,
+    patched + patched,
+    patched + source,
+  ]) {
+    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlStatusReadGuardPatch(drift));
+    assert.equal(result, drift);
+    assert.equal(warnings.length, 1, drift.slice(0, 120));
+  }
+});
+
 test("Linux remote-control status guard skips remote-control environment status reads", () => {
   const source = syntheticAppServerManagerStatusBundle();
   const patched = applyLinuxRemoteControlStatusReadGuardPatch(source);

@@ -876,17 +876,39 @@ function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
 }
 
 function applyLinuxRemoteControlStatusReadGuardPatch(source) {
-  if (source.includes(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER)) {
-    return source;
-  }
-  if (!source.includes("remoteControl/status/read")) {
-    return source;
+  const currentStatusReadPattern =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(([A-Za-z_$][\w$]*)\(\3\)\)return\(\)=>\{\};let ([A-Za-z_$][\w$]*)=new AbortController,([A-Za-z_$][\w$]*)=\(\)=>!\7\.signal\.aborted&&\(\5\?\.\(\)\?\?!0\),([A-Za-z_$][\w$]*)=\2\.get\(([A-Za-z_$][\w$]*),\3\),(?!codexLinuxRemoteControlStatusReadGuard=)/u;
+  const currentMatches = [...source.matchAll(new RegExp(currentStatusReadPattern.source, "gu"))];
+  const patchedHelperPattern = new RegExp(
+    `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}\\((${DEVICE_KEY_IDENT})\\)\\{return !\\(typeof navigator!=\\x60undefined\\x60&&navigator\\.userAgent\\.includes\\(\\x60Linux\\x60\\)&&typeof \\1==\\x60string\\x60&&\\(\\1\\.startsWith\\(\\x60remote-ssh\\x60\\)\\|\\|\\1\\.startsWith\\(\\x60remote-control:\\x60\\)\\)\\)\\}`,
+    "gu",
+  );
+  const patchedHelpers = [...source.matchAll(patchedHelperPattern)];
+  const patchedStatusReadPattern = new RegExp(
+    `function (?<functionName>${DEVICE_KEY_IDENT})\\((?<store>${DEVICE_KEY_IDENT}),(?<host>${DEVICE_KEY_IDENT}),(?<client>${DEVICE_KEY_IDENT}),(?<active>${DEVICE_KEY_IDENT})\\)` +
+      `\\{if\\((?<skip>${DEVICE_KEY_IDENT})\\(\\k<host>\\)\\)return\\(\\)=>\\{\\};let (?<abort>${DEVICE_KEY_IDENT})=new AbortController,` +
+      `(?<isActive>${DEVICE_KEY_IDENT})=\\(\\)=>!\\k<abort>\\.signal\\.aborted&&\\(\\k<active>\\?\\.\\(\\)\\?\\?!0\\),` +
+      `(?<initial>${DEVICE_KEY_IDENT})=\\k<store>\\.get\\((?<atom>${DEVICE_KEY_IDENT}),\\k<host>\\),` +
+      `codexLinuxRemoteControlStatusReadGuard=${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}\\(\\k<host>\\);` +
+      "if\\(!codexLinuxRemoteControlStatusReadGuard\\)\\{\\k<store>\\.set\\(\\k<atom>,\\k<host>,\\{status:\\x60disabled\\x60,available:!1,accessRequired:!1\\}\\);return\\(\\)=>\\{\\}\\}let ",
+    "gu",
+  );
+  const patchedMatches = [...source.matchAll(patchedStatusReadPattern)];
+  const hasPatchSignal = source.includes(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER) ||
+    source.includes("codexLinuxRemoteControlStatusReadGuard");
+
+  if (patchedHelpers.length === 1 && patchedMatches.length === 1 && currentMatches.length === 0 && source.includes("remoteControl/status/read")) {
+    const helperArg = patchedHelpers[0][1];
+    const { store: storeVar, host: hostVar, atom: statusAtomVar } = patchedMatches[0].groups;
+    const relationships = [
+      `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${helperArg}){return !(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)&&typeof ${helperArg}==\`string\`&&(${helperArg}.startsWith(\`remote-ssh\`)||${helperArg}.startsWith(\`remote-control:\`)))}`,
+      `codexLinuxRemoteControlStatusReadGuard=${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${hostVar});`,
+      `if(!codexLinuxRemoteControlStatusReadGuard){${storeVar}.set(${statusAtomVar},${hostVar},{status:\`disabled\`,available:!1,accessRequired:!1});return()=>{}}`,
+    ];
+    if (relationships.every((relationship) => source.split(relationship).length === 2)) return source;
   }
 
-  const currentStatusReadPattern =
-    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(([A-Za-z_$][\w$]*)\(\3\)\)return\(\)=>\{\};let ([A-Za-z_$][\w$]*)=new AbortController,([A-Za-z_$][\w$]*)=\(\)=>!\7\.signal\.aborted&&\(\5\?\.\(\)\?\?!0\),([A-Za-z_$][\w$]*)=\2\.get\(([A-Za-z_$][\w$]*),\3\),/u;
-  const currentMatches = [...source.matchAll(new RegExp(currentStatusReadPattern.source, "gu"))];
-  if (currentMatches.length === 1) {
+  if (currentMatches.length === 1 && patchedMatches.length === 0 && !hasPatchSignal) {
     const [needle, functionName, storeVar, hostVar, clientVar, activeVar, skipVar, abortVar,
       isActiveVar, initialValueVar, statusAtomVar] = currentMatches[0];
     const guardedPrefix =
@@ -896,11 +918,8 @@ function applyLinuxRemoteControlStatusReadGuardPatch(source) {
     return source.slice(0, currentMatches[0].index) + guardedPrefix +
       source.slice(currentMatches[0].index + needle.length);
   }
-  if (currentMatches.length > 1) {
-    console.warn("WARN: Remote-control status read contract is ambiguous - skipping Linux remote-control status guard patch");
-    return source;
-  }
-  console.warn("WARN: Could not find remote-control status read needle - skipping Linux remote-control status guard patch");
+  if (!source.includes("remoteControl/status/read") && !hasPatchSignal) return source;
+  console.warn("WARN: Remote-control status read contract is missing or ambiguous - skipping Linux remote-control status guard patch");
   return source;
 }
 
