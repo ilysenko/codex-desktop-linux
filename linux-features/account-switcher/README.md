@@ -23,13 +23,14 @@ desktop app against that home while changing accounts.
 
 - Switching does not quit or relaunch Electron. It reconnects the local
   app server and reloads desktop windows so account-specific UI caches refresh.
-- Pending app-server requests and active loaded tasks on connected hosts block
-  switching. Task checks use upstream's ready-checked request wrapper, including
-  lazy hosted connections, before starting OAuth. Local/remote servers use
-  `thread/loaded/list` and `thread/read`. The durable cloud gateway does not
-  support `thread/loaded/list`; it uses runtime statuses from all pages of
-  `thread/list`, including archived chats. Active cloud tasks in another window
-  or app also block switching. Unknown statuses or failed checks block switching.
+- Pending app-server requests in this app and active loaded local/remote tasks
+  block switching. Local/remote task checks use upstream's ready-checked request
+  wrapper with `thread/loaded/list` and `thread/read` before starting OAuth.
+  Durable cloud tasks run independently of the desktop connection and do not
+  block a local account change. The switcher does not enumerate or cancel them;
+  work in another app/profile can continue. Pending requests on this app's
+  durable connection still block switching. Unknown local/remote statuses or
+  failed local/remote checks block switching.
   New renderer requests are rejected during the credential change.
   This is not an interprocess lock for external CLI clients or automation.
 - Local chats, projects, settings, and plugin configuration remain shared in
@@ -93,7 +94,8 @@ run the native Owl regression test. This requires a graphical session and an
 unlocked Secret Service provider. It generates a disposable probe, uses synthetic
 credentials, verifies key persistence and vault decryption in fresh switcher
 instances, and exercises **Add account** with the official connection class's
-request/subscription methods and an initially disconnected hosted connection.
+request/subscription methods. An initially disconnected hosted connection must
+remain untouched, and the probe rejects any attempts to query global cloud work.
 The probe uses a synthetic transport and intercepts the browser launch, then
 cancels OAuth; it does not log in to real accounts. It exits only its own process
 and clears only its own test key.

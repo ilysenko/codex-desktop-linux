@@ -43,12 +43,12 @@ electron.app.whenReady().then(async () => {
       clearAuthTokenCache() {}, restart: async () => {},
       messageDelivery: { sendMessage: request => {
         if (!client.connection) throw Error("Codex app-server is not available");
+        // Global cloud work must not be read, cancelled or reconnected by a
+        // local account change, even if its catalog reports an active task.
+        if (id === "durable") throw Error("Do not request independent durable tasks");
         let result;
         switch (request.method) {
-          case "thread/loaded/list":
-            if (id === "durable") throw Error("Gateway rejects thread/loaded/list with -32601");
-            result = { data: [], nextCursor: null }; break;
-          case "thread/list": result = { data: [], nextCursor: null }; break;
+          case "thread/loaded/list": result = { data: [], nextCursor: null }; break;
           case "account/login/start": result = { type: "chatgpt", loginId: "probe-login", authUrl: "https://auth.openai.com/oauth/authorize?probe=1" }; break;
           case "account/login/cancel": result = {}; break;
           case "account/read": result = { account: null }; break;
@@ -79,7 +79,8 @@ electron.app.whenReady().then(async () => {
   await createAccountSwitcher({ electron: api, clients: () => [client, lazy], home, reload() {} }).open(client);
   const vault = path.join(home, ".community-account-switcher/accounts.json");
   const encryptedVault = fs.existsSync(vault) && !fs.readFileSync(vault, "utf8").includes("synthetic-probe-secret");
-  fs.writeFileSync(process.env.ACCOUNT_SWITCHER_PROBE_RESULT, JSON.stringify({ menus, encryptedVault, errors, openedLogin, readyChecks }), { mode: 0o600 });
+  const cloudUntouched = lazy.connection === null && lazy.getPendingRequestCount() === 0;
+  fs.writeFileSync(process.env.ACCOUNT_SWITCHER_PROBE_RESULT, JSON.stringify({ menus, encryptedVault, errors, openedLogin, readyChecks, cloudUntouched }), { mode: 0o600 });
 }).catch(() => {
   fs.writeFileSync(process.env.ACCOUNT_SWITCHER_PROBE_RESULT, JSON.stringify({ probeFailed: true }), { mode: 0o600 });
 }).finally(() => electron.app.quit()); // Only this disposable probe exits.

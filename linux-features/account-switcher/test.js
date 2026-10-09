@@ -296,38 +296,37 @@ test("adding an account initializes a lazy backend before checking tasks and sta
   assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
 });
 
-for (const state of ["idle", "active", "unknown", "rpc-failure", "repeated-cursor"]) {
-  test(`durable uses its supported paginated catalog and fails closed: ${state}`, async t => {
-    const f = fixture(t);
-    const reads = [];
-    f.clients.push({
-      hostConfig: { id: "durable", kind: "local" }, getPendingRequestCount: () => 0,
-      sendAppServerRequest: async (method, params) => {
-        reads.push({ method, params });
-        assert.equal(method, "thread/list", "gateway does not support thread/loaded/list");
-        if (state === "rpc-failure") throw new Error("sensitive gateway payload");
-        if (params.cursor === null) return { data: [{ status: { type: "idle" } }], nextCursor: "page-2" };
-        // The active task is on a later archived page, beyond the visible UI.
-        return { data: [{ status: { type: params.archived && state !== "repeated-cursor" ? state : "idle" } }],
-          nextCursor: state === "repeated-cursor" ? "page-2" : null };
-      },
+for (const action of ["add", "switch"]) {
+  for (const pending of [0, 1]) {
+    test(`cloud work in other apps does not gate ${action}; own pending requests=${pending}`, async t => {
+      const f = fixture(t);
+      const reads = [];
+      f.clients.push({
+        hostConfig: { id: "durable", kind: "local" }, getPendingRequestCount: () => pending,
+        sendAppServerRequest: async method => {
+          reads.push(method);
+          // A catalog would contain a permanently active task from another
+          // profile. Even an unavailable cloud catalog must not gate login.
+          if (method === "thread/list") return { data: [{ status: { type: "active" } }], nextCursor: null };
+          throw new Error("gateway unavailable; sensitive upstream response");
+        },
+      });
+      if (action === "switch") { await f.open(3); f.seedSecond(); }
+      await f.open(1);
+      assert.deepEqual(reads, [], "do not query or cancel independent cloud work");
+      if (pending === 0) {
+        assert.equal(f.dialogs.filter(dialog => dialog.type === "error").length, 0);
+        if (action === "add") assert.ok(f.calls.includes("account/login/start"));
+        else assert.equal(f.reloaded(), 1);
+      } else {
+        assert.equal(f.calls.includes("account/login/start"), false);
+        assert.equal(f.calls.includes("restart"), false);
+        assert.equal(f.reloaded(), 0);
+        assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
+        assert.match(f.dialogs.at(-1).detail, /pending requests/);
+      }
     });
-    await f.open(1);
-    assert.equal(f.calls.includes("account/login/start"), state === "idle");
-    if (state === "idle") {
-      assert.equal(reads.length, 4);
-      assert.deepEqual(reads.map(read => read.params.archived), [false, false, true, true]);
-      assert.equal(f.dialogs.filter(dialog => dialog.type === "error").length, 0);
-    } else {
-      assert.equal(f.calls.includes("restart"), false);
-      assert.equal(f.reloaded(), 0);
-      assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
-      assert.equal(f.dialogs.at(-1).type, "error");
-      assert.ok(!f.dialogs.at(-1).detail.includes("sensitive"));
-      if (state === "active") assert.match(f.dialogs.at(-1).detail, /active cloud tasks/);
-      if (state === "rpc-failure") assert.match(f.dialogs.at(-1).detail, /cloud app server.*thread\/list/);
-    }
-  });
+  }
 }
 
 test("login setup errors name the phase without exposing upstream error details", async t => {
@@ -503,7 +502,7 @@ test("official main and both profile layouts patch uniquely and remain valid Jav
   }
 });
 
-test("official Owl request wrappers initialize lazy connections before OAuth and reopen an encrypted vault", {
+test("official Owl reaches OAuth and reopens an encrypted vault without querying independent cloud work", {
   skip: !process.env.CODEX_ACCOUNT_SWITCHER_NATIVE_APP || !process.env.CODEX_ACCOUNT_SWITCHER_ASAR_CLI,
   timeout: 30_000,
 }, t => {
@@ -537,5 +536,5 @@ test("official Owl request wrappers initialize lazy connections before OAuth and
       ACCOUNT_SWITCHER_PROBE_NATIVE_APP: app },
     stdio: "pipe", timeout: 20_000,
   });
-  assert.deepEqual(JSON.parse(fs.readFileSync(result)), { menus: 3, encryptedVault: true, errors: [], openedLogin: 1, readyChecks: 6 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(result)), { menus: 3, encryptedVault: true, errors: [], openedLogin: 1, readyChecks: 4, cloudUntouched: true });
 });
