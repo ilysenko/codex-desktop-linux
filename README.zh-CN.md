@@ -297,6 +297,13 @@ ChatGPT account rollout 和 server-side 功能仍由 OpenAI 控制。重新构�
 在外观设置的字体菜单中切换系统字体列表与手填字体栈。这个子选项默认关闭，
 需在本地 feature settings 中启用后重新构建。
 
+`ui-tweaks` 的可选子选项 `tweaks.selection.moreDetails.enabled` 可恢复 Codex
+回复正文选中文字菜单中的“更多详情”，让 ChatGPT Quick Chat 结合原对话上下文解释
+所选文字。此子选项默认关闭；详见 [UI Tweaks 配置](linux-features/ui-tweaks/README.md#selectionmoredetails)。
+测试本地构建时，通过 `codex-app/start.sh` 启动，并保留正常桌面启动器中的
+Electron 参数，包括需要的 `--proxy-server=...`。ChatGPT 账号初始化完成后，
+Quick Chat 入口才会可用。
+
 ## 配置可选扩展
 
 推荐使用向导：

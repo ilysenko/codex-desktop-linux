@@ -7,6 +7,7 @@ const reasoningEffortLabels = require("./patches/reasoning-effort-labels.js");
 const dockIcon = require("./patches/dock-icon.js");
 const suggestedPrompts = require("./patches/suggested-prompts.js");
 const customFontInput = require("./patches/custom-font-input.js");
+const selectedTextMoreDetails = require("./patches/selected-text-more-details.js");
 
 function patchesFrom(...modules) {
   return modules.flatMap((moduleExports) =>
@@ -23,5 +24,6 @@ module.exports = {
     dockIcon,
     suggestedPrompts,
     customFontInput,
+    selectedTextMoreDetails,
   ),
 };

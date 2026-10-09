@@ -44,6 +44,18 @@
           }
         }
       }
+    },
+    {
+      "name": "selected-text-more-details",
+      "settings": {
+        "tweaks": {
+          "selection": {
+            "moreDetails": {
+              "enabled": true
+            }
+          }
+        }
+      }
     }
   ],
   "tweaks": {
@@ -72,6 +84,11 @@
     "reasoning": {
       "keepEffortLabelsEnglish": {
         "enabled": true
+      }
+    },
+    "selection": {
+      "moreDetails": {
+        "enabled": false
       }
     },
     "sidebar": {

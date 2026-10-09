@@ -327,6 +327,14 @@ adds a switch between installed-font lists and manual font-stack entry in
 Appearance. This nested tweak is disabled by default and must be enabled in
 local feature settings before rebuilding.
 
+The optional `ui-tweaks` sub-option `tweaks.selection.moreDetails.enabled`
+restores **More details** in the Codex reply selection menu, asking ChatGPT
+Quick Chat to explain the selected text with its source context. It is disabled
+by default; see the [UI Tweaks configuration](linux-features/ui-tweaks/README.md#selectionmoredetails).
+When testing a local build, launch `codex-app/start.sh` with the same Electron
+flags as your normal desktop entry, including any required `--proxy-server=...`
+argument. Quick Chat becomes available after ChatGPT account initialization.
+
 ## Configure optional features
 
 The recommended editor is the setup wizard:

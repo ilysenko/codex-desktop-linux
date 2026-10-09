@@ -31,6 +31,7 @@ Enable it in the local, gitignored feature config:
 | `home.suggestedPrompts` | `patches/suggested-prompts.js` | Exposes the upstream Suggested Prompts setting and enables generated project-aware cards on Home. | `tweaks.home.suggestedPrompts.enabled` |
 | `modelPicker.showModelsByDefault` | `patches/model-picker-model-list.js` | Opens the advanced picker by default and shows model choices inline instead of hiding them behind the compact Power slider and a nested Model submenu. | `tweaks.modelPicker.showModelsByDefault.enabled` |
 | `reasoning.keepEffortLabelsEnglish` | `patches/reasoning-effort-labels.js` | Keeps reasoning effort values in English in the Simplified Chinese UI while leaving the surrounding interface translated. | `tweaks.reasoning.keepEffortLabelsEnglish.enabled` |
+| `selection.moreDetails` | `patches/selected-text-more-details.js` | Restores the Codex reply selection menu's More details action, which asks ChatGPT Quick Chat to explain the selected text. | `tweaks.selection.moreDetails.enabled` |
 | `sidebar.projectName` | `patches/sidebar-project-name.js` | Styles project names in the left sidebar project list. It does not style `Projects` / `Chats` section headings and does not style chat rows. | `tweaks.sidebar.projectName.enabled`, `tweaks.sidebar.projectName.style` |
 
 ## Settings
@@ -306,6 +307,80 @@ Config keys:
   The default is `font-weight: 700 !important;`, so project names are bold
   without changing the fixed row geometry or forcing a color.
 
+### `selection.moreDetails`
+
+Restores **More details** beside **Add to chat** and **Ask in side chat** when
+selecting text in a Codex reply. It opens or reuses a ChatGPT Quick Chat for that
+Codex conversation and automatically asks **Tell me more about this**, with the
+selected text, source reply, and available conversation context. The prompt and
+selection label use the app's current language. Quick Chat uses its selected
+ChatGPT model and reasoning setting. This action does not submit a Codex side
+chat or open an external browser.
+
+This tweak is independently disabled by default:
+
+```json
+{
+  "enabled": ["ui-tweaks"],
+  "settings": {
+    "ui-tweaks": {
+      "tweaks": {
+        "selection": {
+          "moreDetails": {
+            "enabled": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The action remains subject to upstream Quick Chat account availability and
+submission guards. Account initialization must complete before the action is
+available. Signing out or changing accounts during context preparation cancels
+submission. Requests from this action share a queue across Codex chats in the
+same app context and wait for an existing Quick Chat reply or native submission/
+stop operation before replacing its session or sending. The action holds the
+native submission lock through response acceptance and releases it on failure;
+a failed request leaves subsequent selections
+usable. The action waits for the native sender to receive a successful streaming
+response before marking a new Quick Chat as a conversation. A failure while
+preparing or opening the request reaches the selection-menu error toast. An
+explicit new selection can retry; the tweak does not resend failed requests
+automatically. The existing annotation and Codex
+side-chat actions remain available. Ordinary ChatGPT reply menus are unchanged.
+Local logs include bounded visibility, action stages, and elapsed times. Each
+selection receives a renderer-local numeric `traceNo`, so overlapping requests
+can be correlated without recording conversation or account IDs. The native
+sender is instrumented only while dispatching this action; ordinary ChatGPT
+requests keep their original callbacks.
+
+| Log stage or timing type | What it measures |
+| --- | --- |
+| `selection-queued`, `ready`, `context-ready` | Time in the local selection queue and collecting the source context. |
+| `native-sender-entered`, `native-stream-create` | Native sender setup before creating the stream, including preparation-cache state. |
+| `prepare-request-start`, `conversation_prepare` | Conversation prepare request and its measured duration. |
+| `integrity_prepare` | Native request validation/preparation duration. |
+| `request-start`, `stream_post` | The actual conversation POST starting and the preparation path used. |
+| `response-headers`, `response-accepted` | HTTP status, whether the response is a stream, and the accepted-response boundary. |
+| `stream-data-first`, `model-message-first` | First stream data and first native assistant message; a message may precede visible text. |
+| `stream-complete`, `transport-close`, `stream-error`, `recoverable-error` | Stream completion, transport closure, or failure. |
+
+Only fixed stage names, enum values, booleans, durations, status codes, and first
+event byte/count measurements are recorded. Tokens, headers, message content,
+selected text, source replies, and identifiers are excluded. First-data and
+first-model-message logs occur once per selection; native timing samples are
+bounded. Logging failures cannot interrupt native callbacks.
+
+For a local build, use `codex-app/start.sh` with the same Electron flags as your
+normal desktop launcher, including any required `--proxy-server=...` argument.
+ChatGPT account and model initialization require access to the ChatGPT backend;
+local editor formatting remains usable while those requests are pending.
+
+Set `tweaks.selection.moreDetails.enabled` to `false` and rebuild to restore the
+official Codex selection menu.
+
 ## Drift Behavior
 
 The ASAR patches are fail-soft. If upstream bundle markers drift, the feature
@@ -319,6 +394,10 @@ Invalid style values warn and fall back to the default bold style.
 The UI font-size tweak requires the three current settings-registry contracts
 and leaves every target unchanged when any copy is missing, mixed, drifted, or
 ambiguous.
+The selected-text More details tweak validates the renderer and ChatGPT runtime
+contracts together. If either side is missing, ambiguous, changed, or only
+partially patched, it warns and leaves both assets unchanged; acceptance rejects
+that enabled candidate.
 
 ## Adding Tweaks
 
