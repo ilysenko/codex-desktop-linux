@@ -9,6 +9,7 @@ const test = require("node:test");
 
 require("./suggested-prompts.test.js");
 require("./dock-icon.test.js");
+require("./gentoo-support.test.js");
 
 const {
   discoverLinuxFeatureManifests,

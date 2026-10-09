@@ -53,14 +53,14 @@ cd codex-desktop-linux
 | Fedora | `make bootstrap-native` | 构建并安装 RPM |
 | openSUSE | `make bootstrap-native` | 构建并安装 RPM |
 | Arch、Manjaro、EndeavourOS | `make bootstrap-native` | 构建并安装 pacman 软件包 |
-| Gentoo | `make bootstrap-native` | 构建本地 ebuild 并通过 Portage 安装；仅默认功能、不含更新器 |
+| Gentoo | `make bootstrap-native` | 构建本地 ebuild 并通过 Portage 安装；支持 `ui-tweaks`，不含更新器 |
 | NixOS 或其他 Nix 系统 | `nix run github:ilysenko/codex-desktop-linux` | 构建并运行 flake；参阅 [Nix](docs/nix.md) |
 | Atomic 桌面或其他发行版 | `make build-app && make appimage` | 生成不含原生更新器的本地 AppImage |
 
 Gentoo 的应用合并会忽略 `EMERGE_DEFAULT_OPTS`，从生成的 ebuild 安装载荷，而非复用
 二进制包缓存；不会修改全局 Portage 配置。
-Gentoo 已提供分阶段依赖和包资源框架，供后续逐项审查并接入功能；目前尚未将任何
-仓库功能声明为已支持。字段约定见[Gentoo 功能契约](docs/linux-features-architecture.md#gentoo-feature-contract)。
+Gentoo 已提供分阶段依赖和包资源框架；现已支持 `ui-tweaks`，且仍默认关闭。
+其他仓库功能需单独审查并声明支持。字段约定见[Gentoo 功能契约](docs/linux-features-architecture.md#gentoo-feature-contract)。
 Gentoo 本地 ebuild 安装路径已在 OpenRC 环境测试，尚未测试 Gentoo systemd
 环境；验证范围见[Gentoo 原生安装说明](docs/native-setup.md#gentoo-local-ebuild)。
 

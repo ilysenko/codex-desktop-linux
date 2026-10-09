@@ -5,6 +5,14 @@ customizations. It is disabled by default and is intended as a shared place for
 future visual tweaks that are useful to some Linux users but should not affect
 the baseline app.
 
+The Portage-managed Gentoo package supports this feature, audited on amd64
+OpenRC; Gentoo ARM64 and systemd runtime environments have not been tested. Its
+existing launcher cleanup hook is included in the payload, with
+`sys-apps/util-linux` declared in `gentoo.dependencies.RDEPEND` for `flock`.
+This runtime dependency is omitted when `ui-tweaks` is disabled. No additional
+bootstrap or Portage build/merge tools are required, and no separate native
+helper or updater is added. Other feature support requires its own Gentoo audit.
+
 Enable it in the local, gitignored feature config:
 
 ```json

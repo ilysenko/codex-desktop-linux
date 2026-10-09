@@ -139,8 +139,11 @@ make bootstrap-native UPSTREAM_DEB=/absolute/path/chatgpt_<version>_amd64.deb
 
 The Gentoo implementation supports glibc hosts and defaults to
 `PACKAGE_WITH_UPDATER=0`. Only features explicitly audited with
-`gentoo.supported: true` are accepted; none of the repository features has this
-declaration yet, so the supported repository configuration remains empty.
+`gentoo.supported: true` are accepted. `ui-tweaks` is audited on amd64 OpenRC and
+remains disabled by default. Its existing cleanup hook needs `flock`, so it
+declares `sys-apps/util-linux` in `gentoo.dependencies.RDEPEND`; no additional
+bootstrap, Portage build, or merge dependencies are introduced. Other repository
+features remain unsupported until separately audited and declared.
 Unsupported features or an explicitly enabled updater are rejected before
 building the application. The updater-mode check precedes dependency
 installation; feature checks run after Node is available.
