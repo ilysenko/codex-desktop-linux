@@ -3,16 +3,6 @@
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const PATCH_MARKER = "codexLinuxApiKeyFastTier";
 const MODEL_MARKER = "codexLinuxApiKeyServiceTierModel";
-const SERVICE_TIER_GATE_SHAPE = new RegExp(
-  `authMethod===\`chatgpt\`(?:\\|\\|${JS_IDENT}\\?\\.authMethod===\`personalAccessToken\`)?[\\s\\S]{0,200}?authMethod\\?\\?null` +
-    `[\\s\\S]{0,1200}?featureRequirements\\?\\.fast_mode` +
-    `[\\s\\S]{0,500}?\\{isServiceTierAllowed:${JS_IDENT},isLoading:${JS_IDENT}\\}`,
-);
-const PATCHED_SERVICE_TIER_GATE = new RegExp(
-  `${JS_IDENT}=!${JS_IDENT}&&\\(${JS_IDENT}\\?${JS_IDENT}!=null&&` +
-    `${JS_IDENT}\\?\\.requirements\\?\\.featureRequirements\\?\\.fast_mode!==!1:` +
-    `${JS_IDENT}===\`apikey\`\\)`,
-);
 const PATCHED_MODEL_MARKER = new RegExp(`${MODEL_MARKER}:${JS_IDENT}===\\\`apikey\\\``);
 const PATCHED_SERVICE_TIER_RESOLVER = new RegExp(
   `function ${JS_IDENT}\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return \\2==null\\?null:` +
@@ -30,36 +20,6 @@ const MODEL_LIST_MAPPING_SHAPE = new RegExp(
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
-}
-
-function applyApiKeyServiceTierGatePatch(source) {
-  const gateNeedle = new RegExp(
-    `(${JS_IDENT})=(${JS_IDENT})\\?\\.authMethod===\\\`chatgpt\\\`(?:\\|\\|\\2\\?\\.authMethod===\\\`personalAccessToken\\\`)?[,]` +
-      `(${JS_IDENT})=\\2\\?\\.authMethod\\?\\?null([\\s\\S]{0,500}?),` +
-      `(${JS_IDENT})=\\1&&!(${JS_IDENT})&&(${JS_IDENT})!=null&&\\7\\?\\.requirements\\?\\.featureRequirements\\?\\.fast_mode!==!1`,
-    "g",
-  );
-
-  const patched = source.replace(
-    gateNeedle,
-    (_match, isChatGptVar, hostVar, authMethodVar, middle, allowedVar, loadingVar, requirementsVar) =>
-      `${isChatGptVar}=${hostVar}?.authMethod===\`chatgpt\`||${hostVar}?.authMethod===\`personalAccessToken\`,` +
-      `${authMethodVar}=${hostVar}?.authMethod??null${middle},` +
-      `${allowedVar}=!${loadingVar}&&(${isChatGptVar}?${requirementsVar}!=null&&${requirementsVar}?.requirements?.featureRequirements?.fast_mode!==!1:${authMethodVar}===\`apikey\`)`,
-  );
-
-  if (patched !== source || PATCHED_SERVICE_TIER_GATE.test(source)) {
-    return patched;
-  }
-
-  if (hasApiKeyServiceTierGateShape(source)) {
-    warn("Could not find service tier auth gate", "API key service tier gate patch");
-  }
-  return source;
-}
-
-function hasApiKeyServiceTierGateShape(source) {
-  return SERVICE_TIER_GATE_SHAPE.test(source);
 }
 
 function applyApiKeyModelMarkerPatch(source) {
@@ -94,10 +54,6 @@ function applyApiKeyModelMarkerPatch(source) {
 
 function hasApiKeyModelListMappingShape(source) {
   return MODEL_LIST_MAPPING_SHAPE.test(source);
-}
-
-function matchesApiKeyServiceTierGateContract(source) {
-  return PATCHED_SERVICE_TIER_GATE.test(source) || hasApiKeyServiceTierGateShape(source);
 }
 
 function matchesApiKeyServiceTierModelContract(source) {
@@ -251,25 +207,6 @@ function applyFallbackFastTierPatch(source) {
   return source;
 }
 
-function applyApiKeyServiceTierPatch(source) {
-  return applyFallbackFastTierPatch(
-    applyApiKeyServiceTierResolverPatch(
-      applyApiKeyModelMarkerPatch(applyApiKeyServiceTierGatePatch(source)),
-    ),
-  );
-}
-
-function applyCurrentGatePatch(source) {
-  const gateAlreadyPatched = PATCHED_SERVICE_TIER_GATE.test(source);
-  const gateCandidate = gateAlreadyPatched ? source : applyApiKeyServiceTierGatePatch(source);
-  const gateReady = gateAlreadyPatched || gateCandidate !== source;
-
-  if (!gateReady && !hasApiKeyServiceTierGateShape(source)) {
-    warn("Could not identify current service tier auth gate", "API key service tier gate patch");
-  }
-  return gateCandidate;
-}
-
 function applyCurrentModelPatch(source) {
   const modelAlreadyPatched = PATCHED_MODEL_MARKER.test(source);
   const modelCandidate = modelAlreadyPatched ? source : applyApiKeyModelMarkerPatch(source);
@@ -305,17 +242,6 @@ function applyCurrentFallbackFastTierPatch(source) {
 }
 
 const descriptors = [
-  {
-    id: "api-key-service-tier-gate",
-    phase: "webview-asset",
-    order: 20600,
-    ciPolicy: "optional",
-    pattern: /^app-initial-[^.]+\.js$/,
-    assetMatch: matchesApiKeyServiceTierGateContract,
-    missingDescription: "current API key service tier gate bundle",
-    skipDescription: "API key service tier gate patch",
-    apply: applyCurrentGatePatch,
-  },
   {
     id: "api-key-service-tier-model",
     phase: "webview-asset",
@@ -353,17 +279,12 @@ const descriptors = [
 
 module.exports = {
   applyApiKeyModelMarkerPatch,
-  applyApiKeyServiceTierGatePatch,
   applyApiKeyServiceTierResolverPatch,
   applyFallbackFastTierPatch,
-  applyApiKeyServiceTierPatch,
-  applyCurrentGatePatch,
   applyCurrentModelPatch,
   applyCurrentResolverPatch,
   applyCurrentFallbackFastTierPatch,
-  hasApiKeyServiceTierGateShape,
   hasApiKeyModelListMappingShape,
-  matchesApiKeyServiceTierGateContract,
   matchesApiKeyServiceTierModelContract,
   matchesApiKeyServiceTierResolverContract,
   matchesFallbackFastTierContract,

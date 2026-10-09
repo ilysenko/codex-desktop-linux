@@ -883,40 +883,25 @@ function applyLinuxRemoteControlStatusReadGuardPatch(source) {
     return source;
   }
 
-  const statusReadPattern =
-    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=\3\.getHostId\(\);if\(([A-Za-z_$][\w$]*)\(\4\)\)return;let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\2,\4\),([A-Za-z_$][\w$]*)=\2\.get\(([A-Za-z_$][\w$]*),\4\);\3\.addNotificationCallback\(`remoteControl\/status\/changed`,\(\{params:([A-Za-z_$][\w$]*)\}\)=>\{([A-Za-z_$][\w$]*)\(\2,\4,\6\)&&([A-Za-z_$][\w$]*)\(\2,\4,\10\)\}\),\3\.sendRequest\(`remoteControl\/status\/read`,void 0\)\.then\(([A-Za-z_$][\w$]*)=>\{\2\.get\(\9,\4\)===\8&&\11\(\2,\4,\6\)&&\12\(\2,\4,\13\)\}\)\.catch\(([A-Za-z_$][\w$]*)=>\{\11\(\2,\4,\6\)&&([A-Za-z_$][\w$]*)\.error\(`Failed to read remote-control status`,\{safe:\{\},sensitive:\{error:\14\}\}\)\}\)\}/u;
-  const match = source.match(statusReadPattern);
-  if (match == null) {
-    console.warn("WARN: Could not find remote-control status read needle - skipping Linux remote-control status guard patch");
+  const currentStatusReadPattern =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(([A-Za-z_$][\w$]*)\(\3\)\)return\(\)=>\{\};let ([A-Za-z_$][\w$]*)=new AbortController,([A-Za-z_$][\w$]*)=\(\)=>!\7\.signal\.aborted&&\(\5\?\.\(\)\?\?!0\),([A-Za-z_$][\w$]*)=\2\.get\(([A-Za-z_$][\w$]*),\3\),/u;
+  const currentMatches = [...source.matchAll(new RegExp(currentStatusReadPattern.source, "gu"))];
+  if (currentMatches.length === 1) {
+    const [needle, functionName, storeVar, hostVar, clientVar, activeVar, skipVar, abortVar,
+      isActiveVar, initialValueVar, statusAtomVar] = currentMatches[0];
+    const guardedPrefix =
+      `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(e){return !(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)&&typeof e==\`string\`&&(e.startsWith(\`remote-ssh\`)||e.startsWith(\`remote-control:\`)))}` +
+      `function ${functionName}(${storeVar},${hostVar},${clientVar},${activeVar}){if(${skipVar}(${hostVar}))return()=>{};let ${abortVar}=new AbortController,${isActiveVar}=()=>!${abortVar}.signal.aborted&&(${activeVar}?.()??!0),${initialValueVar}=${storeVar}.get(${statusAtomVar},${hostVar}),` +
+      `codexLinuxRemoteControlStatusReadGuard=${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${hostVar});if(!codexLinuxRemoteControlStatusReadGuard){${storeVar}.set(${statusAtomVar},${hostVar},{status:\`disabled\`,available:!1,accessRequired:!1});return()=>{}}let `;
+    return source.slice(0, currentMatches[0].index) + guardedPrefix +
+      source.slice(currentMatches[0].index + needle.length);
+  }
+  if (currentMatches.length > 1) {
+    console.warn("WARN: Remote-control status read contract is ambiguous - skipping Linux remote-control status guard patch");
     return source;
   }
-
-  const [
-    needle,
-    functionName,
-    storeVar,
-    clientVar,
-    hostVar,
-    upstreamSkipFn,
-    generationVar,
-    generationFn,
-    initialValueVar,
-    statusAtomVar,
-    notificationParamsVar,
-    isCurrentFn,
-    statusSetterFn,
-    readResultVar,
-    errorVar,
-    loggerVar,
-  ] = match;
-  const replacement =
-    `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(e){return !(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)&&typeof e==\`string\`&&(e.startsWith(\`remote-ssh\`)||e.startsWith(\`remote-control:\`)))}` +
-    `function ${functionName}(${storeVar},${clientVar}){let ${hostVar}=${clientVar}.getHostId();if(${upstreamSkipFn}(${hostVar}))return;let ${generationVar}=${generationFn}(${storeVar},${hostVar}),${initialValueVar}=${storeVar}.get(${statusAtomVar},${hostVar});` +
-    `${clientVar}.addNotificationCallback(\`remoteControl/status/changed\`,({params:${notificationParamsVar}})=>{${isCurrentFn}(${storeVar},${hostVar},${generationVar})&&${statusSetterFn}(${storeVar},${hostVar},${notificationParamsVar})});` +
-    `if(!${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${hostVar})){${isCurrentFn}(${storeVar},${hostVar},${generationVar})&&${statusSetterFn}(${storeVar},${hostVar},{status:\`disabled\`,available:!1,accessRequired:!1});return}` +
-    `${clientVar}.sendRequest(\`remoteControl/status/read\`,void 0).then(${readResultVar}=>{${storeVar}.get(${statusAtomVar},${hostVar})===${initialValueVar}&&${isCurrentFn}(${storeVar},${hostVar},${generationVar})&&${statusSetterFn}(${storeVar},${hostVar},${readResultVar})}).catch(${errorVar}=>{${isCurrentFn}(${storeVar},${hostVar},${generationVar})&&${loggerVar}.error(\`Failed to read remote-control status\`,{safe:{},sensitive:{error:${errorVar}}})})}`;
-
-  return source.replace(needle, replacement);
+  console.warn("WARN: Could not find remote-control status read needle - skipping Linux remote-control status guard patch");
+  return source;
 }
 
 function applyLinuxRemoteControlStatusWaitPatch(source) {
@@ -1090,9 +1075,11 @@ function remoteMobileConversationHydrationGuardPattern({ patched = false, flags 
     : `(?<notification>${DEVICE_KEY_IDENT})\\.method!==\`turn/started\`&&` +
       `\\k<notification>\\.method!==\`turn/completed\``;
   return new RegExp(
-    `if\\(${marker}${hostGuard}${methodGuard}\\|\\|` +
+    `return (?<pending>${DEVICE_KEY_IDENT})==null\\?${marker}${hostGuard}${methodGuard}\\|\\|` +
       `this\\.context\\.threadStore\\.conversations\\.has\\((?<conversation>${DEVICE_KEY_IDENT})\\)\\|\\|` +
-      `this\\.context\\.threadStore\\.isConversationSuppressed\\(\\k<conversation>\\)\\)return!1;`,
+      `this\\.context\\.threadStore\\.isConversationSuppressed\\(\\k<conversation>\\)\\?!1:` +
+      `\\(this\\.beginDiscovery\\(\\k<conversation>,(?<ignored>${DEVICE_KEY_IDENT})\\),` +
+      `this\\.buffer\\.buffer\\((?<event>${DEVICE_KEY_IDENT}),\\k<ignored>\\)\\):`,
     flags,
   );
 }
@@ -1117,7 +1104,7 @@ function remoteMobileConversationHydrationContract(source) {
   if (
     lifecycle.split("this.context.threadStore.hydrateActiveThread(").length - 1 !== 1 ||
     lifecycle.split("this.buffer.release(").length - 1 !== 1 ||
-    lifecycle.split("Failed to discover cloud thread from turn").length - 1 !== 1
+    lifecycle.split("Failed to discover thread from event").length - 1 !== 1
   ) {
     return null;
   }
@@ -1133,7 +1120,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
   if (contract == null) {
     if (
       source.includes(REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER) ||
-      source.includes("Failed to discover cloud thread from turn") ||
+      source.includes("Failed to discover thread from event") ||
       source.includes("Received item/completed for unknown conversation")
     ) {
       console.warn(
@@ -1144,19 +1131,19 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
   }
   if (contract.state === "patched") return source;
 
-  const { conversation, notification } = contract.match.groups;
+  const { pending, conversation, notification, ignored, event } = contract.match.groups;
   const replacement =
-    `if(/*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}*/` +
+    `return ${pending}==null?/*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}*/` +
     "this.manager.getHostId()!==`durable`&&this.manager.getHostId()!==`local`||" +
     `${notification}.method!==\`turn/started\`&&${notification}.method!==\`turn/completed\`&&` +
     `(this.manager.getHostId()!==\`local\`||${notification}.method!==\`item/started\`&&` +
     `${notification}.method!==\`item/completed\`)||` +
     `this.context.threadStore.conversations.has(${conversation})||` +
-    `this.context.threadStore.isConversationSuppressed(${conversation}))return!1;`;
+    `this.context.threadStore.isConversationSuppressed(${conversation})?!1:` +
+    `(this.beginDiscovery(${conversation},${ignored}),this.buffer.buffer(${event},${ignored})):`;
   return source.slice(0, contract.match.index) + replacement +
     source.slice(contract.match.index + contract.match[0].length);
 }
-
 function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
   const logMarker = "Reasoning summary turn-start config resolved";
   const logIndexes = [...source.matchAll(new RegExp(escapeRegExp(logMarker), "gu"))].map(

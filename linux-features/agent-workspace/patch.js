@@ -1896,13 +1896,28 @@ function isAgentWorkspaceSettingsSharedMetadataBundleSource(currentSource) {
   );
 }
 
-const CURRENT_SETTINGS_ROUTE_PATTERN =
-  /"general-settings":(?=([A-Za-z_$][\w$]*)\(async\(\)=>\(await ([A-Za-z_$][\w$]*)\(async\(\)=>\{let\{GeneralSettings:[A-Za-z_$][\w$]*\}=await import\()/;
+const SETTINGS_IDENT = "[A-Za-z_$][\\w$]*";
+const CURRENT_SETTINGS_GENERAL_OWNER_PATTERN = new RegExp(
+  `(?<binding>${SETTINGS_IDENT})=(?<lazy>${SETTINGS_IDENT})\\(async\\(\\)=>\\(await (?<preload>${SETTINGS_IDENT})` +
+    `\\(async\\(\\)=>\\{let\\{GeneralSettings:(?<component>${SETTINGS_IDENT})\\}=await import` +
+    "\\(`\\.\\/general-settings-[^`/]+\\.js`\\);return\\{GeneralSettings:\\k<component>\\}\\}," +
+    `${SETTINGS_IDENT}\\(\\[[^\\]]*\\]\\),import\\.meta\\.url\\)\\)\\.GeneralSettings\\)`,
+  "gu",
+);
+
+function currentSettingsRouteContract(currentSource) {
+  const owners = [...currentSource.matchAll(CURRENT_SETTINGS_GENERAL_OWNER_PATTERN)];
+  if (owners.length !== 1) return null;
+  const { binding, lazy, preload } = owners[0].groups;
+  const routeNeedle = `"general-settings":${binding},notifications:`;
+  if (currentSource.split(routeNeedle).length !== 2) return null;
+  return { lazy, preload, routeNeedle };
+}
 
 function isAgentWorkspaceSettingsRouteBundleSource(currentSource) {
   return (
     currentSource.includes(SETTINGS_ASSET) ||
-    CURRENT_SETTINGS_ROUTE_PATTERN.test(currentSource)
+    currentSettingsRouteContract(currentSource) != null
   );
 }
 
@@ -1929,9 +1944,9 @@ const PATCHED_SETTINGS_ICON_PATTERN = new RegExp(
     `"agent-workspaces":\\1,worktrees:`,
 );
 const CURRENT_SETTINGS_PRELOAD_SLUGS =
-  "`hooks-settings`,`local-environments`,`worktrees`,`archived-chats`";
+  "`hooks-settings`,`local-environments`,`worktrees`";
 const PATCHED_SETTINGS_PRELOAD_SLUGS =
-  "`hooks-settings`,`local-environments`,`agent-workspaces`,`worktrees`,`archived-chats`";
+  "`hooks-settings`,`local-environments`,`agent-workspaces`,`worktrees`";
 const CURRENT_SETTINGS_POLICY_PATTERN =
   /"local-environments":([A-Za-z_$][\w$]*|`codexLocal`),"mcp-settings":/;
 const PATCHED_SETTINGS_POLICY_PATTERN =
@@ -2022,13 +2037,13 @@ function applyAgentWorkspaceSettingsIndexPatch(currentSource) {
   let patchedSource = currentSource;
 
   if (!patchedSource.includes(SETTINGS_ASSET)) {
-    if (!CURRENT_SETTINGS_ROUTE_PATTERN.test(patchedSource)) {
+    const contract = currentSettingsRouteContract(patchedSource);
+    if (contract == null) {
       throw new Error("could not add agent workspace settings route");
     }
     patchedSource = patchedSource.replace(
-      CURRENT_SETTINGS_ROUTE_PATTERN,
-      (_match, lazyAlias, preloadAlias) =>
-        `"${SETTINGS_SLUG}":${lazyAlias}(async()=>(await ${preloadAlias}(async()=>{let{default:e}=await import(\`./${SETTINGS_ASSET}\`);return{default:e}},[],import.meta.url)).default),"general-settings":`,
+      contract.routeNeedle,
+      `"${SETTINGS_SLUG}":${contract.lazy}(async()=>(await ${contract.preload}(async()=>{let{default:e}=await import(\`./${SETTINGS_ASSET}\`);return{default:e}},[],import.meta.url)).default),${contract.routeNeedle}`,
     );
   }
 
@@ -2065,10 +2080,12 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
       throw new Error("agent workspace settings visibility is partially patched");
     }
     if (!iconPatched) {
+      const currentPreloadCount =
+        patchedSource.split(CURRENT_SETTINGS_PRELOAD_SLUGS).length - 1;
       const currentContracts = [
         CURRENT_SETTINGS_ICON_PATTERN.test(patchedSource),
         patchedSource.includes(CURRENT_SETTINGS_VISIBILITY_CASES),
-        patchedSource.includes(CURRENT_SETTINGS_PRELOAD_SLUGS),
+        currentPreloadCount === 1,
         CURRENT_SETTINGS_POLICY_PATTERN.test(patchedSource),
       ];
       if (!currentContracts.every(Boolean)) {

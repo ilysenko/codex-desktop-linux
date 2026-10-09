@@ -10,10 +10,11 @@ const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-fe
 const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
-// Verbatim partition and classifier from signed official Linux 26.928.20755.
-const fixture = "function xO(e,{keepMcpAppEntriesPersistent:t=!1,mcpServerStatuses:n,renderMcpApps:r=!1}={}){let i=[],a=[],o=[],s=[],c=null;for(let l of e){if(l.kind===`standalone`&&l.item.item.type===`worked-for`){c=l.item.item;continue}if(l.kind===`standalone`&&l.item.item.type===`realtime-transcript`){a.length===0?s.push(l):(a.push(l),o.push(l));continue}a.push(l),SO({unit:l,keepMcpAppEntriesPersistent:t,mcpServerStatuses:n,renderMcpApps:r})?o.push(l):i.push(l)}return{collapsibleUnits:i,expandedUnits:a,persistentUnits:o,preToggleUnits:s,workedForItem:c}}function SO({unit:e,keepMcpAppEntriesPersistent:t,mcpServerStatuses:n,renderMcpApps:r}){if(e.kind!==`standalone`)return!1;let i=e.item.item;return i.type===`assistant-message`&&Vi(i)||i.type===`dynamic-tool-call`&&qh(i)||t&&r&&i.type===`mcp-tool-call`&&CO({item:i,mcpServerStatuses:n})?!0:i.type===`user-message`&&(i.steeringStatus!=null||i.hookFeedback===!0)}";
+// Current signed-package partition and classifier, anchored by semantics rather
+// than the bundle filename or minified aliases.
+const fixture = "function xO(e,{keepMcpAppEntriesPersistent:t=!1,mcpServerStatuses:n,renderMcpApps:r=!1}={}){let i=[],a=[],o=[],s=[],c=null;for(let l of e){if(l.kind===`standalone`&&l.item.item.type===`worked-for`){c=l.item.item;continue}if(l.kind===`standalone`&&l.item.item.type===`realtime-transcript`){a.length===0?s.push(l):(a.push(l),o.push(l));continue}a.push(l),SO({unit:l,keepMcpAppEntriesPersistent:t,mcpServerStatuses:n,renderMcpApps:r})?o.push(l):i.push(l)}return{collapsibleUnits:i,expandedUnits:a,persistentUnits:o,preToggleUnits:s,workedForItem:c}}function SO({unit:e,keepMcpAppEntriesPersistent:t,mcpServerStatuses:n,renderMcpApps:r}){if(e.kind!==`standalone`)return!1;let i=e.item.item;return i.type===`mcp-tool-call`&&MH(i)||i.type===`assistant-message`&&Vi(i)||i.type===`dynamic-tool-call`&&qh(i)||t&&r&&i.type===`mcp-tool-call`&&CO({item:i,mcpServerStatuses:n})?!0:i.type===`user-message`&&(i.steeringStatus!=null||i.hookFeedback===!0)}";
 function partition(source, units, options) {
-  return vm.runInNewContext(source + ";xO", { Vi: item => item.final, qh: item => item.interactive, CO: ({item}) => item.interactive })(units, options);
+  return vm.runInNewContext(source + ";xO", { MH: item => item.persist, Vi: item => item.final, qh: item => item.interactive, CO: ({item}) => item.interactive })(units, options);
 }
 const unit = (type, id, extra = {}) => ({kind:"standalone",item:{item:{type,id,...extra}}});
 const ids = units => Array.from(units, unit => unit.item.item.id);
