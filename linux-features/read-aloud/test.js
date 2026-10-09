@@ -108,6 +108,31 @@ function createDeferredSettingsWrites({ writeKey, enabled = false, speed = 1.05 
   return { settings, writes };
 }
 
+test("language routing preserves Hebrew and defaults ambiguous Latin text to English", () => {
+  const source = [
+    "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
+    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]})}};',
+  ].join("");
+  const patched = twice(applyMainBundlePatch, source);
+  const env = {};
+  const language = new Function("require", "process", `${patched};return codexLinuxReadAloudLanguage;`)(
+    require, { platform: "linux", env },
+  );
+  for (const [text, expected] of [
+    ["שלום עולם", "he"],
+    ["This is a test.", "en"],
+    ["A test with a label and a caption.", "en"],
+    ["你好，这是中文测试。", "zh"],
+    ["こんにちは世界", "ja"],
+    ["안녕하세요", "ko"],
+    ["Привет мир", "ru"],
+  ]) assert.equal(language(text), expected, text);
+  for (const explicit of ["es", "fr", "de", "it", "pt", "he"]) {
+    env.CODEX_LINUX_READ_ALOUD_LANGUAGE = ` ${explicit.toUpperCase()} `;
+    assert.equal(language("This is a test."), explicit);
+  }
+});
+
 test("main bundle patch adds a Linux read aloud handler", () => {
   const source = [
     "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
@@ -125,6 +150,7 @@ test("main bundle patch adds a Linux read aloud handler", () => {
   assert.match(patched, /codex-linux-read-aloud-kokoro-python/);
   assert.match(patched, /codex-linux-read-aloud-kokoro-speed/);
   assert.match(patched, /codex-linux-read-aloud-kokoro-voices/);
+  assert.match(patched, /CODEX_LINUX_READ_ALOUD_KOKORO_LANGUAGE_VOICE/);
   assert.match(patched, /CODEX_LINUX_SETTINGS_FILE/);
   assert.match(patched, /CODEX_LINUX_APP_ID/);
   assert.match(patched, /CODEX_LINUX_READ_ALOUD_KOKORO_SPEED/);
@@ -146,9 +172,7 @@ test("main bundle patch adds a Linux read aloud handler", () => {
   assert.doesNotMatch(patched, /\|\|\s*`female1`/);
   assert.match(patched, /spd-say/);
   assert.match(patched, /espeak-ng/);
-  // A custom voice must win, otherwise fall back by language; without the
-  // parentheses any custom voice forced the Hebrew espeak voice.
-  assert.match(patched, /let espeakVoice=voice\|\|\(hasHebrew\?`he`:`en-us`\);/);
+  assert.match(patched, /let espeakVoice=voice\|\|\(language===`en`\?`en-us`:nativeLanguage\);/);
   assert.doesNotThrow(() => new Function("require", "process", patched));
 });
 
@@ -837,6 +861,53 @@ test("main handler passes the configured Kokoro Python to the runner", async () 
     assert.equal(result.engine, "kokoro");
     assert.equal(spawned[0]?.command, runner);
     assert.equal(spawned[0]?.options?.env?.CODEX_LINUX_READ_ALOUD_KOKORO_PYTHON, python);
+
+    const chineseResult = await new Function(
+      "require",
+      "process",
+      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文朗读测试。"});`,
+    )(requireStub, {
+      platform: "linux",
+      env: {
+        HOME: root,
+        CODEX_LINUX_READ_ALOUD_ENABLED: "1",
+        CODEX_LINUX_READ_ALOUD_KOKORO_PYTHON: python,
+        CODEX_LINUX_READ_ALOUD_KOKORO_MODEL: model,
+        CODEX_LINUX_READ_ALOUD_KOKORO_VOICES: voices,
+      },
+      resourcesPath,
+    });
+    assert.equal(chineseResult.spoken, true);
+    assert.equal(chineseResult.lang, "cmn");
+    assert.equal(chineseResult.voice, "zf_xiaobei");
+    assert.equal(spawned[1]?.options?.env?.CODEX_LINUX_READ_ALOUD_KOKORO_MODEL, model);
+    assert.equal(spawned[1]?.options?.env?.CODEX_LINUX_READ_ALOUD_KOKORO_VOICES, voices);
+    assert.equal(spawned[1]?.options?.env?.CODEX_LINUX_READ_ALOUD_KOKORO_LANG, "cmn");
+    for (const [overrides, expectedVoice, expectedLang] of [
+      [{ CODEX_LINUX_READ_ALOUD_LANGUAGE: "en" }, "bm_george", "en-us"],
+      [{ CODEX_LINUX_READ_ALOUD_KOKORO_VOICE: "af_heart", CODEX_LINUX_READ_ALOUD_KOKORO_LANG: "en-us" }, "af_heart", "en-us"],
+      [{ CODEX_LINUX_READ_ALOUD_KOKORO_VOICE: "af_heart", CODEX_LINUX_READ_ALOUD_KOKORO_LANGUAGE_VOICE: "zf_xiaoni" }, "zf_xiaoni", "cmn"],
+    ]) {
+      const overridden = new Function(
+        "require", "process",
+        `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文测试。"});`,
+      )(requireStub, {
+        platform: "linux",
+        env: {
+          HOME: root,
+          CODEX_LINUX_READ_ALOUD_KOKORO_PYTHON: python,
+          CODEX_LINUX_READ_ALOUD_KOKORO_MODEL: model,
+          CODEX_LINUX_READ_ALOUD_KOKORO_VOICES: voices,
+          ...overrides,
+        },
+        resourcesPath,
+      });
+      assert.equal(overridden.voice, expectedVoice);
+      assert.equal(overridden.lang, expectedLang);
+      assert.equal(spawned.at(-1).options.env.CODEX_LINUX_READ_ALOUD_KOKORO_VOICE, expectedVoice);
+      assert.equal(spawned.at(-1).options.env.CODEX_LINUX_READ_ALOUD_KOKORO_LANG, expectedLang);
+    }
+
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -886,8 +957,64 @@ test("main handler falls back to native speech without forcing spd-say voice typ
     const speakCall = spawned.find((entry) => entry.command === "spd-say" && entry.args.includes("--"));
     assert.ok(speakCall);
     assert.equal(speakCall.args.includes("-t"), false);
+
+    const chineseResult = await new Function(
+      "require",
+      "process",
+      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文测试。"});`,
+    )(requireStub, {
+      platform: "linux",
+      env: { HOME: root, CODEX_LINUX_READ_ALOUD_ENABLED: "1" },
+      resourcesPath: path.join(root, "resources"),
+    });
+    assert.equal(chineseResult.spoken, true);
+    assert.equal(chineseResult.engine, "spd-say");
+    const chineseCall = spawned.find(
+      (entry) => entry.command === "spd-say" && entry.args.includes("cmn"),
+    );
+    assert.ok(chineseCall);
+    const hebrewResult = new Function(
+      "require", "process",
+      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"שלום עולם"});`,
+    )(requireStub, {
+      platform: "linux",
+      env: { HOME: root, CODEX_LINUX_READ_ALOUD_ENABLED: "1" },
+      resourcesPath: path.join(root, "resources"),
+    });
+    assert.equal(hebrewResult.language, "he");
+    assert.ok(spawned.some(({ command, args }) => command === "spd-say" && args.includes("he")));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("native espeak fallback preserves English defaults and configured voices", () => {
+  const source = [
+    "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
+    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]})}};',
+  ].join("");
+  const patched = twice(applyMainBundlePatch, source);
+  for (const [text, overrides, expectedVoice] of [
+    ["This is a test.", {}, "en-us"],
+    ["你好，这是中文测试。", {}, "cmn"],
+    ["שלום עולם", {}, "he"],
+    ["test", { CODEX_LINUX_READ_ALOUD_LANGUAGE: "hi" }, "hi"],
+    ["שלום עולם", { CODEX_LINUX_READ_ALOUD_VOICE: "configured-voice" }, "configured-voice"],
+  ]) {
+    const spawned = [];
+    const requireStub = (name) => {
+      if (name === "node:fs") return { existsSync: () => false, accessSync() { throw Error("missing"); }, constants: fs.constants };
+      if (name === "node:child_process") return {
+        spawnSync: (command, args) => ({ status: command === "which" && args[0] === "espeak-ng" ? 0 : 1 }),
+        spawn: (command, args) => { spawned.push({ command, args }); return { on() {}, unref() {} }; },
+      };
+      return require(name);
+    };
+    const result = new Function("require", "process", "text", `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text});`)(
+      requireStub, { platform: "linux", env: overrides, resourcesPath: "/missing" }, text,
+    );
+    assert.equal(result.engine, "espeak-ng");
+    assert.equal(spawned.at(-1).args[1], expectedVoice);
   }
 });
 
