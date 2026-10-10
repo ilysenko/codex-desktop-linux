@@ -836,7 +836,8 @@ function remoteControlStatusReadPattern(patched = false) {
 }
 
 function applyLinuxRemoteControlStatusReadGuardPatch(source) {
-  if (!source.includes("remoteControl/status/read")) return source;
+  if (!source.includes("remoteControl/status/read") &&
+      !source.includes(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER)) return source;
   const pristine = [...source.matchAll(remoteControlStatusReadPattern())];
   const patched = [...source.matchAll(remoteControlStatusReadPattern(true))];
   const helperCount = source.split(REMOTE_CONTROL_STATUS_READ_HELPER).length - 1;

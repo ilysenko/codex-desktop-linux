@@ -2326,12 +2326,21 @@ test("status guard rejects incomplete, duplicate, mixed, and marker-only contrac
     patched + patched,
     source + "/*codexLinuxRemoteControlShouldReadStatus*/",
     patched.replace("available:!1", "available:!0"),
+    patched.replace("remoteControl/status/read", "remoteControl/status/replaced"),
+    "function codexLinuxRemoteControlShouldReadStatus(){}",
   ];
   for (const candidate of drifted) {
     const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlStatusReadGuardPatch(candidate));
     assert.equal(result, candidate);
     assert.match(warnings.join("\n"), /unique complete remote-control status subscription/);
   }
+});
+
+test("status guard skips unrelated assets without warnings", () => {
+  const source = "export function unrelatedStatus(){return null}";
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlStatusReadGuardPatch(source));
+  assert.equal(result, source);
+  assert.deepEqual(warnings, []);
 });
 
 test("Linux remote terminal status recovery treats stale waiting input as idle", () => {

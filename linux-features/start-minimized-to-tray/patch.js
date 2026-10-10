@@ -61,24 +61,62 @@ function unique(source, pattern) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+function firstWindowContract(source, background) {
+  return unique(source, new RegExp(`let (${ID})=await (${ID})\\.ensureWindow\\(\\{background:${escapeRegExp(background)}\\}\\);\\1\\?\\.once\\(\`show\`,\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),\\1!=null&&!${escapeRegExp(background)}&&\\((${ID})\\(\\1,!(${ID})\\),\\3\\.handleInitialWindowVisible\\(\\)\\)`, "g"));
+}
+
+function windowModeContract(source) {
+  return unique(source, new RegExp(`setPrimaryWindowMode\\((${ID}),(${ID})\\)\\{let (${ID})=(${ID})\\.BrowserWindow\\.fromWebContents\\(\\1\\);if\\(!\\3\\|\\|\\3\\.isDestroyed\\(\\)\\)return;let (${ID})=this\\.windowManager\\.getPrimaryWindow\\(\\);if\\(!\\5\\|\\|\\5\\.isDestroyed\\(\\)\\|\\|\\5\\.id!==\\3\\.id\\)return;`, "g"));
+}
+
+function hiddenWindowModeBody(webContents, mode, window) {
+  return `if(this.windowManager.codexLinuxStartMinimized===!0&&!${window}.isVisible()){let pending=this.codexLinuxStartMinimizedWindowMode;if(pending?.window===${window}){pending.mode=${mode};return}this.codexLinuxStartMinimizedWindowMode={window:${window},webContents:${webContents},mode:${mode}};${window}.once(\`show\`,()=>{let pending=this.codexLinuxStartMinimizedWindowMode;if(pending?.window!==${window})return;this.codexLinuxStartMinimizedWindowMode=null;this.setPrimaryWindowMode(pending.webContents,pending.mode)});${window}.once(\`closed\`,()=>{if(this.codexLinuxStartMinimizedWindowMode?.window===${window})this.codexLinuxStartMinimizedWindowMode=null});return}`;
+}
+
+function preferenceDeclaration(state) {
+  return `codexLinuxStartMinimizedPreferences=codexLinuxStartMinimizedPreference(${state}.globalState),codexLinuxStartMinimized=codexLinuxStartMinimizedPreferences.requested,codexLinuxStartMinimizedRequested=codexLinuxStartMinimized,`;
+}
+
+function trayReadinessStatement(services, isReady) {
+  return `if(codexLinuxStartMinimized){let ready=await ${MAIN_MARKER}(codexLinuxStartMinimizedTraySetup,${isReady});console.info(\`[start-minimized-to-tray] tray readiness\`,{ready});codexLinuxStartMinimized=codexLinuxStartMinimized&&ready}${services}.windowManager.codexLinuxStartMinimized=codexLinuxStartMinimized;`;
+}
+
+function hasCompleteMainPatch(source, state, startup) {
+  const exactlyOnce = value => source.split(value).length === 2;
+  const launchBackground = `(${startup[1]}.isBackgroundLaunch||codexLinuxStartMinimized)`;
+  const first = firstWindowContract(source, launchBackground);
+  const windowMode = windowModeContract(source);
+  const trayReady = unique(source.slice(state.index), new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"));
+  const traySetup = unique(source, new RegExp(`let codexLinuxStartMinimizedTraySetup=\\((${ID})\\|\\|process\\.platform===\`linux\`\\)\\?(${ID})\\(\\):null;`, "g"));
+  if (!first || !windowMode || !trayReady || !traySetup) return false;
+  const clearHidden = `codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`;
+  const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}try\\{${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
+  const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}if\\(!(${ID})&&\\(!codexLinuxStartMinimizedRequested\\|\\|${escapeRegExp(first[2])}\\.getPrimaryWindow\\(\\)==null\\)\\)return null;${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
+  if (!activations || !trayActivation || !unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{\\(${ID}\\|\\|codexLinuxStartMinimizedRequested\\)&&${escapeRegExp(activations[1])}\\(\\);return\\}`, "g"))) return false;
+  return [
+    codexLinuxStartMinimizedTrayReady.toString(),
+    codexLinuxStartMinimizedAutostart.toString(),
+    codexLinuxStartMinimizedPreference.toString(),
+    state[0] + preferenceDeclaration(state[1]),
+    trayReadinessStatement(first[2], trayReady[1]) + first[0],
+    windowMode[0] + hiddenWindowModeBody(...windowMode.slice(1, 4)),
+    `${startup[1]}.onInteractiveLaunch=()=>{${clearHidden}${first[1]}!=null&&!${first[1]}.isDestroyed()&&${first[4]}(${first[1]}),`,
+  ].every(exactlyOnce) && source.split(clearHidden).length === 4 &&
+    source.split(launchBackground).length === 9;
+}
+
 function applyMainPatch(source) {
   const background = unique(source, new RegExp(`let (${ID})=process\\.env\\.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,(${ID})=`, "g"));
   const state = unique(source, new RegExp(`let (${ID})=await ${ID}\\.${ID}\\(\\{moduleDir:__dirname\\}\\),`, "g"));
   const startup = unique(source, new RegExp(`shouldShowPrimaryWindow:\\(\\)=>!\\(?(${ID})\\.isBackgroundLaunch`, "g"));
   if (source.includes(`function ${MAIN_MARKER}(`)) {
-    if (!background || !state || !startup ||
-        source.split(codexLinuxStartMinimizedTrayReady.toString()).length !== 2 ||
-        source.split(codexLinuxStartMinimizedAutostart.toString()).length !== 2 ||
-        source.split(codexLinuxStartMinimizedPreference.toString()).length !== 2 ||
-        source.split(`codexLinuxStartMinimizedPreference(${state[1]}.globalState)`).length !== 2 ||
-        source.split("codexLinuxStartMinimized=codexLinuxStartMinimizedPreferences.requested").length !== 2 ||
-        source.split("if(this.windowManager.codexLinuxStartMinimized===!0").length !== 2 ||
-        source.split("let codexLinuxStartMinimizedTraySetup=").length !== 2 ||
-        ([...source.matchAll(/(?<![\w$.])codexLinuxStartMinimized=!1;/g)].length !== 3) ||
-        source.split(`${startup[1]}.onInteractiveLaunch=()=>{codexLinuxStartMinimized=!1;`).length !== 2 ||
-        source.split(`(${startup[1]}.isBackgroundLaunch||codexLinuxStartMinimized)`).length !== 9) {
+    if (!background || !state || !startup || !hasCompleteMainPatch(source, state, startup)) {
       console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
     }
+    return source;
+  }
+  if (source.includes("codexLinuxStartMinimized")) {
+    console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
     return source;
   }
   const owner = startup?.[1] ?? "__missing";
@@ -86,12 +124,12 @@ function applyMainPatch(source) {
   const launchPattern = escapeRegExp(launchBackground);
   const trayReady = unique(source.slice(state?.index ?? 0), new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"));
   const traySetup = unique(source, new RegExp(`\\((${ID})\\|\\|process\\.platform===\`linux\`\\)&&(${ID})\\(\\);`, "g"));
-  const first = unique(source, new RegExp(`let (${ID})=await (${ID})\\.ensureWindow\\(\\{background:${launchPattern}\\}\\);\\1\\?\\.once\\(\`show\`,\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),\\1!=null&&!${launchPattern}&&\\((${ID})\\(\\1,!(${ID})\\),\\3\\.handleInitialWindowVisible\\(\\)\\)`, "g"));
+  const first = firstWindowContract(source, launchBackground);
   const last = unique(source, new RegExp(`(${ID})!==(${ID})&&!${launchPattern}&&(${ID})\\(\\1,!(${ID})\\)`, "g"));
   // The current upstream bundle already defers restored maximization until
   // show. Require that contract instead of carrying the retired custom patch.
   const maximize = unique(source, new RegExp(`${ID}\\.once\\(\`ready-to-show\`,\\(\\)=>\\{(${ID})\\.isDestroyed\\(\\)\\|\\|\\(\\1\\.isVisible\\(\\)\\?(${ID})\\(\\):\\1\\.once\\(\`show\`,\\2\\)\\)\\}\\)`, "g"));
-  const windowMode = unique(source, new RegExp(`setPrimaryWindowMode\\((${ID}),(${ID})\\)\\{let (${ID})=(${ID})\\.BrowserWindow\\.fromWebContents\\(\\1\\);if\\(!\\3\\|\\|\\3\\.isDestroyed\\(\\)\\)return;let (${ID})=this\\.windowManager\\.getPrimaryWindow\\(\\);if\\(!\\5\\|\\|\\5\\.isDestroyed\\(\\)\\|\\|\\5\\.id!==\\3\\.id\\)return;`, "g"));
+  const windowMode = windowModeContract(source);
   if (!background || !state || !startup || !trayReady || !traySetup || !first || !last || !maximize || !windowMode ||
       first[4] !== background[2] || first[5] !== background[1] ||
       last[2] !== first[1] || last[3] !== first[4] || last[4] !== first[5] ||
@@ -120,23 +158,20 @@ function applyMainPatch(source) {
     return source;
   }
   let patched = source.replace(state[0], state[0] +
-    `codexLinuxStartMinimizedPreferences=codexLinuxStartMinimizedPreference(${state[1]}.globalState),codexLinuxStartMinimized=codexLinuxStartMinimizedPreferences.requested,codexLinuxStartMinimizedRequested=codexLinuxStartMinimized,`);
+    preferenceDeclaration(state[1]));
   patched = patched.replace(background[0],
     `console.info(\`[start-minimized-to-tray] startup preference\`,codexLinuxStartMinimizedPreferences);${background[0]}`);
   patched = patched.replace(traySetup[0],
     `let codexLinuxStartMinimizedTraySetup=(${traySetup[1]}||process.platform===\`linux\`)?${traySetup[2]}():null;`);
   patched = patched.replace(first[0],
-    `if(codexLinuxStartMinimized){let ready=await ${MAIN_MARKER}(codexLinuxStartMinimizedTraySetup,${trayReady[1]});console.info(\`[start-minimized-to-tray] tray readiness\`,{ready});codexLinuxStartMinimized=codexLinuxStartMinimized&&ready}` +
-    `${first[2]}.windowManager.codexLinuxStartMinimized=codexLinuxStartMinimized;${first[0]}`);
+    trayReadinessStatement(first[2], trayReady[1]) + first[0]);
   // Reuse upstream's background creation, attribution, and progress-window
   // guards, leaving its actual background-launch lifecycle state untouched.
   // Eight references above account for both creations, three attribution/show
   // decisions, the renderer mode gate, and both startup-progress windows.
   // Reject additional references rather than patching an unverified consumer.
   patched = patched.replaceAll(launchBackground, `(${launchBackground}||codexLinuxStartMinimized)`);
-  const [webContents, mode, window] = windowMode.slice(1, 4);
-  patched = patched.replace(windowMode[0], windowMode[0] +
-    `if(this.windowManager.codexLinuxStartMinimized===!0&&!${window}.isVisible()){let pending=this.codexLinuxStartMinimizedWindowMode;if(pending?.window===${window}){pending.mode=${mode};return}this.codexLinuxStartMinimizedWindowMode={window:${window},webContents:${webContents},mode:${mode}};${window}.once(\`show\`,()=>{let pending=this.codexLinuxStartMinimizedWindowMode;if(pending?.window!==${window})return;this.codexLinuxStartMinimizedWindowMode=null;this.setPrimaryWindowMode(pending.webContents,pending.mode)});${window}.once(\`closed\`,()=>{if(this.codexLinuxStartMinimizedWindowMode?.window===${window})this.codexLinuxStartMinimizedWindowMode=null});return}`);
+  patched = patched.replace(windowMode[0], windowMode[0] + hiddenWindowModeBody(...windowMode.slice(1, 4)));
   const clearHidden = `codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`;
   // Upstream second-instance activation is already usable before host ready.
   // Tray navigation still needs its explicit exception for our hidden window.

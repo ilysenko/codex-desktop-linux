@@ -431,6 +431,55 @@ test("main patch is idempotent, preserves aliases, and fails closed on absent/am
   }
 });
 
+test("partial startup declarations are rejected before inserting another feature copy", () => {
+  const source = startupFixture();
+  for (const declaration of [
+    "codexLinuxStartMinimizedPreferences=codexLinuxStartMinimizedPreference(V.globalState),",
+    "codexLinuxStartMinimizedPreferences={},codexLinuxStartMinimized=!0,",
+    "codexLinuxStartMinimizedRequested=!0,",
+  ]) {
+    const partial = source.replace("let V=await m.O({moduleDir:__dirname}),",
+      `let V=await m.O({moduleDir:__dirname}),${declaration}`);
+    const result = captureWarnings(() => applyMainPatch(partial));
+    assert.equal(result.value, partial);
+    assert.deepEqual(result.warnings, ["WARN: Start minimized to tray patched startup contract missing or ambiguous"]);
+    assert.equal(result.value.includes("function codexLinuxStartMinimizedTrayReady("), false);
+  }
+});
+
+test("complete patched startup validates renderer replay, readiness and each activation reset", () => {
+  const patched = applyMainPatch(startupFixture());
+  const replacements = [
+    ["pending.mode=t;return", "return"],
+    ["webContents:e,mode:t", "webContents:other,mode:t"],
+    ["this.setPrimaryWindowMode(pending.webContents,pending.mode)", "this.setPrimaryWindowMode(pending.webContents,other)"],
+    ["if(this.codexLinuxStartMinimizedWindowMode?.window===n)this.codexLinuxStartMinimizedWindowMode=null", "this.codexLinuxStartMinimizedWindowMode=null"],
+    ["U.windowManager.codexLinuxStartMinimized=codexLinuxStartMinimized;", ""],
+    ["codexLinuxStartMinimized=codexLinuxStartMinimized&&ready", "codexLinuxStartMinimized=ready"],
+    ["if(!xe&&(!codexLinuxStartMinimizedRequested||U.getPrimaryWindow()==null))", "if(!xe)"],
+    ["(n||codexLinuxStartMinimizedRequested)&&Je()", "n&&Je()"],
+  ];
+  const partials = replacements.map(([needle, replacement]) => {
+    assert.equal(patched.split(needle).length, 2, needle);
+    return patched.replace(needle, replacement);
+  });
+  const clear = "codexLinuxStartMinimized=!1;U.windowManager.codexLinuxStartMinimized=!1;";
+  const resets = [...patched.matchAll(new RegExp(clear.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))];
+  assert.equal(resets.length, 3);
+  for (const reset of resets) {
+    partials.push(patched.slice(0, reset.index) + "codexLinuxStartMinimized=!1;" + patched.slice(reset.index + clear.length));
+  }
+  for (const partial of partials) {
+    const result = captureWarnings(() => applyMainPatch(partial));
+    assert.equal(result.value, partial);
+    assert.deepEqual(result.warnings, ["WARN: Start minimized to tray patched startup contract missing or ambiguous"]);
+  }
+  const renamed = patched.replaceAll("U.", "serviceAlias.").replaceAll("qe", "showAlias");
+  const valid = captureWarnings(() => applyMainPatch(renamed));
+  assert.equal(valid.value, renamed);
+  assert.deepEqual(valid.warnings, []);
+});
+
 function settingsFixture() {
   return 'function menu(e){let i=intlHook(),{platform:p}=platformHook(),v=useSetting(keys.macMenuBarEnabled);if(p!==`macOS`)return null;let label=i.formatMessage({id:`settings.general.macMenuBar.ariaLabel`,defaultMessage:`Show in menu bar`});let c=(0,j.jsx)(Toggle,{checked:v,onChange:change,ariaLabel:label});return(0,j.jsx)(Row,{label:title,description:description,control:c})}' +
     'function another(){let[e,t]=(0,React.useState)(!1)}var React=reactFactory();' +
