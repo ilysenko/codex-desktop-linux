@@ -8,7 +8,8 @@ const http = require("node:http");
 const { execFileSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const test = require("node:test");
-const { apply } = require("./patch");
+const { apply, patchRenderer } = require("./patch");
+const vm = require("node:vm");
 const { listDirectories, parsePort, startServer } = require("./runtime");
 const { stageEnabledLinuxFeatureInstall, loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features");
 
@@ -132,13 +133,29 @@ test("folder chooser lists host directories and validates absolute paths", t => 
   assert.throws(() => listDirectories(path.join(root, "file.txt")));
 });
 
+const capabilityFixture = 'function capability(e){let n=registry[e.name];if(n==null||!supported(n))return{isLoading:!1,isError:!1,isCapable:!1};let r=[...n.accessPolicies.map(e=>e)];return{isLoading:!1,isError:!1,isCapable:!0}}';
+
+test("web mode disables only the embedded browser capability; desktop and coding tools retain upstream results", () => {
+  const source = patchRenderer(capabilityFixture + ';let encodingLevel=`structuredClonable`;');
+  for (const web of [false, true]) {
+    const context = vm.createContext({ electronBridge: { communityWebUi: web }, registry: {
+      "browser.in-app": { accessPolicies: [] }, "desktop.local-executor": { accessPolicies: [] },
+    }, supported: () => true });
+    vm.runInContext(source, context);
+    assert.equal(vm.runInContext('capability({name:"browser.in-app"}).isCapable', context), !web);
+    assert.equal(vm.runInContext('capability({name:"desktop.local-executor"}).isCapable', context), true);
+    assert.equal(vm.runInContext('capability({name:"unknown"}).isCapable', context), false);
+    assert.equal(vm.runInContext('encodingLevel', context), web ? "string" : "structuredClonable");
+  }
+});
+
 function bundle(t) {
   const root = directory(t);
   const put = (file, value) => { const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, value); };
   put(".vite/build/main-test.js", 'const network=require("./network.js");let le=t.u(p);if(!e.app.isPackaged){L.loadURL(e.toString())};encodingLevel=`structuredClonable`;' + ["send", "sendInline", "sendCritical"].map(method => `${method}(e,t,n){e.isDestroyed()||this.sender.${method}(e,{channel:t,payload:n})}`).join(""));
   put(".vite/build/preload.js", 'A=e.ipcRenderer.sendSync(`codex_desktop:get-shared-object-snapshot`)??{};e.contextBridge.exposeInMainWorld(`electronBridge`,bridge)');
   put(".vite/build/network.js", 'server=r.t(((e,t)=>{var n=require("http");t.exports=class extends n{noServer:!1,backlog:null,server:null,host:null,path:null,port:null}}))');
-  put("webview/assets/app-shared-test.js", 'connect-app-host;encodingLevel=`structuredClonable`');
+  put("webview/assets/app-shared-test.js", 'connect-app-host;encodingLevel=`structuredClonable`;' + capabilityFixture);
   put("webview/index.html", '<head>connect-src </head>');
   return { root, put };
 }
@@ -147,11 +164,13 @@ test("entire adaptation is idempotent and missing/ambiguous anchors cause zero w
   const valid = bundle(t);
   assert.equal(apply(valid.root).changed, true);
   assert.equal(apply(valid.root).changed, false);
-  for (const breakage of ["missing", "ambiguous", "codec"]) {
+  for (const breakage of ["missing", "ambiguous", "codec", "capability", "duplicate-capability"]) {
     const fixture = bundle(t);
     if (breakage === "missing") fixture.put(".vite/build/preload.js", "unsupportedPreload()");
     if (breakage === "ambiguous") fixture.put(".vite/build/other-preload.js", fs.readFileSync(path.join(fixture.root, ".vite/build/preload.js")));
     if (breakage === "codec") fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`changed`");
+    if (breakage === "capability") fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`structuredClonable`");
+    if (breakage === "duplicate-capability") fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`structuredClonable`;" + capabilityFixture + capabilityFixture);
     const before = fs.readFileSync(path.join(fixture.root, ".vite/build/main-test.js"));
     assert.throws(() => apply(fixture.root));
     assert.deepEqual(fs.readFileSync(path.join(fixture.root, ".vite/build/main-test.js")), before);

@@ -5,6 +5,13 @@ The installed signed Linux Owl/Electron app remains the host for authentication,
 app-server requests, workers, terminals, files, and agent work. This feature
 adapts the renderer boundary; it does not implement a replacement Codex client.
 
+Web mode disables the embedded browser capability and rejects its native
+browser-panel commands. New tabs use upstream's tool-only workspace screen;
+terminals, files, changes, and side chats remain available. External web links
+use the browser link prompt. This does not change agent web-search settings or
+disable separately configured browser plugins. Ordinary desktop launches keep
+their original browser capability.
+
 The design is inspired by [mkreminskii/codex-web](https://github.com/mkreminskii/codex-web).
 This is an independent implementation for this repository's Linux payload and
 feature lifecycle. It does not copy that project's source, download a macOS

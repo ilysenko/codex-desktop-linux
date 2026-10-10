@@ -6,6 +6,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const http = require("node:http");
 const { chromium } = require(process.env.CODEX_WEB_UI_PLAYWRIGHT_PATH || "playwright");
 
 function connectionUrl(logPath) {
@@ -39,6 +40,8 @@ async function run() {
   fs.mkdirSync(path.join(fixture, "subfolder"));
   fs.writeFileSync(path.join(fixture, "file.txt"), "community-web-ui-file\n");
   const browser = await chromium.launch({ headless: true, chromiumSandbox: true });
+  const destination = http.createServer((_request, response) => response.end("community-external-link-ok"));
+  await new Promise(resolve => destination.listen(0, "127.0.0.1", resolve));
   try {
     assert.equal((await fetch(origin + "/_community/bootstrap")).status, 403);
     if (process.env.CODEX_WEB_UI_TEST_PREVIOUS_LOG) {
@@ -56,6 +59,8 @@ async function run() {
     await installRpc(page);
     const account = await page.evaluate(() => communityTestRpc("account/read", { refreshToken: false }));
     assert.equal(typeof account.requiresOpenaiAuth, "boolean");
+    const browserError = await page.evaluate(() => electronBridge.sendMessageFromView({ type: "browser-sidebar-command", command: { type: "navigate", url: "about:blank" } }).then(() => null, error => error.message));
+    assert.equal(browserError, "The embedded browser is disabled in Web UI.");
     const file = await page.evaluate(filePath => communityTestRpc("fs/readFile", { path: filePath }), path.join(fixture, "file.txt"));
     assert.equal(Buffer.from(file.dataBase64, "base64").toString(), "community-web-ui-file\n");
     const command = await page.evaluate(cwd => communityTestRpc("command/exec", { command: ["/bin/echo", "community-web-ui-command"], cwd, timeoutMs: 5000 }), fixture);
@@ -86,6 +91,20 @@ async function run() {
     await page.getByRole("button", { name: "subfolder", exact: true }).click();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     assert.equal(await selection, path.join(fixture, "subfolder"));
+    // Exercise the native open-external relay and a real user click. Upstream's
+    // document-level link bridge must not intercept the adapter's link again.
+    const externalUrl = `http://127.0.0.1:${destination.address().port}/`;
+    await page.evaluate(url => electronBridge.sendMessageFromView({ type: "open-in-browser", url, openTarget: "external-browser", useExternalBrowser: true, source: "manual" }), externalUrl);
+    const externalLink = page.getByRole("link", { name: "Open 127.0.0.1", exact: true });
+    assert.equal(await externalLink.getAttribute("rel"), "noopener noreferrer");
+    assert.equal(await externalLink.evaluate(link => link.closest("dialog").parentElement.id), "community-test-modal");
+    const popupReady = page.waitForEvent("popup");
+    await externalLink.click();
+    const popup = await popupReady;
+    await popup.waitForURL(externalUrl);
+    assert.equal(await popup.locator("body").innerText(), "community-external-link-ok");
+    await popup.close();
+    assert.equal(await page.locator("#community-external-link").count(), 0);
     await page.evaluate(() => { document.getElementById("community-test-modal").remove(); document.body.style.pointerEvents = ""; });
     const second = await context.newPage();
     await second.goto(origin);
@@ -96,9 +115,10 @@ async function run() {
     assert.equal(typeof (await page.evaluate(() => communityTestRpc("account/read", { refreshToken: false }))).requiresOpenaiAuth, "boolean");
     if (process.env.CODEX_WEB_UI_TEST_SCREENSHOT) await page.screenshot({ path: process.env.CODEX_WEB_UI_TEST_SCREENSHOT });
     assert.deepEqual(errors, []);
-    console.log("PASS: browser bootstrap, IPC/RPC, host file read, sandboxed command, folder selection, single-session gate, and reload");
+    console.log("PASS: browser bootstrap, IPC/RPC, embedded-browser rejection, host file read, sandboxed command, modal folder selection, external-link popup, single-session gate, and reload");
   } finally {
     await browser.close();
+    await new Promise(resolve => destination.close(resolve));
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 }

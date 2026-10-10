@@ -56,7 +56,13 @@ function patchWebSocket(source) {
 
 function patchRenderer(source) {
   if (source.includes(MARKER)) return source;
-  return patchRpc(source, "globalThis.electronBridge?.communityWebUi===true") + `\n${MARKER}\n`;
+  // Disable the native browser through upstream's capability boundary. Its
+  // existing workspace-new-tab fallback retains terminal/files/review tools.
+  // Ordinary desktop windows continue using the original capability result.
+  const capability = one(source, new RegExp(`let (${IDENT})=(${IDENT})\\[(${IDENT})\\.name\\];if\\(\\1==null\\|\\|!(${IDENT})\\(\\1\\)\\)return\\{isLoading:!1,isError:!1,isCapable:!1\\};let (${IDENT})=\\[\\.\\.\\.\\1\\.accessPolicies\\.map`, "g"), "capability evaluation boundary");
+  const guard = `globalThis.electronBridge?.communityWebUi===true&&${capability[3]}.name===\`browser.in-app\``;
+  const patched = source.replace(capability[0], capability[0].replace(`if(${capability[1]}==null`, `if(${guard}||${capability[1]}==null`));
+  return patchRpc(patched, "globalThis.electronBridge?.communityWebUi===true") + `\n${MARKER}\n`;
 }
 
 function apply(extractedDir) {

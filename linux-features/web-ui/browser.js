@@ -129,7 +129,10 @@
           const text = document.createElement("p"); text.textContent = "Continue in your browser";
           const link = document.createElement("a"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer";
           link.textContent = `Open ${url.hostname}`; link.style.cssText = "display:inline-block;margin-right:24px";
-          link.addEventListener("click", () => { dialog.close(); dialog.remove(); });
+          // Upstream delegates every HTTP link to its desktop bridge. Let this
+          // user-initiated link use the browser's default action without being
+          // intercepted again and reopening the same prompt.
+          link.addEventListener("click", event => { event.stopPropagation(); dialog.close(); dialog.remove(); });
           const close = document.createElement("button"); close.textContent = "Cancel";
           close.addEventListener("click", () => { dialog.close(); dialog.remove(); });
           dialog.addEventListener("cancel", () => dialog.remove());

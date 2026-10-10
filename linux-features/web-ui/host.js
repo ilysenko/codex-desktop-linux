@@ -22,6 +22,9 @@ function connectHost(ipc, bridge, sharedObjectSnapshot) {
       case "invoke":
         try {
           if (!allowed.has(message.method) || !Array.isArray(message.args)) throw Error("Unsupported browser operation");
+          if (message.method === "sendMessageFromView" && message.args[0]?.type?.startsWith("browser-sidebar-")) {
+            throw Error("The embedded browser is disabled in Web UI.");
+          }
           const value = await bridge[message.method](...message.args);
           send({ type: "result", id: message.id, ok: true, value });
         } catch (error) {
