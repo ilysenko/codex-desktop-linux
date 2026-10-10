@@ -3,6 +3,36 @@
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const PATCH_MARKER = "codexLinuxApiKeyFastTier";
 const MODEL_MARKER = "codexLinuxApiKeyServiceTierModel";
+const SERVICE_TIER_GATE_SHAPE = new RegExp(
+  `authMethod===\\\`chatgpt\\\`\\|\\|${JS_IDENT}\\?\\.authMethod===\\\`personalAccessToken\\\`` +
+    `[\\s\\S]{0,1800}?serviceTierAccess:${JS_IDENT},isLoading:${JS_IDENT}`,
+);
+const API_KEY_ACCESS = "{fast:!0,ultrafast:!1}";
+
+function serviceTierGatePattern(patched = false) {
+  const access = patched
+    ? `\\k<auth>===\\\`apikey\\\`&&!\\k<loading>\\?\\{fast:!0,ultrafast:!1\\}:null`
+    : "null";
+  const cacheAuth = patched ? "\\k<auth>" : "\\k<account>";
+  return new RegExp(
+    `(?<account>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod===\\\`chatgpt\\\`\\|\\|\\k<host>\\?\\.authMethod===\\\`personalAccessToken\\\`,` +
+    `(?<auth>${JS_IDENT})=\\k<host>\\?\\.authMethod\\?\\?null[\\s\\S]{0,500}?` +
+    `(?<loading>${JS_IDENT})=!!\\k<host>\\?\\.isLoading\\|\\|\\k<account>&&${JS_IDENT},(?<result>${JS_IDENT});` +
+    `(?<cache>${JS_IDENT})\\[3\\]!==(?<requirements>${JS_IDENT})\\|\\|\\k<cache>\\[4\\]!==\\k<loading>\\|\\|\\k<cache>\\[5\\]!==${cacheAuth}\\?` +
+    `\\(\\k<result>=\\k<account>&&!\\k<loading>&&\\k<requirements>!=null\\?(?<resolver>${JS_IDENT})\\(\\k<requirements>\\):${access},` +
+    `\\k<cache>\\[3\\]=\\k<requirements>,\\k<cache>\\[4\\]=\\k<loading>,\\k<cache>\\[5\\]=${cacheAuth},\\k<cache>\\[6\\]=\\k<result>\\):\\k<result>=\\k<cache>\\[6\\];` +
+    `let (?<output>${JS_IDENT})=\\k<result>,${JS_IDENT};return[\\s\\S]{0,160}?serviceTierAccess:\\k<output>,isLoading:\\k<loading>`,
+    "g",
+  );
+}
+
+function serviceTierGateState(source) {
+  const current = [...source.matchAll(serviceTierGatePattern())];
+  const patched = [...source.matchAll(serviceTierGatePattern(true))];
+  if (current.length === 1 && patched.length === 0) return { kind: "current", match: current[0] };
+  if (current.length === 0 && patched.length === 1) return { kind: "patched", match: patched[0] };
+  return { kind: "invalid" };
+}
 const PATCHED_MODEL_MARKER = new RegExp(`${MODEL_MARKER}:${JS_IDENT}===\\\`apikey\\\``);
 const PATCHED_SERVICE_TIER_RESOLVER = new RegExp(
   `function ${JS_IDENT}\\((${JS_IDENT}),(${JS_IDENT})\\)\\{return \\2==null\\?null:` +
@@ -20,6 +50,33 @@ const MODEL_LIST_MAPPING_SHAPE = new RegExp(
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
+}
+
+function applyApiKeyServiceTierGatePatch(source) {
+  const state = serviceTierGateState(source);
+  if (state.kind === "patched") return source;
+  if (state.kind !== "current") {
+    if (hasApiKeyServiceTierGateShape(source)) {
+      warn("Could not find service tier auth gate", "API key service tier gate patch");
+    }
+    return source;
+  }
+  const { account, auth, loading, result, cache, requirements, resolver } = state.match.groups;
+  // The access object now comes from the upstream speed-mode resolver. Keep
+  // account entitlements intact and key its memo by auth method: API-key and
+  // other non-account hosts share the same false account-auth boolean.
+  const replacement = state.match[0]
+    .replace(`${result}=${account}&&!${loading}&&${requirements}!=null?${resolver}(${requirements}):null`,
+      `${result}=${account}&&!${loading}&&${requirements}!=null?${resolver}(${requirements}):${auth}===\`apikey\`&&!${loading}?${API_KEY_ACCESS}:null`)
+    .replace(`${cache}[5]!==${account}`, `${cache}[5]!==${auth}`)
+    .replace(`${cache}[5]=${account}`, `${cache}[5]=${auth}`);
+  const patched = source.slice(0, state.match.index) + replacement +
+    source.slice(state.match.index + state.match[0].length);
+  return serviceTierGateState(patched).kind === "patched" ? patched : source;
+}
+
+function hasApiKeyServiceTierGateShape(source) {
+  return SERVICE_TIER_GATE_SHAPE.test(source);
 }
 
 function applyApiKeyModelMarkerPatch(source) {
@@ -54,6 +111,10 @@ function applyApiKeyModelMarkerPatch(source) {
 
 function hasApiKeyModelListMappingShape(source) {
   return MODEL_LIST_MAPPING_SHAPE.test(source);
+}
+
+function matchesApiKeyServiceTierGateContract(source) {
+  return serviceTierGateState(source).kind !== "invalid";
 }
 
 function matchesApiKeyServiceTierModelContract(source) {
@@ -207,6 +268,25 @@ function applyFallbackFastTierPatch(source) {
   return source;
 }
 
+function applyApiKeyServiceTierPatch(source) {
+  return applyFallbackFastTierPatch(
+    applyApiKeyServiceTierResolverPatch(
+      applyApiKeyModelMarkerPatch(applyApiKeyServiceTierGatePatch(source)),
+    ),
+  );
+}
+
+function applyCurrentGatePatch(source) {
+  const gateAlreadyPatched = serviceTierGateState(source).kind === "patched";
+  const gateCandidate = gateAlreadyPatched ? source : applyApiKeyServiceTierGatePatch(source);
+  const gateReady = gateAlreadyPatched || gateCandidate !== source;
+
+  if (!gateReady && !hasApiKeyServiceTierGateShape(source)) {
+    warn("Could not identify current service tier auth gate", "API key service tier gate patch");
+  }
+  return gateCandidate;
+}
+
 function applyCurrentModelPatch(source) {
   const modelAlreadyPatched = PATCHED_MODEL_MARKER.test(source);
   const modelCandidate = modelAlreadyPatched ? source : applyApiKeyModelMarkerPatch(source);
@@ -242,6 +322,17 @@ function applyCurrentFallbackFastTierPatch(source) {
 }
 
 const descriptors = [
+  {
+    id: "api-key-service-tier-gate",
+    phase: "webview-asset",
+    order: 20600,
+    ciPolicy: "optional",
+    pattern: /^app-initial-[^.]+\.js$/,
+    assetMatch: matchesApiKeyServiceTierGateContract,
+    missingDescription: "current API key service tier gate bundle",
+    skipDescription: "API key service tier gate patch",
+    apply: applyCurrentGatePatch,
+  },
   {
     id: "api-key-service-tier-model",
     phase: "webview-asset",
@@ -279,12 +370,17 @@ const descriptors = [
 
 module.exports = {
   applyApiKeyModelMarkerPatch,
+  applyApiKeyServiceTierGatePatch,
   applyApiKeyServiceTierResolverPatch,
   applyFallbackFastTierPatch,
+  applyApiKeyServiceTierPatch,
+  applyCurrentGatePatch,
   applyCurrentModelPatch,
   applyCurrentResolverPatch,
   applyCurrentFallbackFastTierPatch,
+  hasApiKeyServiceTierGateShape,
   hasApiKeyModelListMappingShape,
+  matchesApiKeyServiceTierGateContract,
   matchesApiKeyServiceTierModelContract,
   matchesApiKeyServiceTierResolverContract,
   matchesFallbackFastTierContract,

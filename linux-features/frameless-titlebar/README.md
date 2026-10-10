@@ -1,7 +1,7 @@
 # Frameless Titlebar
 
 This optional feature hides Electron-drawn Linux window-control overlay buttons
-and the in-app application menu on the primary and Quick Chat Community windows.
+and the in-app application menu on the primary and detached Community windows.
 The official Linux package still creates those windows with
 `titleBarStyle: hidden` plus `titleBarOverlay`, then reapplies the overlay from
 `setWindowZoom` and `installApplicationMenuTitleBarOverlaySync`. Official Linux
@@ -14,7 +14,7 @@ to `native`.
 Use it on compositors or window managers that already provide move, resize,
 minimize, maximize, and close, such as Hyprland. It is also a diagnostic
 switch for GNOME/X11 titlebar right-click lockups, because it removes the
-Linux Window Controls Overlay path from the main window.
+Linux Window Controls Overlay path from primary and detached windows.
 
 The default build leaves the official Linux overlay buttons in place. Enable
 this only when those built-in buttons conflict with your desktop environment.
@@ -39,6 +39,7 @@ is created when the window is constructed.
 | Surface | Current official contract | Result on Linux |
 |---|---|---|
 | Main window options | `win32\|\|linux` hidden titlebar plus `titleBarOverlay` | Linux keeps `titleBarStyle: hidden` and does not receive an overlay |
+| Detached window options | Non-macOS hidden titlebar plus `titleBarOverlay` | Linux keeps `titleBarStyle: hidden` and does not receive an overlay |
 | Zoom overlay | `setWindowZoom` calls `setTitleBarOverlay` on Linux | Overlay updates stay Windows-only |
 | Theme overlay sync | `installApplicationMenuTitleBarOverlaySync` runs on Linux | Theme changes do not restore Linux overlay buttons |
 | Webview chrome mapping | Electron Linux uses `application-menu` | Linux uses `native` chrome and hides the in-app menu |
@@ -63,7 +64,7 @@ node --test linux-features/frameless-titlebar/test.js
 For a manual check, enable the feature as above, rebuild, fully quit every
 ChatGPT Community and official ChatGPT process, then launch the app:
 
-- The primary and Quick Chat windows should show no Electron-drawn titlebar
+- The primary and detached windows should show no Electron-drawn titlebar
   overlay buttons (minimize/maximize/close in the top-right corner) and no menu
   bar.
 - The rightmost app-header control should retain the standard 8px end padding

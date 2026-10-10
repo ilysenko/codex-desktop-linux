@@ -44,19 +44,24 @@ What it changes:
   desktop can authorize outbound control of another enrolled device.
 - Refreshes the remote Connections settings state every 5 seconds and
   immediately after focus, visibility, online, or resume signals.
-- Buffers late `turn/started`, `item/started`, `item/completed`, and
-  `turn/completed` notifications for an unknown conversation, hydrates that
+- Extends the current upstream event-discovery queue to buffer late
+  `turn/started`, `item/started`, `item/completed`, and `turn/completed` notifications for an unknown conversation, hydrates that
   conversation once, and replays the queue in order after hydration. A
   completed item is also restored when its local started state was absent.
+  The upstream request queue, notification timestamps, automation capability,
+  turn merge policy, retry, and discard lifecycle remain intact.
+- Keeps the current abortable Remote status subscriptions and their disposable
+  cleanup; skips the initial status RPC for Linux Remote SSH and outbound-control
+  hosts while preserving local-host reads and notification delivery.
 - Recovers stale remote terminal status when `waitingOnUserInput` remains active
   after the matching input request has already cleared.
 - Keeps local Linux Remote turns on `summary = "none"` unless a turn explicitly
   requests a reasoning summary, preventing Desktop's rollout gate from adding
   repeated English reasoning titles to the mobile transcript. Outside local
   Linux durable turns, it preserves upstream Aeon and rollout summary overrides.
-- Keeps Chrome Browser Use available to remote/mobile controlled sessions when
-  the local Chrome plugin and native host are healthy, and adds a diagnostic
-  when the native browser bridge is not exposed to the session.
+- Preserves the official Chrome Browser Use client. Upstream now routes browser
+  RPCs through its browser service and owns backend eligibility and preferences;
+  the retired client allowlist workaround is no longer staged.
 - Persists the private key material at
   `~/.config/codex-desktop/remote-control-device-keys/remote-control-device-keys-v1.json`
   with `0600` file permissions inside a dedicated `0700` directory. Updates are
@@ -145,9 +150,8 @@ Feature-owned surfaces outside the descriptor array are also topology-scoped:
 
 | Surface | Primary responsibility | Contract |
 | --- | --- | --- |
-| `stage.sh` | `mobile-host` | Stages the host marker, single-instance requirement, cold-start hook, and optional Chrome bridge patch. |
+| `stage.sh` | `mobile-host` | Stages the host marker and cold-start hook while preserving official single-instance and browser routing. |
 | `cold-start-hook.sh` | `mobile-host` | Elects one local remote-control runtime owner and starts only the bundled official Codex fallback. |
-| `applyLinuxRemoteMobileChromeBridgePatch` | `mobile-host` | Keeps local Browser Use available to an authorized mobile-controlled session. |
 | Nix `codex-remote-control.service` | `mobile-host` | Replaces the bundled-process fallback with one declarative local app-server owner. |
 
 The app-server has exactly one Remote Control owner in either supported

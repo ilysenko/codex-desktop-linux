@@ -14,6 +14,18 @@ const patchedWindowOptionsPattern = new RegExp(
     `\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`\\}`,
   "g",
 );
+const detachedWindowPrefix =
+  `case\\\`detached\\\`:return (${IDENT})===\\\`darwin\\\`\\?` +
+  `(\\{titleBarStyle:\\\`hiddenInset\\\`,titleBarOverlay:!0,trafficLightPosition:${IDENT}\\(${IDENT},${IDENT}\\)\\}):`;
+const currentDetachedOptionsPattern = new RegExp(
+  detachedWindowPrefix + `\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}`,
+  "g",
+);
+const patchedDetachedOptionsPattern = new RegExp(
+  detachedWindowPrefix + `\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`\\}:` +
+    `\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}`,
+  "g",
+);
 const currentZoomOverlayPattern = new RegExp(
   `\\(process\\.platform===\\\`win32\\\`\\|\\|process\\.platform===\\\`linux\\\`\\)&&\\(this\\.windowZooms\\.set\\((${IDENT})\\.id,(${IDENT})\\),\\1\\.setTitleBarOverlay\\((${IDENT})\\(\\2\\)\\)\\)`,
   "g",
@@ -33,6 +45,7 @@ const patchedOverlaySyncPattern = new RegExp(
 
 const mainContracts = [
   [currentWindowOptionsPattern, patchedWindowOptionsPattern],
+  [currentDetachedOptionsPattern, patchedDetachedOptionsPattern],
   [currentZoomOverlayPattern, patchedZoomOverlayPattern],
   [currentOverlaySyncPattern, patchedOverlaySyncPattern],
 ];
@@ -92,6 +105,13 @@ function applyFramelessTitlebarMainPatch(source) {
       (_match, platform, overlayHelper, zoom) =>
         `${platform}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelper}(${zoom})}:` +
         `${platform}===\`linux\`?{titleBarStyle:\`hidden\`}`,
+    )
+    .replace(
+      currentDetachedOptionsPattern,
+      (_match, platform, darwinOptions, overlayHelper, zoom) =>
+        `case\`detached\`:return ${platform}===\`darwin\`?${darwinOptions}:` +
+        `${platform}===\`linux\`?{titleBarStyle:\`hidden\`}:` +
+        `{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelper}(${zoom})}`,
     )
     .replace(
       currentZoomOverlayPattern,

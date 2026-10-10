@@ -55,8 +55,10 @@ autostart command if they would otherwise affect manual launches.
 Detection follows [systemd's XDG autostart service naming](https://github.com/systemd/systemd/blob/main/src/xdg-autostart-generator/xdg-autostart-service.c)
 and [GNOME's session launch marker](https://wiki.gnome.org/Projects%282f%29SessionManagement%282f%29GnomeSession.html).
 
-Saved maximization is restored when the window is revealed, so it cannot make
-the initial hidden window visible. Tray Open and second-instance activation
+The current upstream background-window creation and progress-window guards
+keep hidden startup from showing a delayed startup dialog. Upstream restores
+saved maximization when the window is revealed, so it cannot make the initial
+hidden window visible. Tray Open and second-instance activation
 also work while upstream host initialization is still pending.
 The renderer's delayed app/onboarding window-mode requests are deferred until
 the hidden window is revealed. Only the latest mode is applied, including its
@@ -116,15 +118,18 @@ launch through desktop autostart (or with `--codex-autostart`), and verify that
 the window stays hidden. Quit fully and launch from the regular shortcut;
 verify that the window opens even with **Start minimized to tray** also enabled.
 
-The login-only extension builds against signed stable
-`26.930.61225` with this feature enabled alone on amd64 and arm64. A temporary
+The current startup contracts and settings patch build against signed stable
+`26.1007.21434`. Tests exercise upstream background guards and interactive
+activation alongside the feature preferences.
+
+The login-only extension previously built with this feature enabled alone on
+amd64 and arm64. A temporary
 systemd autostart service verified the actual cgroup detection; an ordinary
 manual process was correctly rejected. A real KDE/Wayland login subsequently
 showed that Chromium moves the native app into a separate scope before the
 main bundle reads its cgroup. The launcher hook captures the original
-autostart service before that move. The corrected amd64 build against the
-same signed stable package includes that hook. An isolated test using the
-standard launcher, a real systemd autostart service, and a second systemd
+autostart service before that move. The corrected amd64 build included that
+hook. An isolated test using the standard launcher, a real systemd autostart service, and a second systemd
 scope verified that the startup decision survives this move; manual startup
 stays visible and the explicit fallback still works. This test substitutes a
 small decision probe for Electron. The contributor subsequently confirmed

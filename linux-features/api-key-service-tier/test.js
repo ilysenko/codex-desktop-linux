@@ -18,12 +18,16 @@ const {
 } = require("../../scripts/lib/linux-features.js");
 const {
   applyApiKeyModelMarkerPatch,
+  applyApiKeyServiceTierPatch,
+  applyApiKeyServiceTierGatePatch,
   applyApiKeyServiceTierResolverPatch,
+  applyCurrentGatePatch,
   applyCurrentModelPatch,
   applyCurrentResolverPatch,
   applyCurrentFallbackFastTierPatch,
   applyFallbackFastTierPatch,
   descriptors,
+  hasApiKeyServiceTierGateShape,
   hasApiKeyModelListMappingShape,
 } = require("./patch.js");
 
@@ -36,6 +40,23 @@ function applyPatchTwice(patchFn, source) {
 
 function currentModelFixture() {
   return "function iti({additionalAvailableModels:e,apiKeyDaybreakSupported:q=!1,authMethod:t,availableModels:n,defaultModel:r,enabledReasoningEfforts:i,hasConfiguredModelCatalog:h,includeUltraReasoningEffort:a,isCustomModelProvider:o=!1,models:s,useHiddenModels:c}){let l=[],u=null,d=s.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`max`)),f=a&&s.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>e===`ultra`));return s.forEach(r=>{if(ati({additionalAvailableModels:e,apiKeyDaybreakSupported:q,authMethod:t,availableModels:n,hasConfiguredModelCatalog:h,isCustomModelProvider:o,model:r,useHiddenModels:c})){let e=a?r.supportedReasoningEfforts:r.supportedReasoningEfforts.filter(({reasoningEffort:e})=>e!==`ultra`),n=(t===`copilot`?[e.find(e=>e.reasoningEffort===`medium`)??{reasoningEffort:`medium`,description:`medium effort`}]:e).filter(({reasoningEffort:e})=>cI(e)&&i.has(e)),o={...r,supportedReasoningEfforts:n};l.push(o),r.isDefault&&(u=o)}}),u??=l.find(e=>e.model===r)??null,{models:l,defaultModel:u,hasModelSupportingMaxReasoningEffort:d,hasModelSupportingUltraReasoningEffort:f}}";
+}
+
+function currentGateFixture() {
+  return "function gate(e){let t=(0,cache.c)(10),n=read(localHost),r=e?.hostId??n,i=getHost(r),a=i?.authMethod===`chatgpt`||i?.authMethod===`personalAccessToken`,o=i?.authMethod??null,s;t[0]!==r||t[1]!==o?(s={authMethod:o,hostId:r},t[0]=r,t[1]=o,t[2]=s):s=t[2];let{data:c,isPending:l}=query(requirementsQuery,s),u=!!i?.isLoading||a&&l,d;t[3]!==c||t[4]!==u||t[5]!==a?(d=a&&!u&&c!=null?resolveAccess(c):null,t[3]=c,t[4]=u,t[5]=a,t[6]=d):d=t[6];let f=d,p;return t[7]!==u||t[8]!==f?(p={serviceTierAccess:f,isLoading:u},t[7]=u,t[8]=f,t[9]=p):p=t[9],p}";
+}
+
+function gateHarness(source) {
+  return Function(`
+    let host, requirements, pending = false, calls = 0;
+    const memo = [], cache = {c: () => memo}, localHost = "local", requirementsQuery = {};
+    const read = value => value, getHost = () => host;
+    const query = () => ({data: requirements, isPending: pending});
+    const resolveAccess = data => {calls++; return data.access};
+    ${source}
+    return {gate, setHost: value => host = value, setRequirements: value => requirements = value,
+      setPending: value => pending = value, calls: () => calls};
+  `)();
 }
 
 function captureWarnings(callback) {
@@ -79,6 +100,7 @@ test("api-key-service-tier stays disabled until listed in features.json", () => 
     assert.deepEqual(
       loaded.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
       [
+        ["feature:api-key-service-tier:api-key-service-tier-gate", "webview-asset", "optional"],
         ["feature:api-key-service-tier:api-key-service-tier-model", "webview-asset", "optional"],
         ["feature:api-key-service-tier:api-key-service-tier-resolver", "webview-asset", "optional"],
         ["feature:api-key-service-tier:api-key-service-tier-fallback", "webview-asset", "optional"],
@@ -91,6 +113,7 @@ test("current package descriptors use semantic app-initial and app-shared owners
   assert.deepEqual(
     descriptors.map((descriptor) => descriptor.id),
     [
+      "api-key-service-tier-gate",
       "api-key-service-tier-model",
       "api-key-service-tier-resolver",
       "api-key-service-tier-fallback",
@@ -105,6 +128,11 @@ test("current package descriptors use semantic app-initial and app-shared owners
 });
 
 test("current target wrappers warn when an exact contract disappears", () => {
+  assert.deepEqual(captureWarnings(() => {
+    assert.equal(applyCurrentGatePatch("function driftedGate(){}"), "function driftedGate(){}");
+  }), [
+    "WARN: Could not identify current service tier auth gate - skipping API key service tier gate patch",
+  ]);
   assert.deepEqual(captureWarnings(() => {
     assert.equal(applyCurrentModelPatch("function driftedModel(){}"), "function driftedModel(){}");
   }), [
@@ -122,12 +150,16 @@ test("current target wrappers warn when an exact contract disappears", () => {
   ]);
 });
 
-test("current descriptors apply independently to their semantic owners", () => {
+test("partial current drift is reported when the other exact target still applies", () => {
   withFeatureConfig(["api-key-service-tier"], () => {
     const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "api-key-service-tier-partial-drift-"));
     try {
       const assetsDir = path.join(tempApp, "webview", "assets");
       fs.mkdirSync(assetsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(assetsDir, "app-initial-gate-drifted.js"),
+        "function driftedGate(){return `priority_mode`}",
+      );
       fs.writeFileSync(
         path.join(
           assetsDir,
@@ -151,6 +183,9 @@ test("current descriptors apply independently to their semantic owners", () => {
 
       const report = createPatchReport();
       const warnings = captureWarnings(() => patchExtractedApp(tempApp, { report }));
+      const gate = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-gate",
+      );
       const model = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-model",
       );
@@ -161,6 +196,8 @@ test("current descriptors apply independently to their semantic owners", () => {
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
       );
 
+      assert.ok(warnings.some((warning) => warning.includes("current API key service tier gate bundle")));
+      assert.equal(gate?.status, "skipped-optional");
       assert.equal(model?.status, "applied");
       assert.equal(resolver?.status, "applied");
       assert.equal(fallback?.status, "applied-with-warnings");
@@ -177,6 +214,9 @@ test("a missing exact current target gets its own skipped report entry", () => {
       fs.mkdirSync(path.join(tempApp, "webview", "assets"), { recursive: true });
       const report = createPatchReport();
       const warnings = captureWarnings(() => patchExtractedApp(tempApp, { report }));
+      const gate = report.patches.find(
+        (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-gate",
+      );
       const model = report.patches.find(
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-model",
       );
@@ -187,9 +227,11 @@ test("a missing exact current target gets its own skipped report entry", () => {
         (entry) => entry.name === "feature:api-key-service-tier:api-key-service-tier-fallback",
       );
 
+      assert.ok(warnings.some((warning) => warning.includes("current API key service tier gate bundle")));
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier model bundle")));
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier resolver bundle")));
       assert.ok(warnings.some((warning) => warning.includes("current API key service tier fallback bundle")));
+      assert.equal(gate?.status, "skipped-optional");
       assert.equal(model?.status, "skipped-optional");
       assert.equal(resolver?.status, "skipped-optional");
       assert.equal(fallback?.status, "skipped-optional");
@@ -199,10 +241,76 @@ test("a missing exact current target gets its own skipped report entry", () => {
   });
 });
 
+test("current service-tier access allows API-key Fast without enabling Ultrafast", () => {
+  const source = currentGateFixture();
+  assert.equal(hasApiKeyServiceTierGateShape(source), true);
+  const patched = applyPatchTwice(applyApiKeyServiceTierGatePatch, source);
+  assert.match(patched, /:o===`apikey`&&!u\?\{fast:!0,ultrafast:!1\}:null/);
+  assert.match(patched, /t\[5\]!==o/);
+  assert.match(patched, /t\[5\]=o/);
+  const driver = gateHarness(patched);
+  driver.setHost({authMethod: "apikey", isLoading: false});
+  assert.deepEqual(driver.gate().serviceTierAccess, {fast: true, ultrafast: false});
+  assert.equal(driver.calls(), 0);
+  driver.setHost({authMethod: "apikey", isLoading: true});
+  assert.deepEqual(driver.gate(), {serviceTierAccess: null, isLoading: true});
+});
+
+test("current gate preserves account requirements and pending state", () => {
+  const driver = gateHarness(applyApiKeyServiceTierGatePatch(currentGateFixture()));
+  for (const authMethod of ["chatgpt", "personalAccessToken"]) {
+    driver.setHost({authMethod, isLoading: false});
+    const access = {fast: false, ultrafast: true};
+    driver.setRequirements({access});
+    assert.equal(driver.gate().serviceTierAccess, access);
+    driver.setPending(true);
+    assert.deepEqual(driver.gate(), {serviceTierAccess: null, isLoading: true});
+    driver.setPending(false);
+    driver.setRequirements(null);
+    assert.deepEqual(driver.gate(), {serviceTierAccess: null, isLoading: false});
+  }
+  assert.equal(driver.calls(), 2);
+});
+
+test("memoized current gate recomputes access when API-key authentication changes", () => {
+  const driver = gateHarness(applyApiKeyServiceTierGatePatch(currentGateFixture()));
+  const host = {authMethod: "apikey", isLoading: false};
+  driver.setHost(host);
+  assert.equal(driver.gate().serviceTierAccess.fast, true);
+  for (const authMethod of ["copilot", null, "apikey"]) {
+    host.authMethod = authMethod;
+    assert.deepEqual(driver.gate().serviceTierAccess,
+      authMethod === "apikey" ? {fast: true, ultrafast: false} : null);
+  }
+});
+
 test("current shared option owner synthesizes a fallback from its model argument", () => {
   const source = "function pNr(e,t){return[xNr,...(t??[]).map(t=>{let n=gN(t.id,t.name),r=n===`fast`?mNr(e):null;return{description:dNr(t,r),iconKind:n,label:uNr(t),speedMultiplier:r,tier:t,value:t.id}})]}";
   const patched = applyPatchTwice(applyFallbackFastTierPatch, source);
   assert.match(patched, /t\?\.length\?t:\[codexLinuxApiKeyFastTier\(e\)\]/u);
+});
+
+test("service-tier gate rejects ambiguous, partial and retired boolean contracts", () => {
+  const source = currentGateFixture();
+  const patched = applyApiKeyServiceTierGatePatch(source);
+  const partial = patched.replace("t[5]=o", "t[5]=a");
+  const retired = "function old(){let a=i?.authMethod===`chatgpt`||i?.authMethod===`personalAccessToken`,o=i?.authMethod??null;let d=a&&!u&&c!=null&&c?.requirements?.featureRequirements?.fast_mode!==!1;return{isServiceTierAllowed:d,isLoading:u}}";
+  const descriptor = descriptors.find(({id}) => id === "api-key-service-tier-gate");
+  for (const candidate of [source + source, patched + source, partial, retired]) {
+    assert.equal(descriptor.assetMatch(candidate), false);
+    captureWarnings(() => assert.equal(applyApiKeyServiceTierGatePatch(candidate), candidate));
+  }
+  assert.deepEqual(captureWarnings(() => {
+    assert.equal(applyApiKeyServiceTierGatePatch(retired), retired);
+  }), []);
+});
+
+test("service-tier gate rejects a recognizable unpatchable current access contract", () => {
+  const source = currentGateFixture().replace("resolveAccess(c)", "resolveAccess(c,other)");
+  assert.equal(hasApiKeyServiceTierGateShape(source), true);
+  assert.deepEqual(captureWarnings(() => {
+    assert.equal(applyApiKeyServiceTierGatePatch(source), source);
+  }), ["WARN: Could not find service tier auth gate - skipping API key service tier gate patch"]);
 });
 
 test("model list entries are marked only when loaded for API-key hosts", () => {
@@ -370,4 +478,19 @@ test("fallback descriptor reports skipped when one insertion point drifts", () =
       fs.rmSync(tempApp, { recursive: true, force: true });
     }
   });
+});
+
+test("combined patch updates both service tier gate and fallback options", () => {
+  const source = [
+    currentGateFixture(),
+    currentModelFixture(),
+    "function pNr(e,t){return[gQ,...(t??[]).map(t=>({description:eEe(t),iconKind:fQ(t.id,t.name),label:$Te(t),tier:t,value:t.id}))]}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyApiKeyServiceTierPatch, source);
+
+  assert.match(patched, /o===`apikey`/);
+  assert.match(patched, /codexLinuxApiKeyServiceTierModel:t===`apikey`/);
+  assert.match(patched, /e\?\.codexLinuxApiKeyServiceTierModel!==!0\?null/);
+  assert.match(patched, /function codexLinuxApiKeyFastTier\(e\)/);
 });

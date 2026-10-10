@@ -45,7 +45,10 @@ provider explicitly documents such a model alias.
 
 ## Behavior
 
-- API-key-authenticated hosts are allowed to show service-tier controls.
+- API-key-authenticated hosts are allowed to show Fast service-tier controls.
+  The current upstream access object keeps synthetic Ultrafast access disabled;
+  ChatGPT and personal-access-token hosts retain their upstream speed-mode
+  entitlements.
 - If an API-key host's active model has no `serviceTiers` metadata, the UI
   synthesizes one `fast` option so the selector can send
   `serviceTier: "fast"`.

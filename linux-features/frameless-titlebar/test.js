@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const {
   CHROME_MAPPING_ASSET_PATTERN,
@@ -29,25 +30,55 @@ function captureWarnings(callback) {
 
 function officialMainFixture() {
   return [
-    "function A9(e=1){return{color:O9,symbolColor:l.nativeTheme.shouldUseDarkColors?LTe:ITe,height:Math.round(FTe*e)}}",
-    "setWindowZoom(e,t){let n=l.BrowserWindow.fromWebContents(e),r=n&&this.windowAppearances.get(n.id);",
-    "n==null||r!==`primary`||(process.platform===`darwin`?n.setWindowButtonPosition(k9(t)):",
-    "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(A9(t))))}",
+    "function j9(e=1){return{height:Math.round(30*e)}}",
+    "function A9(e,t){return{x:e.x*t,y:e.y*t}}const k9={x:10,y:12};",
+    "class WindowManager{setWindowZoom(e,t){let n=_.BrowserWindow.fromWebContents(e),r=n&&this.windowAppearances.get(n.id);",
+    "n!=null&&(r===`primary`||process.platform===`darwin`&&r===`detached`)&&(process.platform===`darwin`?n.setWindowButtonPosition(A9(k9,t)):",
+    "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t))))}",
     "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`detached`)return;",
-    "let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(A9(this.windowZooms.get(e.id)))};return l.nativeTheme.on(`updated`,n),n(),()=>{l.nativeTheme.off(`updated`,n)}}",
-    "case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`}:",
-    "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r)}:{titleBarStyle:`default`}",
+    "let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(j9(this.windowZooms.get(e.id)))};return _.nativeTheme.on(`updated`,n),n(),()=>{_.nativeTheme.off(`updated`,n)}}}",
+    "function windowOptions({appearance:e,opaqueWindowSurfaceEnabled:t,platform:n,windowZoom:r=1}){switch(e){",
+    "case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`,trafficLightPosition:A9(k9,r),acceptFirstMouse:!0,...t?{}:{vibrancy:`menu`}}:",
+    "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}:{titleBarStyle:`default`};",
+    "case`detached`:return n===`darwin`?{titleBarStyle:`hiddenInset`,titleBarOverlay:!0,trafficLightPosition:A9(k9,r)}:{titleBarStyle:`hidden`,titleBarOverlay:j9(r)};",
+    "case`secondary`:return n===`darwin`?t?{titleBarStyle:`default`}:{vibrancy:`menu`,titleBarStyle:`default`}:{titleBarStyle:`default`}}}",
   ].join("");
 }
 
 function aliasedMainFixture() {
-  return [
-    "setWindowZoom(contents,zoom){let window=l.BrowserWindow.fromWebContents(contents),appearance=window&&this.windowAppearances.get(window.id);",
-    "window==null||appearance!==`primary`||(process.platform===`darwin`?window.setWindowButtonPosition(k9(zoom)):",
-    "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(window.id,zoom),window.setTitleBarOverlay(overlay(zoom))))}",
-    "installApplicationMenuTitleBarOverlaySync(window,windowType){if(process.platform!==`win32`&&process.platform!==`linux`||windowType!==`primary`&&windowType!==`detached`)return;}",
-    "platform===`win32`||platform===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:overlay(zoom)}:{titleBarStyle:`default`}",
-  ].join("");
+  const aliases = { j9: "overlay", A9: "buttonPosition", k9: "position", e: "windowType", t: "zoom", n: "platform", r: "windowZoom" };
+  return officialMainFixture().replace(/\b(j9|A9|k9|e|t|n|r)\b/g, (alias) => aliases[alias]);
+}
+
+function evaluateMainFixture(source, platform, appearance) {
+  const events = [];
+  const handlers = new Map();
+  const window = {
+    id: 1,
+    isDestroyed: () => false,
+    setTitleBarOverlay: (options) => events.push(["overlay", JSON.parse(JSON.stringify(options))]),
+    setWindowButtonPosition: (position) => events.push(["buttons", JSON.parse(JSON.stringify(position))]),
+  };
+  const context = vm.createContext({
+    process: { platform },
+    _: {
+      BrowserWindow: { fromWebContents: () => window },
+      nativeTheme: {
+        on: (event, callback) => { events.push(["on", event]); handlers.set(event, callback); },
+        off: (event, callback) => { events.push(["off", event]); handlers.delete(event); },
+      },
+    },
+  });
+  vm.runInContext(source, context);
+  const options = vm.runInContext(`windowOptions({appearance:${JSON.stringify(appearance)},platform:process.platform,windowZoom:2})`, context);
+  const manager = vm.runInContext("new WindowManager()", context);
+  manager.windowAppearances = new Map([[1, appearance]]);
+  manager.windowZooms = new Map();
+  manager.setWindowZoom({}, 2);
+  const cleanup = manager.installApplicationMenuTitleBarOverlaySync(window, appearance);
+  handlers.get("updated")?.();
+  cleanup?.();
+  return { options: JSON.parse(JSON.stringify(options)), events, zooms: [...manager.windowZooms] };
 }
 
 function officialWebviewFixture() {
@@ -82,36 +113,43 @@ test("frameless-titlebar is disabled by default and exposes standalone descripto
   }
 });
 
-test("main-process patch removes Linux titleBarOverlay and is idempotent", () => {
+test("main-process patch removes Linux primary and detached overlays and is idempotent", () => {
   const source = officialMainFixture();
   assert.equal(framelessTitlebarMainContract(source), "current");
   const patched = applyFramelessTitlebarMainPatch(source);
   assert.notEqual(patched, source);
   assert.equal(framelessTitlebarMainContract(patched), "patched");
   assert.equal(applyFramelessTitlebarMainPatch(patched), patched);
-  assert.match(patched, /n===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:A9\(r\)/);
-  assert.match(patched, /n===`linux`\?\{titleBarStyle:`hidden`\}/);
-  assert.doesNotMatch(patched, /n===`win32`\|\|n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay/);
-  assert.match(patched, /process\.platform===`win32`&&\(this\.windowZooms\.set\(n\.id,t\),n\.setTitleBarOverlay\(A9\(t\)\)\)/);
-  assert.doesNotMatch(patched, /process\.platform===`win32`\|\|process\.platform===`linux`\)&&\(this\.windowZooms\.set/);
-  assert.match(
-    patched,
-    /installApplicationMenuTitleBarOverlaySync\(e,t\)\{if\(process\.platform!==`win32`\|\|t!==`primary`&&t!==`detached`\)return;/,
-  );
-  assert.match(patched, /titleBarStyle:`hiddenInset`/);
+  for (const appearance of ["primary", "detached"]) {
+    const result = evaluateMainFixture(patched, "linux", appearance);
+    assert.deepEqual(result.options, { titleBarStyle: "hidden" });
+    assert.deepEqual(result.events, []);
+    assert.deepEqual(result.zooms, []);
+    assert.ok(evaluateMainFixture(source, "linux", appearance).events.some(([event]) => event === "overlay"));
+  }
+});
+
+test("main-process patch preserves Windows and macOS options, zoom, and theme synchronization", () => {
+  const source = officialMainFixture();
+  const patched = applyFramelessTitlebarMainPatch(source);
+  for (const platform of ["win32", "darwin"]) {
+    for (const appearance of ["primary", "detached", "secondary"]) {
+      assert.deepEqual(evaluateMainFixture(patched, platform, appearance), evaluateMainFixture(source, platform, appearance));
+    }
+  }
+  assert.deepEqual(evaluateMainFixture(patched, "linux", "secondary"), evaluateMainFixture(source, "linux", "secondary"));
 });
 
 test("main-process patch preserves current minified aliases", () => {
   const source = aliasedMainFixture();
+  assert.equal(framelessTitlebarMainContract(source), "current");
   const patched = applyFramelessTitlebarMainPatch(source);
   assert.notEqual(patched, source);
-  assert.match(patched, /platform===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:overlay\(zoom\)/);
+  assert.equal(framelessTitlebarMainContract(patched), "patched");
+  assert.match(patched, /platform===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:overlay\(windowZoom\)/);
   assert.match(patched, /platform===`linux`\?\{titleBarStyle:`hidden`\}/);
-  assert.match(patched, /this\.windowZooms\.set\(window\.id,zoom\),window\.setTitleBarOverlay\(overlay\(zoom\)\)/);
-  assert.match(
-    patched,
-    /installApplicationMenuTitleBarOverlaySync\(window,windowType\)\{if\(process\.platform!==`win32`\|\|windowType!==`primary`&&windowType!==`detached`\)return;/,
-  );
+  assert.match(patched, /this\.windowZooms\.set\(platform\.id,zoom\),platform\.setTitleBarOverlay\(overlay\(zoom\)\)/);
+  assert.match(patched, /installApplicationMenuTitleBarOverlaySync\(windowType,zoom\)\{if\(process\.platform!==`win32`\|\|zoom!==`primary`&&zoom!==`detached`\)return;/);
   assert.equal(applyFramelessTitlebarMainPatch(patched), patched);
 });
 
@@ -125,23 +163,39 @@ test("already-patched main-process contracts do not warn", () => {
 test("main-process patch rejects incomplete, duplicate, and mixed contracts byte-identically", () => {
   const current = officialMainFixture();
   const patched = applyFramelessTitlebarMainPatch(current);
-  const sources = [
-    current.replace("titleBarOverlay:A9(r)", "changed:A9(r)"),
-    current.replace("installApplicationMenuTitleBarOverlaySync", "installTitleBarOverlaySync"),
-    current.replace("(process.platform===`win32`||process.platform===`linux`)", "(process.platform===`win32`)"),
-    patched.replace("n===`linux`?{titleBarStyle:`hidden`", "n===`linux`?{titleBarStyle:`default`"),
-    patched.replace("process.platform===`win32`&&(this.windowZooms.set", "process.platform===`linux`&&(this.windowZooms.set"),
-    current + current,
-    patched + patched,
-    current + patched,
-    current.replace(
-      "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r)}",
-      "n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:A9(r)}:n===`linux`?{titleBarStyle:`hidden`}",
-    ),
+  const currentAnchors = [
+    "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}",
+    "case`detached`:return n===`darwin`?{titleBarStyle:`hiddenInset`,titleBarOverlay:!0,trafficLightPosition:A9(k9,r)}:{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}",
+    "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t)))",
+    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`detached`)return;",
   ];
-
+  const patchedAnchors = [
+    "n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}:n===`linux`?{titleBarStyle:`hidden`}",
+    "case`detached`:return n===`darwin`?{titleBarStyle:`hiddenInset`,titleBarOverlay:!0,trafficLightPosition:A9(k9,r)}:n===`linux`?{titleBarStyle:`hidden`}:{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}",
+    "process.platform===`win32`&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t)))",
+    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`||t!==`primary`&&t!==`detached`)return;",
+  ];
+  const sources = [current + current, patched + patched, current + patched];
+  for (let index = 0; index < currentAnchors.length; index++) {
+    assert.ok(current.includes(currentAnchors[index]));
+    assert.ok(patched.includes(patchedAnchors[index]));
+    sources.push(
+      current.replace(currentAnchors[index], ""),
+      patched.replace(patchedAnchors[index], ""),
+      current + currentAnchors[index],
+      patched + patchedAnchors[index],
+      current.replace(currentAnchors[index], patchedAnchors[index]),
+      patched.replace(patchedAnchors[index], currentAnchors[index]),
+    );
+  }
+  sources.push(
+    current.replace("titleBarOverlay:j9(r)", "titleBarOverlay:j9(r,1)"),
+    patched.replace("n===`linux`?{titleBarStyle:`hidden`}", "n===`linux`?{titleBarStyle:`default`}"),
+    current.replace("trafficLightPosition:A9(k9,r)}:{titleBarStyle:`hidden`", "trafficLightPosition:A9(k9,r,1)}:{titleBarStyle:`hidden`"),
+  );
   for (const source of sources) {
     const result = captureWarnings(() => applyFramelessTitlebarMainPatch(source));
+    assert.equal(framelessTitlebarMainContract(source), "drifted");
     assert.equal(result.value, source);
     assert.equal(result.warnings.length, 1);
     assert.match(result.warnings[0], /current frameless-titlebar main-process contract/);
@@ -165,6 +219,19 @@ test("webview patch remaps Linux chrome and is idempotent", () => {
   assert.equal(applyFramelessTitlebarWebviewPatch(patched), patched);
   assert.match(patched, /case`linux`:return`native`/);
   assert.doesNotMatch(patched, /case`win32`:case`linux`:return`application-menu`/);
+});
+
+test("webview patch preserves Windows, macOS, and browser chrome behavior", () => {
+  const source = officialWebviewFixture();
+  const patched = applyFramelessTitlebarWebviewPatch(source);
+  const originalMapping = vm.runInNewContext(`${source};h3e`);
+  const patchedMapping = vm.runInNewContext(`${patched};h3e`);
+  for (const engine of ["electron", "browser"]) {
+    for (const platform of ["linux", "win32", "darwin", "unknown"]) {
+      const expected = engine === "electron" && platform === "linux" ? "native" : originalMapping(engine, platform);
+      assert.equal(patchedMapping(engine, platform), expected);
+    }
+  }
 });
 
 test("already-patched webview contracts do not warn", () => {

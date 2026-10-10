@@ -31,7 +31,6 @@ function deviceKeyProviderPattern(flags = "u") {
 }
 const REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER = "codexLinuxRemoteControlOutboundTabGate";
 const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
-const REMOTE_MOBILE_CHROME_BRIDGE_MARKER = "codexLinuxRemoteMobileBrowserBackends";
 const REMOTE_CONTROL_LOAD_GATE_MARKER = "codexLinuxRemoteControlLoadGateEnabled";
 const REMOTE_CONTROL_FEATURE_SYNC_MARKER = "codexLinuxRemoteControlFeatureSyncEnabled";
 const REMOTE_CONTROL_LOAD_GATE_NEEDLE =
@@ -706,67 +705,6 @@ function applyLinuxRemoteConnectionsRefreshPatch(source) {
   return patched.replace(needle, replacement);
 }
 
-function applyLinuxRemoteMobileChromeBridgePatch(source) {
-  if (source.includes(REMOTE_MOBILE_CHROME_BRIDGE_MARKER)) {
-    return source;
-  }
-
-  if (browserClientHasNativeChromeBackendPreferenceRouting(source)) {
-    return source;
-  }
-
-  // 26.527.x moved the browser-use backend allowlist from the
-  // x-codex-browser-use-available-backends request-meta header to the
-  // BROWSER_USE_AVAILABLE_BACKENDS config value (var dy), renamed the allowlist
-  // (X6->e2 / rE->ly) and reader (yC->_y), and dropped the native-pipe diagnostic.
-  const backendNeedle =
-    "var e2=[\"chrome\",\"iab\",\"cdp\"];function ly(e){return e2.some(t=>t===e)}";
-  const backendReplacement =
-    "var e2=[\"chrome\",\"iab\",\"cdp\"];function ly(e){return e2.some(t=>t===e)}function codexLinuxRemoteMobileBrowserBackends(e){if(e==null)return null;if(!Array.isArray(e))return[];let t=e.filter(ly);return typeof process!=`undefined`&&process.platform===`linux`&&!t.includes(`chrome`)?[`chrome`,...t]:t}";
-  const currentBackendNeedle =
-    "function _y(){let e=Su(dy);return e==null?null:vy(e).filter(ly)}";
-  const currentBackendReplacement =
-    "function _y(){let e=Su(dy);return codexLinuxRemoteMobileBrowserBackends(e==null?null:vy(e))}";
-
-  if (source.includes(backendNeedle) && source.includes(currentBackendNeedle)) {
-    return source
-      .replace(backendNeedle, backendReplacement)
-      .replace(currentBackendNeedle, currentBackendReplacement);
-  }
-
-  const backendAllowlistPattern =
-    /var ([A-Za-z_$][\w$]*)=\["chrome","iab","cdp"\];function ([A-Za-z_$][\w$]*)\(e\)\{return \1\.some\(t=>t===e\)\}/u;
-  const readerPattern =
-    /function ([A-Za-z_$][\w$]*)\(\)\{let e=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\);return e==null\?null:([A-Za-z_$][\w$]*)\(e\)\.filter\(([A-Za-z_$][\w$]*)\)\}/u;
-  const allowlistMatch = source.match(backendAllowlistPattern);
-  const readerMatch = source.match(readerPattern);
-  if (allowlistMatch != null && readerMatch != null && readerMatch[5] === allowlistMatch[2]) {
-    const [, allowlistVar, allowlistFn] = allowlistMatch;
-    const [, readerFn, envReaderFn, backendsEnvVar, parseBackendsFn] = readerMatch;
-    return source
-      .replace(
-        backendAllowlistPattern,
-        `var ${allowlistVar}=["chrome","iab","cdp"];function ${allowlistFn}(e){return ${allowlistVar}.some(t=>t===e)}function codexLinuxRemoteMobileBrowserBackends(e){if(e==null)return null;if(!Array.isArray(e))return[];let t=e.filter(${allowlistFn});return typeof process!=\`undefined\`&&process.platform===\`linux\`&&!t.includes(\`chrome\`)?[\`chrome\`,...t]:t}`,
-      )
-      .replace(
-        readerPattern,
-        `function ${readerFn}(){let e=${envReaderFn}(${backendsEnvVar});return codexLinuxRemoteMobileBrowserBackends(e==null?null:${parseBackendsFn}(e))}`,
-      );
-  }
-
-  console.warn("WARN: Could not find Chrome browser-client backend allowlist needles - skipping remote-mobile Chrome bridge patch");
-  return source;
-}
-
-function browserClientHasNativeChromeBackendPreferenceRouting(source) {
-  return (
-    source.includes("BROWSER_USE_AVAILABLE_BACKENDS") &&
-    source.includes("browserPreference") &&
-    source.includes("preferredWindowIdFor") &&
-    /var [A-Za-z_$][\w$]*=\["chrome","iab","cdp"\];function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\{return [A-Za-z_$][\w$]*\.some\([A-Za-z_$][\w$]*=>[A-Za-z_$][\w$]*===[A-Za-z_$][\w$]*\)\}/u.test(source)
-  );
-}
-
 function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
   if (
     source.includes("codexLinuxRemoteTerminalStatusWaitingOnUserInput") &&
@@ -875,52 +813,47 @@ function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
   return patched;
 }
 
+const REMOTE_CONTROL_STATUS_READ_HELPER =
+  `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(e){return !(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)&&typeof e==\`string\`&&(e.startsWith(\`remote-ssh\`)||e.startsWith(\`remote-control:\`)))}`;
+
+function remoteControlStatusReadPattern(patched = false) {
+  const guard = patched ? `${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}\\(\\k<host>\\)\\?` : "";
+  const blocked = patched
+    ? `:\\(\\k<active>\\(\\)&&\\k<setter>\\(\\k<store>,\\k<host>,\\{status:\\x60disabled\\x60,available:!1,accessRequired:!1\\}\\),void 0\\)`
+    : "";
+  return new RegExp(
+    String.raw`function (?<fn>${DEVICE_KEY_IDENT})\((?<store>${DEVICE_KEY_IDENT}),(?<host>${DEVICE_KEY_IDENT}),(?<client>${DEVICE_KEY_IDENT}),(?<current>${DEVICE_KEY_IDENT})\)\{if\((?<skip>${DEVICE_KEY_IDENT})\(\k<host>\)\)return\(\)=>\{\}` +
+      String.raw`;let (?<abort>${DEVICE_KEY_IDENT})=new AbortController,(?<active>${DEVICE_KEY_IDENT})=\(\)=>!\k<abort>\.signal\.aborted&&\(\k<current>\?\.\(\)\?\?!0\),(?<initial>${DEVICE_KEY_IDENT})=\k<store>\.get\((?<atom>${DEVICE_KEY_IDENT}),\k<host>\)` +
+      String.raw`,(?<subscription>${DEVICE_KEY_IDENT})=\k<client>\.subscribe\(\{type:\x60notification\x60,key:\{hostId:\k<host>\},methods:\x60remoteControl/status/changed\x60,listener:\(\{params:(?<params>${DEVICE_KEY_IDENT})\}\)=>\{\k<active>\(\)&&(?<setter>${DEVICE_KEY_IDENT})\(\k<store>,\k<host>,\k<params>\)\}\}\)` +
+      String.raw`,(?<resolved>${DEVICE_KEY_IDENT}),(?<cleanup>${DEVICE_KEY_IDENT})=\(\)=>\{\k<abort>\.signal\.aborted\|\|\(\k<abort>\.abort\(\),\k<subscription>\[Symbol\.dispose\]\(\),\k<resolved>\?\.\[Symbol\.dispose\]\(\)\)\}` +
+      String.raw`;return \k<subscription>\.onRpcBroken\(\k<cleanup>` +
+      String.raw`\),\k<subscription>\.then\((?<ready>${DEVICE_KEY_IDENT})=>\{if\(!\k<active>\(\)\)\{\k<ready>\[Symbol\.dispose\]\(\);return\}\k<resolved>=\k<ready>,\k<ready>\.onRpcBroken\(\k<cleanup>\)\},\k<cleanup>\),` +
+      guard +
+      String.raw`(?<read>(?<cancel>${DEVICE_KEY_IDENT})\(\k<client>\.sendRequest\(\x60remoteControl/status/read\x60,void 0\),\k<abort>\.signal\)\.then\((?<result>${DEVICE_KEY_IDENT})=>\{\k<store>\.get\(\k<atom>,\k<host>\)===\k<initial>&&\k<active>\(\)&&\k<setter>\(\k<store>,\k<host>,\k<result>\)\}\)\.catch\((?<error>${DEVICE_KEY_IDENT})=>\{\k<active>\(\)&&(?<logger>${DEVICE_KEY_IDENT})\.error\(\x60Failed to read remote-control status\x60,\{safe:\{\},sensitive:\{error:\k<error>\}\}\)\}\))` +
+      blocked + String.raw`,\k<cleanup>\}`,
+    "gu",
+  );
+}
+
 function applyLinuxRemoteControlStatusReadGuardPatch(source) {
-  const currentStatusReadPattern =
-    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(([A-Za-z_$][\w$]*)\(\3\)\)return\(\)=>\{\};let ([A-Za-z_$][\w$]*)=new AbortController,([A-Za-z_$][\w$]*)=\(\)=>!\7\.signal\.aborted&&\(\5\?\.\(\)\?\?!0\),([A-Za-z_$][\w$]*)=\2\.get\(([A-Za-z_$][\w$]*),\3\),(?!codexLinuxRemoteControlStatusReadGuard=)/u;
-  const currentMatches = [...source.matchAll(new RegExp(currentStatusReadPattern.source, "gu"))];
-  const patchedHelperPattern = new RegExp(
-    `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}\\((${DEVICE_KEY_IDENT})\\)\\{return !\\(typeof navigator!=\\x60undefined\\x60&&navigator\\.userAgent\\.includes\\(\\x60Linux\\x60\\)&&typeof \\1==\\x60string\\x60&&\\(\\1\\.startsWith\\(\\x60remote-ssh\\x60\\)\\|\\|\\1\\.startsWith\\(\\x60remote-control:\\x60\\)\\)\\)\\}`,
-    "gu",
-  );
-  const patchedHelpers = [...source.matchAll(patchedHelperPattern)];
-  const patchedStatusReadPattern = new RegExp(
-    `function (?<functionName>${DEVICE_KEY_IDENT})\\((?<store>${DEVICE_KEY_IDENT}),(?<host>${DEVICE_KEY_IDENT}),(?<client>${DEVICE_KEY_IDENT}),(?<active>${DEVICE_KEY_IDENT})\\)` +
-      `\\{if\\((?<skip>${DEVICE_KEY_IDENT})\\(\\k<host>\\)\\)return\\(\\)=>\\{\\};let (?<abort>${DEVICE_KEY_IDENT})=new AbortController,` +
-      `(?<isActive>${DEVICE_KEY_IDENT})=\\(\\)=>!\\k<abort>\\.signal\\.aborted&&\\(\\k<active>\\?\\.\\(\\)\\?\\?!0\\),` +
-      `(?<initial>${DEVICE_KEY_IDENT})=\\k<store>\\.get\\((?<atom>${DEVICE_KEY_IDENT}),\\k<host>\\),` +
-      `codexLinuxRemoteControlStatusReadGuard=${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}\\(\\k<host>\\);` +
-      "if\\(!codexLinuxRemoteControlStatusReadGuard\\)\\{\\k<store>\\.set\\(\\k<atom>,\\k<host>,\\{status:\\x60disabled\\x60,available:!1,accessRequired:!1\\}\\);return\\(\\)=>\\{\\}\\}let ",
-    "gu",
-  );
-  const patchedMatches = [...source.matchAll(patchedStatusReadPattern)];
-  const hasPatchSignal = source.includes(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER) ||
-    source.includes("codexLinuxRemoteControlStatusReadGuard");
-
-  if (patchedHelpers.length === 1 && patchedMatches.length === 1 && currentMatches.length === 0 && source.includes("remoteControl/status/read")) {
-    const helperArg = patchedHelpers[0][1];
-    const { store: storeVar, host: hostVar, atom: statusAtomVar } = patchedMatches[0].groups;
-    const relationships = [
-      `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${helperArg}){return !(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)&&typeof ${helperArg}==\`string\`&&(${helperArg}.startsWith(\`remote-ssh\`)||${helperArg}.startsWith(\`remote-control:\`)))}`,
-      `codexLinuxRemoteControlStatusReadGuard=${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${hostVar});`,
-      `if(!codexLinuxRemoteControlStatusReadGuard){${storeVar}.set(${statusAtomVar},${hostVar},{status:\`disabled\`,available:!1,accessRequired:!1});return()=>{}}`,
-    ];
-    if (relationships.every((relationship) => source.split(relationship).length === 2)) return source;
+  if (!source.includes("remoteControl/status/read")) return source;
+  const pristine = [...source.matchAll(remoteControlStatusReadPattern())];
+  const patched = [...source.matchAll(remoteControlStatusReadPattern(true))];
+  const helperCount = source.split(REMOTE_CONTROL_STATUS_READ_HELPER).length - 1;
+  const markerCount = source.split(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER).length - 1;
+  if (pristine.length === 0 && patched.length === 1 && helperCount === 1 && markerCount === 2) {
+    return source;
   }
-
-  if (currentMatches.length === 1 && patchedMatches.length === 0 && !hasPatchSignal) {
-    const [needle, functionName, storeVar, hostVar, clientVar, activeVar, skipVar, abortVar,
-      isActiveVar, initialValueVar, statusAtomVar] = currentMatches[0];
-    const guardedPrefix =
-      `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(e){return !(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)&&typeof e==\`string\`&&(e.startsWith(\`remote-ssh\`)||e.startsWith(\`remote-control:\`)))}` +
-      `function ${functionName}(${storeVar},${hostVar},${clientVar},${activeVar}){if(${skipVar}(${hostVar}))return()=>{};let ${abortVar}=new AbortController,${isActiveVar}=()=>!${abortVar}.signal.aborted&&(${activeVar}?.()??!0),${initialValueVar}=${storeVar}.get(${statusAtomVar},${hostVar}),` +
-      `codexLinuxRemoteControlStatusReadGuard=${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${hostVar});if(!codexLinuxRemoteControlStatusReadGuard){${storeVar}.set(${statusAtomVar},${hostVar},{status:\`disabled\`,available:!1,accessRequired:!1});return()=>{}}let `;
-    return source.slice(0, currentMatches[0].index) + guardedPrefix +
-      source.slice(currentMatches[0].index + needle.length);
+  if (pristine.length !== 1 || patched.length !== 0 || markerCount !== 0) {
+    console.warn("WARN: Could not find unique complete remote-control status subscription - skipping Linux remote-control status guard patch");
+    return source;
   }
-  if (!source.includes("remoteControl/status/read") && !hasPatchSignal) return source;
-  console.warn("WARN: Remote-control status read contract is missing or ambiguous - skipping Linux remote-control status guard patch");
-  return source;
+  const [match] = pristine;
+  const { host, active, setter, store, read } = match.groups;
+  const guardedRead = `${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${host})?${read}:` +
+    `(${active}()&&${setter}(${store},${host},{status:\`disabled\`,available:!1,accessRequired:!1}),void 0)`;
+  return source.slice(0, match.index) + REMOTE_CONTROL_STATUS_READ_HELPER +
+    match[0].replace(read, guardedRead) + source.slice(match.index + match[0].length);
 }
 
 function applyLinuxRemoteControlStatusWaitPatch(source) {
@@ -1097,8 +1030,9 @@ function remoteMobileConversationHydrationGuardPattern({ patched = false, flags 
     `return (?<pending>${DEVICE_KEY_IDENT})==null\\?${marker}${hostGuard}${methodGuard}\\|\\|` +
       `this\\.context\\.threadStore\\.conversations\\.has\\((?<conversation>${DEVICE_KEY_IDENT})\\)\\|\\|` +
       `this\\.context\\.threadStore\\.isConversationSuppressed\\(\\k<conversation>\\)\\?!1:` +
-      `\\(this\\.beginDiscovery\\(\\k<conversation>,(?<ignored>${DEVICE_KEY_IDENT})\\),` +
-      `this\\.buffer\\.buffer\\((?<event>${DEVICE_KEY_IDENT}),\\k<ignored>\\)\\):`,
+      `\\(this\\.beginDiscovery\\(\\k<conversation>,(?<ignore>${DEVICE_KEY_IDENT})\\),` +
+      `this\\.buffer\\.buffer\\((?<delivery>${DEVICE_KEY_IDENT}),\\k<ignore>\\)\\):` +
+      `\\(\\k<pending>\\.ignored\\.add\\(\\k<ignore>\\),this\\.buffer\\.buffer\\(\\k<delivery>,\\k<ignore>\\)\\)\\}`,
     flags,
   );
 }
@@ -1150,7 +1084,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
   }
   if (contract.state === "patched") return source;
 
-  const { pending, conversation, notification, ignored, event } = contract.match.groups;
+  const { conversation, notification, pending, ignore, delivery } = contract.match.groups;
   const replacement =
     `return ${pending}==null?/*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}*/` +
     "this.manager.getHostId()!==`durable`&&this.manager.getHostId()!==`local`||" +
@@ -1159,10 +1093,12 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
     `${notification}.method!==\`item/completed\`)||` +
     `this.context.threadStore.conversations.has(${conversation})||` +
     `this.context.threadStore.isConversationSuppressed(${conversation})?!1:` +
-    `(this.beginDiscovery(${conversation},${ignored}),this.buffer.buffer(${event},${ignored})):`;
+    `(this.beginDiscovery(${conversation},${ignore}),this.buffer.buffer(${delivery},${ignore})):` +
+    `(${pending}.ignored.add(${ignore}),this.buffer.buffer(${delivery},${ignore}))}`;
   return source.slice(0, contract.match.index) + replacement +
     source.slice(contract.match.index + contract.match[0].length);
 }
+
 function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
   const logMarker = "Reasoning summary turn-start config resolved";
   const logIndexes = [...source.matchAll(new RegExp(escapeRegExp(logMarker), "gu"))].map(
@@ -1458,7 +1394,6 @@ module.exports.applyLinuxRemoteMobileAppServerRemoteControlPatch =
   applyLinuxRemoteMobileAppServerRemoteControlPatch;
 module.exports.hasLinuxRemoteMobileLocalAppServerRemoteControlPatch =
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch;
-module.exports.applyLinuxRemoteMobileChromeBridgePatch = applyLinuxRemoteMobileChromeBridgePatch;
 module.exports.applyLinuxRemoteMobileReasoningSummaryPatch = applyLinuxRemoteMobileReasoningSummaryPatch;
 module.exports.applyLinuxRemoteMobileConversationHydrationPatch =
   applyLinuxRemoteMobileConversationHydrationPatch;
