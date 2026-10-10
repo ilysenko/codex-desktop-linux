@@ -1,0 +1,9 @@
+{
+  "id": "project-source-filter",
+  "title": "Project Source Filter",
+  "description": "Adds an All, ChatGPT, or Work filter to the ChatGPT-mode Projects sidebar.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
