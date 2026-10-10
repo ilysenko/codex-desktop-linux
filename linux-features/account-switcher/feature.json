@@ -19,13 +19,5 @@
     "pacman": [
       "libsecret"
     ]
-  },
-  "gentoo": {
-    "dependencies": {
-      "RDEPEND": [
-        "app-crypt/libsecret"
-      ]
-    },
-    "supported": true
   }
 }

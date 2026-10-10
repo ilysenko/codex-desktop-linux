@@ -35,7 +35,7 @@ function applyMain(source) {
   // Work backwards to keep indices stable. Both changes are one fail-closed contract.
   const edits = [
     { index: bridge.index, old: prefix, replacement: injected },
-    { index: config.index, old: config[0], replacement: config[0].slice(0, -1) + ',\`cli_auth_credentials_store="file"\`,\`features.secret_auth_storage=false\`]' },
+    { index: config.index, old: config[0], replacement: config[0].slice(0, -1) + `,...(${config[1]}.hostConfig.id===\`local\`?[\`cli_auth_credentials_store="file"\`,\`features.secret_auth_storage=false\`]:[])]` },
   ].sort((a, b) => b.index - a.index);
   for (const edit of edits) source = source.slice(0, edit.index) + edit.replacement + source.slice(edit.index + edit.old.length);
   return source;

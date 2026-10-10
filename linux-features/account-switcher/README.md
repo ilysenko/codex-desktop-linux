@@ -71,10 +71,11 @@ If a saved refresh token has expired or been revoked, use **Add account…** to
 sign in again. An unlocked Secret Service provider (e.g. GNOME Keyring,
 KeePassXC with Secret Service enabled, or a configured KDE provider) is required;
 the feature never falls back to an unencrypted account vault. Native deb/RPM/
-pacman/Gentoo packages declare the CLI dependency and Nix adds it to the runtime
+pacman packages declare the CLI dependency and Nix adds it to the runtime
 path. Source builds and AppImage need `secret-tool` on the host (`libsecret-tools`
 on Debian/Ubuntu; `libsecret` on Arch/Fedora). On KDE, KWallet itself must expose
 Secret Service, or a separate provider must be active.
+Gentoo support is not declared until native Portage validation is available.
 
 Vault format 2 uses Secret Service encryption. Earlier experimental format-1
 vaults are rejected and preserved; sign in again using a fresh profile to test

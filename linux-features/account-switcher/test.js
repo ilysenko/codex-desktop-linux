@@ -229,8 +229,8 @@ test("native package plans declare the Secret Service CLI dependency", t => {
     assert.ok(plan.dependencies.includes(dependency), format);
     assert.equal(plan.resources.length, 0);
   }
-  const gentoo = require("../../scripts/lib/gentoo-feature-support").gentooFeaturePlan({ featuresConfigPath: config });
-  assert.deepEqual(gentoo.dependencies.RDEPEND, ["app-crypt/libsecret"]);
+  assert.throws(() => require("../../scripts/lib/gentoo-feature-support").gentooFeaturePlan({ featuresConfigPath: config }),
+    /Gentoo does not support.*account-switcher/);
 });
 
 test("switches to a saved account and restores refreshed current credentials later", async t => {
@@ -392,7 +392,7 @@ test("identity uses the current desktop user_id authority ahead of chatgpt_user_
   assert.equal(f.dialogs.length, 0);
 });
 
-test("semantic contracts preserve renamed symbols, reject partial drift, and route the Polish menu action", () => {
+test("semantic contracts preserve renamed symbols, reject partial drift, and route the Polish menu action", async () => {
   const main = 'async function handle(view,message){switch(message.type){case`mcp-request`:{log().debug(`app_server.bridge_received`,{safe:{messageType:`mcp-request`,requestId:String(message.request.id),method:message.request.method,originWebcontentsId:view.id,originHostId:message.hostId}});this.sendAppServerResponseToView();this.appServerConnectionRegistry.getAllHostIds();break}}}async function config(options){return[...helpers.computeConfig(options.globalState,options.hostConfig),...await options.secretAuthStorageConfigOverrides,...await extras(options),mode(options)]}';
   const ui = 'function Profile(props){let memo=(0,Cache.c)(275),{sidebarFooter:footer,ambientUsage:usage,hideUsage:hidden,open:opened,onClose:close}=props,disabled=hidden!==void 0,scope=read(atom);let fmt=intl();fmt.formatMessage({id:`codex.profileDropdown.copyUserIdForEmail`});let label=`codex.profileDropdown.settingsPage`;let settings=(0,UI.jsx)(Item,{leftIconAsset:asset,keyboardShortcut:shortcut,onClick:settingsClick,children:label});let alternate=(0,UI.jsx)(Layout,{accountIcon:icon,accountSwitcher:switcher,additionalItems:items,onCloseMenu:close});Bridge.dispatchMessage(`avatar-overlay-open`,{});return(0,UI.jsxs)(`div`,{children:[identity,divider,settings,null,workspace,analytics,null,null,more]})}';
   for (const [source, apply, drift] of [[main, applyMain, "secretAuthStorageConfigOverrides"], [ui, applyUi, "accountSwitcher"]]) {
@@ -404,6 +404,14 @@ test("semantic contracts preserve renamed symbols, reject partial drift, and rou
     assert.equal(apply(source.replace(drift, "retired")), source.replace(drift, "retired"));
   }
   const patched = applyUi(ui);
+  const config = vm.runInNewContext(applyMain(main) + ";config", {
+    helpers: { computeConfig: () => ["base"] }, extras: async () => ["extras"], mode: () => "mode",
+  });
+  for (const id of ["local", "ssh-test", "durable"]) {
+    const overrides = await config({ hostConfig: { id }, globalState: {}, secretAuthStorageConfigOverrides: ["policy"] });
+    assert.deepEqual(Array.from(overrides), ["base", "policy", "extras", "mode",
+      ...(id === "local" ? ['cli_auth_credentials_store="file"', "features.secret_auth_storage=false"] : [])]);
+  }
   const rows = [...patched.matchAll(/\(0,UI\.jsx\)\(Item,\{onClick:\(\)=>\{close\(\);Bridge\.dispatchMessage[\s\S]*?`Switch account…`\}\)/g)];
   assert.equal(rows.length, 2);
   const sent = [];
