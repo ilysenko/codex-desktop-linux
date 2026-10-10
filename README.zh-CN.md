@@ -271,6 +271,13 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `thorium-chrome-plugin` | 为官方 Chrome integration 添加 Thorium | [文档](linux-features/thorium-chrome-plugin/README.md) |
 | `tray-usage` | 在 Linux 系统托盘菜单显示剩余用量 | [文档](linux-features/tray-usage/README.md) |
 | `ui-tweaks` | 可选 UI 与交互自定义 | [文档](linux-features/ui-tweaks/README.md) |
+| `web-ui` | 由官方 Linux 应用托管、需要身份验证的实验性浏览器界面 | [文档](linux-features/web-ui/README.md) |
+
+启用 `web-ui` 并重新构建后，退出桌面应用，然后运行
+`CODEX_WEB_UI=1 codex-desktop`（或 `CODEX_WEB_UI=1 ./codex-app/start.sh`）。
+在浏览器中打开终端输出的完整私密连接 URL。服务仅监听 loopback，默认端口为
+4310；可通过 `CODEX_WEB_UI_PORT` 修改。SSH 访问方式、支持的工作流和当前限制
+请参阅功能文档。
 
 若要在 GNOME Wayland 下听写时避免 RemoteDesktop 权限提示，请通过
 `make setup-native` 同时选择 `global-dictation` 和 `global-dictation-gnome`，
