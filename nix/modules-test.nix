@@ -112,6 +112,9 @@ let
   accountSwitcherPackage = packages.codex-desktop.override {
     linuxFeatureIds = [ "account-switcher" ];
   };
+  # hasInfix builds a regex, whose pattern cannot carry Nix store context.
+  # Only the comparison pattern loses context; the package keeps its dependency.
+  secretToolBin = builtins.unsafeDiscardStringContext "${lib.getBin pkgs.libsecret}/bin";
   maximalPackages = [
     packages.codex-desktop-maximal-directory-watch
     packages.codex-desktop-maximal-shallow-watch
@@ -148,8 +151,8 @@ assert lib.assertMsg
   "Maximal Nix profiles must retain the shared server without conflicting account switching";
 assert lib.assertMsg
   (accountSwitcherPackage.passthru.linuxFeatureIds == [ "account-switcher" ]
-    && lib.hasInfix "${lib.getBin pkgs.libsecret}/bin" accountSwitcherPackage.installPhase
-    && !(lib.hasInfix "${lib.getBin pkgs.libsecret}/bin" packages.codex-desktop.installPhase))
+    && lib.hasInfix secretToolBin accountSwitcherPackage.installPhase
+    && !(lib.hasInfix secretToolBin packages.codex-desktop.installPhase))
   "Account switching must remain selectable with its conditional Secret Service CLI runtime";
 assert lib.assertMsg
   (!features.optionType.check [ "not-a-feature" ]
