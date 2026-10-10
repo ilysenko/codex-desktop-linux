@@ -1,0 +1,14 @@
+{
+  "id": "web-ui",
+  "title": "Web UI (experimental)",
+  "description": "Open the official interface in a browser through an authenticated loopback bridge, using the installed Linux app as its host.",
+  "defaultEnabled": false,
+  "entrypoints": { "patchDescriptors": "./patch.js" },
+  "resources": [
+    { "source": "runtime.js", "target": ".codex-linux/features/web-ui/runtime.js", "mode": "0644" },
+    { "source": "browser.js", "target": ".codex-linux/features/web-ui/browser.js", "mode": "0644" }
+  ],
+  "runtimeHooks": {
+    "launcher": { "source": "launcher.sh", "name": "web-ui.sh", "mode": "0755" }
+  }
+}
