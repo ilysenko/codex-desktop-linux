@@ -36,6 +36,16 @@
     if (value === undefined) delete bootstrap.sharedObjectSnapshot[key];
     else bootstrap.sharedObjectSnapshot[key] = value;
   }
+  function presentDialog(dialog) {
+    // Upstream's modal disables pointer events outside its content and traps
+    // focus there. Keep this adapter inside that modal's DOM subtree so both
+    // layers remain interactive; the native top layer handles visual stacking.
+    const parent = [...document.querySelectorAll('[role="dialog"][aria-modal="true"][data-state="open"]')]
+      .findLast(element => element.getClientRects().length) ?? document.body;
+    dialog.style.cssText += ";position:fixed;inset:0;margin:auto;pointer-events:auto;background:Canvas;color:CanvasText";
+    parent.append(dialog);
+    dialog.showModal();
+  }
   let folderDialog;
   function chooseFolder() {
     if (folderDialog) return Promise.resolve(null);
@@ -84,7 +94,7 @@
       dialog.addEventListener("cancel", event => { event.preventDefault(); finish(null); });
       form.append(input, button("Open path", () => browse(input.value)));
       controls.append(button("Cancel", () => finish(null)), choose);
-      dialog.append(title, form, error, list, controls); document.body.append(dialog); dialog.showModal();
+      dialog.append(title, form, error, list, controls); presentDialog(dialog);
       browse(null);
     });
   }
@@ -123,7 +133,7 @@
           const close = document.createElement("button"); close.textContent = "Cancel";
           close.addEventListener("click", () => { dialog.close(); dialog.remove(); });
           dialog.addEventListener("cancel", () => dialog.remove());
-          dialog.append(text, link, close); document.body.append(dialog); dialog.showModal();
+          dialog.append(text, link, close); presentDialog(dialog);
         }
         return;
       }

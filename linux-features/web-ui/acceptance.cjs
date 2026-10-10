@@ -10,7 +10,7 @@ const { chromium } = require(process.env.CODEX_WEB_UI_PLAYWRIGHT_PATH || "playwr
 
 function connectionUrl(logPath) {
   if (!logPath) throw Error("Set CODEX_WEB_UI_TEST_LOG to the private host log path");
-  const url = fs.readFileSync(logPath, "utf8").match(/ChatGPT Community Web UI: (http:\/\/[^\s]+)/)?.[1];
+  const url = [...fs.readFileSync(logPath, "utf8").matchAll(/ChatGPT Community Web UI: (http:\/\/[^\s]+)/g)].at(-1)?.[1];
   if (!url) throw Error("Host has not printed its readiness URL");
   return url;
 }
@@ -61,6 +61,18 @@ async function run() {
     const command = await page.evaluate(cwd => communityTestRpc("command/exec", { command: ["/bin/echo", "community-web-ui-command"], cwd, timeoutMs: 5000 }), fixture);
     assert.equal(command.exitCode, 0);
     assert.equal(command.stdout.trim(), "community-web-ui-command");
+    // Reproduce the upstream project modal's pointer-event restriction. A
+    // chooser appended outside it silently ignores real pointer clicks.
+    await page.evaluate(() => {
+      const modal = document.createElement("div");
+      modal.id = "community-test-modal";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.setAttribute("data-state", "open");
+      modal.style.cssText = "position:fixed;inset:100px;pointer-events:auto";
+      document.body.style.pointerEvents = "none";
+      document.body.append(modal);
+    });
     const selection = page.evaluate(() => new Promise(resolve => {
       const listener = event => {
         if (event.data?.type === "workspace-root-option-picked") { window.removeEventListener("message", listener); resolve(event.data.root); }
@@ -69,10 +81,12 @@ async function run() {
       electronBridge.sendMessageFromView({ type: "electron-pick-workspace-root-option", allowMultiple: false });
     }));
     await page.getByRole("textbox", { name: "Host folder path" }).fill(fixture);
+    assert.equal(await page.getByRole("dialog", { name: "Choose a folder on the host computer" }).evaluate(dialog => dialog.parentElement.id), "community-test-modal");
     await page.getByRole("button", { name: "Open path", exact: true }).click();
     await page.getByRole("button", { name: "subfolder", exact: true }).click();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     assert.equal(await selection, path.join(fixture, "subfolder"));
+    await page.evaluate(() => { document.getElementById("community-test-modal").remove(); document.body.style.pointerEvents = ""; });
     const second = await context.newPage();
     await second.goto(origin);
     await second.getByRole("alert").filter({ hasText: "One browser session is already connected" }).waitFor();

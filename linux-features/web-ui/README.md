@@ -69,6 +69,16 @@ ChatGPT OAuth completion may also require forwarding its separate loopback
 callback port when using SSH; use the callback address in the authorization
 URL. Signing in on the Linux host before starting web mode is another option.
 
+Local account authentication and agent turns do not guarantee access to every
+ChatGPT cloud service. In an authenticated Docker test, local projects, agent
+commands, and saved chats worked, while cloud catalog sync received HTTP 403
+responses and other cloud routes reported Cloudflare challenges. The upstream
+Recents list can keep showing a loader while that catalog remains incomplete.
+Inspect the host's `Thread catalog sync failed` logs when diagnosing this;
+reloading the browser or copying the same credentials again does not resolve a
+server-side rejection. The feature retains upstream authentication and cloud
+request behavior.
+
 ## Lifecycle and compatibility
 
 The HTTP server runs inside the official main process and ends with it. No
