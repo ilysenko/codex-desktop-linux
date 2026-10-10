@@ -109,6 +109,13 @@ let
   assertionsFail = evaluated: lib.any (item: !item.assertion) evaluated.config.assertions;
   invalidHomeFiles = map (cfg: assertionsFail (evalHome cfg)) invalidEnvironmentFileConfigs;
   invalidNixOSFiles = map (cfg: assertionsFail (evalNixOS cfg)) invalidEnvironmentFileConfigs;
+  accountSwitcherPackage = packages.codex-desktop.override {
+    linuxFeatureIds = [ "account-switcher" ];
+  };
+  maximalPackages = [
+    packages.codex-desktop-maximal-directory-watch
+    packages.codex-desktop-maximal-shallow-watch
+  ];
 in
 assert lib.assertMsg
   (features.normalize [ "ui-tweaks" "ui-tweaks" "agent-workspace" ] == [ "agent-workspace" "ui-tweaks" ])
@@ -128,6 +135,22 @@ assert lib.assertMsg
 assert lib.assertMsg
   (!(builtins.tryEval (features.normalize [ "community-profile-isolation" "shared-app-server-socket" ])).success)
   "Community profile isolation conflict with shared app-server socket was accepted";
+assert lib.assertMsg
+  (!(builtins.tryEval (features.normalize [ "account-switcher" "shared-app-server-socket" ])).success)
+  "Account switching conflict with shared app-server socket was accepted";
+assert lib.assertMsg
+  (lib.all (package:
+    let selected = package.passthru.linuxFeatureIds;
+    in features.normalize selected == selected
+      && lib.elem "shared-app-server-socket" selected
+      && !(lib.elem "account-switcher" selected)
+  ) maximalPackages)
+  "Maximal Nix profiles must retain the shared server without conflicting account switching";
+assert lib.assertMsg
+  (accountSwitcherPackage.passthru.linuxFeatureIds == [ "account-switcher" ]
+    && lib.hasInfix "${lib.getBin pkgs.libsecret}/bin" accountSwitcherPackage.installPhase
+    && !(lib.hasInfix "${lib.getBin pkgs.libsecret}/bin" packages.codex-desktop.installPhase))
+  "Account switching must remain selectable with its conditional Secret Service CLI runtime";
 assert lib.assertMsg
   (!features.optionType.check [ "not-a-feature" ]
     && features.optionType.check [ "codex-wrapper-updater" ])
