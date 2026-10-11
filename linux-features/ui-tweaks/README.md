@@ -406,6 +406,23 @@ This tweak is independently disabled by default:
 }
 ```
 
+The annotation text can briefly appear in the regular composer area before it
+is sent. The native local direct-submit path accepts the message locally with
+`acceptLocally: true` and `queueModeOverride: "queue"`. The turn coordinator
+registers a `pending` submission, and the upstream queue preview displays
+`pending` and `sending` messages in the composer panels. This explains why the
+annotation can appear to move into the input area while submission completes.
+
+The same native path builds an empty composer prompt and sets
+`preserveComposerDraft: true` to preserve the regular composer's draft. Source
+inspection supports the queue-preview explanation; the transient DOM during
+the reported visual transition was not captured.
+
+This tweak retains the native preview and submission lifecycle. Suppressing the
+visual transition would require separate handling of queued messages, sending
+progress, and failure/retry states, so that cosmetic change is outside this
+tweak's scope.
+
 ## Drift Behavior
 
 The ASAR patches are fail-soft. If upstream bundle markers drift, the feature
