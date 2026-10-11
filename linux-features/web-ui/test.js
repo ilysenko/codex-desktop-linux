@@ -8,7 +8,7 @@ const http = require("node:http");
 const { execFileSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const test = require("node:test");
-const { apply, patchMain, patchRenderer, patchCatalogRenderer } = require("./patch");
+const { apply, patchMain, patchRenderer, patchCatalogRenderer, patchDictationRenderer } = require("./patch");
 const vm = require("node:vm");
 const { listDirectories, parsePort, startServer } = require("./runtime");
 const { stageEnabledLinuxFeatureInstall, loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features");
@@ -141,6 +141,39 @@ const catalogRendererFixture = 'async function loadProfile(){let{getChatGptReque
   'function existingOwner(){let service=client?.accessInputs,t=null;service.publishChatGptRequestProfile(t)}' +
   'function enable(){let disposed=!1,selection={kind:`chatgpt`,accountId:account};return catalog.setSourceEnabled(selection,!0).then(()=>"enabled")}';
 
+const dictationFixture = 'async function transcribe(audio,options={}){let boundary="test-boundary",bytes=await multipart(audio,boundary);return retry(()=>client.getInstance().fetch(`/transcribe`,{method:`POST`,body:bytes,headers:{"Content-Type":`multipart/form-data; boundary=${boundary}`,...nativeHeaders()},signal:options.signal,retry:!1}).then(e=>e.json()),options.signal)}';
+
+test("dictation uses upstream browser headers, preserving audio, cancellation and explicit Retry; desktop keeps native headers", async () => {
+  for (const web of [false, true]) {
+    const calls = [], audio = Buffer.from("synthetic audio bytes"), controller = new AbortController();
+    let loads = 0;
+    const context = vm.createContext({ electronBridge: { communityWebUi: web },
+      multipart: async value => value, retry: operation => operation(),
+      nativeHeaders: () => ({ originator: "Codex Desktop", "X-OpenAI-Attach-Auth": "1" }),
+      loadHeadersModule: async () => { loads++; return { getChatGPTRequestHeaders: route => { assert.equal(route, "/transcribe"); return { originator: "Codex Browser", "User-Agent": "actual browser", "oai-did": "browser-device", "X-OpenAI-Attach-Auth": "1" }; } }; },
+      client: { getInstance: () => ({ fetch: async (route, options) => {
+        assert.equal(route, "/transcribe"); calls.push(options);
+        if (calls.length === 1) throw Error("injected upload failure");
+        return { json: async () => ({ text: "Synthetic dictation test." }) };
+      } }) },
+    });
+    const source = patchDictationRenderer(dictationFixture, "requests.js");
+    assert.equal(patchDictationRenderer(source, "requests.js"), source);
+    vm.runInContext(source.replace('import("./requests.js")', "loadHeadersModule()"), context);
+    await assert.rejects(context.transcribe(audio, { signal: controller.signal }), /injected upload failure/);
+    assert.equal((await context.transcribe(audio, { signal: controller.signal })).text, "Synthetic dictation test.");
+    assert.equal(loads, web ? 2 : 0);
+    for (const options of calls) {
+      assert.equal(options.body, audio);
+      assert.equal(options.signal, controller.signal);
+      assert.equal(options.retry, false);
+      assert.equal(options.headers["Content-Type"], "multipart/form-data; boundary=test-boundary");
+      assert.equal(options.headers.originator, web ? "Codex Browser" : "Codex Desktop");
+      assert.equal(options.headers["X-OpenAI-Attach-Auth"], "1");
+    }
+  }
+});
+
 test("web catalog publishes the real browser profile before activation; desktop retains its original call", async () => {
   for (const web of [false, true]) {
     const calls = [];
@@ -240,7 +273,8 @@ function bundle(t) {
   put(".vite/build/preload.js", 'A=e.ipcRenderer.sendSync(`codex_desktop:get-shared-object-snapshot`)??{};e.contextBridge.exposeInMainWorld(`electronBridge`,bridge)');
   put(".vite/build/network.js", 'server=r.t(((e,t)=>{var n=require("http");t.exports=class extends n{noServer:!1,backlog:null,server:null,host:null,path:null,port:null}}))');
   put("webview/assets/app-shared-test.js", 'connect-app-host;encodingLevel=`structuredClonable`;' + capabilityFixture);
-  put("webview/assets/app-initial-test.js", catalogRendererFixture);
+  put("webview/assets/app-initial-test.js", catalogRendererFixture + dictationFixture);
+  put("webview/assets/requests-test.js", 'export{headers as getChatGPTRequestHeaders,profile as getChatGptRequestProfile};');
   put("webview/index.html", '<head>connect-src </head>');
   return { root, put };
 }
@@ -249,7 +283,7 @@ test("entire adaptation is idempotent and missing/ambiguous anchors cause zero w
   const valid = bundle(t);
   assert.equal(apply(valid.root).changed, true);
   assert.equal(apply(valid.root).changed, false);
-  for (const breakage of ["missing", "ambiguous", "codec", "capability", "duplicate-capability", "catalog", "duplicate-catalog", "request-profile", "catalog-activation"]) {
+  for (const breakage of ["missing", "ambiguous", "codec", "capability", "duplicate-capability", "catalog", "duplicate-catalog", "request-profile", "catalog-activation", "dictation", "duplicate-dictation", "request-exports"]) {
     const fixture = bundle(t);
     if (breakage === "missing") fixture.put(".vite/build/preload.js", "unsupportedPreload()");
     if (breakage === "ambiguous") fixture.put(".vite/build/other-preload.js", fs.readFileSync(path.join(fixture.root, ".vite/build/preload.js")));
@@ -257,6 +291,9 @@ test("entire adaptation is idempotent and missing/ambiguous anchors cause zero w
     if (breakage === "capability") fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`structuredClonable`");
     if (breakage === "duplicate-capability") fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`structuredClonable`;" + capabilityFixture + capabilityFixture);
     if (breakage === "catalog-activation") fixture.put("webview/assets/app-initial-test.js", catalogRendererFixture.replace("setSourceEnabled", "changed"));
+    if (breakage === "dictation") fixture.put("webview/assets/app-initial-test.js", catalogRendererFixture);
+    if (breakage === "duplicate-dictation") fixture.put("webview/assets/app-initial-test.js", catalogRendererFixture + dictationFixture + dictationFixture);
+    if (breakage === "request-exports") fixture.put("webview/assets/requests-test.js", "unsupportedExports()");
     const mainFile = path.join(fixture.root, ".vite/build/main-test.js");
     if (breakage === "catalog") fixture.put(".vite/build/main-test.js", fs.readFileSync(mainFile, "utf8").replace(catalogFixture, ""));
     if (breakage === "duplicate-catalog") fixture.put(".vite/build/main-test.js", fs.readFileSync(mainFile, "utf8") + catalogFixture);

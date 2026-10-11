@@ -96,6 +96,18 @@ function patchCatalogRenderer(source) {
   return source.replace(enabled[0], enabled[0].replace(`${activation}.then`, `(globalThis.electronBridge?.communityWebUi===true?${ready}:${activation}).then`)) + `\n${MARKER}\n`;
 }
 
+function patchDictationRenderer(source, requestModule) {
+  const marker = "/*community-web-ui-dictation-v1*/";
+  if (source.includes(marker)) return source;
+  const upload = one(source, new RegExp(`return (${IDENT})\\(\\(\\)=>(${IDENT})\\.getInstance\\(\\)\\.fetch\\([\\x60]/transcribe[\\x60],\\{method:[\\x60]POST[\\x60],body:(${IDENT}),headers:\\{\"Content-Type\":[\\x60]multipart/form-data; boundary=\\$\\{(${IDENT})\\}[\\x60],\\.\\.\\.(${IDENT})\\(\\)\\}`, "g"), "Codex dictation upload");
+  const headers = "communityWebUiDictationHeaders";
+  if (source.includes(headers)) throw Error("Web UI: dictation binding collision");
+  // Keep upstream's multipart bytes, boundary, cancellation and recovery/retry
+  // path. Only browser windows use Work's existing browser request headers.
+  const load = `const ${headers}=globalThis.electronBridge?.communityWebUi===true?(await import(${JSON.stringify(`./${requestModule}`)})).getChatGPTRequestHeaders(\`/transcribe\`):null;`;
+  return source.replace(upload[0], load + upload[0].replace(`...${upload[5]}()`, `...(${headers}??${upload[5]}())`)) + `\n${marker}\n`;
+}
+
 function apply(extractedDir) {
   const build = path.join(extractedDir, ".vite/build");
   const assets = path.join(extractedDir, "webview/assets");
@@ -110,14 +122,16 @@ function apply(extractedDir) {
   const preload = uniqueFile(buildFiles, entry => entry.source.includes("exposeInMainWorld(`electronBridge`"), "preload");
   const imports = new Set([...main.source.matchAll(/require\("\.\/([^"/]+\.js)"\)/g)].map(match => match[1]));
   const websocket = uniqueFile(buildFiles, entry => imports.has(entry.name) && entry.source.includes("noServer:!1,backlog:null,server:null,host:null,path:null,port:null"), "WebSocket");
-  const renderer = uniqueFile(files(assets), entry => entry.source.includes("connect-app-host") && (entry.source.includes("encodingLevel=`structuredClonable`") || entry.source.includes(MARKER)), "renderer RPC");
-  const catalogRenderer = uniqueFile(files(assets), entry => entry.source.includes("publishChatGptRequestProfile"), "catalog renderer");
+  const assetFiles = files(assets);
+  const renderer = uniqueFile(assetFiles, entry => entry.source.includes("connect-app-host") && (entry.source.includes("encodingLevel=`structuredClonable`") || entry.source.includes(MARKER)), "renderer RPC");
+  const catalogRenderer = uniqueFile(assetFiles, entry => entry.source.includes("publishChatGptRequestProfile"), "catalog renderer");
+  const requestModule = uniqueFile(assetFiles, entry => /export\{[^}]*\bas getChatGPTRequestHeaders\b[^}]*\bas getChatGptRequestProfile\b/.test(entry.source), "ChatGPT request exports");
   const edits = [
     { ...main, result: patchMain(main.source, websocket.name) },
     { ...preload, result: patchPreload(preload.source) },
     { ...websocket, result: patchWebSocket(websocket.source) },
     { ...renderer, result: patchRenderer(renderer.source) },
-    { ...catalogRenderer, result: patchCatalogRenderer(catalogRenderer.source) },
+    { ...catalogRenderer, result: patchDictationRenderer(patchCatalogRenderer(catalogRenderer.source), requestModule.name) },
   ];
   const html = fs.readFileSync(path.join(extractedDir, "webview/index.html"), "utf8");
   if (!html.includes("</head>") || !html.includes("connect-src ")) throw Error("Web UI: index/CSP contract drifted");
@@ -133,6 +147,6 @@ function apply(extractedDir) {
 }
 
 module.exports = {
-  apply, patchMain, patchPreload, patchRenderer, patchCatalogRenderer, patchWebSocket,
+  apply, patchMain, patchPreload, patchRenderer, patchCatalogRenderer, patchDictationRenderer, patchWebSocket,
   descriptors: [{ id: "browser-host-contract", phase: "extracted-app:pre-webview", order: 21_000, ciPolicy: "optional", apply }],
 };

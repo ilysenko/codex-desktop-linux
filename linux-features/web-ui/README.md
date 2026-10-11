@@ -84,12 +84,27 @@ This avoids sending the headless host's profile for browser history requests.
 Authentication, workspace routing, and ordinary desktop requests retain their
 upstream behavior.
 
+Codex dictation uploads use Work mode's existing browser request headers in web
+windows. The original multipart audio, cancellation, recording recovery, and
+Retry flow are retained; ordinary desktop windows keep their native headers.
+
 Local account authentication and agent turns do not guarantee access to every
 ChatGPT cloud service. Other headless-host routes can still receive HTTP 403
-Cloudflare challenges, including transcription. Inspect the failing endpoint
-and response headers before attributing an error to Cloudflare; the presence
+Cloudflare challenges. Inspect the failing endpoint and response headers before
+attributing an error to Cloudflare; the presence
 of `cf-mitigated: challenge` identifies a challenge response. The history
-adapter does not establish that voice or other cloud integrations work.
+adapter does not establish that other cloud integrations work.
+
+For an opt-in dictation check, run `dictation-acceptance.cjs` against an isolated,
+authenticated signed install with Playwright. Set `CODEX_WEB_UI_TEST_LOG` to its
+private readiness log and `CODEX_WEB_UI_TEST_AUDIO` to a generated speech WAV
+containing “purple robot” (or set `CODEX_WEB_UI_TEST_TRANSCRIPT`). Chromium uses a
+fake microphone; no personal audio is captured and no chat messages are sent.
+The check exercises Codex transcription plus a failed upload followed by Retry,
+asserting that Retry inserts text without another recording. Set
+`CODEX_WEB_UI_TEST_WORK=1` to also test Work when its dictation control is
+available for the account. This optional authenticated check is separate from
+the unauthenticated CI suite.
 
 ## Lifecycle and compatibility
 
@@ -98,7 +113,7 @@ background daemon or systemd unit is installed. Browser disconnection disposes
 its RPC port and worker subscriptions; a page reload reconnects. Closing the
 browser does not quit the host. Stop the launching process to stop web mode.
 
-The framework stages two regular JS resources and a launcher hook. Native
+The framework stages three regular JS resources and a launcher hook. Native
 packages, AppImage, Nix, and the minimal update-builder can carry these resources
 through the existing declarative machinery. There are no added package runtime
 dependencies. Gentoo support has not been audited.
