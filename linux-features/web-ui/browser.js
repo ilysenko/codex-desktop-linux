@@ -36,6 +36,30 @@
     if (value === undefined) delete bootstrap.sharedObjectSnapshot[key];
     else bootstrap.sharedObjectSnapshot[key] = value;
   }
+  function webUrl(value) {
+    try {
+      const url = new URL(value);
+      if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) return url;
+    } catch {}
+    return null;
+  }
+  function openExternal(url) {
+    window.open(url.href, "_blank", "noopener,noreferrer");
+  }
+  function externalLink(event) {
+    if (event.defaultPrevented || ![0, 1].includes(event.button)) return;
+    const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+    const url = link && webUrl(link.getAttribute("href"));
+    if (!url || url.origin === location.origin || link.hasAttribute("download")) return;
+    // Keep the browser's native click action and user activation, including
+    // modified/middle clicks. Upstream's delegated desktop opener must not
+    // intercept this click and round-trip through the asynchronous host.
+    link.target = "_blank";
+    link.relList.add("noopener", "noreferrer");
+    event.stopImmediatePropagation();
+  }
+  window.addEventListener("click", externalLink, true);
+  window.addEventListener("auxclick", externalLink, true);
   function presentDialog(dialog) {
     // Upstream's modal disables pointer events outside its content and traps
     // focus there. Keep this adapter inside that modal's DOM subtree so both
@@ -121,23 +145,8 @@
       else waiter?.reject(Error(message.error));
     } else if (message.type === "notification") {
       if (message.value?.type === "community-open-external") {
-        const url = new URL(message.value.url);
-        if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) {
-          document.getElementById("community-external-link")?.remove();
-          const dialog = document.createElement("dialog"); dialog.id = "community-external-link";
-          dialog.style.cssText = "max-width:480px;padding:24px;border:1px solid #8886;border-radius:12px;font:14px system-ui;color-scheme:light dark";
-          const text = document.createElement("p"); text.textContent = "Continue in your browser";
-          const link = document.createElement("a"); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer";
-          link.textContent = `Open ${url.hostname}`; link.style.cssText = "display:inline-block;margin-right:24px";
-          // Upstream delegates every HTTP link to its desktop bridge. Let this
-          // user-initiated link use the browser's default action without being
-          // intercepted again and reopening the same prompt.
-          link.addEventListener("click", event => { event.stopPropagation(); dialog.close(); dialog.remove(); });
-          const close = document.createElement("button"); close.textContent = "Cancel";
-          close.addEventListener("click", () => { dialog.close(); dialog.remove(); });
-          dialog.addEventListener("cancel", () => dialog.remove());
-          dialog.append(text, link, close); presentDialog(dialog);
-        }
+        const url = webUrl(message.value.url);
+        if (url) openExternal(url);
         return;
       }
       if (message.value?.type === "shared-object-updated") setShared(message.value.key, message.value.value);
@@ -171,6 +180,10 @@
     acknowledgeChunkedMessage: () => {},
     getPreloadStartedAtMs: () => performance.timeOrigin,
     sendMessageFromView: message => {
+      if (message.type === "open-in-browser") {
+        const url = webUrl(message.url);
+        if (url) { openExternal(url); return Promise.resolve(); }
+      }
       if (message.type === "electron-pick-workspace-root-option") {
         return chooseFolder().then(root => {
           if (root) window.dispatchEvent(new MessageEvent("message", { data: { type: "workspace-root-option-picked", root } }));

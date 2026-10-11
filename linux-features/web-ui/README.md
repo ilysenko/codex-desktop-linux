@@ -8,9 +8,9 @@ adapts the renderer boundary; it does not implement a replacement Codex client.
 Web mode disables the embedded browser capability and rejects its native
 browser-panel commands. New tabs use upstream's tool-only workspace screen;
 terminals, files, changes, and side chats remain available. External web links
-use the browser link prompt. This does not change agent web-search settings or
-disable separately configured browser plugins. Ordinary desktop launches keep
-their original browser capability.
+open directly in a separate browser tab. This does not change agent web-search
+settings or disable separately configured browser plugins. Ordinary desktop
+launches keep their original browser capability.
 
 The design is inspired by [mkreminskii/codex-web](https://github.com/mkreminskii/codex-web).
 This is an independent implementation for this repository's Linux payload and
@@ -109,6 +109,11 @@ IPC delivery. There are no historical-version fallback paths.
 The workspace folder button opens a browser dialog that lists directories on
 the host computer and accepts an absolute host path. Upstream project creation
 and workspace trust handling still run after selection.
+
+External HTTP/HTTPS links open directly without a confirmation dialog. Link
+clicks retain the browser's native navigation and user gesture; buttons using
+the desktop opener are handled locally. Background host requests also attempt
+to open a tab, but the browser may block them under its popup policy.
 
 This is an experimental single-user browser adapter. Native file dialogs,
 desktop drag-and-drop, native menu accelerators, pets, embedded Owl browser,

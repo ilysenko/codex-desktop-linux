@@ -91,20 +91,34 @@ async function run() {
     await page.getByRole("button", { name: "subfolder", exact: true }).click();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     assert.equal(await selection, path.join(fixture, "subfolder"));
-    // Exercise the native open-external relay and a real user click. Upstream's
-    // document-level link bridge must not intercept the adapter's link again.
+    // Use native link navigation during the gesture, without the desktop
+    // opener/dialog round trip. Exercise upstream-style delegated interception
+    // as well as buttons that invoke the bridge synchronously.
     const externalUrl = `http://127.0.0.1:${destination.address().port}/`;
-    await page.evaluate(url => electronBridge.sendMessageFromView({ type: "open-in-browser", url, openTarget: "external-browser", useExternalBrowser: true, source: "manual" }), externalUrl);
-    const externalLink = page.getByRole("link", { name: "Open 127.0.0.1", exact: true });
+    await page.evaluate(url => {
+      const parent = document.getElementById("community-test-modal");
+      const link = document.createElement("a"); link.href = url; link.textContent = "Direct external test";
+      const button = document.createElement("button"); button.textContent = "Bridge external test";
+      button.onclick = () => electronBridge.sendMessageFromView({ type: "open-in-browser", url, openTarget: "external-browser" });
+      parent.append(link, button);
+      window.communityExternalIntercepts = 0;
+      document.addEventListener("click", event => {
+        if (event.target.closest?.("a") === link) { event.preventDefault(); window.communityExternalIntercepts++; }
+      });
+    }, externalUrl);
+    const externalLink = page.getByRole("link", { name: "Direct external test", exact: true });
+    for (const action of [() => externalLink.click(), () => externalLink.press("Enter"), () => page.getByRole("button", { name: "Bridge external test", exact: true }).click()]) {
+      const popupReady = page.waitForEvent("popup");
+      await action();
+      const popup = await popupReady;
+      await popup.waitForURL(externalUrl);
+      assert.equal(await popup.locator("body").innerText(), "community-external-link-ok");
+      assert.equal(await popup.evaluate(() => window.opener), null);
+      await popup.close();
+      assert.equal(await page.locator("#community-external-link").count(), 0);
+    }
     assert.equal(await externalLink.getAttribute("rel"), "noopener noreferrer");
-    assert.equal(await externalLink.evaluate(link => link.closest("dialog").parentElement.id), "community-test-modal");
-    const popupReady = page.waitForEvent("popup");
-    await externalLink.click();
-    const popup = await popupReady;
-    await popup.waitForURL(externalUrl);
-    assert.equal(await popup.locator("body").innerText(), "community-external-link-ok");
-    await popup.close();
-    assert.equal(await page.locator("#community-external-link").count(), 0);
+    assert.equal(await page.evaluate(() => window.communityExternalIntercepts), 0);
     await page.evaluate(() => { document.getElementById("community-test-modal").remove(); document.body.style.pointerEvents = ""; });
     const second = await context.newPage();
     await second.goto(origin);
