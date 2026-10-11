@@ -25,6 +25,20 @@ function patchMain(source, wsBundle) {
     `await require(require(\`node:path\`).join(process.resourcesPath,\`..\`,\`.codex-linux/features/web-ui/runtime.js\`))` +
     `.loadHost(${window},{electron:require(\`electron\`),WebSocketServer:require(${JSON.stringify(`./${wsBundle}`)}).communityWebSocketServer});return ${window}}${header[0]}`;
   let patched = source.replace(header[0], replacement);
+  one(source, /getChatGptReadInputs=/g, "published ChatGPT request profile");
+  const catalog = one(source, new RegExp(`createSource:(${IDENT})=>(${IDENT})\\(\\1,\\((${IDENT}),(${IDENT})\\)=>this\\.fetchWrapper\\.fetchAuthenticatedJson\\(\\3,\\4\\)\\)`, "g"), "ChatGPT catalog fetch");
+  const [, factory, url, options] = catalog.slice(1);
+  // Upstream's minifier can reuse the outer host name for the inner URL.
+  // Rename the outer parameter before referring to it inside that callback.
+  const catalogHost = "communityWebUiCatalogHost";
+  const catalogOptions = "communityWebUiCatalogOptions";
+  if ([catalogHost, catalogOptions].some(name => source.includes(name))) throw Error("Web UI: catalog binding collision");
+  const fetch = `this.fetchWrapper.fetchAuthenticatedJson(${url},${options})`;
+  const adapted = `require(require(\`node:path\`).join(process.resourcesPath,\`..\`,\`.codex-linux/features/web-ui/catalog.js\`))` +
+    `.requestWithBrowserProfile(${catalogHost},${options},{` +
+    `readPrincipal:()=>this.appServerConnectionRegistry.getConnection(\`local\`).getCachedAuthenticatedPrincipal(),` +
+    `readInputs:p=>this.accessInputs.getChatGptReadInputs(p),fetch:${catalogOptions}=>this.fetchWrapper.fetchAuthenticatedJson(${url},${catalogOptions})})`;
+  patched = patched.replace(catalog[0], `createSource:${catalogHost}=>${factory}(${catalogHost},(${url},${options})=>process.env.CODEX_WEB_UI===\`1\`?${adapted}:${fetch})`);
   for (const method of ["send", "sendInline", "sendCritical"]) {
     const delivery = one(patched, new RegExp(`${method}\\(e,t,n\\)\\{e\\.isDestroyed\\(\\)\\|\\|this\\.sender\\.${method}\\(e,\\{channel:t,payload:n\\}\\)\\}`, "g"), `IPC ${method}`);
     patched = patched.replace(delivery[0], `${method}(e,t,n){if(process.env.CODEX_WEB_UI===\`1\`){if(!e.isDestroyed())e.send(t,n);return}e.isDestroyed()||this.sender.${method}(e,{channel:t,payload:n})}`);
@@ -65,6 +79,23 @@ function patchRenderer(source) {
   return patchRpc(patched, "globalThis.electronBridge?.communityWebUi===true") + `\n${MARKER}\n`;
 }
 
+function patchCatalogRenderer(source) {
+  if (source.includes(MARKER)) return source;
+  const profile = one(source, new RegExp(`async function (${IDENT})\\(\\)\\{let\\{getChatGptRequestProfile:`, "g"), "browser request profile loader")[1];
+  const owner = one(source, new RegExp(`let ${IDENT}=(${IDENT})\\?\\.accessInputs,${IDENT}=`, "g"), "account input service")[1];
+  const enabled = one(source, new RegExp(`let (${IDENT})=!1,(${IDENT})=\\{kind:[\\x60]chatgpt[\\x60],accountId:(${IDENT})\\};return (${IDENT})\\.setSourceEnabled\\(\\2,!0\\)\\.then`, "g"), "cloud catalog activation");
+  const [disposed, selection, account, catalog] = enabled.slice(1);
+  const info = "communityWebUiAccountInfo", profileValue = "communityWebUiRequestProfile", failure = "communityWebUiProfileError";
+  if ([info, profileValue, failure].some(name => source.includes(name))) throw Error("Web UI: profile binding collision");
+  const activation = `${catalog}.setSourceEnabled(${selection},!0)`;
+  const ready = `(async()=>{try{let ${info}=await ${owner}.accessInputs.readAccountInfo();if(${disposed})return;` +
+    `if(${info}.status!==\`ready\`||${info}.data.accountId!==${account}||${info}.data.authenticatedUserId==null)throw Error(\`Web UI account profile is unavailable\`);` +
+    `let ${profileValue}=await ${profile}();if(${disposed})return;` +
+    `if(!await ${owner}.accessInputs.publishChatGptRequestProfile({accountId:${account},userId:${info}.data.authenticatedUserId,profile:${profileValue}}))throw Error(\`Web UI account profile changed\`);` +
+    `if(!${disposed})return ${activation}}catch(${failure}){console.warn(\`[community-web-ui] Cloud history profile initialization failed\`,${failure}?.message?.startsWith(\`Web UI account profile\`)?${failure}.message:\`Account service unavailable\`);throw ${failure}}})()`;
+  return source.replace(enabled[0], enabled[0].replace(`${activation}.then`, `(globalThis.electronBridge?.communityWebUi===true?${ready}:${activation}).then`)) + `\n${MARKER}\n`;
+}
+
 function apply(extractedDir) {
   const build = path.join(extractedDir, ".vite/build");
   const assets = path.join(extractedDir, "webview/assets");
@@ -80,11 +111,13 @@ function apply(extractedDir) {
   const imports = new Set([...main.source.matchAll(/require\("\.\/([^"/]+\.js)"\)/g)].map(match => match[1]));
   const websocket = uniqueFile(buildFiles, entry => imports.has(entry.name) && entry.source.includes("noServer:!1,backlog:null,server:null,host:null,path:null,port:null"), "WebSocket");
   const renderer = uniqueFile(files(assets), entry => entry.source.includes("connect-app-host") && (entry.source.includes("encodingLevel=`structuredClonable`") || entry.source.includes(MARKER)), "renderer RPC");
+  const catalogRenderer = uniqueFile(files(assets), entry => entry.source.includes("publishChatGptRequestProfile"), "catalog renderer");
   const edits = [
     { ...main, result: patchMain(main.source, websocket.name) },
     { ...preload, result: patchPreload(preload.source) },
     { ...websocket, result: patchWebSocket(websocket.source) },
     { ...renderer, result: patchRenderer(renderer.source) },
+    { ...catalogRenderer, result: patchCatalogRenderer(catalogRenderer.source) },
   ];
   const html = fs.readFileSync(path.join(extractedDir, "webview/index.html"), "utf8");
   if (!html.includes("</head>") || !html.includes("connect-src ")) throw Error("Web UI: index/CSP contract drifted");
@@ -100,6 +133,6 @@ function apply(extractedDir) {
 }
 
 module.exports = {
-  apply, patchMain, patchPreload, patchRenderer, patchWebSocket,
+  apply, patchMain, patchPreload, patchRenderer, patchCatalogRenderer, patchWebSocket,
   descriptors: [{ id: "browser-host-contract", phase: "extracted-app:pre-webview", order: 21_000, ciPolicy: "optional", apply }],
 };

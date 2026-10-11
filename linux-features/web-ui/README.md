@@ -71,20 +71,25 @@ initial feature's supported surface.
 Bridge messages are limited to 16 MiB. Larger transfers and file attachments
 need a dedicated browser adapter.
 
-External HTTP/HTTPS links, including sign-in, appear as a browser link prompt.
+External HTTP/HTTPS links, including sign-in, open directly in a browser tab.
 ChatGPT OAuth completion may also require forwarding its separate loopback
 callback port when using SSH; use the callback address in the authorization
 URL. Signing in on the Linux host before starting web mode is another option.
 
+Background cloud-history sync uses the real browser's request profile, just as
+ChatGPT mode does. Before enabling that source, the adapter publishes the
+profile through upstream's account-checked service. It waits for that profile
+and binds each request to the authenticated principal and sign-out signal.
+This avoids sending the headless host's profile for browser history requests.
+Authentication, workspace routing, and ordinary desktop requests retain their
+upstream behavior.
+
 Local account authentication and agent turns do not guarantee access to every
-ChatGPT cloud service. In an authenticated Docker test, local projects, agent
-commands, and saved chats worked, while cloud catalog sync received HTTP 403
-responses and other cloud routes reported Cloudflare challenges. The upstream
-Recents list can keep showing a loader while that catalog remains incomplete.
-Inspect the host's `Thread catalog sync failed` logs when diagnosing this;
-reloading the browser or copying the same credentials again does not resolve a
-server-side rejection. The feature retains upstream authentication and cloud
-request behavior.
+ChatGPT cloud service. Other headless-host routes can still receive HTTP 403
+Cloudflare challenges, including transcription. Inspect the failing endpoint
+and response headers before attributing an error to Cloudflare; the presence
+of `cf-mitigated: challenge` identifies a challenge response. The history
+adapter does not establish that voice or other cloud integrations work.
 
 ## Lifecycle and compatibility
 

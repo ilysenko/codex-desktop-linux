@@ -6,6 +6,7 @@
   "entrypoints": { "patchDescriptors": "./patch.js" },
   "resources": [
     { "source": "runtime.js", "target": ".codex-linux/features/web-ui/runtime.js", "mode": "0644" },
+    { "source": "catalog.js", "target": ".codex-linux/features/web-ui/catalog.js", "mode": "0644" },
     { "source": "browser.js", "target": ".codex-linux/features/web-ui/browser.js", "mode": "0644" }
   ],
   "runtimeHooks": {

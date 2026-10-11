@@ -8,7 +8,7 @@ const http = require("node:http");
 const { execFileSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const test = require("node:test");
-const { apply, patchRenderer } = require("./patch");
+const { apply, patchMain, patchRenderer, patchCatalogRenderer } = require("./patch");
 const vm = require("node:vm");
 const { listDirectories, parsePort, startServer } = require("./runtime");
 const { stageEnabledLinuxFeatureInstall, loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features");
@@ -133,6 +133,90 @@ test("folder chooser lists host directories and validates absolute paths", t => 
   assert.throws(() => listDirectories(path.join(root, "file.txt")));
 });
 
+const { requestWithBrowserProfile } = require("./catalog");
+
+const catalogFixture = 'getChatGptReadInputs=e=>null;createSource:e=>makeSource(e,(e,t)=>this.fetchWrapper.fetchAuthenticatedJson(e,t));';
+
+const catalogRendererFixture = 'async function loadProfile(){let{getChatGptRequestProfile:factory}=await Promise.resolve({getChatGptRequestProfile:()=>({kind:"chatgpt-browser"})});return factory()}' +
+  'function existingOwner(){let service=client?.accessInputs,t=null;service.publishChatGptRequestProfile(t)}' +
+  'function enable(){let disposed=!1,selection={kind:`chatgpt`,accountId:account};return catalog.setSourceEnabled(selection,!0).then(()=>"enabled")}';
+
+test("web catalog publishes the real browser profile before activation; desktop retains its original call", async () => {
+  for (const web of [false, true]) {
+    const calls = [];
+    const context = vm.createContext({ console: { warn() {} }, electronBridge: { communityWebUi: web }, account: "account", catalog: { setSourceEnabled: async () => calls.push("enable") }, client: { accessInputs: {
+      readAccountInfo: async () => { calls.push("read"); return { status: "ready", data: { accountId: "account", authenticatedUserId: "user" } }; },
+      publishChatGptRequestProfile: async value => { calls.push("profile"); assert.equal(value.userId, "user"); assert.equal(value.profile.kind, "chatgpt-browser"); return true; },
+    } } });
+    vm.runInContext(patchCatalogRenderer(catalogRendererFixture), context);
+    assert.equal(await vm.runInContext("enable()", context), "enabled");
+    assert.deepEqual(calls, web ? ["read", "profile", "enable"] : ["enable"]);
+    if (web) {
+      context.client.accessInputs.publishChatGptRequestProfile = async () => false;
+      calls.length = 0;
+      await assert.rejects(vm.runInContext("enable()", context), /profile changed/);
+      assert.equal(calls.includes("enable"), false);
+    }
+  }
+});
+
+test("minified catalog host and URL bindings stay separate in web and desktop requests", async t => {
+  const fixture = bundle(t);
+  const patched = patchMain(fs.readFileSync(path.join(fixture.root, ".vite/build/main-test.js"), "utf8"), "network.js");
+  const callback = patched.match(/createSource:([^;]+)/)[1];
+  for (const web of [false, true]) {
+    const principal = { accountId: "account", userId: "user" }, profile = { kind: "chatgpt-browser" };
+    const options = { signal: new AbortController().signal };
+    const context = vm.createContext({ process: { resourcesPath: "/app/application/resources", env: { CODEX_WEB_UI: web ? "1" : "0" } }, makeSource: (id, fetch) => ({ id, fetch }),
+      require: name => name === "node:path" ? path : { requestWithBrowserProfile },
+      owner: {
+        appServerConnectionRegistry: { getConnection: () => ({ getCachedAuthenticatedPrincipal: () => principal }) },
+        accessInputs: { getChatGptReadInputs: () => ({ profile, signal: new AbortController().signal }) },
+        fetchWrapper: { fetchAuthenticatedJson: (url, options) => ({ url, options }) },
+      },
+    });
+    const source = vm.runInContext(`(function(){return (${callback})}).call(owner)("chatgpt:account:user")`, context);
+    assert.equal(source.id, "chatgpt:account:user");
+    const result = await source.fetch("/conversations?offset=0", options);
+    assert.equal(result.url, "/conversations?offset=0");
+    if (web) assert.equal(result.options.requestProfile, profile);
+    else assert.equal(result.options, options, "desktop request options are untouched");
+  }
+});
+
+test("catalog reuses the validated browser profile, preserving method/body and principal binding", async () => {
+  const principal = { accountId: "account", userId: "user" };
+  const profile = { kind: "chatgpt-browser", userAgent: "real-browser" };
+  const controller = new AbortController(), inputsController = new AbortController();
+  const body = { conversation_ids: ["test"] };
+  let reads = 0;
+  const result = await requestWithBrowserProfile("chatgpt:account:user", { signal: controller.signal, method: "POST", body }, {
+    readPrincipal: () => principal,
+    readInputs: identity => {
+      assert.deepEqual(identity, { kind: "chatgpt", ...principal });
+      return ++reads === 1 ? null : { profile, signal: inputsController.signal };
+    },
+    fetch: options => options,
+  });
+  assert.equal(reads, 2, "waits for the renderer instead of sending a headless request");
+  assert.equal(result.requestProfile, profile);
+  assert.equal(result.expectedPrincipal, principal);
+  assert.equal(result.body, body);
+  assert.equal(result.method, "POST");
+  inputsController.abort();
+  assert.equal(result.signal.aborted, true, "sign-out retires the request");
+});
+
+test("catalog waits are bounded, cancellable, and never fetch with a different principal", async () => {
+  const controller = new AbortController();
+  const services = { readPrincipal: () => ({ accountId: "account", userId: "user" }), readInputs: () => null, fetch: () => { throw Error("must not fetch"); } };
+  await assert.rejects(requestWithBrowserProfile("chatgpt:other:user", { signal: controller.signal }, services), { name: "AbortError" });
+  const pending = requestWithBrowserProfile("chatgpt:account:user", { signal: controller.signal }, services);
+  controller.abort();
+  await assert.rejects(pending, { name: "AbortError" });
+  await assert.rejects(requestWithBrowserProfile("chatgpt:account:user", { signal: new AbortController().signal }, services, 10), error => error.name === "AbortError" || error.name === "TimeoutError");
+});
+
 const capabilityFixture = 'function capability(e){let n=registry[e.name];if(n==null||!supported(n))return{isLoading:!1,isError:!1,isCapable:!1};let r=[...n.accessPolicies.map(e=>e)];return{isLoading:!1,isError:!1,isCapable:!0}}';
 
 test("web mode disables only the embedded browser capability; desktop and coding tools retain upstream results", () => {
@@ -152,10 +236,11 @@ test("web mode disables only the embedded browser capability; desktop and coding
 function bundle(t) {
   const root = directory(t);
   const put = (file, value) => { const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, value); };
-  put(".vite/build/main-test.js", 'const network=require("./network.js");let le=t.u(p);if(!e.app.isPackaged){L.loadURL(e.toString())};encodingLevel=`structuredClonable`;' + ["send", "sendInline", "sendCritical"].map(method => `${method}(e,t,n){e.isDestroyed()||this.sender.${method}(e,{channel:t,payload:n})}`).join(""));
+  put(".vite/build/main-test.js", 'const network=require("./network.js");let le=t.u(p);if(!e.app.isPackaged){L.loadURL(e.toString())};encodingLevel=`structuredClonable`;' + catalogFixture + ["send", "sendInline", "sendCritical"].map(method => `${method}(e,t,n){e.isDestroyed()||this.sender.${method}(e,{channel:t,payload:n})}`).join(""));
   put(".vite/build/preload.js", 'A=e.ipcRenderer.sendSync(`codex_desktop:get-shared-object-snapshot`)??{};e.contextBridge.exposeInMainWorld(`electronBridge`,bridge)');
   put(".vite/build/network.js", 'server=r.t(((e,t)=>{var n=require("http");t.exports=class extends n{noServer:!1,backlog:null,server:null,host:null,path:null,port:null}}))');
   put("webview/assets/app-shared-test.js", 'connect-app-host;encodingLevel=`structuredClonable`;' + capabilityFixture);
+  put("webview/assets/app-initial-test.js", catalogRendererFixture);
   put("webview/index.html", '<head>connect-src </head>');
   return { root, put };
 }
@@ -164,13 +249,18 @@ test("entire adaptation is idempotent and missing/ambiguous anchors cause zero w
   const valid = bundle(t);
   assert.equal(apply(valid.root).changed, true);
   assert.equal(apply(valid.root).changed, false);
-  for (const breakage of ["missing", "ambiguous", "codec", "capability", "duplicate-capability"]) {
+  for (const breakage of ["missing", "ambiguous", "codec", "capability", "duplicate-capability", "catalog", "duplicate-catalog", "request-profile", "catalog-activation"]) {
     const fixture = bundle(t);
     if (breakage === "missing") fixture.put(".vite/build/preload.js", "unsupportedPreload()");
     if (breakage === "ambiguous") fixture.put(".vite/build/other-preload.js", fs.readFileSync(path.join(fixture.root, ".vite/build/preload.js")));
     if (breakage === "codec") fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`changed`");
     if (breakage === "capability") fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`structuredClonable`");
     if (breakage === "duplicate-capability") fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`structuredClonable`;" + capabilityFixture + capabilityFixture);
+    if (breakage === "catalog-activation") fixture.put("webview/assets/app-initial-test.js", catalogRendererFixture.replace("setSourceEnabled", "changed"));
+    const mainFile = path.join(fixture.root, ".vite/build/main-test.js");
+    if (breakage === "catalog") fixture.put(".vite/build/main-test.js", fs.readFileSync(mainFile, "utf8").replace(catalogFixture, ""));
+    if (breakage === "duplicate-catalog") fixture.put(".vite/build/main-test.js", fs.readFileSync(mainFile, "utf8") + catalogFixture);
+    if (breakage === "request-profile") fixture.put(".vite/build/main-test.js", fs.readFileSync(mainFile, "utf8").replace("getChatGptReadInputs=", "changed="));
     const before = fs.readFileSync(path.join(fixture.root, ".vite/build/main-test.js"));
     assert.throws(() => apply(fixture.root));
     assert.deepEqual(fs.readFileSync(path.join(fixture.root, ".vite/build/main-test.js")), before);
@@ -209,7 +299,7 @@ test("minimal update-builder carries the complete patch and runtime without exte
     featuresRoot: path.join(builder, "linux-features"),
     featuresConfigPath: path.join(builder, "linux-features/features.json"),
   });
-  for (const name of ["runtime.js", "browser.js"]) {
+  for (const name of ["runtime.js", "browser.js", "catalog.js"]) {
     assert.deepEqual(fs.readFileSync(path.join(staged, ".codex-linux/features/web-ui", name)), fs.readFileSync(path.join(__dirname, name)));
   }
   assert.equal(fs.existsSync(path.join(builder, "node_modules")), false);
