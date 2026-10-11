@@ -56,6 +56,18 @@
           }
         }
       }
+    },
+    {
+      "name": "selected-text-annotation-submit",
+      "settings": {
+        "tweaks": {
+          "selection": {
+            "annotationSubmit": {
+              "enabled": true
+            }
+          }
+        }
+      }
     }
   ],
   "tweaks": {
@@ -87,6 +99,9 @@
       }
     },
     "selection": {
+      "annotationSubmit": {
+        "enabled": false
+      },
       "moreDetails": {
         "enabled": false
       }

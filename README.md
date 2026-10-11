@@ -332,9 +332,15 @@ The optional `ui-tweaks` sub-option `tweaks.selection.moreDetails.enabled`
 restores **More details** in the Codex reply selection menu, asking ChatGPT
 Quick Chat to explain the selected text with its source context. It is disabled
 by default; see the [UI Tweaks configuration](linux-features/ui-tweaks/README.md#selectionmoredetails).
+
 When testing a local build, launch `codex-app/start.sh` with the same Electron
 flags as your normal desktop entry, including any required `--proxy-server=...`
 argument. Quick Chat becomes available after ChatGPT account initialization.
+
+The optional `ui-tweaks` sub-option `tweaks.selection.annotationSubmit.enabled`
+makes Ctrl+Enter send the active selected-text annotation editor's text without
+being intercepted by the regular composer; it is disabled by default.
+See the [annotation submit configuration](linux-features/ui-tweaks/README.md#selectionannotationsubmit).
 
 ## Configure optional features
 

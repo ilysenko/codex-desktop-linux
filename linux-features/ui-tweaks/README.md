@@ -32,6 +32,7 @@ Enable it in the local, gitignored feature config:
 | `modelPicker.showModelsByDefault` | `patches/model-picker-model-list.js` | Opens the advanced picker by default and shows model choices inline instead of hiding them behind the compact Power slider and a nested Model submenu. | `tweaks.modelPicker.showModelsByDefault.enabled` |
 | `reasoning.keepEffortLabelsEnglish` | `patches/reasoning-effort-labels.js` | Keeps reasoning effort values in English in the Simplified Chinese UI while leaving the surrounding interface translated. | `tweaks.reasoning.keepEffortLabelsEnglish.enabled` |
 | `selection.moreDetails` | `patches/selected-text-more-details.js` | Restores the Codex reply selection menu's More details action, which asks ChatGPT Quick Chat to explain the selected text. | `tweaks.selection.moreDetails.enabled` |
+| `selection.annotationSubmit` | `patches/selected-text-annotation-submit.js` | After selecting text, Ctrl+Enter sends the active annotation editor's text without being intercepted by the regular composer. | `tweaks.selection.annotationSubmit.enabled` |
 | `sidebar.projectName` | `patches/sidebar-project-name.js` | Styles project names in the left sidebar project list. It does not style `Projects` / `Chats` section headings and does not style chat rows. | `tweaks.sidebar.projectName.enabled`, `tweaks.sidebar.projectName.style` |
 
 ## Settings
@@ -380,6 +381,30 @@ local editor formatting remains usable while those requests are pending.
 
 Set `tweaks.selection.moreDetails.enabled` to `false` and rebuild to restore the
 official Codex selection menu.
+
+### `selection.annotationSubmit`
+
+After selecting text, Ctrl+Enter sends the active annotation editor's text
+without being intercepted by the regular composer.
+
+This tweak is independently disabled by default:
+
+```json
+{
+  "enabled": ["ui-tweaks"],
+  "settings": {
+    "ui-tweaks": {
+      "tweaks": {
+        "selection": {
+          "annotationSubmit": {
+            "enabled": true
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ## Drift Behavior
 
