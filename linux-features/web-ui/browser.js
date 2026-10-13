@@ -230,7 +230,9 @@
   // protocol) and /@fs/<path>. <img> cannot send the bearer header, so fetch
   // them with it and show blob URLs instead.
   const blank = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-  const hostImages = new Map(), adapted = new WeakMap();
+  // Only concurrent loads are shared; every adaptation fetches again (the
+  // server sends no-store), so an overwritten host file shows its new content.
+  const inflight = new Map(), adapted = new WeakMap(), written = new WeakMap();
   function hostImagePath(source) {
     try {
       const url = new URL(source, location.href);
@@ -240,26 +242,36 @@
     return null;
   }
   function loadHostImage(encodedPath) {
-    if (!hostImages.has(encodedPath)) {
-      if (hostImages.size >= 256) { const [oldest, url] = hostImages.entries().next().value; hostImages.delete(oldest); url.then(URL.revokeObjectURL, () => {}); }
-      const url = fetch(`/@fs${encodedPath}`, { headers: { Authorization: `Bearer ${capability}` } })
+    if (!inflight.has(encodedPath)) {
+      const blob = fetch(`/@fs${encodedPath}`, { headers: { Authorization: `Bearer ${capability}` } })
         .then(response => response.ok ? response.blob() : Promise.reject(Error(`HTTP ${response.status}`)))
-        .then(blob => URL.createObjectURL(blob));
-      url.catch(() => hostImages.delete(encodedPath));
-      hostImages.set(encodedPath, url);
+        .finally(() => inflight.delete(encodedPath));
+      inflight.set(encodedPath, blob);
     }
-    return hostImages.get(encodedPath);
+    return inflight.get(encodedPath);
   }
+  function write(image, source) { written.set(image, source); image.src = source; }
   function adaptImage(image) {
-    const encodedPath = hostImagePath(image.getAttribute("src") ?? "");
+    const source = image.getAttribute("src") ?? "";
+    // Ignore the observer's echo of this adapter's own writes.
+    if (written.get(image) === source) return;
+    written.delete(image);
+    const encodedPath = hostImagePath(source);
+    // Any other source (set by the renderer) supersedes a pending load.
+    const generation = {};
+    adapted.set(image, generation);
     if (encodedPath === null) return;
-    adapted.set(image, encodedPath);
     // Cancel the unloadable request before it fails into upstream's error state.
-    image.src = blank;
-    loadHostImage(encodedPath).then(
-      url => { if (adapted.get(image) === encodedPath) image.src = url; },
-      () => { if (adapted.get(image) === encodedPath) image.src = "data:,"; },
-    );
+    write(image, blank);
+    loadHostImage(encodedPath).then(blob => {
+      if (adapted.get(image) !== generation) return;
+      const url = URL.createObjectURL(blob);
+      // Each image owns its blob URL; release it once decoded.
+      const release = () => URL.revokeObjectURL(url);
+      image.addEventListener("load", release, { once: true });
+      image.addEventListener("error", release, { once: true });
+      write(image, url);
+    }, () => { if (adapted.get(image) === generation) write(image, "data:,"); });
   }
   new MutationObserver(records => {
     for (const record of records) {

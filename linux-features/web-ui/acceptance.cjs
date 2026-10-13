@@ -204,6 +204,22 @@ async function run() {
       return image.src.startsWith("blob:") && image.complete && image.naturalWidth === 1;
     }));
     await page.evaluate(() => { document.getElementById("community-app-fs").remove(); document.getElementById("community-fs").remove(); });
+    // A renderer source change during a pending load wins over the stale load.
+    await page.evaluate(async encoded => {
+      const image = document.createElement("img"); image.id = "community-replaced"; image.src = `app://fs/@fs${encoded}`;
+      document.body.append(image);
+      await Promise.resolve(); // let the adapter start its fetch
+      image.src = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==#renderer";
+    }, imagePath);
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+    assert.ok((await page.evaluate(() => document.getElementById("community-replaced").getAttribute("src"))).endsWith("#renderer"));
+    // An overwritten host file shows its new content when previewed again.
+    fs.writeFileSync(path.join(fixture, "pixel #1.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==", "base64"));
+    await page.evaluate(encoded => {
+      const image = document.createElement("img"); image.id = "community-updated"; image.src = `/@fs${encoded}`; document.body.append(image);
+    }, imagePath);
+    await poll(page, () => { const image = document.getElementById("community-updated"); return image.complete && image.naturalWidth === 2; });
+    await page.evaluate(() => { document.getElementById("community-replaced").remove(); document.getElementById("community-updated").remove(); });
     const second = await context.newPage();
     await second.goto(origin);
     await second.getByRole("alert").filter({ hasText: "One browser session is already connected" }).waitFor();

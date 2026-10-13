@@ -57,7 +57,19 @@ function hostMedia(encodedPath) {
   const real = fs.realpathSync(file);
   const stat = fs.statSync(real);
   if (!stat.isFile() || stat.size > HOST_MEDIA_LIMIT || !HOST_MEDIA.has(path.extname(real).toLowerCase())) return null;
-  return { body: fs.readFileSync(real), type: MIME[path.extname(real).toLowerCase()] };
+  return { file: real, size: stat.size, type: MIME[path.extname(real).toLowerCase()] };
+}
+
+// Stream files with backpressure. A client that pipelines requests without
+// reading responses then holds at most a stream buffer per queued response,
+// and Node stops reading its socket, instead of whole files in memory.
+function sendFile(req, res, file, size, type) {
+  res.writeHead(200, { "Content-Type": type, "Content-Length": size });
+  if (req.method === "HEAD") { res.end(); return; }
+  const stream = fs.createReadStream(file);
+  stream.on("error", () => res.destroy());
+  res.on("close", () => stream.destroy());
+  stream.pipe(res);
 }
 
 function isDirectory(file) {
@@ -127,7 +139,7 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
         // Fetched by the adapter with the bearer header, then shown as a blob.
         if (!bearer(req)) return reply(req, res, 403, "Forbidden");
         const media = hostMedia(url.pathname.slice("/@fs".length));
-        return media ? reply(req, res, 200, media.body, media.type) : reply(req, res, 404, "Not found");
+        return media ? sendFile(req, res, media.file, media.size, media.type) : reply(req, res, 404, "Not found");
       }
       if (url.pathname === "/_community/browser.js") return reply(req, res, 200, fs.readFileSync(browserScript), MIME[".js"]);
       if (url.pathname.startsWith("/_community/") || url.pathname === "/community-web-host.html") return reply(req, res, 404, "Not found");
@@ -138,11 +150,12 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
       const file = path.join(root, decoded === "/" ? "index.html" : decoded);
       // realpath also prevents a staged symlink from exposing host files.
       const real = fs.realpathSync(file);
-      if (!real.startsWith(`${root}${path.sep}`) || !fs.statSync(real).isFile()) return reply(req, res, 404, "Not found");
-      let body = fs.readFileSync(real);
+      const stat = fs.statSync(real);
+      if (!real.startsWith(`${root}${path.sep}`) || !stat.isFile()) return reply(req, res, 404, "Not found");
       const type = MIME[path.extname(real)] ?? "application/octet-stream";
-      if (real === path.join(root, "index.html")) {
-        let html = body.toString();
+      if (real !== path.join(root, "index.html")) return sendFile(req, res, real, stat.size, type);
+      {
+        let html = fs.readFileSync(real, "utf8");
         // Explicit WebSocket origin for Chromium versions whose 'self' does not
         // cover ws:. Preserve the upstream CSP's other source restrictions.
         // CSP host-sources cannot contain '_' (container names); 'self' covers those.
@@ -152,9 +165,8 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
         // when no capability is available.
         const shim = '<script src="/_community/browser.js"></script>';
         html = html.includes("<script") ? html.replace("<script", `${shim}<script`) : html.replace("</head>", `${shim}</head>`);
-        body = Buffer.from(html);
+        reply(req, res, 200, html, type);
       }
-      reply(req, res, 200, body, type);
     } catch {
       reply(req, res, 404, "Not found");
     }

@@ -48,7 +48,7 @@ async function service(t) {
   t.after(() => server.close());
   const ws = StubServer.current;
   const token = new URLSearchParams(new URL(server.url).hash.slice(1)).get("cap");
-  return { ...server, messages, token, ws };
+  return { ...server, messages, token, ws, webviewRoot: view };
 }
 
 const bearer = server => ({ Authorization: `Bearer ${server.token}` });
@@ -112,6 +112,22 @@ test("host-local media previews require the token and are limited to media files
     assert.equal(await status(server.origin + route(file), bearer(server)), 404, file);
   }
   assert.equal(await status(server.origin + "/@fs/relative.png", bearer(server)), 404);
+});
+
+test("pipelined unauthenticated requests that are never read do not buffer whole files", async t => {
+  const server = await service(t);
+  fs.writeFileSync(path.join(server.webviewRoot, "large.js"), Buffer.alloc(4 * 1024 * 1024, 97));
+  const { port } = new URL(server.origin);
+  const before = process.memoryUsage().arrayBuffers;
+  const socket = require("node:net").connect(port, "127.0.0.1");
+  t.after(() => socket.destroy());
+  socket.on("error", () => {});
+  await new Promise(resolve => socket.once("connect", resolve));
+  socket.pause(); // never read the responses
+  socket.write(`GET /large.js HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n\r\n`.repeat(32));
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const retained = process.memoryUsage().arrayBuffers - before;
+  assert.ok(retained < 32 * 1024 * 1024, `retained ${Math.round(retained / 1048576)} MiB for 32 x 4 MiB pipelined requests`);
 });
 
 test("the shim runs before upstream scripts so it can stop an unauthenticated page", async t => {
