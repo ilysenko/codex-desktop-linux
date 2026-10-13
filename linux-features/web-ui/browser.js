@@ -226,6 +226,50 @@
     };
     current.start();
   });
+  // Host-local previews: upstream renders app://fs/@fs/<path> (Electron's
+  // protocol) and /@fs/<path>. <img> cannot send the bearer header, so fetch
+  // them with it and show blob URLs instead.
+  const blank = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+  const hostImages = new Map(), adapted = new WeakMap();
+  function hostImagePath(source) {
+    try {
+      const url = new URL(source, location.href);
+      const local = (url.protocol === "app:" && url.host === "fs") || url.origin === location.origin;
+      if (local && url.pathname.startsWith("/@fs/")) return url.pathname.slice("/@fs".length);
+    } catch {}
+    return null;
+  }
+  function loadHostImage(encodedPath) {
+    if (!hostImages.has(encodedPath)) {
+      if (hostImages.size >= 256) { const [oldest, url] = hostImages.entries().next().value; hostImages.delete(oldest); url.then(URL.revokeObjectURL, () => {}); }
+      const url = fetch(`/@fs${encodedPath}`, { headers: { Authorization: `Bearer ${capability}` } })
+        .then(response => response.ok ? response.blob() : Promise.reject(Error(`HTTP ${response.status}`)))
+        .then(blob => URL.createObjectURL(blob));
+      url.catch(() => hostImages.delete(encodedPath));
+      hostImages.set(encodedPath, url);
+    }
+    return hostImages.get(encodedPath);
+  }
+  function adaptImage(image) {
+    const encodedPath = hostImagePath(image.getAttribute("src") ?? "");
+    if (encodedPath === null) return;
+    adapted.set(image, encodedPath);
+    // Cancel the unloadable request before it fails into upstream's error state.
+    image.src = blank;
+    loadHostImage(encodedPath).then(
+      url => { if (adapted.get(image) === encodedPath) image.src = url; },
+      () => { if (adapted.get(image) === encodedPath) image.src = "data:,"; },
+    );
+  }
+  new MutationObserver(records => {
+    for (const record of records) {
+      if (record.type === "attributes") { if (record.target instanceof HTMLImageElement) adaptImage(record.target); continue; }
+      for (const node of record.addedNodes) {
+        if (node instanceof HTMLImageElement) adaptImage(node);
+        else if (node instanceof Element) node.querySelectorAll("img[src]").forEach(adaptImage);
+      }
+    }
+  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["src"] });
   const unsupported = () => { throw Error("This operation requires the desktop interface."); };
   const theme = matchMedia("(prefers-color-scheme: dark)");
   const bridge = {

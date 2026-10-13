@@ -16,6 +16,18 @@ function connectionUrl(logPath) {
   return url;
 }
 
+// page.waitForFunction re-evaluates its predicate in the page with eval while
+// polling, which upstream's CSP blocks; page.evaluate goes through the
+// DevTools protocol instead.
+async function poll(page, predicate, timeoutMs = 30_000) {
+  for (const deadline = Date.now() + timeoutMs; Date.now() < deadline; await new Promise(resolve => setTimeout(resolve, 100))) {
+    // A navigation (e.g. the fragment-triggered reload) destroys the context
+    // mid-evaluation; keep polling the new document.
+    if (await page.evaluate(predicate).catch(() => false)) return;
+  }
+  throw Error("Timed out waiting for the page");
+}
+
 async function installRpc(page) {
   await page.evaluate(() => {
     window.communityTestRpc = (method, params) => new Promise((resolve, reject) => {
@@ -41,6 +53,7 @@ async function run() {
   const fixture = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), "web-ui-browser-"));
   fs.mkdirSync(path.join(fixture, "subfolder"));
   fs.writeFileSync(path.join(fixture, "file.txt"), "community-web-ui-file\n");
+  fs.writeFileSync(path.join(fixture, "pixel #1.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64"));
   const browser = await chromium.launch({ headless: true, chromiumSandbox: true });
   const destination = http.createServer((_request, response) => response.end("community-external-link-ok"));
   await new Promise(resolve => destination.listen(0, "127.0.0.1", resolve));
@@ -66,7 +79,7 @@ async function run() {
     const page = await context.newPage(), errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(url);
-    await page.waitForFunction(() => window.electronBridge?.communityWebUi === true);
+    await poll(page, () => window.electronBridge?.communityWebUi === true);
     assert.equal(await page.title(), "ChatGPT Community");
     assert.equal(new URL(page.url()).hash, "", "the fragment is removed from the address bar and history");
     assert.deepEqual(await context.cookies(), [], "no cookie: browsers never attach the capability on their own");
@@ -179,6 +192,18 @@ async function run() {
     assert.equal(await externalLink.getAttribute("rel"), "noopener noreferrer");
     assert.equal(await page.evaluate(() => window.communityExternalIntercepts), 0);
     await page.evaluate(() => { document.getElementById("community-test-modal").remove(); document.body.style.pointerEvents = ""; });
+    // Host-local previews in upstream's two URL forms render through the adapter.
+    const imagePath = encodeURI(path.join(fixture, "pixel #1.png")).replaceAll("#", "%23").replaceAll("?", "%3F");
+    await page.evaluate(encoded => {
+      for (const [id, src] of [["community-app-fs", `app://fs/@fs${encoded}`], ["community-fs", `/@fs${encoded}`]]) {
+        const image = document.createElement("img"); image.id = id; image.src = src; document.body.append(image);
+      }
+    }, imagePath);
+    await poll(page, () => ["community-app-fs", "community-fs"].every(id => {
+      const image = document.getElementById(id);
+      return image.src.startsWith("blob:") && image.complete && image.naturalWidth === 1;
+    }));
+    await page.evaluate(() => { document.getElementById("community-app-fs").remove(); document.getElementById("community-fs").remove(); });
     const second = await context.newPage();
     await second.goto(origin);
     await second.getByRole("alert").filter({ hasText: "One browser session is already connected" }).waitFor();
@@ -195,10 +220,10 @@ async function run() {
     await reopened.goto(origin + "/#cap=stale-capability", { waitUntil: "commit" });
     await reopened.getByRole("alert").filter({ hasText: "no longer valid" }).waitFor();
     await reopened.evaluate(next => { location.hash = next; }, new URL(url).hash);
-    await reopened.waitForFunction(() => window.electronBridge?.communityWebUi === true);
+    await poll(reopened, () => window.electronBridge?.communityWebUi === true);
     assert.equal(new URL(reopened.url()).hash, "");
     await recovery.close();
-    console.log("PASS: fragment capability, cross-port isolation, unauthenticated stop page, browser bootstrap, IPC/RPC, embedded-browser rejection, host file read, sandboxed command, modal folder selection, external-link popup, single-session gate, and reload");
+    console.log("PASS: fragment capability, cross-port isolation, unauthenticated stop page, host-local image previews, browser bootstrap, IPC/RPC, embedded-browser rejection, host file read, sandboxed command, modal folder selection, external-link popup, single-session gate, and reload");
   } finally {
     await browser.close();
     await new Promise(resolve => destination.close(resolve));

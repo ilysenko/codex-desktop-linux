@@ -123,6 +123,11 @@ docker run --security-opt seccomp=unconfined -p 127.0.0.1:4310:4310 \
 
 Read the connection URL from `docker logs`. A restart rotates it.
 
+Host-local images and media that upstream shows with Electron-only
+`app://fs/@fs/…` (or `/@fs/…`) URLs are fetched with the capability and shown as
+blob URLs. Only image/audio/video file types up to 64 MiB are served this way;
+other file access stays on the app-server's authenticated file RPC.
+
 Bridge messages are limited to 16 MiB. Larger transfers and file attachments
 need a dedicated browser adapter.
 

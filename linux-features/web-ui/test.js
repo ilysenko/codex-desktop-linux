@@ -95,6 +95,25 @@ test("capability travels in the URL fragment; public assets, protected bootstrap
   assert.equal(await status(server.origin, { Host: "codex_desktop:4310" }), 200, "container names may contain underscores");
 });
 
+test("host-local media previews require the token and are limited to media files", async t => {
+  const server = await service(t);
+  const files = directory(t);
+  fs.writeFileSync(path.join(files, "shot #1.png"), Buffer.from("89504e470d0a1a0a", "hex"));
+  fs.writeFileSync(path.join(files, "secret.txt"), "not media");
+  fs.symlinkSync(path.join(files, "secret.txt"), path.join(files, "disguised.png"));
+  fs.mkdirSync(path.join(files, "folder.png"));
+  // Upstream's encoding: encodeURI plus escaped '#' and '?'.
+  const route = file => "/@fs" + encodeURI(path.join(files, file)).replaceAll("#", "%23").replaceAll("?", "%3F");
+  assert.equal(await status(server.origin + route("shot #1.png")), 403, "no ambient access for <img> or another origin");
+  const image = await get(server.origin + route("shot #1.png"), bearer(server));
+  assert.equal(image.status, 200);
+  assert.equal(image.headers["content-type"], "image/png");
+  for (const file of ["secret.txt", "disguised.png", "folder.png", "missing.png"]) {
+    assert.equal(await status(server.origin + route(file), bearer(server)), 404, file);
+  }
+  assert.equal(await status(server.origin + "/@fs/relative.png", bearer(server)), 404);
+});
+
 test("the shim runs before upstream scripts so it can stop an unauthenticated page", async t => {
   const server = await service(t);
   const html = (await get(server.origin)).body;

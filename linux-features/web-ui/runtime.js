@@ -17,7 +17,8 @@ const TYPES = new Set(["invoke", "subscribe", "unsubscribe", "connect", "rpc"]);
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml",
-  ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
+  ".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon",
   ".woff": "font/woff", ".woff2": "font/woff2", ".wasm": "application/wasm",
   ".mp3": "audio/mpeg", ".wav": "audio/wav", ".mp4": "video/mp4", ".webm": "video/webm",
 };
@@ -43,6 +44,20 @@ function secretEqual(left, right) {
   if (typeof left !== "string") return false;
   const a = Buffer.from(left), b = Buffer.from(right);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Host-local previews (upstream's app://fs/@fs/<path> and /@fs/<path>) are
+// limited to media types; general file access stays on the app-server RPC.
+const HOST_MEDIA = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".bmp", ".ico", ".svg", ".mp3", ".wav", ".mp4", ".webm"]);
+const HOST_MEDIA_LIMIT = 64 * 1024 * 1024;
+
+function hostMedia(encodedPath) {
+  const file = decodeURIComponent(encodedPath);
+  if (!path.isAbsolute(file) || file.includes("\0")) return null;
+  const real = fs.realpathSync(file);
+  const stat = fs.statSync(real);
+  if (!stat.isFile() || stat.size > HOST_MEDIA_LIMIT || !HOST_MEDIA.has(path.extname(real).toLowerCase())) return null;
+  return { body: fs.readFileSync(real), type: MIME[path.extname(real).toLowerCase()] };
 }
 
 function isDirectory(file) {
@@ -107,6 +122,12 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
       if (url.pathname === "/_community/bootstrap") {
         if (!bearer(req)) return reply(req, res, 403, "Use the complete connection URL printed by ChatGPT Community.");
         return reply(req, res, bootstrap ? 200 : 503, bootstrap ? JSON.stringify(bootstrap) : "Host not ready", bootstrap ? MIME[".json"] : undefined);
+      }
+      if (url.pathname.startsWith("/@fs/")) {
+        // Fetched by the adapter with the bearer header, then shown as a blob.
+        if (!bearer(req)) return reply(req, res, 403, "Forbidden");
+        const media = hostMedia(url.pathname.slice("/@fs".length));
+        return media ? reply(req, res, 200, media.body, media.type) : reply(req, res, 404, "Not found");
       }
       if (url.pathname === "/_community/browser.js") return reply(req, res, 200, fs.readFileSync(browserScript), MIME[".js"]);
       if (url.pathname.startsWith("/_community/") || url.pathname === "/community-web-host.html") return reply(req, res, 404, "Not found");

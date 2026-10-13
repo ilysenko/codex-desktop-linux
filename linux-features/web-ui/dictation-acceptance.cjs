@@ -60,8 +60,13 @@ async function run() {
       await page.getByRole("button", { name: "Stop dictation", exact: true }).click();
     }
     async function transcript() {
-      await page.waitForFunction(expected => [...document.querySelectorAll('[contenteditable="true"],textarea')]
-        .some(element => (element.value ?? element.innerText).toLowerCase().includes(expected.toLowerCase())), expected, { timeout: 90_000 });
+      // Poll through page.evaluate: waitForFunction evaluates its predicate
+      // with eval while polling, which upstream's CSP blocks.
+      for (const deadline = Date.now() + 90_000; ; await page.waitForTimeout(250)) {
+        if (await page.evaluate(expected => [...document.querySelectorAll('[contenteditable="true"],textarea')]
+          .some(element => (element.value ?? element.innerText).toLowerCase().includes(expected.toLowerCase())), expected)) break;
+        if (Date.now() > deadline) throw Error("Timed out waiting for the transcript");
+      }
       assert.ok((await text()).toLowerCase().includes(expected.toLowerCase()), "generated speech appears in draft");
       assert.equal(await page.getByText("Dictation stopped", { exact: true }).count(), 0);
     }
