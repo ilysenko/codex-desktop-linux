@@ -11,7 +11,10 @@ async function requestWithBrowserProfile(hostId, options, { readPrincipal, readI
   for (;;) {
     signal.throwIfAborted();
     const principal = readPrincipal();
-    if (!principal || hostId !== `chatgpt:${principal.accountId}:${principal.userId}`) {
+    // No cached principal (cold or expiring token): let upstream's own request
+    // refresh it instead of failing into the catalog's five-minute backoff.
+    if (!principal) return fetch(options);
+    if (hostId !== `chatgpt:${principal.accountId}:${principal.userId}`) {
       throw new DOMException("Authenticated principal changed", "AbortError");
     }
     const inputs = readInputs({ kind: "chatgpt", ...principal });

@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 const { connectHost } = require("./host");
 const IDENT = "[A-Za-z_$][\\w$]*";
@@ -108,6 +109,13 @@ function patchDictationRenderer(source, requestModule) {
   return source.replace(upload[0], load + upload[0].replace(`...${upload[5]}()`, `...(${headers}??${upload[5]}())`)) + `\n${marker}\n`;
 }
 
+function parses(source, module) {
+  try {
+    execFileSync(process.execPath, [`--input-type=${module ? "module" : "commonjs"}`, "--check"], { input: source, stdio: ["pipe", "ignore", "ignore"], maxBuffer: 1 << 30 });
+    return true;
+  } catch { return false; }
+}
+
 function apply(extractedDir) {
   const build = path.join(extractedDir, ".vite/build");
   const assets = path.join(extractedDir, "webview/assets");
@@ -126,6 +134,7 @@ function apply(extractedDir) {
   const renderer = uniqueFile(assetFiles, entry => entry.source.includes("connect-app-host") && (entry.source.includes("encodingLevel=`structuredClonable`") || entry.source.includes(MARKER)), "renderer RPC");
   const catalogRenderer = uniqueFile(assetFiles, entry => entry.source.includes("publishChatGptRequestProfile"), "catalog renderer");
   const requestModule = uniqueFile(assetFiles, entry => /export\{[^}]*\bas getChatGPTRequestHeaders\b[^}]*\bas getChatGptRequestProfile\b/.test(entry.source), "ChatGPT request exports");
+  if (renderer.file === catalogRenderer.file) throw Error("Web UI: renderer RPC and catalog anchors share one bundle");
   const edits = [
     { ...main, result: patchMain(main.source, websocket.name) },
     { ...preload, result: patchPreload(preload.source) },
@@ -136,6 +145,14 @@ function apply(extractedDir) {
   const html = fs.readFileSync(path.join(extractedDir, "webview/index.html"), "utf8");
   if (!html.includes("</head>") || !html.includes("connect-src ")) throw Error("Web UI: index/CSP contract drifted");
   edits.push({ file: path.join(extractedDir, "webview/community-web-host.html"), result: '<!doctype html><html><head><meta charset="utf-8"><title>ChatGPT Community Web UI host</title></head><body>ChatGPT Community is hosting the browser interface. Open the connection URL printed in the terminal.</body></html>\n' });
+  // Splices are textual; reject any edit that turns parseable code into a
+  // syntax error (for example a const spliced after an unbraced if).
+  for (const edit of edits) {
+    if (edit.source !== undefined && edit.result !== edit.source && /\.js$/.test(edit.file)) {
+      const module = edit.file.startsWith(assets + path.sep);
+      if (parses(edit.source, module) && !parses(edit.result, module)) throw Error(`Web UI: patch would break ${edit.name}`);
+    }
+  }
   // Resolve every semantic anchor before writing anything. Drift never leaves a
   // partially adapted bundle; the enabled-feature acceptance gate rejects it.
   let changed = 0;

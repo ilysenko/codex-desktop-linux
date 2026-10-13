@@ -40,6 +40,7 @@ async function service(t) {
   fs.mkdirSync(view);
   fs.writeFileSync(path.join(view, "index.html"), '<head><meta content="connect-src &#39;self&#39;;"></head><body>Official UI</body>');
   fs.writeFileSync(path.join(view, "asset.js"), "officialAsset()");
+  fs.writeFileSync(path.join(view, "worker.mjs"), "export {}");
   fs.writeFileSync(path.join(root, "private"), "secret");
   fs.symlinkSync(path.join(root, "private"), path.join(view, "escape.txt"));
   const messages = [];
@@ -69,9 +70,13 @@ function status(url, headers) {
 test("capability exchange, Host checks, protected assets and filesystem confinement", async t => {
   const server = await service(t);
   const login = await fetch(server.url, { redirect: "manual" });
-  assert.equal(login.status, 303);
-  assert.match(login.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
-  assert.equal(login.headers.get("location"), "/");
+  // 200 + same-origin refresh, not a redirect: a cross-site click would make a
+  // redirect cross-site and SameSite=Strict would withhold the new cookie.
+  assert.equal(login.status, 200);
+  assert.match(login.headers.get("set-cookie"), /^community_web_ui_[0-9a-f]{12}=[\w-]+; HttpOnly; SameSite=Strict; Path=\/$/);
+  assert.match(await login.text(), /http-equiv="refresh" content="0;url=\/"/);
+  const other = await service(t);
+  assert.notEqual(other.cookie.split("=")[0], server.cookie.split("=")[0], "hosts sharing a hostname keep separate cookies");
   for (const route of ["/", "/asset.js", "/_community/bootstrap", "/_community/browser.js"]) {
     assert.equal((await fetch(server.origin + route)).status, 403, route);
   }
@@ -94,6 +99,8 @@ test("capability exchange, Host checks, protected assets and filesystem confinem
     assert.notEqual((await fetch(server.origin + route, { headers })).status, 200, route);
   }
   assert.equal((await fetch(server.origin + "/asset.js", { headers, method: "HEAD" })).headers.get("content-length"), "15");
+  assert.equal((await fetch(server.origin + "/worker.mjs", { headers })).headers.get("content-type"), "text/javascript; charset=utf-8");
+  assert.equal(await status(server.origin, { ...headers, Host: "codex_desktop:4310" }), 200, "container names may contain underscores");
 });
 
 test("WebSocket rejects cross-origin access, missing secrets, and a second browser; forwards valid messages", async t => {
@@ -124,6 +131,26 @@ test("WebSocket rejects cross-origin access, missing secrets, and a second brows
   assert.equal(await upgrade(server, { Cookie: server.cookie, Host: "codex.lan:8080", Origin: "http://codex.lan:8080" }), 418, "same-origin access through a published port");
 });
 
+test("a peer resetting a rejected upgrade does not raise an uncaught error", async t => {
+  const server = await service(t);
+  const failures = [];
+  const record = error => failures.push(error);
+  process.on("uncaughtException", record);
+  t.after(() => process.off("uncaughtException", record));
+  for (let i = 0; i < 5; i++) {
+    await new Promise(resolve => {
+      const { port } = new URL(server.origin);
+      const socket = require("node:net").connect(port, "127.0.0.1", () => {
+        socket.write(`GET /_community/bridge HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`);
+        socket.resetAndDestroy();
+        setTimeout(resolve, 50);
+      });
+      socket.on("error", () => {});
+    });
+  }
+  assert.deepEqual(failures, []);
+});
+
 test("strict port validation and address-in-use errors", async t => {
   for (const port of ["-1", "65536", "1.2", "01", "", "4310junk"]) assert.throws(() => parsePort(port));
   assert.equal(parsePort("0"), 0);
@@ -138,6 +165,11 @@ test("folder chooser lists host directories and validates absolute paths", t => 
   fs.mkdirSync(path.join(root, "visible"));
   fs.mkdirSync(path.join(root, ".hidden"));
   fs.writeFileSync(path.join(root, "file.txt"), "not a directory");
+  fs.symlinkSync(path.join(root, "visible"), path.join(root, "linked"));
+  fs.symlinkSync(path.join(root, "file.txt"), path.join(root, "linked-file"));
+  fs.symlinkSync(path.join(root, "missing"), path.join(root, "dangling"));
+  assert.deepEqual(listDirectories(root).entries.map(entry => entry.name), ["linked", "visible"], "symlinked folders are listed");
+  for (const name of ["linked", "linked-file", "dangling"]) fs.unlinkSync(path.join(root, name));
   const result = listDirectories(root);
   assert.deepEqual(result.entries.map(entry => entry.name), ["visible"]);
   assert.equal(result.path, fs.realpathSync(root));
@@ -261,6 +293,9 @@ test("catalog waits are bounded, cancellable, and never fetch with a different p
   controller.abort();
   await assert.rejects(pending, { name: "AbortError" });
   await assert.rejects(requestWithBrowserProfile("chatgpt:account:user", { signal: new AbortController().signal }, services, 10), error => error.name === "AbortError" || error.name === "TimeoutError");
+  // A cold principal defers to upstream's request, which refreshes the token.
+  const options = { signal: new AbortController().signal };
+  assert.equal(await requestWithBrowserProfile("chatgpt:account:user", options, { ...services, readPrincipal: () => undefined, fetch: value => value }), options);
 });
 
 const capabilityFixture = 'function capability(e){let n=registry[e.name];if(n==null||!supported(n))return{isLoading:!1,isError:!1,isCapable:!1};let r=[...n.accessPolicies.map(e=>e)];return{isLoading:!1,isError:!1,isCapable:!0}}';
@@ -296,7 +331,7 @@ test("entire adaptation is idempotent and missing/ambiguous anchors cause zero w
   const valid = bundle(t);
   assert.equal(apply(valid.root).changed, true);
   assert.equal(apply(valid.root).changed, false);
-  for (const breakage of ["missing", "ambiguous", "codec", "capability", "duplicate-capability", "catalog", "duplicate-catalog", "request-profile", "catalog-activation", "dictation", "duplicate-dictation", "request-exports"]) {
+  for (const breakage of ["missing", "ambiguous", "codec", "capability", "duplicate-capability", "catalog", "duplicate-catalog", "request-profile", "catalog-activation", "dictation", "duplicate-dictation", "request-exports", "shared-bundle", "unparseable-dictation"]) {
     const fixture = bundle(t);
     if (breakage === "missing") fixture.put(".vite/build/preload.js", "unsupportedPreload()");
     if (breakage === "ambiguous") fixture.put(".vite/build/other-preload.js", fs.readFileSync(path.join(fixture.root, ".vite/build/preload.js")));
@@ -306,6 +341,11 @@ test("entire adaptation is idempotent and missing/ambiguous anchors cause zero w
     if (breakage === "catalog-activation") fixture.put("webview/assets/app-initial-test.js", catalogRendererFixture.replace("setSourceEnabled", "changed"));
     if (breakage === "dictation") fixture.put("webview/assets/app-initial-test.js", catalogRendererFixture);
     if (breakage === "duplicate-dictation") fixture.put("webview/assets/app-initial-test.js", catalogRendererFixture + dictationFixture + dictationFixture);
+    if (breakage === "shared-bundle") {
+      fixture.put("webview/assets/app-shared-test.js", "connect-app-host;encodingLevel=`structuredClonable`;" + capabilityFixture + catalogRendererFixture + dictationFixture);
+      fixture.put("webview/assets/app-initial-test.js", "initial()");
+    }
+    if (breakage === "unparseable-dictation") fixture.put("webview/assets/app-initial-test.js", catalogRendererFixture + dictationFixture.replace("return retry(", "if(audio)return retry("));
     if (breakage === "request-exports") fixture.put("webview/assets/requests-test.js", "unsupportedExports()");
     const mainFile = path.join(fixture.root, ".vite/build/main-test.js");
     if (breakage === "catalog") fixture.put(".vite/build/main-test.js", fs.readFileSync(mainFile, "utf8").replace(catalogFixture, ""));

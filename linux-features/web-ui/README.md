@@ -38,7 +38,8 @@ CODEX_WEB_UI=1 codex-desktop
 Open the complete `ChatGPT Community Web UI:` URL printed in the terminal.
 It grants access to the application and its workspaces: keep it private. The
 service exchanges its random 256-bit capability for an HttpOnly, SameSite=Strict
-cookie and redirects to a URL without the secret. A restart rotates the secret.
+cookie and reloads to a URL without the secret (a same-origin refresh, so the
+link also works when clicked from another site). A restart rotates the secret.
 Only one browser tab can connect at a time; close the old tab before reconnecting.
 
 Even with the feature built in, ordinary launches keep the desktop interface
@@ -74,10 +75,35 @@ to loopback:
 ssh -N -L 4310:127.0.0.1:4310 USER@LINUX_HOST
 ```
 
+Browser cookies are not isolated by port: other services on the same hostname
+receive the session cookie. Do not browse untrusted services on the hostname
+you use for the Web UI. Each host uses its own cookie name, so several hosts on
+one hostname (tunnels, containers) do not replace each other's sessions.
+
+A reverse proxy must forward the browser's `Host` unchanged and pass WebSocket
+upgrades for `/_community/bridge`; the bridge accepts only a same-origin
+`Origin`. For nginx:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:4310;
+    proxy_set_header Host $http_host;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+The bridge pings the browser every 30 seconds. A browser that disappears
+without closing (sleep, network change) releases the single-session slot
+within a minute.
+
 Browsers treat `http://127.0.0.1`/`localhost` as secure contexts, but not plain
 HTTP on other names. In those cases browser features that require a secure
-context, such as clipboard and microphone (dictation), are unavailable; the
-interface itself still works.
+context, such as clipboard, microphone (dictation) and `crypto.subtle` (used by
+some spreadsheet, Pages and MCP app views), are unavailable. The interface and
+chats work; use `localhost` through a tunnel or published port, or HTTPS, for
+full functionality.
 
 ### Docker
 
@@ -150,7 +176,7 @@ IPC delivery. There are no historical-version fallback paths.
 
 ## Limits and validation
 
-The workspace folder button opens a browser dialog that lists directories on
+The workspace folder button and Open Folder… (Ctrl+O) open a browser dialog that lists directories on
 the host computer and accepts an absolute host path. Upstream project creation
 and workspace trust handling still run after selection.
 

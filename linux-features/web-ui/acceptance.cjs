@@ -91,6 +91,17 @@ async function run() {
     await page.getByRole("button", { name: "subfolder", exact: true }).click();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     assert.equal(await selection, path.join(fixture, "subfolder"));
+    // Upstream's modal can unmount the chooser (Escape) without a cancel event;
+    // the next pick must still open a chooser.
+    page.evaluate(() => electronBridge.sendMessageFromView({ type: "electron-pick-workspace-root-option", allowMultiple: false }));
+    const chooser = page.getByRole("dialog", { name: "Choose a folder on the host computer" });
+    await chooser.waitFor();
+    await chooser.evaluate(dialog => dialog.remove());
+    // Open Folder… / Ctrl+O uses the browser chooser, not a native host dialog.
+    const added = page.evaluate(() => electronBridge.sendMessageFromView({ type: "electron-add-new-workspace-root-option" }).then(() => "settled"));
+    await chooser.waitFor();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.equal(await added, "settled");
     // Use native link navigation during the gesture, without the desktop
     // opener/dialog round trip. Exercise upstream-style delegated interception
     // as well as buttons that invoke the bridge synchronously.

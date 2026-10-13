@@ -9,9 +9,10 @@ const os = require("node:os");
 
 const HOST_URL = "app://-/community-web-host.html";
 const CHANNEL = "community:web-ui";
+const HEARTBEAT_MS = 30_000;
 const TYPES = new Set(["invoke", "subscribe", "unsubscribe", "connect", "rpc"]);
 const MIME = {
-  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml",
   ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
   ".woff": "font/woff", ".woff2": "font/woff2", ".wasm": "application/wasm",
@@ -32,7 +33,7 @@ function parseHost(value = "0.0.0.0") {
 
 // The Host header is reflected into the CSP and compared with Origin. Accept
 // only a plain host[:port] authority; the capability cookie is the access gate.
-const AUTHORITY = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/;
+const AUTHORITY = /^(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/;
 const requestHost = req => typeof req.headers.host === "string" && AUTHORITY.test(req.headers.host) ? req.headers.host : null;
 
 function secretEqual(left, right) {
@@ -41,13 +42,17 @@ function secretEqual(left, right) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+function isDirectory(file) {
+  try { return fs.statSync(file).isDirectory(); } catch { return false; }
+}
+
 function listDirectories(directory) {
   if (directory !== null && (typeof directory !== "string" || !path.isAbsolute(directory) || directory.includes("\0"))) {
     throw Error("Choose an absolute path on the host computer.");
   }
   const current = fs.realpathSync(directory ?? os.homedir());
   const entries = fs.readdirSync(current, { withFileTypes: true })
-    .filter(entry => !entry.name.startsWith(".") && entry.isDirectory())
+    .filter(entry => !entry.name.startsWith(".") && (entry.isDirectory() || (entry.isSymbolicLink() && isDirectory(path.join(current, entry.name)))))
     .map(entry => ({ name: entry.name, path: path.join(current, entry.name) }))
     .sort((left, right) => left.name.localeCompare(right.name));
   return { path: current, parent: path.dirname(current), entries };
@@ -57,7 +62,9 @@ function listDirectories(directory) {
 // network directly: only the registered host's preload can handle relay calls.
 async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "0.0.0.0", sendToHost, browserScript = path.join(__dirname, "browser.js") }) {
   const capability = crypto.randomBytes(32).toString("base64url");
-  const cookieName = "community_web_ui";
+  // Cookies are not port-isolated: a per-host name keeps two hosts on one
+  // hostname (tunnels, containers) from replacing each other's session.
+  const cookieName = `community_web_ui_${crypto.createHash("sha256").update(capability).digest("hex").slice(0, 12)}`;
   let origin, bootstrap, browser, closed = false;
   const sockets = new Set();
   const root = fs.realpathSync(webviewRoot);
@@ -89,8 +96,11 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
     try {
       const url = new URL(req.url, `http://${authority}`);
       if (url.pathname === "/" && secretEqual(url.searchParams.get("cap"), capability)) {
-        res.writeHead(303, { "Set-Cookie": `${cookieName}=${capability}; HttpOnly; SameSite=Strict; Path=/`, Location: "/" });
-        res.end(); return;
+        // A cross-site click (webmail, chat, browser IDE) makes a redirect
+        // cross-site too, so SameSite=Strict would withhold the new cookie.
+        // A same-origin refresh is a same-site navigation and sends it.
+        res.setHeader("Set-Cookie", `${cookieName}=${capability}; HttpOnly; SameSite=Strict; Path=/`);
+        return reply(req, res, 200, '<!doctype html><meta http-equiv="refresh" content="0;url=/">', MIME[".html"]);
       }
       if (!authorized(req)) return reply(req, res, 403, "Use the complete connection URL printed by ChatGPT Community.");
       if (url.pathname === "/_community/bootstrap") {
@@ -112,7 +122,8 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
         let html = body.toString();
         // Explicit WebSocket origin for Chromium versions whose 'self' does not
         // cover ws:. Preserve the upstream CSP's other source restrictions.
-        html = html.replace("connect-src ", `connect-src ws://${authority} wss://${authority} `);
+        // CSP host-sources cannot contain '_' (container names); 'self' covers those.
+        if (!authority.includes("_")) html = html.replace("connect-src ", `connect-src ws://${authority} wss://${authority} `);
         html = html.replace(/<title>[^<]*<\/title>/, "<title>ChatGPT Community</title>");
         html = html.replace("</head>", '<script src="/_community/browser.js"></script></head>');
         body = Buffer.from(html);
@@ -124,6 +135,9 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
   });
   server.on("connection", socket => { sockets.add(socket); socket.on("close", () => sockets.delete(socket)); });
   server.on("upgrade", (req, socket, head) => {
+    // Node removes its own socket error handler before 'upgrade'; a peer reset
+    // must not become an uncaught exception in the app's main process.
+    socket.on("error", () => {});
     if (!sameOrigin(req) || !authorized(req) || req.url !== "/_community/bridge" || !bootstrap) {
       socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return;
     }
@@ -131,6 +145,16 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
       client.on("error", () => {});
       if (browser) { client.close(1013, "One browser session is already connected"); return; }
       browser = client;
+      // Release the single-session slot when a remote browser vanishes
+      // without closing (sleep, network change): no pong, no session.
+      let alive = true;
+      client.on("pong", () => { alive = true; });
+      const heartbeat = setInterval(() => {
+        if (!alive) { client.terminate(); return; }
+        alive = false;
+        try { client.ping(); } catch {}
+      }, HEARTBEAT_MS);
+      heartbeat.unref?.();
       client.on("message", (bytes, binary) => {
         try {
           const message = JSON.parse(bytes.toString());
@@ -149,6 +173,7 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
         } catch { client.close(1007, "Invalid bridge message"); }
       });
       client.on("close", () => {
+        clearInterval(heartbeat);
         if (browser === client) { browser = undefined; sendToHost({ type: "disconnect" }); }
       });
     });
@@ -191,7 +216,12 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
 
 let instance;
 async function loadHost(window, { electron, WebSocketServer }) {
-  if (instance) throw Error("Web UI supports one host window; use the browser to navigate between chats.");
+  if (instance) {
+    // Upstream already built and registered this extra window (overlay, detached
+    // chat); destroy it so its owner's cleanup runs instead of leaking it.
+    if (!window.isDestroyed()) window.destroy();
+    throw Error("Web UI supports one host window; use the browser to navigate between chats.");
+  }
   instance = true;
   let service, readyTimer;
   const contents = window.webContents;
@@ -204,11 +234,18 @@ async function loadHost(window, { electron, WebSocketServer }) {
       if (service.wildcard) process.stdout.write("Listening on all interfaces; from another machine or a published container port, replace the host:port in this URL.\n");
     }
   };
-  service = await startServer({
-    webviewRoot: path.join(electron.app.getAppPath(), "webview"),
-    WebSocketServer, port: process.env.CODEX_WEB_UI_PORT ?? "4310", host: process.env.CODEX_WEB_UI_HOST ?? "0.0.0.0",
-    sendToHost: message => { if (!contents.isDestroyed()) contents.send(CHANNEL, message); },
-  });
+  try {
+    service = await startServer({
+      webviewRoot: path.join(electron.app.getAppPath(), "webview"),
+      WebSocketServer, port: process.env.CODEX_WEB_UI_PORT ?? "4310", host: process.env.CODEX_WEB_UI_HOST ?? "0.0.0.0",
+      sendToHost: message => { if (!contents.isDestroyed()) contents.send(CHANNEL, message); },
+    });
+  } catch (error) {
+    // Headless: upstream's startup error dialog is invisible. Report and exit.
+    process.stderr.write(`ChatGPT Community Web UI failed to start: ${error?.message ?? error}\n`);
+    electron.app.exit(1);
+    throw error;
+  }
   const shutdown = () => {
     clearTimeout(readyTimer);
     electron.ipcMain.removeListener(CHANNEL, receive);
@@ -223,7 +260,9 @@ async function loadHost(window, { electron, WebSocketServer }) {
     }
     service.receive({ type: "notification", value: { type: "community-open-external", url: url.href } });
   };
-  electron.app.once("before-quit", shutdown);
+  // will-quit fires only when no before-quit handler (e.g. upstream's
+  // in-progress-work confirmation) cancelled the quit.
+  electron.app.once("will-quit", shutdown);
   contents.once("destroyed", shutdown);
   contents.once("render-process-gone", () => { shutdown(); electron.app.exit(1); });
   electron.ipcMain.on(CHANNEL, receive);

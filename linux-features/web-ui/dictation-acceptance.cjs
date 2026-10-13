@@ -96,4 +96,5 @@ async function run() {
     console.log("PASS: authenticated dictation acceptance (no messages sent)");
   } finally { await browser.close(); }
 }
-run().catch(error => { console.error(error.message); process.exitCode = 1; });
+// Playwright errors embed the navigated URL; never print the live capability.
+run().catch(error => { console.error(String(error?.message ?? error).replace(/([?&]cap=)[\w-]+/g, "$1REDACTED")); process.exitCode = 1; });

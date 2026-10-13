@@ -80,8 +80,11 @@
     parent.append(dialog);
     dialog.showModal();
   }
-  let folderDialog;
+  let folderDialog, abandonFolder;
   function chooseFolder() {
+    // An upstream modal can unmount the chooser (Escape) without its cancel
+    // event; settle that orphaned request instead of blocking every later pick.
+    if (folderDialog && !folderDialog.isConnected) abandonFolder();
     if (folderDialog) return Promise.resolve(null);
     return new Promise(resolve => {
       const dialog = document.createElement("dialog");
@@ -121,7 +124,8 @@
           if (current === generation) error.textContent = failure.message;
         }
       }
-      function finish(value) { generation++; folderDialog = undefined; dialog.close(); dialog.remove(); resolve(value); }
+      function finish(value) { generation++; folderDialog = abandonFolder = undefined; if (dialog.open) dialog.close(); dialog.remove(); resolve(value); }
+      abandonFolder = () => finish(null);
       form.addEventListener("submit", event => { event.preventDefault(); browse(input.value); });
       // Typing a path must validate it before the selection can be committed.
       input.addEventListener("input", () => { generation++; selected = null; choose.disabled = true; });
@@ -193,6 +197,10 @@
       if (message.type === "open-in-browser") {
         const url = webUrl(message.url);
         if (url) { openExternal(url); return Promise.resolve(); }
+      }
+      // Open Folder… / Ctrl+O: main only shows its native dialog without a root.
+      if (message.type === "electron-add-new-workspace-root-option" && message.root == null) {
+        return chooseFolder().then(root => root ? invoke("sendMessageFromView", [{ ...message, root }]) : undefined);
       }
       if (message.type === "electron-pick-workspace-root-option") {
         return chooseFolder().then(root => {
