@@ -28,6 +28,12 @@
     store.set(fragment);
   }
   const capability = fragment ?? store.get();
+  // Opening a new connection URL (after a host restart) in this tab changes
+  // only the fragment and does not reload the document. Reload so the new
+  // capability is consumed and the bridge reinitializes, also from the stop page.
+  window.addEventListener("hashchange", () => {
+    if (new URLSearchParams(location.hash.slice(1)).has("cap")) location.reload();
+  });
   function blocked(text) {
     // Stop before upstream's scripts load; they need the bridge defined here.
     window.stop();

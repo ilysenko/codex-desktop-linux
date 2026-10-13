@@ -61,6 +61,11 @@ async function run() {
     const stale = await anonymous.newPage();
     await stale.goto(origin + "/#cap=stale-capability", { waitUntil: "commit" });
     await stale.getByRole("alert").filter({ hasText: "no longer valid" }).waitFor();
+    // Opening the current URL in that same tab (fragment-only change) recovers.
+    await stale.evaluate(next => { location.hash = next; }, new URL(url).hash);
+    await stale.waitForFunction(() => window.electronBridge?.communityWebUi === true);
+    assert.equal(new URL(stale.url()).hash, "");
+    await stale.close();
     await anonymous.close();
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage(), errors = [];
