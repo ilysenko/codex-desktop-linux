@@ -183,6 +183,26 @@ test("a peer resetting a rejected upgrade does not raise an uncaught error", asy
   assert.deepEqual(failures, []);
 });
 
+test("rejected upgrades are closed even when the peer keeps its side open", async t => {
+  const server = await service(t);
+  const { port } = new URL(server.origin);
+  const closed = await new Promise((resolve, reject) => {
+    // allowHalfOpen: the peer never ends its write side after the 403.
+    const socket = require("node:net").connect({ port, host: "127.0.0.1", allowHalfOpen: true }, () => {
+      socket.write(`GET /_community/bridge HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`);
+    });
+    socket.on("data", () => {});
+    socket.on("error", () => {});
+    const timer = setTimeout(() => { socket.destroy(); resolve(false); }, 2_000);
+    // A server-side destroy closes the connection fully; end() alone would not.
+    socket.on("close", () => { clearTimeout(timer); resolve(true); });
+    // After the server's FIN, keep writing: a destroyed server socket answers
+    // with a reset, while a merely half-closed one keeps accepting data.
+    socket.on("end", () => { const probe = setInterval(() => { if (socket.destroyed) clearInterval(probe); else socket.write("x"); }, 50); socket.on("close", () => clearInterval(probe)); });
+  });
+  assert.equal(closed, true);
+});
+
 test("strict port validation and address-in-use errors", async t => {
   for (const port of ["-1", "65536", "1.2", "01", "", "4310junk"]) assert.throws(() => parsePort(port));
   assert.equal(parsePort("0"), 0);

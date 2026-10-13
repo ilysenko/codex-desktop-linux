@@ -10,6 +10,7 @@ const os = require("node:os");
 const HOST_URL = "app://-/community-web-host.html";
 const CHANNEL = "community:web-ui";
 const HEARTBEAT_MS = 30_000;
+const REJECT_FLUSH_MS = 5_000;
 const PROTOCOL = "community-web-ui";
 const TOKEN_PROTOCOL = "community-web-ui.cap.";
 const TYPES = new Set(["invoke", "subscribe", "unsubscribe", "connect", "rpc"]);
@@ -143,7 +144,12 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
     // must not become an uncaught exception in the app's main process.
     socket.on("error", () => {});
     if (!sameOrigin(req) || !offeredToken(req) || req.url !== "/_community/bridge" || !bootstrap) {
-      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return;
+      // end() only half-closes; a peer that keeps its side open would hold the
+      // descriptor forever. Destroy once flushed, or after a bounded stall.
+      const stalled = setTimeout(() => socket.destroy(), REJECT_FLUSH_MS);
+      stalled.unref?.();
+      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", () => { clearTimeout(stalled); socket.destroy(); });
+      return;
     }
     ws.handleUpgrade(req, socket, head, client => {
       client.on("error", () => {});
