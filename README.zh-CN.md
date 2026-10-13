@@ -275,8 +275,8 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 
 启用 `web-ui` 并重新构建后，退出桌面应用，然后运行
 `CODEX_WEB_UI=1 codex-desktop`（或 `CODEX_WEB_UI=1 ./codex-app/start.sh`）。
-在浏览器中打开终端输出的完整私密连接 URL。服务仅监听 loopback，默认端口为
-4310；可通过 `CODEX_WEB_UI_PORT` 修改。SSH 访问方式、支持的工作流和当前限制
+在浏览器中打开终端输出的完整私密连接 URL。服务默认监听 `0.0.0.0:4310`；
+可通过 `CODEX_WEB_UI_HOST` 和 `CODEX_WEB_UI_PORT` 修改。SSH 访问方式、支持的工作流和当前限制
 请参阅功能文档。
 
 若要在 GNOME Wayland 下听写时避免 RemoteDesktop 权限提示，请通过

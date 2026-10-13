@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
 const crypto = require("node:crypto");
+const net = require("node:net");
 const os = require("node:os");
 
 const HOST_URL = "app://-/community-web-host.html";
@@ -23,6 +24,16 @@ function parsePort(value = "4310") {
   }
   return Number(value);
 }
+
+function parseHost(value = "0.0.0.0") {
+  if (net.isIP(value) === 0) throw Error("CODEX_WEB_UI_HOST must be an IPv4 or IPv6 address");
+  return value;
+}
+
+// The Host header is reflected into the CSP and compared with Origin. Accept
+// only a plain host[:port] authority; the capability cookie is the access gate.
+const AUTHORITY = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/;
+const requestHost = req => typeof req.headers.host === "string" && AUTHORITY.test(req.headers.host) ? req.headers.host : null;
 
 function secretEqual(left, right) {
   if (typeof left !== "string") return false;
@@ -44,7 +55,7 @@ function listDirectories(directory) {
 
 // This HTTP service is also testable without Electron. IPC never crosses the
 // network directly: only the registered host's preload can handle relay calls.
-async function startServer({ webviewRoot, WebSocketServer, port = 4310, sendToHost, browserScript = path.join(__dirname, "browser.js") }) {
+async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "0.0.0.0", sendToHost, browserScript = path.join(__dirname, "browser.js") }) {
   const capability = crypto.randomBytes(32).toString("base64url");
   const cookieName = "community_web_ui";
   let origin, bootstrap, browser, closed = false;
@@ -55,7 +66,12 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, sendToHo
     const [name, ...value] = cookie.trim().split("=");
     return name === cookieName && secretEqual(value.join("="), capability);
   });
-  const expectedHost = req => req.headers.host === new URL(origin).host;
+  // Same-origin WebSocket only: blocks cross-site WebSocket hijacking whatever
+  // address (loopback, LAN, Docker-published port, proxy) the browser used.
+  const sameOrigin = req => {
+    const authority = requestHost(req);
+    return authority !== null && [`http://${authority}`, `https://${authority}`].includes(req.headers.origin);
+  };
   function reply(req, res, status, body, type = "text/plain; charset=utf-8") {
     res.writeHead(status, { "Content-Type": type, "Content-Length": Buffer.byteLength(body) });
     res.end(req.method === "HEAD" ? undefined : body);
@@ -67,10 +83,11 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, sendToHo
     res.setHeader("X-Frame-Options", "DENY");
     // Block cross-origin scripts from using capability-authenticated assets.
     res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-    if (!expectedHost(req)) return reply(req, res, 421, "Unexpected Host");
+    const authority = requestHost(req);
+    if (authority === null) return reply(req, res, 400, "Invalid Host");
     if (!["GET", "HEAD"].includes(req.method)) return reply(req, res, 405, "Method not allowed");
     try {
-      const url = new URL(req.url, origin);
+      const url = new URL(req.url, `http://${authority}`);
       if (url.pathname === "/" && secretEqual(url.searchParams.get("cap"), capability)) {
         res.writeHead(303, { "Set-Cookie": `${cookieName}=${capability}; HttpOnly; SameSite=Strict; Path=/`, Location: "/" });
         res.end(); return;
@@ -95,7 +112,7 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, sendToHo
         let html = body.toString();
         // Explicit WebSocket origin for Chromium versions whose 'self' does not
         // cover ws:. Preserve the upstream CSP's other source restrictions.
-        html = html.replace("connect-src ", `connect-src ${origin.replace("http:", "ws:")} `);
+        html = html.replace("connect-src ", `connect-src ws://${authority} wss://${authority} `);
         html = html.replace(/<title>[^<]*<\/title>/, "<title>ChatGPT Community</title>");
         html = html.replace("</head>", '<script src="/_community/browser.js"></script></head>');
         body = Buffer.from(html);
@@ -107,7 +124,7 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, sendToHo
   });
   server.on("connection", socket => { sockets.add(socket); socket.on("close", () => sockets.delete(socket)); });
   server.on("upgrade", (req, socket, head) => {
-    if (!expectedHost(req) || req.headers.origin !== origin || !authorized(req) || req.url !== "/_community/bridge" || !bootstrap) {
+    if (!sameOrigin(req) || !authorized(req) || req.url !== "/_community/bridge" || !bootstrap) {
       socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return;
     }
     ws.handleUpgrade(req, socket, head, client => {
@@ -138,11 +155,14 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, sendToHo
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(parsePort(port), "127.0.0.1", resolve);
+    server.listen(parsePort(port), parseHost(host), resolve);
   });
-  origin = `http://127.0.0.1:${server.address().port}`;
+  const bound = server.address();
+  // A wildcard bind is reachable through any local address; print loopback.
+  const shown = net.isIPv6(bound.address) ? (bound.address === "::" ? "[::1]" : `[${bound.address}]`) : (bound.address === "0.0.0.0" ? "127.0.0.1" : bound.address);
+  origin = `http://${shown}:${bound.port}`;
   return {
-    origin, url: `${origin}/?cap=${capability}`,
+    origin, url: `${origin}/?cap=${capability}`, wildcard: ["0.0.0.0", "::"].includes(bound.address),
     receive(message) {
       if (message.type === "bootstrap") {
         bootstrap = message.value;
@@ -181,11 +201,12 @@ async function loadHost(window, { electron, WebSocketServer }) {
     if (message.type === "bootstrap") {
       clearTimeout(readyTimer);
       process.stdout.write(`ChatGPT Community Web UI: ${service.url}\n`);
+      if (service.wildcard) process.stdout.write("Listening on all interfaces; from another machine or a published container port, replace the host:port in this URL.\n");
     }
   };
   service = await startServer({
     webviewRoot: path.join(electron.app.getAppPath(), "webview"),
-    WebSocketServer, port: process.env.CODEX_WEB_UI_PORT ?? "4310",
+    WebSocketServer, port: process.env.CODEX_WEB_UI_PORT ?? "4310", host: process.env.CODEX_WEB_UI_HOST ?? "0.0.0.0",
     sendToHost: message => { if (!contents.isDestroyed()) contents.send(CHANNEL, message); },
   });
   const shutdown = () => {
@@ -211,4 +232,4 @@ async function loadHost(window, { electron, WebSocketServer }) {
   await window.loadURL(HOST_URL);
 }
 
-module.exports = { listDirectories, loadHost, parsePort, startServer };
+module.exports = { listDirectories, loadHost, parseHost, parsePort, startServer };

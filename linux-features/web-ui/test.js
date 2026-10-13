@@ -10,7 +10,7 @@ const { EventEmitter } = require("node:events");
 const test = require("node:test");
 const { apply, patchMain, patchRenderer, patchCatalogRenderer, patchDictationRenderer } = require("./patch");
 const vm = require("node:vm");
-const { listDirectories, parsePort, startServer } = require("./runtime");
+const { listDirectories, parseHost, parsePort, startServer } = require("./runtime");
 const { stageEnabledLinuxFeatureInstall, loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features");
 
 function directory(t) {
@@ -43,7 +43,7 @@ async function service(t) {
   fs.writeFileSync(path.join(root, "private"), "secret");
   fs.symlinkSync(path.join(root, "private"), path.join(view, "escape.txt"));
   const messages = [];
-  const server = await startServer({ webviewRoot: view, WebSocketServer: StubServer, port: 0, sendToHost: value => messages.push(value) });
+  const server = await startServer({ webviewRoot: view, WebSocketServer: StubServer, port: 0, host: "127.0.0.1", sendToHost: value => messages.push(value) });
   t.after(() => server.close());
   const ws = StubServer.current;
   const login = await fetch(server.url, { redirect: "manual" });
@@ -76,7 +76,15 @@ test("capability exchange, Host checks, protected assets and filesystem confinem
     assert.equal((await fetch(server.origin + route)).status, 403, route);
   }
   const headers = { Cookie: server.cookie };
-  assert.equal(await status(server.origin, { ...headers, Host: "attacker.invalid" }), 421);
+  // Published Docker ports, LAN addresses and proxies present other Hosts;
+  // the capability cookie, not the Host, authorizes them.
+  assert.equal(await status(server.origin, { ...headers, Host: "codex.lan:8080" }), 200);
+  assert.equal(await status(server.origin, { Host: "codex.lan:8080" }), 403);
+  assert.equal(await status(server.origin, { ...headers, Host: "bad host\"><script>" }), 400);
+  const proxied = await new Promise((resolve, reject) => http.get(server.origin, { headers: { ...headers, Host: "codex.lan:8080" } }, response => {
+    let body = ""; response.on("data", chunk => { body += chunk; }).on("end", () => resolve(body));
+  }).on("error", reject));
+  assert.match(proxied, /connect-src ws:\/\/codex\.lan:8080 wss:\/\/codex\.lan:8080 &#39;self/);
   assert.equal((await fetch(server.origin + "/asset.js", { headers, method: "POST" })).status, 405);
   assert.equal((await fetch(server.origin + "/_community/bootstrap", { headers })).status, 503);
   const index = await fetch(server.origin, { headers });
@@ -96,6 +104,7 @@ test("WebSocket rejects cross-origin access, missing secrets, and a second brows
   assert.equal(await upgrade(server, { Origin: server.origin }), 403);
   assert.equal(await upgrade(server, { Cookie: server.cookie, Origin: "https://attacker.invalid" }), 403);
   assert.equal(await upgrade(server, { ...headers, Host: "attacker.invalid" }), 403);
+  assert.equal(await upgrade(server, { Cookie: server.cookie, Host: "codex.lan:8080", Origin: "http://other.lan:8080" }), 403);
   assert.equal(await upgrade(server, headers), 418);
   const client = server.ws.lastClient;
   client.emit("message", Buffer.from(JSON.stringify({ type: "invoke", id: "1", method: "sendMessageFromView", args: [] })), false);
@@ -111,13 +120,17 @@ test("WebSocket rejects cross-origin access, missing secrets, and a second brows
   assert.equal(client.closed.code, 1007);
   assert.equal(server.messages.at(-1).type, "disconnect");
   assert.equal(await upgrade(server, headers), 418, "reload can reconnect");
+  server.ws.lastClient.emit("close");
+  assert.equal(await upgrade(server, { Cookie: server.cookie, Host: "codex.lan:8080", Origin: "http://codex.lan:8080" }), 418, "same-origin access through a published port");
 });
 
 test("strict port validation and address-in-use errors", async t => {
   for (const port of ["-1", "65536", "1.2", "01", "", "4310junk"]) assert.throws(() => parsePort(port));
   assert.equal(parsePort("0"), 0);
   const server = await service(t);
-  await assert.rejects(startServer({ webviewRoot: directory(t), WebSocketServer: StubServer, port: new URL(server.origin).port, sendToHost() {} }), { code: "EADDRINUSE" });
+  await assert.rejects(startServer({ webviewRoot: directory(t), WebSocketServer: StubServer, port: new URL(server.origin).port, host: "127.0.0.1", sendToHost() {} }), { code: "EADDRINUSE" });
+  for (const host of ["localhost", "", "0.0.0.0:1", "example.com"]) assert.throws(() => parseHost(host));
+  for (const host of ["0.0.0.0", "127.0.0.1", "::", "::1"]) assert.equal(parseHost(host), host);
 });
 
 test("folder chooser lists host directories and validates absolute paths", t => {

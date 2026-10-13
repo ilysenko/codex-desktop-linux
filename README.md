@@ -300,8 +300,8 @@ requirements, known limitations, configuration, and tests.
 
 With `web-ui` enabled and rebuilt, quit the desktop app and run
 `CODEX_WEB_UI=1 codex-desktop` (or `CODEX_WEB_UI=1 ./codex-app/start.sh`).
-Open the private connection URL printed in the terminal. The loopback listener
-defaults to port 4310; `CODEX_WEB_UI_PORT` selects another port. See the feature
+Open the private connection URL printed in the terminal. The listener defaults
+to `0.0.0.0:4310`; `CODEX_WEB_UI_HOST` and `CODEX_WEB_UI_PORT` change it. See the feature
 documentation for SSH access, supported workflows, and current limits.
 
 For GNOME Wayland dictation without RemoteDesktop permission prompts, select

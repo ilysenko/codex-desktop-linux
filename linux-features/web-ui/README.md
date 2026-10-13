@@ -49,24 +49,48 @@ ChatGPT and ChatGPT Community before changing launch modes.
 
 ## Listener and remote access
 
-The listener always binds to `127.0.0.1`; it cannot expose itself to the LAN.
-Its default port is `4310`. Choose a port from `1` to `65535`, or `0` for a random
-available port:
+The listener binds to `0.0.0.0` (all interfaces) on port `4310` by default, so
+a headless host in a container or on a server is reachable through a published
+port, a LAN address, or a reverse proxy. Every route except the one-time
+capability exchange requires the capability cookie, and the bridge WebSocket
+accepts only a same-origin `Origin`. Select the address with `CODEX_WEB_UI_HOST`
+(an IPv4/IPv6 literal, for example `127.0.0.1` for loopback only) and the port
+with `CODEX_WEB_UI_PORT` (`1`–`65535`, or `0` for a random available port):
 
 ```bash
 CODEX_WEB_UI=1 CODEX_WEB_UI_PORT=4311 codex-desktop
+CODEX_WEB_UI=1 CODEX_WEB_UI_HOST=127.0.0.1 codex-desktop   # loopback only
 ```
 
-For access from another machine, forward the **same port** over SSH:
+The printed URL uses `127.0.0.1`. From another machine or through a published
+container port, keep its `/?cap=…` part and replace the host and port, for
+example `http://SERVER:4310/?cap=…`.
+
+Plain HTTP exposes the capability and session cookie to the network path. On
+an untrusted network, use HTTPS through a reverse proxy, an SSH tunnel, or bind
+to loopback:
 
 ```bash
 ssh -N -L 4310:127.0.0.1:4310 USER@LINUX_HOST
 ```
 
-Open the printed URL unchanged on the browser machine. Host and WebSocket Origin
-must match the exact `http://127.0.0.1:PORT` origin. Public reverse proxies, HTTPS
-termination, multi-user deployment, and custom hostnames are outside this
-initial feature's supported surface.
+Browsers treat `http://127.0.0.1`/`localhost` as secure contexts, but not plain
+HTTP on other names. In those cases browser features that require a secure
+context, such as clipboard and microphone (dictation), are unavailable; the
+interface itself still works.
+
+### Docker
+
+The official Chromium sandbox stays enabled, so the container must allow the
+user namespaces it needs (for example `--security-opt seccomp=unconfined`). Run
+the host as a non-root user and publish the port:
+
+```bash
+docker run --security-opt seccomp=unconfined -p 127.0.0.1:4310:4310 \
+  -e CODEX_WEB_UI=1 IMAGE codex-desktop
+```
+
+Read the connection URL from `docker logs`. A restart rotates it.
 
 Bridge messages are limited to 16 MiB. Larger transfers and file attachments
 need a dedicated browser adapter.
