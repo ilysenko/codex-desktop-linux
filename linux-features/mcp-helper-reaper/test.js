@@ -210,9 +210,15 @@ test("session hook merge preserves existing SessionStart hook and deduplicates r
   run("bash", [INSTALL_SESSION_HOOK], { env });
 
   const merged = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
-  const commands = merged.hooks.SessionStart.flatMap((entry) => entry.hooks ?? []).map((hook) => hook.command);
+  const sessionHooks = merged.hooks.SessionStart.flatMap((entry) => entry.hooks ?? []);
+  const commands = sessionHooks.map((hook) => hook.command);
   assert.equal(commands.filter((command) => command.includes("existing-session-hook")).length, 1);
-  const reaperCommands = commands.filter((command) => command.includes("codex-mcp-helper-reaper-session"));
+  const reaperHooks = sessionHooks.filter((hook) =>
+    hook.command.includes("codex-mcp-helper-reaper-session"),
+  );
+  assert.equal(reaperHooks.length, 1);
+  assert.equal(reaperHooks[0].statusMessage, "MCP Helper Reaper");
+  const reaperCommands = reaperHooks.map((hook) => hook.command);
   assert.equal(reaperCommands.length, 1);
   assert.match(reaperCommands[0], /--codex-parent "\$PPID"/);
   assert.match(reaperCommands[0], /--include-orphans/);

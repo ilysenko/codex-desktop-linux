@@ -90,6 +90,7 @@ cleaned_entries.append({
             "type": "command",
             "command": command,
             "timeout": 1,
+            "statusMessage": "MCP Helper Reaper",
         }
     ],
 })
