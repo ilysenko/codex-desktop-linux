@@ -38,7 +38,7 @@ class StubServer {
 async function service(t) {
   const root = directory(t), view = path.join(root, "webview");
   fs.mkdirSync(view);
-  fs.writeFileSync(path.join(view, "index.html"), '<head><meta content="connect-src &#39;self&#39;;"></head><body>Official UI</body>');
+  fs.writeFileSync(path.join(view, "index.html"), '<head><meta content="connect-src &#39;self&#39;;"><script type="module" src="./asset.js"></script></head><body>Official UI</body>');
   fs.writeFileSync(path.join(view, "asset.js"), "officialAsset()");
   fs.writeFileSync(path.join(view, "worker.mjs"), "export {}");
   fs.writeFileSync(path.join(root, "private"), "secret");
@@ -47,10 +47,12 @@ async function service(t) {
   const server = await startServer({ webviewRoot: view, WebSocketServer: StubServer, port: 0, host: "127.0.0.1", sendToHost: value => messages.push(value) });
   t.after(() => server.close());
   const ws = StubServer.current;
-  const login = await fetch(server.url, { redirect: "manual" });
-  const cookie = login.headers.get("set-cookie").split(";")[0];
-  return { ...server, messages, cookie, ws };
+  const token = new URLSearchParams(new URL(server.url).hash.slice(1)).get("cap");
+  return { ...server, messages, token, ws };
 }
+
+const bearer = server => ({ Authorization: `Bearer ${server.token}` });
+const subprotocol = server => ({ "Sec-WebSocket-Protocol": `community-web-ui, community-web-ui.cap.${server.token}` });
 
 function upgrade(server, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -61,57 +63,87 @@ function upgrade(server, headers = {}) {
   });
 }
 
-function status(url, headers) {
+function get(url, headers = {}) {
   return new Promise((resolve, reject) => {
-    http.get(url, { headers }, response => { response.resume(); resolve(response.statusCode); }).on("error", reject);
+    http.get(url, { headers }, response => {
+      let body = ""; response.on("data", chunk => { body += chunk; }).on("end", () => resolve({ status: response.statusCode, headers: response.headers, body }));
+    }).on("error", reject);
   });
 }
+const status = (url, headers) => get(url, headers).then(response => response.status);
 
-test("capability exchange, Host checks, protected assets and filesystem confinement", async t => {
+test("capability travels in the URL fragment; public assets, protected bootstrap, Host checks and confinement", async t => {
   const server = await service(t);
-  const login = await fetch(server.url, { redirect: "manual" });
-  // 200 + same-origin refresh, not a redirect: a cross-site click would make a
-  // redirect cross-site and SameSite=Strict would withhold the new cookie.
-  assert.equal(login.status, 200);
-  assert.match(login.headers.get("set-cookie"), /^community_web_ui_[0-9a-f]{12}=[\w-]+; HttpOnly; SameSite=Strict; Path=\/$/);
-  assert.match(await login.text(), /http-equiv="refresh" content="0;url=\/"/);
-  const other = await service(t);
-  assert.notEqual(other.cookie.split("=")[0], server.cookie.split("=")[0], "hosts sharing a hostname keep separate cookies");
-  for (const route of ["/", "/asset.js", "/_community/bootstrap", "/_community/browser.js"]) {
-    assert.equal((await fetch(server.origin + route)).status, 403, route);
+  assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/#cap=[\w-]{43}$/, "the secret is a fragment, never sent in a request line");
+  // Upstream's signed-package UI and the adapter script hold no secrets.
+  for (const route of ["/", "/asset.js", "/_community/browser.js"]) assert.equal(await status(server.origin + route), 200, route);
+  assert.equal(await status(server.origin + "/_community/bootstrap"), 403);
+  assert.equal(await status(server.origin + "/_community/bootstrap", { Authorization: "Bearer wrong" }), 403);
+  assert.equal(await status(server.origin + "/_community/bootstrap", bearer(server)), 503, "host not ready yet");
+  // Published Docker ports, LAN addresses and proxies present other Hosts.
+  assert.equal(await status(server.origin + "/_community/bootstrap", { ...bearer(server), Host: "codex.lan:8080" }), 503);
+  assert.equal(await status(server.origin, { Host: "bad host\"><script>" }), 400);
+  const proxied = await get(server.origin, { Host: "codex.lan:8080" });
+  assert.match(proxied.body, /connect-src ws:\/\/codex\.lan:8080 wss:\/\/codex\.lan:8080 &#39;self/);
+  assert.equal(proxied.headers["cache-control"], "no-store");
+  assert.equal((await fetch(server.origin + "/asset.js", { method: "POST" })).status, 405);
+  for (const route of ["/escape.txt", "/%2e%2e%2fprivate", "/.vite/build/main.js", "/community-web-host.html", "/%00private", "/_community/other"]) {
+    assert.notEqual(await status(server.origin + route), 200, route);
   }
-  const headers = { Cookie: server.cookie };
-  // Published Docker ports, LAN addresses and proxies present other Hosts;
-  // the capability cookie, not the Host, authorizes them.
-  assert.equal(await status(server.origin, { ...headers, Host: "codex.lan:8080" }), 200);
-  assert.equal(await status(server.origin, { Host: "codex.lan:8080" }), 403);
-  assert.equal(await status(server.origin, { ...headers, Host: "bad host\"><script>" }), 400);
-  const proxied = await new Promise((resolve, reject) => http.get(server.origin, { headers: { ...headers, Host: "codex.lan:8080" } }, response => {
-    let body = ""; response.on("data", chunk => { body += chunk; }).on("end", () => resolve(body));
-  }).on("error", reject));
-  assert.match(proxied, /connect-src ws:\/\/codex\.lan:8080 wss:\/\/codex\.lan:8080 &#39;self/);
-  assert.equal((await fetch(server.origin + "/asset.js", { headers, method: "POST" })).status, 405);
-  assert.equal((await fetch(server.origin + "/_community/bootstrap", { headers })).status, 503);
-  const index = await fetch(server.origin, { headers });
-  assert.match(await index.text(), /script src="\/_community\/browser.js"/);
-  assert.equal(index.headers.get("cache-control"), "no-store");
-  for (const route of ["/escape.txt", "/%2e%2e%2fprivate", "/.vite/build/main.js", "/community-web-host.html", "/%00private"]) {
-    assert.notEqual((await fetch(server.origin + route, { headers })).status, 200, route);
-  }
-  assert.equal((await fetch(server.origin + "/asset.js", { headers, method: "HEAD" })).headers.get("content-length"), "15");
-  assert.equal((await fetch(server.origin + "/worker.mjs", { headers })).headers.get("content-type"), "text/javascript; charset=utf-8");
-  assert.equal(await status(server.origin, { ...headers, Host: "codex_desktop:4310" }), 200, "container names may contain underscores");
+  assert.equal((await fetch(server.origin + "/asset.js", { method: "HEAD" })).headers.get("content-length"), "15");
+  assert.equal((await fetch(server.origin + "/worker.mjs")).headers.get("content-type"), "text/javascript; charset=utf-8");
+  assert.equal(await status(server.origin, { Host: "codex_desktop:4310" }), 200, "container names may contain underscores");
+});
+
+test("the shim runs before upstream scripts so it can stop an unauthenticated page", async t => {
+  const server = await service(t);
+  const html = (await get(server.origin)).body;
+  const shim = html.indexOf('<script src="/_community/browser.js"></script>');
+  assert.ok(shim >= 0 && shim < html.indexOf('<script type="module"'), "adapter precedes upstream's module script");
+  assert.equal(html.split("/_community/browser.js").length, 2, "injected once");
+});
+
+test("no ambient credential: the capability cannot leak to or be replayed from another port on the same hostname", async t => {
+  const server = await service(t);
+  server.receive({ type: "bootstrap", value: { sharedObjectSnapshot: {} } });
+  // Exercise every route a browser session uses and collect what it would store.
+  const responses = [
+    await get(server.origin), await get(server.origin + "/asset.js"), await get(server.origin + "/_community/browser.js"),
+    await get(server.origin + "/_community/bootstrap", bearer(server)),
+  ];
+  for (const response of responses) assert.equal(response.headers["set-cookie"], undefined, "the server never sets a cookie");
+  // An untrusted service on another port of the same hostname receives the
+  // browser's ambient credentials for that hostname: cookies only.
+  const leaked = [];
+  const attacker = http.createServer((request, response) => { leaked.push(request.headers); response.end("ok"); });
+  await new Promise(resolve => attacker.listen(0, "127.0.0.1", resolve));
+  t.after(() => attacker.close());
+  await get(`http://127.0.0.1:${attacker.address().port}/`, { Cookie: "" });
+  assert.ok(!JSON.stringify(leaked).includes(server.token), "nothing the browser sends cross-port contains the capability");
+  // Replaying everything it received, even with a forged same-origin Origin
+  // and Host, opens nothing: only the explicit token authorizes.
+  const replay = { ...leaked[0], host: new URL(server.origin).host, origin: server.origin };
+  delete replay.connection;
+  assert.equal(await status(server.origin + "/_community/bootstrap", replay), 403);
+  assert.equal(await upgrade(server, replay), 403);
+  // A cookie bearing the capability (the former mechanism) is not accepted.
+  const cookie = { Cookie: `community_web_ui=${server.token}`, Origin: server.origin };
+  assert.equal(await status(server.origin + "/_community/bootstrap", cookie), 403);
+  assert.equal(await upgrade(server, cookie), 403);
+  assert.equal(await upgrade(server, { ...subprotocol(server), Origin: server.origin }), 418, "the explicit subprotocol token works");
 });
 
 test("WebSocket rejects cross-origin access, missing secrets, and a second browser; forwards valid messages", async t => {
   const server = await service(t);
-  const headers = { Cookie: server.cookie, Origin: server.origin };
+  const headers = { ...subprotocol(server), Origin: server.origin };
   assert.equal(await upgrade(server, headers), 403, "host must become ready");
   server.receive({ type: "bootstrap", value: { sharedObjectSnapshot: { initial: 1 } } });
   assert.equal(await upgrade(server, { Origin: server.origin }), 403);
-  assert.equal(await upgrade(server, { Cookie: server.cookie, Origin: "https://attacker.invalid" }), 403);
+  assert.equal(await upgrade(server, { "Sec-WebSocket-Protocol": "community-web-ui, community-web-ui.cap.wrong", Origin: server.origin }), 403);
+  assert.equal(await upgrade(server, { "Sec-WebSocket-Protocol": `community-web-ui.cap.${server.token}`, Origin: server.origin }), 403, "the bridge protocol must be offered");
+  assert.equal(await upgrade(server, { ...subprotocol(server), Origin: "https://attacker.invalid" }), 403);
   assert.equal(await upgrade(server, { ...headers, Host: "attacker.invalid" }), 403);
-  assert.equal(await upgrade(server, { Cookie: server.cookie, Host: "codex.lan:8080", Origin: "http://other.lan:8080" }), 403);
+  assert.equal(await upgrade(server, { ...subprotocol(server), Host: "codex.lan:8080", Origin: "http://other.lan:8080" }), 403);
   assert.equal(await upgrade(server, headers), 418);
   const client = server.ws.lastClient;
   client.emit("message", Buffer.from(JSON.stringify({ type: "invoke", id: "1", method: "sendMessageFromView", args: [] })), false);
@@ -121,14 +153,14 @@ test("WebSocket rejects cross-origin access, missing secrets, and a second brows
   await upgrade(server, headers);
   assert.equal(server.ws.lastClient.closed.code, 1013);
   server.receive({ type: "notification", value: { type: "shared-object-updated", key: "initial", value: 2 } });
-  const bootstrap = await fetch(server.origin + "/_community/bootstrap", { headers: { Cookie: server.cookie } }).then(response => response.json());
+  const bootstrap = JSON.parse((await get(server.origin + "/_community/bootstrap", bearer(server))).body);
   assert.equal(bootstrap.sharedObjectSnapshot.initial, 2, "reload gets current shared state");
   client.emit("message", Buffer.from('{"type":"rpc","value":{"not":"string codec"}}'), false);
   assert.equal(client.closed.code, 1007);
   assert.equal(server.messages.at(-1).type, "disconnect");
   assert.equal(await upgrade(server, headers), 418, "reload can reconnect");
   server.ws.lastClient.emit("close");
-  assert.equal(await upgrade(server, { Cookie: server.cookie, Host: "codex.lan:8080", Origin: "http://codex.lan:8080" }), 418, "same-origin access through a published port");
+  assert.equal(await upgrade(server, { ...subprotocol(server), Host: "codex.lan:8080", Origin: "http://codex.lan:8080" }), 418, "same-origin access through a published port");
 });
 
 test("a peer resetting a rejected upgrade does not raise an uncaught error", async t => {

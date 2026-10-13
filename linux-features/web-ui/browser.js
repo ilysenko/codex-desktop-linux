@@ -12,12 +12,46 @@
       return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
     };
   }
+  // The capability arrives in the URL fragment (never sent to the server) and
+  // stays in origin-scoped storage, which other ports on this hostname cannot
+  // read. It is never stored in a cookie, so browsers never attach it on
+  // their own.
+  const storageKey = "community-web-ui:capability";
+  const store = {
+    get() { try { return localStorage.getItem(storageKey); } catch { return null; } },
+    set(value) { try { localStorage.setItem(storageKey, value); } catch {} },
+    clear() { try { localStorage.removeItem(storageKey); } catch {} },
+  };
+  const fragment = new URLSearchParams(location.hash.slice(1)).get("cap");
+  if (fragment !== null) {
+    history.replaceState(history.state, "", location.pathname + location.search);
+    store.set(fragment);
+  }
+  const capability = fragment ?? store.get();
+  function blocked(text) {
+    // Stop before upstream's scripts load; they need the bridge defined here.
+    window.stop();
+    const message = document.createElement("p");
+    message.setAttribute("role", "alert");
+    message.textContent = text;
+    message.style.cssText = "font:16px system-ui;max-width:40em;margin:20vh auto;padding:0 16px;text-align:center";
+    const body = document.createElement("body");
+    body.append(message);
+    document.documentElement.replaceChildren(document.head ?? document.createElement("head"), body);
+    throw Error(text);
+  }
+  if (!capability || !/^[\w-]+$/.test(capability)) blocked("Open the complete connection URL printed by ChatGPT Community.");
   const request = new XMLHttpRequest();
   request.open("GET", "/_community/bootstrap", false);
+  request.setRequestHeader("Authorization", `Bearer ${capability}`);
   request.send();
-  if (request.status !== 200) throw Error("Web UI host is unavailable; reload after restarting the app.");
+  if (request.status === 403) {
+    store.clear();
+    blocked("This connection URL is no longer valid. If ChatGPT Community restarted, open the new URL it printed.");
+  }
+  if (request.status !== 200) blocked("The Web UI host is not ready. Reload in a moment.");
   const bootstrap = JSON.parse(request.responseText);
-  const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/_community/bridge`);
+  const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/_community/bridge`, ["community-web-ui", `community-web-ui.cap.${capability}`]);
   const pending = new Map(), workers = new Map();
   // Late results from a disconnected tab must not resolve a new tab's calls.
   const session = crypto.randomUUID();

@@ -10,6 +10,8 @@ const os = require("node:os");
 const HOST_URL = "app://-/community-web-host.html";
 const CHANNEL = "community:web-ui";
 const HEARTBEAT_MS = 30_000;
+const PROTOCOL = "community-web-ui";
+const TOKEN_PROTOCOL = "community-web-ui.cap.";
 const TYPES = new Set(["invoke", "subscribe", "unsubscribe", "connect", "rpc"]);
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
@@ -32,7 +34,7 @@ function parseHost(value = "0.0.0.0") {
 }
 
 // The Host header is reflected into the CSP and compared with Origin. Accept
-// only a plain host[:port] authority; the capability cookie is the access gate.
+// only a plain host[:port] authority; the capability token is the access gate.
 const AUTHORITY = /^(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/;
 const requestHost = req => typeof req.headers.host === "string" && AUTHORITY.test(req.headers.host) ? req.headers.host : null;
 
@@ -62,17 +64,24 @@ function listDirectories(directory) {
 // network directly: only the registered host's preload can handle relay calls.
 async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "0.0.0.0", sendToHost, browserScript = path.join(__dirname, "browser.js") }) {
   const capability = crypto.randomBytes(32).toString("base64url");
-  // Cookies are not port-isolated: a per-host name keeps two hosts on one
-  // hostname (tunnels, containers) from replacing each other's session.
-  const cookieName = `community_web_ui_${crypto.createHash("sha256").update(capability).digest("hex").slice(0, 12)}`;
   let origin, bootstrap, browser, closed = false;
   const sockets = new Set();
   const root = fs.realpathSync(webviewRoot);
-  const ws = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024, perMessageDeflate: false });
-  const authorized = req => (req.headers.cookie ?? "").split(";").some(cookie => {
-    const [name, ...value] = cookie.trim().split("=");
-    return name === cookieName && secretEqual(value.join("="), capability);
-  });
+  const ws = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024, perMessageDeflate: false, handleProtocols: () => PROTOCOL });
+  // No ambient credential: cookies are scoped to a hostname, not a port, so any
+  // other service on that hostname would receive and could replay one. The
+  // browser keeps the capability in origin-scoped (port-isolated) storage and
+  // presents it explicitly: a bearer header for bootstrap and a WebSocket
+  // subprotocol for the bridge, which browsers cannot attach on another
+  // origin's behalf.
+  const bearer = req => {
+    const match = /^Bearer ([\w-]+)$/.exec(req.headers.authorization ?? "");
+    return secretEqual(match?.[1], capability);
+  };
+  const offeredToken = req => {
+    const offered = String(req.headers["sec-websocket-protocol"] ?? "").split(",").map(value => value.trim());
+    return offered.includes(PROTOCOL) && offered.some(value => value.startsWith(TOKEN_PROTOCOL) && secretEqual(value.slice(TOKEN_PROTOCOL.length), capability));
+  };
   // Same-origin WebSocket only: blocks cross-site WebSocket hijacking whatever
   // address (loopback, LAN, Docker-published port, proxy) the browser used.
   const sameOrigin = req => {
@@ -88,22 +97,14 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
-    // Block cross-origin scripts from using capability-authenticated assets.
     res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
     const authority = requestHost(req);
     if (authority === null) return reply(req, res, 400, "Invalid Host");
     if (!["GET", "HEAD"].includes(req.method)) return reply(req, res, 405, "Method not allowed");
     try {
       const url = new URL(req.url, `http://${authority}`);
-      if (url.pathname === "/" && secretEqual(url.searchParams.get("cap"), capability)) {
-        // A cross-site click (webmail, chat, browser IDE) makes a redirect
-        // cross-site too, so SameSite=Strict would withhold the new cookie.
-        // A same-origin refresh is a same-site navigation and sends it.
-        res.setHeader("Set-Cookie", `${cookieName}=${capability}; HttpOnly; SameSite=Strict; Path=/`);
-        return reply(req, res, 200, '<!doctype html><meta http-equiv="refresh" content="0;url=/">', MIME[".html"]);
-      }
-      if (!authorized(req)) return reply(req, res, 403, "Use the complete connection URL printed by ChatGPT Community.");
       if (url.pathname === "/_community/bootstrap") {
+        if (!bearer(req)) return reply(req, res, 403, "Use the complete connection URL printed by ChatGPT Community.");
         return reply(req, res, bootstrap ? 200 : 503, bootstrap ? JSON.stringify(bootstrap) : "Host not ready", bootstrap ? MIME[".json"] : undefined);
       }
       if (url.pathname === "/_community/browser.js") return reply(req, res, 200, fs.readFileSync(browserScript), MIME[".js"]);
@@ -125,7 +126,10 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
         // CSP host-sources cannot contain '_' (container names); 'self' covers those.
         if (!authority.includes("_")) html = html.replace("connect-src ", `connect-src ws://${authority} wss://${authority} `);
         html = html.replace(/<title>[^<]*<\/title>/, "<title>ChatGPT Community</title>");
-        html = html.replace("</head>", '<script src="/_community/browser.js"></script></head>');
+        // Run the adapter before upstream's scripts so it can stop the page
+        // when no capability is available.
+        const shim = '<script src="/_community/browser.js"></script>';
+        html = html.includes("<script") ? html.replace("<script", `${shim}<script`) : html.replace("</head>", `${shim}</head>`);
         body = Buffer.from(html);
       }
       reply(req, res, 200, body, type);
@@ -138,7 +142,7 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
     // Node removes its own socket error handler before 'upgrade'; a peer reset
     // must not become an uncaught exception in the app's main process.
     socket.on("error", () => {});
-    if (!sameOrigin(req) || !authorized(req) || req.url !== "/_community/bridge" || !bootstrap) {
+    if (!sameOrigin(req) || !offeredToken(req) || req.url !== "/_community/bridge" || !bootstrap) {
       socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"); return;
     }
     ws.handleUpgrade(req, socket, head, client => {
@@ -187,7 +191,8 @@ async function startServer({ webviewRoot, WebSocketServer, port = 4310, host = "
   const shown = net.isIPv6(bound.address) ? (bound.address === "::" ? "[::1]" : `[${bound.address}]`) : (bound.address === "0.0.0.0" ? "127.0.0.1" : bound.address);
   origin = `http://${shown}:${bound.port}`;
   return {
-    origin, url: `${origin}/?cap=${capability}`, wildcard: ["0.0.0.0", "::"].includes(bound.address),
+    // The fragment never reaches the server, proxies, logs or Referer headers.
+    origin, url: `${origin}/#cap=${capability}`, wildcard: ["0.0.0.0", "::"].includes(bound.address),
     receive(message) {
       if (message.type === "bootstrap") {
         bootstrap = message.value;
@@ -231,7 +236,7 @@ async function loadHost(window, { electron, WebSocketServer }) {
     if (message.type === "bootstrap") {
       clearTimeout(readyTimer);
       process.stdout.write(`ChatGPT Community Web UI: ${service.url}\n`);
-      if (service.wildcard) process.stdout.write("Listening on all interfaces; from another machine or a published container port, replace the host:port in this URL.\n");
+      if (service.wildcard) process.stdout.write("Listening on all interfaces; from another machine or a published container port, replace the host:port in this URL and keep its #cap= fragment.\n");
     }
   };
   try {

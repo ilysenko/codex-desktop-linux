@@ -36,6 +36,8 @@ async function installRpc(page) {
 
 async function run() {
   const url = connectionUrl(process.env.CODEX_WEB_UI_TEST_LOG), origin = new URL(url).origin;
+  const token = new URLSearchParams(new URL(url).hash.slice(1)).get("cap");
+  assert.ok(token, "connection URL carries the capability in its fragment");
   const fixture = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), "web-ui-browser-"));
   fs.mkdirSync(path.join(fixture, "subfolder"));
   fs.writeFileSync(path.join(fixture, "file.txt"), "community-web-ui-file\n");
@@ -45,17 +47,63 @@ async function run() {
   try {
     assert.equal((await fetch(origin + "/_community/bootstrap")).status, 403);
     if (process.env.CODEX_WEB_UI_TEST_PREVIOUS_LOG) {
-      assert.equal((await fetch(connectionUrl(process.env.CODEX_WEB_UI_TEST_PREVIOUS_LOG), { redirect: "manual" })).status, 403);
+      const previous = new URLSearchParams(new URL(connectionUrl(process.env.CODEX_WEB_UI_TEST_PREVIOUS_LOG)).hash.slice(1)).get("cap");
+      assert.equal((await fetch(origin + "/_community/bootstrap", { headers: { Authorization: `Bearer ${previous}` } })).status, 403);
     }
+    // Without the fragment (or with a stale one) the adapter stops the page
+    // before upstream loads and explains what to open.
+    const anonymous = await browser.newContext();
+    const blocked = await anonymous.newPage();
+    await blocked.goto(origin, { waitUntil: "commit" }); // window.stop() ends loading before "load"
+    await blocked.getByRole("alert").filter({ hasText: "Open the complete connection URL" }).waitFor();
+    assert.equal(await blocked.evaluate(() => typeof window.electronBridge), "undefined");
+    // A fresh page: a fragment-only change would not reload the document.
+    const stale = await anonymous.newPage();
+    await stale.goto(origin + "/#cap=stale-capability", { waitUntil: "commit" });
+    await stale.getByRole("alert").filter({ hasText: "no longer valid" }).waitFor();
+    await anonymous.close();
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage(), errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(url);
     await page.waitForFunction(() => window.electronBridge?.communityWebUi === true);
     assert.equal(await page.title(), "ChatGPT Community");
-    assert.equal(new URL(page.url()).searchParams.has("cap"), false);
-    const cookies = await context.cookies();
-    assert.ok(cookies.some(cookie => cookie.httpOnly && cookie.sameSite === "Strict"));
+    assert.equal(new URL(page.url()).hash, "", "the fragment is removed from the address bar and history");
+    assert.deepEqual(await context.cookies(), [], "no cookie: browsers never attach the capability on their own");
+    // Cross-port isolation: an untrusted service on another port of the same
+    // hostname gets nothing it can replay, and its page cannot read the token.
+    const leaked = [];
+    const attacker = http.createServer((request, response) => {
+      leaked.push(request.headers);
+      response.setHeader("Content-Type", "text/html");
+      response.end("<!doctype html><title>other service</title>");
+    });
+    await new Promise(resolve => attacker.listen(0, "127.0.0.1", resolve));
+    try {
+      const other = await context.newPage();
+      await other.goto(`http://${new URL(origin).hostname}:${attacker.address().port}/`);
+      const seen = await other.evaluate(async bridge => {
+        const stored = Object.keys(localStorage).map(key => localStorage.getItem(key));
+        const socket = await new Promise(resolve => {
+          const ws = new WebSocket(bridge);
+          ws.onopen = () => { ws.close(); resolve("open"); };
+          ws.onerror = () => resolve("refused");
+        });
+        return { stored, cookie: document.cookie, socket };
+      }, origin.replace(/^http/, "ws") + "/_community/bridge");
+      await other.close();
+      assert.deepEqual(seen.stored, []);
+      assert.equal(seen.cookie, "");
+      assert.equal(seen.socket, "refused");
+      assert.ok(leaked.length > 0 && !JSON.stringify(leaked).includes(token), "the capability never reaches another port");
+      for (const headers of leaked) {
+        const replay = { ...headers, host: new URL(origin).host, origin };
+        delete replay.connection;
+        assert.equal((await fetch(origin + "/_community/bootstrap", { headers: replay })).status, 403);
+      }
+    } finally {
+      await new Promise(resolve => attacker.close(resolve));
+    }
     await installRpc(page);
     const account = await page.evaluate(() => communityTestRpc("account/read", { refreshToken: false }));
     assert.equal(typeof account.requiresOpenaiAuth, "boolean");
@@ -140,7 +188,7 @@ async function run() {
     assert.equal(typeof (await page.evaluate(() => communityTestRpc("account/read", { refreshToken: false }))).requiresOpenaiAuth, "boolean");
     if (process.env.CODEX_WEB_UI_TEST_SCREENSHOT) await page.screenshot({ path: process.env.CODEX_WEB_UI_TEST_SCREENSHOT });
     assert.deepEqual(errors, []);
-    console.log("PASS: browser bootstrap, IPC/RPC, embedded-browser rejection, host file read, sandboxed command, modal folder selection, external-link popup, single-session gate, and reload");
+    console.log("PASS: fragment capability, cross-port isolation, unauthenticated stop page, browser bootstrap, IPC/RPC, embedded-browser rejection, host file read, sandboxed command, modal folder selection, external-link popup, single-session gate, and reload");
   } finally {
     await browser.close();
     await new Promise(resolve => destination.close(resolve));

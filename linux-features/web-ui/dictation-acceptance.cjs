@@ -97,4 +97,4 @@ async function run() {
   } finally { await browser.close(); }
 }
 // Playwright errors embed the navigated URL; never print the live capability.
-run().catch(error => { console.error(String(error?.message ?? error).replace(/([?&]cap=)[\w-]+/g, "$1REDACTED")); process.exitCode = 1; });
+run().catch(error => { console.error(String(error?.message ?? error).replace(/([?&#]cap=)[\w-]+/g, "$1REDACTED")); process.exitCode = 1; });

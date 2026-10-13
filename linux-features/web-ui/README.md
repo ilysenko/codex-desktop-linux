@@ -37,9 +37,14 @@ CODEX_WEB_UI=1 codex-desktop
 
 Open the complete `ChatGPT Community Web UI:` URL printed in the terminal.
 It grants access to the application and its workspaces: keep it private. The
-service exchanges its random 256-bit capability for an HttpOnly, SameSite=Strict
-cookie and reloads to a URL without the secret (a same-origin refresh, so the
-link also works when clicked from another site). A restart rotates the secret.
+random 256-bit capability is in the URL fragment (`#cap=…`), which browsers
+never send to the server, proxies, logs or `Referer`. The page moves it into the
+origin's `localStorage` and removes it from the address bar. Storage is isolated
+per scheme, host *and port*, so other services on the same hostname cannot read
+it. No cookie is used: the page presents the capability explicitly, as a bearer
+header for its bootstrap request and as a WebSocket subprotocol for the bridge,
+so a browser never attaches it to another origin's requests. A restart rotates
+the secret; a stale link shows a message asking for the new URL.
 Only one browser tab can connect at a time; close the old tab before reconnecting.
 
 Even with the feature built in, ordinary launches keep the desktop interface
@@ -52,9 +57,10 @@ ChatGPT and ChatGPT Community before changing launch modes.
 
 The listener binds to `0.0.0.0` (all interfaces) on port `4310` by default, so
 a headless host in a container or on a server is reachable through a published
-port, a LAN address, or a reverse proxy. Every route except the one-time
-capability exchange requires the capability cookie, and the bridge WebSocket
-accepts only a same-origin `Origin`. Select the address with `CODEX_WEB_UI_HOST`
+port, a LAN address, or a reverse proxy. Static files are upstream's public
+signed-package UI and are served without authentication; the bootstrap state
+and the bridge WebSocket require the capability, and the bridge also requires a
+same-origin `Origin`. Select the address with `CODEX_WEB_UI_HOST`
 (an IPv4/IPv6 literal, for example `127.0.0.1` for loopback only) and the port
 with `CODEX_WEB_UI_PORT` (`1`–`65535`, or `0` for a random available port):
 
@@ -64,10 +70,11 @@ CODEX_WEB_UI=1 CODEX_WEB_UI_HOST=127.0.0.1 codex-desktop   # loopback only
 ```
 
 The printed URL uses `127.0.0.1`. From another machine or through a published
-container port, keep its `/?cap=…` part and replace the host and port, for
-example `http://SERVER:4310/?cap=…`.
+container port, keep its `/#cap=…` part and replace the host and port, for
+example `http://SERVER:4310/#cap=…`.
 
-Plain HTTP exposes the capability and session cookie to the network path. On
+Plain HTTP exposes the capability (bootstrap header, bridge handshake) to the
+network path. On
 an untrusted network, use HTTPS through a reverse proxy, an SSH tunnel, or bind
 to loopback:
 
@@ -75,10 +82,8 @@ to loopback:
 ssh -N -L 4310:127.0.0.1:4310 USER@LINUX_HOST
 ```
 
-Browser cookies are not isolated by port: other services on the same hostname
-receive the session cookie. Do not browse untrusted services on the hostname
-you use for the Web UI. Each host uses its own cookie name, so several hosts on
-one hostname (tunnels, containers) do not replace each other's sessions.
+Several hosts on one hostname (tunnels, containers) use different ports and
+therefore separate storage; they do not replace each other's sessions.
 
 A reverse proxy must forward the browser's `Host` unchanged and pass WebSocket
 upgrades for `/_community/bridge`; the bridge accepts only a same-origin
@@ -227,6 +232,6 @@ capabilities stop working. Signed package verification must remain enabled.
 Quit the host and launch without `CODEX_WEB_UI=1` to return to desktop mode.
 Remove `web-ui` from `features.json` and rebuild to remove its patches, staged
 resources, and hook. The feature creates no user-home files and has no cleanup
-hook. Clear the browser's site data to remove its cookie and upstream local
-renderer state if desired; upstream account and workspace data stay under the
+hook. Clear the browser's site data to remove the stored capability and upstream
+local renderer state if desired; upstream account and workspace data stay under the
 normal application profile.
