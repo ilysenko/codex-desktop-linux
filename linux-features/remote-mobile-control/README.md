@@ -255,6 +255,14 @@ explicit autostart disablement, then to a valid Desktop app-server marker, and
 uses the bundled official Codex runtime only as the final fallback. The selected
 owner is written to the launcher log.
 
+When Desktop owns remote-control, the hook cleans stale PID records from both
+upstream daemon namespaces under `$CODEX_HOME/app-server-daemon`.
+[Codex 0.162.1 selects the names by managed installation path](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/app-server-daemon/src/lib.rs#L334):
+`packages/standalone` uses `app-server.pid` and `app-server-updater.pid`; other
+locations, including `packages/app-server-daemon`, use `daemon.pid` and
+`daemon-updater.pid`. Both namespaces remain valid. Records whose PID is still
+alive are preserved.
+
 To test a specific daemon binary without changing the interactive CLI, set:
 
 ```bash

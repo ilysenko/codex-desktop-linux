@@ -916,26 +916,23 @@ test("remote mobile cold-start hook does not bypass a present disabled systemd u
   }
 });
 
-test("remote mobile cold-start hook removes dead daemon pid files when Desktop app-server owns remote-control", () => {
+test("remote mobile cold-start hook removes dead pid files from both daemon namespaces when Desktop owns remote-control", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
   try {
     const home = path.join(tempRoot, "home");
     const codexHome = path.join(tempRoot, "codex-home");
     const daemonDir = path.join(codexHome, "app-server-daemon");
     const appDir = path.join(tempRoot, "package", "share", "codex-desktop", "app");
+    const pidFiles = ["app-server.pid", "app-server-updater.pid", "daemon.pid", "daemon-updater.pid"]
+      .map((name) => path.join(daemonDir, name));
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(daemonDir, { recursive: true });
     fs.mkdirSync(appDir, { recursive: true });
     writeDesktopAppServerRemoteControlMarker(appDir);
-    fs.writeFileSync(
-      path.join(daemonDir, "app-server.pid"),
-      JSON.stringify({ pid: 999999, processStartTime: "fixture" }),
-    );
-    fs.writeFileSync(
-      path.join(daemonDir, "app-server-updater.pid"),
-      JSON.stringify({ pid: 999998, processStartTime: "fixture" }),
-    );
+    for (const pidFile of pidFiles) {
+      fs.writeFileSync(pidFile, JSON.stringify({ pid: 999999, processStartTime: "fixture" }));
+    }
 
     const result = runColdStartHook({
       CODEX_HOME: codexHome,
@@ -944,8 +941,9 @@ test("remote mobile cold-start hook removes dead daemon pid files when Desktop a
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(fs.existsSync(path.join(daemonDir, "app-server.pid")), false);
-    assert.equal(fs.existsSync(path.join(daemonDir, "app-server-updater.pid")), false);
+    for (const pidFile of pidFiles) {
+      assert.equal(fs.existsSync(pidFile), false, pidFile);
+    }
     assert.match(result.stdout, /Removed stale remote mobile control daemon pid file/);
     assert.match(result.stdout, /owner: desktop \(app-server launches with remote-control enabled\)/);
   } finally {
@@ -953,20 +951,24 @@ test("remote mobile cold-start hook removes dead daemon pid files when Desktop a
   }
 });
 
-test("remote mobile cold-start hook preserves live daemon pid files when Desktop app-server owns remote-control", () => {
+test("remote mobile cold-start hook preserves live pid files from both daemon namespaces when Desktop owns remote-control", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-cold-start-"));
   try {
     const home = path.join(tempRoot, "home");
     const codexHome = path.join(tempRoot, "codex-home");
     const daemonDir = path.join(codexHome, "app-server-daemon");
     const appDir = path.join(tempRoot, "package", "share", "codex-desktop", "app");
-    const pidFile = path.join(daemonDir, "app-server.pid");
+    const pidFiles = ["app-server.pid", "app-server-updater.pid", "daemon.pid", "daemon-updater.pid"]
+      .map((name) => path.join(daemonDir, name));
+    const pidRecord = JSON.stringify({ pid: process.pid, processStartTime: "fixture" });
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(daemonDir, { recursive: true });
     fs.mkdirSync(appDir, { recursive: true });
     writeDesktopAppServerRemoteControlMarker(appDir);
-    fs.writeFileSync(pidFile, JSON.stringify({ pid: process.pid, processStartTime: "fixture" }));
+    for (const pidFile of pidFiles) {
+      fs.writeFileSync(pidFile, pidRecord);
+    }
 
     const result = runColdStartHook({
       CODEX_HOME: codexHome,
@@ -975,7 +977,9 @@ test("remote mobile cold-start hook preserves live daemon pid files when Desktop
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(fs.existsSync(pidFile), true);
+    for (const pidFile of pidFiles) {
+      assert.equal(fs.readFileSync(pidFile, "utf8"), pidRecord, pidFile);
+    }
     assert.doesNotMatch(result.stdout, /Removed stale remote mobile control daemon pid file/);
     assert.match(result.stdout, /owner: desktop \(app-server launches with remote-control enabled\)/);
   } finally {

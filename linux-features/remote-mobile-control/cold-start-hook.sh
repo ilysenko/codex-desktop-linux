@@ -20,9 +20,13 @@ cleanup_stale_remote_mobile_daemon_state() {
     local pid_file=""
     local pid=""
 
+    # Upstream selects PID names by the managed installation path; both
+    # namespaces remain valid, so a cold start must consider both sets.
     for pid_file in \
         "$codex_home/app-server-daemon/app-server.pid" \
-        "$codex_home/app-server-daemon/app-server-updater.pid"
+        "$codex_home/app-server-daemon/app-server-updater.pid" \
+        "$codex_home/app-server-daemon/daemon.pid" \
+        "$codex_home/app-server-daemon/daemon-updater.pid"
     do
         [ -e "$pid_file" ] || continue
         pid="$(remote_mobile_control_daemon_pid "$pid_file" || true)"
