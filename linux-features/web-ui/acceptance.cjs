@@ -61,11 +61,6 @@ async function run() {
     const stale = await anonymous.newPage();
     await stale.goto(origin + "/#cap=stale-capability", { waitUntil: "commit" });
     await stale.getByRole("alert").filter({ hasText: "no longer valid" }).waitFor();
-    // Opening the current URL in that same tab (fragment-only change) recovers.
-    await stale.evaluate(next => { location.hash = next; }, new URL(url).hash);
-    await stale.waitForFunction(() => window.electronBridge?.communityWebUi === true);
-    assert.equal(new URL(stale.url()).hash, "");
-    await stale.close();
     await anonymous.close();
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage(), errors = [];
@@ -193,6 +188,16 @@ async function run() {
     assert.equal(typeof (await page.evaluate(() => communityTestRpc("account/read", { refreshToken: false }))).requiresOpenaiAuth, "boolean");
     if (process.env.CODEX_WEB_UI_TEST_SCREENSHOT) await page.screenshot({ path: process.env.CODEX_WEB_UI_TEST_SCREENSHOT });
     assert.deepEqual(errors, []);
+    // Last, because it takes the single browser session: opening the current
+    // URL in a tab blocked by a stale link (a fragment-only change) recovers.
+    const recovery = await browser.newContext();
+    const reopened = await recovery.newPage();
+    await reopened.goto(origin + "/#cap=stale-capability", { waitUntil: "commit" });
+    await reopened.getByRole("alert").filter({ hasText: "no longer valid" }).waitFor();
+    await reopened.evaluate(next => { location.hash = next; }, new URL(url).hash);
+    await reopened.waitForFunction(() => window.electronBridge?.communityWebUi === true);
+    assert.equal(new URL(reopened.url()).hash, "");
+    await recovery.close();
     console.log("PASS: fragment capability, cross-port isolation, unauthenticated stop page, browser bootstrap, IPC/RPC, embedded-browser rejection, host file read, sandboxed command, modal folder selection, external-link popup, single-session gate, and reload");
   } finally {
     await browser.close();

@@ -5,6 +5,11 @@ function connectHost(ipc, bridge, sharedObjectSnapshot) {
   if (location.href !== "app://-/community-web-host.html") return;
   const channel = "community:web-ui";
   const subscriptions = new Map();
+  // Worker requests forwarded for the current browser session. Upstream keeps
+  // live queries (git watchers) until cancelled or the WebContents dies, and
+  // this host outlives every browser session, so cancel them on reset.
+  const outstanding = new Map();
+  const requestKey = (workerId, id) => `${workerId}\0${id}`;
   let port;
   const send = message => ipc.send(channel, message);
   const closePort = () => { port?.close(); port = undefined; };
@@ -12,6 +17,10 @@ function connectHost(ipc, bridge, sharedObjectSnapshot) {
     closePort();
     for (const dispose of subscriptions.values()) dispose();
     subscriptions.clear();
+    for (const { workerId, id } of outstanding.values()) {
+      try { bridge.sendWorkerMessageFromView(workerId, { type: "worker-request-cancel", workerId, id }); } catch {}
+    }
+    outstanding.clear();
   };
   window.addEventListener("message", event => {
     if (event.source == null) send({ type: "notification", value: event.data });
@@ -25,6 +34,11 @@ function connectHost(ipc, bridge, sharedObjectSnapshot) {
           if (message.method === "sendMessageFromView" && message.args[0]?.type?.startsWith("browser-sidebar-")) {
             throw Error("The embedded browser is disabled in Web UI.");
           }
+          if (message.method === "sendWorkerMessageFromView") {
+            const [workerId, worker] = message.args;
+            if (worker?.type === "worker-request" && worker.request?.id != null) outstanding.set(requestKey(workerId, worker.request.id), { workerId, id: worker.request.id });
+            if (worker?.type === "worker-request-cancel") outstanding.delete(requestKey(workerId, worker.id));
+          }
           const value = await bridge[message.method](...message.args);
           send({ type: "result", id: message.id, ok: true, value });
         } catch (error) {
@@ -34,7 +48,10 @@ function connectHost(ipc, bridge, sharedObjectSnapshot) {
       case "subscribe":
         if (typeof message.workerId === "string" && /^[\w:-]{1,128}$/.test(message.workerId) && !subscriptions.has(message.workerId)) {
           subscriptions.set(message.workerId, bridge.subscribeToWorkerMessages(message.workerId,
-            value => send({ type: "worker", workerId: message.workerId, value })));
+            value => {
+              if (value?.type !== "worker-event" && value?.response?.id != null) outstanding.delete(requestKey(message.workerId, value.response.id));
+              send({ type: "worker", workerId: message.workerId, value });
+            }));
         }
         break;
       case "unsubscribe":

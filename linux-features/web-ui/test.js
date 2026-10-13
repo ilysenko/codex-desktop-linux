@@ -203,6 +203,37 @@ test("rejected upgrades are closed even when the peer keeps its side open", asyn
   assert.equal(closed, true);
 });
 
+test("host cancels the browser session's outstanding worker requests on disconnect", async () => {
+  const { connectHost } = require("./host");
+  const sent = [], workerMessages = [];
+  let onIpc, workerCallback;
+  const ipc = { send: (_channel, message) => sent.push(message), on: (_channel, handler) => { onIpc = handler; }, postMessage() {} };
+  const bridge = {
+    sendWorkerMessageFromView: async (workerId, message) => { workerMessages.push({ workerId, message }); },
+    subscribeToWorkerMessages: (_workerId, callback) => { workerCallback = callback; return () => {}; },
+    getAppSessionId: () => "s", getDesktopUserAgent: () => "ua", getBuildFlavor: () => "prod", getSystemThemeVariant: () => "light",
+    isDeviceCheckSupported: () => false, isIntelMacBuild: () => false,
+  };
+  const context = vm.createContext({ location: { href: "app://-/community-web-host.html" }, window: { addEventListener() {} }, MessageChannel, Error, Array, Set, Map, String });
+  vm.runInContext(`(${connectHost.toString()})`, context)(ipc, bridge, {});
+  const deliver = message => onIpc({}, message);
+  deliver({ type: "subscribe", workerId: "git" });
+  const request = id => ({ type: "invoke", id: `i${id}`, method: "sendWorkerMessageFromView", args: ["git", { type: "worker-request", workerId: "git", request: { id, method: "subscribe-live-query" } }] });
+  for (const id of ["r1", "r2", "r3"]) deliver(request(id));
+  await new Promise(resolve => setImmediate(resolve));
+  workerCallback({ type: "worker-response", workerId: "git", response: { id: "r1", method: "subscribe-live-query", result: { type: "ok" } } });
+  workerCallback({ type: "worker-event", event: { type: "git-live-query-updated" } });
+  deliver({ type: "invoke", id: "c2", method: "sendWorkerMessageFromView", args: ["git", { type: "worker-request-cancel", workerId: "git", id: "r2" }] });
+  await new Promise(resolve => setImmediate(resolve));
+  workerMessages.length = 0;
+  deliver({ type: "disconnect" });
+  // JSON round trip: objects created in the VM realm have other prototypes.
+  assert.deepEqual(JSON.parse(JSON.stringify(workerMessages)), [{ workerId: "git", message: { type: "worker-request-cancel", workerId: "git", id: "r3" } }], "only the unsettled request is cancelled");
+  workerMessages.length = 0;
+  deliver({ type: "disconnect" });
+  assert.deepEqual(workerMessages, [], "a second reset sends nothing");
+});
+
 test("strict port validation and address-in-use errors", async t => {
   for (const port of ["-1", "65536", "1.2", "01", "", "4310junk"]) assert.throws(() => parsePort(port));
   assert.equal(parsePort("0"), 0);
