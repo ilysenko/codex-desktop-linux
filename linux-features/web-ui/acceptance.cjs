@@ -53,6 +53,12 @@ async function run() {
   const fixture = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), "web-ui-browser-"));
   fs.mkdirSync(path.join(fixture, "subfolder"));
   fs.writeFileSync(path.join(fixture, "file.txt"), "community-web-ui-file\n");
+  // One second of 8 kHz 8-bit silence.
+  const samples = Buffer.alloc(8000, 128), header = Buffer.alloc(44);
+  header.write("RIFF", 0); header.writeUInt32LE(36 + samples.length, 4); header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22); header.writeUInt32LE(8000, 24);
+  header.writeUInt32LE(8000, 28); header.writeUInt16LE(1, 32); header.writeUInt16LE(8, 34); header.write("data", 36); header.writeUInt32LE(samples.length, 40);
+  fs.writeFileSync(path.join(fixture, "tone.wav"), Buffer.concat([header, samples]));
   fs.writeFileSync(path.join(fixture, "pixel #1.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64"));
   const browser = await chromium.launch({ headless: true, chromiumSandbox: true });
   const destination = http.createServer((_request, response) => response.end("community-external-link-ok"));
@@ -213,6 +219,20 @@ async function run() {
     }, imagePath);
     await new Promise(resolve => setTimeout(resolve, 1_000));
     assert.ok((await page.evaluate(() => document.getElementById("community-replaced").getAttribute("src"))).endsWith("#renderer"));
+    // Host-local audio/video (direct src and <source> children) play from
+    // retained blob URLs.
+    const audioPath = encodeURI(path.join(fixture, "tone.wav"));
+    await page.evaluate(encoded => {
+      const video = document.createElement("video"); video.id = "community-video"; video.src = `app://fs/@fs${encoded}`;
+      const audio = document.createElement("audio"); audio.id = "community-audio";
+      const source = document.createElement("source"); source.src = `/@fs${encoded}`; audio.append(source);
+      document.body.append(video, audio);
+    }, audioPath);
+    await poll(page, () => ["community-video", "community-audio"].every(id => {
+      const media = document.getElementById(id);
+      return media.currentSrc.startsWith("blob:") && media.readyState >= 1 && Math.abs(media.duration - 1) < 0.1;
+    }));
+    await page.evaluate(() => { document.getElementById("community-video").remove(); document.getElementById("community-audio").remove(); });
     // An overwritten host file shows its new content when previewed again.
     fs.writeFileSync(path.join(fixture, "pixel #1.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==", "base64"));
     await page.evaluate(encoded => {
@@ -239,7 +259,7 @@ async function run() {
     await poll(reopened, () => window.electronBridge?.communityWebUi === true);
     assert.equal(new URL(reopened.url()).hash, "");
     await recovery.close();
-    console.log("PASS: fragment capability, cross-port isolation, unauthenticated stop page, host-local image previews, browser bootstrap, IPC/RPC, embedded-browser rejection, host file read, sandboxed command, modal folder selection, external-link popup, single-session gate, and reload");
+    console.log("PASS: fragment capability, cross-port isolation, unauthenticated stop page, host-local image/audio/video previews, browser bootstrap, IPC/RPC, embedded-browser rejection, host file read, sandboxed command, modal folder selection, external-link popup, single-session gate, and reload");
   } finally {
     await browser.close();
     await new Promise(resolve => destination.close(resolve));

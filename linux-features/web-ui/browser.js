@@ -229,11 +229,15 @@
   // Host-local previews: upstream renders app://fs/@fs/<path> (Electron's
   // protocol) and /@fs/<path>. <img> cannot send the bearer header, so fetch
   // them with it and show blob URLs instead.
-  const blank = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+  // Placeholders that load without error, so upstream's error state is not
+  // entered while the authenticated fetch is pending.
+  const blankImage = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
+  const blankMedia = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+  const hostMediaSelector = "img[src], audio[src], video[src], audio > source[src], video > source[src]";
   // Only concurrent loads are shared; every adaptation fetches again (the
   // server sends no-store), so an overwritten host file shows its new content.
-  const inflight = new Map(), adapted = new WeakMap(), written = new WeakMap();
-  function hostImagePath(source) {
+  const inflight = new Map(), adapted = new WeakMap(), written = new WeakMap(), owned = new WeakMap();
+  function hostMediaPath(source) {
     try {
       const url = new URL(source, location.href);
       const local = (url.protocol === "app:" && url.host === "fs") || url.origin === location.origin;
@@ -241,7 +245,7 @@
     } catch {}
     return null;
   }
-  function loadHostImage(encodedPath) {
+  function loadHostMedia(encodedPath) {
     if (!inflight.has(encodedPath)) {
       const blob = fetch(`/@fs${encodedPath}`, { headers: { Authorization: `Bearer ${capability}` } })
         .then(response => response.ok ? response.blob() : Promise.reject(Error(`HTTP ${response.status}`)))
@@ -250,36 +254,58 @@
     }
     return inflight.get(encodedPath);
   }
-  function write(image, source) { written.set(image, source); image.src = source; }
-  function adaptImage(image) {
-    const source = image.getAttribute("src") ?? "";
+  const adaptable = element => element instanceof HTMLImageElement || element instanceof HTMLMediaElement ||
+    (element instanceof HTMLSourceElement && element.parentElement instanceof HTMLMediaElement);
+  function release(element) {
+    const url = owned.get(element);
+    if (url) { owned.delete(element); URL.revokeObjectURL(url); }
+  }
+  function write(element, source) {
+    written.set(element, source);
+    element.src = source;
+    // A <source> change takes effect only when its media element reloads.
+    if (element instanceof HTMLSourceElement) element.parentElement?.load();
+  }
+  function adaptMedia(element) {
+    const source = element.getAttribute("src") ?? "";
     // Ignore the observer's echo of this adapter's own writes.
-    if (written.get(image) === source) return;
-    written.delete(image);
-    const encodedPath = hostImagePath(source);
+    if (written.get(element) === source) return;
+    written.delete(element);
+    release(element);
+    const encodedPath = hostMediaPath(source);
     // Any other source (set by the renderer) supersedes a pending load.
     const generation = {};
-    adapted.set(image, generation);
+    adapted.set(element, generation);
     if (encodedPath === null) return;
-    // Cancel the unloadable request before it fails into upstream's error state.
-    write(image, blank);
-    loadHostImage(encodedPath).then(blob => {
-      if (adapted.get(image) !== generation) return;
+    const image = element instanceof HTMLImageElement;
+    write(element, image ? blankImage : blankMedia);
+    loadHostMedia(encodedPath).then(blob => {
+      if (adapted.get(element) !== generation) return;
       const url = URL.createObjectURL(blob);
-      // Each image owns its blob URL; release it once decoded.
-      const release = () => URL.revokeObjectURL(url);
-      image.addEventListener("load", release, { once: true });
-      image.addEventListener("error", release, { once: true });
-      write(image, url);
-    }, () => { if (adapted.get(image) === generation) write(image, "data:,"); });
+      if (image) {
+        // Images are decoded once; release their blob URL after loading.
+        const done = () => URL.revokeObjectURL(url);
+        element.addEventListener("load", done, { once: true });
+        element.addEventListener("error", done, { once: true });
+      } else {
+        // Audio/video read the blob while playing and seeking; keep it until
+        // the source changes or the element leaves the document.
+        owned.set(element, url);
+      }
+      write(element, url);
+    }, () => { if (adapted.get(element) === generation) write(element, image ? "data:," : ""); });
+  }
+  function forEachAdaptable(node, callback) {
+    if (!(node instanceof Element)) return;
+    if (adaptable(node)) callback(node);
+    node.querySelectorAll(hostMediaSelector).forEach(element => { if (adaptable(element)) callback(element); });
   }
   new MutationObserver(records => {
     for (const record of records) {
-      if (record.type === "attributes") { if (record.target instanceof HTMLImageElement) adaptImage(record.target); continue; }
-      for (const node of record.addedNodes) {
-        if (node instanceof HTMLImageElement) adaptImage(node);
-        else if (node instanceof Element) node.querySelectorAll("img[src]").forEach(adaptImage);
-      }
+      if (record.type === "attributes") { if (adaptable(record.target)) adaptMedia(record.target); continue; }
+      for (const node of record.addedNodes) forEachAdaptable(node, adaptMedia);
+      // Moves re-insert the node before this check; only release real removals.
+      for (const node of record.removedNodes) queueMicrotask(() => { if (!node.isConnected) forEachAdaptable(node, release); });
     }
   }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["src"] });
   const unsupported = () => { throw Error("This operation requires the desktop interface."); };
