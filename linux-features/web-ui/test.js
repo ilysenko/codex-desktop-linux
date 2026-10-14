@@ -108,6 +108,13 @@ test("host-local media previews require the token and are limited to media files
   const image = await get(server.origin + route("shot #1.png"), bearer(server));
   assert.equal(image.status, 200);
   assert.equal(image.headers["content-type"], "image/png");
+  // Every upstream-previewable media type is served with a media MIME type.
+  for (const [file, type] of [["a.ogg", "audio/ogg"], ["a.m4a", "audio/mp4"], ["a.flac", "audio/flac"], ["a.opus", "audio/ogg"], ["a.aac", "audio/aac"], ["v.ogv", "video/ogg"], ["v.mov", "video/quicktime"], ["i.tiff", "image/tiff"]]) {
+    fs.writeFileSync(path.join(files, file), "media");
+    const response = await get(server.origin + route(file), bearer(server));
+    assert.equal(response.status, 200, file);
+    assert.equal(response.headers["content-type"], type, file);
+  }
   for (const file of ["secret.txt", "disguised.png", "folder.png", "missing.png"]) {
     assert.equal(await status(server.origin + route(file), bearer(server)), 404, file);
   }

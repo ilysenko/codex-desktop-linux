@@ -18,9 +18,15 @@ const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
-  ".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon",
+  ".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon", ".jfif": "image/jpeg",
+  ".tif": "image/tiff", ".tiff": "image/tiff", ".heic": "image/heic", ".heif": "image/heif",
   ".woff": "font/woff", ".woff2": "font/woff2", ".wasm": "application/wasm",
-  ".mp3": "audio/mpeg", ".wav": "audio/wav", ".mp4": "video/mp4", ".webm": "video/webm",
+  ".mp3": "audio/mpeg", ".wav": "audio/wav", ".aac": "audio/aac", ".flac": "audio/flac",
+  ".m4a": "audio/mp4", ".mp4a": "audio/mp4", ".oga": "audio/ogg", ".ogg": "audio/ogg", ".opus": "audio/ogg",
+  ".weba": "audio/webm", ".aif": "audio/aiff", ".aiff": "audio/aiff", ".wma": "audio/x-ms-wma",
+  ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".ogv": "video/ogg", ".mov": "video/quicktime",
+  ".mkv": "video/x-matroska", ".3gp": "video/3gpp", ".avi": "video/x-msvideo", ".mpeg": "video/mpeg",
+  ".mpg": "video/mpeg", ".wmv": "video/x-ms-wmv",
 };
 
 function parsePort(value = "4310") {
@@ -48,7 +54,13 @@ function secretEqual(left, right) {
 
 // Host-local previews (upstream's app://fs/@fs/<path> and /@fs/<path>) are
 // limited to media types; general file access stays on the app-server RPC.
-const HOST_MEDIA = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".bmp", ".ico", ".svg", ".mp3", ".wav", ".mp4", ".webm"]);
+// Mirrors the image/audio/video extensions upstream recognizes for previews
+// (plus .ogv); the browser decides which it can decode.
+const HOST_MEDIA = new Set([
+  ".png", ".jpg", ".jpeg", ".jfif", ".webp", ".gif", ".avif", ".bmp", ".ico", ".svg", ".tif", ".tiff", ".heic", ".heif",
+  ".mp3", ".wav", ".aac", ".flac", ".m4a", ".mp4a", ".oga", ".ogg", ".opus", ".weba", ".aif", ".aiff", ".wma",
+  ".mp4", ".m4v", ".webm", ".ogv", ".mov", ".mkv", ".3gp", ".avi", ".mpeg", ".mpg", ".wmv",
+]);
 const HOST_MEDIA_LIMIT = 64 * 1024 * 1024;
 
 function hostMedia(encodedPath) {

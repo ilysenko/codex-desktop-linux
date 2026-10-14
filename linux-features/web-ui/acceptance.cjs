@@ -28,6 +28,30 @@ async function poll(page, predicate, timeoutMs = 30_000) {
   throw Error("Timed out waiting for the page");
 }
 
+// A minimal valid FLAC stream: one second of 8 kHz 8-bit mono silence in
+// verbatim frames (no encoder needed), to cover a non-WAV audio format.
+function silentFlac(rate = 8000, samples = 8000, block = 4000) {
+  const crc8 = bytes => bytes.reduce((crc, byte) => { crc ^= byte; for (let i = 0; i < 8; i++) crc = (crc & 0x80 ? (crc << 1) ^ 0x07 : crc << 1) & 0xff; return crc; }, 0);
+  const crc16 = bytes => bytes.reduce((crc, byte) => { crc ^= byte << 8; for (let i = 0; i < 8; i++) crc = (crc & 0x8000 ? (crc << 1) ^ 0x8005 : crc << 1) & 0xffff; return crc; }, 0);
+  const info = Buffer.alloc(34);
+  info.writeUInt16BE(block, 0); info.writeUInt16BE(block, 2); // min/max block size; frame sizes unknown (0)
+  // 20-bit sample rate, 3-bit channels-1 (0), 5-bit bits-per-sample-1 (7), 36-bit total samples.
+  info.writeUInt32BE(((rate << 12) | (0 << 9) | (7 << 4)) >>> 0, 10);
+  info.writeUInt32BE(samples, 14);
+  const frames = [];
+  for (let start = 0, number = 0; start < samples; start += block, number++) {
+    const size = Math.min(block, samples - start);
+    // Sync, fixed block size; block size from 16-bit field (0111), 8 kHz (0100);
+    // mono (0000), 8 bits (001); UTF-8 frame number; 16-bit block size - 1.
+    const header = [0xff, 0xf8, 0x74, 0x02, number, (size - 1) >> 8, (size - 1) & 0xff];
+    header.push(crc8(header));
+    const frame = [...header, 0x02, ...new Array(size).fill(0)]; // verbatim subframe of zeros
+    const crc = crc16(frame);
+    frames.push(Buffer.from([...frame, crc >> 8, crc & 0xff]));
+  }
+  return Buffer.concat([Buffer.from("fLaC"), Buffer.from([0x80, 0, 0, 34]), info, ...frames]);
+}
+
 async function installRpc(page) {
   await page.evaluate(() => {
     window.communityTestRpc = (method, params) => new Promise((resolve, reject) => {
@@ -59,6 +83,7 @@ async function run() {
   header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22); header.writeUInt32LE(8000, 24);
   header.writeUInt32LE(8000, 28); header.writeUInt16LE(1, 32); header.writeUInt16LE(8, 34); header.write("data", 36); header.writeUInt32LE(samples.length, 40);
   fs.writeFileSync(path.join(fixture, "tone.wav"), Buffer.concat([header, samples]));
+  fs.writeFileSync(path.join(fixture, "tone.flac"), silentFlac());
   fs.writeFileSync(path.join(fixture, "pixel #1.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64"));
   const browser = await chromium.launch({ headless: true, chromiumSandbox: true });
   const destination = http.createServer((_request, response) => response.end("community-external-link-ok"));
@@ -228,10 +253,14 @@ async function run() {
       const source = document.createElement("source"); source.src = `/@fs${encoded}`; audio.append(source);
       document.body.append(video, audio);
     }, audioPath);
-    await poll(page, () => ["community-video", "community-audio"].every(id => {
+    await page.evaluate(encoded => {
+      const flac = document.createElement("audio"); flac.id = "community-flac"; flac.src = `app://fs/@fs${encoded}`; document.body.append(flac);
+    }, encodeURI(path.join(fixture, "tone.flac")));
+    await poll(page, () => ["community-video", "community-audio", "community-flac"].every(id => {
       const media = document.getElementById(id);
       return media.currentSrc.startsWith("blob:") && media.readyState >= 1 && Math.abs(media.duration - 1) < 0.1;
     }));
+    await page.evaluate(() => document.getElementById("community-flac").remove());
     // Removed previews release their blob URLs: also when removed while the
     // load is pending, and for a <source> removed apart from its media element.
     await page.evaluate(() => {
