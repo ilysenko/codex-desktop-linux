@@ -280,7 +280,8 @@
     const image = element instanceof HTMLImageElement;
     write(element, image ? blankImage : blankMedia);
     loadHostMedia(encodedPath).then(blob => {
-      if (adapted.get(element) !== generation) return;
+      // Superseded, or removed while loading (dispose cleared the generation).
+      if (adapted.get(element) !== generation || !element.isConnected) return;
       const url = URL.createObjectURL(blob);
       if (image) {
         // Images are decoded once; release their blob URL after loading.
@@ -300,12 +301,22 @@
     if (adaptable(node)) callback(node);
     node.querySelectorAll(hostMediaSelector).forEach(element => { if (adaptable(element)) callback(element); });
   }
+  // Removal cleanup must not depend on the current parent: a detached
+  // <source> no longer has its media element.
+  function dispose(node) {
+    if (!(node instanceof Element)) return;
+    for (const element of [node, ...node.querySelectorAll("img, audio, video, source")]) {
+      adapted.delete(element); // invalidates a pending load
+      written.delete(element);
+      release(element);
+    }
+  }
   new MutationObserver(records => {
     for (const record of records) {
       if (record.type === "attributes") { if (adaptable(record.target)) adaptMedia(record.target); continue; }
       for (const node of record.addedNodes) forEachAdaptable(node, adaptMedia);
       // Moves re-insert the node before this check; only release real removals.
-      for (const node of record.removedNodes) queueMicrotask(() => { if (!node.isConnected) forEachAdaptable(node, release); });
+      for (const node of record.removedNodes) queueMicrotask(() => { if (!node.isConnected) dispose(node); });
     }
   }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["src"] });
   const unsupported = () => { throw Error("This operation requires the desktop interface."); };

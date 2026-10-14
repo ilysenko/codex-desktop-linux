@@ -232,7 +232,29 @@ async function run() {
       const media = document.getElementById(id);
       return media.currentSrc.startsWith("blob:") && media.readyState >= 1 && Math.abs(media.duration - 1) < 0.1;
     }));
+    // Removed previews release their blob URLs: also when removed while the
+    // load is pending, and for a <source> removed apart from its media element.
+    await page.evaluate(() => {
+      window.communityLiveBlobs = new Set();
+      const create = URL.createObjectURL, revoke = URL.revokeObjectURL;
+      URL.createObjectURL = blob => { const url = create(blob); window.communityLiveBlobs.add(url); return url; };
+      URL.revokeObjectURL = url => { window.communityLiveBlobs.delete(url); revoke(url); };
+    });
     await page.evaluate(() => { document.getElementById("community-video").remove(); document.getElementById("community-audio").remove(); });
+    await page.evaluate(async encoded => {
+      const pending = document.createElement("video"); pending.src = `app://fs/@fs${encoded}`; document.body.append(pending);
+      await Promise.resolve(); await Promise.resolve(); // the adapter has started its fetch
+      pending.remove();
+      const audio = document.createElement("audio"); audio.id = "community-source-owner";
+      const source = document.createElement("source"); source.id = "community-source"; source.src = `/@fs${encoded}`;
+      audio.append(source); document.body.append(audio);
+    }, audioPath);
+    await poll(page, () => document.getElementById("community-source-owner").currentSrc.startsWith("blob:"));
+    assert.equal(await page.evaluate(() => window.communityLiveBlobs.size), 1, "the playing <source> keeps its blob URL");
+    await page.evaluate(() => document.getElementById("community-source").remove());
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+    assert.equal(await page.evaluate(() => window.communityLiveBlobs.size), 0, "no blob URL outlives its element");
+    await page.evaluate(() => document.getElementById("community-source-owner").remove());
     // An overwritten host file shows its new content when previewed again.
     fs.writeFileSync(path.join(fixture, "pixel #1.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==", "base64"));
     await page.evaluate(encoded => {
