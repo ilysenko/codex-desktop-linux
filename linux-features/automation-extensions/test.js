@@ -20,6 +20,10 @@ test("automation-extensions is disabled by default and owns both optional patche
     ["multi-time-rrule", "eager-automation-update"],
   );
   assert.ok(descriptors.every(({ ciPolicy }) => ciPolicy === "optional"));
+  const eager = descriptors.find(({ id }) => id === "eager-automation-update");
+  assert.equal(eager.pattern.test("app-initial-newHash.js"), true);
+  assert.equal(eager.pattern.test("app-shared-oldHash.js"), true);
+  assert.equal(eager.pattern.test("app-initial-newHash.css"), false);
 });
 
 test("automation_update remains eager in the current dynamic tool catalog", () => {

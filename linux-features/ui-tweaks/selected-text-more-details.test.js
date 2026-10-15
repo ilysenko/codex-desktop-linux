@@ -36,8 +36,8 @@ function primaryFixture() {
     'import{}from"./app-shared-fixture.js";',
     'import{}from"./app-initial-fixture.js";',
     'function Parent(e){let t=(0,Cache.c)(18),{actions:n,canOpenSideChat:r,scopeToThread:i,targetSelector:a}=e,o=useScope(root),s=context(),c;let l=c,d;d=sourceId(o);let f=d,p=useQuery(messages,f),m=useQuery(remote,f);return jsx(Leaf,{onAddResponseTextAnnotation:p,onOpenSideChat:n.onOpenSideChat,targetContainerRefs:l,targetSelector:a})}',
-    'function Actions(e){let z=0,f=intl(),[p,m]=state();return label(`selectedTextOverlay.moreDetails`)}',
-    'function Errors(e){let b=readState(workMode),x=intl();return()=>{logger.error(`[Composer] side chat failed`,{safe:{},sensitive:{error:e}}),e.get(toast).danger(x.formatMessage({id:`composer.sideSlashCommand.error`}),{errorAnalytics:{toastId:`composer.sideSlashCommand.error`}})}}',
+    'function Actions(e){let z=0,f=$r(),[p,m]=state();return label(`selectedTextOverlay.moreDetails`)}',
+    'function Errors(e){let b=readState(workMode),x=$r();return()=>{logger.error(`[Composer] side chat failed`,{safe:{},sensitive:{error:e}}),e.get(toast).danger(x.formatMessage({id:`composer.sideSlashCommand.error`}),{errorAnalytics:{toastId:`composer.sideSlashCommand.error`}})}}',
     'function Leaf(e){let t=(0,Cache.c)(8),{onAddResponseTextAnnotation:n,onOpenSideChat:r,targetContainerRefs:i,targetSelector:a}=e,o=zoom();if(n==null&&r==null)return null;let s;t[0]!==n||t[1]!==r||t[2]!==o?(s=(e,t)=>{let{portalTarget:i,rect:a,selectedText:s,selectionRange:c,target:l}=e,u=annotation(l,c,s);return(0,Jsx.jsx)(`div`,{className:`contents`,children:(0,Jsx.jsx)(Actions,{selectedText:s,onAddSelectedText:u==null||n==null?void 0:()=>{n(u,{x:a.right/o,y:a.top/o},t()),window.getSelection()?.removeAllRanges()},onOpenSideChat:r})})},t[0]=n,t[1]=r,t[2]=o,t[3]=s):s=t[3];let c;return t[4]!==s||t[5]!==i||t[6]!==a?(c=(0,Jsx.jsx)(Surface,{targetContainerRefs:i,targetSelector:a,children:s}),t[4]=s,t[5]=i,t[6]=a,t[7]=c):c=t[7],c}',
   ].join("");
 }
@@ -141,7 +141,7 @@ test("renderer keeps annotations and side chat, and invalidates the cached callb
   const language = { formatMessage: ({ id }) => id.endsWith("quickChatPrompt") ? "告诉我更多相关信息" : "所选文字" };
   const context = vm.createContext({ Cache: { c: () => memo }, root: {}, useScope: () => scope,
     sourceId: (value) => value.value.conversationId, useQuery: () => ({ isCapable: capable, isLoading: loading }),
-    readState: (atom) => atom === "account" ? {} : blocked, intl: () => language, zoom: () => 1,
+    readState: (atom) => atom === "account" ? {} : blocked, $r: () => language, zoom: () => 1,
     annotation: () => ({ text: "annotation" }), Jsx: { jsx: (component, props) => ({ component, props }) },
     Surface: "surface", toast: "toast", window: { getSelection: () => ({ removeAllRanges() {} }) },
     logger: { info() {} }, [DIAGNOSTICS_EXPORT]() {},

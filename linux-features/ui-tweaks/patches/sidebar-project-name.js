@@ -1,7 +1,7 @@
 "use strict";
 
 const DEFAULT_PROJECT_NAME_STYLE = "font-weight: 700 !important;";
-const PROJECTS_SIDEBAR_ASSET_PATTERN = /^app-shared-[^.]+\.js$/;
+const PROJECTS_SIDEBAR_ASSET_PATTERN = /^[^.]+\.js$/;
 const PROJECT_ROW_ATTRIBUTE = "data-app-action-sidebar-project-row";
 const PROJECT_NAME_SELECTOR = `[${PROJECT_ROW_ATTRIBUTE}] [data-marquee-text]`;
 const STYLE_ID = "codex-linux-ui-tweaks-sidebar-project-name-style";
@@ -12,6 +12,7 @@ const SIDEBAR_PROJECT_NAME_MARKERS = [
   `sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\``,
   "sidebarProjectRow:`[${",
   "sidebarProjectRow:({collapsed:",
+  "sidebarProjectLabel:",
 ];
 
 function warn(message) {
@@ -120,6 +121,7 @@ const descriptors = [
     pattern: PROJECTS_SIDEBAR_ASSET_PATTERN,
     missingDescription: "projects sidebar bundle",
     skipDescription: "ui-tweaks sidebar project name style patch",
+    assetMatch: looksLikeSidebarProjectBundle,
     apply: (source, context = {}) =>
       applySidebarProjectNameStylePatch(source, { ...context, warnOnMissingMarkers: true }),
   },

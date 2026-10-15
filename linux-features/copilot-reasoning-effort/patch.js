@@ -14,7 +14,7 @@ function currentCopilotWriterRegex() {
 
 function matchesCopilotReasoningEffortSettingsContract(source) {
   const cleanReader = new RegExp(
-    `function ${JS_IDENT}\\(\\)\\{let ${JS_IDENT}=\\(0,${JS_IDENT}\\.c\\)\\(3\\),${JS_IDENT}=${JS_IDENT}\\(\\),` +
+    `function ${JS_IDENT}\\(\\)\\{let ${JS_IDENT}=\\(0,${JS_IDENT}\\.c\\)\\(3\\),${JS_IDENT}=${JS_IDENT}\\([^)]*\\),` +
       `\\{data:${JS_IDENT},isLoading:${JS_IDENT}\\}=${JS_IDENT}\\(${BT}copilot-default-model${BT}\\)` +
       `[\\s\\S]{0,400}?reasoningEffort:${BT}medium${BT}`,
   );
@@ -196,7 +196,7 @@ function applyCopilotReasoningEffortSettingsPatch(currentSource) {
 
   const copilotDefaultsPatchMarker = "copilot-default-reasoning-effort`),codexCopilotModelValue=";
   const copilotDefaultsRegex =
-    /function ([A-Za-z_$][\w$]*)\(\)\{let ([A-Za-z_$][\w$]*)=\(0,([A-Za-z_$][\w$]*)\.c\)\(3\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\),\{data:([A-Za-z_$][\w$]*),isLoading:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(`copilot-default-model`\),([A-Za-z_$][\w$]*)=\6\?\?\4\.defaultModel,([A-Za-z_$][\w$]*);return \2\[0\]!==\7\|\|\2\[1\]!==\9\?\(\10=\{model:\9,reasoningEffort:`medium`,profile:null,isLoading:\7\},\2\[0\]=\7,\2\[1\]=\9,\2\[2\]=\10\):\10=\2\[2\],\10\}/;
+    /function ([A-Za-z_$][\w$]*)\(\)\{let ([A-Za-z_$][\w$]*)=\(0,([A-Za-z_$][\w$]*)\.c\)\(3\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\([^)]*\)),\{data:([A-Za-z_$][\w$]*),isLoading:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(`copilot-default-model`\),([A-Za-z_$][\w$]*)=\6\?\?\4\.defaultModel,([A-Za-z_$][\w$]*);return \2\[0\]!==\7\|\|\2\[1\]!==\9\?\(\10=\{model:\9,reasoningEffort:`medium`,profile:null,isLoading:\7\},\2\[0\]=\7,\2\[1\]=\9,\2\[2\]=\10\):\10=\2\[2\],\10\}/;
   if (patchedSource.includes(copilotDefaultsPatchMarker)) {
     // Already patched.
   } else if (copilotDefaultsRegex.test(patchedSource)) {
@@ -208,14 +208,14 @@ function applyCopilotReasoningEffortSettingsPatch(currentSource) {
         memoVar,
         cacheModuleVar,
         defaultsVar,
-        defaultsHookVar,
+        defaultsExpression,
         savedModelVar,
         modelLoadingVar,
         persistedStateHookVar,
         _modelValueVar,
         resultVar,
       ) =>
-        `function ${functionName}(){let ${memoVar}=(0,${cacheModuleVar}.c)(5),${defaultsVar}=${defaultsHookVar}(),{data:${savedModelVar},isLoading:${modelLoadingVar}}=${persistedStateHookVar}(\`copilot-default-model\`),{data:codexCopilotReasoningEffort,isLoading:codexCopilotReasoningEffortLoading}=${persistedStateHookVar}(\`copilot-default-reasoning-effort\`),codexCopilotModelValue=${savedModelVar}??${defaultsVar}.defaultModel,codexCopilotReasoningEffortValue=codexCopilotReasoningEffort??\`medium\`,${resultVar};return ${memoVar}[0]!==${modelLoadingVar}||${memoVar}[1]!==codexCopilotReasoningEffortLoading||${memoVar}[2]!==codexCopilotModelValue||${memoVar}[3]!==codexCopilotReasoningEffortValue?(${resultVar}={model:codexCopilotModelValue,reasoningEffort:codexCopilotReasoningEffortValue,profile:null,isLoading:${modelLoadingVar}||codexCopilotReasoningEffortLoading},${memoVar}[0]=${modelLoadingVar},${memoVar}[1]=codexCopilotReasoningEffortLoading,${memoVar}[2]=codexCopilotModelValue,${memoVar}[3]=codexCopilotReasoningEffortValue,${memoVar}[4]=${resultVar}):${resultVar}=${memoVar}[4],${resultVar}}`,
+        `function ${functionName}(){let ${memoVar}=(0,${cacheModuleVar}.c)(5),${defaultsVar}=${defaultsExpression},{data:${savedModelVar},isLoading:${modelLoadingVar}}=${persistedStateHookVar}(\`copilot-default-model\`),{data:codexCopilotReasoningEffort,isLoading:codexCopilotReasoningEffortLoading}=${persistedStateHookVar}(\`copilot-default-reasoning-effort\`),codexCopilotModelValue=${savedModelVar}??${defaultsVar}.defaultModel,codexCopilotReasoningEffortValue=codexCopilotReasoningEffort??\`medium\`,${resultVar};return ${memoVar}[0]!==${modelLoadingVar}||${memoVar}[1]!==codexCopilotReasoningEffortLoading||${memoVar}[2]!==codexCopilotModelValue||${memoVar}[3]!==codexCopilotReasoningEffortValue?(${resultVar}={model:codexCopilotModelValue,reasoningEffort:codexCopilotReasoningEffortValue,profile:null,isLoading:${modelLoadingVar}||codexCopilotReasoningEffortLoading},${memoVar}[0]=${modelLoadingVar},${memoVar}[1]=codexCopilotReasoningEffortLoading,${memoVar}[2]=codexCopilotModelValue,${memoVar}[3]=codexCopilotReasoningEffortValue,${memoVar}[4]=${resultVar}):${resultVar}=${memoVar}[4],${resultVar}}`,
     );
   } else if (patchedSource.includes("copilot-default-model")) {
     console.warn(

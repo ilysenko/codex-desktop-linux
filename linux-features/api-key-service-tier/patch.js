@@ -360,7 +360,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20610,
     ciPolicy: "optional",
-    pattern: /^app-shared-[^.]+\.js$/,
+    pattern: /^[A-Za-z0-9_-]+\.js$/,
     assetMatch: matchesFallbackFastTierContract,
     missingDescription: "current API key service tier fallback bundle",
     skipDescription: "API key fallback fast tier patch",

@@ -60,7 +60,7 @@ const {
 
 function projectBundleFixture() {
   return [
-    `var actionAttributes={sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
+    `var actionAttributes={sidebarProjectLabel:\`data-app-action-sidebar-project-label\`,sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
     "var selectors={sidebarProjectRow:`[${actionAttributes.sidebarProjectRow}]`};",
     "var actions={sidebarProjectRow:({collapsed:e,label:t,projectId:n})=>({collapsed:e,label:t,projectId:n})};",
     "function marquee(e){return(0,Iy.jsx)(`span`,{...e,\"data-marquee-text\":!0})}",
@@ -764,20 +764,21 @@ test("English reasoning effort labels can be disabled", () => {
 
 test("sidebar project descriptor targets only the current project sidebar asset", () => {
   assert.match("app-shared-BTphDPeq.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
-  assert.doesNotMatch("app-initial-BTphDPeq.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
-  assert.doesNotMatch(
+  assert.match("app-initial-BTphDPeq.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
+  assert.match(
     "app-initial~app-main~page-kMhXWEru.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
-  assert.doesNotMatch(
+  assert.match(
     "app-initial~app-main~automations-page-BcHjEK7e.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
-  assert.doesNotMatch("projects-index-page-TFjtVwC4.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
-  assert.doesNotMatch(
+  assert.match("projects-index-page-TFjtVwC4.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
+  assert.match(
     "app-initial~app-main~remote-conversation-page~projects-index-page-By2_tGIM.js",
     PROJECTS_SIDEBAR_ASSET_PATTERN,
   );
+  assert.doesNotMatch("app-initial-BTphDPeq.css", PROJECTS_SIDEBAR_ASSET_PATTERN);
 });
 
 test("patch injects sidebar project-name stylesheet runtime once", () => {

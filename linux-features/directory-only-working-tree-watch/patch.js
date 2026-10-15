@@ -1611,9 +1611,7 @@ function classifyCurrentBundle(bundlePath, source, settings = normalizedSettings
     markerCount > 0 ||
     rawRouteLookalikeCount > 0 ||
     pristineRouteMatches.length > 0 ||
-    completedRouteMatches.length > 0 ||
-    parcelHelperMatches.length > 0 ||
-    parcelImportCount > 0;
+    completedRouteMatches.length > 0;
   return {
     branchCallCount,
     bundlePath,

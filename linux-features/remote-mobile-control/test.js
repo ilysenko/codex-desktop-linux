@@ -71,8 +71,8 @@ const OLD_REMOTE_LOAD_GATE_ASSET =
 const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
 const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = "app-primary-a0bff570446b.js";
-const CURRENT_REMOTE_REASONING_SUMMARY_ASSET = "app-shared-5c3eff50f08d.js";
-const CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET = CURRENT_REMOTE_REASONING_SUMMARY_ASSET;
+const CURRENT_REMOTE_REASONING_SUMMARY_ASSET = "app-initial-currentHash.js";
+const CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET = "app-initial-currentHash.js";
 const VALID_DEVICE_KEY_NONCE = Buffer.alloc(32, 1).toString("base64url");
 const VALID_DEVICE_KEY_DIGEST = Buffer.alloc(32, 2).toString("base64url");
 
@@ -1036,14 +1036,16 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     );
     assert.ok(reasoningSummaryDescriptor);
     assert.equal(reasoningSummaryDescriptor.pattern.test(CURRENT_REMOTE_REASONING_SUMMARY_ASSET), true);
-    assert.equal(reasoningSummaryDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+    assert.equal(reasoningSummaryDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), true);
+    assert.equal(reasoningSummaryDescriptor.pattern.test("app-initial-currentHash.css"), false);
 
     const hydrationDescriptor = descriptors.find((descriptor) =>
       descriptor.id === "feature:remote-mobile-control:linux-remote-mobile-conversation-hydration"
     );
     assert.ok(hydrationDescriptor);
     assert.equal(hydrationDescriptor.pattern.test(CURRENT_REMOTE_CONVERSATION_HYDRATION_ASSET), true);
-    assert.equal(hydrationDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+    assert.equal(hydrationDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), true);
+    assert.equal(hydrationDescriptor.pattern.test("app-initial-currentHash.css"), false);
     const hydrationOwner = syntheticCurrentConversationHydrationBundle();
     const patchedHydrationOwner = applyLinuxRemoteMobileConversationHydrationPatch(hydrationOwner);
     assert.equal(

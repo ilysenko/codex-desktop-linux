@@ -18,9 +18,9 @@ const {
 } = require("./patch.js");
 
 const FIXTURES = {
-  "landing-route-current.js": `function route(){if(D===\`error\`||j?.tbo_config?.tbo_available==null||j.structure==null)return null;if(j.tbo_config.tbo_available){return redirect}}`,
-  "app-shared-current.js": `function capable(){if(e.query.getData(iq,t)?.accounts[t]?.account.tbo_config?.tbo_available!==!0)throw Error();return n?.accounts[t]?.account.tbo_config?.tbo_available===!0}`,
-  "personalization-settings-current.js": `_?.accounts[l]?.account.tbo_config?.tbo_available!==!0; c?.accounts[i]?.account.tbo_config?.tbo_available!==!0;`,
+  "landing-route-current.js": `function route(){if(D===\`error\`||account?.tbo_config?.tbo_available==null||account.structure==null)return null;if(account.tbo_config.tbo_available){return redirect}}`,
+  "app-initial-current.js": `function capable(){if(scope.query.getData(accountQuery,accountId)?.accounts[accountId]?.account.tbo_config?.tbo_available!==!0)throw Error();return response?.accounts[accountId]?.account.tbo_config?.tbo_available===!0}`,
+  "personalization-settings-current.js": `first?.accounts[accountId]?.account.tbo_config?.tbo_available!==!0; second?.accounts[otherId]?.account.tbo_config?.tbo_available!==!0;`,
 };
 
 function withFeatureConfig(enabled, fn) {
@@ -63,12 +63,12 @@ test("feature is disabled until selected", () => {
 test("landing route stays visible while preserving the server gate", () => {
   const patched = applyDotsLandingRoutePatch(FIXTURES["landing-route-current.js"]);
   assert.doesNotMatch(patched, /tbo_available==null/);
-  assert.match(patched, /if\(j\.tbo_config\.tbo_available\)/);
+  assert.match(patched, /if\(account\.tbo_config\.tbo_available\)/);
   assert.equal(applyDotsLandingRoutePatch(patched), patched);
 });
 
 test("shared Dots capability checks no longer reject a country-gated account", () => {
-  const patched = applyDotsAppSharedPatch(FIXTURES["app-shared-current.js"]);
+  const patched = applyDotsAppSharedPatch(FIXTURES["app-initial-current.js"]);
   assert.equal(patched, "function capable(){if(!1)throw Error();return !0}");
   assert.doesNotMatch(patched, /\?\.[!01]/);
   assert.equal(applyDotsAppSharedPatch(patched), patched);
@@ -82,7 +82,7 @@ test("personalization Dots checks are patched together", () => {
 });
 
 test("ambiguous contracts fail closed", () => {
-  const source = `${CONTRACTS.landingRoute[0][0]};${CONTRACTS.landingRoute[0][0]}`;
+  const source = "a?.tbo_config?.tbo_available==null;b?.tbo_config?.tbo_available==null";
   assert.equal(applyDotsLandingRoutePatch(source), source);
 });
 

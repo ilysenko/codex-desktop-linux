@@ -92,6 +92,18 @@ test("status panel preference follows the current lifted menu state", () => {
   assert.equal(applyPersistentStatusPanelPatch(patched), patched);
 });
 
+test("status state remains correlated across the current large composer function", () => {
+  const source = liftedStatusStateComposerSource.replace(
+    ",v=o.formatMessage",
+    `,/*${"x".repeat(55_000)}*/v=o.formatMessage`,
+  );
+  const patched = applyPersistentStatusPanelPatch(source);
+
+  assert.notEqual(patched, source);
+  assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
+  assert.equal(applyPersistentStatusPanelPatch(patched), patched);
+});
+
 test("descriptor patches the current app-primary composer status bundle", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "persistent-status-panel-assets-"));
   try {

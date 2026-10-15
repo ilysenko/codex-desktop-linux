@@ -380,6 +380,7 @@ test("bundle discovery patches the current bootstrap companion and worker copies
   const extractedDir = tempDirectory(t, "directory-watch-bundle-");
   const buildDir = path.join(extractedDir, ".vite", "build");
   writeFile(path.join(buildDir, "unrelated.js"), "const unrelated=true;");
+  writeFile(path.join(buildDir, "watcher.js"), CURRENT_PARCEL_HELPER);
   const targets = [
     path.join(buildDir, "bootstrap-current.js"),
     path.join(buildDir, "worker.js"),

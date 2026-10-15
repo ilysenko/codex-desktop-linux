@@ -446,32 +446,18 @@ function upstreamSliderFilterCondition(section, defaultCondition) {
 
 function sliderPatchContract(source) {
   const markerCount = source.split(SLIDER_PATCH_MARKER).length - 1;
-  const localMarkerCount = source.split(LOCAL_DEFAULT_PATCH_MARKER).length - 1;
   const sliderSection = sliderResolverSection(source);
-  const powerSection = powerSelectionResolverSection(source);
-  const catalogParameter = firstFunctionParameter(powerSection);
-  if (markerCount === 0 && localMarkerCount === 0) {
-    if (sliderSection == null || powerSection == null) return "drifted";
-    const defaultCondition = upstreamDefaultSliderCondition(powerSection);
-    return (sliderSection.source.match(/\.length>=3/g) ?? []).length === 2 &&
-      defaultCondition != null &&
-      upstreamSliderFilterCondition(powerSection, defaultCondition) != null
-      ? "current"
-      : "drifted";
+  if (markerCount === 0) {
+    return sliderSection != null &&
+      (sliderSection.source.match(/\.length>=3/g) ?? []).length === 2
+      ? "current" : "drifted";
   }
   if (
     markerCount === 1 &&
-    localMarkerCount === 1 &&
     sliderSection != null &&
-    powerSection != null &&
     sliderSection.source.includes(`/*${SLIDER_PATCH_MARKER}*/`) &&
-    powerSection.source.includes(`/*${LOCAL_DEFAULT_PATCH_MARKER}*/`) &&
     (sliderSection.source.match(/\.length>=codexLinuxDefaultPresetMinimum\(/g) ?? []).length === 2 &&
-    !sliderSection.source.includes(".length>=3") &&
-    powerSection.source.includes(
-      `let codexLinuxHasDefaultPresets=${catalogParameter}?.${CATALOG_PRESET_OPTIONS_KEY}!=null`,
-    ) &&
-    (powerSection.source.match(/codexLinuxHasDefaultPresets/g) ?? []).length === 3
+    !sliderSection.source.includes(".length>=3")
   ) {
     return "applied";
   }
@@ -501,17 +487,6 @@ function applySliderMinimumPatch(source, context = {}) {
   }
 
   const sliderSection = sliderResolverSection(source);
-  const powerSection = powerSelectionResolverSection(source);
-  const defaultCondition = upstreamDefaultSliderCondition(powerSection);
-  const filterCondition =
-    defaultCondition == null ? null : upstreamSliderFilterCondition(powerSection, defaultCondition);
-  if (defaultCondition == null || filterCondition == null) {
-    warn(
-      "Could not locate the local Default power-selection branch",
-      "model picker Default slider patch",
-    );
-    return source;
-  }
   const configuredIds = presets.map(
     ({ modelSlug, thinkingEffort }) =>
       `${modelSlug}:${THINKING_EFFORT_TO_EFFORT[thinkingEffort]}`,
@@ -527,41 +502,8 @@ function applySliderMinimumPatch(source, context = {}) {
       /([A-Za-z_$][\w$]*)\.length>=3/g,
       "$1.length>=codexLinuxDefaultPresetMinimum($1)",
     );
-  const configuredDefaultCondition =
-    `codexLinuxHasDefaultPresets&&${defaultCondition.selectionMode}===\`default\``;
-  let patchedPowerSection = powerSection.source
-    .replace(filterCondition, `${configuredDefaultCondition}||`)
-    .replace(
-      defaultCondition.match,
-      `${configuredDefaultCondition}&&${defaultCondition.sliderSettings}.length>0?${defaultCondition.sliderSettings}:`,
-    );
-  const bodyOpening = patchedPowerSection.lastIndexOf(
-    "){",
-    patchedPowerSection.indexOf(".sliderSettings"),
-  ) + 1;
-  if (bodyOpening <= 0 || patchedPowerSection[bodyOpening] !== "{") {
-    warn(
-      "Could not locate the power-selection resolver body",
-      "model picker Default slider patch",
-    );
-    return source;
-  }
-  patchedPowerSection =
-    patchedPowerSection.slice(0, bodyOpening + 1) +
-    `/*${LOCAL_DEFAULT_PATCH_MARKER}*/let codexLinuxHasDefaultPresets=${defaultCondition.catalogParameter}?.${CATALOG_PRESET_OPTIONS_KEY}!=null;` +
-    patchedPowerSection.slice(bodyOpening + 1);
-  const replacements = [
-    { ...sliderSection, source: patchedSliderSection },
-    { ...powerSection, source: patchedPowerSection },
-  ].sort((left, right) => right.start - left.start);
-  let patchedSource = source;
-  for (const replacement of replacements) {
-    patchedSource =
-      patchedSource.slice(0, replacement.start) +
-      replacement.source +
-      patchedSource.slice(replacement.end);
-  }
-  return patchedSource;
+  return source.slice(0, sliderSection.start) + patchedSliderSection +
+    source.slice(sliderSection.end);
 }
 
 function localComposerResolverSection(source) {

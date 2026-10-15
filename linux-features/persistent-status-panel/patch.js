@@ -15,7 +15,7 @@ function applyPersistentStatusPanelPatch(source) {
   const statePattern = /\[([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\]=\(0,([A-Za-z_$][\w$]*)\.useState\)\(!1\)/gu;
   const candidates = [...source.matchAll(statePattern)].filter((candidate) => {
     const setter = candidate[2];
-    const tail = source.slice(candidate.index, candidate.index + 50_000);
+    const tail = source.slice(candidate.index, candidate.index + 60_000);
     return tail.includes(`setIsStatusMenuOpen:${setter}`) &&
       tail.includes(`onClose:()=>${setter}(!1)`);
   });

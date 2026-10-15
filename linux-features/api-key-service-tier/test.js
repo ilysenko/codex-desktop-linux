@@ -109,7 +109,7 @@ test("api-key-service-tier stays disabled until listed in features.json", () => 
   });
 });
 
-test("current package descriptors use semantic app-initial and app-shared owners", () => {
+test("current package descriptors use semantic owners without binding the moved fallback to a chunk", () => {
   assert.deepEqual(
     descriptors.map((descriptor) => descriptor.id),
     [
@@ -119,12 +119,18 @@ test("current package descriptors use semantic app-initial and app-shared owners
       "api-key-service-tier-fallback",
     ],
   );
-  const sharedIds = new Set(["api-key-service-tier-resolver", "api-key-service-tier-fallback"]);
-  assert.ok(descriptors.filter((descriptor) => !sharedIds.has(descriptor.id))
+  const sharedIds = new Set(["api-key-service-tier-resolver"]);
+  assert.ok(descriptors.filter((descriptor) =>
+    ["api-key-service-tier-gate", "api-key-service-tier-model"].includes(descriptor.id))
     .every((descriptor) => descriptor.pattern.test("app-initial-Bd3Z1bES.js")));
   assert.ok(descriptors.filter((descriptor) => sharedIds.has(descriptor.id))
     .every((descriptor) => descriptor.pattern.test("app-shared-d9439dc9e73f.js")));
-  assert.ok(descriptors.every((descriptor) => !descriptor.pattern.test("projects-index-page-DjNy92Xe.js")));
+  const fallback = descriptors.find((descriptor) => descriptor.id === "api-key-service-tier-fallback");
+  assert.equal(fallback.pattern.test("app-initial-newHash.js"), true);
+  assert.equal(fallback.pattern.test("app-shared-newHash.js"), true);
+  assert.equal(fallback.assetMatch("function unrelated(){}"), false);
+  assert.ok(descriptors.filter((descriptor) => descriptor !== fallback)
+    .every((descriptor) => !descriptor.pattern.test("projects-index-page-DjNy92Xe.js")));
 });
 
 test("current target wrappers warn when an exact contract disappears", () => {

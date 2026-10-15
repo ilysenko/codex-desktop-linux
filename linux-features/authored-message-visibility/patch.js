@@ -5,17 +5,19 @@
 // both authored-message branches match as one unique contract.
 const identifier = String.raw`[A-Za-z_$][\w$]*`;
 const classifierPrefix =
-  String.raw`function (?<classifier>${identifier})\(\{unit:(?<unit>${identifier}),keepMcpAppEntriesPersistent:(?<keep>${identifier}),mcpServerStatuses:(?<statuses>${identifier}),renderMcpApps:(?<render>${identifier})\}\)\{if\(\k<unit>\.kind!==\`standalone\`\)return!1;let (?<item>${identifier})=\k<unit>\.item\.item;return `;
+  String.raw`function (?<classifier>${identifier})\(\{unit:(?<unit>${identifier}),hasFollowingFinalAnswer:(?<following>${identifier}),keepMcpAppEntriesPersistent:(?<keep>${identifier}),mcpServerStatuses:(?<statuses>${identifier}),renderMcpApps:(?<render>${identifier})\}\)\{if\(\k<unit>\.kind!==\`standalone\`\)return!1;let (?<item>${identifier})=\k<unit>\.item\.item;return `;
 const classifierTools =
   String.raw`\|\|\k<item>\.type===\`dynamic-tool-call\`&&${identifier}\(\k<item>\)\|\|\k<keep>&&\k<render>&&\k<item>\.type===\`mcp-tool-call\`&&${identifier}\(\{item:\k<item>,mcpServerStatuses:\k<statuses>\}\)\?!0:`;
 const classifierLeadingTool =
+  String.raw`\k<item>\.type===\`user-input-response\`\?!\k<item>\.completed:` +
   String.raw`\k<item>\.type===\`mcp-tool-call\`&&${identifier}\(\k<item>\)\|\|`;
 const currentPattern = new RegExp(
   classifierPrefix +
     classifierLeadingTool +
     String.raw`\k<item>\.type===\`assistant-message\`&&(?<assistantFilter>${identifier})\(\k<item>\)` +
     classifierTools +
-    String.raw`\k<item>\.type===\`user-message\`&&\(\k<item>\.steeringStatus!=null\|\|\k<item>\.hookFeedback===!0\)\}`,
+    String.raw`\k<item>\.type===\`user-message\`&&\(\k<item>\.steeringStatus===\`pending\`\|\|` +
+    String.raw`\k<item>\.deliveryStatus===\`not-sent\`\|\|\k<item>\.hookFeedback===!0\|\|!\k<following>\)\}`,
   "g",
 );
 const patchedPattern = new RegExp(
@@ -41,7 +43,7 @@ function applyAuthoredMessageVisibilityPatch(source) {
   const assistantFilter = match.groups.assistantFilter;
   const assistantBefore = `${item}.type===\`assistant-message\`&&${assistantFilter}(${item})`;
   const assistantAfter = `${item}.type===\`assistant-message\``;
-  const before = `${item}.type===\`user-message\`&&(${item}.steeringStatus!=null||${item}.hookFeedback===!0)`;
+  const before = `${item}.type===\`user-message\`&&(${item}.steeringStatus===\`pending\`||${item}.deliveryStatus===\`not-sent\`||${item}.hookFeedback===!0||!${match.groups.following})`;
   const after = `${item}.type===\`assistant-message\`||${item}.type===\`user-message\``;
   const replacement = match[0]
     .replace(assistantBefore, assistantAfter)

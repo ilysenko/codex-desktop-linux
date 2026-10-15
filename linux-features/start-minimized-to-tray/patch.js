@@ -62,7 +62,7 @@ function unique(source, pattern) {
 }
 
 function firstWindowContract(source, background) {
-  return unique(source, new RegExp(`let (${ID})=await (${ID})\\.ensureWindow\\(\\{background:${escapeRegExp(background)}\\}\\);\\1\\?\\.once\\(\`show\`,\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),\\1!=null&&!${escapeRegExp(background)}&&\\((${ID})\\(\\1,!(${ID})\\),\\3\\.handleInitialWindowVisible\\(\\)\\)`, "g"));
+  return unique(source, new RegExp(`let (${ID})=(?:${ID}\\.deepLinks\\.isWakeOnlyLaunch\\(\\)&&!${ID}\\?null:)?await (${ID})\\.ensureWindow\\(\\{background:${escapeRegExp(background)}\\}\\);\\1\\?\\.once\\(\`show\`,\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),\\1!=null&&!${escapeRegExp(background)}&&\\(?(?:(${ID})\\(\\1,!(${ID})\\))(?:,\\3\\.handleInitialWindowVisible\\(\\))?\\)?`, "g"));
 }
 
 function windowModeContract(source) {
@@ -93,6 +93,7 @@ function hasCompleteMainPatch(source, state, startup) {
   const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}try\\{${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}if\\(!(${ID})&&\\(!codexLinuxStartMinimizedRequested\\|\\|${escapeRegExp(first[2])}\\.getPrimaryWindow\\(\\)==null\\)\\)return null;${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   if (!activations || !trayActivation || !unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{\\(${ID}\\|\\|codexLinuxStartMinimizedRequested\\)&&${escapeRegExp(activations[1])}\\(\\);return\\}`, "g"))) return false;
+  const expectedLaunchParts = first[0].includes("isWakeOnlyLaunch") ? 8 : 9;
   return [
     codexLinuxStartMinimizedTrayReady.toString(),
     codexLinuxStartMinimizedAutostart.toString(),
@@ -102,7 +103,7 @@ function hasCompleteMainPatch(source, state, startup) {
     windowMode[0] + hiddenWindowModeBody(...windowMode.slice(1, 4)),
     `${startup[1]}.onInteractiveLaunch=()=>{${clearHidden}${first[1]}!=null&&!${first[1]}.isDestroyed()&&${first[4]}(${first[1]}),`,
   ].every(exactlyOnce) && source.split(clearHidden).length === 4 &&
-    source.split(launchBackground).length === 9;
+    source.split(launchBackground).length === expectedLaunchParts;
 }
 
 function applyMainPatch(source) {
@@ -130,10 +131,11 @@ function applyMainPatch(source) {
   // show. Require that contract instead of carrying the retired custom patch.
   const maximize = unique(source, new RegExp(`${ID}\\.once\\(\`ready-to-show\`,\\(\\)=>\\{(${ID})\\.isDestroyed\\(\\)\\|\\|\\(\\1\\.isVisible\\(\\)\\?(${ID})\\(\\):\\1\\.once\\(\`show\`,\\2\\)\\)\\}\\)`, "g"));
   const windowMode = windowModeContract(source);
+  const expectedLaunchParts = first?.[0].includes("isWakeOnlyLaunch") ? 8 : 9;
   if (!background || !state || !startup || !trayReady || !traySetup || !first || !last || !maximize || !windowMode ||
       first[4] !== background[2] || first[5] !== background[1] ||
       last[2] !== first[1] || last[3] !== first[4] || last[4] !== first[5] ||
-      source.split(launchBackground).length !== 9 ||
+      source.split(launchBackground).length !== expectedLaunchParts ||
       source.split(`background:${launchBackground}`).length !== 3 ||
       source.split(`shouldShow:()=>!${launchBackground}`).length !== 3) {
     console.warn("WARN: Start minimized to tray startup contract missing or ambiguous");
@@ -167,7 +169,7 @@ function applyMainPatch(source) {
     trayReadinessStatement(first[2], trayReady[1]) + first[0]);
   // Reuse upstream's background creation, attribution, and progress-window
   // guards, leaving its actual background-launch lifecycle state untouched.
-  // Eight references above account for both creations, three attribution/show
+  // Seven references above account for both creations, both attribution/show
   // decisions, the renderer mode gate, and both startup-progress windows.
   // Reject additional references rather than patching an unverified consumer.
   patched = patched.replaceAll(launchBackground, `(${launchBackground}||codexLinuxStartMinimized)`);

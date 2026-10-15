@@ -1,35 +1,58 @@
 "use strict";
 
+const IDENT = "[A-Za-z_$][\\w$]*";
 const CONTRACTS = Object.freeze({
-  landingRoute: [
-    ["j?.tbo_config?.tbo_available==null", "!1"],
-  ],
-  appShared: [
-    ["e.query.getData(iq,t)?.accounts[t]?.account.tbo_config?.tbo_available!==!0", "!1"],
-    ["n?.accounts[t]?.account.tbo_config?.tbo_available===!0", "!0"],
-  ],
-  personalization: [
-    ["_?.accounts[l]?.account.tbo_config?.tbo_available!==!0", "!1"],
-    ["c?.accounts[i]?.account.tbo_config?.tbo_available!==!0", "!1"],
-  ],
+  landingRoute: [{
+    pattern: new RegExp(`${IDENT}\\?\\.tbo_config\\?\\.tbo_available==null`, "gu"),
+    replacement: "!1",
+    expected: 1,
+  }],
+  appShared: [{
+    pattern: new RegExp(
+      `${IDENT}\\.query\\.getData\\(${IDENT},(?<account>${IDENT})\\)\\?\\.accounts\\[\\k<account>\\]` +
+        `\\?\\.account\\.tbo_config\\?\\.tbo_available!==!0`,
+      "gu",
+    ),
+    replacement: "!1",
+    expected: 1,
+  }, {
+    pattern: new RegExp(
+      `${IDENT}\\?\\.accounts\\[(?<account>${IDENT})\\]\\?\\.account\\.tbo_config` +
+        `\\?\\.tbo_available===!0`,
+      "gu",
+    ),
+    replacement: "!0",
+    expected: 1,
+  }],
+  personalization: [{
+    pattern: new RegExp(
+      `${IDENT}\\?\\.accounts\\[${IDENT}\\]\\?\\.account\\.tbo_config\\?\\.tbo_available!==!0`,
+      "gu",
+    ),
+    replacement: "!1",
+    expected: 2,
+  }],
 });
 
+function contractState(source, replacements) {
+  const matches = replacements.map((contract) => [
+    ...source.matchAll(new RegExp(contract.pattern.source, contract.pattern.flags)),
+  ]);
+  if (matches.every((found) => found.length === 0)) return "patched";
+  return matches.every((found, index) => found.length === replacements[index].expected)
+    ? "pristine"
+    : "invalid";
+}
+
 function applyContract(source, replacements, description) {
-  const counts = replacements.map(([needle, , expected = 1]) => ({
-    needle,
-    expected,
-    count: source.split(needle).length - 1,
-  }));
-  if (counts.every(({ count }) => count === 0)) {
-    return source;
-  }
-  if (counts.some(({ count, expected }) => count !== expected)) {
+  const state = contractState(source, replacements);
+  if (state === "patched") return source;
+  if (state !== "pristine") {
     console.warn(`WARN: Could not prove the current ChatGPT Dots ${description} contract — skipping Dots patch`);
     return source;
   }
-
   return replacements.reduce(
-    (patched, [needle, replacement]) => patched.replaceAll(needle, replacement),
+    (patched, contract) => patched.replace(contract.pattern, contract.replacement),
     source,
   );
 }
@@ -46,14 +69,18 @@ function applyDotsPersonalizationPatch(source) {
   return applyContract(source, CONTRACTS.personalization, "personalization");
 }
 
+function matchesContract(source, contracts) {
+  return contractState(source, contracts) === "pristine";
+}
+
 const descriptors = [
   {
     id: "dots-landing-route",
     phase: "webview-asset",
     order: 20_900,
     ciPolicy: "optional",
-    pattern: /^landing-route-[^.]+\.js$/,
-    assetMatch: (source) => CONTRACTS.landingRoute.every(([needle]) => source.includes(needle)),
+    pattern: /^[^.]+\.js$/,
+    assetMatch: (source) => matchesContract(source, CONTRACTS.landingRoute),
     missingDescription: "ChatGPT Dots landing route bundle",
     skipDescription: "ChatGPT Dots landing route patch",
     apply: applyDotsLandingRoutePatch,
@@ -63,9 +90,9 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_901,
     ciPolicy: "optional",
-    pattern: /^app-shared-[^.]+\.js$/,
-    assetMatch: (source) => CONTRACTS.appShared.every(([needle]) => source.includes(needle)),
-    missingDescription: "ChatGPT Dots shared capability bundle",
+    pattern: /^[^.]+\.js$/,
+    assetMatch: (source) => matchesContract(source, CONTRACTS.appShared),
+    missingDescription: "ChatGPT Dots capability bundle",
     skipDescription: "ChatGPT Dots capability patch",
     apply: applyDotsAppSharedPatch,
   },
@@ -74,8 +101,8 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_902,
     ciPolicy: "optional",
-    pattern: /^personalization-settings-[^.]+\.js$/,
-    assetMatch: (source) => CONTRACTS.personalization.every(([needle]) => source.includes(needle)),
+    pattern: /^[^.]+\.js$/,
+    assetMatch: (source) => matchesContract(source, CONTRACTS.personalization),
     missingDescription: "ChatGPT Dots personalization bundle",
     skipDescription: "ChatGPT Dots personalization patch",
     apply: applyDotsPersonalizationPatch,

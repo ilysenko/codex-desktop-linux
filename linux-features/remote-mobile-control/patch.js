@@ -1310,7 +1310,11 @@ module.exports = [
   {
     id: "linux-remote-mobile-reasoning-summary-none",
     phase: "webview-asset",
-    pattern: /^app-shared-[^.]+\.js$/,
+    pattern: /^[^.]+\.js$/,
+    assetMatch: (source) =>
+      source.includes("Reasoning summary turn-start config resolved") &&
+      source.includes("reasoningSummaryOverride") &&
+      source.includes("canUseProjectlessWorkspace:"),
     order: 20_149,
     ciPolicy: "optional",
     missingDescription: "turn-start reasoning summary resolver",
@@ -1320,7 +1324,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-conversation-hydration",
     phase: "webview-asset",
-    pattern: /^app-shared-[^.]+\.js$/,
+    pattern: /^[A-Za-z0-9_-]+\.js$/,
     assetMatch: matchesRemoteMobileConversationHydrationContract,
     order: 20_151,
     ciPolicy: "optional",

@@ -20,7 +20,7 @@ module.exports = [
     phase: "webview-asset",
     order: 20_110,
     ciPolicy: "optional",
-    pattern: /^app-shared-[^.]+\.js$/,
+    pattern: /^[A-Za-z0-9_-]+\.js$/,
     assetMatch: matchesAutomationUpdateEagerToolContract,
     missingDescription: "dynamic Codex app tools bundle",
     skipDescription: "automation_update eager dynamic tool patch",
