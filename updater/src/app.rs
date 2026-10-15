@@ -985,7 +985,7 @@ mod replacement_tests {
             fs::{OpenOptionsExt, PermissionsExt},
         },
         path::{Path, PathBuf},
-        process::{Command, Stdio},
+        process::{Child, Command, Stdio},
         thread,
         time::Duration,
     };
@@ -2330,13 +2330,63 @@ exit 90
     }
 
     fn stage_executable(source: &Path, destination: &Path) -> Result<()> {
+        finish_executable_staging(spawn_executable_staging(source, destination)?)
+    }
+
+    fn spawn_executable_staging(source: &Path, destination: &Path) -> Result<Child> {
         let staging = destination.with_extension(format!(
             "stage-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
 
-        let mut input = File::open(source)
+        // Keep writable executable descriptors out of the parallel test
+        // runner: another thread's fork can inherit them until its exec,
+        // even with O_CLOEXEC and after this thread closes its own copy.
+        Command::new(env::current_exe()?)
+            .args([
+                "app::replacement_tests::stage_executable_process_fixture",
+                "--exact",
+                "--nocapture",
+            ])
+            .env("CODEX_STAGE_EXECUTABLE_SOURCE", source)
+            .env("CODEX_STAGE_EXECUTABLE_STAGING", &staging)
+            .env("CODEX_STAGE_EXECUTABLE_DESTINATION", destination)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("fixture: spawn executable staging process")
+    }
+
+    fn finish_executable_staging(child: Child) -> Result<()> {
+        let output = child
+            .wait_with_output()
+            .context("fixture: wait for executable staging process")?;
+        anyhow::ensure!(
+            output.status.success(),
+            "fixture: executable staging process failed ({}):\n{}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stage_executable_process_fixture() -> Result<()> {
+        let Some(source) = env::var_os("CODEX_STAGE_EXECUTABLE_SOURCE") else {
+            return Ok(());
+        };
+        let source = PathBuf::from(source);
+        let staging = PathBuf::from(
+            env::var_os("CODEX_STAGE_EXECUTABLE_STAGING").expect("staging path is required"),
+        );
+        let destination = PathBuf::from(
+            env::var_os("CODEX_STAGE_EXECUTABLE_DESTINATION")
+                .expect("destination path is required"),
+        );
+
+        let mut input = File::open(&source)
             .with_context(|| format!("fixture: open source executable {}", source.display()))?;
         let mut output = OpenOptions::new()
             .write(true)
@@ -2352,7 +2402,7 @@ exit 90
         drop(output);
         drop(input);
 
-        fs::rename(&staging, destination).with_context(|| {
+        fs::rename(&staging, &destination).with_context(|| {
             format!(
                 "fixture: publish staged executable {} -> {}",
                 staging.display(),
@@ -2360,6 +2410,137 @@ exit 90
             )
         })?;
         Ok(())
+    }
+
+    #[test]
+    fn failed_executable_staging_preserves_the_destination() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("codex-update-manager");
+        fs::write(&installed, b"previous executable")?;
+
+        let error = stage_executable(&temp.path().join("missing-source"), &installed)
+            .expect_err("a failed staging child must fail the parent fixture");
+
+        assert!(error
+            .to_string()
+            .contains("fixture: open source executable"));
+        assert_eq!(fs::read(&installed)?, b"previous executable");
+        Ok(())
+    }
+
+    #[test]
+    fn staged_executable_can_run_while_an_unrelated_child_is_before_exec() -> Result<()> {
+        use std::{
+            ffi::CString,
+            io::{Read, Write},
+            os::{fd::AsRawFd, unix::net::UnixStream, unix::process::CommandExt},
+            time::Instant,
+        };
+
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("source.fifo");
+        let installed = temp.path().join("codex-update-manager");
+        let source_name = CString::new(source.as_os_str().as_bytes())?;
+        // A FIFO keeps the executable writer open until the test closes its
+        // input, so the competing fork always falls inside the copy window.
+        if unsafe { libc::mkfifo(source_name.as_ptr(), 0o600) } != 0 {
+            return Err(io::Error::last_os_error()).context("fixture: create source FIFO");
+        }
+        fs::write(&installed, b"previous executable")?;
+        const SCRIPT: &[u8] = b"#!/bin/sh\nexit 0\n";
+
+        thread::scope(|scope| -> Result<()> {
+            let mut input = OpenOptions::new().read(true).write(true).open(&source)?;
+            let input_fd = input.as_raw_fd();
+            // Finish spawning before the gated fork: the parent's stdout and
+            // stderr pipe writers must be closed before they can be inherited.
+            let child = spawn_executable_staging(&source, &installed)?;
+            let writer = scope.spawn(move || finish_executable_staging(child));
+            input.write_all(SCRIPT)?;
+
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let mut copying = false;
+                for entry in fs::read_dir(temp.path())? {
+                    let entry = entry?;
+                    let metadata = entry.metadata()?;
+                    if entry.path() != installed
+                        && metadata.is_file()
+                        && metadata.len() == SCRIPT.len() as u64
+                    {
+                        copying = true;
+                        break;
+                    }
+                }
+                if copying {
+                    break;
+                }
+                anyhow::ensure!(Instant::now() < deadline, "fixture: copy did not start");
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(fs::read(&installed)?, b"previous executable");
+
+            let (mut control, gate) = UnixStream::pair()?;
+            control.set_read_timeout(Some(Duration::from_secs(10)))?;
+            let control_fd = control.as_raw_fd();
+            let gate_fd = gate.as_raw_fd();
+            let unrelated = scope.spawn(move || -> io::Result<_> {
+                let mut command = Command::new("/bin/sh");
+                command.args(["-c", "exit 0"]);
+                // SAFETY: the child uses only async-signal-safe syscalls
+                // between fork and exec. Closing its input copy lets the FIFO
+                // reach EOF while this child remains blocked on the gate.
+                unsafe {
+                    command.pre_exec(move || {
+                        libc::close(input_fd);
+                        libc::close(control_fd);
+                        loop {
+                            if libc::write(gate_fd, b"r".as_ptr().cast(), 1) == 1 {
+                                break;
+                            }
+                            let error = io::Error::last_os_error();
+                            if error.kind() != io::ErrorKind::Interrupted {
+                                return Err(error);
+                            }
+                        }
+                        let mut token = 0u8;
+                        loop {
+                            match libc::read(gate_fd, (&mut token as *mut u8).cast(), 1) {
+                                1 => return Ok(()),
+                                0 => return Err(io::Error::from_raw_os_error(libc::EPIPE)),
+                                _ => {
+                                    let error = io::Error::last_os_error();
+                                    if error.kind() != io::ErrorKind::Interrupted {
+                                        return Err(error);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                let result = command.status();
+                drop(gate);
+                result
+            });
+
+            let mut ready = [0u8];
+            control.read_exact(&mut ready)?;
+            assert_eq!(&ready, b"r");
+            drop(input);
+            writer.join().expect("executable writer panicked")?;
+
+            let status = Command::new(&installed)
+                .status()
+                .context("fixture: execute while unrelated child is before exec")?;
+            assert!(status.success());
+
+            control.write_all(b"x")?;
+            assert!(unrelated
+                .join()
+                .expect("unrelated child panicked")?
+                .success());
+            Ok(())
+        })
     }
 
     #[tokio::test]
