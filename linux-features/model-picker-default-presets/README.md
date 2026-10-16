@@ -100,8 +100,9 @@ The local resolver contract follows the current signed stable package's
 rejects the build/update candidate and preserves the working installation.
 The composer context requires the current separate host-ID binding; the retired
 host-object context shape is rejected.
-The official-bundle CI audit includes populated presets so all five
-descriptors are checked, including the local composer resolver.
+The official-bundle CI audit includes populated presets so all six
+descriptors are checked, including the new upstream Default-selection
+compatibility audit and the local composer resolver.
 
 ## Test
 
