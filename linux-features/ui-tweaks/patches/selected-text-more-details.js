@@ -138,8 +138,9 @@ function runtimeContract(source) {
     throw new Error("ChatGPT response acceptance contract drifted");
   }
   const overrides = uniqueMatch(dispatch.source, `gizmoEditor\\?\\?${IDENT}\\.get\\((${IDENT}),`, "ChatGPT dispatch overrides")[1];
+  const sendInit = containingFunction(source, `${overrides}=`);
   return { init: init.name, capability, blocked, account, session, host, create: create[1], visibility,
-    context: contextWrapper, send: send.name, model,
+    context: contextWrapper, send: send.name, sendInit: sendInit.name, overrides, model,
     status, statusInit: statusInit.name, busy: busy.name, submitting, stopping, dispatch: dispatch.name };
 }
 
@@ -156,11 +157,12 @@ export function ${DIAGNOSTICS_EXPORT}(scope, state, logger) {
 }
 export function ${BINDINGS_EXPORT}() {
   ${bindings.init}();
+  ${bindings.sendInit}();
   ${bindings.statusInit}();
   return {capability:${bindings.capability}, blocked:${bindings.blocked}, account:${bindings.account},
     session:${bindings.session}, host:${bindings.host}, create:${bindings.create}, show:${bindings.visibility},
     context:${bindings.context}, send:${bindings.send}, model:${bindings.model}, status:${bindings.status}, busy:${bindings.busy},
-    submitting:${bindings.submitting}, stopping:${bindings.stopping}};
+    submitting:${bindings.submitting}, stopping:${bindings.stopping}, overrides:${bindings.overrides}};
 }
 export function ${OPEN_EXPORT}(scope, input) {
   const bindings = ${BINDINGS_EXPORT}();

@@ -109,6 +109,8 @@ test("missing, ambiguous, mixed, and drifted contracts leave every asset unchang
   const variants = [
     (app) => fs.writeFileSync(app.initial, initialFixture().replace("gizmoEditor??", "gizmoEditorChanged??")),
     (app) => fs.writeFileSync(app.initial, initialFixture().replace(/requireResponseAcceptance/gu, "responseAcceptanceChanged")),
+    (app) => fs.writeFileSync(app.initial, initialFixture().replace("overrides=atom()", "changed=atom()")),
+    (app) => fs.writeFileSync(app.initial, initialFixture() + "function duplicateSendInit(){overrides=atom()}"),
     (app) => fs.writeFileSync(app.initial, initialFixture().replace("a.set(submitting,b,!0)", "a.set(submitting,b,drifted)")),
     (app) => fs.writeFileSync(app.primary, primaryFixture().replace("onOpenSideChat:r}", "onOpenSideChat:r,drifted:true}")),
     (app) => fs.writeFileSync(path.join(app.assets, "app-initial-duplicate.js"), initialFixture()),
@@ -203,23 +205,37 @@ function runtimeFixture(options = {}) {
     waiter.evaluate();
   }) };
   let sequence = 0;
-  const bindings = { init: "init", sendInit: "sendInit", capability: "cap", blocked: "blocked", account: "account",
+  const bindings = { init: "init", sendInit: "sendInit", overrides: "overrides", capability: "cap", blocked: "blocked", account: "account",
     session: "session", host: "host", create: "create", visibility: "show", context: "context", send: "send", model: "model",
     status: "status", statusInit: "statusInit", busy: "busy", submitting: "submitting", stopping: "stopping" };
-  const sandbox = vm.createContext({ setTimeout, clearTimeout, ...Object.fromEntries(["cap", "blocked", "account", "session", "host", "model", "status", "submitting", "stopping"].map((key) => [key, key])),
-    init() {}, sendInit() {}, statusInit() {}, busy: (status) => ["streaming", "active-async-turn", "active-tpp-turn"].includes(status),
+  const runtimeGlobals = { setTimeout, clearTimeout, overrides: undefined,
+    ...Object.fromEntries(["cap", "blocked", "account", "session", "host", "model", "status", "submitting", "stopping"].map((key) => [key, key])),
+    init() {}, statusInit() {}, busy: (status) => ["streaming", "active-async-turn", "active-tpp-turn"].includes(status),
     create(value, input) { const id = input.conversationId ?? `new-chat-${++sequence}`;
       value.set("session", { conversationId: id, contextSourceThread: input.contextSourceThread, hasConversation: false }); return id; },
     show() { calls.push({ type: "show" }); },
     async context(value, sourceThread) { calls.push({ type: "context", sourceThread });
       return options.context ? options.context(value, sourceThread) : ["Codex conversation context"]; },
-    async send(value, input) { calls.push({ type: "send", input }); if (options.send) await options.send(value, input); } });
+    async send(value, input) { calls.push({ type: "send", input }); if (options.send) await options.send(value, input); } };
+  runtimeGlobals.sendInit = () => {
+    runtimeGlobals.overrides = "dispatch-overrides";
+    state.set("overrides", runtimeGlobals.overrides);
+  };
+  const sandbox = vm.createContext(runtimeGlobals);
   vm.runInContext(runtimeSource(bindings).replace(/export /gu, ""), sandbox);
   const input = { sourceConversationId: "source-a", selectedText: "chosen text", selectedMessageText: "entire reply containing chosen text",
     prompt: "localized question", targetedReplyLabel: "localized selected text" };
   return { calls, state, scope, input, open: (override = {}) => sandbox[OPEN_EXPORT](scope, { ...input, ...override }),
-    openInScope: (value, override = {}) => sandbox[OPEN_EXPORT](value, { ...input, ...override }) };
+    openInScope: (value, override = {}) => sandbox[OPEN_EXPORT](value, { ...input, ...override }),
+    bindings: () => sandbox[BINDINGS_EXPORT]() };
 }
+
+test("generated Quick Chat bindings initialize the cold dispatch override atom", () => {
+  const fixture = runtimeFixture();
+  assert.equal(fixture.state.has("overrides"), false);
+  assert.equal(fixture.bindings().overrides, "dispatch-overrides");
+  assert.equal(fixture.state.get("overrides"), "dispatch-overrides");
+});
 
 test("Quick Chat sends the selected text, reply, Codex context, localized labels, and selected ChatGPT model", async () => {
   const fixture = runtimeFixture();
