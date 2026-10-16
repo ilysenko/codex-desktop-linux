@@ -267,6 +267,7 @@ requirements, known limitations, configuration, and tests.
 | `automation-extensions` | Multi-time schedules and eager `automation_update` exposure | [Docs](linux-features/automation-extensions/README.md) |
 | `browser-proxy` | Pass explicit proxy settings to Browser Use network helpers | [Docs](linux-features/browser-proxy/README.md) |
 | `chatgpt-dots-any-country` | Keep ChatGPT Dots entry points visible when the account response is country-gated | [Docs](linux-features/chatgpt-dots-any-country/README.md) |
+| `chatgpt-sidebar-separate-history` | Default the ChatGPT history filter to Chat and remember Chat / Work / All selections | [Docs](linux-features/chatgpt-sidebar-separate-history/README.md) |
 | `chronicle-skysight` | Opt-in Linux desktop activity memory and restricted Skysight MCP tools | [Docs](linux-features/chronicle-skysight/README.md) |
 | `codex-micro` | Work Louder Codex Micro hotplug and hidraw policy using upstream `node-hid` | [Docs](linux-features/codex-micro/README.md) |
 | `community-profile-isolation` | Isolate Community Codex/Electron state and child CLI resolution from official ChatGPT | [Docs](linux-features/community-profile-isolation/README.md) |
