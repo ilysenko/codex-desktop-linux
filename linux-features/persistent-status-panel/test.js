@@ -95,13 +95,29 @@ test("status panel preference follows the current lifted menu state", () => {
 test("status state remains correlated across the current large composer function", () => {
   const source = liftedStatusStateComposerSource.replace(
     ",v=o.formatMessage",
-    `,/*${"x".repeat(55_000)}*/v=o.formatMessage`,
+    `,/*${"x".repeat(70_000)}*/v=o.formatMessage`,
   );
   const patched = applyPersistentStatusPanelPatch(source);
 
   assert.notEqual(patched, source);
   assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
   assert.equal(applyPersistentStatusPanelPatch(patched), patched);
+});
+
+test("same-alias status consumers in adjacent functions do not cross owner boundaries", () => {
+  const source =
+    "function stateOwner(){let[yt,bt]=(0,R3.useState)(!1),v=o.formatMessage({id:`composer.statusSlashCommand.description`});return yt}" +
+    "function menuOwner(){return jsx(Menu,{setIsStatusMenuOpen:bt})}" +
+    "function panelOwner(){return jsx(StatusPanel,{onClose:()=>bt(!1)})}";
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyPersistentStatusPanelPatch(source),
+  );
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find Codex status panel state - skipping persistent status panel patch",
+  ]);
 });
 
 test("descriptor patches the current app-primary composer status bundle", () => {
