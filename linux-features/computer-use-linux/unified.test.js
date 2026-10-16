@@ -20,8 +20,8 @@ test("unified Linux native selection uses the native setting and retains browser
   assert.deepEqual(surfaces(selector, "linux"), ["browser"]);
   assert.deepEqual(surfaces(patch(selector), "linux"), ["browser", "computer"]);
   assert.match(patch(selector), /build\(e,i\)/);
-  assert.match(patch(selector), /function build\(\{browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n\},i\)/);
-  assert.match(patch(selector), /\.sky=path\.default\.join\(i,`scripts`,`native-service\.mjs`\)/);
+  assert.match(patch(selector), /function build\(\{browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n\},codexLinuxPluginRoot\)/);
+  assert.match(patch(selector), /\.sky=path\.default\.join\(codexLinuxPluginRoot,`scripts`,`native-service\.mjs`\)/);
   assert.match(patch(selector), /NODE_REPL_JS_BANNER:.*native-client\.mjs/);
   assert.match(patch(selector), /CODEX_LINUX_CUA_HOST_SOCKET:process\.env\.CODEX_LINUX_CUA_HOST_SOCKET/);
 });
@@ -63,7 +63,7 @@ test("unified service patch scopes the plugin root and current env-key alias to 
     selector.replace("[constants.Il]", "[constants.Gl]");
   const patched = patch(current);
 
-  assert.match(patched, /path\.default\.join\(i,`scripts`,`native-service\.mjs`\)/u);
+  assert.match(patched, /path\.default\.join\(codexLinuxPluginRoot,`scripts`,`native-service\.mjs`\)/u);
   assert.match(patched, /\[constants\.Gl\]:JSON\.stringify\(l\)/u);
   assert.doesNotMatch(patched, /path\.default\.join\(otherRoot,`scripts`,`native-service\.mjs`\)/u);
   assert.equal(patch(patched), patched);
@@ -86,4 +86,30 @@ test("unified banner patch rejects duplicate banners inside the service owner", 
   );
 
   assert.throws(() => patch(duplicate), /unified.*contract/i);
+});
+
+function runBuilder(source, nodeRepl) {
+  const start = source.indexOf("function build(");
+  const build = vm.runInNewContext(`const process={env:{}},path={default:{join:(...p)=>p.join("/")}},constants={Il:"services"};(${source.slice(start)})`);
+  return build({ browserBackends: [], deferTools: false, surfaces: ["computer"], nodeRepl }, "/plugin-root").env;
+}
+
+test("unified builder patch does not collide with the builder's own minified bindings", () => {
+  // 26.1013.31256 minifies the builder's nodeRepl binding to the same name as
+  // the caller's plugin root; reusing it produced `nodeRepl:r},r`.
+  const colliding = selector.replace("nodeRepl:n}", "nodeRepl:i}");
+  const patched = patch(colliding);
+
+  assert.doesNotThrow(() => new vm.Script(patched));
+  assert.match(patched, /nodeRepl:i\},codexLinuxPluginRoot\)/u);
+  assert.match(patched, /build\(e,i\)/u);
+  const env = runBuilder(patched, null);
+  assert.equal(env.services, JSON.stringify({ sky: "/plugin-root/scripts/native-service.mjs" }));
+  assert.match(env.NODE_REPL_JS_BANNER, /"\/plugin-root\/scripts\/native-client\.mjs"/u);
+  assert.equal(patch(patched), patched);
+});
+
+test("unified builder patch fails closed when its bindings shadow the path module", () => {
+  assert.throws(() => patch(selector.replace("nodeRepl:n}", "nodeRepl:path}")), /unified.*contract/i);
+  assert.throws(() => patch(selector.replace("{let l={};", "{let codexLinuxPluginRoot,l={};")), /unified.*contract/i);
 });

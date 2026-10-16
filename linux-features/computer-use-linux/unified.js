@@ -43,6 +43,11 @@ function applyUnifiedComputerUsePatch(source) {
   const builder = builders[0];
   const builderOwner = enclosingFunction(source, builder.index);
   const builderSource = source.slice(builderOwner.start, builderOwner.end);
+  // The builder receives the caller's plugin root under a dedicated parameter.
+  // Reusing the caller's minified name can collide with the builder's own
+  // destructured bindings (for example `nodeRepl:r},r`), which is a
+  // SyntaxError that prevents the main app chunk from loading.
+  const builderRoot = "codexLinuxPluginRoot";
   const surfaces = builder.groups.surfaces;
   const currentServicePattern = new RegExp(
     `${surfaces}\\.includes\\(\`computer\`\\)&&\\((?<services>[\\w$]+)\\.sky=\`@oai/sky/service\`\\)`,
@@ -78,8 +83,9 @@ function applyUnifiedComputerUsePatch(source) {
   const servicePatched = currentServices.length === 0 && patchedServices.length === 1;
   const bannerCurrent = currentBanners.length === 1 && patchedBanners.length === 0;
   const bannerPatched = currentBanners.length === 0 && patchedBanners.length === 1;
+  const builderRootUsed = new RegExp(`(?<![\\w$])${builderRoot}(?![\\w$])`, "u").test(builderSource);
   const current = !linux && builder.groups.rootParam == null && calls.length === 1 &&
-    calls[0].groups.rootArg == null && serviceCurrent && bannerCurrent;
+    calls[0].groups.rootArg == null && serviceCurrent && bannerCurrent && !builderRootUsed;
   const patched = Boolean(linux) && builder.groups.rootParam != null && calls.length === 1 &&
     calls[0].groups.rootArg != null && servicePatched && bannerPatched;
   if (!current && !patched) {
@@ -94,14 +100,18 @@ function applyUnifiedComputerUsePatch(source) {
   if (banner.groups.services !== service.groups.services) {
     throw new Error("Linux unified Computer Use contract drift: changed native banner relationship");
   }
-  if (patched && (service.groups.path !== root.groups.path || service.groups.pluginRoot !== root.groups.pluginRoot ||
-      banner.groups.path !== root.groups.path || banner.groups.pluginRoot !== root.groups.pluginRoot ||
-      builder.groups.pluginRoot !== root.groups.pluginRoot || calls[0].groups.pluginRoot !== root.groups.pluginRoot)) {
+  if (patched && (service.groups.path !== root.groups.path || service.groups.pluginRoot !== builderRoot ||
+      banner.groups.path !== root.groups.path || banner.groups.pluginRoot !== builderRoot ||
+      builder.groups.pluginRoot !== builderRoot || calls[0].groups.pluginRoot !== root.groups.pluginRoot)) {
     throw new Error("Linux unified Computer Use contract drift: changed native service path relationship");
   }
   if (patched) return source;
   const pluginRoot = root.groups.pluginRoot;
   const pathAlias = root.groups.path;
+  const { backends, defer, nodeRepl } = builder.groups;
+  if ([backends, defer, surfaces, nodeRepl].includes(pathAlias)) {
+    throw new Error("Linux unified Computer Use contract drift: native config builder shadows the path module");
+  }
   const edits = [
     {
       index: match.index,
@@ -114,7 +124,7 @@ function applyUnifiedComputerUsePatch(source) {
     {
       index: builderOwner.start + service.index,
       length: service[0].length,
-      replacement: `${surfaces}.includes(\`computer\`)&&(${service.groups.services}.sky=${pathAlias}.default.join(${pluginRoot},\`scripts\`,\`native-service.mjs\`))`,
+      replacement: `${surfaces}.includes(\`computer\`)&&(${service.groups.services}.sky=${pathAlias}.default.join(${builderRoot},\`scripts\`,\`native-service.mjs\`))`,
     },
     {
       index: builderOwner.start + banner.index,
@@ -122,13 +132,13 @@ function applyUnifiedComputerUsePatch(source) {
       replacement:
         `CUA_REPL_ENABLED_SURFACES:${surfaces}.join(\`,\`),` +
         `CODEX_LINUX_CUA_HOST_SOCKET:process.env.CODEX_LINUX_CUA_HOST_SOCKET,` +
-        `NODE_REPL_JS_BANNER:\`await import("@oai/cua/tinyskyAlt");await(await import(\${JSON.stringify(${pathAlias}.default.join(${pluginRoot},\`scripts\`,\`native-client.mjs\`))})).installLinuxComputerUse(cua);\`,` +
+        `NODE_REPL_JS_BANNER:\`await import("@oai/cua/tinyskyAlt");await(await import(\${JSON.stringify(${pathAlias}.default.join(${builderRoot},\`scripts\`,\`native-client.mjs\`))})).installLinuxComputerUse(cua);\`,` +
         `[${banner.groups.constants}.${banner.groups.constant}]:JSON.stringify(${banner.groups.services})`,
     },
     {
       index: builder.index + builder[0].length - 2,
       length: 1,
-      replacement: `,${pluginRoot})`,
+      replacement: `,${builderRoot})`,
     },
     {
       index: calls[0].index,
