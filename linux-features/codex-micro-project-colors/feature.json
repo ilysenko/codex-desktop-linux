@@ -1,0 +1,12 @@
+{
+  "id": "codex-micro-project-colors",
+  "title": "Codex Micro project working colors",
+  "description": "Per-project Micro working colors with Add/Remove override buttons, an inline themed picker, and sidebar color indicators. Controls appear after a Micro has been detected.",
+  "defaultEnabled": false,
+  "requires": [
+    "codex-micro"
+  ],
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

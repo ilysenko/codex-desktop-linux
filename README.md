@@ -269,6 +269,7 @@ requirements, known limitations, configuration, and tests.
 | `chatgpt-dots-any-country` | Keep ChatGPT Dots entry points visible when the account response is country-gated | [Docs](linux-features/chatgpt-dots-any-country/README.md) |
 | `chronicle-skysight` | Opt-in Linux desktop activity memory and restricted Skysight MCP tools | [Docs](linux-features/chronicle-skysight/README.md) |
 | `codex-micro` | Work Louder Codex Micro hotplug and hidraw policy using upstream `node-hid` | [Docs](linux-features/codex-micro/README.md) |
+| `codex-micro-project-colors` | Per-project Micro working colors, a themed picker in Edit project, and sidebar color indicators | [Docs](linux-features/codex-micro-project-colors/README.md) |
 | `community-profile-isolation` | Isolate Community Codex/Electron state and child CLI resolution from official ChatGPT | [Docs](linux-features/community-profile-isolation/README.md) |
 | `computer-use-linux` | Linux desktop-control UI and native MCP backend | [Docs](linux-features/computer-use-linux/README.md) |
 | `copilot-reasoning-effort` | Persistent reasoning-effort defaults for Copilot-auth sessions | [Docs](linux-features/copilot-reasoning-effort/README.md) |

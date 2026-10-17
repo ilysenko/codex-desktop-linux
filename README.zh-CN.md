@@ -244,6 +244,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `chatgpt-dots-any-country` | 当账号响应受到国家限制时，仍显示 ChatGPT Dots 入口和可用性说明 | [文档](linux-features/chatgpt-dots-any-country/README.md) |
 | `chronicle-skysight` | 可选的 Linux 桌面活动记忆与受限 Skysight MCP 工具 | [文档](linux-features/chronicle-skysight/README.md) |
 | `codex-micro` | 使用上游 `node-hid` 的 Codex Micro hotplug/hidraw policy | [文档](linux-features/codex-micro/README.md) |
+| `codex-micro-project-colors` | 在项目编辑窗口中设置 Micro 工作状态颜色，提供随主题变化的颜色选择器和侧边栏颜色标记 | [文档](linux-features/codex-micro-project-colors/README.md) |
 | `community-profile-isolation` | 将 Community 的 Codex/Electron 状态与子进程 CLI 解析和官方 ChatGPT 隔离 | [文档](linux-features/community-profile-isolation/README.md) |
 | `computer-use-linux` | Linux desktop-control UI 与原生 MCP backend | [文档](linux-features/computer-use-linux/README.md) |
 | `copilot-reasoning-effort` | Copilot auth 的 reasoning-effort 默认值 | [文档](linux-features/copilot-reasoning-effort/README.md) |
