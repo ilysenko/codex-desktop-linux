@@ -484,10 +484,25 @@ async function defaultMaterializePackage(request) {
       let packResult;
       try {
         const packResults = JSON.parse(packOutput);
-        if (!Array.isArray(packResults) || packResults.length !== 1) {
+        if (Array.isArray(packResults) && packResults.length === 1) {
+          [packResult] = packResults;
+        } else if (
+          packResults != null &&
+          typeof packResults === "object" &&
+          Object.keys(packResults).length === 1
+        ) {
+          [packResult] = Object.values(packResults);
+        } else {
           throw new Error("npm pack did not return exactly one archive");
         }
-        [packResult] = packResults;
+        if (
+          packResult == null ||
+          typeof packResult !== "object" ||
+          packResult.name !== request.name ||
+          packResult.version !== request.version
+        ) {
+          throw new Error("npm pack returned unexpected package metadata");
+        }
       } catch (error) {
         throw new Error(`Could not parse npm pack output: ${error.message}`);
       }
