@@ -1,0 +1,169 @@
+"use strict";
+
+const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const path = require("node:path");
+const { connectHost } = require("./host");
+const IDENT = "[A-Za-z_$][\\w$]*";
+const MARKER = "/*community-web-ui-v1*/";
+
+function one(source, pattern, label) {
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) throw Error(`Web UI: expected one ${label}, found ${matches.length}`);
+  return matches[0];
+}
+
+function patchRpc(source, expression) {
+  const match = one(source, /encodingLevel=`structuredClonable`/g, "MessagePort RPC codec");
+  return source.replace(match[0], `encodingLevel=${expression}?\`string\`:\`structuredClonable\``);
+}
+
+function patchMain(source, wsBundle) {
+  if (source.includes(MARKER)) return source;
+  const header = one(source, new RegExp(`let (${IDENT})=(${IDENT})\\.u\\((${IDENT})\\);if\\(!(${IDENT})\\.app\\.isPackaged\\)`, "g"), "renderer load boundary");
+  const window = one(source.slice(header.index, header.index + 600), new RegExp(`(${IDENT})\\.loadURL\\(e\\.toString\\(\\)\\)`, "g"), "renderer window")[1];
+  const replacement = `if(process.env.CODEX_WEB_UI===\`1\`){` +
+    `await require(require(\`node:path\`).join(process.resourcesPath,\`..\`,\`.codex-linux/features/web-ui/runtime.js\`))` +
+    `.loadHost(${window},{electron:require(\`electron\`),WebSocketServer:require(${JSON.stringify(`./${wsBundle}`)}).communityWebSocketServer});return ${window}}${header[0]}`;
+  let patched = source.replace(header[0], replacement);
+  one(source, /getChatGptReadInputs=/g, "published ChatGPT request profile");
+  const catalog = one(source, new RegExp(`createSource:(${IDENT})=>(${IDENT})\\(\\1,\\((${IDENT}),(${IDENT})\\)=>this\\.fetchWrapper\\.fetchAuthenticatedJson\\(\\3,\\4\\)\\)`, "g"), "ChatGPT catalog fetch");
+  const [, factory, url, options] = catalog.slice(1);
+  // Upstream's minifier can reuse the outer host name for the inner URL.
+  // Rename the outer parameter before referring to it inside that callback.
+  const catalogHost = "communityWebUiCatalogHost";
+  const catalogOptions = "communityWebUiCatalogOptions";
+  if ([catalogHost, catalogOptions].some(name => source.includes(name))) throw Error("Web UI: catalog binding collision");
+  const fetch = `this.fetchWrapper.fetchAuthenticatedJson(${url},${options})`;
+  const adapted = `require(require(\`node:path\`).join(process.resourcesPath,\`..\`,\`.codex-linux/features/web-ui/catalog.js\`))` +
+    `.requestWithBrowserProfile(${catalogHost},${options},{` +
+    `readPrincipal:()=>this.appServerConnectionRegistry.getConnection(\`local\`).getCachedAuthenticatedPrincipal(),` +
+    `readInputs:p=>this.accessInputs.getChatGptReadInputs(p),fetch:${catalogOptions}=>this.fetchWrapper.fetchAuthenticatedJson(${url},${catalogOptions})})`;
+  patched = patched.replace(catalog[0], `createSource:${catalogHost}=>${factory}(${catalogHost},(${url},${options})=>process.env.CODEX_WEB_UI===\`1\`?${adapted}:${fetch})`);
+  for (const method of ["send", "sendInline", "sendCritical"]) {
+    const delivery = one(patched, new RegExp(`${method}\\(e,t,n\\)\\{e\\.isDestroyed\\(\\)\\|\\|this\\.sender\\.${method}\\(e,\\{channel:t,payload:n\\}\\)\\}`, "g"), `IPC ${method}`);
+    patched = patched.replace(delivery[0], `${method}(e,t,n){if(process.env.CODEX_WEB_UI===\`1\`){if(!e.isDestroyed())e.send(t,n);return}e.isDestroyed()||this.sender.${method}(e,{channel:t,payload:n})}`);
+  }
+  return patchRpc(patched, "process.env.CODEX_WEB_UI===`1`") + `\n${MARKER}\n`;
+}
+
+function patchPreload(source) {
+  if (source.includes(MARKER)) return source;
+  const exposed = one(source, new RegExp(`(${IDENT})\\.contextBridge\\.exposeInMainWorld\\(\\\`electronBridge\\\`,(${IDENT})\\)`, "g"), "preload bridge exposure");
+  const alias = exposed[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const snapshot = one(source, new RegExp(`(${IDENT})=${alias}\\.ipcRenderer\\.sendSync\\(\\\`codex_desktop:get-shared-object-snapshot\\\`\\)\\?\\?\\{\\}`, "g"), "shared-object snapshot");
+  return source.replace(exposed[0], `${exposed[0]},(${connectHost.toString()})(${exposed[1]}.ipcRenderer,${exposed[2]},${snapshot[1]})`) + `\n${MARKER}\n`;
+}
+
+function patchWebSocket(source) {
+  if (source.includes(MARKER)) return source;
+  const server = one(source, /noServer:!1,backlog:null,server:null,host:null,path:null,port:null/g, "upstream WebSocket server");
+  const prefix = source.slice(Math.max(0, server.index - 1800), server.index);
+  const wrappers = [...prefix.matchAll(new RegExp(`(${IDENT})=${IDENT}\\.t\\(\\(\\(${IDENT},${IDENT}\\)=>\\{`, "g"))];
+  const wrapper = wrappers.at(-1);
+  if (!wrapper || !prefix.slice(wrapper.index).includes('require("http")') || !prefix.slice(wrapper.index).includes(".exports=class extends")) {
+    throw Error("Web UI: upstream WebSocket server wrapper drifted");
+  }
+  // Reuse the signed payload's pure JS ws implementation, including its fixes.
+  // No npm install, vendored library, native rebuild, or extra runtime is needed.
+  return source + `\n${MARKER}\nObject.defineProperty(exports,\`communityWebSocketServer\`,{get:()=>${wrapper[1]}()});\n`;
+}
+
+function patchRenderer(source) {
+  if (source.includes(MARKER)) return source;
+  // Disable the native browser through upstream's capability boundary. Its
+  // existing workspace-new-tab fallback retains terminal/files/review tools.
+  // Ordinary desktop windows continue using the original capability result.
+  const capability = one(source, new RegExp(`let (${IDENT})=(${IDENT})\\[(${IDENT})\\.name\\];if\\(\\1==null\\|\\|!(${IDENT})\\(\\1\\)\\)return\\{isLoading:!1,isError:!1,isCapable:!1\\};let (${IDENT})=\\[\\.\\.\\.\\1\\.accessPolicies\\.map`, "g"), "capability evaluation boundary");
+  const guard = `globalThis.electronBridge?.communityWebUi===true&&${capability[3]}.name===\`browser.in-app\``;
+  const patched = source.replace(capability[0], capability[0].replace(`if(${capability[1]}==null`, `if(${guard}||${capability[1]}==null`));
+  return patchRpc(patched, "globalThis.electronBridge?.communityWebUi===true") + `\n${MARKER}\n`;
+}
+
+function patchCatalogRenderer(source) {
+  if (source.includes(MARKER)) return source;
+  const profile = one(source, new RegExp(`async function (${IDENT})\\(\\)\\{let\\{getChatGptRequestProfile:`, "g"), "browser request profile loader")[1];
+  const owner = one(source, new RegExp(`let ${IDENT}=(${IDENT})\\?\\.accessInputs,${IDENT}=`, "g"), "account input service")[1];
+  const enabled = one(source, new RegExp(`let (${IDENT})=!1,(${IDENT})=\\{kind:[\\x60]chatgpt[\\x60],accountId:(${IDENT})\\};return (${IDENT})\\.setSourceEnabled\\(\\2,!0\\)\\.then`, "g"), "cloud catalog activation");
+  const [disposed, selection, account, catalog] = enabled.slice(1);
+  const info = "communityWebUiAccountInfo", profileValue = "communityWebUiRequestProfile", failure = "communityWebUiProfileError";
+  if ([info, profileValue, failure].some(name => source.includes(name))) throw Error("Web UI: profile binding collision");
+  const activation = `${catalog}.setSourceEnabled(${selection},!0)`;
+  const ready = `(async()=>{try{let ${info}=await ${owner}.accessInputs.readAccountInfo();if(${disposed})return;` +
+    `if(${info}.status!==\`ready\`||${info}.data.accountId!==${account}||${info}.data.authenticatedUserId==null)throw Error(\`Web UI account profile is unavailable\`);` +
+    `let ${profileValue}=await ${profile}();if(${disposed})return;` +
+    `if(!await ${owner}.accessInputs.publishChatGptRequestProfile({accountId:${account},userId:${info}.data.authenticatedUserId,profile:${profileValue}}))throw Error(\`Web UI account profile changed\`);` +
+    `if(!${disposed})return ${activation}}catch(${failure}){console.warn(\`[community-web-ui] Cloud history profile initialization failed\`,${failure}?.message?.startsWith(\`Web UI account profile\`)?${failure}.message:\`Account service unavailable\`);throw ${failure}}})()`;
+  return source.replace(enabled[0], enabled[0].replace(`${activation}.then`, `(globalThis.electronBridge?.communityWebUi===true?${ready}:${activation}).then`)) + `\n${MARKER}\n`;
+}
+
+function patchDictationRenderer(source, requestModule) {
+  const marker = "/*community-web-ui-dictation-v1*/";
+  if (source.includes(marker)) return source;
+  const upload = one(source, new RegExp(`return (${IDENT})\\(\\(\\)=>(${IDENT})\\.getInstance\\(\\)\\.fetch\\([\\x60]/transcribe[\\x60],\\{method:[\\x60]POST[\\x60],body:(${IDENT}),headers:\\{\"Content-Type\":[\\x60]multipart/form-data; boundary=\\$\\{(${IDENT})\\}[\\x60],\\.\\.\\.(${IDENT})\\(\\)\\}`, "g"), "Codex dictation upload");
+  const headers = "communityWebUiDictationHeaders";
+  if (source.includes(headers)) throw Error("Web UI: dictation binding collision");
+  // Keep upstream's multipart bytes, boundary, cancellation and recovery/retry
+  // path. Only browser windows use Work's existing browser request headers.
+  const load = `const ${headers}=globalThis.electronBridge?.communityWebUi===true?(await import(${JSON.stringify(`./${requestModule}`)})).getChatGPTRequestHeaders(\`/transcribe\`):null;`;
+  return source.replace(upload[0], load + upload[0].replace(`...${upload[5]}()`, `...(${headers}??${upload[5]}())`)) + `\n${marker}\n`;
+}
+
+function parses(source, module) {
+  try {
+    execFileSync(process.execPath, [`--input-type=${module ? "module" : "commonjs"}`, "--check"], { input: source, stdio: ["pipe", "ignore", "ignore"], maxBuffer: 1 << 30 });
+    return true;
+  } catch { return false; }
+}
+
+function apply(extractedDir) {
+  const build = path.join(extractedDir, ".vite/build");
+  const assets = path.join(extractedDir, "webview/assets");
+  const files = dir => fs.readdirSync(dir).filter(name => name.endsWith(".js")).map(name => ({ name, file: path.join(dir, name), source: fs.readFileSync(path.join(dir, name), "utf8") }));
+  const buildFiles = files(build);
+  function uniqueFile(entries, match, label) {
+    const candidates = entries.filter(entry => match(entry));
+    if (candidates.length !== 1) throw Error(`Web UI: expected one ${label} bundle, found ${candidates.length}`);
+    return candidates[0];
+  }
+  const main = uniqueFile(buildFiles, entry => /^main(?:-[^.]+)?\.js$/.test(entry.name), "main");
+  const preload = uniqueFile(buildFiles, entry => entry.source.includes("exposeInMainWorld(`electronBridge`"), "preload");
+  const imports = new Set([...main.source.matchAll(/require\("\.\/([^"/]+\.js)"\)/g)].map(match => match[1]));
+  const websocket = uniqueFile(buildFiles, entry => imports.has(entry.name) && entry.source.includes("noServer:!1,backlog:null,server:null,host:null,path:null,port:null"), "WebSocket");
+  const assetFiles = files(assets);
+  const renderer = uniqueFile(assetFiles, entry => entry.source.includes("connect-app-host") && (entry.source.includes("encodingLevel=`structuredClonable`") || entry.source.includes(MARKER)), "renderer RPC");
+  const catalogRenderer = uniqueFile(assetFiles, entry => entry.source.includes("publishChatGptRequestProfile"), "catalog renderer");
+  const requestModule = uniqueFile(assetFiles, entry => /export\{[^}]*\bas getChatGPTRequestHeaders\b[^}]*\bas getChatGptRequestProfile\b/.test(entry.source), "ChatGPT request exports");
+  if (renderer.file === catalogRenderer.file) throw Error("Web UI: renderer RPC and catalog anchors share one bundle");
+  const edits = [
+    { ...main, result: patchMain(main.source, websocket.name) },
+    { ...preload, result: patchPreload(preload.source) },
+    { ...websocket, result: patchWebSocket(websocket.source) },
+    { ...renderer, result: patchRenderer(renderer.source) },
+    { ...catalogRenderer, result: patchDictationRenderer(patchCatalogRenderer(catalogRenderer.source), requestModule.name) },
+  ];
+  const html = fs.readFileSync(path.join(extractedDir, "webview/index.html"), "utf8");
+  if (!html.includes("</head>") || !html.includes("connect-src ")) throw Error("Web UI: index/CSP contract drifted");
+  edits.push({ file: path.join(extractedDir, "webview/community-web-host.html"), result: '<!doctype html><html><head><meta charset="utf-8"><title>ChatGPT Community Web UI host</title></head><body>ChatGPT Community is hosting the browser interface. Open the connection URL printed in the terminal.</body></html>\n' });
+  // Splices are textual; reject any edit that turns parseable code into a
+  // syntax error (for example a const spliced after an unbraced if).
+  for (const edit of edits) {
+    if (edit.source !== undefined && edit.result !== edit.source && /\.js$/.test(edit.file)) {
+      const module = edit.file.startsWith(assets + path.sep);
+      if (parses(edit.source, module) && !parses(edit.result, module)) throw Error(`Web UI: patch would break ${edit.name}`);
+    }
+  }
+  // Resolve every semantic anchor before writing anything. Drift never leaves a
+  // partially adapted bundle; the enabled-feature acceptance gate rejects it.
+  let changed = 0;
+  for (const edit of edits) {
+    const current = fs.existsSync(edit.file) ? fs.readFileSync(edit.file, "utf8") : null;
+    if (current !== edit.result) { fs.writeFileSync(edit.file, edit.result); changed++; }
+  }
+  return { changed: changed > 0 };
+}
+
+module.exports = {
+  apply, patchMain, patchPreload, patchRenderer, patchCatalogRenderer, patchDictationRenderer, patchWebSocket,
+  descriptors: [{ id: "browser-host-contract", phase: "extracted-app:pre-webview", order: 21_000, ciPolicy: "optional", apply }],
+};
