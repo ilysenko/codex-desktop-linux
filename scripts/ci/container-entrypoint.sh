@@ -46,6 +46,9 @@ build_clean_app() {
 run_core() {
     local node_test_log
     node_test_log="$(mktemp)"
+    # Minimal containers have no logind to create the runtime root. The prerm
+    # tests reserve and clean up their own unique directories beneath it.
+    mkdir -p --mode=0755 /run/user
     bash tests/scripts_smoke.sh
     if ! node --test scripts/patch-linux-window-ui.test.js scripts/patches/runner.test.js \
         scripts/patches/core/*/test.js \
