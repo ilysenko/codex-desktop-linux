@@ -46,6 +46,7 @@ function mainBundleFixture() {
 
 function fakeHelperChild() {
   const child = new EventEmitter();
+  child.pid = 4242;
   child.stdin = {
     writes: [],
     write(value, callback) {

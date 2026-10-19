@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    future::Future,
     io::Write,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -7,9 +8,12 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    signal::unix::{signal, Signal, SignalKind},
+};
 use zbus::{
-    proxy::{CacheProperties, MethodFlags},
+    proxy::{CacheProperties, MethodFlags, SignalStream},
     zvariant::{OwnedObjectPath, OwnedValue, Value},
     Connection, Proxy,
 };
@@ -18,6 +22,15 @@ const PORTAL_SERVICE: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const SHORTCUTS_INTERFACE: &str = "org.freedesktop.portal.GlobalShortcuts";
 const REQUEST_INTERFACE: &str = "org.freedesktop.portal.Request";
+const SESSION_INTERFACE: &str = "org.freedesktop.portal.Session";
+// GDBus answers UnknownMethod and zbus/sd-bus UnknownObject or UnknownInterface
+// once the portal has already released a session object.
+const SESSION_GONE_ERRORS: [&str; 3] = [
+    "org.freedesktop.DBus.Error.UnknownObject",
+    "org.freedesktop.DBus.Error.UnknownMethod",
+    "org.freedesktop.DBus.Error.UnknownInterface",
+];
+const SESSION_CLOSED_BY_PORTAL: &str = "GlobalShortcuts session was closed by the desktop portal";
 const REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
 const GNOME_SERVICE: &str = "org.chatgpt.Community.Dictation";
 const GNOME_PATH: &str = "/org/chatgpt/Community/Dictation";
@@ -68,10 +81,17 @@ struct Shortcut {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    if let Err(error) = run().await {
+    exit_with(run().await)
+}
+
+/// Exits before the runtime is dropped: tokio reads stdin with a blocking read
+/// that cannot be cancelled, so runtime shutdown would wait for the next line.
+fn exit_with(result: Result<()>) -> ! {
+    if let Err(error) = result {
         eprintln!("{error:#}");
         std::process::exit(1);
     }
+    std::process::exit(0)
 }
 
 async fn run() -> Result<()> {
@@ -84,7 +104,25 @@ async fn run() -> Result<()> {
         }
         return Ok(());
     }
-    run_portal(&shortcuts).await
+    // Install the handler before connecting: SIGINT is the stop request, and a
+    // signal delivered while no phase is polling must still end the helper.
+    let mut interrupt =
+        signal(SignalKind::interrupt()).context("failed to install the SIGINT handler")?;
+    let Some(connection) = interruptible(&mut interrupt, Connection::session()).await else {
+        return Ok(());
+    };
+    let connection = connection.context("failed to connect to the session bus")?;
+    run_portal_on(&connection, &shortcuts, &mut interrupt).await
+}
+
+/// Runs `future` unless SIGINT arrives first; dropping it before a session
+/// handle is known is safe because the portal closes sessions with the connection.
+async fn interruptible<T>(interrupt: &mut Signal, future: impl Future<Output = T>) -> Option<T> {
+    tokio::select! {
+        biased;
+        _ = interrupt.recv() => None,
+        value = future => Some(value),
+    }
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Vec<Shortcut>> {
@@ -280,33 +318,50 @@ fn portal_key(key: &str) -> Result<String> {
     Ok(mapped.to_string())
 }
 
-async fn run_portal(shortcuts: &[Shortcut]) -> Result<()> {
-    let connection = Connection::session()
-        .await
-        .context("failed to connect to the session bus")?;
-    run_portal_on(&connection, shortcuts).await
-}
-
-async fn run_portal_on(connection: &Connection, shortcuts: &[Shortcut]) -> Result<()> {
-    let proxy = Proxy::new(connection, PORTAL_SERVICE, PORTAL_PATH, SHORTCUTS_INTERFACE)
-        .await
-        .context("GlobalShortcuts portal is unavailable")?;
-    let version: u32 = proxy
-        .get_property("version")
-        .await
-        .context("GlobalShortcuts portal version is unavailable")?;
-    if version < 1 {
-        bail!("GlobalShortcuts portal version {version} is unsupported");
-    }
-
-    let session = create_session(connection, &proxy).await?;
-    let mut signals = proxy
-        .receive_all_signals()
-        .await
-        .context("failed to subscribe to global shortcut events")?;
+async fn run_portal_on(
+    connection: &Connection,
+    shortcuts: &[Shortcut],
+    interrupt: &mut Signal,
+) -> Result<()> {
+    let opened = interruptible(interrupt, async {
+        let proxy = Proxy::new(connection, PORTAL_SERVICE, PORTAL_PATH, SHORTCUTS_INTERFACE)
+            .await
+            .context("GlobalShortcuts portal is unavailable")?;
+        let version: u32 = proxy
+            .get_property("version")
+            .await
+            .context("GlobalShortcuts portal version is unavailable")?;
+        if version < 1 {
+            bail!("GlobalShortcuts portal version {version} is unsupported");
+        }
+        let session = create_session(connection, &proxy).await?;
+        Ok((proxy, session))
+    })
+    .await;
+    let Some(opened) = opened else {
+        return Ok(());
+    };
+    let (proxy, session) = opened?;
+    let subscriptions = async {
+        let closed = session_closed_stream(connection, &session).await?;
+        let signals = proxy
+            .receive_all_signals()
+            .await
+            .context("failed to subscribe to global shortcut events")?;
+        Ok::<_, anyhow::Error>((closed, signals))
+    };
+    let (mut closed, mut signals) = match subscriptions.await {
+        Ok(streams) => streams,
+        Err(error) => {
+            close_session(connection, &session).await;
+            return Err(error);
+        }
+    };
     let bound = tokio::select! {
+        biased;
+        _ = interrupt.recv() => return close_session_checked(connection, &session).await,
+        _ = closed.next() => bail!(SESSION_CLOSED_BY_PORTAL),
         result = bind_shortcuts(connection, &proxy, &session, shortcuts) => result,
-        _ = tokio::signal::ctrl_c() => return close_session_checked(connection, &session).await,
     };
     let bound = match bound {
         Ok(bound) => bound,
@@ -317,15 +372,24 @@ async fn run_portal_on(connection: &Connection, shortcuts: &[Shortcut]) -> Resul
     };
 
     let backend = tokio::select! {
+        biased;
+        _ = interrupt.recv() => return close_session_checked(connection, &session).await,
+        _ = closed.next() => bail!(SESSION_CLOSED_BY_PORTAL),
         backend = detect_paste_backend(connection) => backend,
-        _ = tokio::signal::ctrl_c() => return close_session_checked(connection, &session).await,
     };
     let mut pressed = vec![false; shortcuts.len()];
     emit_bindings(shortcuts, &bound, &mut pressed)?;
     let mut commands = BufReader::new(tokio::io::stdin()).lines();
     let mut paste_session = None;
+    let mut portal_closed = false;
     loop {
         tokio::select! {
+            biased;
+            _ = interrupt.recv() => break,
+            _ = closed.next() => {
+                portal_closed = true;
+                break;
+            }
             message = signals.next() => {
                 let message = message.context("global shortcut event stream ended")?;
                 let header = message.header();
@@ -352,7 +416,11 @@ async fn run_portal_on(connection: &Connection, shortcuts: &[Shortcut]) -> Resul
             command = commands.next_line() => {
                 match command.context("failed to read helper command")? {
                     Some(command) if command == "paste" => {
-                        let result = paste_with_backend(connection, &mut paste_session, backend).await;
+                        let Some(result) =
+                            paste_until_interrupted(connection, &mut paste_session, backend, interrupt).await
+                        else {
+                            break;
+                        };
                         match result {
                             Ok(()) => emit("paste-ok")?,
                             Err(error) => {
@@ -368,13 +436,37 @@ async fn run_portal_on(connection: &Connection, shortcuts: &[Shortcut]) -> Resul
                     None => break,
                 }
             }
-            _ = tokio::signal::ctrl_c() => break,
         }
     }
     if let Some(session) = paste_session {
         close_session(connection, &session).await;
     }
+    if portal_closed {
+        bail!(SESSION_CLOSED_BY_PORTAL);
+    }
     close_session_checked(connection, &session).await
+}
+
+/// Returns `None` when SIGINT interrupts the paste. Consent and probing may be
+/// abandoned, but RemoteDesktop key events always finish so Ctrl is released.
+async fn paste_until_interrupted(
+    connection: &Connection,
+    session: &mut Option<OwnedObjectPath>,
+    backend: PasteBackend,
+    interrupt: &mut Signal,
+) -> Option<Result<()>> {
+    if backend == PasteBackend::RemoteDesktop && session.is_none() {
+        match interruptible(interrupt, start_remote_desktop_keyboard_session(connection)).await? {
+            Ok(started) => *session = Some(started),
+            Err(error) => return Some(Err(error)),
+        }
+    }
+    match backend {
+        PasteBackend::RemoteDesktop => Some(paste_with_backend(connection, session, backend).await),
+        PasteBackend::Gnome => {
+            interruptible(interrupt, paste_with_backend(connection, session, backend)).await
+        }
+    }
 }
 
 async fn detect_paste_backend(connection: &Connection) -> PasteBackend {
@@ -748,19 +840,41 @@ async fn close_session(connection: &Connection, session: &OwnedObjectPath) {
     let _ = close_session_checked(connection, session).await;
 }
 
+async fn session_closed_stream<'a>(
+    connection: &'a Connection,
+    session: &OwnedObjectPath,
+) -> Result<SignalStream<'a>> {
+    Proxy::new(
+        connection,
+        PORTAL_SERVICE,
+        session.as_str().to_owned(),
+        SESSION_INTERFACE,
+    )
+    .await
+    .context("failed to open portal session")?
+    .receive_signal("Closed")
+    .await
+    .context("failed to subscribe to portal session closure")
+}
+
 async fn close_session_checked(connection: &Connection, session: &OwnedObjectPath) -> Result<()> {
     let proxy = Proxy::new(
         connection,
         PORTAL_SERVICE,
         session.as_str(),
-        "org.freedesktop.portal.Session",
+        SESSION_INTERFACE,
     )
     .await
     .context("failed to open portal session for cleanup")?;
-    proxy
-        .call::<_, _, ()>("Close", &())
-        .await
-        .context("failed to close portal session")
+    match proxy.call::<_, _, ()>("Close", &()).await {
+        // The portal already closed the session; the release still succeeded.
+        Err(zbus::Error::MethodError(name, _, _))
+            if SESSION_GONE_ERRORS.contains(&name.as_str()) =>
+        {
+            Ok(())
+        }
+        result => result.context("failed to close portal session"),
+    }
 }
 
 async fn portal_request_stream<'a>(
@@ -875,14 +989,16 @@ mod tests {
     };
 
     use super::{
-        bind_shortcuts, create_session, detect_paste_backend, parse_args, paste_with_backend,
-        portal_key, portal_trigger, probe_gnome_companion, request_path, signal_matches,
-        PasteBackend, Shortcut, DEVICE_KEYBOARD, GNOME_GUIDANCE, GNOME_PATH, GNOME_SERVICE,
-        GNOME_TIMEOUT, KEYSYM_CONTROL_L, KEYSYM_V, KEY_PRESSED, KEY_RELEASED, PORTAL_PATH,
-        PORTAL_SERVICE, REQUEST_INTERFACE, SHORTCUTS_INTERFACE,
+        bind_shortcuts, close_session_checked, create_session, detect_paste_backend, parse_args,
+        paste_with_backend, portal_key, portal_trigger, probe_gnome_companion, request_path,
+        signal_matches, PasteBackend, Shortcut, DEVICE_KEYBOARD, GNOME_GUIDANCE, GNOME_PATH,
+        GNOME_SERVICE, GNOME_TIMEOUT, KEYSYM_CONTROL_L, KEYSYM_V, KEY_PRESSED, KEY_RELEASED,
+        PORTAL_PATH, PORTAL_SERVICE, REQUEST_INTERFACE, SESSION_CLOSED_BY_PORTAL,
+        SESSION_INTERFACE, SHORTCUTS_INTERFACE,
     };
 
-    const SHORTCUT_ID: &str = "globalDictationHold";
+    // Saved compositor bindings are keyed by this ID; it predates the shared backend.
+    const SHORTCUT_ID: &str = "global-dictation";
     const TEST_SESSION: &str = "/org/freedesktop/portal/desktop/session/test/global_dictation";
     const TEST_PASTE_SESSION: &str = "/org/freedesktop/portal/desktop/session/test/paste";
 
@@ -986,7 +1102,9 @@ mod tests {
         ids: Arc<Mutex<Vec<String>>>,
         description: Arc<Mutex<Option<String>>>,
         accepted: Option<Vec<String>>,
+        delay_create: bool,
         delay_bind: bool,
+        create_calls: Arc<Mutex<u32>>,
     }
 
     #[zbus::interface(name = "org.freedesktop.portal.GlobalShortcuts")]
@@ -1002,6 +1120,7 @@ mod tests {
             #[zbus(header)] header: Header<'_>,
             #[zbus(connection)] connection: &Connection,
         ) -> zbus::fdo::Result<OwnedObjectPath> {
+            *self.create_calls.lock().unwrap() += 1;
             let handle = request_handle(&header, &options)?;
             let mut results = HashMap::new();
             results.insert(
@@ -1009,7 +1128,9 @@ mod tests {
                 OwnedValue::try_from(zbus::zvariant::Value::from(TEST_SESSION))
                     .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?,
             );
-            emit_response(connection, &handle, 0, results).await?;
+            if !self.delay_create {
+                emit_response(connection, &handle, 0, results).await?;
+            }
             Ok(handle)
         }
 
@@ -1082,12 +1203,17 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeShortcutsSession {
         closed: Arc<Mutex<bool>>,
+        close_error: Option<fn(String) -> zbus::fdo::Error>,
     }
 
     #[zbus::interface(name = "org.freedesktop.portal.Session")]
     impl FakeShortcutsSession {
-        fn close(&self) {
+        fn close(&self) -> zbus::fdo::Result<()> {
+            if let Some(error) = self.close_error {
+                return Err(error("session is gone".into()));
+            }
             *self.closed.lock().unwrap() = true;
+            Ok(())
         }
     }
 
@@ -1096,6 +1222,7 @@ mod tests {
         create_count: Arc<Mutex<u32>>,
         key_events: Arc<Mutex<Vec<(i32, u32)>>>,
         response_code: u32,
+        delay_create: bool,
     }
 
     #[zbus::interface(name = "org.freedesktop.portal.RemoteDesktop")]
@@ -1119,7 +1246,9 @@ mod tests {
                 OwnedValue::try_from(zbus::zvariant::Value::from(TEST_PASTE_SESSION))
                     .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?,
             );
-            emit_response(connection, &handle, self.response_code, results).await?;
+            if !self.delay_create {
+                emit_response(connection, &handle, self.response_code, results).await?;
+            }
             Ok(handle)
         }
 
@@ -1553,7 +1682,72 @@ mod tests {
             ["portal", "--shortcut", SHORTCUT_ID, "Dictation", "Ctrl+G"].map(str::to_string),
         )
         .unwrap();
-        super::run_portal_on(&client, &shortcuts).await.unwrap();
+        let mut interrupt =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
+        super::exit_with(super::run_portal_on(&client, &shortcuts, &mut interrupt).await)
+    }
+
+    /// Runs the real helper loop in a child test process so SIGINT stays
+    /// isolated from the test runner.
+    fn spawn_helper(bus: &TestBus) -> Child {
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::portal_helper_subprocess", "--nocapture"])
+            .env("CODEX_TEST_SHORTCUTS_BUS", &bus.address)
+            .env("CODEX_LINUX_APP_ID", "codex-desktop")
+            .env("CHROME_DESKTOP", "chatgpt.desktop")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
+    /// Waits for BindShortcuts plus the fast paste-backend probe of an empty bus.
+    async fn wait_for_event_loop(bound: &Mutex<Vec<String>>) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while bound.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("helper did not bind its shortcuts");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    /// Waits until `ready` holds, optionally sends SIGINT, and returns the exit
+    /// status with the helper's stderr. A helper that outlives the timeout fails.
+    async fn finish_helper(
+        mut child: Child,
+        ready: impl Fn() -> bool,
+        interrupt: bool,
+    ) -> (std::process::ExitStatus, String) {
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            while !ready() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            if interrupt {
+                assert!(Command::new("kill")
+                    .args(["-INT", &child.id().to_string()])
+                    .status()
+                    .unwrap()
+                    .success());
+            }
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        if result.is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let status = result.expect("helper did not stop in time");
+        let mut stderr = String::new();
+        std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+        (status, stderr)
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1581,43 +1775,189 @@ mod tests {
             .build()
             .await
             .unwrap();
-        // Isolate SIGINT from the test runner while exercising the real helper loop.
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "tests::portal_helper_subprocess", "--nocapture"])
-            .env("CODEX_TEST_SHORTCUTS_BUS", &bus.address)
-            .env("CODEX_LINUX_APP_ID", "codex-desktop")
-            .env("CHROME_DESKTOP", "chatgpt.desktop")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-        let result = tokio::time::timeout(Duration::from_secs(3), async {
-            while bound.lock().unwrap().is_empty() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            assert!(Command::new("kill")
-                .args(["-INT", &child.id().to_string()])
-                .status()
-                .unwrap()
-                .success());
-            loop {
-                if let Some(status) = child.try_wait().unwrap() {
-                    break status;
-                }
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await;
-        if result.is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        assert!(result
-            .expect("helper did not acknowledge session closure")
-            .success());
+        let child = spawn_helper(&bus);
+        let (status, stderr) =
+            finish_helper(child, || !bound.lock().unwrap().is_empty(), true).await;
+        assert!(status.success(), "{stderr}");
         assert!(*closed.lock().unwrap());
         assert_eq!(*app_ids.lock().unwrap(), ["codex-desktop"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn interrupt_before_a_session_handle_exits_cleanly() {
+        let bus = TestBus::start();
+        let portal = FakePortal {
+            delay_create: true,
+            ..FakePortal::default()
+        };
+        let create_calls = portal.create_calls.clone();
+        let _server = Builder::address(bus.address.as_str())
+            .unwrap()
+            .name(PORTAL_SERVICE)
+            .unwrap()
+            .serve_at(PORTAL_PATH, portal)
+            .unwrap()
+            .serve_at(PORTAL_PATH, FakeHostRegistry::default())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        // Without a handler installed up front, SIGINT here killed the helper by signal.
+        let (status, stderr) = finish_helper(
+            spawn_helper(&bus),
+            || *create_calls.lock().unwrap() > 0,
+            true,
+        )
+        .await;
+        assert!(status.success(), "{stderr}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn interrupt_during_paste_consent_closes_the_shortcuts_session() {
+        let bus = TestBus::start();
+        let remote = FakeRemoteDesktop {
+            delay_create: true,
+            ..FakeRemoteDesktop::default()
+        };
+        let paste_requests = remote.create_count.clone();
+        let key_events = remote.key_events.clone();
+        let session = FakeShortcutsSession::default();
+        let closed = session.closed.clone();
+        let _server = Builder::address(bus.address.as_str())
+            .unwrap()
+            .name(PORTAL_SERVICE)
+            .unwrap()
+            .serve_at(PORTAL_PATH, FakePortal::default())
+            .unwrap()
+            .serve_at(PORTAL_PATH, FakeHostRegistry::default())
+            .unwrap()
+            .serve_at(PORTAL_PATH, remote)
+            .unwrap()
+            .serve_at(TEST_SESSION, session)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let mut child = spawn_helper(&bus);
+        std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"paste\n").unwrap();
+        // The RemoteDesktop consent request stays pending; SIGINT used to wait
+        // for its 30-second timeout and was then lost.
+        let (status, stderr) =
+            finish_helper(child, || *paste_requests.lock().unwrap() > 0, true).await;
+        assert!(status.success(), "{stderr}");
+        assert!(*closed.lock().unwrap());
+        assert!(key_events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn portal_session_closure_ends_the_helper_without_closing_again() {
+        let bus = TestBus::start();
+        let portal = FakePortal::default();
+        let bound = portal.ids.clone();
+        let session = FakeShortcutsSession::default();
+        let closed = session.closed.clone();
+        let server = Builder::address(bus.address.as_str())
+            .unwrap()
+            .name(PORTAL_SERVICE)
+            .unwrap()
+            .serve_at(PORTAL_PATH, portal)
+            .unwrap()
+            .serve_at(PORTAL_PATH, FakeHostRegistry::default())
+            .unwrap()
+            .serve_at(TEST_SESSION, session)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let child = spawn_helper(&bus);
+        wait_for_event_loop(&bound).await;
+        let details: HashMap<String, OwnedValue> = HashMap::new();
+        server
+            .emit_signal(
+                None::<&str>,
+                TEST_SESSION,
+                SESSION_INTERFACE,
+                "Closed",
+                &(details,),
+            )
+            .await
+            .unwrap();
+        let (status, stderr) = finish_helper(child, || true, false).await;
+        assert!(!status.success());
+        assert!(stderr.contains(SESSION_CLOSED_BY_PORTAL), "{stderr}");
+        assert!(!*closed.lock().unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn interrupt_in_the_event_loop_exits_promptly() {
+        let bus = TestBus::start();
+        let portal = FakePortal::default();
+        let bound = portal.ids.clone();
+        let session = FakeShortcutsSession::default();
+        let closed = session.closed.clone();
+        let _server = Builder::address(bus.address.as_str())
+            .unwrap()
+            .name(PORTAL_SERVICE)
+            .unwrap()
+            .serve_at(PORTAL_PATH, portal)
+            .unwrap()
+            .serve_at(PORTAL_PATH, FakeHostRegistry::default())
+            .unwrap()
+            .serve_at(TEST_SESSION, session)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let child = spawn_helper(&bus);
+        wait_for_event_loop(&bound).await;
+        // The pending stdin read used to block runtime shutdown after Close.
+        let (status, stderr) = finish_helper(child, || true, true).await;
+        assert!(status.success(), "{stderr}");
+        assert!(*closed.lock().unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn closing_an_already_released_session_succeeds() {
+        let bus = TestBus::start();
+        let unknown_method = "/org/freedesktop/portal/desktop/session/test/gdbus_gone";
+        let denied = "/org/freedesktop/portal/desktop/session/test/denied";
+        let _server = Builder::address(bus.address.as_str())
+            .unwrap()
+            .name(PORTAL_SERVICE)
+            .unwrap()
+            .serve_at(
+                unknown_method,
+                FakeShortcutsSession {
+                    close_error: Some(zbus::fdo::Error::UnknownMethod),
+                    ..FakeShortcutsSession::default()
+                },
+            )
+            .unwrap()
+            .serve_at(
+                denied,
+                FakeShortcutsSession {
+                    close_error: Some(zbus::fdo::Error::AccessDenied),
+                    ..FakeShortcutsSession::default()
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client = bus_client(&bus).await;
+        // No object at the path: zbus answers UnknownObject.
+        close_session_checked(&client, &OwnedObjectPath::try_from(TEST_SESSION).unwrap())
+            .await
+            .unwrap();
+        // GDBus, which xdg-desktop-portal uses, answers UnknownMethod.
+        close_session_checked(&client, &OwnedObjectPath::try_from(unknown_method).unwrap())
+            .await
+            .unwrap();
+        assert!(
+            close_session_checked(&client, &OwnedObjectPath::try_from(denied).unwrap())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

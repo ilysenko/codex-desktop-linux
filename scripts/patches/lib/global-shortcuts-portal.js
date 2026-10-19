@@ -95,28 +95,37 @@ function codexLinuxGlobalShortcutsUnavailable(registration, error) {
 
 function codexLinuxGlobalShortcutsPortalRegistration(accelerator, callbacks, commandId) {
   if (codexLinuxGlobalShortcutsShuttingDown) return null;
-  const description = {
-    hotkeyWindow: "Open popout chat window", openAvatarOverlay: "Show Mini / Pet",
-    globalDictationHold: "Dictation: hold to talk", globalDictationSingleTap: "Dictation: start / stop",
-    appshots: "Capture app context (Appshots)", realtimeVoice: "Open voice chat", meetings: "Take meeting notes",
-  }[commandId];
+  // Portal IDs key saved compositor bindings; never rename them. Hold-to-talk
+  // keeps the ID used before the shared backend so existing approvals survive.
+  const [id, description] = {
+    hotkeyWindow: ["hotkeyWindow", "Open popout chat window"],
+    openAvatarOverlay: ["openAvatarOverlay", "Show Mini / Pet"],
+    globalDictationHold: ["global-dictation", "Dictation: hold to talk"],
+    globalDictationSingleTap: ["global-dictation-single-tap", "Dictation: start / stop"],
+    appshots: ["appshots", "Capture app context (Appshots)"],
+    realtimeVoice: ["realtimeVoice", "Open voice chat"],
+    meetings: ["meetings", "Take meeting notes"],
+  }[commandId] ?? [];
   const helper = codexLinuxGlobalShortcutsNativePath("codex-global-dictation-linux");
   if (!helper || typeof description !== "string") return null;
   let trigger;
   try {
     trigger = require("node:child_process").execFileSync(helper,
-      ["check", "--shortcut", commandId, description, accelerator],
+      ["check", "--shortcut", id, description, accelerator],
       { encoding: "utf8", timeout: 2000, maxBuffer: 4096, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
     if (!trigger || /[\r\n]/.test(trigger)) throw new Error("Invalid helper validation response");
-    if (codexLinuxGlobalShortcutsRequested().some((r) => r.id !== commandId && r.trigger === trigger)) {
+    if (codexLinuxGlobalShortcutsRequested().some((r) => r.id !== id && r.trigger === trigger)) {
       throw new Error("Shortcut conflicts with another application action");
     }
   } catch (error) {
+    if (/unknown command: check/.test(String(error?.stderr ?? ""))) {
+      console.warn("[linux-global-shortcuts] The staged codex-global-dictation-linux helper is outdated; rebuild it with the current repository");
+    }
     console.warn(`[linux-global-shortcuts] ${commandId} validation failed`, error);
     return null;
   }
   const registration = {
-    id: commandId, description, accelerator, trigger, callbacks, pressed: false, notified: false, failed: false,
+    id, description, accelerator, trigger, callbacks, pressed: false, notified: false, failed: false,
     handlesRelease: true,
     ready: () => codexLinuxGlobalShortcutsPortalRegistrations.has(registration) &&
       codexLinuxGlobalShortcutsPortalBackend?.ready === true &&
@@ -212,11 +221,14 @@ function codexLinuxGlobalShortcutsPortalSchedule() {
 }
 
 function codexLinuxGlobalShortcutsPortalStart(registrations, fallback, recovery) {
-  let child, closed = false, stderr = "", timer, killTimer, forced = false;
+  let child, closed = false, stderr = "", timer, killTimer, gone = false;
   let finishRegistration, finishExit, pasteResolve, pasteReject, pasteTimer;
   let reported = new Map();
   const registrationFinished = new Promise((resolve) => { finishRegistration = resolve; });
+  // Resolves true once no helper process can hold a portal session: the portal
+  // closes a session with its D-Bus connection, so any exit or signal releases it.
   const exited = new Promise((resolve) => { finishExit = resolve; });
+  const released = () => child?.pid === undefined || gone;
   const finishPaste = (error) => {
     if (pasteTimer) clearTimeout(pasteTimer);
     pasteTimer = null;
@@ -239,11 +251,12 @@ function codexLinuxGlobalShortcutsPortalStart(registrations, fallback, recovery)
     }
     finishPaste(error);
     try {
-      if (child) {
+      if (released()) finishExit(true);
+      else {
         child.kill("SIGINT");
-        killTimer = setTimeout(() => { forced = true; child.kill("SIGKILL"); }, 2000);
+        killTimer = setTimeout(() => child.kill("SIGKILL"), 2000);
         killTimer.unref?.();
-      } else finishExit(false);
+      }
     } catch { finishExit(false); }
     return exited;
   };
@@ -306,13 +319,20 @@ function codexLinuxGlobalShortcutsPortalStart(registrations, fallback, recovery)
       }
     });
     child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString("utf8")).slice(-4096); });
-    child.once("error", (error) => { finishExit(false); fail(error); });
-    child.once("exit", (code) => {
-      if (killTimer) clearTimeout(killTimer);
-      finishExit(code === 0 && !forced);
-      if (!closed) fail(new Error(stderr.trim() || `Global shortcuts helper exited with code ${code}`));
+    child.once("error", (error) => {
+      if (released()) finishExit(true);
+      fail(error);
     });
-  } catch (error) { finishExit(false); fail(error); }
+    child.once("exit", (code, signal) => {
+      gone = true;
+      if (killTimer) clearTimeout(killTimer);
+      finishExit(true);
+      if (!closed) fail(new Error(stderr.trim() || `Global shortcuts helper exited with ${signal ?? `code ${code}`}`));
+    });
+  } catch (error) {
+    if (released()) finishExit(true);
+    fail(error);
+  }
   return backend;
 }
 

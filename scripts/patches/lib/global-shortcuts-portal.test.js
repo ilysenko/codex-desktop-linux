@@ -145,6 +145,42 @@ test("validation uses the native parser before touching an active session", asyn
   await cleanup(ctx);
 });
 
+test("portal shortcut IDs stay stable so saved compositor bindings survive upgrades", async () => {
+  const child = fakeHelperChild(), ctx = waylandPatchContext([child], { dictation: true, shortcuts: true });
+  ctx.gestures = { press() {}, release() {}, cancelPress() {} };
+  // Drive the patched dictation owner so its linuxCommandId tags feed the mapping.
+  vm.runInNewContext('var dictation=new H7();dictation.shortcutGestures=gestures;' +
+    'dictation.registerHotkeyOrThrow("Ctrl+Alt+D",{isOwner:()=>true});' +
+    'dictation.registerToggleHotkeyOrThrow("Ctrl+Alt+T",{isOwner:()=>true})', ctx);
+  for (const [id, key] of [["hotkeyWindow", "Ctrl+Alt+G"], ["openAvatarOverlay", "Super+Alt+P"],
+    ["appshots", "Ctrl+Alt+A"], ["realtimeVoice", "Ctrl+Alt+V"], ["meetings", "Ctrl+Alt+M"]]) {
+    assert.notEqual(registerPortal(ctx, key, {}, id), null);
+  }
+  await spawned(ctx, 1);
+  const args = Array.from(ctx.__spawns[0][1]);
+  const ids = args.flatMap((value, index) => args[index - 1] === "--shortcut" ? [value] : []);
+  // Hold-to-talk was registered as `global-dictation` before the shared backend.
+  assert.deepEqual(ids, ["global-dictation", "global-dictation-single-tap", "hotkeyWindow",
+    "openAvatarOverlay", "appshots", "realtimeVoice", "meetings"]);
+  assert.deepEqual(ctx.__checks.slice(0, 2).map(([, check]) => Array.from(check)), [
+    ["check", "--shortcut", "global-dictation", "Dictation: hold to talk", "Ctrl+Alt+D"],
+    ["check", "--shortcut", "global-dictation-single-tap", "Dictation: start / stop", "Ctrl+Alt+T"],
+  ]);
+  child.ready();
+  vm.runInNewContext("dictation.deactivateLifecycle()", ctx);
+  await cleanup(ctx);
+});
+
+test("an outdated staged helper is reported when validation is unsupported", () => {
+  const ctx = context([]);
+  ctx.__validate = () => Object.assign(new Error("Command failed"), { stderr: "unknown command: check\n" });
+  const validate = ctx.__validate;
+  ctx.__validate = () => { throw validate(); };
+  assert.equal(registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow"), null);
+  assert.equal(ctx.__warnings.some(([message]) => /helper is outdated/.test(message)), true);
+  assert.equal(ctx.__spawns.length, 0);
+});
+
 test("same-tick registrations share one session and retain separate transitions", async () => {
   const child = fakeHelperChild(), ctx = context([child]);
   const presses = [0, 0], releases = [0, 0];
@@ -410,7 +446,13 @@ for (const failure of ["timeout", "spawn", "invalid-report"]) {
   });
 }
 
-test("an unclean helper exit cancels capture and releases its suspension", async () => {
+// The portal closes a session together with its D-Bus connection, so any helper
+// exit releases the bindings; only a helper that may still be alive blocks capture.
+for (const [exit, kill] of [
+  ["SIGKILL after the grace period", (child, signal) => signal === "SIGKILL" && setImmediate(() => child.emit("exit", null, "SIGKILL"))],
+  ["SIGINT default disposition", (child, signal) => setImmediate(() => child.emit("exit", null, signal))],
+  ["a nonzero exit code", (child) => setImmediate(() => child.emit("exit", 1, null))],
+]) test(`a helper terminated by ${exit} releases its session for capture`, async () => {
   const first = fakeHelperChild(), resumed = fakeHelperChild(), ctx = context([first, resumed]);
   const handle = vm.runInNewContext('eA("Ctrl+Alt+G",{linuxCommandId:"hotkeyWindow",onPressed(){}})', ctx);
   await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
@@ -420,11 +462,44 @@ test("an unclean helper exit cancels capture and releases its suspension", async
     if (ms === 2000) force = callback;
     return timer;
   };
-  first.kill = signal => {if (signal === "SIGKILL") setImmediate(() => first.emit("exit", 137));};
+  const signals = [];
+  first.kill = signal => { signals.push(signal); kill(first, signal); return true; };
   ctx.origin = captureOrigin();
   const pending = vm.runInNewContext("new CaptureService(origin).beginCapture()", ctx);
-  force();
-  assert.equal(await pending, null);
+  await tick();
+  if (signals.at(-1) === "SIGINT" && exit.startsWith("SIGKILL")) force();
+  const capture = await pending;
+  assert.notEqual(capture, null);
+  assert.deepEqual(signals, exit.startsWith("SIGKILL") ? ["SIGINT", "SIGKILL"] : ["SIGINT"]);
+  assert.equal(ctx.suspendDepth, 1);
+  assert.equal(ctx.__warnings.some(([message]) => /Unable to prepare shortcut capture/.test(message)), false);
+  capture[Symbol.dispose]();
+  await spawned(ctx, 2); resumed.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  assert.equal(handle.handlesRelease, true);
+  handle.unregister(); await cleanup(ctx);
+});
+
+test("a helper that is already gone is not signalled again and releases capture", async () => {
+  const first = fakeHelperChild(), recovered = fakeHelperChild(), ctx = context([first, recovered]);
+  const handle = vm.runInNewContext('eA("Ctrl+Alt+G",{linuxCommandId:"hotkeyWindow",onPressed(){}})', ctx);
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  first.emit("exit", null, "SIGTERM");
+  await spawned(ctx, 2);
+  assert.deepEqual(first.signals, undefined);
+  recovered.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  recovered.kill = signal => { (recovered.signals ??= []).push(signal); setImmediate(() => recovered.emit("exit", null, "SIGINT")); return true; };
+  await ctx.codexLinuxGlobalShortcutsPortalPause();
+  assert.deepEqual(recovered.signals, ["SIGINT"]);
+  handle.unregister(); await cleanup(ctx);
+});
+
+test("a helper that may still hold its session blocks capture", async () => {
+  const first = fakeHelperChild(), resumed = fakeHelperChild(), ctx = context([first, resumed]);
+  const handle = vm.runInNewContext('eA("Ctrl+Alt+G",{linuxCommandId:"hotkeyWindow",onPressed(){}})', ctx);
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  first.kill = () => { throw new Error("EPERM"); };
+  ctx.origin = captureOrigin();
+  assert.equal(await vm.runInNewContext("new CaptureService(origin).beginCapture()", ctx), null);
   assert.equal(ctx.suspendDepth, 0);
   await spawned(ctx, 2); resumed.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
   handle.unregister(); await cleanup(ctx);

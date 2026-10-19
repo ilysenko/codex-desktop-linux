@@ -31,7 +31,9 @@ On KDE, edit actual bindings under
 preferred combination in the app may leave that saved system binding unchanged.
 
 Shortcut capture temporarily releases the app's global bindings and restores
-them when capture ends. Partial approval leaves accepted actions usable. A
+them when capture ends. Capture starts once the helper has exited; the portal closes
+a session together with the helper's D-Bus connection, so an exit forced by a
+signal also releases the bindings. Partial approval leaves accepted actions usable. A
 failed reconfiguration attempts one recovery of still-requested working actions;
 session replacement can briefly interrupt shortcuts. Requests time out after
 30 seconds. Supported portal shortcuts contain a modifier and one key.

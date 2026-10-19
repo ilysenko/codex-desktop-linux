@@ -48,6 +48,11 @@ ships/installs the companion, not selects the backend: manually installed
 compatible companions are detected too. Restart the app/helper after enabling
 the extension. X11 paste is unchanged.
 
+Portal shortcut IDs key the compositor's saved bindings and never change.
+Hold-to-talk keeps `global-dictation`, the ID used before the shared backend, so
+existing approvals and bindings survive upgrades. Start/stop uses
+`global-dictation-single-tap`.
+
 Wayland shortcuts must contain at least one modifier and one key. Modifier-only
 shortcuts cannot be represented by the XDG shortcut format and are rejected
 before registration.
