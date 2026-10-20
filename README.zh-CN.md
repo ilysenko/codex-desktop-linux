@@ -241,6 +241,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `authenticated-proxy` | 带用户名和密码的 HTTP proxy | [文档](linux-features/authenticated-proxy/README.md) |
 | `automation-extensions` | 多时间调度和 eager `automation_update` | [文档](linux-features/automation-extensions/README.md) |
 | `browser-proxy` | 让 Browser Use 的网络辅助进程继承显式代理设置 | [文档](linux-features/browser-proxy/README.zh-CN.md) |
+| `chatgpt-dil-markdown-fallback` | 交互式 ChatGPT 回复渲染失败时显示已保存的 Markdown 正文 | [文档](linux-features/chatgpt-dil-markdown-fallback/README.md) |
 | `chatgpt-dots-any-country` | 当账号响应受到国家限制时，仍显示 ChatGPT Dots 入口和可用性说明 | [文档](linux-features/chatgpt-dots-any-country/README.md) |
 | `chronicle-skysight` | 可选的 Linux 桌面活动记忆与受限 Skysight MCP 工具 | [文档](linux-features/chronicle-skysight/README.md) |
 | `codex-micro` | 使用上游 `node-hid` 的 Codex Micro hotplug/hidraw policy | [文档](linux-features/codex-micro/README.md) |

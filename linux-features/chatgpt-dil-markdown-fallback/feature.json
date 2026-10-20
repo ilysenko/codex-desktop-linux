@@ -1,0 +1,9 @@
+{
+  "id": "chatgpt-dil-markdown-fallback",
+  "title": "ChatGPT reply Markdown fallback",
+  "description": "Show the saved Markdown reply when the interactive reply renderer fails to start or render.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
