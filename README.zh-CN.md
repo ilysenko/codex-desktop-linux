@@ -243,6 +243,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `browser-proxy` | 让 Browser Use 的网络辅助进程继承显式代理设置 | [文档](linux-features/browser-proxy/README.zh-CN.md) |
 | `chatgpt-dil-markdown-fallback` | 交互式 ChatGPT 回复渲染失败时显示已保存的 Markdown 正文 | [文档](linux-features/chatgpt-dil-markdown-fallback/README.md) |
 | `chatgpt-dots-any-country` | 当账号响应受到国家限制时，仍显示 ChatGPT Dots 入口和可用性说明 | [文档](linux-features/chatgpt-dots-any-country/README.md) |
+| `chatgpt-sidebar-separate-history` | ChatGPT 历史记录默认仅显示聊天，并记住聊天 / Work / 全部筛选选项 | [文档](linux-features/chatgpt-sidebar-separate-history/README.md) |
 | `chronicle-skysight` | 可选的 Linux 桌面活动记忆与受限 Skysight MCP 工具 | [文档](linux-features/chronicle-skysight/README.md) |
 | `codex-micro` | 使用上游 `node-hid` 的 Codex Micro hotplug/hidraw policy | [文档](linux-features/codex-micro/README.md) |
 | `community-profile-isolation` | 将 Community 的 Codex/Electron 状态与子进程 CLI 解析和官方 ChatGPT 隔离 | [文档](linux-features/community-profile-isolation/README.md) |

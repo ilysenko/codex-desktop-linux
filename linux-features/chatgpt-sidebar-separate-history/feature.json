@@ -1,0 +1,9 @@
+{
+  "id": "chatgpt-sidebar-separate-history",
+  "title": "Separate ChatGPT Sidebar History",
+  "description": "Default the ChatGPT sidebar to Chat and remember the selected Chat/Work/All history filter.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
