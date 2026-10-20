@@ -5,6 +5,12 @@ const path = require("node:path");
 
 const MARKER = "function codexLinuxDilMarkdownFallback(";
 const IDENT = "[A-Za-z_$][\\w$]*";
+const MODULE_PATH = `(?:"[./A-Za-z0-9_-]+\\.js"|'[./A-Za-z0-9_-]+\\.js')`;
+const MARKDOWN_WRAPPER = new RegExp(
+  `^(?:\\s*import\\s*(?:${MODULE_PATH}|\\{[\\w$,\\s]+\\}\\s*from\\s*${MODULE_PATH})\\s*;)*\\s*` +
+  `(?:${IDENT}\\s*\\(\\s*\\)\\s*;\\s*)*export\\s*\\{([\\w$,\\s]+)\\}\\s*;?\\s*` +
+  `(?:\\/\\/# sourceMappingURL=[^\\r\\n]*)?\\s*$`,
+);
 
 function fallbackSource(jsx, failure, markdown = "codexLinuxDilMarkdownView") {
   return `${MARKER}{reference:e}){` +
@@ -64,6 +70,11 @@ function patchDilMarkdownFallback(extractedDir) {
   });
   if (responses.length !== 1 || markdown.length !== 1) {
     throw new Error(`Expected one interactive reply and one native Markdown module; found ${responses.length} and ${markdown.length}`);
+  }
+  // Validate the whole unique entry so comments or string examples cannot
+  // qualify, and competing named exports are rejected even in larger modules.
+  if (!MARKDOWN_WRAPPER.test(markdown[0].source)) {
+    throw new Error("Native ChatGPT Markdown wrapper contract changed");
   }
   const output = applyDilMarkdownFallback(responses[0].source, markdown[0].file);
   if (output === responses[0].source) return { changed: false };

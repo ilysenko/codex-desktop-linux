@@ -158,9 +158,11 @@ test("Markdown modules without the named export are rejected before any reply wr
     'const name="ChatGptMarkdown";export{init as n,view as t};',
     "export{View as ChatGptMarkdownOther};",
     "export{ChatGptMarkdown as t};",
+    "// export{View as ChatGptMarkdown};",
+    'const example=`export{View as ChatGptMarkdown};//# sourceMappingURL=fake`;',
   ]) {
     fs.writeFileSync(entry,source);
-    assert.throws(() => patchDilMarkdownFallback(root), /found 1 and 0/);
+    assert.throws(() => patchDilMarkdownFallback(root), /found 1 and 0|wrapper contract changed/);
     assert.equal(fs.readFileSync(file,"utf8"),fixture);
     assert.equal(fs.readFileSync(entry,"utf8"),source);
   }
@@ -174,7 +176,9 @@ test("ambiguous named exports fail before any reply bytes change", t => {
   const file = path.join(assets,"response-A.js");
   fs.writeFileSync(file,fixture);
   fs.writeFileSync(path.join(assets,"first.js"),"export{view as ChatGptMarkdown};");
-  fs.writeFileSync(path.join(assets,"second.js"),"export{ChatGptMarkdown};");
-  assert.throws(() => patchDilMarkdownFallback(root), /found 1 and 2/);
-  assert.equal(fs.readFileSync(file,"utf8"),fixture);
+  for (const source of ["export{ChatGptMarkdown};", "function ChatGptMarkdown(){}export{ChatGptMarkdown};"]) {
+    fs.writeFileSync(path.join(assets,"second.js"),source);
+    assert.throws(() => patchDilMarkdownFallback(root), /found 1 and 2/);
+    assert.equal(fs.readFileSync(file,"utf8"),fixture);
+  }
 });
