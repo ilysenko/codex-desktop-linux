@@ -13,9 +13,14 @@ the fallback. Replies without valid, nonempty fallback Markdown retain the
 upstream error message. The original conversation and security policies are
 unchanged. The feature does not execute the DIL program as Markdown.
 
+The saved-content fallback disables streaming presentation, including for old
+interrupted or partial replies. New saved text can still update normally.
+
 The feature is disabled by default. Add `chatgpt-dil-markdown-fallback` to
 `linux-features/features.json` and rebuild. Remove the ID and rebuild to disable.
 The build fails if the unique upstream renderer contracts have changed.
+The Markdown view is imported from the unique module exporting the named
+`ChatGptMarkdown` component; minified export letters are not used.
 
 ## Validation
 

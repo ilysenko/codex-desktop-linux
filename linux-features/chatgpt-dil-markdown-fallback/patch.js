@@ -7,14 +7,13 @@ const MARKER = "function codexLinuxDilMarkdownFallback(";
 const IDENT = "[A-Za-z_$][\\w$]*";
 
 function fallbackSource(jsx, failure, markdown = "codexLinuxDilMarkdownView") {
-  return `${MARKER}{reference:e,source:s}){` +
+  return `${MARKER}{reference:e}){` +
     "let p=e?.model_dil_v2,m=p?.fallbackMarkdown;" +
     "if(p?.fallbackMarkdownVersion!==1||typeof m!==`string`||m.trim().length===0)" +
     `return(0,${jsx}.jsx)(${failure},{});` +
-    "codexLinuxInitDilMarkdown();" +
     `return(0,${jsx}.jsx)(\`div\`,{\"data-dil-markdown-fallback\":\`\`,` +
     `children:(0,${jsx}.jsx)(${markdown},{` +
-    "isStreaming:s?.source_message_status!=null&&s.source_message_status!==`finished_successfully`," +
+    "isStreaming:false," +
     "textStyle:{kind:`assistant-message`},children:m})})}";
 }
 
@@ -26,11 +25,11 @@ function applyDilMarkdownFallback(source, markdownFile) {
   if (patched) {
     if (source.includes("errorFallback:") &&
         source.includes("jsx)(codexLinuxDilMarkdownFallback,{reference:") &&
-        source.includes("n as codexLinuxInitDilMarkdown,t as codexLinuxDilMarkdownView")) return source;
+        source.includes("ChatGptMarkdown as codexLinuxDilMarkdownView")) return source;
     throw new Error("Incomplete ChatGPT DIL Markdown fallback patch");
   }
   const owners = [...source.matchAll(new RegExp(
-    `function ${IDENT}\\(\\{assistantMessageId:${IDENT},reference:(${IDENT}),source:(${IDENT}),`, "g",
+    `function ${IDENT}\\(\\{assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},`, "g",
   ))];
   const fallbacks = [...source.matchAll(new RegExp(
     `errorFallback:(${IDENT})\\?null:\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}),\\{\\}\\),diagnostics:`, "g",
@@ -42,9 +41,8 @@ function applyDilMarkdownFallback(source, markdownFile) {
   }
   const [, preparing, jsx, failure] = fallbacks[0];
   const reference = owners[0][1];
-  const messageSource = owners[0][2];
-  const replacement = `errorFallback:${preparing}?null:(0,${jsx}.jsx)(codexLinuxDilMarkdownFallback,{reference:${reference},source:${messageSource}}),diagnostics:`;
-  const importSource = `import{n as codexLinuxInitDilMarkdown,t as codexLinuxDilMarkdownView}from"./${markdownFile}";`;
+  const replacement = `errorFallback:${preparing}?null:(0,${jsx}.jsx)(codexLinuxDilMarkdownFallback,{reference:${reference}}),diagnostics:`;
+  const importSource = `import{ChatGptMarkdown as codexLinuxDilMarkdownView}from"./${markdownFile}";`;
   return importSource + fallbackSource(jsx, failure) + source.replace(fallbacks[0][0], () => replacement);
 }
 
@@ -57,11 +55,13 @@ function patchDilMarkdownFallback(extractedDir) {
   const responses = modules.filter(({ source }) =>
     source.includes("model_dil_v2") && source.includes("source_message_status") &&
     source.includes(".prepareDil(") && source.includes("errorFallback:"));
-  const markdown = modules.filter(({ file, source }) =>
-    /^chatgpt-markdown-view-[A-Za-z0-9_-]+\.js$/.test(file) &&
-    source.includes("externalLinkAppearance") && source.includes("getDefaultComponents") &&
-    new RegExp(`${IDENT} as n(?:,|\\})`).test(source) &&
-    new RegExp(`${IDENT} as t(?:,|\\})`).test(source));
+  // The public wrapper initializes the native view and exports its stable name.
+  // The implementation chunk's single-letter exports are not a safe contract.
+  const markdown = modules.filter(({ source }) => {
+    const exports = source.match(/\bexport\s*\{([^{}]*)\}\s*;?\s*(?:\/\/# sourceMappingURL=[^\r\n]*)?\s*$/)?.[1];
+    return exports != null && exports.split(",").some(entry =>
+      new RegExp(`^(?:${IDENT}\\s+as\\s+)?ChatGptMarkdown$`).test(entry.trim()));
+  });
   if (responses.length !== 1 || markdown.length !== 1) {
     throw new Error(`Expected one interactive reply and one native Markdown module; found ${responses.length} and ${markdown.length}`);
   }
