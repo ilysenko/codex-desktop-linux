@@ -10,12 +10,17 @@ const {
 } = require("../lib/linux-features.js");
 const { createPatchReport, enabledFeatureFailuresFromReport } = require("../lib/patch-report.js");
 const { patchExtractedApp } = require("../patches/runner.js");
+const { resolveOfficialAppRoot } = require("./official-linux-feature-runtime.js");
 
 const source = process.argv[2];
 if (!source || !fs.statSync(source, { throwIfNoEntry: false })?.isDirectory()) {
-  console.error("Usage: verify-official-linux-features.js <extracted-official-app-asar>");
+  console.error(
+    "Usage: verify-official-linux-features.js " +
+      "<extracted-official-app-asar> [official-app-root]",
+  );
   process.exit(2);
 }
+process.env.CODEX_UPSTREAM_APP_DIR = resolveOfficialAppRoot(source, process.argv[3]);
 
 const featuresRoot = path.resolve(__dirname, "../../linux-features");
 const features = discoverLinuxFeatureManifests({ featuresRoot });

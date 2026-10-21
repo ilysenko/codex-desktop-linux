@@ -85,14 +85,17 @@ jobs:
           asar_dir="upstream/${{ matrix.architecture }}/signed-app"
           mkdir -p "$asar_dir"
           dpkg-deb --fsys-tarfile "$package" | \
-            tar -xf - -C "$asar_dir" --strip-components=5 \
+            tar -xf - -C "$asar_dir" --strip-components=4 \
+              ./usr/lib/chatgpt/ChatGPT \
               ./usr/lib/chatgpt/resources/app.asar \
               ./usr/lib/chatgpt/resources/app.asar.unpacked
-          asar="$asar_dir/app.asar"
+          asar="$asar_dir/resources/app.asar"
+          test -x "$asar_dir/ChatGPT"
           test -s "$asar"
           test -d "$asar.unpacked"
           echo "package=$package" >> "$GITHUB_OUTPUT"
           echo "asar=$asar" >> "$GITHUB_OUTPUT"
+          echo "app_dir=$asar_dir" >> "$GITHUB_OUTPUT"
       - name: Require the dispatched signed campaign
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -287,7 +290,9 @@ jobs:
           npx --yes @electron/asar extract \
             "${{ steps.upstream.outputs.asar }}" \
             "$extracted_asar"
-          node scripts/ci/verify-official-linux-features.js "$extracted_asar"
+          node scripts/ci/verify-official-linux-features.js \
+            "$extracted_asar" \
+            "${{ steps.upstream.outputs.app_dir }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: official-linux-${{ matrix.architecture }}-metadata

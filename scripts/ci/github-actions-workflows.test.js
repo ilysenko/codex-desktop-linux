@@ -74,11 +74,14 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(signedBaseline, /name: Test required core patches against the signed bundle/);
   assert.match(
     signedBaseline,
-    /dpkg-deb --fsys-tarfile "\$package" \| \\\s+tar -xf - -C "\$asar_dir" --strip-components=5 \\\s+\.\/usr\/lib\/chatgpt\/resources\/app\.asar \\\s+\.\/usr\/lib\/chatgpt\/resources\/app\.asar\.unpacked/,
+    /dpkg-deb --fsys-tarfile "\$package" \| \\\s+tar -xf - -C "\$asar_dir" --strip-components=4 \\\s+\.\/usr\/lib\/chatgpt\/ChatGPT \\\s+\.\/usr\/lib\/chatgpt\/resources\/app\.asar \\\s+\.\/usr\/lib\/chatgpt\/resources\/app\.asar\.unpacked/,
   );
+  assert.match(signedBaseline, /asar="\$asar_dir\/resources\/app\.asar"/);
+  assert.match(signedBaseline, /test -x "\$asar_dir\/ChatGPT"/);
   assert.match(signedBaseline, /test -s "\$asar"/);
   assert.match(signedBaseline, /test -d "\$asar\.unpacked"/);
   assert.match(signedBaseline, /echo "asar=\$asar" >> "\$GITHUB_OUTPUT"/);
+  assert.match(signedBaseline, /echo "app_dir=\$asar_dir" >> "\$GITHUB_OUTPUT"/);
   assert.doesNotMatch(signedBaseline, /dpkg-deb -x/);
   assert.equal(
     (signedBaseline.match(/trap 'rm -rf "\$(?:extracted_asar|fix_root)"' EXIT/g) || []).length,
@@ -137,6 +140,10 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(signedBaseline, /!authed\.includes\(`\.\/\$\{primaryName\}`\)/);
   assert.match(signedBaseline, /const authedFingerprint = authedName\.slice/);
   assert.match(signedBaseline, /primary\.includes\(reverseMarker\)/);
+  assert.match(
+    signedBaseline,
+    /verify-official-linux-features\.js \\\s+"\$extracted_asar" \\\s+"\$\{\{ steps\.upstream\.outputs\.app_dir \}\}"/,
+  );
   assert.match(
     signedBaseline,
     /name: Validate the Nix ELF contract against the official payload[\s\S]*?env:\n          CODEX_INSTALL_DIR:.*matrix\.architecture[\s\S]*?nix\/elf-runtime\.cjs fix[\s\S]*?nix\/elf-runtime\.cjs audit/,
