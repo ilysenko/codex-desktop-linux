@@ -1934,6 +1934,10 @@ const CURRENT_SETTINGS_VISIBILITY_CASES =
   "case`worktrees`:case`local-environments`:case`environments`:return";
 const PATCHED_SETTINGS_VISIBILITY_CASES =
   "case`worktrees`:case`local-environments`:case`agent-workspaces`:case`environments`:return";
+const CURRENT_SETTINGS_PRELOAD_SLUGS =
+  "`hooks-settings`,`gateways`,`local-environments`,`worktrees`,`storage`";
+const PATCHED_SETTINGS_PRELOAD_SLUGS =
+  "`hooks-settings`,`gateways`,`local-environments`,`agent-workspaces`,`worktrees`,`storage`";
 const CURRENT_SETTINGS_ICON_PATTERN = new RegExp(
   `"local-environments":(\\{component:[A-Za-z_$][\\w$]*,commandAsset:[A-Za-z_$][\\w$]*,` +
     `navigation:\\{assets:\\{16:[A-Za-z_$][\\w$]*,20:[A-Za-z_$][\\w$]*\\},ariaHidden:!1\\}\\}),worktrees:`,
@@ -2070,7 +2074,17 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
     const iconPatched = iconMatch != null;
     const casesPatched = patchedSource.includes(PATCHED_SETTINGS_VISIBILITY_CASES);
     const policyPatched = PATCHED_SETTINGS_POLICY_PATTERN.test(patchedSource);
-    const patchedContracts = [iconPatched, casesPatched, policyPatched];
+    const currentPreloadCount = patchedSource.split(CURRENT_SETTINGS_PRELOAD_SLUGS).length - 1;
+    const patchedPreloadCount = patchedSource.split(PATCHED_SETTINGS_PRELOAD_SLUGS).length - 1;
+    if (
+      currentPreloadCount > 1 ||
+      patchedPreloadCount > 1 ||
+      (currentPreloadCount !== 0 && patchedPreloadCount !== 0)
+    ) {
+      throw new Error("could not uniquely resolve current settings preload allowlist");
+    }
+    const preloadPatched = patchedPreloadCount === 1;
+    const patchedContracts = [iconPatched, casesPatched, policyPatched, preloadPatched];
     if (patchedContracts.some(Boolean) && !patchedContracts.every(Boolean)) {
       throw new Error("agent workspace settings visibility is partially patched");
     }
@@ -2079,6 +2093,7 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
         CURRENT_SETTINGS_ICON_PATTERN.test(patchedSource),
         patchedSource.includes(CURRENT_SETTINGS_VISIBILITY_CASES),
         CURRENT_SETTINGS_POLICY_PATTERN.test(patchedSource),
+        currentPreloadCount === 1,
       ];
       if (!currentContracts.every(Boolean)) {
         throw new Error("could not add agent workspace to current settings visibility contracts");
@@ -2094,7 +2109,8 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
           CURRENT_SETTINGS_POLICY_PATTERN,
           (_match, policy) =>
             `"local-environments":${policy},"${SETTINGS_SLUG}":${policy},"mcp-settings":`,
-        );
+        )
+        .replace(CURRENT_SETTINGS_PRELOAD_SLUGS, PATCHED_SETTINGS_PRELOAD_SLUGS);
     }
   }
 
