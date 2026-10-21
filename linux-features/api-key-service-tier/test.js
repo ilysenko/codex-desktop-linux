@@ -43,7 +43,7 @@ function currentModelFixture() {
 }
 
 function currentGateFixture() {
-  return "function gate(e){let t=(0,cache.c)(10),n=read(localHost),r=e?.hostId??n,i=getHost(r),a=i?.authMethod===`chatgpt`||i?.authMethod===`personalAccessToken`,o=i?.authMethod??null,s;t[0]!==r||t[1]!==o?(s={authMethod:o,hostId:r},t[0]=r,t[1]=o,t[2]=s):s=t[2];let{data:c,isPending:l}=query(requirementsQuery,s),u=!!i?.isLoading||a&&l,d;t[3]!==c||t[4]!==u||t[5]!==a?(d=a&&!u&&c!=null?resolveAccess(c):null,t[3]=c,t[4]=u,t[5]=a,t[6]=d):d=t[6];let f=d,p;return t[7]!==u||t[8]!==f?(p={serviceTierAccess:f,isLoading:u},t[7]=u,t[8]=f,t[9]=p):p=t[9],p}";
+  return "function gate(e){let t=(0,cache.c)(10),n=read(localHost),r=e?.hostId??n,i=getHost(r),a=i?.authMethod===`chatgpt`||i?.authMethod===`personalAccessToken`||i?.authMethod===`amazonBedrock`,o=i?.authMethod??null,s;t[0]!==r||t[1]!==o?(s={authMethod:o,hostId:r},t[0]=r,t[1]=o,t[2]=s):s=t[2];let{data:c,isPending:l}=query(requirementsQuery,s),u=!!i?.isLoading||a&&l,d;t[3]!==c||t[4]!==u||t[5]!==a?(d=a&&!u&&c!=null?resolveAccess(c):null,t[3]=c,t[4]=u,t[5]=a,t[6]=d):d=t[6];let f=d,p;return t[7]!==u||t[8]!==f?(p={serviceTierAccess:f,isLoading:u},t[7]=u,t[8]=f,t[9]=p):p=t[9],p}";
 }
 
 function gateHarness(source) {
@@ -264,7 +264,7 @@ test("current service-tier access allows API-key Fast without enabling Ultrafast
 
 test("current gate preserves account requirements and pending state", () => {
   const driver = gateHarness(applyApiKeyServiceTierGatePatch(currentGateFixture()));
-  for (const authMethod of ["chatgpt", "personalAccessToken"]) {
+  for (const authMethod of ["chatgpt", "personalAccessToken", "amazonBedrock"]) {
     driver.setHost({authMethod, isLoading: false});
     const access = {fast: false, ultrafast: true};
     driver.setRequirements({access});
@@ -275,7 +275,7 @@ test("current gate preserves account requirements and pending state", () => {
     driver.setRequirements(null);
     assert.deepEqual(driver.gate(), {serviceTierAccess: null, isLoading: false});
   }
-  assert.equal(driver.calls(), 2);
+  assert.equal(driver.calls(), 3);
 });
 
 test("memoized current gate recomputes access when API-key authentication changes", () => {

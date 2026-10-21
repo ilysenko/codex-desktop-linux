@@ -13,11 +13,7 @@ const {
 } = require("./implementation.js");
 
 function currentAppShellTabLayoutFixture() {
-  return [
-    "function o9a(){let re=(e,t)=>{K(t.scrollWidth>t.clientWidth)},ie=Xu(re),ye=`@max-[4rem]/app-shell-tab:invisible`;return jsx(`button`,{ref:ie,\"data-app-shell-tab-close-button\":!0})}",
-    "function m9a(e){let{animateLayout:n,targetWidth:O,sharesTabWidth:m}=e,C=(0,React.useContext)(InitialContext),N=O==null?m?MZt:jZt:pZt,ie={maxWidth:`160px`},se=n&&C?.initial!==!1?N:!1,ve={},te=`@container/app-shell-tab`;return jsx(kf.div,{className:te,animate:ie,\"data-app-shell-tab-controller\":ke,initial:se,style:{},transition:ve,onAnimationComplete:Re})}",
-    "var jZt={maxWidth:`0px`,minWidth:`0px`},MZt={maxWidth:`0px`,\"--tab-size-progress\":0},pZt={width:`0px`};",
-  ].join("");
+  return "function tabs(){let map=new Map,Qe=(e,t)=>{let{key:n}=e,r=map.get(n);return r==null?null:jsx(Tab,{...t,activateOnClick:!0,animateLayout:!r.isWorkspaceHome&&t.animateLayout,animateExit:!r.isWorkspaceHome&&t.animateExit,closeButtonTabIndex:-1,controller:C,dragActivator:`tab`,tab:r,shortcutHint:null})};return Qe}";
 }
 
 test("linux-performance-workarounds remains an opt-in renderer-only feature", () => {
@@ -32,18 +28,17 @@ test("linux-performance-workarounds remains an opt-in renderer-only feature", ()
   );
   assert.equal(descriptors[0].pattern.test("app-primary-a0bff570446b.js"), false);
   assert.equal(descriptors[0].pattern.test("app-initial-cccb87527a41.js"), true);
-  assert.equal(descriptors[1].pattern.test("app-initial-cccb87527a41.js"), true);
+  assert.equal(descriptors[1].pattern.test("thread-app-shell-chrome-1cbe88398368.js"), true);
   assert.equal(descriptors[2].pattern.test("app-primary-a0bff570446b.css"), true);
   assert.equal(descriptors[2].pattern.test("app-initial-cccb87527a41.css"), true);
 });
 
-test("current app-shell tab workaround disables mount animation and defers overflow measurement", () => {
+test("current app-shell tab workaround disables tab layout animation", () => {
   const source = currentAppShellTabLayoutFixture();
   assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), true);
   const patched = applyLinuxAppShellTabLayoutPerformancePatch(source);
   assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxScheduleAppShellTabOverflow\(t,K\)/u);
-  assert.match(patched, /,se=!1,/u);
+  assert.match(patched, /animateLayout:!1,animateExit:!r\.isWorkspaceHome&&t\.animateExit/u);
   assert.doesNotThrow(() => new Function(patched));
   assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(patched), true);
   assert.equal(applyLinuxAppShellTabLayoutPerformancePatch(patched), patched);
@@ -52,16 +47,12 @@ test("current app-shell tab workaround disables mount animation and defers overf
 test("app-shell tab workaround fails closed for missing, duplicate, mixed, and partial owners", () => {
   const owner = currentAppShellTabLayoutFixture();
   const patched = applyLinuxAppShellTabLayoutPerformancePatch(owner);
-  const renamed = owner
-    .replaceAll("o9a", "o8a")
-    .replaceAll("m9a", "m8a")
-    .replaceAll("jZt", "jYt")
-    .replaceAll("MZt", "MYt");
+  const renamed = owner.replaceAll("Qe", "Xe").replaceAll("map", "tabsById");
   const cases = [
-    owner.replace("initial:se", "initial:!1"),
+    owner.replace("dragActivator:`tab`", "dragActivator:`panel`"),
     owner + renamed,
     patched + renamed,
-    owner.replace("function o9a", "function unrelated").replace("data-app-shell-tab-close-button", "data-close-button"),
+    owner.replace("animateExit:!r.isWorkspaceHome&&t.animateExit", "animateExit:t.animateExit"),
   ];
   for (const source of cases) {
     assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), false);

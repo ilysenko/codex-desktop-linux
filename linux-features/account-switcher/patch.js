@@ -56,20 +56,23 @@ function applyMain(source) {
 
 function applyUi(source) {
   if (source.includes(UI_MARKER)) return source;
-  const identity = unique(source, new RegExp(
-    `function ${IDENT}\\(${IDENT}\\)\\{let ${IDENT}=\\(0,${IDENT}\\.c\\)\\(\\d+\\),\\{sidebarFooter:${IDENT},ambientUsage:${IDENT},hideUsage:${IDENT},open:${IDENT},onClose:(${IDENT})\\}=${IDENT},[^;]{0,200}?(${IDENT})=(${IDENT})\\((${IDENT})\\)`, "g"));
   const dispatch = unique(source, new RegExp(`(${IDENT})\\.dispatchMessage\\(\\\`avatar-overlay-open\\\`,\\{\\}\\)`, "g"));
-  const jsx = unique(source, new RegExp(`\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}),\\{accountIcon:${IDENT},accountSwitcher:${IDENT},additionalItems:(${IDENT}),`, "g"));
-  const regular = unique(source, new RegExp(`children:\\[(${IDENT}),(${IDENT}),(${IDENT}),null,(${IDENT}),(${IDENT}),null,null,`, "g"));
-  const settings = unique(source, new RegExp(`\\(0,${IDENT}\\.jsx\\)\\((${IDENT}),\\{leftIconAsset:${IDENT},keyboardShortcut:${IDENT},onClick:${IDENT},children:${IDENT}\\}\\)`, "g"));
+  const jsx = unique(source, new RegExp(
+    `\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}),\\{accountIcon:${IDENT},accountSwitcher:${IDENT},additionalItems:(${IDENT}),` +
+      `[\\s\\S]{0,500}?onCloseMenu:(${IDENT}),`, "g"));
+  const settings = unique(source, new RegExp(
+    `let (${IDENT});[\\s\\S]{0,350}?codex\\.profileDropdown\\.settingsPage[\\s\\S]{0,350}?` +
+      `let (${IDENT});[\\s\\S]{0,350}?\\2=\\(0,${IDENT}\\.jsx\\)\\((${IDENT}),` +
+      `\\{leftIconAsset:${IDENT},keyboardShortcut:${IDENT},onClick:${IDENT},children:\\1\\}\\)`, "g"));
   const intl = unique(source, new RegExp(`(${IDENT})\\.formatMessage\\(\\{id:\\\`codex\\.profileDropdown\\.copyUserIdForEmail\\\``, "g"));
-  if (!identity || !dispatch || !jsx || !regular || !settings || !intl || !source.includes("codex.profileDropdown.settingsPage")) {
+  const regular = settings == null ? null : unique(source, new RegExp(
+    `children:\\[(${IDENT}),(${IDENT}),${settings[2]}\\]`, "g"));
+  if (!dispatch || !jsx || !regular || !settings || !intl) {
     console.warn("WARN: Account switcher profile-menu contract drifted - skipping patch");
     return source;
   }
-  const [, close] = identity;
-  const [, jsxAlias, , additional] = jsx;
-  const [, menuItem] = settings;
+  const [, jsxAlias, , additional, close] = jsx;
+  const menuItem = settings[3];
   const binding = menuItemImport(source, menuItem);
   if (!binding) {
     console.warn("WARN: Account switcher menu-item import contract drifted - skipping patch");
@@ -88,8 +91,8 @@ function applyUi(source) {
   source = source.replace(jsx[0], jsx[0].replace(`additionalItems:${additional},`,
     `additionalItems:(0,${jsxAlias}.jsxs)(${jsxAlias}.Fragment,{children:[${additional},${row}]}),/*${UI_MARKER}*/`));
   source = source.replace(regular[0], regular[0].replace(
-    `children:[${regular[1]},${regular[2]},${regular[3]},null,`,
-    `children:[${regular[1]},${regular[2]},${regular[3]},${row},`));
+    `children:[${regular[1]},${regular[2]},${settings[2]}]`,
+    `children:[${regular[1]},${regular[2]},${settings[2]},${row}]`));
   return source;
 }
 

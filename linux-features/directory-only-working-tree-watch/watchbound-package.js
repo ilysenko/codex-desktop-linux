@@ -82,7 +82,7 @@ function nodeVersionSupportsWatchbound(version) {
   return major > 18 || (major === 18 && (minor > 15 || (minor === 15 && patch >= 0)));
 }
 
-function extractedAppElectronVersion(extractedDir) {
+function extractedAppElectronVersion(extractedDir, qualifiedElectronVersion) {
   const packagePath = path.join(path.resolve(extractedDir), "package.json");
   const stat = fs.lstatSync(packagePath, { throwIfNoEntry: false });
   if (!stat?.isFile() || stat.isSymbolicLink()) {
@@ -96,10 +96,14 @@ function extractedAppElectronVersion(extractedDir) {
   } catch (error) {
     throw new Error(`Could not read extracted app package metadata: ${error.message}`);
   }
-  return exactVersion(
-    metadata.devDependencies?.electron ?? metadata.dependencies?.electron,
-    "Extracted app Electron version",
-  );
+  const declaredVersion = metadata.devDependencies?.electron ?? metadata.dependencies?.electron;
+  if (declaredVersion == null) {
+    return exactVersion(
+      qualifiedElectronVersion,
+      "Watchbound qualified Electron version",
+    );
+  }
+  return exactVersion(declaredVersion, "Extracted app Electron version");
 }
 
 function validateTargetRuntime(
@@ -108,7 +112,10 @@ function validateTargetRuntime(
   targetElectronVersion,
   targetNodeVersion,
 ) {
-  const appElectronVersion = extractedAppElectronVersion(extractedDir);
+  const appElectronVersion = extractedAppElectronVersion(
+    extractedDir,
+    manifest.runtime.electron,
+  );
   const buildElectronVersion = targetElectronVersion == null || targetElectronVersion === ""
     ? appElectronVersion
     : exactVersion(targetElectronVersion, "Target Electron version");

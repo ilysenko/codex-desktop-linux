@@ -1943,10 +1943,6 @@ const PATCHED_SETTINGS_ICON_PATTERN = new RegExp(
     `navigation:\\{assets:\\{16:[A-Za-z_$][\\w$]*,20:[A-Za-z_$][\\w$]*\\},ariaHidden:!1\\}\\}),` +
     `"agent-workspaces":\\1,worktrees:`,
 );
-const CURRENT_SETTINGS_PRELOAD_SLUGS =
-  "`hooks-settings`,`local-environments`,`worktrees`";
-const PATCHED_SETTINGS_PRELOAD_SLUGS =
-  "`hooks-settings`,`local-environments`,`agent-workspaces`,`worktrees`";
 const CURRENT_SETTINGS_POLICY_PATTERN =
   /"local-environments":([A-Za-z_$][\w$]*|`codexLocal`),"mcp-settings":/;
 const PATCHED_SETTINGS_POLICY_PATTERN =
@@ -2073,19 +2069,15 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
     const iconMatch = patchedSource.match(PATCHED_SETTINGS_ICON_PATTERN);
     const iconPatched = iconMatch != null;
     const casesPatched = patchedSource.includes(PATCHED_SETTINGS_VISIBILITY_CASES);
-    const preloadPatched = patchedSource.includes(PATCHED_SETTINGS_PRELOAD_SLUGS);
     const policyPatched = PATCHED_SETTINGS_POLICY_PATTERN.test(patchedSource);
-    const patchedContracts = [iconPatched, casesPatched, preloadPatched, policyPatched];
+    const patchedContracts = [iconPatched, casesPatched, policyPatched];
     if (patchedContracts.some(Boolean) && !patchedContracts.every(Boolean)) {
       throw new Error("agent workspace settings visibility is partially patched");
     }
     if (!iconPatched) {
-      const currentPreloadCount =
-        patchedSource.split(CURRENT_SETTINGS_PRELOAD_SLUGS).length - 1;
       const currentContracts = [
         CURRENT_SETTINGS_ICON_PATTERN.test(patchedSource),
         patchedSource.includes(CURRENT_SETTINGS_VISIBILITY_CASES),
-        currentPreloadCount === 1,
         CURRENT_SETTINGS_POLICY_PATTERN.test(patchedSource),
       ];
       if (!currentContracts.every(Boolean)) {
@@ -2098,7 +2090,6 @@ function applyAgentWorkspaceSettingsPagePatch(currentSource) {
             `"local-environments":${localEnvironmentsDescriptor},"${SETTINGS_SLUG}":${localEnvironmentsDescriptor},worktrees:`,
         )
         .replace(CURRENT_SETTINGS_VISIBILITY_CASES, PATCHED_SETTINGS_VISIBILITY_CASES)
-        .replace(CURRENT_SETTINGS_PRELOAD_SLUGS, PATCHED_SETTINGS_PRELOAD_SLUGS)
         .replace(
           CURRENT_SETTINGS_POLICY_PATTERN,
           (_match, policy) =>

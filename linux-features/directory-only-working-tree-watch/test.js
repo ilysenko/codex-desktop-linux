@@ -1171,11 +1171,12 @@ function createPackageFixture(t, name, version, files, metadataOverrides = {}) {
 const QUALIFIED_ELECTRON_VERSION = "42.3.0";
 
 function writeExtractedAppRuntime(extractedDir, electron = QUALIFIED_ELECTRON_VERSION) {
-  writeJson(path.join(extractedDir, "package.json"), {
+  const metadata = {
     name: "openai-codex-electron",
     version: "0.0.0-test",
-    devDependencies: { electron },
-  });
+  };
+  if (electron != null) metadata.devDependencies = { electron };
+  writeJson(path.join(extractedDir, "package.json"), metadata);
 }
 
 function packageStageOptions(extractedDir, fixture, overrides = {}) {
@@ -1376,6 +1377,19 @@ test("Watchbound staging uses pinned runtime metadata without executing Electron
     node: "24.15.0",
     qualification: "pinned-artifact-manifest",
   });
+
+  writeExtractedAppRuntime(extractedDir, null);
+  assert.deepEqual(validateTargetRuntime(
+    extractedDir,
+    fixture.manifest,
+    undefined,
+    undefined,
+  ), {
+    electron: QUALIFIED_ELECTRON_VERSION,
+    node: "24.15.0",
+    qualification: "pinned-artifact-manifest",
+  });
+  writeExtractedAppRuntime(extractedDir);
 
   assert.deepEqual(validateTargetRuntime(
     extractedDir,

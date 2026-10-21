@@ -100,7 +100,7 @@ function runtimeContract(source) {
     "Quick Chat visibility helper")[1];
   const context = containingFunction(source, "Reply to the user query using the following additional context from their Codex conversation:");
   const contextWrapper = uniqueMatch(source,
-    `function (${IDENT})\\((${IDENT}),(${IDENT})\\)\\{return ${context.name}\\(\\2,` +
+    `function (${IDENT})\\((${IDENT}),(${IDENT})\\)\\{return ${escapeRegExp(context.name)}\\(\\2,` +
       `\\{isBackgroundSubagentsEnabled:!0,sourceThread:\\3\\}\\)\\}`,
     "Quick Chat source-context helper")[1];
   const accountContext = containingFunction(source, "Context window or account changed");

@@ -3,8 +3,11 @@
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const PATCH_MARKER = "codexLinuxApiKeyFastTier";
 const MODEL_MARKER = "codexLinuxApiKeyServiceTierModel";
+const ACCOUNT_AUTH_METHODS =
+  `${JS_IDENT}\\?\\.authMethod===\\\`chatgpt\\\`\\|\\|${JS_IDENT}\\?\\.authMethod===\\\`personalAccessToken\\\`` +
+  `\\|\\|${JS_IDENT}\\?\\.authMethod===\\\`amazonBedrock\\\``;
 const SERVICE_TIER_GATE_SHAPE = new RegExp(
-  `authMethod===\\\`chatgpt\\\`\\|\\|${JS_IDENT}\\?\\.authMethod===\\\`personalAccessToken\\\`` +
+  ACCOUNT_AUTH_METHODS +
     `[\\s\\S]{0,1800}?serviceTierAccess:${JS_IDENT},isLoading:${JS_IDENT}`,
 );
 const API_KEY_ACCESS = "{fast:!0,ultrafast:!1}";
@@ -15,7 +18,8 @@ function serviceTierGatePattern(patched = false) {
     : "null";
   const cacheAuth = patched ? "\\k<auth>" : "\\k<account>";
   return new RegExp(
-    `(?<account>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod===\\\`chatgpt\\\`\\|\\|\\k<host>\\?\\.authMethod===\\\`personalAccessToken\\\`,` +
+    `(?<account>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod===\\\`chatgpt\\\`\\|\\|\\k<host>\\?\\.authMethod===\\\`personalAccessToken\\\`` +
+      `\\|\\|\\k<host>\\?\\.authMethod===\\\`amazonBedrock\\\`,` +
     `(?<auth>${JS_IDENT})=\\k<host>\\?\\.authMethod\\?\\?null[\\s\\S]{0,500}?` +
     `(?<loading>${JS_IDENT})=!!\\k<host>\\?\\.isLoading\\|\\|\\k<account>&&${JS_IDENT},(?<result>${JS_IDENT});` +
     `(?<cache>${JS_IDENT})\\[3\\]!==(?<requirements>${JS_IDENT})\\|\\|\\k<cache>\\[4\\]!==\\k<loading>\\|\\|\\k<cache>\\[5\\]!==${cacheAuth}\\?` +

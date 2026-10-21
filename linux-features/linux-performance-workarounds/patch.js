@@ -27,7 +27,7 @@ module.exports = [
     phase: "webview-asset",
     order: 20_110,
     ciPolicy: "optional",
-    pattern: /^app-initial-[^.]+\.js$/,
+    pattern: /^[A-Za-z0-9_-]+\.js$/,
     assetMatch: matchesLinuxAppShellTabLayoutPerformanceContract,
     missingDescription: "app-shell tab layout bundle",
     skipDescription: "app-shell tab layout performance workaround",
