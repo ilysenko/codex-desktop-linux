@@ -107,10 +107,12 @@ fallback routes. Watchbound itself accepts the relocated interpreter without
 a consumer-side compatibility path.
 
 Build-time runtime qualification does not execute the upstream Electron
-binary. The extracted app's pinned Electron dependency must match the exact
-Electron version in the checked-in Watchbound artifact manifest, and an
-explicit target Node version must satisfy Watchbound's published `>=18.15.0`
-range. A mismatch rejects this enabled feature before package materialization.
+binary. When the extracted app declares an Electron dependency, its exact
+version must match the checked-in Watchbound artifact manifest. If that
+dependency metadata is absent, qualification uses the manifest's checked-in
+Electron version for the qualified artifact runtime. An explicit target Node
+version must satisfy Watchbound's published `>=18.15.0` range. A mismatch
+rejects this enabled feature before package materialization.
 
 Nix builds do not run npm or perform unpinned registry resolution. The flake
 pins Watchbound's `v2.1.2` source commit and archive digest, builds the selected
