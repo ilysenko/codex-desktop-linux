@@ -82,7 +82,7 @@ function nodeVersionSupportsWatchbound(version) {
   return major > 18 || (major === 18 && (minor > 15 || (minor === 15 && patch >= 0)));
 }
 
-function extractedAppElectronVersion(extractedDir, qualifiedElectronVersion) {
+function extractedAppElectronVersion(extractedDir) {
   const packagePath = path.join(path.resolve(extractedDir), "package.json");
   const stat = fs.lstatSync(packagePath, { throwIfNoEntry: false });
   if (!stat?.isFile() || stat.isSymbolicLink()) {
@@ -96,14 +96,89 @@ function extractedAppElectronVersion(extractedDir, qualifiedElectronVersion) {
   } catch (error) {
     throw new Error(`Could not read extracted app package metadata: ${error.message}`);
   }
-  const declaredVersion = metadata.devDependencies?.electron ?? metadata.dependencies?.electron;
-  if (declaredVersion == null) {
-    return exactVersion(
-      qualifiedElectronVersion,
-      "Watchbound qualified Electron version",
+  const declaredVersions = [
+    metadata.devDependencies?.electron,
+    metadata.dependencies?.electron,
+  ].filter((version) => version != null);
+  const uniqueVersions = [...new Set(declaredVersions)];
+  if (uniqueVersions.length > 1) {
+    throw new Error(
+      `Extracted app Electron metadata is ambiguous: ${uniqueVersions.join(", ")}`,
     );
   }
-  return exactVersion(declaredVersion, "Extracted app Electron version");
+  if (uniqueVersions.length === 0) return null;
+  return exactVersion(uniqueVersions[0], "Extracted app Electron version");
+}
+
+function runtimeExecutablePath(extractedDir, explicitPath) {
+  const candidates = explicitPath == null || explicitPath === ""
+    ? [
+        path.join(path.resolve(extractedDir), "ChatGPT"),
+        process.env.CODEX_UPSTREAM_APP_DIR == null
+          ? null
+          : path.join(process.env.CODEX_UPSTREAM_APP_DIR, "ChatGPT"),
+        process.env.UPSTREAM_APP_DIR == null
+          ? null
+          : path.join(process.env.UPSTREAM_APP_DIR, "ChatGPT"),
+      ]
+    : [path.resolve(explicitPath)];
+  const observed = new Map();
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    const stat = fs.lstatSync(candidate, { throwIfNoEntry: false });
+    if (stat == null) continue;
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`Observed upstream runtime executable is unsafe: ${candidate}`);
+    }
+    observed.set(fs.realpathSync(candidate), candidate);
+  }
+  if (observed.size === 0) {
+    throw new Error(
+      "Observed upstream runtime evidence is missing: could not locate the official ChatGPT executable",
+    );
+  }
+  if (observed.size !== 1) {
+    throw new Error(
+      `Observed upstream runtime evidence is ambiguous: ${[...observed.values()].join(", ")}`,
+    );
+  }
+  return [...observed.keys()][0];
+}
+
+function observedRuntimeNodeVersion(executablePath) {
+  const descriptor = fs.openSync(executablePath, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  const overlap = 64;
+  let tail = Buffer.alloc(0);
+  let position = 0;
+  const anchors = new Map();
+  try {
+    for (;;) {
+      const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, position);
+      if (bytesRead === 0) break;
+      const contents = Buffer.concat([tail, buffer.subarray(0, bytesRead)]);
+      const baseOffset = position - tail.length;
+      const source = contents.toString("latin1");
+      for (const match of source.matchAll(/node\.js\/v(\d+\.\d+\.\d+)/gu)) {
+        anchors.set(baseOffset + match.index, match[1]);
+      }
+      tail = Buffer.from(contents.subarray(Math.max(0, contents.length - overlap)));
+      position += bytesRead;
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  if (anchors.size === 0) {
+    throw new Error(
+      `Observed upstream runtime evidence is missing from ${executablePath}`,
+    );
+  }
+  if (anchors.size !== 1) {
+    throw new Error(
+      `Observed upstream runtime evidence is ambiguous in ${executablePath}`,
+    );
+  }
+  return exactVersion([...anchors.values()][0], "Observed upstream Node.js version");
 }
 
 function validateTargetRuntime(
@@ -111,15 +186,13 @@ function validateTargetRuntime(
   manifest,
   targetElectronVersion,
   targetNodeVersion,
+  runtimeExecutable,
 ) {
-  const appElectronVersion = extractedAppElectronVersion(
-    extractedDir,
-    manifest.runtime.electron,
-  );
+  const appElectronVersion = extractedAppElectronVersion(extractedDir);
   const buildElectronVersion = targetElectronVersion == null || targetElectronVersion === ""
-    ? appElectronVersion
+    ? manifest.runtime.electron
     : exactVersion(targetElectronVersion, "Target Electron version");
-  if (appElectronVersion !== buildElectronVersion) {
+  if (appElectronVersion != null && appElectronVersion !== buildElectronVersion) {
     throw new Error(
       `Extracted app Electron ${appElectronVersion} does not match build target ` +
         `${buildElectronVersion}`,
@@ -139,24 +212,33 @@ function validateTargetRuntime(
         `${manifest.runtime.node}`,
     );
   }
+  let qualifiedNode = manifest.runtime.node;
+  let qualification = "pinned-artifact-manifest";
+  if (appElectronVersion == null) {
+    qualifiedNode = observedRuntimeNodeVersion(
+      runtimeExecutablePath(extractedDir, runtimeExecutable),
+    );
+    qualification = "signed-runtime-executable";
+  }
   if (targetNodeVersion != null && targetNodeVersion !== "") {
     const targetNode = exactVersion(targetNodeVersion, "Target Node.js version");
-    if (nodeVersionSupportsWatchbound(targetNode)) {
-      return {
-        electron: buildElectronVersion,
-        node: targetNode,
-        qualification: "pinned-artifact-manifest",
-      };
+    if (appElectronVersion == null && targetNode !== qualifiedNode) {
+      throw new Error(
+        `Observed upstream Node.js ${qualifiedNode} does not match build target ${targetNode}`,
+      );
     }
+    qualifiedNode = targetNode;
+  }
+  if (!nodeVersionSupportsWatchbound(qualifiedNode)) {
     throw new Error(
       `Watchbound ${manifest.version} requires Node.js ${WATCHBOUND_NODE_RANGE}, ` +
-        `got Node.js ${targetNode}`,
+        `got Node.js ${qualifiedNode}`,
     );
   }
   return {
     electron: buildElectronVersion,
-    node: manifest.runtime.node,
-    qualification: "pinned-artifact-manifest",
+    node: qualifiedNode,
+    qualification,
   };
 }
 
@@ -1542,6 +1624,7 @@ async function stageWatchboundPackages(options) {
     options.manifest,
     options.targetElectronVersion,
     options.targetNodeVersion,
+    options.runtimeExecutable,
   );
   const materializePackage = options.materializePackage ?? defaultMaterializePackage;
   const artifacts = [

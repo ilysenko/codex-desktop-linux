@@ -1179,6 +1179,13 @@ function writeExtractedAppRuntime(extractedDir, electron = QUALIFIED_ELECTRON_VE
   writeJson(path.join(extractedDir, "package.json"), metadata);
 }
 
+function writeObservedRuntimeExecutable(extractedDir, ...nodeVersions) {
+  writeFile(
+    path.join(extractedDir, "ChatGPT"),
+    Buffer.from(nodeVersions.map((version) => `node.js/v${version}\0`).join("")),
+  );
+}
+
 function packageStageOptions(extractedDir, fixture, overrides = {}) {
   return {
     extractedDir,
@@ -1348,7 +1355,7 @@ test("the artifact manifest requires every supported Codex architecture", (t) =>
   }
 });
 
-test("Watchbound staging uses pinned runtime metadata without executing Electron", async (t) => {
+test("Watchbound staging uses observed runtime evidence without executing Electron", async (t) => {
   const fixture = packageFixtureManifest(t);
   const extractedDir = tempDirectory(t, "watchbound-runtime-app-");
   writeExtractedAppRuntime(extractedDir);
@@ -1379,6 +1386,17 @@ test("Watchbound staging uses pinned runtime metadata without executing Electron
   });
 
   writeExtractedAppRuntime(extractedDir, null);
+  assert.throws(
+    () => validateTargetRuntime(
+      extractedDir,
+      fixture.manifest,
+      undefined,
+      undefined,
+    ),
+    /Observed upstream runtime evidence is missing/u,
+  );
+
+  writeObservedRuntimeExecutable(extractedDir, "24.15.0");
   assert.deepEqual(validateTargetRuntime(
     extractedDir,
     fixture.manifest,
@@ -1387,8 +1405,30 @@ test("Watchbound staging uses pinned runtime metadata without executing Electron
   ), {
     electron: QUALIFIED_ELECTRON_VERSION,
     node: "24.15.0",
-    qualification: "pinned-artifact-manifest",
+    qualification: "signed-runtime-executable",
   });
+
+  writeObservedRuntimeExecutable(extractedDir, "24.15.0", "24.16.0");
+  assert.throws(
+    () => validateTargetRuntime(
+      extractedDir,
+      fixture.manifest,
+      undefined,
+      undefined,
+    ),
+    /Observed upstream runtime evidence is ambiguous/u,
+  );
+
+  writeObservedRuntimeExecutable(extractedDir, "24.15.0");
+  assert.throws(
+    () => validateTargetRuntime(
+      extractedDir,
+      fixture.manifest,
+      undefined,
+      "24.16.0",
+    ),
+    /Observed upstream Node\.js 24\.15\.0 does not match build target 24\.16\.0/u,
+  );
   writeExtractedAppRuntime(extractedDir);
 
   assert.deepEqual(validateTargetRuntime(
