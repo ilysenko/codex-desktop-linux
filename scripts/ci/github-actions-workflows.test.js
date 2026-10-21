@@ -72,7 +72,18 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(signedBaseline, /validate-patch-report\.js/);
   assert.match(signedBaseline, /--profile upstream-build/);
   assert.match(signedBaseline, /name: Test required core patches against the signed bundle/);
-  assert.match(signedBaseline, /dpkg-deb -x "\$\{\{ steps\.upstream\.outputs\.package \}\}"/);
+  assert.match(
+    signedBaseline,
+    /dpkg-deb --fsys-tarfile "\$package" \| \\\s+tar -xf - -C "\$asar_dir" --strip-components=5 \\\s+\.\/usr\/lib\/chatgpt\/resources\/app\.asar \\\s+\.\/usr\/lib\/chatgpt\/resources\/app\.asar\.unpacked/,
+  );
+  assert.match(signedBaseline, /test -s "\$asar"/);
+  assert.match(signedBaseline, /test -d "\$asar\.unpacked"/);
+  assert.match(signedBaseline, /echo "asar=\$asar" >> "\$GITHUB_OUTPUT"/);
+  assert.doesNotMatch(signedBaseline, /dpkg-deb -x/);
+  assert.equal(
+    (signedBaseline.match(/trap 'rm -rf "\$(?:extracted_asar|fix_root)"' EXIT/g) || []).length,
+    5,
+  );
   assert.match(signedBaseline, /CODEX_SIGNED_EXTRACTED_APP="\$extracted_asar"/);
   assert.match(signedBaseline, /corePatchDescriptors\(\)/);
   assert.match(signedBaseline, /ciPolicy \}\) => ciPolicy === "required-upstream"/);
@@ -101,7 +112,7 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(signedBaseline, /signed renderer regression is not bound to the expected campaign/);
   assert.match(
     signedBaseline,
-    /"\$upstream_root\/usr\/lib\/chatgpt\/resources\/app\.asar"/,
+    /"\$\{\{ steps\.upstream\.outputs\.asar \}\}"/,
   );
   assert.match(signedBaseline, /function requireUniqueAsset\(pattern, description\)/);
   assert.match(signedBaseline, /matches\.length !== 1/);
