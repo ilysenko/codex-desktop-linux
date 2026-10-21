@@ -96,6 +96,7 @@ jobs:
           echo "package=$package" >> "$GITHUB_OUTPUT"
           echo "asar=$asar" >> "$GITHUB_OUTPUT"
           echo "app_dir=$asar_dir" >> "$GITHUB_OUTPUT"
+          echo "executable=$asar_dir/ChatGPT" >> "$GITHUB_OUTPUT"
       - name: Require the dispatched signed campaign
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -115,6 +116,49 @@ jobs:
           if (!/^[0-9a-f]{64}$/.test(process.env.EXPECTED_RELEASE_ID)) {
             throw new Error("invalid dispatched release identity");
           }
+          NODE
+      - name: Qualify Watchbound against the signed runtime executable
+        run: |
+          set -euo pipefail
+          official_asar="$(realpath -- "${{ steps.upstream.outputs.asar }}")"
+          runtime_metadata="$(mktemp -d)"
+          trap 'rm -rf "$runtime_metadata"' EXIT
+          (
+            cd "$runtime_metadata"
+            npx --yes @electron/asar extract-file \
+              "$official_asar" \
+              package.json
+          )
+          test -s "$runtime_metadata/package.json"
+          node - \
+            "$runtime_metadata" \
+            "${{ steps.upstream.outputs.executable }}" \
+            "${{ matrix.architecture }}" <<'NODE'
+          const fs = require("node:fs");
+          const {
+            validateArtifactManifest,
+            validateTargetRuntime,
+          } = require("./linux-features/directory-only-working-tree-watch/watchbound-package.js");
+          const manifest = JSON.parse(fs.readFileSync(
+            "linux-features/directory-only-working-tree-watch/watchbound-artifacts.json",
+            "utf8",
+          ));
+          validateArtifactManifest(manifest);
+          const runtime = validateTargetRuntime(
+            process.argv[2],
+            manifest,
+            undefined,
+            undefined,
+            process.argv[3],
+          );
+          if (runtime.qualification !== "signed-runtime-executable") {
+            throw new Error(
+              `Watchbound ${process.argv[4]} runtime qualification did not use the signed executable`,
+            );
+          }
+          console.log(
+            `Watchbound ${process.argv[4]} runtime qualified from signed executable: Node.js ${runtime.node}`,
+          );
           NODE
       - name: Build required default baseline
         env:

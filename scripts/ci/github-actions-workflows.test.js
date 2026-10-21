@@ -82,10 +82,11 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(signedBaseline, /test -d "\$asar\.unpacked"/);
   assert.match(signedBaseline, /echo "asar=\$asar" >> "\$GITHUB_OUTPUT"/);
   assert.match(signedBaseline, /echo "app_dir=\$asar_dir" >> "\$GITHUB_OUTPUT"/);
+  assert.match(signedBaseline, /echo "executable=\$asar_dir\/ChatGPT" >> "\$GITHUB_OUTPUT"/);
   assert.doesNotMatch(signedBaseline, /dpkg-deb -x/);
   assert.equal(
-    (signedBaseline.match(/trap 'rm -rf "\$(?:extracted_asar|fix_root)"' EXIT/g) || []).length,
-    5,
+    (signedBaseline.match(/trap 'rm -rf "\$(?:extracted_asar|fix_root|runtime_metadata)"' EXIT/g) || []).length,
+    6,
   );
   assert.match(signedBaseline, /CODEX_SIGNED_EXTRACTED_APP="\$extracted_asar"/);
   assert.match(signedBaseline, /corePatchDescriptors\(\)/);
@@ -151,6 +152,23 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(
     signedBaseline,
     /nix\/elf-runtime\.cjs validate-upstream[\s\S]*?--root "\$CODEX_INSTALL_DIR"[\s\S]*?--arch "\$\{\{ matrix\.architecture \}\}"/,
+  );
+  assert.match(
+    signedBaseline,
+    /matrix:\n        architecture: \[amd64, arm64\][\s\S]*?name: Qualify Watchbound against the signed runtime executable\n        run:/,
+  );
+  assert.match(
+    signedBaseline,
+    /official_asar="\$\(realpath -- "\$\{\{ steps\.upstream\.outputs\.asar \}\}"\)"[\s\S]*?@electron\/asar extract-file \\\s+"\$official_asar" \\\s+package\.json[\s\S]*?test -s "\$runtime_metadata\/package\.json"[\s\S]*?"\$runtime_metadata" \\\s+"\$\{\{ steps\.upstream\.outputs\.executable \}\}" \\\s+"\$\{\{ matrix\.architecture \}\}"/,
+  );
+  assert.match(signedBaseline, /validateArtifactManifest\(manifest\)/);
+  assert.match(
+    signedBaseline,
+    /validateTargetRuntime\(\s+process\.argv\[2\],[\s\S]*?process\.argv\[3\],\s+\)/,
+  );
+  assert.match(
+    signedBaseline,
+    /runtime\.qualification !== "signed-runtime-executable"/,
   );
 
   const packageMatrix = job(workflow, "package-matrix");
