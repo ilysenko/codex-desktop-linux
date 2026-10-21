@@ -1486,6 +1486,37 @@ test("Watchbound staging uses observed runtime evidence without executing Electr
   );
 });
 
+test("Watchbound staging prefers the copied app runtime over the upstream fallback", async (t) => {
+  const fixture = packageFixtureManifest(t);
+  const extractedDir = tempDirectory(t, "watchbound-runtime-copied-app-");
+  const upstreamAppDir = tempDirectory(t, "watchbound-runtime-upstream-app-");
+  writeExtractedAppRuntime(extractedDir, null);
+  writeObservedRuntimeExecutable(extractedDir, "24.15.0");
+  writeObservedRuntimeExecutable(upstreamAppDir, "24.16.0");
+
+  const previousUpstreamAppDir = process.env.UPSTREAM_APP_DIR;
+  process.env.UPSTREAM_APP_DIR = upstreamAppDir;
+  t.after(() => {
+    if (previousUpstreamAppDir == null) delete process.env.UPSTREAM_APP_DIR;
+    else process.env.UPSTREAM_APP_DIR = previousUpstreamAppDir;
+  });
+
+  const result = await stageWatchboundPackages(packageStageOptions(
+    extractedDir,
+    fixture,
+    {
+      arch: "x64",
+      materializePackage: fixtureMaterializer(fixture),
+    },
+  ));
+
+  assert.deepEqual(result.runtime, {
+    electron: QUALIFIED_ELECTRON_VERSION,
+    node: "24.15.0",
+    qualification: "signed-runtime-executable",
+  });
+});
+
 test("verified Watchbound packages stage idempotently into app node_modules", async (t) => {
   const extractedDir = tempDirectory(t, "watchbound-extracted-app-");
   writeExtractedAppRuntime(extractedDir);

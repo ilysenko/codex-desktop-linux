@@ -122,7 +122,6 @@ function runtimeExecutablePath(extractedDir, explicitPath) {
           : path.join(process.env.UPSTREAM_APP_DIR, "ChatGPT"),
       ]
     : [path.resolve(explicitPath)];
-  const observed = new Map();
   for (const candidate of candidates) {
     if (candidate == null) continue;
     const stat = fs.lstatSync(candidate, { throwIfNoEntry: false });
@@ -130,19 +129,11 @@ function runtimeExecutablePath(extractedDir, explicitPath) {
     if (!stat.isFile() || stat.isSymbolicLink()) {
       throw new Error(`Observed upstream runtime executable is unsafe: ${candidate}`);
     }
-    observed.set(fs.realpathSync(candidate), candidate);
+    return fs.realpathSync(candidate);
   }
-  if (observed.size === 0) {
-    throw new Error(
-      "Observed upstream runtime evidence is missing: could not locate the official ChatGPT executable",
-    );
-  }
-  if (observed.size !== 1) {
-    throw new Error(
-      `Observed upstream runtime evidence is ambiguous: ${[...observed.values()].join(", ")}`,
-    );
-  }
-  return [...observed.keys()][0];
+  throw new Error(
+    "Observed upstream runtime evidence is missing: could not locate the official ChatGPT executable",
+  );
 }
 
 function observedRuntimeNodeVersion(executablePath) {
