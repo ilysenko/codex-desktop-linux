@@ -127,14 +127,19 @@ pointer-proximity tracking never sees a pointer leaving the visible mascot and
 the transparent overlay surface keeps accepting clicks. On Hyprland the
 compositor owns the real cursor position, so the feature polls
 `hyprctl cursorpos` and refreshes the overlay client's real rectangle from
-`hyprctl clients -j`, then publishes the near/far state through the same
-proximity channel the KWin bridge uses.
+`hyprctl clients -j`.
 
-The compositor position wins over the Electron window bounds, because Wayland
-does not keep the Electron content bounds in sync with the compositor
-placement. Polling starts with the overlay window and stops when it closes.
-Both `hyprctl` failures and unreadable client records are ignored, so the
-upstream tracking stays in charge when the compositor cannot be queried.
+The poll only supplies data. Upstream's own proximity tracking stays the single
+publisher, so its guards (native layout, notch or pet controls) and its own
+enter and exit distances still decide when the pet controls expand. Inside that
+tracking method the compositor cursor and window rectangle replace the Electron
+values, because Wayland does not keep the Electron content bounds in sync with
+the compositor placement; when the compositor cannot be queried the Electron
+values are used unchanged.
+
+Polling starts with the overlay window and stops when that window closes.
+`hyprctl` failures and unreadable client records are ignored, so upstream's
+tracking stays in charge when the compositor cannot be queried.
 
 ## KDE Plasma Notes
 
