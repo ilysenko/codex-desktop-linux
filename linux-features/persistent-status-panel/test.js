@@ -165,6 +165,29 @@ test("persistent status descriptor recognizes pristine and patched semantic cont
   assert.equal(matchesPersistentStatusPanelContract(currentComposerSource), false);
 });
 
+test("partial, duplicate, and unrelated persistent markers fail closed byte-identically", () => {
+  const complete = applyPersistentStatusPanelPatch(liftedStatusStateComposerSource);
+  const variants = [
+    complete.replace("localStorage.setItem", "localStorage.changedSetItem"),
+    complete + complete,
+    liftedStatusStateComposerSource.replace(
+      "function nW(){",
+      `function unrelated(){return \`${STORAGE_KEY}\`}function nW(){`,
+    ),
+  ];
+
+  for (const source of variants) {
+    const { value: patched, warnings } = captureWarns(() =>
+      applyPersistentStatusPanelPatch(source),
+    );
+    assert.equal(patched, source);
+    assert.equal(matchesPersistentStatusPanelContract(source), false);
+    assert.deepEqual(warnings, [
+      "WARN: Found incomplete or ambiguous persistent status panel patch - leaving bundle unchanged",
+    ]);
+  }
+});
+
 test("ambiguous lifted status state owners are unchanged", () => {
   const ambiguousSource = liftedStatusStateComposerSource +
     liftedStatusStateComposerSource.replaceAll("yt", "xt").replaceAll("bt", "ct");

@@ -50,6 +50,14 @@ function splitPrimaryFixture() {
   return primaryFixture().replace(quickChatOwner, "").replace(localizationOwner, "");
 }
 
+function reorderedOverlayOwnersFixture() {
+  const source = primaryFixture();
+  const parentStart = source.indexOf("function Parent(");
+  const parentEnd = source.indexOf("function QuickChatSurface(");
+  const parent = source.slice(parentStart, parentEnd);
+  return source.slice(0, parentStart) + source.slice(parentEnd) + parent;
+}
+
 const enabledContext = { feature: { settings: { tweaks: { selection: { moreDetails: { enabled: true } } } } } };
 
 function appFixture(t) {
@@ -112,6 +120,14 @@ test("helper imports preserve the upstream module evaluation order", () => {
   assert.deepEqual(imports(result.primary), imports(original));
   assert.match(result.primary, new RegExp(`import\\{${BINDINGS_EXPORT},${DIAGNOSTICS_EXPORT},${OPEN_EXPORT}\\}` +
     'from"\\./app-initial-fixture\\.js"'));
+});
+
+test("reordered overlay and parent owners patch without corrupting JavaScript", () => {
+  const result = patchSources(initialFixture(), reorderedOverlayOwnersFixture(), "app-initial-fixture.js");
+  assert.equal(result.applied, false);
+  assert.match(result.primary, new RegExp(OVERLAY_MARKER));
+  assert.doesNotThrow(() => new vm.Script(result.primary.replace(/import\{[^}]*\}from"[^"]+";/gu, "")));
+  assert.equal(patchSources(result.initial, result.primary, "app-initial-fixture.js").applied, true);
 });
 
 test("semantic owners in split chunks are imported through their existing shared module", () => {
@@ -192,6 +208,20 @@ test("already-patched validation rejects every incomplete parent, leaf, and impo
     assert.equal(result.warnings.length, 1, label);
     assert.equal(fs.readFileSync(app.primary, "utf8"), corrupted, label);
   }
+});
+
+test("already-patched validation rejects invalid full-module JavaScript byte-identically", (t) => {
+  const app = appFixture(t);
+  assert.equal(applySelectedTextMoreDetails(app.root, enabledContext).changed, 2);
+  fs.appendFileSync(app.primary, "const codexLinuxInvalidSyntax=;");
+  const before = [app.initial, app.primary].map((file) => fs.readFileSync(file, "utf8"));
+
+  const result = warnings(() => applySelectedTextMoreDetails(app.root, enabledContext));
+
+  assert.equal(result.result.changed, 0);
+  assert.equal(result.result.matched, 0);
+  assert.equal(result.warnings.length, 1);
+  assert.deepEqual([app.initial, app.primary].map((file) => fs.readFileSync(file, "utf8")), before);
 });
 
 test("renderer keeps annotations and side chat, and invalidates the cached callback on availability and source changes", async () => {

@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { patchNativeSenderTrace, traceRuntimeSource } = require("./selected-text-more-details-trace.js");
 
 // Discovery also runs on isolated feature copies whose disabled patches never
@@ -452,6 +453,41 @@ function replaceOnce(source, before, after) {
   return source.replace(before, after);
 }
 
+function replaceRanges(source, replacements) {
+  const ordered = [...replacements].sort((left, right) => left.start - right.start);
+  for (let index = 1; index < ordered.length; index += 1) {
+    if (ordered[index - 1].end > ordered[index].start) {
+      throw new Error("Overlapping selected-text overlay owners");
+    }
+  }
+  let result = source;
+  for (const replacement of ordered.reverse()) {
+    result = result.slice(0, replacement.start) + replacement.source + result.slice(replacement.end);
+  }
+  return result;
+}
+
+function validateJavaScriptModuleSyntax(source, label) {
+  const result = spawnSync(process.execPath, [
+    "--experimental-vm-modules",
+    "-e",
+    "const vm=require('node:vm');let source='';process.stdin.setEncoding('utf8');" +
+      "process.stdin.on('data',chunk=>source+=chunk);" +
+      "process.stdin.on('end',()=>{new vm.SourceTextModule(source)})",
+  ], {
+    input: source,
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+    env: { ...process.env, NODE_OPTIONS: "" },
+  });
+  if (result.error || result.status !== 0) {
+    const diagnostic = result.stderr?.split("\n").find((line) => line.startsWith("SyntaxError:"));
+    throw new Error(`${label} JavaScript syntax validation failed: ${diagnostic ?? result.error?.message ??
+      `parser exited ${result.status} (${result.signal ?? "no signal"})`}`);
+  }
+}
+
 function patchSources(initial, primary, initialName, references = []) {
   const bindings = runtimeContract(initial);
   const runtime = runtimeSource(bindings);
@@ -464,6 +500,8 @@ function patchSources(initial, primary, initialName, references = []) {
       throw new Error("Incomplete or drifted selected-text Quick Chat patch");
     }
     validatePatchedOverlay(primary, initialName, references);
+    validateJavaScriptModuleSyntax(initial, "selected-text runtime");
+    validateJavaScriptModuleSyntax(primary, "selected-text overlay");
     return { initial, primary, applied: true };
   }
   const contract = overlayContract(primary, references);
@@ -509,14 +547,17 @@ function patchSources(initial, primary, initialName, references = []) {
   overlay = replaceOnce(overlay, `selectedText:${contract.selectedText},onAddSelectedText:`,
     `selectedText:${contract.selectedText},${edits.toolbarCallback}onAddSelectedText:`);
 
-  let patchedPrimary = primary.slice(0, contract.parent.start) + parent + primary.slice(contract.parent.end);
-  const shiftedOverlayStart = contract.overlay.start + (parent.length - contract.parent.source.length);
-  const shiftedOverlayEnd = shiftedOverlayStart + contract.overlay.source.length;
-  patchedPrimary = patchedPrimary.slice(0, shiftedOverlayStart) + overlay + patchedPrimary.slice(shiftedOverlayEnd);
+  let patchedPrimary = replaceRanges(primary, [
+    { start: contract.parent.start, end: contract.parent.end, source: parent },
+    { start: contract.overlay.start, end: contract.overlay.end, source: overlay },
+  ]);
   patchedPrimary = applyOwnerImports(patchedPrimary, contract.owners.imports);
   patchedPrimary = replaceOnce(patchedPrimary, nativeImport[0], importWithHelper);
-  return { initial: initial.slice(0, dispatch.start) + nativeTrace.source + initial.slice(dispatch.end) + runtime,
-    primary: patchedPrimary, applied: false };
+  const patchedInitial = initial.slice(0, dispatch.start) + nativeTrace.source + initial.slice(dispatch.end) + runtime;
+  validatePatchedOverlay(patchedPrimary, initialName, references.filter((source) => source !== primary));
+  validateJavaScriptModuleSyntax(patchedInitial, "selected-text runtime");
+  validateJavaScriptModuleSyntax(patchedPrimary, "selected-text overlay");
+  return { initial: patchedInitial, primary: patchedPrimary, applied: false };
 }
 
 function applySelectedTextMoreDetails(extractedDir, context = {}) {
