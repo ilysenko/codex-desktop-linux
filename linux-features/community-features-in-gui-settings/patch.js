@@ -67,9 +67,14 @@ function settingComponent(contract, catalog) {
 
 function applySettingsPatch(extractedDir, context = {}) {
   const assetsDir = path.join(extractedDir, "webview/assets");
-  const candidates = fs.readdirSync(assetsDir).filter((name) => name.endsWith(".js"))
-    .map((name) => ({ name, source: fs.readFileSync(path.join(assetsDir, name), "utf8") }))
-    .filter(({ source }) => source.includes("settings.general.macMenuBar.description") && source.includes(".macMenuBarEnabled"));
+  const candidates = [];
+  for (const name of fs.readdirSync(assetsDir)) {
+    if (!name.endsWith(".js")) continue;
+    const source = fs.readFileSync(path.join(assetsDir, name), "utf8");
+    if (source.includes("settings.general.macMenuBar.description") && source.includes(".macMenuBarEnabled")) {
+      candidates.push({ name, source });
+    }
+  }
   if (candidates.length !== 1) throw Error("community-features-in-gui-settings: General settings asset missing or ambiguous");
   const [{ name, source }] = candidates;
   const contract = settingsContract(source);

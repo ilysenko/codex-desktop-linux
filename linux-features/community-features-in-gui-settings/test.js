@@ -74,6 +74,35 @@ test("frozen catalogs survive an enabled-only rebuild and recompute enabled flag
   assert.throws(() => buildCatalog(f.context), /invalid catalog/);
 });
 
+test("Nix dirty revisions retain their commit hash without relaxing snapshot validation", (t) => {
+  const f = fixture(t), commit = "c0d3ac1dc70652dcf9034896efb6e212b02b4b1f";
+  const script = `const fs=require("node:fs"),{buildCatalog}=require(${JSON.stringify(path.join(__dirname, "catalog.js"))});process.stdout.write(JSON.stringify(buildCatalog(JSON.parse(fs.readFileSync(0,"utf8")))));`;
+  const build = (revision) => spawnSync(process.execPath, ["-e", script], {
+    input: JSON.stringify(f.context), encoding: "utf8",
+    env: { ...process.env, CODEX_LINUX_SOURCE_COMMIT: revision },
+  });
+  for (const revision of [commit, `${commit}-dirty`]) {
+    const result = build(revision);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).sourceCommit, commit);
+  }
+  assert.notEqual(build("invalid-dirty").status, 0);
+  const invalid = JSON.parse(build(commit).stdout);
+  invalid.sourceCommit = `${commit}-dirty`;
+  assert.throws(() => validateCatalog(invalid), /invalid catalog/);
+});
+
+test("current internal manifests remove frozen public entries while absent features remain discoverable", (t) => {
+  const f = fixture(t), original = buildCatalog(f.context);
+  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), JSON.stringify(original));
+  const file = path.join(f.root, "alpha/feature.json"), data = JSON.parse(fs.readFileSync(file, "utf8"));
+  data.internal = true;
+  fs.writeFileSync(file, JSON.stringify(data));
+  fs.rmSync(path.join(f.root, "beta"), { recursive: true });
+  const rebuilt = buildCatalog({ ...f.context, enabledFeatureIds: ["community-features-in-gui-settings"] });
+  assert.deepEqual(rebuilt.features.map((feature) => feature.id), ["beta", "community-features-in-gui-settings", "private"]);
+});
+
 function uiTweaksFixture(t) {
   const f = fixture(t), source = require("../ui-tweaks/feature.json");
   const dir = manifest(f.root, source.id, source);

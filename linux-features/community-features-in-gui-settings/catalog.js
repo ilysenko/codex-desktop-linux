@@ -77,8 +77,9 @@ function buildCatalog(context = {}) {
   const features = new Map((frozen?.features ?? []).map((feature) => [feature.id, feature]));
   // Only declarative manifests are inspected, including for disabled features.
   // Never load their patch descriptors just to discover UI subfeatures.
-  for (const feature of discoverLinuxFeatureManifests(options).filter((item) => !item.manifest.internal)) {
+  for (const feature of discoverLinuxFeatureManifests(options)) {
     const manifest = feature.manifest;
+    if (manifest.internal) { features.delete(feature.id); continue; }
     features.set(feature.id, {
       id: feature.id, title: manifest.title ?? manifest.name ?? feature.id,
       description: manifest.description ?? "", origin: feature.origin,
@@ -87,9 +88,11 @@ function buildCatalog(context = {}) {
   }
   const settings = linuxFeaturesConfig(options).settings;
   const enabled = new Set(context.enabledFeatureIds ?? enabledLinuxFeatureIds(options));
+  const revision = frozen?.sourceCommit ?? sourceInfo(path.dirname(root)).commit ?? null;
   return validateCatalog({
     schemaVersion: 1,
-    sourceCommit: frozen?.sourceCommit ?? sourceInfo(path.dirname(root)).commit ?? null,
+    // Nix uses <commit>-dirty for a working tree; snapshots store the Git hash.
+    sourceCommit: typeof revision === "string" ? revision.replace(/^([a-f0-9]{7,40})-dirty$/, "$1") : revision,
     features: [...features.values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map((feature) => ({
       id: feature.id, title: feature.title, description: feature.description, origin: feature.origin,
       requires: feature.requires, conflicts: feature.conflicts, enabled: enabled.has(feature.id),
