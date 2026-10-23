@@ -170,7 +170,10 @@ function recordReplayHelperSource({ fsVar, pathVar }) {
 function hasCompleteRecordReplayMainBridgePatch(source) {
   const helperPayload = recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS);
   const bridgePayload = recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS);
-  const bridgeInsertion = `${bridgePayload},"get-global-state":async({key:`;
+  const anchor = source.includes('"chronicle-permissions":async')
+    ? '"chronicle-permissions":async'
+    : '"get-global-state":async({key:';
+  const bridgeInsertion = `${bridgePayload},${anchor}`;
   return countOccurrences(source, helperPayload) === 1
     && countOccurrences(source, bridgePayload) === 1
     && countOccurrences(source, bridgeInsertion) === 1;
@@ -195,7 +198,9 @@ function applyRecordReplayMainBridgePatch(currentSource) {
   }
 
   let patchedSource = currentSource;
-  const handlerNeedle = `"get-global-state":async({key:`;
+  const handlerNeedle = currentSource.includes('"chronicle-permissions":async')
+    ? '"chronicle-permissions":async'
+    : `"get-global-state":async({key:`;
   if (!currentSource.includes(handlerNeedle)) {
     warn("Could not find global-state bridge insertion point", patchName);
     return currentSource;

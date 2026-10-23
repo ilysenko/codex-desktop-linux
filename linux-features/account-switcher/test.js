@@ -412,6 +412,10 @@ test("semantic contracts preserve renamed symbols, reject partial drift, and rou
     assert.deepEqual(Array.from(overrides), ["base", "policy", "extras", "mode",
       ...(id === "local" ? ['cli_auth_credentials_store="file"', "features.secret_auth_storage=false"] : [])]);
   }
+  const compactConfig = main.replace(",mode(options)", "");
+  const compactPatched = applyMain(compactConfig);
+  assert.notEqual(compactPatched, compactConfig);
+  assert.match(compactPatched, /features\.secret_auth_storage=false/);
   for (const invalid of [ui.replace('import{MenuItem as Item}from"./menu.js";', ""), 'import{Other as Item}from"./other.js";' + ui]) {
     assert.equal(applyUi(invalid), invalid, "unverified or ambiguous imports must fail closed");
   }

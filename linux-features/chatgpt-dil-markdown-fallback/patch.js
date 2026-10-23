@@ -38,7 +38,7 @@ function applyDilMarkdownFallback(source, markdownFile) {
     `function ${IDENT}\\(\\{assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},`, "g",
   ))];
   const fallbacks = [...source.matchAll(new RegExp(
-    `errorFallback:(${IDENT})\\?null:\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}),\\{\\}\\),diagnostics:`, "g",
+    `errorFallback:(${IDENT})\\?null:\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}),\\{[^{}]{0,200}\\}\\),diagnostics:`, "g",
   ))];
   if (owners.length !== 1 || fallbacks.length !== 1 ||
       !source.includes("model_dil_v2") || !source.includes("source_message_status") ||

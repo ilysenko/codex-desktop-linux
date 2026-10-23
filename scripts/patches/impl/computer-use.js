@@ -357,7 +357,10 @@ function applyLinuxNativeDesktopAppsHandlerPatch(currentSource) {
     return currentSource;
   }
 
-  if (findHandlerValue(currentSource, "native-desktop-apps") == null) {
+  const nativeHandlerBeforePatch = findHandlerValue(currentSource, "native-desktop-apps");
+  const currentHandlerAnchor = '"set-remote-wsl-connections-enabled":';
+  const hasCurrentHandlerObject = currentSource.split(currentHandlerAnchor).length === 2;
+  if (nativeHandlerBeforePatch == null && !hasCurrentHandlerObject) {
     if (currentSource.includes("native-desktop-apps") || currentSource.includes("handleVSCodeRequest")) {
       console.warn(
         "WARN: Could not find native-desktop-apps handler — skipping Linux native desktop apps patch",
@@ -382,6 +385,16 @@ function applyLinuxNativeDesktopAppsHandlerPatch(currentSource) {
     currentSource,
     linuxNativeDesktopAppsHelper({ childProcessVar, fsVar, osVar, pathVar }),
   );
+
+  if (nativeHandlerBeforePatch == null) {
+    patchedSource = patchedSource.replace(
+      currentHandlerAnchor,
+      `"computer-use-native-desktop-app-icon":async(e)=>codexLinuxNativeDesktopAppIcon(e),` +
+        `"native-desktop-apps":async()=>codexLinuxNativeDesktopApps(),` +
+        `"set-remote-wsl-connections-enabled":`,
+    );
+    return patchedSource;
+  }
 
   const nativeHandler = findHandlerValue(patchedSource, "native-desktop-apps");
   if (nativeHandler == null) {

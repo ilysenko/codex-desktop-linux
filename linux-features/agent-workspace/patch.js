@@ -172,8 +172,19 @@ function applyAgentWorkspaceMainBridgePatch(currentSource) {
 
   const handlerNeedle = `"get-global-state":async({key:`;
   if (!currentSource.includes(handlerNeedle)) {
-    warn("Could not find global-state handler insertion point", patchName);
-    return currentSource;
+    const currentHandlerAnchor = '"set-remote-wsl-connections-enabled":';
+    if (currentSource.split(currentHandlerAnchor).length !== 2) {
+      warn("Could not find global-state handler insertion point", patchName);
+      return currentSource;
+    }
+    const bridge = agentWorkspaceBridgeWithWorkspaceStartSource(NODE_MODULE_EXPRESSIONS);
+    const stateHandlers =
+      '"get-global-state":async({key,params}={})=>({value:this.globalState.get(key??params?.key)}),' +
+      '"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;this.globalState.set(k,v);return{success:!0}},';
+    return currentSource.replace(
+      currentHandlerAnchor,
+      `${bridge},${stateHandlers}"set-remote-wsl-connections-enabled":`,
+    );
   }
 
   return currentSource.replace(
@@ -1853,16 +1864,19 @@ function inferRuntimeDependenciesFromSettingsAssets(assetsDir) {
     .readdirSync(assetsDir)
     .filter((name) => /^settings-page-[^.]+\.js$/.test(name))
     .sort();
-  const matches = [];
+  const matches = new Map();
   for (const candidate of candidates) {
     const dependencies = inferRuntimeDependenciesFromSettingsSource(
       fs.readFileSync(path.join(assetsDir, candidate), "utf8"),
     );
     if (dependencies != null) {
-      matches.push(dependencies);
+      matches.set(
+        `${dependencies.reactAsset}\0${dependencies.reactExportName}`,
+        dependencies,
+      );
     }
   }
-  return matches.length === 1 ? matches[0] : null;
+  return matches.size === 1 ? matches.values().next().value : null;
 }
 
 function resolveAgentWorkspaceSettingsAsset(extractedDir) {
@@ -1891,8 +1905,9 @@ function resolveAgentWorkspaceSettingsAsset(extractedDir) {
 
 function isAgentWorkspaceSettingsSharedMetadataBundleSource(currentSource) {
   return (
-    currentSource.includes('"local-environments":{id:`settings.nav.local-environments`') &&
-    currentSource.includes("settings.section.worktrees")
+    currentSource.includes('"local-environments":{id:`settings.nav.local-environments`') ||
+    (currentSource.includes("case`local-environments`:") &&
+      currentSource.includes("settings.section.worktrees"))
   );
 }
 
@@ -2001,7 +2016,14 @@ function applyAgentWorkspaceSettingsCatalogPatch(currentSource) {
 
 function applyAgentWorkspaceSettingsSharedPatch(currentSource) {
   let patchedSource = currentSource;
-  if (!patchedSource.includes(`settings.nav.${SETTINGS_SLUG}`)) {
+  let matched = false;
+  if (
+    patchedSource.includes('"local-environments":{id:`settings.nav.local-environments`') ||
+    patchedSource.includes(`settings.nav.${SETTINGS_SLUG}`)
+  ) {
+    matched = true;
+  }
+  if (matched && !patchedSource.includes(`settings.nav.${SETTINGS_SLUG}`)) {
     const navNeedle =
       '"local-environments":{id:`settings.nav.local-environments`,defaultMessage:`Environments`,description:`Title for environments settings section`},';
     if (!patchedSource.includes(navNeedle)) {
@@ -2013,7 +2035,12 @@ function applyAgentWorkspaceSettingsSharedPatch(currentSource) {
     );
   }
 
-  if (!patchedSource.includes(`settings.section.${SETTINGS_SLUG}`)) {
+  const hasSectionContract = patchedSource.includes("case`local-environments`:") &&
+    patchedSource.includes("settings.section.worktrees");
+  if (hasSectionContract || patchedSource.includes(`settings.section.${SETTINGS_SLUG}`)) {
+    matched = true;
+  }
+  if (hasSectionContract && !patchedSource.includes(`settings.section.${SETTINGS_SLUG}`)) {
     const sectionNeedle = "case`worktrees`:{";
     if (!patchedSource.includes(sectionNeedle)) {
       throw new Error("could not add agent workspace section title");
@@ -2030,6 +2057,7 @@ function applyAgentWorkspaceSettingsSharedPatch(currentSource) {
       `case\`${SETTINGS_SLUG}\`:{return (0,${jsxAlias}.jsx)(${messageComponent},{id:\`settings.section.${SETTINGS_SLUG}\`,defaultMessage:\`Agent Workspaces\`,description:\`Title for Agent Workspaces settings section\`})}${sectionNeedle}`,
     );
   }
+  if (!matched) throw new Error("could not add agent workspace settings metadata");
   return patchedSource;
 }
 
@@ -2129,13 +2157,10 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
 
   const candidates = fs
     .readdirSync(assetsDir)
-    .filter((name) =>
-      /^app-initial-[^.]+\.js$/.test(name) ||
-      /^settings-page-[^.]+\.js$/.test(name) ||
-      /^use-visible-settings-sections-[^.]+\.js$/.test(name)
-    )
+    .filter((name) => /^[A-Za-z0-9_-]+\.js$/.test(name))
     .sort();
-  let metadataMatched = false;
+  let metadataNavMatched = false;
+  let metadataSectionMatched = false;
   let routeMatched = false;
   let navigationMatched = false;
   let visibilityMatched = false;
@@ -2147,7 +2172,11 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
     const currentSource = fs.readFileSync(filePath, "utf8");
     let patchedSource = currentSource;
     if (isAgentWorkspaceSettingsSharedMetadataBundleSource(currentSource)) {
-      metadataMatched = true;
+      metadataNavMatched ||= currentSource.includes('"local-environments":{id:`settings.nav.local-environments`') ||
+        currentSource.includes(`settings.nav.${SETTINGS_SLUG}`);
+      metadataSectionMatched ||= (currentSource.includes("case`local-environments`:") &&
+        currentSource.includes("settings.section.worktrees")) ||
+        currentSource.includes(`settings.section.${SETTINGS_SLUG}`);
       patchedSource = applyAgentWorkspaceSettingsSharedPatch(patchedSource);
     }
     if (isAgentWorkspaceSettingsRouteBundleSource(currentSource)) {
@@ -2171,7 +2200,7 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
     }
   }
 
-  if (!metadataMatched) {
+  if (!metadataNavMatched || !metadataSectionMatched) {
     throw new Error("could not find webview settings metadata bundle");
   }
   if (!routeMatched) {

@@ -137,12 +137,23 @@ function applyMainBundlePatch(source) {
   const handler = `"${HANDLER_NAME}":async(e)=>codexLinuxReadAloudHandle(e),`;
   const needle = `"native-desktop-apps":`;
   const handlerIndex = source.indexOf(needle);
-  if (handlerIndex === -1) {
-    warn("Could not find native-desktop-apps handler", "read aloud main-bundle patch");
-    return source;
+  let withHandler;
+  if (handlerIndex !== -1) {
+    withHandler = source.slice(0, handlerIndex) + handler + source.slice(handlerIndex);
+  } else {
+    const currentAnchor = '"set-remote-wsl-connections-enabled":';
+    if (source.split(currentAnchor).length !== 2) {
+      warn("Could not find current main handler object", "read aloud main-bundle patch");
+      return source;
+    }
+    const stateHandlers =
+      '"get-global-state":async({key,params}={})=>({value:this.globalState.get(key??params?.key)}),' +
+      '"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;this.globalState.set(k,v);return{success:!0}},';
+    withHandler = source.replace(
+      currentAnchor,
+      `${handler}${stateHandlers}"set-remote-wsl-connections-enabled":`,
+    );
   }
-
-  const withHandler = source.slice(0, handlerIndex) + handler + source.slice(handlerIndex);
   const helperInsertAt = withHandler.startsWith(`"use strict";`)
     ? `"use strict";`.length
     : withHandler.startsWith(`'use strict';`)

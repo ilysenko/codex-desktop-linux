@@ -35,7 +35,7 @@ function primaryFixture() {
     'import{}from"./rolldown-runtime-fixture.js";',
     'import{}from"./app-shared-fixture.js";',
     'import{}from"./app-initial-fixture.js";',
-    'function Parent(e){let t=(0,Cache.c)(18),{actions:n,canOpenSideChat:r,scopeToThread:i,targetSelector:a}=e,o=useScope(root),s=context(),c;let l=c,d;d=sourceId(o);let f=d,p=useQuery(messages,f),m=useQuery(remote,f);return jsx(Leaf,{onAddResponseTextAnnotation:p,onOpenSideChat:n.onOpenSideChat,targetContainerRefs:l,targetSelector:a})}',
+    'function Parent(e){let t=(0,Cache.c)(18),{actions:n,canOpenSideChat:r,scopeToThread:i,targetSelector:a}=e,o=useScope(root),f;t[2]===o?f=t[3]:(f=sourceId(o),t[2]=o,t[3]=f);let h=f,S=annotationAction,C=r?n.onOpenSideChat:void 0,w=[];let T;return t[13]!==S||t[14]!==C||t[15]!==w||t[16]!==a?(T=jsx(Leaf,{onAddResponseTextAnnotation:S,onOpenSideChat:C,targetContainerRefs:w,targetSelector:a}),t[13]=S,t[14]=C,t[15]=w,t[16]=a,t[17]=T):T=t[17],T}',
     'function Actions(e){let z=0,f=$r(),[p,m]=state();return label(`selectedTextOverlay.moreDetails`)}',
     'function Errors(e){let b=readState(workMode),x=$r();return()=>{logger.error(`[Composer] side chat failed`,{safe:{},sensitive:{error:e}}),e.get(toast).danger(x.formatMessage({id:`composer.sideSlashCommand.error`}),{errorAnalytics:{toastId:`composer.sideSlashCommand.error`}})}}',
     'function Leaf(e){let t=(0,Cache.c)(8),{onAddResponseTextAnnotation:n,onOpenSideChat:r,targetContainerRefs:i,targetSelector:a}=e,o=zoom();if(n==null&&r==null)return null;let s;t[0]!==n||t[1]!==r||t[2]!==o?(s=(e,t)=>{let{portalTarget:i,rect:a,selectedText:s,selectionRange:c,target:l}=e,u=annotation(l,c,s);return(0,Jsx.jsx)(`div`,{className:`contents`,children:(0,Jsx.jsx)(Actions,{selectedText:s,onAddSelectedText:u==null||n==null?void 0:()=>{n(u,{x:a.right/o,y:a.top/o},t()),window.getSelection()?.removeAllRanges()},onOpenSideChat:r})})},t[0]=n,t[1]=r,t[2]=o,t[3]=s):s=t[3];let c;return t[4]!==s||t[5]!==i||t[6]!==a?(c=(0,Jsx.jsx)(Surface,{targetContainerRefs:i,targetSelector:a,children:s}),t[4]=s,t[5]=i,t[6]=a,t[7]=c):c=t[7],c}',
@@ -82,7 +82,7 @@ test("More details reconnects both assets once and detects complete reapplicatio
   const primary = fs.readFileSync(app.primary, "utf8");
   assert.match(initial, new RegExp(RUNTIME_MARKER));
   assert.match(primary, new RegExp(OVERLAY_MARKER));
-  assert.match(primary, /selectedTextOverlay.quickChatPrompt/);
+  assert.match(primary, /Tell me more about this/);
   assert.equal(applySelectedTextMoreDetails(app.root, enabledContext).changed, 0);
   assert.equal(fs.readFileSync(app.initial, "utf8"), initial);
   assert.equal(fs.readFileSync(app.primary, "utf8"), primary);
@@ -102,7 +102,7 @@ test("helper imports preserve the upstream module evaluation order", () => {
   const result = patchSources(initialFixture(), original, "app-initial-fixture.js");
   const imports = (source) => [...source.matchAll(/import\{[^}]*\}from"([^"]+)";/gu)].map((match) => match[1]);
   assert.deepEqual(imports(result.primary), imports(original));
-  assert.match(result.primary, /import\{codexLinuxSelectedTextQuickChatBindings,codexLinuxOpenSelectedTextQuickChat,codexLinuxReportSelectedTextQuickChatState\}from"\.\/app-initial-fixture\.js"/);
+  assert.match(result.primary, /import\{codexLinuxOpenSelectedTextQuickChat\}from"\.\/app-initial-fixture\.js"/);
 });
 
 test("missing, ambiguous, mixed, and drifted contracts leave every asset unchanged", (t) => {
@@ -112,20 +112,20 @@ test("missing, ambiguous, mixed, and drifted contracts leave every asset unchang
     (app) => fs.writeFileSync(app.initial, initialFixture().replace("overrides=atom()", "changed=atom()")),
     (app) => fs.writeFileSync(app.initial, initialFixture() + "function duplicateSendInit(){overrides=atom()}"),
     (app) => fs.writeFileSync(app.initial, initialFixture().replace("a.set(submitting,b,!0)", "a.set(submitting,b,drifted)")),
-    (app) => fs.writeFileSync(app.primary, primaryFixture().replace("onOpenSideChat:r}", "onOpenSideChat:r,drifted:true}")),
+    (app) => fs.writeFileSync(app.primary, primaryFixture().replace("onAddResponseTextAnnotation:S", "onAddResponseTextAnnotationChanged:S")),
     (app) => fs.writeFileSync(path.join(app.assets, "app-initial-duplicate.js"), initialFixture()),
     (app) => fs.writeFileSync(app.primary, primaryFixture() + `/*${OVERLAY_MARKER}*/`),
     (app) => {
       applySelectedTextMoreDetails(app.root, enabledContext);
-      fs.writeFileSync(app.primary, fs.readFileSync(app.primary, "utf8").replace("onMoreDetails:codexLinuxCanAskQuickChat", "onMoreDetails:broken"));
+      fs.writeFileSync(app.primary, fs.readFileSync(app.primary, "utf8").replace("onMoreDetails:codexLinuxMoreDetails==null", "onMoreDetails:broken==null"));
     },
   ];
-  for (const modify of variants) {
+  for (const [index, modify] of variants.entries()) {
     const app = appFixture(t);
     modify(app);
     const before = [app.initial, app.primary].map((file) => fs.readFileSync(file, "utf8"));
     const result = warnings(() => applySelectedTextMoreDetails(app.root, enabledContext));
-    assert.equal(result.result.changed, 0);
+    assert.equal(result.result.changed, 0, `drift variant ${index}`);
     assert.equal(result.result.matched, 0);
     assert.equal(result.warnings.length, 1);
     assert.deepEqual([app.initial, app.primary].map((file) => fs.readFileSync(file, "utf8")), before);
@@ -135,29 +135,36 @@ test("missing, ambiguous, mixed, and drifted contracts leave every asset unchang
 test("renderer keeps annotations and side chat, and invalidates the cached callback on availability and source changes", async () => {
   const result = patchSources(initialFixture(), primaryFixture(), "app-initial-fixture.js");
   const memo = [];
+  const parentMemo = [];
   const scope = { value: { kind: "local", conversationId: "source-a" }, get: () => ({ danger: () => {} }) };
+  let activeScope = scope;
   const calls = [];
   let capable = false;
   let loading = false;
   let blocked = false;
   const language = { formatMessage: ({ id }) => id.endsWith("quickChatPrompt") ? "告诉我更多相关信息" : "所选文字" };
-  const context = vm.createContext({ Cache: { c: () => memo }, root: {}, useScope: () => scope,
+  const context = vm.createContext({ Cache: { c: (size) => size === 22 ? parentMemo : memo }, root: {}, useScope: () => activeScope,
     sourceId: (value) => value.value.conversationId, useQuery: () => ({ isCapable: capable, isLoading: loading }),
     readState: (atom) => atom === "account" ? {} : blocked, $r: () => language, zoom: () => 1,
     annotation: () => ({ text: "annotation" }), Jsx: { jsx: (component, props) => ({ component, props }) },
+    jsx: (component, props) => ({ component, props }), annotationAction: () => {},
     Surface: "surface", toast: "toast", window: { getSelection: () => ({ removeAllRanges() {} }) },
     logger: { info() {} }, [DIAGNOSTICS_EXPORT]() {},
     [BINDINGS_EXPORT]: () => ({ capability: "cap", blocked: "blocked", account: "account" }),
     [OPEN_EXPORT]: async (value, input) => calls.push({ value, input }) });
   vm.runInContext(result.primary.replace(/import\{[^}]*\}from"[^"]+";/gu, ""), context);
-  const render = (props) => context.Leaf(props)?.props.children({ rect: { right: 2, top: 3 },
+  const render = (props) => {
+    const wired = context.Parent({ actions: { onOpenSideChat: props.onOpenSideChat }, canOpenSideChat: true,
+      scopeToThread: true, targetSelector: "target" }).props;
+    return context.Leaf({ ...wired, ...props })?.props.children({ rect: { right: 2, top: 3 },
     selectedText: "selection", target: { innerText: "entire source reply" }, selectionRange: {} }, () => "placement").props.children.props;
+  };
   const annotationCalls = [];
   const side = () => {};
   const props = { onAddResponseTextAnnotation: (...args) => annotationCalls.push(args), onOpenSideChat: side };
-  assert.equal(render(props).onMoreDetails, undefined);
+  assert.equal(typeof render(props).onMoreDetails, "function");
   loading = true;
-  assert.equal(render(props).onMoreDetails, undefined);
+  assert.equal(typeof render(props).onMoreDetails, "function");
   loading = false;
   capable = true;
   let actions = render(props);
@@ -166,14 +173,14 @@ test("renderer keeps annotations and side chat, and invalidates the cached callb
   assert.equal(annotationCalls.length, 1);
   actions.onMoreDetails("selection");
   await Promise.resolve();
-  assert.equal(calls[0].input.prompt, "告诉我更多相关信息");
+  assert.equal(calls[0].input.prompt, "Tell me more about this");
   assert.equal(calls[0].input.selectedMessageText, "entire source reply");
-  scope.value.conversationId = "source-b";
+  activeScope = { ...scope, value: { ...scope.value, conversationId: "source-b" } };
   render(props).onMoreDetails("next selection");
   await Promise.resolve();
   assert.equal(calls[1].input.sourceConversationId, "source-b");
   blocked = true;
-  assert.equal(render(props).onMoreDetails, undefined);
+  assert.equal(typeof render(props).onMoreDetails, "function");
   blocked = false;
   assert.equal(typeof render({}).onMoreDetails, "function");
 });

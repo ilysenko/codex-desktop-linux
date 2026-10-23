@@ -4,6 +4,18 @@ const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js"
 
 const STORAGE_KEY = "codex-linux-persistent-status-panel-open";
 
+function matchesPersistentStatusPanelContract(source) {
+  if (source.includes(STORAGE_KEY)) return true;
+  if (!source.includes("composer.statusSlashCommand.description")) return false;
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    return applyPersistentStatusPanelPatch(source) !== source;
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 function findContainingFunction(source, index) {
   let searchFrom = index;
   while (searchFrom >= 0) {
@@ -78,7 +90,8 @@ const patches = [
     phase: "webview-asset",
     order: 20_800,
     ciPolicy: "optional",
-    pattern: /^app-primary-[^.]+\.js$/,
+    pattern: /^[A-Za-z0-9_-]+\.js$/,
+    assetMatch: matchesPersistentStatusPanelContract,
     missingDescription: "composer status panel bundle",
     skipDescription: "persistent status panel patch",
     apply: applyPersistentStatusPanelPatch,
@@ -88,5 +101,6 @@ const patches = [
 module.exports = {
   STORAGE_KEY,
   applyPersistentStatusPanelPatch,
+  matchesPersistentStatusPanelContract,
   descriptors: patches,
 };

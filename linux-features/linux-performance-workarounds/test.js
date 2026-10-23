@@ -26,11 +26,19 @@ test("linux-performance-workarounds remains an opt-in renderer-only feature", ()
       ["markdown-animation", "webview-asset"],
     ],
   );
-  assert.equal(descriptors[0].pattern.test("app-primary-a0bff570446b.js"), false);
+  assert.equal(descriptors[0].pattern.test("app-primary-a0bff570446b.js"), true);
   assert.equal(descriptors[0].pattern.test("app-initial-cccb87527a41.js"), true);
   assert.equal(descriptors[1].pattern.test("thread-app-shell-chrome-1cbe88398368.js"), true);
   assert.equal(descriptors[2].pattern.test("app-primary-a0bff570446b.css"), true);
   assert.equal(descriptors[2].pattern.test("app-initial-cccb87527a41.css"), true);
+});
+
+test("sidebar workaround locates the current semantic container after asset moves", () => {
+  const source = "jsx(`div`,{...styles.sidebarScroll,className:cx(`vertical-scroll-fade-mask`,`[contain:layout_paint]`,styles.headerFadeMask),ref:node,onScroll:event=>{let{scrollTop:value}=event.currentTarget;return value}})";
+  assert.equal(descriptors[0].assetMatch(source), true);
+  const patched = descriptors[0].apply(source);
+  assert.match(patched, /style:\{animationName:`none`/u);
+  assert.equal(descriptors[0].assetMatch(patched), true);
 });
 
 test("current app-shell tab workaround disables tab layout animation", () => {

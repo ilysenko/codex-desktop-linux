@@ -1799,6 +1799,10 @@ test("agent-workspace settings infer runtime dependencies from the current setti
 
     assert.equal(fs.existsSync(path.join(assetsDir, "runtime-test.js")), true);
     assert.equal(fs.existsSync(path.join(assetsDir, "settings-page-test.js")), true);
+    fs.writeFileSync(
+      path.join(assetsDir, "settings-page-lazy-test.js"),
+      syntheticCurrentSettingsNavigation(),
+    );
 
     const { value: result, warnings } = captureWarns(() => patchAgentWorkspaceSettingsAssets(tempApp));
 

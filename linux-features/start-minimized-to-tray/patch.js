@@ -61,6 +61,18 @@ function unique(source, pattern) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+function backgroundContract(source, first) {
+  if (!first) return null;
+  const pattern = new RegExp(
+    `let (${ID})=process\\.env\\.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,(${ID})=`,
+    "g",
+  );
+  const matches = [...source.matchAll(pattern)].filter(
+    (match) => match[1] === first[5] && match[2] === first[4],
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function firstWindowContract(source, background) {
   return unique(source, new RegExp(`let (${ID})=(?:${ID}\\.deepLinks\\.isWakeOnlyLaunch\\(\\)&&!${ID}\\?null:)?await (${ID})\\.ensureWindow\\(\\{background:${escapeRegExp(background)}\\}\\);\\1\\?\\.once\\(\`show\`,\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),\\1!=null&&!${escapeRegExp(background)}&&\\(?(?:(${ID})\\(\\1,!(${ID})\\))(?:,\\3\\.handleInitialWindowVisible\\(\\))?\\)?`, "g"));
 }
@@ -107,9 +119,14 @@ function hasCompleteMainPatch(source, state, startup) {
 }
 
 function applyMainPatch(source) {
-  const background = unique(source, new RegExp(`let (${ID})=process\\.env\\.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,(${ID})=`, "g"));
   const state = unique(source, new RegExp(`let (${ID})=await ${ID}\\.${ID}\\(\\{moduleDir:__dirname\\}\\),`, "g"));
   const startup = unique(source, new RegExp(`shouldShowPrimaryWindow:\\(\\)=>!\\(?(${ID})\\.isBackgroundLaunch`, "g"));
+  const owner = startup?.[1] ?? "__missing";
+  const launchBackground = source.includes(`function ${MAIN_MARKER}(`)
+    ? `(${owner}.isBackgroundLaunch||codexLinuxStartMinimized)`
+    : `${owner}.isBackgroundLaunch`;
+  const first = firstWindowContract(source, launchBackground);
+  const background = backgroundContract(source, first);
   if (source.includes(`function ${MAIN_MARKER}(`)) {
     if (!background || !state || !startup || !hasCompleteMainPatch(source, state, startup)) {
       console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
@@ -120,12 +137,9 @@ function applyMainPatch(source) {
     console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
     return source;
   }
-  const owner = startup?.[1] ?? "__missing";
-  const launchBackground = `${owner}.isBackgroundLaunch`;
   const launchPattern = escapeRegExp(launchBackground);
   const trayReady = unique(source.slice(state?.index ?? 0), new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"));
   const traySetup = unique(source, new RegExp(`\\((${ID})\\|\\|process\\.platform===\`linux\`\\)&&(${ID})\\(\\);`, "g"));
-  const first = firstWindowContract(source, launchBackground);
   const last = unique(source, new RegExp(`(${ID})!==(${ID})&&!${launchPattern}&&(${ID})\\(\\1,!(${ID})\\)`, "g"));
   // The current upstream bundle already defers restored maximization until
   // show. Require that contract instead of carrying the retired custom patch.

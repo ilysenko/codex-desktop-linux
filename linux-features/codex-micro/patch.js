@@ -16,20 +16,29 @@ const CODEX_MICRO_SERVICE_PATTERN =
   /^service-[A-Za-z0-9_-]+\.js$/;
 const CODEX_MICRO_GATE_CONTRACTS = [
   {
-    description: "Codex Micro app-shell gates",
+    description: "Codex Micro app-shell and settings gates",
     gateCount: 3,
-    routeCount: 0,
+    routeCount: 2,
     anchor: (source) =>
       source.includes("codex-micro-onboarding-host-")
+      && source.includes("codex-micro-bridge-")
       && source.includes("codexMicro"),
   },
   {
-    description: "Codex Micro settings-page gates",
-    gateCount: 2,
-    routeCount: 3,
+    description: "Codex Micro dictation gate",
+    gateCount: 1,
+    routeCount: 1,
     anchor: (source) =>
-      source.includes("codex-micro-bridge-")
-      && source.includes('"codex-micro":'),
+      source.includes("onDictationTranscriptInsert")
+      && source.includes("waveformVariant"),
+  },
+  {
+    description: "Codex Micro composer gate",
+    gateCount: 1,
+    routeCount: 0,
+    anchor: (source) =>
+      source.includes("surface:`composer`")
+      && source.includes("effectiveMode:"),
   },
   {
     description: "Codex Micro settings-visibility gate",

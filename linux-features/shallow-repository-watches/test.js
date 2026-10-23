@@ -36,9 +36,9 @@ function parcelWorkingTreeSource() {
     "function create(t,n,r){return{",
     "metadata:t.isLocal?process.platform===`linux`&&n.recursive!==!1?",
     "Jve(n,{ignoredPaths:[]}):e.startFileWatch(n):t.startFileWatch(n),",
-    "workingTree:t.isLocal?process.platform===`linux`?",
-    "Jve(n,{ignoredPaths:[E.posix.join(n.path,`.git`),...r]}):",
-    "e.startFileWatch(n):t.startFileWatch(n)}}",
+    "startWorkingTreeWatch:(t,n,r)=>{if(!t.isLocal)return t.startFileWatch(n);",
+    "if(process.platform===`linux`)return Jve(n,{ignoredPaths:[E.default.join(n.path,`.git`),...r]});",
+    "if(r.length===0)return e.startFileWatch(n);return e.startFileWatch(n)}}}",
   ].join("");
 }
 

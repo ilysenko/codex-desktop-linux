@@ -293,6 +293,9 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
   };
   const bridgePayload = recordReplayBridgeSource(moduleExpressions);
   const helperPayload = recordReplayHelperSource(moduleExpressions);
+  const bridgeAnchor = patched.includes('"chronicle-permissions":async')
+    ? '"chronicle-permissions":async'
+    : '"get-global-state":async';
   const variants = {
     "missing current bridge handler": patched.replace(
       '"linux-record-replay-status":async',
@@ -303,8 +306,8 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
       '"get-global-state":async',
     )}var misplaced={${bridgePayload}};`,
     "duplicate bridge payload": patched.replace(
-      `${bridgePayload},"get-global-state":async`,
-      `${bridgePayload},${bridgePayload},"get-global-state":async`,
+      `${bridgePayload},${bridgeAnchor}`,
+      `${bridgePayload},${bridgePayload},${bridgeAnchor}`,
     ),
     "helper-only partial": `${helperPayload}\n${chroniclePatched}`,
     "duplicate helper payload": `${helperPayload}\n${patched}`,

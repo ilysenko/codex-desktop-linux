@@ -37,6 +37,16 @@ function matchesCopilotReasoningEffortUiContract(source) {
   return analyzeCopilotReasoningEffortUiContract(source).state !== "invalid";
 }
 
+function matchesCopilotReasoningEffortDropdownContract(source) {
+  const contract = analyzeCompiledCopilotReasoningEffortUiContract(source);
+  return contract != null && contract.state !== "invalid";
+}
+
+function matchesCopilotReasoningSlashContract(source) {
+  const contract = analyzeCompiledCopilotReasoningSlashContract(source);
+  return contract != null && contract.state !== "invalid";
+}
+
 function findAllMatches(source, regex) {
   const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`;
   return [...source.matchAll(new RegExp(regex.source, flags))];
@@ -64,9 +74,8 @@ function findCompiledNamedFunctionOwner(source, index) {
 
 function analyzeCompiledCopilotReasoningEffortUiContract(source) {
   if (
-    !source.includes("composer.reasoningSlashCommand.title") ||
     !source.includes("reasoningEffortDisabled:") ||
-    !source.includes("authMethod===`copilot`")
+    (!source.includes("authMethod===`copilot`") && !source.includes(COMPILED_UI_MARKER))
   ) {
     return null;
   }
@@ -116,10 +125,22 @@ function analyzeCompiledCopilotReasoningEffortUiContract(source) {
     };
   }
 
-  const titleIndex = source.indexOf("composer.reasoningSlashCommand.title");
-  const slashStart = Math.max(0, titleIndex - 2_000);
-  const slashEnd = Math.min(source.length, titleIndex + 3_000);
-  const slashSource = source.slice(slashStart, slashEnd);
+  const pristine = cleanCombinedMatches.length === 1;
+  const patched = patchedCombinedMatches.length === 1;
+  return {
+    state: pristine ? "pristine" : "patched",
+    contract: "dropdown",
+    combinedMatch,
+  };
+}
+
+function analyzeCompiledCopilotReasoningSlashContract(source) {
+  if (
+    !source.includes("composer.reasoningSlashCommand.title") ||
+    !source.includes("authMethod===`copilot`")
+  ) {
+    return null;
+  }
   const cleanSlash = new RegExp(
     `(?<enabled>${JS_IDENT})=(?<requires>${JS_IDENT})&&(?<ready>${JS_IDENT})&&!` +
       `(?<copilot>${JS_IDENT})&&!0,(?<dependencies>${JS_IDENT});`,
@@ -128,8 +149,8 @@ function analyzeCompiledCopilotReasoningEffortUiContract(source) {
     `(?<enabled>${JS_IDENT})=(?<requires>${JS_IDENT})&&(?<ready>${JS_IDENT})&&!0` +
       `/\\*${COMPILED_UI_MARKER}\\*/,(?<dependencies>${JS_IDENT});`,
   );
-  const cleanSlashMatches = findAllMatches(slashSource, cleanSlash);
-  const patchedSlashMatches = findAllMatches(slashSource, patchedSlash);
+  const cleanSlashMatches = findAllMatches(source, cleanSlash);
+  const patchedSlashMatches = findAllMatches(source, patchedSlash);
   const slashMatches = [...cleanSlashMatches, ...patchedSlashMatches];
   if (slashMatches.length !== 1) {
     return {
@@ -141,11 +162,18 @@ function analyzeCompiledCopilotReasoningEffortUiContract(source) {
   }
 
   if (cleanSlashMatches.length === 1) {
+    const owner = findCompiledNamedFunctionOwner(source, cleanSlashMatches[0].index);
+    if (owner == null) {
+      return {
+        state: "invalid",
+        warning: "Could not find current compiled Copilot reasoning slash command owner",
+      };
+    }
     const copilotVar = cleanSlashMatches[0].groups.copilot;
     const copilotDeclaration = new RegExp(
       `${copilotVar}=${JS_IDENT}\\?\\.authMethod===${BT}copilot${BT}`,
     );
-    if (!copilotDeclaration.test(slashSource)) {
+    if (!copilotDeclaration.test(source.slice(owner.start, owner.end))) {
       return {
         state: "invalid",
         warning: "Could not find current compiled Copilot reasoning slash command auth gate",
@@ -153,24 +181,16 @@ function analyzeCompiledCopilotReasoningEffortUiContract(source) {
     }
   }
 
-  const pristine = cleanCombinedMatches.length === 1 && cleanSlashMatches.length === 1;
-  const patched = patchedCombinedMatches.length === 1 && patchedSlashMatches.length === 1;
-  if (!pristine && !patched) {
-    return {
-      state: "invalid",
-      warning: "Found mixed current compiled Copilot reasoning effort UI contract state",
-    };
-  }
   return {
-    state: pristine ? "pristine" : "patched",
-    contract: "compiled",
-    combinedMatch,
+    state: cleanSlashMatches.length === 1 ? "pristine" : "patched",
+    contract: "slash",
     slashMatch: slashMatches[0],
   };
 }
 
 function analyzeCopilotReasoningEffortUiContract(source) {
-  const compiled = analyzeCompiledCopilotReasoningEffortUiContract(source);
+  const compiled = analyzeCompiledCopilotReasoningEffortUiContract(source) ??
+    analyzeCompiledCopilotReasoningSlashContract(source);
   return compiled ?? {
     state: "invalid",
     warning: "Could not find current compiled Copilot reasoning effort UI contract",
@@ -277,16 +297,17 @@ function applyCopilotReasoningEffortUiPatch(currentSource) {
     return currentSource;
   }
 
-  const combined = contract.combinedMatch.groups;
-  const slash = contract.slashMatch.groups;
-  let patchedSource = currentSource.replace(
-    contract.combinedMatch[0],
-    `${combined.disabled}=/*${COMPILED_UI_MARKER}*/${combined.modelExpression}`,
-  );
-  patchedSource = patchedSource.replace(
-    contract.slashMatch[0],
-    `${slash.enabled}=${slash.requires}&&${slash.ready}&&!0/*${COMPILED_UI_MARKER}*/,${slash.dependencies};`,
-  );
+  const combined = contract.combinedMatch?.groups;
+  const slash = contract.slashMatch?.groups;
+  let patchedSource = contract.contract === "dropdown"
+    ? currentSource.replace(
+      contract.combinedMatch[0],
+      `${combined.disabled}=/*${COMPILED_UI_MARKER}*/${combined.modelExpression}`,
+    )
+    : currentSource.replace(
+      contract.slashMatch[0],
+      `${slash.enabled}=${slash.requires}&&${slash.ready}&&!0/*${COMPILED_UI_MARKER}*/,${slash.dependencies};`,
+    );
   if (analyzeCopilotReasoningEffortUiContract(patchedSource).state === "patched") {
     return patchedSource;
   }
@@ -299,16 +320,6 @@ function applyCopilotReasoningEffortUiPatch(currentSource) {
 module.exports = {
   descriptors: [
     {
-      id: "settings",
-      name: "copilot-reasoning-effort-settings",
-      phase: "webview-asset",
-      pattern: /^app-initial-[^.]+\.js$/,
-      assetMatch: matchesCopilotReasoningEffortSettingsContract,
-      missingDescription: "model settings bundle",
-      skipDescription: "Copilot reasoning effort settings patch",
-      apply: applyCopilotReasoningEffortSettingsPatch,
-    },
-    {
       id: "model-list",
       name: "copilot-reasoning-effort-model-list",
       phase: "webview-asset",
@@ -319,13 +330,23 @@ module.exports = {
       apply: applyCopilotReasoningEffortModelListPatch,
     },
     {
-      id: "ui",
-      name: "copilot-reasoning-effort-ui",
+      id: "ui-dropdown",
+      name: "copilot-reasoning-effort-ui-dropdown",
       phase: "webview-asset",
-      pattern: /^app-(?:initial|primary)-[^.]+\.js$/,
-      assetMatch: matchesCopilotReasoningEffortUiContract,
-      missingDescription: "current composer bundle",
-      skipDescription: "Copilot reasoning effort UI patch",
+      pattern: /^(?!locale-)[A-Za-z0-9_-]+\.js$/,
+      assetMatch: matchesCopilotReasoningEffortDropdownContract,
+      missingDescription: "current reasoning effort dropdown owner",
+      skipDescription: "Copilot reasoning effort dropdown patch",
+      apply: applyCopilotReasoningEffortUiPatch,
+    },
+    {
+      id: "ui-slash-command",
+      name: "copilot-reasoning-effort-ui-slash-command",
+      phase: "webview-asset",
+      pattern: /^(?!locale-)[A-Za-z0-9_-]+\.js$/,
+      assetMatch: matchesCopilotReasoningSlashContract,
+      missingDescription: "current reasoning slash command owner",
+      skipDescription: "Copilot reasoning slash command patch",
       apply: applyCopilotReasoningEffortUiPatch,
     },
   ],
@@ -334,5 +355,7 @@ module.exports = {
   applyCopilotReasoningEffortUiPatch,
   matchesCopilotReasoningEffortModelListContract,
   matchesCopilotReasoningEffortSettingsContract,
+  matchesCopilotReasoningEffortDropdownContract,
+  matchesCopilotReasoningSlashContract,
   matchesCopilotReasoningEffortUiContract,
 };

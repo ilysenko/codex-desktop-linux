@@ -18,13 +18,13 @@ function findTransportSymbols(source) {
 
   const sshClassSource = source.slice(classMatch.index, selectionLogIndex);
   const webSocketMatch = sshClassSource.match(
-    new RegExp(`new (${IDENT})\\.(${IDENT})\\((${IDENT}),\\{perMessageDeflate:!1,createConnection:`),
+    new RegExp(`new (${IDENT})\\.(${IDENT})\\((${IDENT}),\\{perMessageDeflate:!1,[^}]{0,160}createConnection:`),
   );
   if (webSocketMatch == null) return null;
   const [, namespace, webSocketClass, webSocketUrl] = webSocketMatch;
   const lifecycleMatch = sshClassSource.match(
     new RegExp(
-      `let ${IDENT}=new ${namespace}\\.(${IDENT})\\((${IDENT}),[^;]{0,120}\\);return ${namespace}\\.(${IDENT})\\(\\2,\\{onPongTimeout:`,
+      `let ${IDENT}=new ${namespace}\\.(${IDENT})\\((${IDENT}),[^;]{0,160}\\);[\\s\\S]{0,800}?${namespace}\\.(${IDENT})\\(\\2,\\{onPongTimeout:`,
     ),
   );
   if (lifecycleMatch == null) return null;

@@ -120,9 +120,9 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
     );
 
     const holdRegistration = new RegExp(
-      `${registerFunctionPattern}\\(e,\\{(onPressed:\\(\\)=>\\{this\\.ensureHotkeyReleaseWatchers\\(\\),this\\.shortcutGestures\\.press\\(\`primary\`,[\\s\\S]{0,220}?\\)\\},` +
-        `onReleased:\\(\\)=>this\\.shortcutGestures\\.release\\(\`primary\`\\),` +
-        `onCancelled:\\(\\)=>this\\.shortcutGestures\\.cancelPress\\(\`primary\`\\))\\},` +
+      `${registerFunctionPattern}\\(e,\\{((?:(?!\\},\\{(?:ownership:|bareModifierTrigger:))[\\s\\S]){0,1200}?shortcutGestures\\.press\\(\`primary\`,[\\s\\S]{0,300}?` +
+        `shortcutGestures\\.release\\(\`primary\`\\)[\\s\\S]{0,300}?` +
+        `shortcutGestures\\.cancelPress\\(\`primary\`\\)[\\s\\S]{0,120}?)\\},` +
         `\\{ownership:(${IDENT})(,bareModifierTrigger:\`cancellablePress\`)\\}\\)`,
       "u",
     );
@@ -136,9 +136,9 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
 
     const toggleRegistration = new RegExp(
       registerFunctionPattern +
-        `\\(e,\\{(onPressed:\\(\\)=>\\{this\\.ensureHotkeyReleaseWatchers\\(\\),this\\.shortcutGestures\\.press\\(\`single-tap\`,[\\s\\S]{0,220}?\\)\\},` +
-        `onReleased:\\(\\)=>this\\.shortcutGestures\\.release\\(\`single-tap\`\\),` +
-        `onCancelled:\\(\\)=>this\\.shortcutGestures\\.cancelPress\\(\`single-tap\`\\))\\},` +
+        `\\(e,\\{((?:(?!\\},\\{(?:ownership:|bareModifierTrigger:))[\\s\\S]){0,1200}?shortcutGestures\\.press\\(\`single-tap\`,[\\s\\S]{0,300}?` +
+        `shortcutGestures\\.release\\(\`single-tap\`\\)[\\s\\S]{0,300}?` +
+        `shortcutGestures\\.cancelPress\\(\`single-tap\`\\)[\\s\\S]{0,120}?)\\},` +
         `\\{bareModifierTrigger:\`cancellablePress\`,ownership:(${IDENT})\\}\\)`,
       "u",
     );

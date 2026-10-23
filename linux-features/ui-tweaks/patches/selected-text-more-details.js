@@ -253,66 +253,43 @@ export function ${OPEN_EXPORT}(scope, input) {
 
 function overlayContract(source) {
   const header = uniqueMatch(source,
-    `function (${IDENT})\\(${IDENT}\\)\\{let (${IDENT})=\\(0,${IDENT}\\.c\\)\\((8|12)\\),` +
+    `function (${IDENT})\\(${IDENT}\\)\\{let (${IDENT})=\\(0,${IDENT}\\.c\\)\\((8|9)\\),` +
       `\\{onAddResponseTextAnnotation:(${IDENT}),onOpenSideChat:(${IDENT}),targetContainerRefs:${IDENT},targetSelector:${IDENT}\\}=${IDENT},(${IDENT})=${IDENT}\\(\\);`,
     "Codex selected-text overlay");
   const overlay = functionAt(source, header.index);
   const parent = uniqueMatch(source,
-    `function (${IDENT})\\(${IDENT}\\)\\{let ${IDENT}=\\(0,${IDENT}\\.c\\)\\(18\\),` +
+    `function (${IDENT})\\(${IDENT}\\)\\{let (${IDENT})=\\(0,${IDENT}\\.c\\)\\((18|22)\\),` +
       `\\{actions:${IDENT},canOpenSideChat:${IDENT},scopeToThread:${IDENT},targetSelector:${IDENT}\\}=${IDENT},` +
       `(${IDENT})=(${IDENT})\\((${IDENT})\\),`, "Codex overlay scope");
   const parentFunction = functionAt(source, parent.index);
-  if (!parentFunction.source.includes(`${header[1]},{onAddResponseTextAnnotation:`)) throw new Error("Overlay caller drifted");
+  if (!parentFunction.source.includes(`${header[1]},{onAddResponseTextAnnotation:`)) {
+    throw new Error("Overlay caller drifted");
+  }
   const sourceId = uniqueMatch(parentFunction.source,
-    `(${IDENT})=(${IDENT})\\(${parent[2]}\\)`, "Codex source conversation getter")[2];
-  const query = uniqueMatch(parentFunction.source,
-    `let (${IDENT})=${IDENT},${IDENT}=(${IDENT})\\(${IDENT},\\1\\),${IDENT}=\\2\\(${IDENT},\\1\\)`,
-    "Codex query hook")[2];
-  const actions = containingFunction(source, "selectedTextOverlay.moreDetails");
-  const intl = uniqueMatch(actions.source,
-    `,${IDENT}=(${IDENT})\\(\\),\\[${IDENT},${IDENT}\\]=`, "selection intl hook")[1];
-  const errors = containingFunction(source, "composer.sideSlashCommand.error");
-  const logger = uniqueMatch(errors.source,
-    `(${IDENT})\\.error\\(\\x60\\[Composer\\] side chat failed\\x60`, "selection logger")[1];
-  const stateHook = uniqueMatch(errors.source,
-    `${IDENT}=(${IDENT})\\(${IDENT}\\),${IDENT}=${escapeRegExp(intl)}\\(\\)`, "Codex state hook")[1];
-  const toastAtoms = [...errors.source.matchAll(new RegExp(`${IDENT}\\.get\\((${IDENT})\\)\\.danger\\(`, "gu"))];
-  const toasts = new Set(toastAtoms.map((match) => match[1]));
-  if (toasts.size !== 1) throw new Error("Selection error toast contract drifted");
-  const target = uniqueMatch(overlay.source,
+    `(${IDENT});${parent[2]}\\[2\\]===${parent[4]}\\?\\1=${parent[2]}\\[3\\]:` +
+      `\\(\\1=(${IDENT})\\(${parent[4]}\\),${parent[2]}\\[2\\]=${parent[4]},${parent[2]}\\[3\\]=\\1\\);let (${IDENT})=\\1,`,
+    "Codex source conversation getter")[3];
+  const selection = uniqueMatch(overlay.source,
     `let\\{portalTarget:${IDENT},rect:${IDENT},selectedText:(${IDENT}),selectionRange:${IDENT},target:(${IDENT})\\}=`,
     "Codex selection text and source target");
-  return { overlay, header, cache: header[2], add: header[4], side: header[5], zoom: header[6],
-    scopeHook: parent[3], scopeAtom: parent[4], sourceId, query, stateHook, intl, logger, toast: [...toasts][0], target: target[2] };
+  return { overlay, parent: parentFunction, header, cache: header[2], add: header[4], side: header[5],
+    zoom: header[6], parentCache: parent[2], scope: parent[4], sourceId,
+    selectedText: selection[1], target: selection[2] };
 }
 
 function overlayEdits(contract) {
-  const { cache, add, side, zoom, scopeHook, scopeAtom, sourceId, query, stateHook, intl, logger, toast, target } = contract;
-  const setup = `/*${OVERLAY_MARKER}*/const codexLinuxQuickChatScope=${scopeHook}(${scopeAtom}),` +
-    `codexLinuxQuickChatIntl=${intl}(),codexLinuxQuickChatBindings=${BINDINGS_EXPORT}(),` +
-    `codexLinuxQuickChatCapability=${query}(codexLinuxQuickChatBindings.capability,{name:\`chatgpt.quick-chat\`}),` +
-    `codexLinuxQuickChatCapable=codexLinuxQuickChatCapability.isCapable,` +
-    `codexLinuxQuickChatAccount=${stateHook}(codexLinuxQuickChatBindings.account),` +
-    `codexLinuxQuickChatBlocked=${stateHook}(codexLinuxQuickChatBindings.blocked),` +
-    `codexLinuxQuickChatSourceId=${sourceId}(codexLinuxQuickChatScope),` +
-    `codexLinuxCanAskQuickChat=codexLinuxQuickChatCapable&&codexLinuxQuickChatAccount!=null&&!codexLinuxQuickChatBlocked&&codexLinuxQuickChatSourceId!=null;` +
-    `${DIAGNOSTICS_EXPORT}(codexLinuxQuickChatScope,{kind:codexLinuxQuickChatScope.value.kind,` +
-    `sourcePresent:codexLinuxQuickChatSourceId!=null,hookCapable:codexLinuxQuickChatCapable===true,` +
-    `loading:codexLinuxQuickChatCapability.isLoading===true,error:codexLinuxQuickChatCapability.isError===true,` +
-    `storeCapable:codexLinuxQuickChatScope.get(codexLinuxQuickChatBindings.capability,{name:\`chatgpt.quick-chat\`}).isCapable===true,` +
-    `blocked:codexLinuxQuickChatBlocked===true,contextPresent:codexLinuxQuickChatScope.get(codexLinuxQuickChatBindings.account)!=null,` +
-    `visible:codexLinuxCanAskQuickChat===true},${logger});`;
-  const callback = `onMoreDetails:codexLinuxCanAskQuickChat?codexLinuxText=>{${OPEN_EXPORT}(codexLinuxQuickChatScope,{` +
-    `sourceConversationId:codexLinuxQuickChatSourceId,selectedText:codexLinuxText,selectedMessageText:${target}.innerText,logger:${logger},` +
-    `prompt:codexLinuxQuickChatIntl.formatMessage({id:\`selectedTextOverlay.quickChatPrompt\`,defaultMessage:\`Tell me more about this\`}),` +
-    `targetedReplyLabel:codexLinuxQuickChatIntl.formatMessage({id:\`chatGptConversation.targetedReply.selectedText\`,defaultMessage:\`Selected text\`})` +
-    `}).catch(()=>{codexLinuxQuickChatScope.get(${toast}).danger(codexLinuxQuickChatIntl.formatMessage({` +
-    `id:\`selectedTextOverlay.quickChatError\`,defaultMessage:\`Failed to start chat\`}),{errorAnalytics:{toastId:\`selectedTextOverlay.quickChatError\`}})})}:void 0,`;
-  return { setup, callback,
-    guard: `if(${add}==null&&${side}==null`,
-    dependencies: `||${cache}[8]!==codexLinuxCanAskQuickChat||${cache}[9]!==codexLinuxQuickChatIntl||${cache}[10]!==codexLinuxQuickChatScope||${cache}[11]!==codexLinuxQuickChatSourceId`,
-    assignments: `${cache}[8]=codexLinuxCanAskQuickChat,${cache}[9]=codexLinuxQuickChatIntl,${cache}[10]=codexLinuxQuickChatScope,${cache}[11]=codexLinuxQuickChatSourceId,`,
-    originalDependencies: `${cache}[0]!==${add}||${cache}[1]!==${side}||${cache}[2]!==${zoom}` };
+  const { cache, add, side, zoom, parentCache, scope, sourceId, target } = contract;
+  const parentSetup = `/*${OVERLAY_MARKER}*/let codexLinuxMoreDetails;${parentCache}[18]!==${scope}||${parentCache}[19]!==${sourceId}?` +
+    `(codexLinuxMoreDetails=${sourceId}==null?void 0:(e,t)=>${OPEN_EXPORT}(${scope},{sourceConversationId:${sourceId},` +
+    `selectedText:e,selectedMessageText:t,logger:console,prompt:\`Tell me more about this\`,` +
+    `targetedReplyLabel:\`Selected text\`}).catch(e=>console.error(\`[ui-tweaks] selected-text More details failed\`,e)),` +
+    `${parentCache}[18]=${scope},${parentCache}[19]=${sourceId},${parentCache}[20]=codexLinuxMoreDetails):` +
+    `codexLinuxMoreDetails=${parentCache}[20];`;
+  return { parentSetup, guard: `if(${add}==null&&${side}==null`,
+    originalDependencies: `${cache}[0]!==${add}||${cache}[1]!==${side}||${cache}[2]!==${zoom}`,
+    leafDependency: `||${cache}[8]!==codexLinuxMoreDetails`,
+    leafAssignment: `${cache}[8]=codexLinuxMoreDetails,`,
+    toolbarCallback: `onMoreDetails:codexLinuxMoreDetails==null?void 0:e=>codexLinuxMoreDetails(e,${target}.innerText),` };
 }
 
 function replaceOnce(source, before, after) {
@@ -325,40 +302,67 @@ function patchSources(initial, primary, initialName) {
   const runtime = runtimeSource(bindings);
   const dispatch = namedFunction(initial, bindings.dispatch);
   const nativeTrace = patchNativeSenderTrace(dispatch);
-  const contract = overlayContract(primary);
-  const edits = overlayEdits(contract);
-  const nativeImport = uniqueMatch(primary,
-    `import\\{([^}]*)\\}from(["\\x60])\\./${escapeRegExp(initialName)}\\2`, "existing app runtime import");
-  const ownImports = [BINDINGS_EXPORT, OPEN_EXPORT, DIAGNOSTICS_EXPORT];
-  const importNames = nativeImport[1].split(",").filter(Boolean);
-  const importWithHelpers = `import{${[...importNames, ...ownImports].join(",")}}from${nativeImport[2]}./${initialName}${nativeImport[2]}`;
   const runtimeCount = initial.split(RUNTIME_MARKER).length - 1;
   const overlayCount = primary.split(OVERLAY_MARKER).length - 1;
   if (runtimeCount || overlayCount) {
     if (runtimeCount !== 1 || overlayCount !== 1 || !initial.endsWith(runtime) || !nativeTrace.applied ||
-        !ownImports.every((name) => importNames.filter((entry) => entry === name).length === 1) || contract.header[3] !== "12" ||
-        !contract.overlay.source.includes(edits.setup) || !contract.overlay.source.includes(edits.callback) ||
-        !contract.overlay.source.includes(edits.originalDependencies + edits.dependencies) ||
-        !contract.overlay.source.includes(edits.assignments) ||
-        !contract.overlay.source.includes(edits.guard + "&&!codexLinuxCanAskQuickChat)")) {
+        !primary.includes(OPEN_EXPORT) || !primary.includes(".c)(22)") || !primary.includes(".c)(9)") ||
+        !primary.includes("onMoreDetails:codexLinuxMoreDetails,onAddResponseTextAnnotation:") ||
+        !primary.includes("onMoreDetails:codexLinuxMoreDetails==null?void 0:e=>codexLinuxMoreDetails(e,") ||
+        !primary.includes("[8]=codexLinuxMoreDetails")) {
       throw new Error("Incomplete or drifted selected-text Quick Chat patch");
     }
     return { initial, primary, applied: true };
   }
-  if (contract.header[3] !== "8" || primary.includes(BINDINGS_EXPORT) || initial.includes(OPEN_EXPORT) || nativeTrace.applied) {
+  const contract = overlayContract(primary);
+  const edits = overlayEdits(contract);
+  const nativeImport = uniqueMatch(primary,
+    `import\\{([^}]*)\\}from(["\\x60])\\./${escapeRegExp(initialName)}\\2`, "existing app runtime import");
+  const importNames = nativeImport[1].split(",").filter(Boolean);
+  const importWithHelper = `import{${[...importNames, OPEN_EXPORT].join(",")}}from${nativeImport[2]}./${initialName}${nativeImport[2]}`;
+  if (contract.header[3] !== "8" || contract.parent.source.includes("codexLinuxMoreDetails") ||
+      primary.includes(OPEN_EXPORT) || initial.includes(OPEN_EXPORT) || nativeTrace.applied) {
     throw new Error("Mixed selected-text Quick Chat input");
   }
-  // Both assets and every cache dependency are validated before either file is written.
+
+  let parent = contract.parent.source;
+  parent = replaceOnce(parent, ".c)(18)", ".c)(22)");
+  const returnMatch = uniqueMatch(parent, `let (${IDENT});return ${escapeRegExp(contract.parentCache)}\\[13\\]`, "overlay parent return");
+  parent = replaceOnce(parent, returnMatch[0], `${edits.parentSetup}${returnMatch[0]}`);
+  parent = replaceOnce(parent,
+    `${contract.header[1]},{onAddResponseTextAnnotation:`,
+    `${contract.header[1]},{onMoreDetails:codexLinuxMoreDetails,onAddResponseTextAnnotation:`);
+  const parentDependencies = uniqueMatch(parent,
+    `${escapeRegExp(contract.parentCache)}\\[13\\]!==${IDENT}\\|\\|${escapeRegExp(contract.parentCache)}\\[14\\]!==${IDENT}\\|\\|` +
+      `${escapeRegExp(contract.parentCache)}\\[15\\]!==${IDENT}\\|\\|${escapeRegExp(contract.parentCache)}\\[16\\]!==${IDENT}`,
+    "overlay parent memo dependencies")[0];
+  parent = replaceOnce(parent, parentDependencies,
+    `${parentDependencies}||${contract.parentCache}[21]!==codexLinuxMoreDetails`);
+  const parentAssignments = uniqueMatch(parent,
+    `${escapeRegExp(contract.parentCache)}\\[13\\]=${IDENT},${escapeRegExp(contract.parentCache)}\\[14\\]=${IDENT},` +
+      `${escapeRegExp(contract.parentCache)}\\[15\\]=${IDENT},${escapeRegExp(contract.parentCache)}\\[16\\]=${IDENT},`,
+    "overlay parent memo assignments")[0];
+  parent = replaceOnce(parent, parentAssignments,
+    `${parentAssignments}${contract.parentCache}[21]=codexLinuxMoreDetails,`);
+
   let overlay = contract.overlay.source;
-  overlay = replaceOnce(overlay, ".c)(8)", ".c)(12)");
-  overlay = replaceOnce(overlay, edits.guard, edits.setup + edits.guard);
-  overlay = replaceOnce(overlay, edits.guard + ")", edits.guard + "&&!codexLinuxCanAskQuickChat)");
-  overlay = replaceOnce(overlay, edits.originalDependencies, edits.originalDependencies + edits.dependencies);
-  overlay = replaceOnce(overlay, `${contract.cache}[0]=${contract.add},`, edits.assignments + `${contract.cache}[0]=${contract.add},`);
-  overlay = replaceOnce(overlay, `onOpenSideChat:${contract.side}}`, edits.callback + `onOpenSideChat:${contract.side}}`);
-  const patchedPrimary = primary.slice(0, contract.overlay.start) + overlay + primary.slice(contract.overlay.end);
+  overlay = replaceOnce(overlay, ".c)(8)", ".c)(9)");
+  overlay = replaceOnce(overlay,
+    `{onAddResponseTextAnnotation:${contract.add},onOpenSideChat:${contract.side},`,
+    `{onAddResponseTextAnnotation:${contract.add},onMoreDetails:codexLinuxMoreDetails,onOpenSideChat:${contract.side},`);
+  overlay = replaceOnce(overlay, edits.guard, `${edits.guard}&&codexLinuxMoreDetails==null`);
+  overlay = replaceOnce(overlay, edits.originalDependencies, edits.originalDependencies + edits.leafDependency);
+  overlay = replaceOnce(overlay, `${contract.cache}[0]=${contract.add},`, edits.leafAssignment + `${contract.cache}[0]=${contract.add},`);
+  overlay = replaceOnce(overlay, `selectedText:${contract.selectedText},onAddSelectedText:`,
+    `selectedText:${contract.selectedText},${edits.toolbarCallback}onAddSelectedText:`);
+
+  let patchedPrimary = primary.slice(0, contract.parent.start) + parent + primary.slice(contract.parent.end);
+  const shiftedOverlayStart = contract.overlay.start + (parent.length - contract.parent.source.length);
+  const shiftedOverlayEnd = shiftedOverlayStart + contract.overlay.source.length;
+  patchedPrimary = patchedPrimary.slice(0, shiftedOverlayStart) + overlay + patchedPrimary.slice(shiftedOverlayEnd);
+  patchedPrimary = replaceOnce(patchedPrimary, nativeImport[0], importWithHelper);
   return { initial: initial.slice(0, dispatch.start) + nativeTrace.source + initial.slice(dispatch.end) + runtime,
-    primary: replaceOnce(patchedPrimary, nativeImport[0], importWithHelpers), applied: false };
+    primary: patchedPrimary, applied: false };
 }
 
 function applySelectedTextMoreDetails(extractedDir, context = {}) {
@@ -367,13 +371,16 @@ function applySelectedTextMoreDetails(extractedDir, context = {}) {
     const assets = path.join(extractedDir, "webview", "assets");
     const names = fs.readdirSync(assets);
     const findAsset = (pattern, marker) => {
+      const markers = Array.isArray(marker) ? marker : [marker];
       const matches = names.filter((name) => pattern.test(name)).map((name) => ({ name,
-        source: fs.readFileSync(path.join(assets, name), "utf8") })).filter((asset) => asset.source.includes(marker));
-      if (matches.length !== 1) throw new Error(`Expected one ${marker} asset, found ${matches.length}`);
+        source: fs.readFileSync(path.join(assets, name), "utf8") }))
+        .filter((asset) => markers.every((entry) => asset.source.includes(entry)));
+      if (matches.length !== 1) throw new Error(`Expected one ${markers.join(" + ")} asset, found ${matches.length}`);
       return matches[0];
     };
     const initial = findAsset(/^app-initial-[A-Za-z0-9_-]+\.js$/u, "has-opened-quick-chat-v1");
-    const primary = findAsset(/^app-primary-[A-Za-z0-9_-]+\.js$/u, "selectedTextOverlay.moreDetails");
+    const primary = findAsset(/^[A-Za-z0-9_-]+\.js$/u,
+      ["onAddResponseTextAnnotation:", "targetContainerRefs:"]);
     if (!primary.source.includes(`from"./${initial.name}"`) && !primary.source.includes(`from\`./${initial.name}\``)) {
       throw new Error("Codex overlay imports a different runtime asset");
     }

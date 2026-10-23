@@ -22,7 +22,7 @@ const CONTRACTS = Object.freeze({
       "gu",
     ),
     replacement: "!0",
-    expected: 1,
+    expected: 2,
   }],
   personalization: [{
     pattern: new RegExp(

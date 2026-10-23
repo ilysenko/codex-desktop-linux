@@ -70,6 +70,11 @@ test("patch targets only the failure branch and is idempotent", () => {
   assert.ok(applyDilMarkdownFallback(renamed, "markdown.js").includes(
     "errorFallback:preparing?null:(0,$$.jsx)(codexLinuxDilMarkdownFallback,{reference:r})",
   ));
+  const classifiedFailure = fixture.replace("Failure,{}", "Failure,{stage:error?.stage,errorClass:error?.errorClass}");
+  assert.match(
+    applyDilMarkdownFallback(classifiedFailure, "markdown.js"),
+    /errorFallback:preparing\?null:\(0,jsx\.jsx\)\(codexLinuxDilMarkdownFallback,\{reference:r\}\)/,
+  );
   assert.throws(() => applyDilMarkdownFallback(fixture.replace("errorFallback:", "fallback:"), "markdown.js"), /contract changed/);
   assert.throws(() => applyDilMarkdownFallback(fixture + fixture, "markdown.js"), /contract changed/);
   assert.throws(() => applyDilMarkdownFallback(fixture, "../bad.js"), /Invalid/);

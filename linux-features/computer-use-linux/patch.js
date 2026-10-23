@@ -76,7 +76,7 @@ module.exports = [
   webviewAssetPatch({
     id: "native-settings-visibility",
     order: 20_160,
-    pattern: /^app-initial-[^.]+\.js$/,
+    pattern: /^[A-Za-z0-9_-]+\.js$/,
     assetMatch: matchesNativeSettingsVisibilityContract,
     missingDescription: "Plugins presentation filter",
     skipDescription: "Linux native Settings visibility patch",

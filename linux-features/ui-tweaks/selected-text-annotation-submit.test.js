@@ -106,6 +106,13 @@ function appFixture(t, source = official.KQs) {
   return { root, assets, target };
 }
 
+const currentShortcutSource = official.KQs
+  .replace(
+    "p=e=>{if(e.target instanceof Element&&e.target,!e.defaultPrevented){",
+    "p=e=>{let target=e.target instanceof Element?e.target:null;if(!e.defaultPrevented){",
+  )
+  .replace("Kqt(n,e)&&e.preventDefault()", "(Kqt(n,e))&&(e.preventDefault())");
+
 function withWarnings(callback) {
   const messages = [];
   const warn = console.warn;
@@ -131,6 +138,12 @@ test("patch discovers renamed native symbols, preserves registration and memo sl
   assert.equal(patchSource(patched), patched);
   assert.equal(patched.replace(`/*${HANDLER_MARKER}*/if(${GUARD_NAME}(renamed_n,renamed_e))return;`, "")
     .slice(0, renamed.length), renamed);
+});
+
+test("patch accepts the current shortcut target normalization and grouped dispatch", () => {
+  const patched = patchSource(currentShortcutSource);
+  assert.equal(shortcutContract(patched).state, "applied");
+  assert.equal(patchSource(patched), patched);
 });
 
 test("unpatched capture handler reproduces loss of the initial unsaved annotation body", async () => {

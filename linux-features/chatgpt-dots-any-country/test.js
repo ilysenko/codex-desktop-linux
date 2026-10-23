@@ -19,7 +19,7 @@ const {
 
 const FIXTURES = {
   "landing-route-current.js": `function route(){if(D===\`error\`||account?.tbo_config?.tbo_available==null||account.structure==null)return null;if(account.tbo_config.tbo_available){return redirect}}`,
-  "app-initial-current.js": `function capable(){if(scope.query.getData(accountQuery,accountId)?.accounts[accountId]?.account.tbo_config?.tbo_available!==!0)throw Error();return response?.accounts[accountId]?.account.tbo_config?.tbo_available===!0}`,
+  "app-initial-current.js": `function capable(){if(scope.query.getData(accountQuery,accountId)?.accounts[accountId]?.account.tbo_config?.tbo_available!==!0)throw Error();let capable=response?.accounts[accountId]?.account.tbo_config?.tbo_available===!0;return capable||retry?.accounts[accountId]?.account.tbo_config?.tbo_available===!0}`,
   "personalization-settings-current.js": `first?.accounts[accountId]?.account.tbo_config?.tbo_available!==!0; second?.accounts[otherId]?.account.tbo_config?.tbo_available!==!0;`,
 };
 
@@ -69,7 +69,7 @@ test("landing route stays visible while preserving the server gate", () => {
 
 test("shared Dots capability checks no longer reject a country-gated account", () => {
   const patched = applyDotsAppSharedPatch(FIXTURES["app-initial-current.js"]);
-  assert.equal(patched, "function capable(){if(!1)throw Error();return !0}");
+  assert.equal(patched, "function capable(){if(!1)throw Error();let capable=!0;return capable||!0}");
   assert.doesNotMatch(patched, /\?\.[!01]/);
   assert.equal(applyDotsAppSharedPatch(patched), patched);
 });

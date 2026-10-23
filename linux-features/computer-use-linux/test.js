@@ -47,7 +47,11 @@ test("computer-use-linux is opt-in and owns the current Linux descriptors", () =
   );
   const visibility = descriptors.find(({ id }) => id === "native-settings-visibility");
   assert.equal(visibility.pattern.test("app-initial-3e128f859aa3.js"), true);
-  assert.equal(visibility.pattern.test("app-primary-72206882651c.js"), false);
+  assert.equal(visibility.pattern.test("app-primary-72206882651c.js"), true);
+  assert.equal(visibility.assetMatch(
+    "function f(p,h,r){if(h.length===0&&!r)return p;let s=new Set(h);return p.filter(e=>(!r||!x(e.plugin.id))&&!s.has(e.plugin.id))}",
+  ), true);
+  assert.equal(visibility.assetMatch("function unrelated(){return true}"), false);
   const hostPlatform = descriptors.find(({ id }) => id === "host-platform");
   assert.equal(hostPlatform.pattern.test("app-initial-currentHash.js"), true);
   assert.equal(hostPlatform.pattern.test("app-shared-oldHash.js"), true);
