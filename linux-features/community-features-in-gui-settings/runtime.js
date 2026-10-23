@@ -27,12 +27,25 @@ function buildFeatureTree(catalog) {
   // A disabled/local cycle has no natural root. Expose its component once;
   // rendering stops when a path reaches an ancestor again.
   for (const id of families) if (!covered.has(id)) { roots.push(id); visit(id); }
+  // Subfeatures belong to their feature, rather than representing another
+  // package dependency. Count each subfeature, replacing its grouping parent.
+  const units = (feature) => feature.subfeatures?.length ? feature.subfeatures : [feature];
+  const count = (ids) => catalog.features.filter((feature) => ids.includes(feature.id))
+    .reduce((total, feature) => total + units(feature).length, 0);
+  for (const feature of catalog.features) for (const item of feature.subfeatures ?? []) {
+    const id = `${feature.id}/${item.id}`;
+    nodes.set(id, { ...item, id, owner: feature.id, kind: "subfeature", origin: feature.origin, requires: [], conflicts: [] });
+    children.set(id, []);
+    children.get(feature.id).push(id);
+  }
+  const counted = catalog.features.flatMap(units);
   return { nodes, children, roots, independent,
-    familyCount: catalog.features.filter((feature) => families.includes(feature.id)).length };
+    familyCount: count(families), independentCount: count(independent),
+    total: counted.length, enabled: counted.filter((item) => item.enabled).length };
 }
 
 // Embedded with the upstream settings row, button, theme and active locale.
-function renderCommunityFeaturesInGuiSettings({ React, Row, Button, locale, platform, catalog, buildTree = buildFeatureTree, resources, translate }) {
+function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Stack, locale, platform, catalog, buildTree = buildFeatureTree, resources, translate }) {
   const h = React.createElement, language = translate(locale, resources);
   const words = language.messages, format = language.format;
   const tree = buildTree({ ...catalog, features: catalog.features.map(language.feature) });
@@ -43,7 +56,6 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, locale, plat
   const panelId = React.useId();
   if (platform !== "linux") return null;
 
-  const enabled = catalog.features.filter((feature) => feature.enabled).length;
   const toggle = (key, value) => setOpened((previous) => {
     const next = new Set(previous);
     if (value ?? !next.has(key)) next.add(key); else next.delete(key);
@@ -55,6 +67,11 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, locale, plat
     strokeWidth: 1.2, "aria-hidden": true, style: { flexShrink: 0 },
   }, h("path", { d: folder ? "M1.5 4V3A1 1 0 0 1 2.5 2h4l1.5 2h5.5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" : "M3 1.5h6l4 4v9H3Zm6 0v4h4" }));
   const status = (feature) => feature.enabled === null ? words.missing : feature.enabled ? words.enabled : words.available;
+  const statusLabel = (feature) => h("span", {
+    className: "text-xs text-secondary",
+    style: { flexShrink: 0, fontWeight: feature.enabled ? 600 : 400,
+      color: feature.enabled ? "var(--color-text-success)" : undefined },
+  }, status(feature));
   const renderNode = ({ id, key, parent, level, ancestors = [], collection, ids, count }) => {
     const feature = id ? tree.nodes.get(id) : null, cycle = id != null && ancestors.includes(id);
     const children = ids ?? (cycle ? [] : tree.children.get(id));
@@ -83,9 +100,11 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, locale, plat
     icon(hasChildren || !feature),
     h("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere", fontWeight: feature ? 400 : 600 }, title: feature?.description }, label),
     !feature && h("span", { className: "text-xs text-secondary" }, String(count ?? ids.length)),
+    feature?.subfeatures?.length > 0 && h("span", { className: "text-xs text-secondary" }, String(feature.subfeatures.length)),
+    feature?.kind === "subfeature" && h("span", { className: "text-xs text-secondary" }, words.subfeature),
     feature?.requires.length > 1 && h("span", { className: "text-xs text-secondary" }, words.multiple),
     cycle && h("span", { className: "text-xs text-secondary" }, words.cycle),
-    feature && h("span", { className: "text-xs text-secondary", style: { flexShrink: 0, fontWeight: feature.enabled ? 600 : 400 } }, status(feature))),
+    feature && statusLabel(feature)),
     open && h("div", { role: "group", style: { marginInlineStart: "15px", paddingInlineStart: "12px", borderInlineStart: "1px solid var(--color-border)" } },
       children.map((child) => renderNode({ id: child, key: `${key}/${child}`, parent: key, level: level + 1, ancestors: id ? [...ancestors, id] : ancestors }))),
     );
@@ -113,32 +132,36 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, locale, plat
   const detail = feature && h("div", { className: "flex flex-col gap-1" },
     feature.description && h("div", null, feature.description),
     h("div", null, h("code", { title: words.id }, feature.id), feature.origin === "local" ? ` · ${words.local}` : null),
+    feature.kind === "subfeature" && h("div", null, format("owner", { name: names([feature.owner]) })),
     feature.requires.length > 0 && h("div", null, format("requires", { names: names(feature.requires) })),
     feature.conflicts.length > 0 && h("div", null, format("conflicts", { names: names(feature.conflicts) })),
   );
-  return h(React.Fragment, null,
-    h(Row, {
-      label: words.title, description: format("summary", { enabled, total: catalog.features.length }),
-      control: h(Button, {
-        color: "secondary", size: "toolbar", onClick: () => setExpanded((value) => !value),
-        "aria-expanded": expanded, "aria-controls": expanded ? panelId : undefined,
-      }, expanded ? words.hide : words.show),
-    }),
-    expanded && h("div", { id: panelId, role: "region", "aria-label": words.title },
-      h("p", { id: `${panelId}-hint`, className: "text-xs text-secondary", style: { padding: "4px 16px 8px" } }, words.note),
-      h("div", {
-        role: "tree", "aria-label": words.tree, "aria-describedby": `${panelId}-hint`, onKeyDown,
-        style: { maxHeight: "24rem", overflowY: "auto", padding: "0 12px 8px" },
-      },
-      tree.roots.length > 0 && renderNode({ key: "dependencies", collection: words.families, ids: tree.roots, count: tree.familyCount, level: 1 }),
-      tree.independent.length > 0 && renderNode({ key: "independent", collection: words.independent, ids: tree.independent, level: 1 }),
-      catalog.features.length === 0 && h("p", { className: "text-sm text-secondary" }, words.empty)),
-      h("div", { role: "region", "aria-label": words.select, style: { borderTop: "1px solid var(--color-border)", minHeight: "60px" } },
-        feature ? h(Row, { label: feature.title, description: detail, control: status(feature), size: "compact", verticalAlignment: "start" })
-          : h("p", { className: "text-xs text-secondary", style: { padding: "14px 16px" } }, words.select)),
-      catalog.sourceCommit && h("p", { className: "text-xs text-secondary", style: { padding: "4px 16px 8px" } },
-        format("snapshot", { revision: catalog.sourceCommit.slice(0, 12) })),
-    ),
+  return h(Section, null,
+    h(Section.Header, { title: words.title }),
+    h(Section.Content, null, h(Stack, null,
+      h(Row, {
+        label: words.list, description: format("summary", { enabled: tree.enabled, total: tree.total }),
+        control: h(Button, {
+          color: "secondary", size: "toolbar", onClick: () => setExpanded((value) => !value),
+          "aria-expanded": expanded, "aria-controls": expanded ? panelId : undefined,
+        }, expanded ? words.hide : words.show),
+      }),
+      expanded && h("div", { id: panelId, role: "region", "aria-label": words.title },
+        h("p", { id: `${panelId}-hint`, className: "text-xs text-secondary", style: { padding: "4px 16px 8px" } }, words.note),
+        h("div", {
+          role: "tree", "aria-label": words.tree, "aria-describedby": `${panelId}-hint`, onKeyDown,
+          style: { maxHeight: "24rem", overflowY: "auto", padding: "0 12px 8px" },
+        },
+        tree.roots.length > 0 && renderNode({ key: "dependencies", collection: words.families, ids: tree.roots, count: tree.familyCount, level: 1 }),
+        tree.independent.length > 0 && renderNode({ key: "independent", collection: words.independent, ids: tree.independent, count: tree.independentCount, level: 1 }),
+        catalog.features.length === 0 && h("p", { className: "text-sm text-secondary" }, words.empty)),
+        h("div", { role: "region", "aria-label": words.select, style: { borderTop: "1px solid var(--color-border)", minHeight: "60px" } },
+          feature ? h(Row, { label: feature.title, description: detail, control: statusLabel(feature), size: "compact", verticalAlignment: "start" })
+            : h("p", { className: "text-xs text-secondary", style: { padding: "14px 16px" } }, words.select)),
+        catalog.sourceCommit && h("p", { className: "text-xs text-secondary", style: { padding: "4px 16px 8px" } },
+          format("snapshot", { revision: catalog.sourceCommit.slice(0, 12) })),
+      ),
+    )),
   );
 }
 

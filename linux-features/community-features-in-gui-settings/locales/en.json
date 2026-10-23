@@ -4,13 +4,13 @@
     "title": "Community features",
     "show": "Show",
     "hide": "Hide",
-    "enabled": "Enabled",
-    "available": "Not enabled",
-    "summary": "{enabled} enabled in this build · {total} supported",
-    "note": "A child depends on its parent. Enabled means included in this build, not runtime health.",
+    "enabled": "Installed",
+    "available": "Not installed",
+    "summary": "{enabled} installed in this build · {total} supported",
+    "note": "Dependency children require their parent; subfeatures belong to their parent. Each subfeature counts once; its grouping parent is not counted again. Installed means included in this build, not runtime health.",
     "families": "Dependency groups",
     "independent": "Independent features",
-    "tree": "Feature dependency tree",
+    "tree": "Community feature tree",
     "select": "Select a feature to see its description",
     "requires": "Requires: {names}",
     "conflicts": "Conflicts with: {names}",
@@ -24,7 +24,10 @@
     "expand": "Expand {name}",
     "collapse": "Collapse {name}",
     "featureLabel": "{name}, {status}",
-    "separator": ", "
+    "separator": ", ",
+    "list": "Feature catalog",
+    "subfeature": "Subfeature",
+    "owner": "Part of: {name}"
   },
   "features": {}
 }

@@ -6,6 +6,39 @@ const path = require("node:path");
 const CATALOG_ASSET = "webview/assets/community-features-in-gui-settings-catalog.json";
 const SNAPSHOT_NAME = "catalog-snapshot.json";
 const FEATURE_ID = /^[a-z0-9][a-z0-9-]*$/;
+const SETTING_PATH = /^[a-zA-Z][\w]*(?:\.[a-zA-Z][\w]*)*\.enabled$/;
+
+function validateSubfeatures(subfeatures = []) {
+  const seen = new Set();
+  if (!Array.isArray(subfeatures)) throw Error("community-features-in-gui-settings: invalid subfeatures");
+  for (const item of subfeatures) {
+    if (typeof item?.id !== "string" || !FEATURE_ID.test(item.id) || seen.has(item.id) ||
+        typeof item.title !== "string" || !item.title.trim() || typeof item.description !== "string" ||
+        typeof item.settingPath !== "string" || !SETTING_PATH.test(item.settingPath) ||
+        item.settingPath.split(".").some((part) => ["__proto__", "prototype", "constructor"].includes(part)) ||
+        !["true", "not-false"].includes(item.enabledWhen) || typeof item.nullishFallback !== "boolean" ||
+        typeof item.defaultEnabled !== "boolean" || typeof item.enabled !== "boolean") {
+      throw Error("community-features-in-gui-settings: invalid or duplicate subfeature");
+    }
+    seen.add(item.id);
+  }
+  return subfeatures;
+}
+
+function settingValue(settings, settingPath) {
+  return settingPath.split(".").reduce((value, part) => value != null && typeof value === "object" &&
+    !Array.isArray(value) && Object.hasOwn(value, part) ? value[part] : undefined, settings);
+}
+
+function catalogSubfeatures(manifest) {
+  if (manifest.catalogSubfeatures == null) return [];
+  if (!Array.isArray(manifest.catalogSubfeatures)) throw Error("community-features-in-gui-settings: invalid subfeatures");
+  return validateSubfeatures(manifest.catalogSubfeatures.map((item) => ({
+    ...item, enabledWhen: item.enabledWhen ?? "true", nullishFallback: item.nullishFallback ?? false,
+    defaultEnabled: typeof item.settingPath === "string" ? settingValue(manifest, item.settingPath) : undefined,
+    enabled: false,
+  })));
+}
 
 function validateCatalog(catalog) {
   if (catalog?.schemaVersion !== 1 || !Array.isArray(catalog.features) ||
@@ -22,6 +55,10 @@ function validateCatalog(catalog) {
           feature[key].some((id) => typeof id !== "string" || !FEATURE_ID.test(id)))) {
       throw Error("community-features-in-gui-settings: invalid or duplicate catalog feature");
     }
+    validateSubfeatures(feature.subfeatures);
+    if (feature.enabled === false && feature.subfeatures?.some((item) => item.enabled)) {
+      throw Error("community-features-in-gui-settings: enabled subfeature has a disabled parent");
+    }
     seen.add(feature.id);
   }
   return catalog;
@@ -30,7 +67,7 @@ function validateCatalog(catalog) {
 function buildCatalog(context = {}) {
   // Descriptor discovery can run inside linux-features.js itself. Resolve its
   // exports only when applying the patch, after discovery has completed.
-  const { featuresJsonSummary, enabledLinuxFeatureIds, linuxFeaturesRoot } = require("../../scripts/lib/linux-features.js");
+  const { discoverLinuxFeatureManifests, linuxFeaturesConfig, enabledLinuxFeatureIds, linuxFeaturesRoot } = require("../../scripts/lib/linux-features.js");
   const { sourceInfo } = require("../../scripts/lib/build-info.js");
   const options = context.featurePatchOptions ?? {};
   const root = linuxFeaturesRoot(options);
@@ -38,7 +75,17 @@ function buildCatalog(context = {}) {
   const frozen = fs.existsSync(snapshotPath)
     ? validateCatalog(JSON.parse(fs.readFileSync(snapshotPath, "utf8"))) : null;
   const features = new Map((frozen?.features ?? []).map((feature) => [feature.id, feature]));
-  for (const feature of featuresJsonSummary(options)) features.set(feature.id, feature);
+  // Only declarative manifests are inspected, including for disabled features.
+  // Never load their patch descriptors just to discover UI subfeatures.
+  for (const feature of discoverLinuxFeatureManifests(options).filter((item) => !item.manifest.internal)) {
+    const manifest = feature.manifest;
+    features.set(feature.id, {
+      id: feature.id, title: manifest.title ?? manifest.name ?? feature.id,
+      description: manifest.description ?? "", origin: feature.origin,
+      requires: manifest.requires, conflicts: manifest.conflicts, subfeatures: catalogSubfeatures(manifest),
+    });
+  }
+  const settings = linuxFeaturesConfig(options).settings;
   const enabled = new Set(context.enabledFeatureIds ?? enabledLinuxFeatureIds(options));
   return validateCatalog({
     schemaVersion: 1,
@@ -46,6 +93,11 @@ function buildCatalog(context = {}) {
     features: [...features.values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map((feature) => ({
       id: feature.id, title: feature.title, description: feature.description, origin: feature.origin,
       requires: feature.requires, conflicts: feature.conflicts, enabled: enabled.has(feature.id),
+      subfeatures: (feature.subfeatures ?? []).map((item) => {
+        const override = settingValue(settings[feature.id], item.settingPath);
+        const value = override === undefined || item.nullishFallback && override === null ? item.defaultEnabled : override;
+        return { ...item, enabled: enabled.has(feature.id) && (item.enabledWhen === "true" ? value === true : value !== false) };
+      }),
     })),
   });
 }

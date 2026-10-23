@@ -1,16 +1,21 @@
 {
-  "aliases": ["zh", "zh-CN", "zh-Hans", "zh-SG"],
+  "aliases": [
+    "zh",
+    "zh-CN",
+    "zh-Hans",
+    "zh-SG"
+  ],
   "messages": {
     "title": "社区功能",
     "show": "展开",
     "hide": "收起",
-    "enabled": "已启用",
-    "available": "未启用",
-    "summary": "本次构建启用 {enabled} 项 · 支持 {total} 项",
-    "note": "父节点是基础功能，子节点依赖父节点。启用状态来自本次构建，不代表运行状态。",
+    "enabled": "已安装",
+    "available": "未安装",
+    "summary": "本次构建安装 {enabled} 项 · 支持 {total} 项",
+    "note": "依赖功能需要父项，子功能归属于父项。子功能分别计数，分组父项不再重复计数。已安装表示包含在本次构建中，不代表运行状态。",
     "families": "有依赖关系",
     "independent": "独立功能",
-    "tree": "功能依赖树",
+    "tree": "社区功能树",
     "select": "选择功能查看说明",
     "requires": "依赖：{names}",
     "conflicts": "不兼容：{names}",
@@ -24,7 +29,47 @@
     "expand": "展开 {name}",
     "collapse": "收起 {name}",
     "featureLabel": "{name}，{status}",
-    "separator": "、"
+    "separator": "、",
+    "list": "功能目录",
+    "subfeature": "子功能",
+    "owner": "所属功能：{name}"
   },
-  "features": {}
+  "features": {
+    "ui-tweaks/dock-icon": {
+      "title": "Dock 图标",
+      "description": "显示 Dock 图标选择器，并同步到 Linux 窗口、托盘和受支持的启动器。"
+    },
+    "ui-tweaks/ui-font-size": {
+      "title": "扩展界面字号",
+      "description": "将界面字号上限提高到可配置的值。"
+    },
+    "ui-tweaks/custom-font-input": {
+      "title": "自定义字体输入",
+      "description": "在已安装字体和手动输入 CSS 字体列表之间切换。"
+    },
+    "ui-tweaks/suggested-prompts": {
+      "title": "建议提示词",
+      "description": "在设置中显示建议提示词，并在首页启用与项目相关的卡片。"
+    },
+    "ui-tweaks/model-list": {
+      "title": "展开模型选择器",
+      "description": "默认打开高级选择器，直接展示模型及其支持的推理强度。"
+    },
+    "ui-tweaks/english-effort-labels": {
+      "title": "英语推理强度名称",
+      "description": "在简体中文界面中保留英语推理强度名称。"
+    },
+    "ui-tweaks/selection-more-details": {
+      "title": "选中文本：更多详情",
+      "description": "恢复选中文本菜单的更多详情操作，通过 Quick Chat 解释所选文本。"
+    },
+    "ui-tweaks/annotation-submit": {
+      "title": "批注提交快捷键",
+      "description": "用 Ctrl+Enter 发送当前选中文本的批注，避免被常规输入框拦截。"
+    },
+    "ui-tweaks/sidebar-project-name": {
+      "title": "侧栏项目名称样式",
+      "description": "自定义侧栏中项目名称的样式。"
+    }
+  }
 }

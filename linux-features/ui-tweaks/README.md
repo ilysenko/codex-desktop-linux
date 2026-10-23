@@ -35,6 +35,12 @@ Enable it in the local, gitignored feature config:
 | `selection.annotationSubmit` | `patches/selected-text-annotation-submit.js` | After selecting text, Ctrl+Enter sends the active annotation editor's text without being intercepted by the regular composer. | `tweaks.selection.annotationSubmit.enabled` |
 | `sidebar.projectName` | `patches/sidebar-project-name.js` | Styles project names in the left sidebar project list. It does not style `Projects` / `Chats` section headings and does not style chat rows. | `tweaks.sidebar.projectName.enabled`, `tweaks.sidebar.projectName.style` |
 
+The manifest's `catalogSubfeatures` metadata exposes these nine modules to
+[`community-features-in-gui-settings`](../community-features-in-gui-settings/README.md).
+The catalog counts each module separately and uses `UI Tweaks` as its grouping
+parent. Module installed states follow the settings above and are all false
+when `ui-tweaks` itself is disabled.
+
 ## Settings
 
 Tracked defaults live in `feature.json`, but local preferences should not be

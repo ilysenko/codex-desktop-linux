@@ -23,12 +23,7 @@ function settingsContract(source) {
   const row = unique(body, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${ID}),\\{label:${ID},description:${ID},control:${ID}\\}`, "g"));
   const reactUse = source.match(new RegExp(`\\(0,(${ID})\\.useState\\)\\(`));
   const react = reactUse && unique(source, new RegExp(`\\b${escapeRegExp(reactUse[1])}=(${ID})\\(\\)`, "g"));
-  const render = unique(source, new RegExp(`\\(0,(${ID})\\.jsx\\)\\(${escapeRegExp(owner[1])},\\{appName:${ID}\\}\\)`, "g"));
-  // Insert a sibling in the existing children array. A refactor to a cached
-  // scalar expression must fail closed instead of discarding the new element.
-  const arrayStart = render == null ? -1 : source.lastIndexOf("children:[", render.index);
-  const siblings = arrayStart < 0 ? null : source.slice(arrayStart + "children:[".length, render.index);
-  const arrayContract = siblings != null && new RegExp(`^(?:\\(0,${ID}\\.jsx\\)\\(${ID},\\{\\}\\),)*$`).test(siblings);
+  const menuRender = unique(source, new RegExp(`\\(0,(${ID})\\.jsx\\)\\(${escapeRegExp(owner[1])},\\{appName:${ID}\\}\\)`, "g"));
   const intlUse = unique(body, new RegExp(`(${ID})\\.formatMessage\\(\\{id:\`settings\\.general\\.macMenuBar\\.ariaLabel\``, "g"));
   const intl = intlUse && unique(body, new RegExp(`\\b${escapeRegExp(intlUse[1])}=(${ID})\\(\\)`, "g"));
   // The existing licenses action provides the native secondary toolbar button.
@@ -39,15 +34,35 @@ function settingsContract(source) {
     `\\(0,(${ID})\\.jsx\\)\\((${ID}),\\{color:\`secondary\`,size:\`toolbar\`,onClick:${ID},children:${ID}\\}`,
     "g",
   ));
-  if (!row || !react || !render || !arrayContract || !intl || !button || row[1] !== render[1] || button[1] !== row[1]) return null;
+  if (!row || !react || !menuRender || !intl || !button || row[1] !== menuRender[1] || button[1] !== row[1]) return null;
   if (source.split("settings.openSourceLicenses.view").length !== 2) return null;
-  return { row: row[2], button: button[2], reactFactory: react[1], platformHook: owner[4], intlHook: intl[1], jsx: row[1], render };
+  // Bind the native section primitives to the General group containing the
+  // menu preference, but insert at the page level, above all existing groups.
+  const generalStart = source.lastIndexOf("function ", menuRender.index);
+  const generalEnd = generalStart < 0 ? -1 : findMatchingBrace(source, source.indexOf("{", generalStart));
+  if (generalEnd < menuRender.index) return null;
+  const general = source.slice(generalStart, generalEnd + 1), jsx = escapeRegExp(row[1]);
+  const generalName = general.match(new RegExp(`^function (${ID})\\(\\)`))?.[1];
+  const section = unique(general, new RegExp(`\\(0,${jsx}\\.jsx\\)\\((${ID})\\.Header,\\{title:\\(0,${jsx}\\.jsx\\)\\(${ID},\\{id:\`settings\\.general\\.groupTitle\``, "g"));
+  if (!section || !generalName) return null;
+  const stacks = [...general.matchAll(new RegExp(`\\(0,${jsx}\\.jsx\\)\\(${escapeRegExp(section[1])}\\.Content,\\{children:\\(0,${jsx}\\.jsxs?\\)\\((${ID}),\\{children:`, "g"))];
+  if (!stacks.length || new Set(stacks.map((match) => match[1])).size !== 1) return null;
+  const pageMarker = unique(source, /slug:`general-settings`/g);
+  const pageStart = pageMarker == null ? -1 : source.lastIndexOf("function ", pageMarker.index);
+  const pageEnd = pageStart < 0 ? -1 : findMatchingBrace(source, source.indexOf("{", pageStart));
+  if (!pageMarker || pageEnd < pageMarker.index) return null;
+  const page = source.slice(pageStart, pageEnd + 1);
+  if (!page.includes(`(0,${row[1]}.jsx)(${generalName},{})`)) return null;
+  const render = unique(page, new RegExp(`\\(0,${jsx}\\.jsxs\\)\\(${ID},\\{title:${ID},children:\\[(?:\\(0,${jsx}\\.jsx\\)\\(${UI},\\{\\}\\),)?${ID},${ID}\\]\\}\\)`, "g"));
+  if (!render) return null;
+  return { row: row[2], button: button[2], section: section[1], stack: stacks[0][1],
+    reactFactory: react[1], platformHook: owner[4], intlHook: intl[1], jsx: row[1], render };
 }
 
 function settingComponent(contract, catalog) {
-  const { row, button, reactFactory, platformHook, intlHook } = contract;
+  const { row, button, section, stack, reactFactory, platformHook, intlHook } = contract;
   const resources = loadLocaleResources();
-  return `function ${UI}(){return(${renderCommunityFeaturesInGuiSettings.toString()})({React:${reactFactory}(),Row:${row},Button:${button},locale:${intlHook}().locale,platform:${platformHook}().platform,catalog:${JSON.stringify(catalog)},buildTree:(${buildFeatureTree.toString()}),resources:${JSON.stringify(resources)},translate:(${createTranslator.toString()})})}`;
+  return `function ${UI}(){return(${renderCommunityFeaturesInGuiSettings.toString()})({React:${reactFactory}(),Row:${row},Button:${button},Section:${section},Stack:${stack},locale:${intlHook}().locale,platform:${platformHook}().platform,catalog:${JSON.stringify(catalog)},buildTree:(${buildFeatureTree.toString()}),resources:${JSON.stringify(resources)},translate:(${createTranslator.toString()})})}`;
 }
 
 function applySettingsPatch(extractedDir, context = {}) {
@@ -66,13 +81,14 @@ function applySettingsPatch(extractedDir, context = {}) {
   const render = `(0,${contract.jsx}.jsx)(${UI},{})`;
   if (source.includes(UI)) {
     if (source.split(component).length !== 2 || source.split(render).length !== 2 ||
+        !contract.render[0].includes(`children:[${render},`) ||
         !fs.existsSync(snapshotPath) || fs.readFileSync(snapshotPath, "utf8") !== snapshot) {
       throw Error("community-features-in-gui-settings: incomplete or inconsistent settings patch");
     }
     return { changed: false };
   }
   if (fs.existsSync(snapshotPath)) throw Error("community-features-in-gui-settings: unexpected catalog asset");
-  const patched = source.replace(contract.render[0], `${render},${contract.render[0]}`) + `\n${component}\n`;
+  const patched = source.replace(contract.render[0], contract.render[0].replace("children:[", `children:[${render},`)) + `\n${component}\n`;
   // Resolve and validate every contract before writing either generated asset.
   fs.writeFileSync(snapshotPath, snapshot);
   fs.writeFileSync(path.join(assetsDir, name), patched);

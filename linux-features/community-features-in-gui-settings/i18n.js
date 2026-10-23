@@ -37,7 +37,7 @@ function loadLocaleResources(directory = path.join(__dirname, "locales")) {
       }
     }
     for (const [featureId, feature] of Object.entries(resource.features ?? {})) {
-      if (!/^[a-z0-9][a-z0-9-]*$/.test(featureId) || !object(feature) ||
+      if (!/^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?$/.test(featureId) || !object(feature) ||
           Object.entries(feature).some(([key, value]) => !["title", "description"].includes(key) || typeof value !== "string" || !value.trim())) {
         fail(`invalid feature translation: ${id}.${featureId}`);
       }
@@ -67,14 +67,18 @@ function createTranslator(locale, resources) {
   const english = resources.en, resource = resources[resolved];
   const messages = { ...english.messages, ...resource.messages };
   const lookup = (table, id) => table && Object.hasOwn(table, id) ? table[id] : {};
+  const featureText = (feature, id) => {
+    const fallback = lookup(english.features, id), translated = lookup(resource.features, id);
+    return { ...feature, title: translated.title ?? fallback.title ?? feature.title,
+      description: translated.description ?? fallback.description ?? feature.description };
+  };
   return {
     locale: resolved, messages,
     format: (key, values = {}) => messages[key].replace(/\{(\w+)\}/g,
       (match, name) => Object.hasOwn(values, name) ? String(values[name]) : match),
     feature: (feature) => {
-      const fallback = lookup(english.features, feature.id), translated = lookup(resource.features, feature.id);
-      return { ...feature, title: translated.title ?? fallback.title ?? feature.title,
-        description: translated.description ?? fallback.description ?? feature.description };
+      return { ...featureText(feature, feature.id),
+        subfeatures: (feature.subfeatures ?? []).map((item) => featureText(item, `${feature.id}/${item.id}`)) };
     },
   };
 }

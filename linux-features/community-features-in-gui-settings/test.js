@@ -32,7 +32,8 @@ function manifest(root, id, extra = {}) {
 function settingsFixture() {
   return 'function menu(e){let i=intlHook(),{platform:p}=platformHook(),v=useSetting(keys.macMenuBarEnabled);if(p!==`macOS`)return null;let label=i.formatMessage({id:`settings.general.macMenuBar.ariaLabel`});let c=(0,j.jsx)(Toggle,{checked:v,onChange:change,ariaLabel:label});return(0,j.jsx)(Row,{label:title,description:description,control:c})}' +
     'function another(){let[e,t]=(0,React.useState)(!1)}var React=reactFactory();' +
-    'var page=(0,j.jsxs)(j.Fragment,{children:[(0,j.jsx)(menu,{appName:appName})]});/*settings.general.macMenuBar.description*/' +
+    'function general(){let header=(0,j.jsx)(Section.Header,{title:(0,j.jsx)(Message,{id:`settings.general.groupTitle`,defaultMessage:`General`})});return(0,j.jsxs)(Section,{children:[header,(0,j.jsx)(Section.Content,{children:(0,j.jsxs)(Stack,{children:[(0,j.jsx)(menu,{appName:appName})]})})]})}' +
+    'function generalPage(){let n=(0,j.jsx)(general,{}),title=(0,j.jsx)(PageTitle,{slug:`general-settings`}),i=(0,j.jsx)(Other,{});return(0,j.jsxs)(Page,{title:title,children:[n,i]})}var page=generalPage();/*settings.general.macMenuBar.description*/' +
     'function licenses(){let label=`settings.openSourceLicenses.view`;return(0,j.jsx)(Button,{color:`secondary`,size:`toolbar`,onClick:show,children:label})}';
 }
 
@@ -73,20 +74,100 @@ test("frozen catalogs survive an enabled-only rebuild and recompute enabled flag
   assert.throws(() => buildCatalog(f.context), /invalid catalog/);
 });
 
+function uiTweaksFixture(t) {
+  const f = fixture(t), source = require("../ui-tweaks/feature.json");
+  const dir = manifest(f.root, source.id, source);
+  // Catalog discovery must never evaluate feature implementations.
+  fs.writeFileSync(path.join(dir, "patch.js"), 'throw Error("must not execute");');
+  return f;
+}
+
+test("UI Tweaks exposes nine independently counted modules with parent-gated defaults and overrides", (t) => {
+  const f = uiTweaksFixture(t);
+  const parent = (catalog) => catalog.features.find((feature) => feature.id === "ui-tweaks");
+  const disabled = buildCatalog(f.context);
+  assert.equal(parent(disabled).subfeatures.length, 9);
+  const paths = (object, prefix = "tweaks") => Object.entries(object).flatMap(([key, value]) =>
+    key === "enabled" ? [`${prefix}.enabled`] : value && typeof value === "object" ? paths(value, `${prefix}.${key}`) : []);
+  assert.deepEqual(parent(disabled).subfeatures.map((item) => item.settingPath).sort(),
+    paths(require("../ui-tweaks/feature.json").tweaks).sort());
+  assert.equal(parent(disabled).subfeatures.some((item) => item.enabled), false);
+  assert.equal(buildFeatureTree(disabled).total, 13); // Four plain features and nine subfeatures.
+  const enabledContext = { ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "ui-tweaks"] };
+  assert.deepEqual(parent(buildCatalog(enabledContext)).subfeatures.filter((item) => item.enabled).map((item) => item.id),
+    ["english-effort-labels", "sidebar-project-name"]);
+  const config = path.join(f.root, "features.json");
+  fs.writeFileSync(config, JSON.stringify({ enabled: enabledContext.enabledFeatureIds, settings: { "ui-tweaks": { tweaks: {
+    appearance: { dockIcon: { enabled: true }, customFontInput: { enabled: true } },
+    reasoning: { keepEffortLabelsEnglish: { enabled: false } }, sidebar: { projectName: { enabled: false } },
+  } } } }));
+  const configured = buildCatalog({ ...enabledContext, featurePatchOptions: { ...f.context.featurePatchOptions, featuresConfigPath: config } });
+  assert.deepEqual(parent(configured).subfeatures.filter((item) => item.enabled).map((item) => item.id), ["dock-icon", "custom-font-input"]);
+  assert.equal(buildFeatureTree(configured).enabled, 4);
+  assert.equal(buildFeatureTree(configured).independentCount, 11);
+  const render = uiHarness(configured);
+  assert.equal(summaryRow(render()).props.description, "本次构建安装 4 项 · 支持 13 项");
+  summaryRow(render()).props.control.props.onClick();
+  item(render(), "independent").children[0].props.onClick(clickEvent());
+  const folder = item(render(), "independent/ui-tweaks");
+  assert.equal(folder.props["aria-expanded"], false);
+  folder.children[0].children[0].props.onClick(clickEvent());
+  const module = item(render(), "independent/ui-tweaks/ui-tweaks/dock-icon");
+  assert.equal(module.props["aria-level"], 3);
+  assert.equal(module.props["aria-label"], "Dock 图标，已安装");
+  module.children[0].props.onClick(clickEvent());
+  const detail = collect(render(), (node) => node.type === "native-row").at(-1);
+  assert.equal(detail.props.label, "Dock 图标");
+  assert.ok(JSON.stringify(detail.props.description).includes("所属功能：UI Tweaks"));
+  assert.ok(JSON.stringify(detail.props.description).includes("ui-tweaks/dock-icon"));
+});
+
+test("subfeature metadata survives enabled-only update builders and never reports a child of a disabled parent installed", (t) => {
+  const f = uiTweaksFixture(t);
+  const original = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "ui-tweaks"] });
+  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), JSON.stringify(original));
+  fs.rmSync(path.join(f.root, "ui-tweaks"), { recursive: true });
+  const rebuilt = buildCatalog(f.context), modules = rebuilt.features.find((feature) => feature.id === "ui-tweaks").subfeatures;
+  assert.equal(modules.length, 9);
+  assert.equal(modules.some((item) => item.enabled), false);
+  assert.equal(modules.find((item) => item.id === "english-effort-labels").defaultEnabled, true);
+  assert.equal(buildFeatureTree(rebuilt).total, buildFeatureTree(original).total);
+  assert.equal(buildFeatureTree(rebuilt).enabled, buildFeatureTree(original).enabled - 2);
+  for (const mutate of [
+    (item) => { item.enabled = true; },
+    (item) => { item.settingPath = "constructor.prototype.enabled"; },
+    (item) => { item.defaultEnabled = "yes"; },
+  ]) {
+    const invalid = JSON.parse(JSON.stringify(rebuilt));
+    mutate(invalid.features.find((feature) => feature.id === "ui-tweaks").subfeatures[0]);
+    assert.throws(() => validateCatalog(invalid), /subfeature/);
+  }
+});
+
 test("semantic settings injection is self-contained, idempotent and leaves other assets unchanged", (t) => {
   const f = fixture(t);
   fs.writeFileSync(path.join(f.assets, "unrelated.js"), "unchanged");
   assert.equal(applySettingsPatch(f.app, f.context).changed, true);
   const patched = fs.readFileSync(f.target, "utf8");
   assert.ok(patched.includes(`function ${UI}()`));
-  assert.ok(patched.includes(`(0,j.jsx)(${UI},{}),(0,j.jsx)(menu,{appName:appName})`));
+  assert.ok(patched.includes(`children:[(0,j.jsx)(${UI},{}),n,i]`));
+  assert.ok(patched.includes('children:[(0,j.jsx)(menu,{appName:appName})]'));
   const jsx = (type, props) => ({ type, props });
   const page = vm.runInNewContext(patched + ';page', {
     j: { jsx, jsxs: jsx, Fragment: "fragment" }, appName: "ChatGPT Community", reactFactory: () => ({}),
+    Page: "page", PageTitle: "page-title", Other: "other",
   });
-  assert.equal(page.props.children.length, 2);
+  assert.equal(page.props.children.length, 3);
   assert.equal(page.props.children[0].type.name, UI);
-  assert.equal(page.props.children[1].type.name, "menu");
+  assert.equal(page.props.children[1].type.name, "general");
+  assert.equal(page.props.children[2].type, "other");
+  const general = vm.runInNewContext(patched + ';general()', {
+    j: { jsx, jsxs: jsx }, appName: "ChatGPT Community", reactFactory: () => ({}),
+    Page: "page", PageTitle: "page-title", Other: "other", Section: { Header: "header", Content: "content" },
+    Message: "message", Stack: "stack",
+  });
+  assert.equal(general.props.children[0].type, "header");
+  assert.equal(general.props.children[1].props.children.props.children[0].type.name, "menu");
   assert.equal(fs.readFileSync(path.join(f.assets, "unrelated.js"), "utf8"), "unchanged");
   assert.equal(applySettingsPatch(f.app, f.context).changed, false);
   assert.equal(fs.readFileSync(f.target, "utf8"), patched);
@@ -100,7 +181,11 @@ test("missing or ambiguous anchors fail before changing settings or writing a ca
     (s) => s.replace("settings.openSourceLicenses.view", "changed.action"),
     (s) => s + 'var duplicate=(0,j.jsx)(menu,{appName:other});',
     (s) => s.replace("size:`toolbar`", "size:`changed`"),
-    (s) => s.replace('children:[(0,j.jsx)(menu,{appName:appName})]', 'children:(0,j.jsx)(menu,{appName:appName})'),
+    (s) => s.replace('title:title,children:[n,i]', 'title:title,children:n'),
+    (s) => s.replace('settings.general.groupTitle', 'settings.general.changedGroup'),
+    (s) => s.replace('slug:`general-settings`', 'slug:`different-page`'),
+    (s) => s.replace('Section.Content', 'Changed.Content'),
+    (s) => s + 'function duplicatePage(){let title=(0,j.jsx)(PageTitle,{slug:`general-settings`})}',
     (s) => s.replace('return(0,j.jsx)(Button,', 'var duplicate=(0,j.jsx)(Button,{color:`secondary`,size:`toolbar`,onClick:show,children:label});return(0,j.jsx)(Button,'),
   ];
   for (const change of cases) {
@@ -127,6 +212,19 @@ test("incomplete patches and a changed candidate selection are rejected without 
   assert.equal(fs.existsSync(path.join(f.app, CATALOG_ASSET)), false);
 });
 
+test("other General rows remain in place and an existing patch moved into the inner group is rejected", (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(f.target, settingsFixture().replace('children:[(0,j.jsx)(menu,', 'children:[(0,j.jsx)(OtherSetting,{}),(0,j.jsx)(menu,'));
+  applySettingsPatch(f.app, f.context);
+  const patched = fs.readFileSync(f.target, "utf8");
+  assert.ok(patched.includes('children:[(0,j.jsx)(OtherSetting,{}),(0,j.jsx)(menu,'));
+  const moved = patched.replace(`children:[(0,j.jsx)(${UI},{}),n,i]`, 'children:[n,i]')
+    .replace('children:[(0,j.jsx)(OtherSetting,{}),', `children:[(0,j.jsx)(${UI},{}),(0,j.jsx)(OtherSetting,{}),`);
+  fs.writeFileSync(f.target, moved);
+  assert.throws(() => applySettingsPatch(f.app, f.context), /inconsistent/);
+  assert.equal(fs.readFileSync(f.target, "utf8"), moved);
+});
+
 function uiHarness(catalog, locale = "zh-CN", platform = "linux", resources = loadLocaleResources()) {
   const values = [];
   let index = 0;
@@ -139,7 +237,9 @@ function uiHarness(catalog, locale = "zh-CN", platform = "linux", resources = lo
     useId: () => "community-panel",
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat().filter((child) => child !== false && child != null) }),
   };
-  return () => { index = 0; return renderCommunityFeaturesInGuiSettings({ React, Row: "native-row", Button: "native-button", catalog, locale, platform, resources, translate: createTranslator }); };
+  return () => { index = 0; return renderCommunityFeaturesInGuiSettings({ React, Row: "native-row", Button: "native-button",
+    Section: { Header: "native-header", Content: "native-content" }, Stack: "native-stack",
+    catalog, locale, platform, resources, translate: createTranslator }); };
 }
 
 function collect(node, predicate) {
@@ -152,6 +252,7 @@ function collect(node, predicate) {
 const clickEvent = () => ({ stopPropagation() {}, currentTarget: { closest: () => ({ focus() {} }) } });
 const items = (tree) => collect(tree, (node) => node.props.role === "treeitem");
 const item = (tree, key) => items(tree).find((node) => node.props["data-path"] === key);
+const summaryRow = (tree) => collect(tree, (node) => node.type === "native-row")[0];
 
 test("English and zh_Hans_CN resources cover every interface message with locale aliases", () => {
   const resources = loadLocaleResources();
@@ -160,7 +261,7 @@ test("English and zh_Hans_CN resources cover every interface message with locale
   for (const locale of ["zh_Hans_CN", "zh-Hans-CN", "zh-CN", "zh_CN", "zh-Hans-SG", "zh"]) {
     const language = createTranslator(locale, resources);
     assert.equal(language.locale, "zh_Hans_CN", locale);
-    assert.equal(language.format("summary", { enabled: 0, total: 47 }), "本次构建启用 0 项 · 支持 47 项");
+    assert.equal(language.format("summary", { enabled: 0, total: 47 }), "本次构建安装 0 项 · 支持 47 项");
   }
   for (const locale of ["en", "en-US", "en_GB", "de-DE", "zh-TW", "zh_Hant_TW", "zh-Hant-CN", "???", null, undefined]) {
     assert.equal(createTranslator(locale, resources).locale, "en", String(locale));
@@ -185,9 +286,9 @@ test("a new resource file adds a locale and feature translations with per-messag
   assert.equal(language.format("summary", { enabled: 1, total: 4 }), "4 disponibles · 1 activées");
   const catalog = buildCatalog(fixture(t).context), original = JSON.stringify(catalog);
   const render = uiHarness(catalog, "fr-CA", "linux", resources);
-  assert.equal(render().children[0].props.label, "Fonctionnalités communautaires");
-  render().children[0].props.control.props.onClick();
-  assert.equal(item(render(), "dependencies/beta/alpha").props["aria-label"], "Alpha traduit, Enabled");
+  assert.equal(collect(render(), (node) => node.type === "native-header")[0].props.title, "Fonctionnalités communautaires");
+  summaryRow(render()).props.control.props.onClick();
+  assert.equal(item(render(), "dependencies/beta/alpha").props["aria-label"], "Alpha traduit, Installed");
   item(render(), "dependencies/beta/alpha").children[0].props.onClick(clickEvent());
   const detail = collect(render(), (node) => node.type === "native-row").at(-1);
   assert.equal(detail.props.label, "Alpha traduit");
@@ -230,8 +331,9 @@ test("the embedded renderer carries its graph helper without depending on anothe
     reactFactory: () => ({ Fragment: "fragment", createElement: jsx, useId: () => "tree-panel",
       useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}] }),
     platformHook: () => ({ platform: "linux" }), intlHook: () => ({ locale: "zh-CN" }), Row: "row", Button: "button",
+    Section: { Header: "native-header", Content: "native-content" }, Stack: "native-stack",
   });
-  assert.equal(result.children[0].props.label, "社区功能");
+  assert.equal(result.children[0].props.title, "社区功能");
 });
 
 function graphCatalog(edges) {
@@ -247,13 +349,35 @@ test("shared prerequisites retain every edge, count features once and include mi
   assert.deepEqual(model.children.get("b"), ["child"]);
   assert.equal(model.familyCount, 4);
   assert.equal(model.nodes.get("external").enabled, null);
+  const catalog = graphCatalog({ a: [], b: [], child: ["a", "b"] });
+  catalog.features[2].subfeatures = [{ id: "one", enabled: true }, { id: "two", enabled: false }];
+  const subfeatures = buildFeatureTree(catalog);
+  assert.equal(subfeatures.total, 4);
+  assert.equal(subfeatures.familyCount, 4);
+  assert.equal(subfeatures.enabled, 1);
+  assert.deepEqual(subfeatures.children.get("child"), ["child/one", "child/two"]);
+});
+
+test("native section wraps the catalog and installed statuses use the theme's green in tree and detail", (t) => {
+  const render = uiHarness(buildCatalog(fixture(t).context));
+  const section = render();
+  assert.equal(section.children[0].type, "native-header");
+  assert.equal(section.children[0].props.title, "社区功能");
+  assert.equal(section.children[1].type, "native-content");
+  assert.equal(section.children[1].children[0].type, "native-stack");
+  summaryRow(section).props.control.props.onClick();
+  const installed = item(render(), "dependencies/beta/alpha"), absent = item(render(), "dependencies/beta");
+  assert.equal(installed.children[0].children.at(-1).props.style.color, "var(--color-text-success)");
+  assert.equal(absent.children[0].children.at(-1).props.style.color, undefined);
+  installed.children[0].props.onClick(clickEvent());
+  assert.equal(collect(render(), (node) => node.type === "native-row").at(-1).props.control.props.style.color, "var(--color-text-success)");
 });
 
 test("cycles remain discoverable without infinite rendering or hiding unrelated components", () => {
   const catalog = graphCatalog({ a: ["b"], b: ["a"], c: ["d"], d: ["c"] });
   assert.deepEqual(buildFeatureTree(catalog).roots, ["a", "c"]);
   const render = uiHarness(catalog);
-  render().children[0].props.control.props.onClick();
+  summaryRow(render()).props.control.props.onClick();
   item(render(), "dependencies/a/b").children[0].children[0].props.onClick(clickEvent());
   const reference = item(render(), "dependencies/a/b/a");
   assert.equal(reference.props["aria-expanded"], undefined);
@@ -281,7 +405,7 @@ function pressTreeKey(render, key, path) {
 
 test("keyboard navigation expands folders, selects details and collapses without stranding focus", (t) => {
   const render = uiHarness(buildCatalog(fixture(t).context));
-  render().children[0].props.control.props.onClick();
+  summaryRow(render()).props.control.props.onClick();
   assert.equal(item(render(), "independent").props["aria-expanded"], false);
   pressTreeKey(render, "ArrowRight", "independent");
   assert.equal(item(render(), "independent").props["aria-expanded"], true);
@@ -301,7 +425,7 @@ test("read-only tree uses the active locale, per-node status and selectable nati
     ["zh-Hans-CN", "社区功能", "展开", "，"], ["en-US", "Community features", "Show", ", "], ["de", "Community features", "Show", ", "]]) {
     const render = uiHarness(catalog, locale);
     let tree = render(), button = collect(tree, (node) => node.type === "native-button")[0];
-    assert.equal(tree.children[0].props.label, title);
+    assert.equal(collect(tree, (node) => node.type === "native-header")[0].props.title, title);
     assert.equal(button.children[0], show);
     assert.equal(button.props["aria-expanded"], false);
     assert.equal(collect(tree, (node) => node.props.role === "region").length, 0);
@@ -310,8 +434,8 @@ test("read-only tree uses the active locale, per-node status and selectable nati
     assert.equal(collect(tree, (node) => node.props.role === "tree").length, 1);
     assert.equal(items(tree).length, 4);
     assert.equal(item(tree, "dependencies/beta/alpha").props["aria-level"], 3);
-    assert.equal(item(tree, "dependencies/beta/alpha").props["aria-label"], `alpha title${punctuation}${title === "社区功能" ? "已启用" : "Enabled"}`);
-    assert.equal(item(tree, "dependencies/beta").props["aria-label"], `beta title${punctuation}${title === "社区功能" ? "未启用" : "Not enabled"}`);
+    assert.equal(item(tree, "dependencies/beta/alpha").props["aria-label"], `alpha title${punctuation}${title === "社区功能" ? "已安装" : "Installed"}`);
+    assert.equal(item(tree, "dependencies/beta").props["aria-label"], `beta title${punctuation}${title === "社区功能" ? "未安装" : "Not installed"}`);
     item(tree, "dependencies/beta/alpha").children[0].props.onClick(clickEvent());
     const detailRows = collect(render(), (node) => node.type === "native-row");
     assert.equal(detailRows.at(-1).props.label, "alpha title");
@@ -321,14 +445,14 @@ test("read-only tree uses the active locale, per-node status and selectable nati
     assert.equal(collect(render(), (node) => node.props.role === "region").length, 0);
   }
   assert.equal(uiHarness(catalog, "en", "macOS")(), null);
-  assert.equal(uiHarness(catalog)().children[0].props.control.props["aria-expanded"], false);
+  assert.equal(summaryRow(uiHarness(catalog)()).props.control.props["aria-expanded"], false);
 });
 
 test("empty groups render clearly and no metadata is interpreted as markup", () => {
   const feature = { id: "test", title: "<script>title</script>", description: "<img onerror=bad>", origin: "repo", enabled: false, requires: [], conflicts: [] };
   const catalog = validateCatalog({ schemaVersion: 1, sourceCommit: null, features: [feature] });
   const render = uiHarness(catalog), collapsed = render();
-  collapsed.children[0].props.control.props.onClick();
+  summaryRow(collapsed).props.control.props.onClick();
   item(render(), "independent").children[0].props.onClick(clickEvent());
   item(render(), "independent/test").children[0].props.onClick(clickEvent());
   const rows = collect(render(), (node) => node.type === "native-row");

@@ -70,6 +70,68 @@
       }
     }
   ],
+  "catalogSubfeatures": [
+    {
+      "id": "dock-icon",
+      "title": "Dock icon",
+      "description": "Expose the Dock icon selector and synchronize the selected icon with Linux windows, tray and supported launchers.",
+      "settingPath": "tweaks.appearance.dockIcon.enabled"
+    },
+    {
+      "id": "ui-font-size",
+      "title": "Extended UI font size",
+      "description": "Raise the UI font-size maximum to a configurable value.",
+      "settingPath": "tweaks.appearance.uiFontSize.enabled"
+    },
+    {
+      "id": "custom-font-input",
+      "title": "Custom font input",
+      "description": "Switch between installed fonts and a manually entered CSS font-family stack.",
+      "settingPath": "tweaks.appearance.customFontInput.enabled",
+      "nullishFallback": true
+    },
+    {
+      "id": "suggested-prompts",
+      "title": "Suggested prompts",
+      "description": "Expose Suggested Prompts in settings and enable project-aware cards on Home.",
+      "settingPath": "tweaks.home.suggestedPrompts.enabled"
+    },
+    {
+      "id": "model-list",
+      "title": "Expanded model picker",
+      "description": "Open the advanced picker by default and show models inline with their supported reasoning efforts.",
+      "settingPath": "tweaks.modelPicker.showModelsByDefault.enabled",
+      "enabledWhen": "not-false"
+    },
+    {
+      "id": "english-effort-labels",
+      "title": "English reasoning effort labels",
+      "description": "Keep reasoning effort names in English in the Simplified Chinese interface.",
+      "settingPath": "tweaks.reasoning.keepEffortLabelsEnglish.enabled",
+      "enabledWhen": "not-false"
+    },
+    {
+      "id": "selection-more-details",
+      "title": "Selection: More details",
+      "description": "Restore the selected-text More details action that asks Quick Chat to explain the selection.",
+      "settingPath": "tweaks.selection.moreDetails.enabled",
+      "nullishFallback": true
+    },
+    {
+      "id": "annotation-submit",
+      "title": "Annotation submit shortcut",
+      "description": "Send the active selected-text annotation with Ctrl+Enter without the regular composer intercepting it.",
+      "settingPath": "tweaks.selection.annotationSubmit.enabled",
+      "nullishFallback": true
+    },
+    {
+      "id": "sidebar-project-name",
+      "title": "Sidebar project names",
+      "description": "Apply a configurable style to project names in the sidebar.",
+      "settingPath": "tweaks.sidebar.projectName.enabled",
+      "enabledWhen": "not-false"
+    }
+  ],
   "tweaks": {
     "appearance": {
       "customFontInput": {
