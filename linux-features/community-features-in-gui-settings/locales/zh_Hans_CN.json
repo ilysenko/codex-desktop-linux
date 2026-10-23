@@ -1,0 +1,30 @@
+{
+  "aliases": ["zh", "zh-CN", "zh-Hans", "zh-SG"],
+  "messages": {
+    "title": "社区功能",
+    "show": "展开",
+    "hide": "收起",
+    "enabled": "已启用",
+    "available": "未启用",
+    "summary": "本次构建启用 {enabled} 项 · 支持 {total} 项",
+    "note": "父节点是基础功能，子节点依赖父节点。启用状态来自本次构建，不代表运行状态。",
+    "families": "有依赖关系",
+    "independent": "独立功能",
+    "tree": "功能依赖树",
+    "select": "选择功能查看说明",
+    "requires": "依赖：{names}",
+    "conflicts": "不兼容：{names}",
+    "local": "本地功能",
+    "multiple": "多重依赖",
+    "cycle": "循环引用",
+    "missing": "目录未收录",
+    "empty": "暂无功能",
+    "id": "功能 ID",
+    "snapshot": "功能目录版本：{revision}",
+    "expand": "展开 {name}",
+    "collapse": "收起 {name}",
+    "featureLabel": "{name}，{status}",
+    "separator": "、"
+  },
+  "features": {}
+}

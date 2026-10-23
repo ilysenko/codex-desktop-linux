@@ -1,0 +1,30 @@
+{
+  "aliases": [],
+  "messages": {
+    "title": "Community features",
+    "show": "Show",
+    "hide": "Hide",
+    "enabled": "Enabled",
+    "available": "Not enabled",
+    "summary": "{enabled} enabled in this build · {total} supported",
+    "note": "A child depends on its parent. Enabled means included in this build, not runtime health.",
+    "families": "Dependency groups",
+    "independent": "Independent features",
+    "tree": "Feature dependency tree",
+    "select": "Select a feature to see its description",
+    "requires": "Requires: {names}",
+    "conflicts": "Conflicts with: {names}",
+    "local": "Local feature",
+    "multiple": "Multiple dependencies",
+    "cycle": "Cycle reference",
+    "missing": "Not in catalog",
+    "empty": "No features",
+    "id": "Feature ID",
+    "snapshot": "Feature catalog version: {revision}",
+    "expand": "Expand {name}",
+    "collapse": "Collapse {name}",
+    "featureLabel": "{name}, {status}",
+    "separator": ", "
+  },
+  "features": {}
+}

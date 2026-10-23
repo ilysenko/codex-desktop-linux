@@ -1,0 +1,394 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const test = require("node:test");
+const vm = require("node:vm");
+const { spawnSync } = require("node:child_process");
+const { UI, settingsContract, settingComponent, applySettingsPatch } = require("./patch.js");
+const { buildFeatureTree, renderCommunityFeaturesInGuiSettings } = require("./runtime.js");
+const { loadLocaleResources, createTranslator } = require("./i18n.js");
+const { CATALOG_ASSET, SNAPSHOT_NAME, buildCatalog, validateCatalog, readCatalogFromAsar, preserveUpdateBuilderCatalog } = require("./catalog.js");
+const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
+
+function temporary(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "community-features-in-gui-settings-test-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function manifest(root, id, extra = {}) {
+  const dir = path.join(root, id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "feature.json"), JSON.stringify({
+    id, title: `${id} title`, description: `${id} description`, defaultEnabled: false, ...extra,
+  }));
+  fs.writeFileSync(path.join(dir, "README.md"), id);
+  return dir;
+}
+
+function settingsFixture() {
+  return 'function menu(e){let i=intlHook(),{platform:p}=platformHook(),v=useSetting(keys.macMenuBarEnabled);if(p!==`macOS`)return null;let label=i.formatMessage({id:`settings.general.macMenuBar.ariaLabel`});let c=(0,j.jsx)(Toggle,{checked:v,onChange:change,ariaLabel:label});return(0,j.jsx)(Row,{label:title,description:description,control:c})}' +
+    'function another(){let[e,t]=(0,React.useState)(!1)}var React=reactFactory();' +
+    'var page=(0,j.jsxs)(j.Fragment,{children:[(0,j.jsx)(menu,{appName:appName})]});/*settings.general.macMenuBar.description*/' +
+    'function licenses(){let label=`settings.openSourceLicenses.view`;return(0,j.jsx)(Button,{color:`secondary`,size:`toolbar`,onClick:show,children:label})}';
+}
+
+function fixture(t) {
+  const dir = temporary(t), root = path.join(dir, "linux-features");
+  const featureDir = manifest(root, "community-features-in-gui-settings");
+  manifest(root, "alpha", { requires: ["beta"] });
+  manifest(root, "beta", { conflicts: ["gamma"] });
+  manifest(root, "internal", { internal: true });
+  manifest(path.join(root, "local"), "private");
+  const assets = path.join(dir, "app/webview/assets");
+  fs.mkdirSync(assets, { recursive: true });
+  const target = path.join(assets, "renamed-general.js");
+  fs.writeFileSync(target, settingsFixture());
+  const context = { feature: { dir: featureDir }, featurePatchOptions: { featuresRoot: root }, enabledFeatureIds: ["alpha", "community-features-in-gui-settings"] };
+  return { dir, root, featureDir, assets, target, app: path.join(dir, "app"), context };
+}
+
+test("catalog contains disabled and local features, hides internal ones and uses the candidate selection", (t) => {
+  const f = fixture(t), catalog = buildCatalog(f.context);
+  assert.deepEqual(catalog.features.map((feature) => feature.id), ["alpha", "beta", "community-features-in-gui-settings", "private"]);
+  assert.deepEqual(catalog.features.filter((feature) => feature.enabled).map((feature) => feature.id), ["alpha", "community-features-in-gui-settings"]);
+  assert.deepEqual(catalog.features[0].requires, ["beta"]);
+  assert.deepEqual(catalog.features[1].conflicts, ["gamma"]);
+  assert.equal(catalog.features.at(-1).origin, "local");
+});
+
+test("frozen catalogs survive an enabled-only rebuild and recompute enabled flags", (t) => {
+  const f = fixture(t), original = buildCatalog(f.context);
+  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), JSON.stringify(original));
+  fs.rmSync(path.join(f.root, "alpha"), { recursive: true });
+  fs.rmSync(path.join(f.root, "beta"), { recursive: true });
+  const rebuilt = buildCatalog({ ...f.context, enabledFeatureIds: ["community-features-in-gui-settings"] });
+  assert.equal(rebuilt.features.length, original.features.length);
+  assert.equal(rebuilt.features.find((feature) => feature.id === "alpha").enabled, false);
+  assert.deepEqual(rebuilt.features.find((feature) => feature.id === "alpha").requires, ["beta"]);
+  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), '{"schemaVersion":2,"features":[]}');
+  assert.throws(() => buildCatalog(f.context), /invalid catalog/);
+});
+
+test("semantic settings injection is self-contained, idempotent and leaves other assets unchanged", (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.assets, "unrelated.js"), "unchanged");
+  assert.equal(applySettingsPatch(f.app, f.context).changed, true);
+  const patched = fs.readFileSync(f.target, "utf8");
+  assert.ok(patched.includes(`function ${UI}()`));
+  assert.ok(patched.includes(`(0,j.jsx)(${UI},{}),(0,j.jsx)(menu,{appName:appName})`));
+  const jsx = (type, props) => ({ type, props });
+  const page = vm.runInNewContext(patched + ';page', {
+    j: { jsx, jsxs: jsx, Fragment: "fragment" }, appName: "ChatGPT Community", reactFactory: () => ({}),
+  });
+  assert.equal(page.props.children.length, 2);
+  assert.equal(page.props.children[0].type.name, UI);
+  assert.equal(page.props.children[1].type.name, "menu");
+  assert.equal(fs.readFileSync(path.join(f.assets, "unrelated.js"), "utf8"), "unchanged");
+  assert.equal(applySettingsPatch(f.app, f.context).changed, false);
+  assert.equal(fs.readFileSync(f.target, "utf8"), patched);
+  const component = settingComponent(settingsContract(settingsFixture()), buildCatalog(f.context));
+  assert.doesNotThrow(() => new vm.Script(component));
+});
+
+test("missing or ambiguous anchors fail before changing settings or writing a catalog", (t) => {
+  const cases = [
+    (s) => s.replace(".macMenuBarEnabled", ".changedPreference"),
+    (s) => s.replace("settings.openSourceLicenses.view", "changed.action"),
+    (s) => s + 'var duplicate=(0,j.jsx)(menu,{appName:other});',
+    (s) => s.replace("size:`toolbar`", "size:`changed`"),
+    (s) => s.replace('children:[(0,j.jsx)(menu,{appName:appName})]', 'children:(0,j.jsx)(menu,{appName:appName})'),
+    (s) => s.replace('return(0,j.jsx)(Button,', 'var duplicate=(0,j.jsx)(Button,{color:`secondary`,size:`toolbar`,onClick:show,children:label});return(0,j.jsx)(Button,'),
+  ];
+  for (const change of cases) {
+    const f = fixture(t), source = change(settingsFixture());
+    fs.writeFileSync(f.target, source);
+    assert.throws(() => applySettingsPatch(f.app, f.context), /(?:asset|contract) missing or ambiguous/);
+    assert.equal(fs.readFileSync(f.target, "utf8"), source);
+    assert.equal(fs.existsSync(path.join(f.app, CATALOG_ASSET)), false);
+  }
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.assets, "duplicate.js"), settingsFixture());
+  assert.throws(() => applySettingsPatch(f.app, f.context), /asset missing or ambiguous/);
+  assert.equal(fs.readFileSync(f.target, "utf8"), settingsFixture());
+});
+
+test("incomplete patches and a changed candidate selection are rejected without partial repairs", (t) => {
+  const f = fixture(t);
+  applySettingsPatch(f.app, f.context);
+  const original = fs.readFileSync(f.target, "utf8");
+  assert.throws(() => applySettingsPatch(f.app, { ...f.context, enabledFeatureIds: ["community-features-in-gui-settings"] }), /inconsistent/);
+  assert.equal(fs.readFileSync(f.target, "utf8"), original);
+  fs.unlinkSync(path.join(f.app, CATALOG_ASSET));
+  assert.throws(() => applySettingsPatch(f.app, f.context), /inconsistent/);
+  assert.equal(fs.existsSync(path.join(f.app, CATALOG_ASSET)), false);
+});
+
+function uiHarness(catalog, locale = "zh-CN", platform = "linux", resources = loadLocaleResources()) {
+  const values = [];
+  let index = 0;
+  const React = {
+    Fragment: "fragment", useState: (initial) => {
+      const position = index++;
+      if (!(position in values)) values[position] = typeof initial === "function" ? initial() : initial;
+      return [values[position], (change) => { values[position] = typeof change === "function" ? change(values[position]) : change; }];
+    },
+    useId: () => "community-panel",
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat().filter((child) => child !== false && child != null) }),
+  };
+  return () => { index = 0; return renderCommunityFeaturesInGuiSettings({ React, Row: "native-row", Button: "native-button", catalog, locale, platform, resources, translate: createTranslator }); };
+}
+
+function collect(node, predicate) {
+  if (typeof node !== "object" || node == null) return [];
+  return [...(predicate(node) ? [node] : []),
+    ...[...(node.children ?? []), node.props?.control, node.props?.description]
+      .flatMap((child) => collect(child, predicate))];
+}
+
+const clickEvent = () => ({ stopPropagation() {}, currentTarget: { closest: () => ({ focus() {} }) } });
+const items = (tree) => collect(tree, (node) => node.props.role === "treeitem");
+const item = (tree, key) => items(tree).find((node) => node.props["data-path"] === key);
+
+test("English and zh_Hans_CN resources cover every interface message with locale aliases", () => {
+  const resources = loadLocaleResources();
+  assert.deepEqual(Object.keys(resources), ["en", "zh_Hans_CN"]);
+  assert.deepEqual(Object.keys(resources.zh_Hans_CN.messages).sort(), Object.keys(resources.en.messages).sort());
+  for (const locale of ["zh_Hans_CN", "zh-Hans-CN", "zh-CN", "zh_CN", "zh-Hans-SG", "zh"]) {
+    const language = createTranslator(locale, resources);
+    assert.equal(language.locale, "zh_Hans_CN", locale);
+    assert.equal(language.format("summary", { enabled: 0, total: 47 }), "本次构建启用 0 项 · 支持 47 项");
+  }
+  for (const locale of ["en", "en-US", "en_GB", "de-DE", "zh-TW", "zh_Hant_TW", "zh-Hant-CN", "???", null, undefined]) {
+    assert.equal(createTranslator(locale, resources).locale, "en", String(locale));
+  }
+  assert.equal(createTranslator("en", resources).format("expand", { name: "<b>$& {total}</b>" }), "Expand <b>$& {total}</b>");
+});
+
+function localeFixture(t) {
+  const directory = path.join(temporary(t), "locales");
+  fs.cpSync(path.join(__dirname, "locales"), directory, { recursive: true });
+  return directory;
+}
+
+test("a new resource file adds a locale and feature translations with per-message English fallback", (t) => {
+  const directory = localeFixture(t);
+  fs.writeFileSync(path.join(directory, "fr.json"), JSON.stringify({ aliases: ["fr-FR"], messages: {
+    title: "Fonctionnalités communautaires", summary: "{total} disponibles · {enabled} activées",
+  }, features: { alpha: { title: "Alpha traduit", description: "Description traduite" }, beta: { title: "Bêta" } } }));
+  const resources = loadLocaleResources(directory), language = createTranslator("fr-CA", resources);
+  assert.equal(language.locale, "fr");
+  assert.equal(language.messages.show, "Show");
+  assert.equal(language.format("summary", { enabled: 1, total: 4 }), "4 disponibles · 1 activées");
+  const catalog = buildCatalog(fixture(t).context), original = JSON.stringify(catalog);
+  const render = uiHarness(catalog, "fr-CA", "linux", resources);
+  assert.equal(render().children[0].props.label, "Fonctionnalités communautaires");
+  render().children[0].props.control.props.onClick();
+  assert.equal(item(render(), "dependencies/beta/alpha").props["aria-label"], "Alpha traduit, Enabled");
+  item(render(), "dependencies/beta/alpha").children[0].props.onClick(clickEvent());
+  const detail = collect(render(), (node) => node.type === "native-row").at(-1);
+  assert.equal(detail.props.label, "Alpha traduit");
+  assert.ok(JSON.stringify(detail.props.description).includes("Description traduite"));
+  assert.ok(JSON.stringify(detail.props.description).includes("Requires: Bêta"));
+  assert.equal(JSON.stringify(catalog), original);
+});
+
+test("invalid locale aliases, messages, placeholders and feature overrides fail during build preparation", (t) => {
+  for (const change of [
+    (resource) => { resource.messages.summary = "{enabled}"; },
+    (resource) => { resource.messages.typo = "invalid"; },
+    (resource) => { resource.aliases = ["en"]; },
+    (resource) => { resource.aliases = ["invalid_@"]; },
+    (resource) => { resource.features.alpha = { enabled: true }; },
+  ]) {
+    const directory = localeFixture(t), file = path.join(directory, "zh_Hans_CN.json");
+    const resource = JSON.parse(fs.readFileSync(file, "utf8"));
+    change(resource); fs.writeFileSync(file, JSON.stringify(resource));
+    assert.throws(() => loadLocaleResources(directory), /community-features-in-gui-settings:/);
+  }
+  const directory = localeFixture(t);
+  fs.unlinkSync(path.join(directory, "en.json"));
+  assert.throws(() => loadLocaleResources(directory), /English fallback/);
+});
+
+test("dependency graph nests dependents under prerequisites and keeps independent features separate", (t) => {
+  const model = buildFeatureTree(buildCatalog(fixture(t).context));
+  assert.deepEqual(model.roots, ["beta"]);
+  assert.deepEqual(model.children.get("beta"), ["alpha"]);
+  assert.deepEqual(model.independent, ["community-features-in-gui-settings", "private"]);
+  assert.equal(model.familyCount, 2);
+});
+
+test("the embedded renderer carries its graph helper without depending on another renderer global", (t) => {
+  const catalog = buildCatalog(fixture(t).context);
+  const component = settingComponent(settingsContract(settingsFixture()), catalog);
+  const jsx = (type, props, ...children) => ({ type, props: props ?? {}, children });
+  const result = vm.runInNewContext(component + `;${UI}()`, {
+    reactFactory: () => ({ Fragment: "fragment", createElement: jsx, useId: () => "tree-panel",
+      useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}] }),
+    platformHook: () => ({ platform: "linux" }), intlHook: () => ({ locale: "zh-CN" }), Row: "row", Button: "button",
+  });
+  assert.equal(result.children[0].props.label, "社区功能");
+});
+
+function graphCatalog(edges) {
+  return { schemaVersion: 1, sourceCommit: null, features: Object.entries(edges).map(([id, requires]) => ({
+    id, title: id, description: `${id} description`, requires, conflicts: [], enabled: false, origin: "repo",
+  })) };
+}
+
+test("shared prerequisites retain every edge, count features once and include missing metadata", () => {
+  const model = buildFeatureTree(graphCatalog({ a: [], b: [], child: ["a", "b"], missing: ["external"] }));
+  assert.deepEqual(model.roots, ["a", "b", "external"]);
+  assert.deepEqual(model.children.get("a"), ["child"]);
+  assert.deepEqual(model.children.get("b"), ["child"]);
+  assert.equal(model.familyCount, 4);
+  assert.equal(model.nodes.get("external").enabled, null);
+});
+
+test("cycles remain discoverable without infinite rendering or hiding unrelated components", () => {
+  const catalog = graphCatalog({ a: ["b"], b: ["a"], c: ["d"], d: ["c"] });
+  assert.deepEqual(buildFeatureTree(catalog).roots, ["a", "c"]);
+  const render = uiHarness(catalog);
+  render().children[0].props.control.props.onClick();
+  item(render(), "dependencies/a/b").children[0].children[0].props.onClick(clickEvent());
+  const reference = item(render(), "dependencies/a/b/a");
+  assert.equal(reference.props["aria-expanded"], undefined);
+  assert.ok(JSON.stringify(reference).includes("循环引用"));
+  assert.ok(items(render()).length < 10);
+});
+
+function pressTreeKey(render, key, path) {
+  const current = render(), virtual = items(current);
+  let focused;
+  const dom = virtual.map((node) => ({
+    dataset: { path: node.props["data-path"], parent: node.props["data-parent"], feature: node.props["data-feature"] },
+    getAttribute: (name) => node.props[name] === undefined ? null : String(node.props[name]),
+    focus() { focused = this.dataset.path; node.props.onFocus({ target: this, currentTarget: this }); },
+  }));
+  const target = dom.find((node) => node.dataset.path === path);
+  let prevented = false, stopped = false;
+  collect(current, (node) => node.props.role === "tree")[0].props.onKeyDown({
+    key, target: { closest: () => target }, currentTarget: { querySelectorAll: () => dom },
+    preventDefault() { prevented = true; }, stopPropagation() { stopped = true; },
+  });
+  assert.ok(prevented && stopped);
+  return focused;
+}
+
+test("keyboard navigation expands folders, selects details and collapses without stranding focus", (t) => {
+  const render = uiHarness(buildCatalog(fixture(t).context));
+  render().children[0].props.control.props.onClick();
+  assert.equal(item(render(), "independent").props["aria-expanded"], false);
+  pressTreeKey(render, "ArrowRight", "independent");
+  assert.equal(item(render(), "independent").props["aria-expanded"], true);
+  assert.equal(pressTreeKey(render, "ArrowDown", "independent"), "independent/community-features-in-gui-settings");
+  assert.equal(collect(render(), (node) => node.type === "native-row").at(-1).props.label, "community-features-in-gui-settings title");
+  assert.equal(pressTreeKey(render, "End", "independent/community-features-in-gui-settings"), "independent/private");
+  assert.equal(pressTreeKey(render, "ArrowLeft", "independent/private"), "independent");
+  pressTreeKey(render, "ArrowLeft", "independent");
+  assert.equal(item(render(), "independent").props.tabIndex, 0);
+  assert.equal(item(render(), "independent/private"), undefined);
+  assert.equal(pressTreeKey(render, "Home", "independent"), "dependencies");
+});
+
+test("read-only tree uses the active locale, per-node status and selectable native detail rows", (t) => {
+  const catalog = buildCatalog(fixture(t).context);
+  for (const [locale, title, show, punctuation] of [["zh-CN", "社区功能", "展开", "，"], ["zh_Hans_CN", "社区功能", "展开", "，"],
+    ["zh-Hans-CN", "社区功能", "展开", "，"], ["en-US", "Community features", "Show", ", "], ["de", "Community features", "Show", ", "]]) {
+    const render = uiHarness(catalog, locale);
+    let tree = render(), button = collect(tree, (node) => node.type === "native-button")[0];
+    assert.equal(tree.children[0].props.label, title);
+    assert.equal(button.children[0], show);
+    assert.equal(button.props["aria-expanded"], false);
+    assert.equal(collect(tree, (node) => node.props.role === "region").length, 0);
+    button.props.onClick();
+    tree = render();
+    assert.equal(collect(tree, (node) => node.props.role === "tree").length, 1);
+    assert.equal(items(tree).length, 4);
+    assert.equal(item(tree, "dependencies/beta/alpha").props["aria-level"], 3);
+    assert.equal(item(tree, "dependencies/beta/alpha").props["aria-label"], `alpha title${punctuation}${title === "社区功能" ? "已启用" : "Enabled"}`);
+    assert.equal(item(tree, "dependencies/beta").props["aria-label"], `beta title${punctuation}${title === "社区功能" ? "未启用" : "Not enabled"}`);
+    item(tree, "dependencies/beta/alpha").children[0].props.onClick(clickEvent());
+    const detailRows = collect(render(), (node) => node.type === "native-row");
+    assert.equal(detailRows.at(-1).props.label, "alpha title");
+    assert.ok(JSON.stringify(detailRows.at(-1).props.description).includes("beta title"));
+    assert.equal(collect(tree, (node) => node.props.role === "region")[0].props.id, "community-panel");
+    collect(tree, (node) => node.type === "native-button")[0].props.onClick();
+    assert.equal(collect(render(), (node) => node.props.role === "region").length, 0);
+  }
+  assert.equal(uiHarness(catalog, "en", "macOS")(), null);
+  assert.equal(uiHarness(catalog)().children[0].props.control.props["aria-expanded"], false);
+});
+
+test("empty groups render clearly and no metadata is interpreted as markup", () => {
+  const feature = { id: "test", title: "<script>title</script>", description: "<img onerror=bad>", origin: "repo", enabled: false, requires: [], conflicts: [] };
+  const catalog = validateCatalog({ schemaVersion: 1, sourceCommit: null, features: [feature] });
+  const render = uiHarness(catalog), collapsed = render();
+  collapsed.children[0].props.control.props.onClick();
+  item(render(), "independent").children[0].props.onClick(clickEvent());
+  item(render(), "independent/test").children[0].props.onClick(clickEvent());
+  const rows = collect(render(), (node) => node.type === "native-row");
+  assert.equal(rows[1].props.label, feature.title);
+  assert.equal(rows[1].props.description.children[0].children[0], feature.description);
+  assert.equal(collect(render(), (node) => node.props.dangerouslySetInnerHTML != null).length, 0);
+});
+
+function writeAsar(file, catalog) {
+  const data = Buffer.from(JSON.stringify(catalog));
+  const header = Buffer.from(JSON.stringify({ files: { webview: { files: { assets: { files: {
+    "community-features-in-gui-settings-catalog.json": { offset: "0", size: data.length },
+  } } } } } }));
+  const headerSize = Math.ceil((header.length + 8) / 4) * 4;
+  const prefix = Buffer.alloc(8 + headerSize);
+  prefix.writeUInt32LE(4, 0); prefix.writeUInt32LE(headerSize, 4);
+  prefix.writeUInt32LE(headerSize - 4, 8); prefix.writeUInt32LE(header.length, 12);
+  header.copy(prefix, 16);
+  fs.writeFileSync(file, Buffer.concat([prefix, data]));
+}
+
+test("native package hook preserves the actual built catalog and minimal builder manifest", (t) => {
+  const catalog = buildCatalog(fixture(t).context);
+  for (const format of ["deb", "rpm", "pacman"]) {
+    const app = path.join(temporary(t), "opt/codex-desktop");
+    const builder = path.join(app, "update-builder");
+    fs.mkdirSync(path.join(app, "resources"), { recursive: true });
+    fs.mkdirSync(path.join(builder, "linux-features/community-features-in-gui-settings"), { recursive: true });
+    fs.mkdirSync(path.join(builder, ".codex-linux"), { recursive: true });
+    fs.writeFileSync(path.join(builder, ".codex-linux/update-builder-manifest.txt"), "install.sh\n");
+    writeAsar(path.join(app, "resources/app.asar"), catalog);
+    assert.deepEqual(readCatalogFromAsar(path.join(app, "resources/app.asar")), catalog);
+    const run = spawnSync("bash", [path.join(__dirname, "package.sh")], {
+      env: { ...process.env, PACKAGE_FORMAT: format, PACKAGE_APP_DIR: app }, encoding: "utf8",
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(builder, "linux-features/community-features-in-gui-settings", SNAPSHOT_NAME))), catalog);
+    assert.equal(fs.readFileSync(path.join(builder, ".codex-linux/update-builder-manifest.txt"), "utf8"),
+      "install.sh\nlinux-features/community-features-in-gui-settings/catalog-snapshot.json\n");
+    preserveUpdateBuilderCatalog(app);
+    assert.equal(fs.readFileSync(path.join(builder, ".codex-linux/update-builder-manifest.txt"), "utf8").split(SNAPSHOT_NAME).length, 2);
+  }
+  assert.equal(preserveUpdateBuilderCatalog(temporary(t)), false);
+});
+
+test("malformed ASAR/catalog snapshots fail before writing builder files", (t) => {
+  const file = path.join(temporary(t), "app.asar");
+  fs.writeFileSync(file, "broken");
+  assert.throws(() => readCatalogFromAsar(file), /ASAR header/);
+  writeAsar(file, { schemaVersion: 2, sourceCommit: null, features: [] });
+  assert.throws(() => readCatalogFromAsar(file), /invalid catalog/);
+  writeAsar(file, { schemaVersion: 1, sourceCommit: null, features: [] });
+  fs.truncateSync(file, fs.statSync(file).size - 1);
+  assert.throws(() => readCatalogFromAsar(file), /catalog bounds/);
+});
+
+test("feature remains disabled by default and enabled descriptors require no other feature", (t) => {
+  const config = path.join(temporary(t), "features.json");
+  fs.writeFileSync(config, '{"enabled":[]}');
+  assert.equal(loadLinuxFeaturePatchDescriptors({ featuresConfigPath: config }).some((patch) => patch.featureId === "community-features-in-gui-settings"), false);
+  fs.writeFileSync(config, '{"enabled":["community-features-in-gui-settings"]}');
+  assert.deepEqual(loadLinuxFeaturePatchDescriptors({ featuresConfigPath: config }).map((patch) => patch.id), ["feature:community-features-in-gui-settings:general-list"]);
+});

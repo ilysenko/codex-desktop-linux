@@ -1,0 +1,12 @@
+{
+  "id": "community-features-in-gui-settings",
+  "title": "Community Features in GUI Settings",
+  "description": "Show a read-only community feature dependency tree with build status in Settings > General.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "packageHooks": [
+    { "source": "./package.sh", "formats": ["deb", "rpm", "pacman"] }
+  ]
+}
