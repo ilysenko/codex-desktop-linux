@@ -2825,6 +2825,125 @@ test("Hyprland no-match result is ignored", () => {
   assert.equal(JSON.stringify(calls), JSON.stringify([["clients", "-j"]]));
 });
 
+function runHyprlandProximityScenario({
+  cursorOutput = "1200, 700",
+  clientsJson = JSON.stringify([
+    {
+      address: "0x201",
+      at: [100, 200],
+      class: "Codex",
+      floating: true,
+      fullscreen: 0,
+      pid: 4242,
+      size: [356, 320],
+      title: "Codex Pet Overlay",
+    },
+  ]),
+  env = { XDG_CURRENT_DESKTOP: "Hyprland" },
+  contentBounds = { x: 0, y: 0, width: 356, height: 320 },
+  intervals = [],
+} = {}) {
+  const calls = [];
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture(), {
+    feature: { manifest: { petOverlay: { hyprland: true } }, settings: {} },
+  });
+  const { controller } = controllerFromPatchedSource(patched, {
+    process: { env },
+    setInterval(callback, delay) {
+      intervals.push({ callback, delay });
+      return { unref() {} };
+    },
+    clearInterval() {},
+    childProcess: {
+      execFile(command, args, _options, callback) {
+        assert.equal(command, "hyprctl");
+        calls.push(args);
+        if (args[0] === "cursorpos") {
+          callback(null, cursorOutput);
+          return;
+        }
+        callback(null, clientsJson);
+      },
+    },
+  });
+
+  const window = {
+    getBounds: () => contentBounds,
+    getContentBounds: () => contentBounds,
+    isDestroyed: () => false,
+    isVisible: () => true,
+  };
+  controller.window = window;
+  controller.layout = { mascot: { left: 10, top: 10, width: 40, height: 40 } };
+  controller.petControlsAppearance = { proximityEnterDistance: 64, proximityExitDistance: 48 };
+  controller.petControlsProximityRects = [];
+  const proximity = [];
+  controller.setPetPointerProximity = (value) => proximity.push(value);
+
+  return { calls, controller, intervals, proximity, window };
+}
+
+test("Hyprland proximity uses the compositor cursor and window geometry", () => {
+  const far = runHyprlandProximityScenario({ cursorOutput: "1200, 700" });
+  far.controller.codexPetOverlayHyprlandClientRefresh();
+  far.controller.codexPetOverlayHyprlandCursorPoll();
+  assert.deepEqual(far.proximity, [false]);
+
+  // The compositor window origin wins over the Electron content bounds, which
+  // Wayland does not keep in sync with the compositor placement.
+  const near = runHyprlandProximityScenario({ cursorOutput: "120, 220" });
+  near.controller.codexPetOverlayHyprlandClientRefresh();
+  near.controller.codexPetOverlayHyprlandCursorPoll();
+  assert.deepEqual(near.proximity, [true]);
+});
+
+test("Hyprland cursor parsing accepts compositor and JSON output", () => {
+  const { controller } = runHyprlandProximityScenario();
+
+  const parsed = controller.codexPetOverlayParseHyprlandCursor("1200, 700");
+  assert.equal(parsed.x, 1200);
+  assert.equal(parsed.y, 700);
+
+  const json = controller.codexPetOverlayParseHyprlandCursor('{"x":12,"y":34}');
+  assert.equal(json.x, 12);
+  assert.equal(json.y, 34);
+
+  assert.equal(controller.codexPetOverlayParseHyprlandCursor("not-a-cursor"), null);
+  assert.equal(controller.codexPetOverlayParseHyprlandCursor(""), null);
+  assert.equal(controller.codexPetOverlayParseHyprlandCursor(null), null);
+});
+
+test("Hyprland proximity tracking prefers the compositor cursor over Chromium", () => {
+  const { controller, intervals, proximity } = runHyprlandProximityScenario({
+    cursorOutput: "120, 220",
+  });
+  controller.isNotchEnabled = true;
+  controller.logger = () => ({ info() {}, debug() {} });
+  controller.codexPetOverlayHyprlandClientRefresh();
+  controller.codexPetOverlayHyprlandCursorPoll();
+  proximity.length = 0;
+
+  controller.updateCssPetControlsProximityTracking();
+  const tracking = intervals.at(-1);
+  assert.ok(tracking);
+  tracking.callback();
+
+  // Chromium reports the cursor at the origin on Wayland; the compositor
+  // position is the only reliable source for the proximity decision.
+  assert.deepEqual(proximity, [true]);
+});
+
+test("Hyprland proximity polling stops when the overlay window closes", () => {
+  const { controller, intervals } = runHyprlandProximityScenario();
+
+  controller.codexPetOverlayStartHyprlandProximity();
+  assert.deepEqual(intervals.map((entry) => entry.delay), [100, 1000]);
+
+  controller.codexPetOverlaySyncWindow(null);
+  assert.equal(controller.codexPetOverlayHyprlandProximityTimer, null);
+  assert.equal(controller.codexPetOverlayHyprlandClientTimer, null);
+});
+
 test("settings can turn Hyprland handling off", () => {
   const calls = runHyprlandHintScenario({
     clientsJson: JSON.stringify([
