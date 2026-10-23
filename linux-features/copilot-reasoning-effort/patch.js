@@ -4,24 +4,33 @@ const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const BT = "`";
 const COMPILED_UI_MARKER = "codexLinuxCopilotReasoningEffortUi";
 
-function currentCopilotWriterRegex() {
-  return new RegExp(
-    `(${JS_IDENT}=async\\((${JS_IDENT}),(${JS_IDENT}),${JS_IDENT},${JS_IDENT}\\)=>\\{[\\s\\S]{0,1000}?` +
-      `if\\((${JS_IDENT})\\)return await (${JS_IDENT})\\((${JS_IDENT}),${BT}copilot-default-model${BT},\\2,` +
-      `\\{throwOnFailure:!0\\}\\)),!0`,
+function matchesCopilotModelAndReasoningPersistenceContract(source) {
+  const exportedContract = new RegExp(
+    `setDefaultModelAndReasoningEffort:${JS_IDENT},` +
+      `setModelAndReasoningEffortForNextTurn:${JS_IDENT},` +
+      `setModelAndReasoningEffort:${JS_IDENT},modelSettings:${JS_IDENT}`,
+    "g",
   );
-}
+  const exportedMatches = findAllMatches(source, exportedContract);
+  if (exportedMatches.length !== 1) return false;
 
-function matchesCopilotReasoningEffortSettingsContract(source) {
-  const cleanReader = new RegExp(
-    `function ${JS_IDENT}\\(\\)\\{let ${JS_IDENT}=\\(0,${JS_IDENT}\\.c\\)\\(3\\),${JS_IDENT}=${JS_IDENT}\\([^)]*\\),` +
-      `\\{data:${JS_IDENT},isLoading:${JS_IDENT}\\}=${JS_IDENT}\\(${BT}copilot-default-model${BT}\\)` +
-      `[\\s\\S]{0,400}?reasoningEffort:${BT}medium${BT}`,
+  const match = exportedMatches[0];
+  const ownerRegion = source.slice(Math.max(0, match.index - 6_000), match.index + match[0].length);
+  const defaultWriteMatches = findAllMatches(
+    ownerRegion,
+    new RegExp(`\\.setDefaultModelConfig\\(${JS_IDENT},${JS_IDENT},${JS_IDENT}\\.profile\\)`),
   );
-  const patchedReader = source.includes("copilot-default-reasoning-effort`),codexCopilotModelValue=");
-  const patchedWriter = source.includes("`copilot-default-reasoning-effort`,");
-  return (cleanReader.test(source) || patchedReader) &&
-    (currentCopilotWriterRegex().test(source) || patchedWriter);
+  const defaultWrapperMatches = findAllMatches(
+    ownerRegion,
+    new RegExp(`=>${JS_IDENT}\\(${JS_IDENT},${JS_IDENT},${BT}default${BT}\\)`),
+  );
+  const currentWrapperMatches = findAllMatches(
+    ownerRegion,
+    new RegExp(`=>${JS_IDENT}\\(${JS_IDENT},${JS_IDENT},${BT}current${BT},${JS_IDENT}\\)`),
+  );
+  return defaultWriteMatches.length === 1 &&
+    defaultWrapperMatches.length === 1 &&
+    currentWrapperMatches.length === 1;
 }
 
 function matchesCopilotReasoningEffortModelListContract(source) {
@@ -197,72 +206,6 @@ function analyzeCopilotReasoningEffortUiContract(source) {
   };
 }
 
-function applyCopilotReasoningEffortSettingsPatch(currentSource) {
-  const copilotSavePatchMarker = "copilot-default-reasoning-effort`,";
-  const currentCopilotSaveRegex = currentCopilotWriterRegex();
-  if (
-    !currentSource.includes(copilotSavePatchMarker) &&
-    !currentCopilotSaveRegex.test(currentSource)
-  ) {
-    if (currentSource.includes("copilot-default-model")) {
-      console.warn(
-        "WARN: Could not find Copilot default model writer - skipping Copilot reasoning effort settings patch",
-      );
-    }
-    return currentSource;
-  }
-
-  let patchedSource = currentSource;
-
-  const copilotDefaultsPatchMarker = "copilot-default-reasoning-effort`),codexCopilotModelValue=";
-  const copilotDefaultsRegex =
-    /function ([A-Za-z_$][\w$]*)\(\)\{let ([A-Za-z_$][\w$]*)=\(0,([A-Za-z_$][\w$]*)\.c\)\(3\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*\([^)]*\)),\{data:([A-Za-z_$][\w$]*),isLoading:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(`copilot-default-model`\),([A-Za-z_$][\w$]*)=\6\?\?\4\.defaultModel,([A-Za-z_$][\w$]*);return \2\[0\]!==\7\|\|\2\[1\]!==\9\?\(\10=\{model:\9,reasoningEffort:`medium`,profile:null,isLoading:\7\},\2\[0\]=\7,\2\[1\]=\9,\2\[2\]=\10\):\10=\2\[2\],\10\}/;
-  if (patchedSource.includes(copilotDefaultsPatchMarker)) {
-    // Already patched.
-  } else if (copilotDefaultsRegex.test(patchedSource)) {
-    patchedSource = patchedSource.replace(
-      copilotDefaultsRegex,
-      (
-        _match,
-        functionName,
-        memoVar,
-        cacheModuleVar,
-        defaultsVar,
-        defaultsExpression,
-        savedModelVar,
-        modelLoadingVar,
-        persistedStateHookVar,
-        _modelValueVar,
-        resultVar,
-      ) =>
-        `function ${functionName}(){let ${memoVar}=(0,${cacheModuleVar}.c)(5),${defaultsVar}=${defaultsExpression},{data:${savedModelVar},isLoading:${modelLoadingVar}}=${persistedStateHookVar}(\`copilot-default-model\`),{data:codexCopilotReasoningEffort,isLoading:codexCopilotReasoningEffortLoading}=${persistedStateHookVar}(\`copilot-default-reasoning-effort\`),codexCopilotModelValue=${savedModelVar}??${defaultsVar}.defaultModel,codexCopilotReasoningEffortValue=codexCopilotReasoningEffort??\`medium\`,${resultVar};return ${memoVar}[0]!==${modelLoadingVar}||${memoVar}[1]!==codexCopilotReasoningEffortLoading||${memoVar}[2]!==codexCopilotModelValue||${memoVar}[3]!==codexCopilotReasoningEffortValue?(${resultVar}={model:codexCopilotModelValue,reasoningEffort:codexCopilotReasoningEffortValue,profile:null,isLoading:${modelLoadingVar}||codexCopilotReasoningEffortLoading},${memoVar}[0]=${modelLoadingVar},${memoVar}[1]=codexCopilotReasoningEffortLoading,${memoVar}[2]=codexCopilotModelValue,${memoVar}[3]=codexCopilotReasoningEffortValue,${memoVar}[4]=${resultVar}):${resultVar}=${memoVar}[4],${resultVar}}`,
-    );
-  } else if (patchedSource.includes("copilot-default-model")) {
-    console.warn(
-      "WARN: Could not find Copilot default model reader - skipping Copilot reasoning effort default patch",
-    );
-  }
-
-  if (patchedSource.includes(copilotSavePatchMarker)) {
-    // Already patched.
-  } else {
-    const currentMatch = patchedSource.match(currentCopilotSaveRegex);
-    if (currentMatch != null) {
-      const [, prefix, _modelArg, effortArg, _isCopilot, persistState, stateScope] = currentMatch;
-      patchedSource = patchedSource.replace(
-        currentCopilotSaveRegex,
-        `${prefix},await ${persistState}(${stateScope},${BT}copilot-default-reasoning-effort${BT},${effortArg},{throwOnFailure:!0}),!0`,
-      );
-    } else if (patchedSource.includes("copilot-default-model")) {
-      console.warn(
-        "WARN: Could not find Copilot default model writer - skipping Copilot reasoning effort persistence patch",
-      );
-    }
-  }
-
-  return patchedSource;
-}
-
 function applyCopilotReasoningEffortModelListPatch(currentSource) {
   const currentCopilotReasoningFilterRegex =
     /([A-Za-z_$][\w$]*)=\(([A-Za-z_$][\w$]*)===`copilot`\?\[([A-Za-z_$][\w$]*)\.find\([^)]*\)\?\?\{reasoningEffort:`medium`,description:`medium effort`\}\]:\3\)\.filter\(/g;
@@ -320,6 +263,16 @@ function applyCopilotReasoningEffortUiPatch(currentSource) {
 module.exports = {
   descriptors: [
     {
+      id: "persistence-contract",
+      name: "copilot-reasoning-effort-persistence-contract",
+      phase: "webview-asset",
+      pattern: /^(?!locale-)[A-Za-z0-9_-]+\.js$/,
+      assetMatch: matchesCopilotModelAndReasoningPersistenceContract,
+      missingDescription: "current model-and-reasoning persistence owner",
+      skipDescription: "Copilot reasoning effort persistence validation",
+      apply: (source) => source,
+    },
+    {
       id: "model-list",
       name: "copilot-reasoning-effort-model-list",
       phase: "webview-asset",
@@ -351,10 +304,9 @@ module.exports = {
     },
   ],
   applyCopilotReasoningEffortModelListPatch,
-  applyCopilotReasoningEffortSettingsPatch,
   applyCopilotReasoningEffortUiPatch,
   matchesCopilotReasoningEffortModelListContract,
-  matchesCopilotReasoningEffortSettingsContract,
+  matchesCopilotModelAndReasoningPersistenceContract,
   matchesCopilotReasoningEffortDropdownContract,
   matchesCopilotReasoningSlashContract,
   matchesCopilotReasoningEffortUiContract,

@@ -2157,14 +2157,16 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
 
   const candidates = fs
     .readdirSync(assetsDir)
-    .filter((name) => /^[A-Za-z0-9_-]+\.js$/.test(name))
+    .filter((name) => name !== SETTINGS_ASSET && /^[A-Za-z0-9_-]+\.js$/.test(name))
     .sort();
-  let metadataNavMatched = false;
-  let metadataSectionMatched = false;
-  let routeMatched = false;
-  let navigationMatched = false;
-  let visibilityMatched = false;
-  let catalogMatched = false;
+  const ownerCounts = {
+    metadataNavigation: 0,
+    metadataSection: 0,
+    route: 0,
+    navigation: 0,
+    visibility: 0,
+    catalog: 0,
+  };
   const patches = [];
 
   for (const candidate of candidates) {
@@ -2172,27 +2174,35 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
     const currentSource = fs.readFileSync(filePath, "utf8");
     let patchedSource = currentSource;
     if (isAgentWorkspaceSettingsSharedMetadataBundleSource(currentSource)) {
-      metadataNavMatched ||= currentSource.includes('"local-environments":{id:`settings.nav.local-environments`') ||
-        currentSource.includes(`settings.nav.${SETTINGS_SLUG}`);
-      metadataSectionMatched ||= (currentSource.includes("case`local-environments`:") &&
-        currentSource.includes("settings.section.worktrees")) ||
-        currentSource.includes(`settings.section.${SETTINGS_SLUG}`);
+      if (
+        currentSource.includes('"local-environments":{id:`settings.nav.local-environments`') ||
+        currentSource.includes(`settings.nav.${SETTINGS_SLUG}`)
+      ) {
+        ownerCounts.metadataNavigation += 1;
+      }
+      if (
+        (currentSource.includes("case`local-environments`:") &&
+          currentSource.includes("settings.section.worktrees")) ||
+        currentSource.includes(`settings.section.${SETTINGS_SLUG}`)
+      ) {
+        ownerCounts.metadataSection += 1;
+      }
       patchedSource = applyAgentWorkspaceSettingsSharedPatch(patchedSource);
     }
     if (isAgentWorkspaceSettingsRouteBundleSource(currentSource)) {
-      routeMatched = true;
+      ownerCounts.route += 1;
       patchedSource = applyAgentWorkspaceSettingsIndexPatch(patchedSource);
     }
     if (isAgentWorkspaceSettingsNavigationBundleSource(currentSource)) {
-      navigationMatched = true;
+      ownerCounts.navigation += 1;
       patchedSource = applyAgentWorkspaceSettingsPagePatch(patchedSource);
     }
     if (isAgentWorkspaceSettingsVisibilityBundleSource(currentSource)) {
-      visibilityMatched = true;
+      ownerCounts.visibility += 1;
       patchedSource = applyAgentWorkspaceSettingsPagePatch(patchedSource);
     }
     if (isAgentWorkspaceSettingsCatalogBundleSource(currentSource)) {
-      catalogMatched = true;
+      ownerCounts.catalog += 1;
       patchedSource = applyAgentWorkspaceSettingsCatalogPatch(patchedSource);
     }
     if (patchedSource !== currentSource) {
@@ -2200,20 +2210,13 @@ function collectAgentWorkspaceRouteAndNavigationPatches(extractedDir) {
     }
   }
 
-  if (!metadataNavMatched || !metadataSectionMatched) {
-    throw new Error("could not find webview settings metadata bundle");
-  }
-  if (!routeMatched) {
-    throw new Error("could not find webview settings route bundle");
-  }
-  if (!navigationMatched) {
-    throw new Error("could not find webview settings navigation bundle");
-  }
-  if (!visibilityMatched) {
-    throw new Error("could not find webview settings visibility bundle");
-  }
-  if (!catalogMatched) {
-    throw new Error("could not find current webview settings catalog bundle");
+  const ambiguousContracts = Object.entries(ownerCounts)
+    .filter(([, count]) => count !== 1)
+    .map(([contract, count]) => `${contract}=${count}`);
+  if (ambiguousContracts.length > 0) {
+    throw new Error(
+      `could not uniquely resolve webview settings semantic owners (${ambiguousContracts.join(", ")})`,
+    );
   }
 
   return patches;

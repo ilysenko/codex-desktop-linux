@@ -59,7 +59,7 @@ function currentChronicleControllerFixture() {
     "N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{await archive({codexHome:V.codexHome,reason:`skysight_gate_enabled`})&&U.broadcastQueryCacheInvalidation([`skills`])}}));",
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var Host=class{constructor(){this.options=appOptions;let i={};this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>[],()=>[],{}):void 0}}};",
-    "var bridge={\"get-global-state\":async({key:e})=>null};",
+    "var bridge={\"set-remote-wsl-connections-enabled\":()=>null};",
   ].join("");
 }
 
@@ -319,6 +319,29 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
     assert.equal(value, drifted, name);
     assert.equal(warnings.length, 1, name);
     assert.match(warnings[0], /incomplete Record & Replay main bridge patch/, name);
+  }
+});
+
+test("record-and-replay rejects missing, duplicate, and mixed insertion anchors byte-identically", () => {
+  const current = applyChronicleSkysightMainBridgePatch(currentChronicleControllerFixture());
+  const legacy = 'let codexLinuxRecordReplayRun=()=>{};var bridge={"get-global-state":async({key:e})=>null};';
+  const variants = {
+    missing: current
+      .replace('"chronicle-permissions":async', '"chronicle-permissions-missing":async')
+      .replace('"get-global-state":async({key:', '"get-global-state-missing":async({key:'),
+    "duplicate current": current.replace(
+      '"chronicle-permissions":async',
+      '"chronicle-permissions":async()=>null,"chronicle-permissions":async',
+    ),
+    "duplicate legacy": `${legacy},extra={"get-global-state":async({key:e})=>null}`,
+    "mixed current and legacy owners": `${current},extra={"get-global-state":async({key:e})=>null}`,
+  };
+
+  for (const [name, source] of Object.entries(variants)) {
+    const { value, warnings } = captureWarns(() => applyRecordReplayMainBridgePatch(source));
+    assert.equal(value, source, name);
+    assert.equal(warnings.length, 1, name);
+    assert.match(warnings[0], /uniquely resolve current \/ legacy bridge insertion point/, name);
   }
 });
 

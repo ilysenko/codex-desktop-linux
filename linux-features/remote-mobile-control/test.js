@@ -45,6 +45,8 @@ const {
   applyLinuxRemoteConnectionsRefreshPatch,
   applyLinuxRemoteControlSettingsUxPatch,
   applyLinuxRemoteControlVisibilityPatch,
+  matchesLinuxRemoteControlEnablementBridgeContract,
+  validateLinuxRemoteControlAutoConnectContract,
 } = require("./patch.js");
 const remoteMobilePatchDescriptors = require("./patch.js");
 
@@ -145,6 +147,7 @@ test("remote mobile README assigns every descriptor to one control topology", ()
     ["linux-remote-control-status-wait", "shared-boundary"],
     ["linux-remote-control-enable-for-host-params", "shared-boundary"],
     ["linux-remote-control-enablement-bridge", "shared-boundary"],
+    ["linux-remote-control-auto-connect-contract", "outbound-control"],
     ["linux-remote-mobile-active-status", "mobile-host"],
   ]);
 
@@ -433,6 +436,14 @@ function syntheticCurrentAppMainEnablementBridgeBundle() {
     syntheticAppMainEnablementBridgeBundle(),
     "var handlers={\"set-remote-control-enabled-for-host\":pU((e,{enabled:t})=>e.sendRequest(t?`remoteControl/enable`:`remoteControl/disable`,null))};",
   ].join("");
+}
+
+function syntheticAutoConnectServiceBundle() {
+  return "class ConnectionsService{constructor(e){this.connections=e}setAutoConnect(e){return this.connections.setRemoteConnectionAutoConnect(e.hostId,e.autoConnect)}}";
+}
+
+function syntheticAutoConnectSettingsCallerBundle() {
+  return "async function hs(e){let t=De.remoteConnections;if(t==null)throw Error(`Remote connections are unavailable`);return t.setAutoConnect(e)}";
 }
 
 function withTempFeatureRoot(enabled, fn) {
@@ -1009,6 +1020,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "feature:remote-mobile-control:linux-remote-control-status-wait",
       "feature:remote-mobile-control:linux-remote-control-enable-for-host-params",
       "feature:remote-mobile-control:linux-remote-control-enablement-bridge",
+      "feature:remote-mobile-control:linux-remote-control-auto-connect-contract",
       "feature:remote-mobile-control:linux-remote-mobile-active-status",
     ]);
     assert.deepEqual(descriptors.map((descriptor) => descriptor.phase), [
@@ -1029,6 +1041,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "webview-asset",
       "webview-asset",
       "webview-asset",
+      "extracted-app:post-webview",
       "webview-asset",
     ]);
 
@@ -2579,7 +2592,7 @@ test("remote mobile feature patch report records feature metadata", () => {
       assert.notEqual(enablementBridgePatch.status, "already-applied");
       assert.ok(
         enablementBridgePatch.warnings.some((warning) =>
-          warning.includes("remote-control enablement bridge needle"),
+          warning.includes("app main bundle"),
         ),
       );
 
@@ -2671,7 +2684,7 @@ test("Linux remote-control enablement bridge accepts the current service contrac
     applyLinuxRemoteControlEnablementBridgePatch(retired),
   );
   assert.doesNotMatch(result, /codexLinuxRemoteControlEnablementBridge/u);
-  assert.ok(warnings.some((warning) => warning.includes("enablement bridge anchors")));
+  assert.ok(warnings.some((warning) => warning.includes("enablement bridge owner")));
 });
 
 test("Linux remote-control enablement bridge rejects distant anchors", () => {
@@ -2688,6 +2701,19 @@ test("Linux remote-control enablement bridge rejects distant anchors", () => {
   assert.ok(warnings.some((warning) => warning.includes("anchors are too far apart")));
 });
 
+test("Linux remote-control enablement bridge rejects duplicate semantic owners byte-identically", () => {
+  const source = syntheticAppMainEnablementBridgeBundle().repeat(2);
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteControlEnablementBridgePatch(source),
+  );
+
+  assert.equal(matchesLinuxRemoteControlEnablementBridgeContract(source), false);
+  assert.equal(result, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /uniquely resolve current remote-control enablement bridge owner/);
+  assert.match(warnings[0], /owners=2/);
+});
+
 test("Linux remote-control enablement bridge reports current anchor drift instead of false success", () => {
   const source =
     "function OF(){return B.remoteConnections.setRemoteControlEnabled({enabled:true})}";
@@ -2698,7 +2724,7 @@ test("Linux remote-control enablement bridge reports current anchor drift instea
   assert.equal(result, source);
   assert.ok(
     warnings.some((warning) =>
-      warning.includes("current remote-control enablement bridge anchors"),
+      warning.includes("current remote-control enablement bridge owner"),
     ),
   );
 });
@@ -2850,6 +2876,57 @@ test("Linux remote-control enablement bridge preserves service-owned auto-connec
   assert.equal(calls[0].method, "setRemoteControlEnabled");
   assert.equal(calls[0].params.enabled, true);
   assert.equal(calls[0].params.oneToOnePairingInAppEnabled, false);
+});
+
+test("upstream auto-connect service preserves an explicit settings choice", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-auto-connect-contract-"));
+  try {
+    const buildDir = path.join(root, ".vite", "build");
+    const assetsDir = path.join(root, "webview", "assets");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const serviceSource = syntheticAutoConnectServiceBundle();
+    const callerSource = syntheticAutoConnectSettingsCallerBundle();
+    fs.writeFileSync(path.join(buildDir, "main-current.js"), serviceSource);
+    fs.writeFileSync(path.join(assetsDir, "remote-connections-settings-current.js"), callerSource);
+
+    assert.deepEqual(validateLinuxRemoteControlAutoConnectContract(root), {
+      matched: true,
+      changed: false,
+    });
+
+    const calls = [];
+    const context = {
+      De: { remoteConnections: null },
+      module: { exports: {} },
+    };
+    vm.runInNewContext(`${serviceSource};module.exports=ConnectionsService;`, context);
+    const service = new context.module.exports({
+      setRemoteConnectionAutoConnect(hostId, autoConnect) {
+        calls.push({ hostId, autoConnect });
+        return Promise.resolve({ hostId, autoConnect });
+      },
+    });
+    context.De.remoteConnections = service;
+    vm.runInNewContext(`${callerSource};this.callAutoConnect=hs;`, context);
+
+    await context.callAutoConnect({ hostId: "host-1", autoConnect: false });
+    await context.callAutoConnect({ hostId: "host-1", autoConnect: true });
+    assert.deepEqual(calls, [
+      { hostId: "host-1", autoConnect: false },
+      { hostId: "host-1", autoConnect: true },
+    ]);
+
+    fs.appendFileSync(path.join(buildDir, "main-current.js"), serviceSource);
+    const { result, warnings } = captureWarnings(() =>
+      validateLinuxRemoteControlAutoConnectContract(root),
+    );
+    assert.equal(result.matched, false);
+    assert.match(result.reason, /service=2, caller=1/);
+    assert.equal(warnings.length, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("patched Linux device-key provider signs upstream-canonical enrollment and connection payloads", async () => {

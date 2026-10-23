@@ -1799,11 +1799,6 @@ test("agent-workspace settings infer runtime dependencies from the current setti
 
     assert.equal(fs.existsSync(path.join(assetsDir, "runtime-test.js")), true);
     assert.equal(fs.existsSync(path.join(assetsDir, "settings-page-test.js")), true);
-    fs.writeFileSync(
-      path.join(assetsDir, "settings-page-lazy-test.js"),
-      syntheticCurrentSettingsNavigation(),
-    );
-
     const { value: result, warnings } = captureWarns(() => patchAgentWorkspaceSettingsAssets(tempApp));
 
     assert.equal(result.matched, true);
@@ -1819,6 +1814,34 @@ test("agent-workspace settings infer runtime dependencies from the current setti
     assert.match(settingsSource, /AgentWorkspacesSettings/);
     assert.match(fs.readFileSync(path.join(assetsDir, "settings-page-test.js"), "utf8"), /agent-workspaces/);
     assert.match(fs.readFileSync(path.join(assetsDir, "app-initial-test.js"), "utf8"), new RegExp(SETTINGS_ASSET));
+  } finally {
+    fs.rmSync(tempApp, { recursive: true, force: true });
+  }
+});
+
+test("agent-workspace settings reject duplicate semantic owners atomically", () => {
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-agent-workspace-duplicate-owner-"));
+  try {
+    const { assetsDir } = writeSyntheticExtractedApp(tempApp);
+    fs.writeFileSync(
+      path.join(assetsDir, "settings-page-lazy-test.js"),
+      syntheticCurrentSettingsNavigation(),
+    );
+    const before = new Map(
+      fs.readdirSync(assetsDir).map((name) => [name, fs.readFileSync(path.join(assetsDir, name))]),
+    );
+
+    const { value: result, warnings } = captureWarns(() => patchAgentWorkspaceSettingsAssets(tempApp));
+
+    assert.equal(result.matched, false);
+    assert.equal(result.changed, 0);
+    assert.match(result.reason, /uniquely resolve webview settings semantic owners/);
+    assert.match(result.reason, /navigation=2/);
+    assert.ok(warnings.some((warning) => warning.includes("navigation=2")));
+    assert.equal(fs.existsSync(path.join(assetsDir, SETTINGS_ASSET)), false);
+    for (const [name, source] of before) {
+      assert.deepEqual(fs.readFileSync(path.join(assetsDir, name)), source, name);
+    }
   } finally {
     fs.rmSync(tempApp, { recursive: true, force: true });
   }
