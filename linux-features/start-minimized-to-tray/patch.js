@@ -15,6 +15,21 @@ const LABEL_TRANSLATIONS = require("./labels.json");
 const DESCRIPTION_IDS = ["settings.general.startMinimizedToTray.description", "settings.general.startMinimizedToTrayOnlyOnBoot.description"];
 const DESCRIPTION_TRANSLATIONS = require("./descriptions.json");
 const ID = "[A-Za-z_$][\\w$]*";
+const GLOBAL_STATE_GET_HANDLER = '"get-global-state":async';
+const GLOBAL_STATE_SET_HANDLER = '"set-global-state":async';
+const CURRENT_HANDLER_OWNER = '"set-remote-wsl-connections-enabled":';
+const GLOBAL_STATE_HANDLERS =
+  '"get-global-state":async({key,params}={})=>({value:this.globalState.get(key??params?.key)}),' +
+  '"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;this.globalState.set(k,v);return{success:!0}},';
+
+function globalStateHandlerPlan(source) {
+  const count = needle => source.split(needle).length - 1;
+  const getCount = count(GLOBAL_STATE_GET_HANDLER);
+  const setCount = count(GLOBAL_STATE_SET_HANDLER);
+  if (getCount === 1 && setCount === 1) return patched => patched;
+  if (getCount !== 0 || setCount !== 0 || count(CURRENT_HANDLER_OWNER) !== 1) return null;
+  return patched => patched.replace(CURRENT_HANDLER_OWNER, GLOBAL_STATE_HANDLERS + CURRENT_HANDLER_OWNER);
+}
 
 // systemd's XDG generator uses app-<escaped desktop ID>@autostart.service.
 // GNOME session launches expose DESKTOP_AUTOSTART_ID. Other launchers can
@@ -119,6 +134,11 @@ function hasCompleteMainPatch(source, state, startup) {
 }
 
 function applyMainPatch(source) {
+  const installGlobalStateHandlers = globalStateHandlerPlan(source);
+  if (!installGlobalStateHandlers) {
+    console.warn("WARN: Start minimized to tray global-state handler owner missing or ambiguous");
+    return source;
+  }
   const state = unique(source, new RegExp(`let (${ID})=await ${ID}\\.${ID}\\(\\{moduleDir:__dirname\\}\\),`, "g"));
   const startup = unique(source, new RegExp(`shouldShowPrimaryWindow:\\(\\)=>!\\(?(${ID})\\.isBackgroundLaunch`, "g"));
   const owner = startup?.[1] ?? "__missing";
@@ -130,8 +150,9 @@ function applyMainPatch(source) {
   if (source.includes(`function ${MAIN_MARKER}(`)) {
     if (!background || !state || !startup || !hasCompleteMainPatch(source, state, startup)) {
       console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
+      return source;
     }
-    return source;
+    return installGlobalStateHandlers(source);
   }
   if (source.includes("codexLinuxStartMinimized")) {
     console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
@@ -198,7 +219,7 @@ function applyMainPatch(source) {
   patched = patched.replace(queuedActivation[0], queuedActivation[0]
     .replace(`${queuedActivation[1]}&&`, `(${queuedActivation[1]}||codexLinuxStartMinimizedRequested)&&`));
   patched = patched.replace(interactive[0], interactive[0].replace("=>{", `=>{${clearHidden}`));
-  return `${codexLinuxStartMinimizedAutostart.toString()}\n${codexLinuxStartMinimizedPreference.toString()}\n${codexLinuxStartMinimizedTrayReady.toString()}\n${patched}`;
+  return installGlobalStateHandlers(`${codexLinuxStartMinimizedAutostart.toString()}\n${codexLinuxStartMinimizedPreference.toString()}\n${codexLinuxStartMinimizedTrayReady.toString()}\n${patched}`);
 }
 
 function settingsContract(source) {

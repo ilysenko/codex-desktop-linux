@@ -76,8 +76,40 @@ function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
 }
 
+const GLOBAL_STATE_GET_HANDLER = '"get-global-state":async';
+const GLOBAL_STATE_SET_HANDLER = '"set-global-state":async';
+const CURRENT_HANDLER_OWNER = '"set-remote-wsl-connections-enabled":';
+const GLOBAL_STATE_HANDLERS =
+  '"get-global-state":async({key,params}={})=>({value:this.globalState.get(key??params?.key)}),' +
+  '"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;this.globalState.set(k,v);return{success:!0}},';
+
+function count(source, needle) {
+  return source.split(needle).length - 1;
+}
+
+function ensureGlobalStateHandlers(source) {
+  const getCount = count(source, GLOBAL_STATE_GET_HANDLER);
+  const setCount = count(source, GLOBAL_STATE_SET_HANDLER);
+  if (getCount === 1 && setCount === 1) return source;
+  if (getCount !== 0 || setCount !== 0) return null;
+  const currentOwners = count(source, CURRENT_HANDLER_OWNER);
+  if (currentOwners !== 1) return null;
+  return source.replace(CURRENT_HANDLER_OWNER, GLOBAL_STATE_HANDLERS + CURRENT_HANDLER_OWNER);
+}
+
 function applyMainBundlePatch(source) {
-  if (source.includes(`"${HANDLER_NAME}":async`)) {
+  const originalSource = source;
+  source = ensureGlobalStateHandlers(source);
+  if (source == null) {
+    warn("Could not find unique global-state handler owner", "read aloud main-bundle patch");
+    return originalSource;
+  }
+  const installedHandlerCount = count(source, `"${HANDLER_NAME}":async`);
+  if (installedHandlerCount > 1) {
+    warn("Found duplicate read aloud handlers", "read aloud main-bundle patch");
+    return originalSource;
+  }
+  if (installedHandlerCount === 1) {
     return source;
   }
 
@@ -135,25 +167,7 @@ function applyMainBundlePatch(source) {
   ].join("");
 
   const handler = `"${HANDLER_NAME}":async(e)=>codexLinuxReadAloudHandle(e),`;
-  const needle = `"native-desktop-apps":`;
-  const handlerIndex = source.indexOf(needle);
-  let withHandler;
-  if (handlerIndex !== -1) {
-    withHandler = source.slice(0, handlerIndex) + handler + source.slice(handlerIndex);
-  } else {
-    const currentAnchor = '"set-remote-wsl-connections-enabled":';
-    if (source.split(currentAnchor).length !== 2) {
-      warn("Could not find current main handler object", "read aloud main-bundle patch");
-      return source;
-    }
-    const stateHandlers =
-      '"get-global-state":async({key,params}={})=>({value:this.globalState.get(key??params?.key)}),' +
-      '"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;this.globalState.set(k,v);return{success:!0}},';
-    withHandler = source.replace(
-      currentAnchor,
-      `${handler}${stateHandlers}"set-remote-wsl-connections-enabled":`,
-    );
-  }
+  const withHandler = source.replace(GLOBAL_STATE_GET_HANDLER, handler + GLOBAL_STATE_GET_HANDLER);
   const helperInsertAt = withHandler.startsWith(`"use strict";`)
     ? `"use strict";`.length
     : withHandler.startsWith(`'use strict';`)

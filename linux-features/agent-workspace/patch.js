@@ -14,6 +14,25 @@ function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
 }
 
+const GLOBAL_STATE_GET_HANDLER = '"get-global-state":async';
+const GLOBAL_STATE_SET_HANDLER = '"set-global-state":async';
+const CURRENT_HANDLER_OWNER = '"set-remote-wsl-connections-enabled":';
+const GLOBAL_STATE_HANDLERS =
+  '"get-global-state":async({key,params}={})=>({value:this.globalState.get(key??params?.key)}),' +
+  '"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;this.globalState.set(k,v);return{success:!0}},';
+
+function countOccurrences(source, needle) {
+  return source.split(needle).length - 1;
+}
+
+function ensureGlobalStateHandlers(source) {
+  const getCount = countOccurrences(source, GLOBAL_STATE_GET_HANDLER);
+  const setCount = countOccurrences(source, GLOBAL_STATE_SET_HANDLER);
+  if (getCount === 1 && setCount === 1) return source;
+  if (getCount !== 0 || setCount !== 0 || countOccurrences(source, CURRENT_HANDLER_OWNER) !== 1) return null;
+  return source.replace(CURRENT_HANDLER_OWNER, GLOBAL_STATE_HANDLERS + CURRENT_HANDLER_OWNER);
+}
+
 const NODE_MODULE_EXPRESSIONS = Object.freeze({
   childProcessVar: 'require("node:child_process")',
   fsVar: 'require("node:fs")',
@@ -117,11 +136,6 @@ function replaceAgentWorkspaceActionBridge(currentSource, actionBridgeSource) {
     return currentSource;
   }
 
-  const getGlobalStateIndex = currentSource.indexOf(`,"get-global-state":async`, start);
-  if (getGlobalStateIndex !== -1) {
-    return `${currentSource.slice(0, start)}${actionBridgeSource}${currentSource.slice(getGlobalStateIndex)}`;
-  }
-
   const arrowBodyIndex = currentSource.indexOf("=>{", start);
   if (arrowBodyIndex === -1) {
     return currentSource;
@@ -160,6 +174,12 @@ function replaceAgentWorkspaceActionBridge(currentSource, actionBridgeSource) {
 
 function applyAgentWorkspaceMainBridgePatch(currentSource) {
   const patchName = "agent workspace main bridge patch";
+  const originalSource = currentSource;
+  currentSource = ensureGlobalStateHandlers(currentSource);
+  if (currentSource == null) {
+    warn("Could not find global-state handler insertion point: owner missing or ambiguous", patchName);
+    return originalSource;
+  }
   if (currentSource.includes('"linux-agent-workspace":async')) {
     const args = NODE_MODULE_EXPRESSIONS;
     let patchedSource = currentSource;
@@ -170,23 +190,7 @@ function applyAgentWorkspaceMainBridgePatch(currentSource) {
     return replaceAgentWorkspaceActionBridge(patchedSource, agentWorkspaceActionBridgeSource(args));
   }
 
-  const handlerNeedle = `"get-global-state":async({key:`;
-  if (!currentSource.includes(handlerNeedle)) {
-    const currentHandlerAnchor = '"set-remote-wsl-connections-enabled":';
-    if (currentSource.split(currentHandlerAnchor).length !== 2) {
-      warn("Could not find global-state handler insertion point", patchName);
-      return currentSource;
-    }
-    const bridge = agentWorkspaceBridgeWithWorkspaceStartSource(NODE_MODULE_EXPRESSIONS);
-    const stateHandlers =
-      '"get-global-state":async({key,params}={})=>({value:this.globalState.get(key??params?.key)}),' +
-      '"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;this.globalState.set(k,v);return{success:!0}},';
-    return currentSource.replace(
-      currentHandlerAnchor,
-      `${bridge},${stateHandlers}"set-remote-wsl-connections-enabled":`,
-    );
-  }
-
+  const handlerNeedle = GLOBAL_STATE_GET_HANDLER;
   return currentSource.replace(
     handlerNeedle,
     `${agentWorkspaceBridgeWithWorkspaceStartSource(NODE_MODULE_EXPRESSIONS)},${handlerNeedle}`,
