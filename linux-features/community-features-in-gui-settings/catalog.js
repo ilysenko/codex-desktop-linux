@@ -82,11 +82,10 @@ function catalogFeatureFromManifest(id, manifest, origin) {
   });
 }
 
-function validatePublicCatalog(catalog) {
+function validatePackagedCatalog(catalog) {
   validateCatalog(catalog);
-  if (catalog.sourceCommit !== null || catalog.features.some((feature) =>
-    feature.origin !== "repo" || feature.enabled || feature.subfeatures?.some((item) => item.enabled))) {
-    throw Error("community-features-in-gui-settings: public catalog contains private metadata or build state");
+  if (catalog.features.some((feature) => feature.origin === "local" && !feature.enabled)) {
+    throw Error("community-features-in-gui-settings: packaged catalog contains disabled local metadata");
   }
   return catalog;
 }
@@ -94,28 +93,38 @@ function validatePublicCatalog(catalog) {
 function buildCatalog(context = {}, onWarning = console.warn) {
   // Descriptor discovery can run inside linux-features.js itself. Resolve its
   // exports only when applying the patch, after discovery has completed.
-  const { loadEnabledLinuxFeatures, enabledLinuxFeatureIds, linuxFeaturesRoot } = require("../../scripts/lib/linux-features.js");
+  const { discoverLinuxFeatureManifests, loadEnabledLinuxFeatures, enabledLinuxFeatureIds, linuxFeaturesRoot } = require("../../scripts/lib/linux-features.js");
   const { sourceInfo } = require("../../scripts/lib/build-info.js");
   const options = context.featurePatchOptions ?? {};
   const root = linuxFeaturesRoot(options);
-  const publicCatalog = validatePublicCatalog(JSON.parse(fs.readFileSync(path.join(context.feature?.dir ?? __dirname, CATALOG_NAME), "utf8")));
-  const features = new Map(publicCatalog.features.map((feature) => [feature.id, feature]));
+  const snapshotPath = path.join(context.feature?.dir ?? __dirname, CATALOG_NAME);
+  // Package staging creates this resource only in the selected feature tree.
+  // The updater copies that tree but omits top-level .codex-linux metadata.
+  const snapshot = fs.existsSync(snapshotPath)
+    ? validatePackagedCatalog(JSON.parse(fs.readFileSync(snapshotPath, "utf8"))) : null;
+  // Never revive local metadata from a previous build's snapshot. Selected
+  // local entries are recomputed below from the implementations still present.
+  const features = new Map((snapshot?.features ?? []).filter((feature) => feature.origin === "repo")
+    .map((feature) => [feature.id, feature]));
   const enabled = new Set(context.enabledFeatureIds ?? enabledLinuxFeatureIds(options));
   const selected = loadEnabledLinuxFeatures({ ...options, enabledFeatureIds: [...enabled] });
   const settings = new Map(selected.map((feature) => [feature.id, feature.settings]));
-  // Public metadata comes only from our published JSON. Local metadata is
-  // considered only for explicitly selected features, never disabled ones.
-  for (const feature of selected) {
-    if (feature.origin !== "local" || !enabled.has(feature.id) || feature.manifest.internal) continue;
+  // Inspect declarations only, including disabled public features. Loading a
+  // patch descriptor just to discover display metadata would run feature code.
+  for (const feature of discoverLinuxFeatureManifests(options)) {
+    if (feature.manifest.internal || feature.origin === "local" && !enabled.has(feature.id)) {
+      features.delete(feature.id);
+      continue;
+    }
     try {
-      features.set(feature.id, catalogFeatureFromManifest(feature.id, feature.manifest, "local"));
+      features.set(feature.id, catalogFeatureFromManifest(feature.id, feature.manifest, feature.origin));
     } catch (error) {
       // Display-only metadata must not add build failures for other features.
       features.delete(feature.id);
       onWarning(`WARN: community-features-in-gui-settings: skipping invalid catalog metadata for '${feature.id}': ${error.message}`);
     }
   }
-  const revision = sourceInfo(path.dirname(root)).commit ?? null;
+  const revision = sourceInfo(path.dirname(root)).commit ?? snapshot?.sourceCommit ?? null;
   // Nix uses <commit>-dirty for a working tree; snapshots store the Git hash.
   const sourceCommit = typeof revision === "string" && revision.endsWith("-dirty") && SOURCE_COMMIT.test(revision.slice(0, -6))
     ? revision.slice(0, -6) : revision;
@@ -168,16 +177,16 @@ function prepareUpdateBuilderCatalog(appDir) {
   const builder = path.join(appDir, "update-builder");
   if (!fs.existsSync(builder)) return false; // AppImage/Nix and updater-free native packages.
   const featureDir = path.join(builder, "linux-features/community-features-in-gui-settings");
-  const publicCatalogPath = path.join(featureDir, CATALOG_NAME);
+  const builderCatalogPath = path.join(featureDir, CATALOG_NAME);
   const legacySnapshot = path.join(featureDir, SNAPSHOT_NAME);
   const manifest = path.join(builder, ".codex-linux/update-builder-manifest.txt");
-  if (!fs.existsSync(publicCatalogPath)) throw Error("community-features-in-gui-settings: update-builder public catalog is missing");
-  validatePublicCatalog(JSON.parse(fs.readFileSync(publicCatalogPath, "utf8")));
-  const entries = new Set(fs.readFileSync(manifest, "utf8").trim().split("\n").filter(Boolean));
-  const catalog = readCatalogFromAsar(path.join(appDir, "resources/app.asar"));
-  if (catalog.features.some((feature) => feature.origin === "local" && !feature.enabled)) {
-    throw Error("community-features-in-gui-settings: packaged catalog contains disabled local metadata");
+  if (!fs.statSync(featureDir, { throwIfNoEntry: false })?.isDirectory()) {
+    throw Error("community-features-in-gui-settings: update-builder feature is missing");
   }
+  const entries = new Set(fs.readFileSync(manifest, "utf8").trim().split("\n").filter(Boolean));
+  const catalog = validatePackagedCatalog(readCatalogFromAsar(path.join(appDir, "resources/app.asar")));
+  // Snapshot the actual built view into package staging, never the source tree.
+  fs.writeFileSync(builderCatalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
   // The former whole-build snapshot could retain disabled private entries.
   // Remove only that owned file from package staging; never touch the source.
   fs.rmSync(legacySnapshot, { force: true });
@@ -192,5 +201,5 @@ if (require.main === module) {
   prepareUpdateBuilderCatalog(path.resolve(process.argv[2]));
 }
 
-module.exports = { CATALOG_ASSET, CATALOG_NAME, SNAPSHOT_NAME, validateCatalog, validatePublicCatalog,
-  catalogFeatureFromManifest, buildCatalog, readCatalogFromAsar, prepareUpdateBuilderCatalog };
+module.exports = { CATALOG_ASSET, CATALOG_NAME, SNAPSHOT_NAME, validateCatalog,
+  buildCatalog, readCatalogFromAsar, prepareUpdateBuilderCatalog };
