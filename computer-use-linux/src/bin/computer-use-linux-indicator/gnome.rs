@@ -53,7 +53,9 @@ pub fn run() -> Result<()> {
         let socket = UnixDatagram::bind(&path)?;
         let _cleanup = SocketFile(path.clone());
         socket.set_nonblocking(true)?;
-        let socket = tokio::io::unix::AsyncFd::new(socket)?;
+        // SAFETY: `UnixDatagram` owns a valid file descriptor and we do not
+        // replace or close it while owned by `AsyncFd`.
+        let socket = unsafe { tokio::io::unix::AsyncFd::register(socket)? };
         let mut ticker = tokio::time::interval(Duration::from_millis(40));
         let mut last: Option<IndicatorEvent> = None;
         let mut action_at = Instant::now();

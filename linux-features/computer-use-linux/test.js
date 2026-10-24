@@ -39,6 +39,7 @@ test("computer-use-linux is opt-in and owns the current Linux descriptors", () =
       "avatar-cursor",
       "ui-feature",
       "plugin-gate",
+      "native-applications",
       "ui-availability",
       "host-platform",
       "native-settings-visibility",

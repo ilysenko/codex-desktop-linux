@@ -151,15 +151,7 @@ pub fn resolve_window_target<'a>(
     }
 
     if let Some(app_id) = normalized_target(target.app_id.as_deref()) {
-        if let Some(window) = windows.iter().find(|window| {
-            window
-                .app_id
-                .as_deref()
-                .is_some_and(|value| value.eq_ignore_ascii_case(&app_id))
-        }) {
-            return Ok(window);
-        }
-        bail!("No window matched app_id {app_id}.");
+        return resolve_app_id_target(windows, &app_id);
     }
 
     if let Some(wm_class) = normalized_target(target.wm_class.as_deref()) {
@@ -188,6 +180,34 @@ pub fn resolve_window_target<'a>(
     }
 
     bail!("Pass window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd to target a window.");
+}
+
+fn resolve_app_id_target<'a>(windows: &'a [WindowInfo], app_id: &str) -> Result<&'a WindowInfo> {
+    if let Some(window) = windows.iter().find(|window| {
+        window
+            .app_id
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(app_id))
+    }) {
+        return Ok(window);
+    }
+
+    if app_id.contains('.') {
+        bail!("No window matched app_id {app_id}.");
+    }
+
+    let mut matches = windows.iter().filter(|window| {
+        window.app_id.as_deref().is_some_and(|value| {
+            crate::windowing::types::app_id_leaf(value).eq_ignore_ascii_case(app_id)
+        })
+    });
+    let Some(first) = matches.next() else {
+        bail!("No window matched app_id {app_id}.");
+    };
+    if matches.any(|window| !same_optional_string(&first.app_id, &window.app_id)) {
+        bail!("app_id {app_id} matched multiple applications; use the full app_id.");
+    }
+    Ok(first)
 }
 
 fn resolve_window_id_target<'a>(

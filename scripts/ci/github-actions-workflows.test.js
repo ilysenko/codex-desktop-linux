@@ -293,10 +293,24 @@ test("Community profile isolation is validated alone against the signed package"
     signedBaseline,
     /node --test linux-features\/community-profile-isolation\/test\.js/,
   );
-  assert.match(
-    signedBaseline,
-    /node --test linux-features\/computer-use-linux\/unified\.test\.js \\\s+linux-features\/computer-use-linux\/resume\.test\.js \\\s+linux-features\/account-switcher\/test\.js/,
-  );
+  const logicalBaseline = signedBaseline.replace(/\\\r?\n[ \t]*/g, " ");
+  const signedCommands = logicalBaseline.match(
+    /CODEX_SIGNED_EXTRACTED_APP="\$extracted_asar"[ \t]+node --test[ \t]+[^\r\n]+/g,
+  ) ?? [];
+  const computerUseCommand = signedCommands.find((command) =>
+    command.includes("linux-features/computer-use-linux/unified.test.js"));
+  assert.ok(computerUseCommand, "Computer Use tests must use the signed extracted app");
+  const testPaths = computerUseCommand.split("node --test")[1].trim().split(/\s+/);
+  assert.ok(testPaths.every((value) => /^linux-features\/[\w./-]+\.js$/.test(value)));
+  for (const file of [
+    "linux-features/computer-use-linux/unified.test.js",
+    "linux-features/computer-use-linux/resume.test.js",
+    "linux-features/computer-use-linux/current-signed.test.js",
+    "linux-features/computer-use-linux/native-applications.test.js",
+    "linux-features/account-switcher/test.js",
+  ]) {
+    assert.ok(testPaths.includes(file), `${file} must run in the signed baseline`);
+  }
 });
 
 test("official Linux metadata expires after seven days", () => {

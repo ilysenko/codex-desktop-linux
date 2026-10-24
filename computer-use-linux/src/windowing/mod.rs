@@ -14,6 +14,8 @@ pub use target::{
     window_permission_hint,
 };
 #[allow(unused_imports)]
+pub(crate) use types::app_id_leaf;
+#[allow(unused_imports)]
 pub use types::{WindowBounds, WindowFocusResult, WindowInfo, WindowTarget};
 
 #[cfg(test)]
@@ -259,6 +261,104 @@ mod tests {
         .unwrap();
 
         assert_eq!(matched.window_id, 2);
+    }
+
+    #[test]
+    fn app_id_alias_matches_reverse_dns_leaf_case_insensitively() {
+        let windows = vec![window(1, "KWrite", "org.kde.kwrite", "kwrite")];
+        for app_id in ["kwrite", "KWRITE", "org.kde.kwrite"] {
+            let matched = resolve_window_target(
+                &windows,
+                &WindowTarget {
+                    app_id: Some(app_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(matched.window_id, 1);
+        }
+
+        let ghostty = vec![window(
+            2,
+            "Ghostty",
+            "com.mitchellh.ghostty.desktop",
+            "Ghostty",
+        )];
+        assert!(resolve_window_target(
+            &ghostty,
+            &WindowTarget {
+                app_id: Some("ghostty".to_string()),
+                ..Default::default()
+            },
+        )
+        .is_ok());
+        assert!(resolve_window_target(
+            &ghostty,
+            &WindowTarget {
+                app_id: Some("desktop".to_string()),
+                ..Default::default()
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn exact_app_id_match_precedes_leaf_aliases() {
+        let windows = vec![
+            window(1, "Other KWrite", "org.kde.kwrite", "kwrite"),
+            window(2, "Exact KWrite", "kwrite", "kwrite"),
+        ];
+
+        let matched = resolve_window_target(
+            &windows,
+            &WindowTarget {
+                app_id: Some("kwrite".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(matched.window_id, 2);
+    }
+
+    #[test]
+    fn app_id_alias_rejects_ambiguous_applications() {
+        let windows = vec![
+            window(1, "KDE KWrite", "org.kde.kwrite", "kwrite"),
+            window(2, "Other KWrite", "com.example.kwrite", "kwrite"),
+        ];
+
+        let error = resolve_window_target(
+            &windows,
+            &WindowTarget {
+                app_id: Some("kwrite".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("matched multiple applications"));
+        assert!(error.contains("full app_id"));
+    }
+
+    #[test]
+    fn app_id_alias_allows_multiple_windows_of_one_application() {
+        let windows = vec![
+            window(1, "First", "org.kde.kwrite", "kwrite"),
+            window(2, "Second", "org.kde.kwrite", "kwrite"),
+        ];
+
+        let matched = resolve_window_target(
+            &windows,
+            &WindowTarget {
+                app_id: Some("kwrite".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(matched.window_id, 1);
     }
 
     #[test]

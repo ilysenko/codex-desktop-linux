@@ -60,6 +60,11 @@ pub(crate) async fn logical_desktop_rect() -> Result<(i32, i32, i32, i32)> {
     parse_kwin_logical_desktop_rect(&json)
 }
 
+pub(crate) async fn element_click_snapshot() -> Result<KwinElementClickSnapshot> {
+    let json = call_kwin_window_script().await?;
+    KwinElementClickSnapshot::from_json(&json)
+}
+
 pub async fn activate_window(window_id: u64) -> Result<()> {
     let uuid = kwin_uuid_for_window_id(window_id).await?.with_context(|| {
         format!("No KWin window matched window_id {window_id} during activation")
@@ -506,21 +511,67 @@ fn kwin_window_script_source(
         return null;
     }}
 
-    function geometry(window) {{
-        var frame = null;
+    function rect(obj, key) {{
+        var value = null;
         try {{
-            frame = window.frameGeometry;
+            value = obj[key];
         }} catch (error) {{}}
+        if (value === null || value === undefined) {{
+            return null;
+        }}
+        return {{
+            x: read(value, "x"),
+            y: read(value, "y"),
+            width: read(value, "width"),
+            height: read(value, "height")
+        }};
+    }}
+
+    function geometry(window) {{
+        var frame = rect(window, "frameGeometry");
         var x = read(window, "x");
         var y = read(window, "y");
         var width = read(window, "width");
         var height = read(window, "height");
         return {{
-            x: x !== null ? x : read(frame, "x"),
-            y: y !== null ? y : read(frame, "y"),
-            width: width !== null ? width : read(frame, "width"),
-            height: height !== null ? height : read(frame, "height")
+            x: x !== null ? x : (frame === null ? null : frame.x),
+            y: y !== null ? y : (frame === null ? null : frame.y),
+            width: width !== null ? width : (frame === null ? null : frame.width),
+            height: height !== null ? height : (frame === null ? null : frame.height)
         }};
+    }}
+
+    function outputIdentity(window) {{
+        var output = null;
+        try {{
+            output = window.output;
+        }} catch (error) {{}}
+        return read(output, "name");
+    }}
+
+    function activeOutputs() {{
+        var outputs = null;
+        try {{
+            outputs = workspace.screens;
+        }} catch (error) {{}}
+        if (outputs === null || outputs === undefined) {{
+            try {{
+                outputs = workspace.outputs;
+            }} catch (error) {{}}
+        }}
+        if (outputs === null || outputs === undefined) {{
+            return [];
+        }}
+        var active = Array.prototype.filter.call(outputs, function(output) {{
+            return read(output, "enabled") !== false;
+        }});
+        return Array.prototype.map.call(active, function(output) {{
+            return {{
+                name: read(output, "name"),
+                geometry: rect(output, "geometry"),
+                devicePixelRatio: read(output, "devicePixelRatio")
+            }};
+        }});
     }}
 
     function workspaceGeometry() {{
@@ -547,6 +598,41 @@ fn kwin_window_script_source(
         var first = desktops[0];
         var parsed = parseInt(first, 10);
         return isFinite(parsed) ? parsed : null;
+    }}
+
+    function onCurrentDesktop(window) {{
+        // KWin::Window exposes desktops/onAllDesktops, not onCurrentDesktop.
+        // Keep the QObject list intact instead of serializing its members.
+        if (read(window, "onAllDesktops") === true) {{
+            return true;
+        }}
+        try {{
+            var desktops = window.desktops;
+            if (desktops === null || desktops === undefined) {{
+                return null;
+            }}
+            if (desktops.length === 0) {{
+                return true;
+            }}
+            var current = typeof workspace.currentDesktopForScreen === "function"
+                ? workspace.currentDesktopForScreen(window.output)
+                : workspace.currentDesktop;
+            var currentId = read(current, "id");
+            if (currentId === null) {{
+                return null;
+            }}
+            var unknown = false;
+            for (var i = 0; i < desktops.length; ++i) {{
+                var id = read(desktops[i], "id");
+                if (id === currentId) {{
+                    return true;
+                }}
+                unknown = unknown || id === null;
+            }}
+            return unknown ? null : false;
+        }} catch (error) {{
+            return null;
+        }}
     }}
 
     function clientType(window) {{
@@ -610,11 +696,23 @@ fn kwin_window_script_source(
             y: geo.y,
             width: geo.width,
             height: geo.height,
+            frameGeometry: rect(window, "frameGeometry"),
+            clientGeometry: rect(window, "clientGeometry"),
+            output: outputIdentity(window),
             workspace: firstDesktop(window),
             minimized: read(window, "minimized"),
+            onCurrentDesktop: onCurrentDesktop(window),
             active: read(window, "active") || window === activeWindow,
             clientType: clientType(window),
             normalWindow: read(window, "normalWindow"),
+            dialog: read(window, "dialog"),
+            transient: read(window, "transient"),
+            managed: read(window, "managed"),
+            wantsInput: read(window, "wantsInput"),
+            specialWindow: read(window, "specialWindow"),
+            popupWindow: read(window, "popupWindow") || read(window, "popupMenu")
+                || read(window, "dropdownMenu") || read(window, "tooltip")
+                || read(window, "comboBox") || read(window, "menu"),
             desktopWindow: read(window, "desktopWindow"),
             skipTaskbar: read(window, "skipTaskbar"),
             dock: read(window, "dock")
@@ -625,6 +723,7 @@ fn kwin_window_script_source(
         backend: "kwin",
         pluginName: pluginName,
         desktopGeometry: workspaceGeometry(),
+        outputs: activeOutputs(),
         windows: windows
     }}));
 }})();
@@ -853,10 +952,7 @@ fn parse_kwin_windows(json: &str) -> Result<Vec<WindowInfo>> {
     let mut windows = snapshot
         .windows
         .into_iter()
-        .filter(|window| !json_value_as_bool(window.desktop_window.as_ref()).unwrap_or(false))
-        .filter(|window| !json_value_as_bool(window.dock.as_ref()).unwrap_or(false))
-        .filter(|window| !json_value_as_bool(window.skip_taskbar.as_ref()).unwrap_or(false))
-        .filter(|window| json_value_as_bool(window.normal_window.as_ref()).unwrap_or(true))
+        .filter(element_window)
         .map(WindowInfo::try_from)
         .collect::<Result<Vec<_>>>()?;
     windows.sort_by_key(|window| window.window_id);
@@ -875,6 +971,8 @@ fn parse_kwin_snapshot(json: &str) -> Result<KwinWindowSnapshot> {
 struct KwinWindowSnapshot {
     #[serde(default, rename = "desktopGeometry")]
     desktop_geometry: Option<KwinRawGeometry>,
+    #[serde(default)]
+    outputs: Vec<KwinRawOutput>,
     windows: Vec<KwinRawWindow>,
 }
 
@@ -908,6 +1006,14 @@ struct KwinRawGeometry {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct KwinRawOutput {
+    name: Option<String>,
+    geometry: Option<KwinRawGeometry>,
+    device_pixel_ratio: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct KwinRawWindow {
     uuid: Option<String>,
     internal_id: Option<String>,
@@ -921,11 +1027,21 @@ struct KwinRawWindow {
     y: Option<serde_json::Value>,
     width: Option<serde_json::Value>,
     height: Option<serde_json::Value>,
+    frame_geometry: Option<KwinRawGeometry>,
+    client_geometry: Option<KwinRawGeometry>,
+    output: Option<String>,
     workspace: Option<serde_json::Value>,
     minimized: Option<serde_json::Value>,
+    on_current_desktop: Option<serde_json::Value>,
     active: Option<serde_json::Value>,
     client_type: Option<String>,
     normal_window: Option<serde_json::Value>,
+    dialog: Option<serde_json::Value>,
+    transient: Option<serde_json::Value>,
+    managed: Option<serde_json::Value>,
+    wants_input: Option<serde_json::Value>,
+    special_window: Option<serde_json::Value>,
+    popup_window: Option<serde_json::Value>,
     desktop_window: Option<serde_json::Value>,
     skip_taskbar: Option<serde_json::Value>,
     dock: Option<serde_json::Value>,
@@ -938,6 +1054,432 @@ impl KwinRawWindow {
             .or(self.internal_id.as_deref())
             .and_then(normalize_kwin_uuid)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct KwinElementFrame {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct KwinElementClickTarget {
+    pub(crate) window_id: Option<u64>,
+    pub(crate) pid: Option<u32>,
+    pub(crate) frame: KwinElementFrame,
+    pub(crate) center: (i32, i32),
+    pub(crate) require_exact_focus: bool,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct KwinElementClickPoint {
+    pub(crate) logical: (i32, i32),
+    pub(crate) capture: (i32, i32),
+}
+
+pub(crate) struct KwinElementClickSnapshot {
+    windows: Vec<KwinRawWindow>,
+    outputs: Vec<KwinElementOutput>,
+}
+
+struct KwinElementOutput {
+    name: String,
+    geometry: KwinRect,
+    device_pixel_ratio: f64,
+}
+
+#[derive(Clone, Copy)]
+struct KwinRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl KwinRect {
+    fn new(x: f64, y: f64, width: f64, height: f64) -> Result<Self> {
+        if ![x, y, width, height].into_iter().all(f64::is_finite) || width <= 0.0 || height <= 0.0 {
+            anyhow::bail!("geometry must be finite with positive width and height");
+        }
+        Ok(Self {
+            x,
+            y,
+            width,
+            height,
+        })
+    }
+
+    fn from_raw(geometry: Option<&KwinRawGeometry>, label: &str) -> Result<Self> {
+        let geometry = geometry.with_context(|| format!("KWin did not expose {label}"))?;
+        Self::new(
+            json_value_as_f64(geometry.x.as_ref())
+                .with_context(|| format!("KWin {label} x is unavailable"))?,
+            json_value_as_f64(geometry.y.as_ref())
+                .with_context(|| format!("KWin {label} y is unavailable"))?,
+            json_value_as_f64(geometry.width.as_ref())
+                .with_context(|| format!("KWin {label} width is unavailable"))?,
+            json_value_as_f64(geometry.height.as_ref())
+                .with_context(|| format!("KWin {label} height is unavailable"))?,
+        )
+        .with_context(|| format!("KWin {label} is unusable"))
+    }
+
+    fn right(self) -> f64 {
+        self.x + self.width
+    }
+
+    fn bottom(self) -> f64 {
+        self.y + self.height
+    }
+
+    fn contains(self, point: (f64, f64)) -> bool {
+        point.0 >= self.x && point.0 < self.right() && point.1 >= self.y && point.1 < self.bottom()
+    }
+
+    fn overlaps(self, other: Self) -> bool {
+        self.x.max(other.x) < self.right().min(other.right())
+            && self.y.max(other.y) < self.bottom().min(other.bottom())
+    }
+}
+
+impl KwinElementClickSnapshot {
+    fn from_json(json: &str) -> Result<Self> {
+        let snapshot = parse_kwin_snapshot(json)?;
+        let outputs = snapshot
+            .outputs
+            .iter()
+            .map(|output| {
+                let name = clean_string(output.name.as_deref())
+                    .context("KWin output name is unavailable")?;
+                let geometry = KwinRect::from_raw(
+                    output.geometry.as_ref(),
+                    &format!("geometry for output {name}"),
+                )?;
+                let device_pixel_ratio = json_value_as_f64(output.device_pixel_ratio.as_ref())
+                    .with_context(|| {
+                        format!("KWin output {name} devicePixelRatio is unavailable")
+                    })?;
+                if !device_pixel_ratio.is_finite() || device_pixel_ratio <= 0.0 {
+                    anyhow::bail!("KWin output {name} has an invalid devicePixelRatio");
+                }
+                Ok(KwinElementOutput {
+                    name,
+                    geometry,
+                    device_pixel_ratio,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if outputs.is_empty() {
+            anyhow::bail!("KWin did not expose any active outputs");
+        }
+        Ok(Self {
+            windows: snapshot.windows,
+            outputs,
+        })
+    }
+
+    pub(crate) fn map_element_click(
+        &self,
+        target: &KwinElementClickTarget,
+        capture_width: u32,
+        capture_height: u32,
+    ) -> Result<KwinElementClickPoint> {
+        let window = self.associated_window(target)?;
+        if target
+            .pid
+            .is_some_and(|pid| json_value_as_u32(window.pid.as_ref()) != Some(pid))
+        {
+            anyhow::bail!("cached KWin window identity and AT-SPI root PID disagree");
+        }
+        if target.require_exact_focus
+            && !json_value_as_bool(window.active.as_ref()).unwrap_or(false)
+        {
+            anyhow::bail!(
+                "the explicitly targeted KWin window is not exactly focused; app-only focus is insufficient"
+            );
+        }
+        let window_id = window
+            .kwin_uuid()
+            .map(|uuid| kwin_window_id_from_uuid(&uuid))
+            .context("associated KWin window has no stable identity")?;
+        let frame = KwinRect::from_raw(
+            window.frame_geometry.as_ref(),
+            &format!("frameGeometry for window_id {window_id}"),
+        )?;
+        let client = KwinRect::from_raw(
+            window.client_geometry.as_ref(),
+            &format!("clientGeometry for window_id {window_id}"),
+        )?;
+        let output_name = clean_string(window.output.as_deref())
+            .with_context(|| format!("KWin window_id {window_id} has no output identity"))?;
+        if self
+            .outputs
+            .iter()
+            .filter(|output| output.name == output_name)
+            .count()
+            != 1
+        {
+            anyhow::bail!("KWin window_id {window_id} output identity is missing or ambiguous");
+        }
+        let global = global_element_point(target, frame, client)?;
+        self.capture_point(global, &output_name, capture_width, capture_height)
+    }
+
+    fn associated_window(&self, target: &KwinElementClickTarget) -> Result<&KwinRawWindow> {
+        let pid = target
+            .pid
+            .context("cached element has no root PID identity")?;
+        if let Some(window_id) = target.window_id {
+            let identified = self
+                .windows
+                .iter()
+                .filter(|window| {
+                    window
+                        .kwin_uuid()
+                        .is_some_and(|uuid| kwin_window_id_from_uuid(&uuid) == window_id)
+                })
+                .collect::<Vec<_>>();
+            match identified.as_slice() {
+                [window] if json_value_as_u32(window.pid.as_ref()) == Some(pid) => {}
+                [_] => anyhow::bail!("cached KWin window identity and AT-SPI root PID disagree"),
+                [] => anyhow::bail!("no KWin window matched the cached window identity"),
+                _ => anyhow::bail!("cached window identity matched multiple KWin windows"),
+            }
+        }
+        // PID-scoped AT-SPI trees include every window of an application. A
+        // requested window or current focus cannot establish which frame owns
+        // a selected element. Even hidden same-PID windows can be its owner.
+        let candidates = self
+            .windows
+            .iter()
+            .filter(|window| json_value_as_u32(window.pid.as_ref()) == Some(pid))
+            .collect::<Vec<_>>();
+        let mut matching = Vec::new();
+        for window in &candidates {
+            let frame =
+                KwinRect::from_raw(window.frame_geometry.as_ref(), "candidate frameGeometry")?;
+            let client =
+                KwinRect::from_raw(window.client_geometry.as_ref(), "candidate clientGeometry")?;
+            if !element_coordinate_matches(target, frame, client)?.is_empty() {
+                matching.push(*window);
+            }
+        }
+        let window = match matching.as_slice() {
+            [window] => *window,
+            [] => anyhow::bail!("AT-SPI frame matches neither client-local, global client, nor global decorated KWin geometry for the root PID"),
+            _ => anyhow::bail!(
+                "AT-SPI frame matches multiple same-PID KWin windows; focus or a requested window_id cannot prove element ownership"
+            ),
+        };
+        if target.window_id.is_some_and(|id| {
+            window
+                .kwin_uuid()
+                .is_none_or(|uuid| kwin_window_id_from_uuid(&uuid) != id)
+        }) {
+            anyhow::bail!("selected AT-SPI frame belongs to a different KWin window than the cached or requested window identity");
+        }
+        if !element_window(window) {
+            anyhow::bail!(
+                "unsupported KWin window type: element mapping requires a normal window, dialog, or verified interactive top-level transient; desktop, dock, and popup windows cannot be mapped by refreshing the snapshot"
+            );
+        }
+        if !visible_element_window(window) {
+            anyhow::bail!(
+                "associated KWin window is hidden or its current-desktop visibility is unknown"
+            );
+        }
+        Ok(window)
+    }
+
+    fn capture_point(
+        &self,
+        global: (f64, f64),
+        window_output: &str,
+        capture_width: u32,
+        capture_height: u32,
+    ) -> Result<KwinElementClickPoint> {
+        if capture_width == 0 || capture_height == 0 {
+            anyhow::bail!("raw desktop capture is empty");
+        }
+        let mut names = std::collections::BTreeSet::new();
+        if !self
+            .outputs
+            .iter()
+            .all(|output| names.insert(output.name.as_str()))
+        {
+            anyhow::bail!("KWin active-output identities are ambiguous");
+        }
+        for (index, output) in self.outputs.iter().enumerate() {
+            if self.outputs[index + 1..]
+                .iter()
+                .any(|other| output.geometry.overlaps(other.geometry))
+            {
+                anyhow::bail!("overlapping or mirrored KWin outputs are unsupported");
+            }
+        }
+        let union = logical_output_union(&self.outputs)?;
+        let scale_x = f64::from(capture_width) / union.width;
+        let scale_y = f64::from(capture_height) / union.height;
+        if !scale_x.is_finite()
+            || !scale_y.is_finite()
+            || scale_x <= 0.0
+            || scale_y <= 0.0
+            || (scale_x - scale_y).abs() > 0.01
+        {
+            anyhow::bail!("raw capture does not have a finite, positive, uniform desktop scale");
+        }
+        if let Some(output) = self.outputs.iter().find(|output| {
+            (output.device_pixel_ratio - scale_x).abs() > 0.01
+                || (output.device_pixel_ratio - scale_y).abs() > 0.01
+        }) {
+            anyhow::bail!(
+                "mixed or unknown KWin output scales are unsupported (output {} DPR {}, capture scale {:.4}x{:.4})",
+                output.name,
+                output.device_pixel_ratio,
+                scale_x,
+                scale_y
+            );
+        }
+        let containing = self
+            .outputs
+            .iter()
+            .filter(|output| output.geometry.contains(global))
+            .collect::<Vec<_>>();
+        let output = match containing.as_slice() {
+            [output] => *output,
+            [] => anyhow::bail!("mapped element point is outside every active KWin output"),
+            _ => anyhow::bail!("mapped element point belongs to multiple KWin outputs"),
+        };
+        if output.name != window_output {
+            anyhow::bail!("mapped element point is not on the associated KWin window's output");
+        }
+        let logical = (round_coordinate(global.0)?, round_coordinate(global.1)?);
+        let capture = (
+            round_coordinate((global.0 - union.x) * scale_x)?,
+            round_coordinate((global.1 - union.y) * scale_y)?,
+        );
+        if capture.0 < 0
+            || capture.1 < 0
+            || capture.0 as u32 >= capture_width
+            || capture.1 as u32 >= capture_height
+        {
+            anyhow::bail!("mapped element point is outside the raw desktop capture");
+        }
+        Ok(KwinElementClickPoint { logical, capture })
+    }
+}
+
+fn visible_element_window(window: &KwinRawWindow) -> bool {
+    !json_value_as_bool(window.minimized.as_ref()).unwrap_or(false)
+        && json_value_as_bool(window.on_current_desktop.as_ref()) == Some(true)
+}
+
+fn element_window(window: &KwinRawWindow) -> bool {
+    if [
+        &window.desktop_window,
+        &window.dock,
+        &window.popup_window,
+        &window.special_window,
+    ]
+    .into_iter()
+    .any(|flag| json_value_as_bool(flag.as_ref()) == Some(true))
+    {
+        return false;
+    }
+    // skipTaskbar is a presentation hint. Dialogs and proven interactive
+    // transients remain targetable even when they do not have a taskbar entry.
+    let dialog = json_value_as_bool(window.dialog.as_ref()) == Some(true);
+    let interactive_transient = json_value_as_bool(window.transient.as_ref()) == Some(true)
+        && json_value_as_bool(window.managed.as_ref()) == Some(true)
+        && json_value_as_bool(window.wants_input.as_ref()) == Some(true)
+        && json_value_as_bool(window.special_window.as_ref()) == Some(false)
+        && json_value_as_bool(window.popup_window.as_ref()) == Some(false);
+    let normal = json_value_as_bool(window.normal_window.as_ref()).unwrap_or(true)
+        && !json_value_as_bool(window.skip_taskbar.as_ref()).unwrap_or(false);
+    normal || dialog || interactive_transient
+}
+
+fn global_element_point(
+    target: &KwinElementClickTarget,
+    frame: KwinRect,
+    client: KwinRect,
+) -> Result<(f64, f64)> {
+    let mut matches = element_coordinate_matches(target, frame, client)?;
+    // Undecorated global client/frame signatures describe the same mapping.
+    // Collapse only identical points; tolerance must not hide different ones.
+    matches.dedup();
+    match matches.as_slice() {
+        [point] => Ok(*point),
+        [] => anyhow::bail!(
+            "AT-SPI frame matches neither client-local, global client, nor global decorated KWin geometry"
+        ),
+        _ => anyhow::bail!("AT-SPI frame has an ambiguous KWin coordinate signature"),
+    }
+}
+
+fn element_coordinate_matches(
+    target: &KwinElementClickTarget,
+    frame: KwinRect,
+    client: KwinRect,
+) -> Result<Vec<(f64, f64)>> {
+    let atspi = KwinRect::new(
+        f64::from(target.frame.x),
+        f64::from(target.frame.y),
+        f64::from(target.frame.width),
+        f64::from(target.frame.height),
+    )
+    .context("AT-SPI frame bounds are unusable")?;
+    let center = (f64::from(target.center.0), f64::from(target.center.1));
+    if !atspi.contains(center) {
+        anyhow::bail!("element center is outside its depth-1 AT-SPI frame");
+    }
+    let local_origin = near(atspi.x, 0.0) && near(atspi.y, 0.0);
+    let client_size = near(atspi.width, client.width) && near(atspi.height, client.height);
+    let decorated_size = near(atspi.width, frame.width) && near(atspi.height, frame.height);
+    let mut matches = Vec::new();
+    if local_origin && client_size {
+        matches.push((client.x + center.0 - atspi.x, client.y + center.1 - atspi.y));
+    }
+    if near(atspi.x, client.x) && near(atspi.y, client.y) && client_size {
+        matches.push(center);
+    }
+    if near(atspi.x, frame.x) && near(atspi.y, frame.y) && decorated_size {
+        matches.push(center);
+    }
+    Ok(matches)
+}
+
+fn near(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 1.0
+}
+
+fn logical_output_union(outputs: &[KwinElementOutput]) -> Result<KwinRect> {
+    let first = outputs
+        .first()
+        .context("KWin active-output list is empty")?
+        .geometry;
+    let left = outputs
+        .iter()
+        .fold(first.x, |value, output| value.min(output.geometry.x));
+    let top = outputs
+        .iter()
+        .fold(first.y, |value, output| value.min(output.geometry.y));
+    let right = outputs.iter().fold(first.right(), |value, output| {
+        value.max(output.geometry.right())
+    });
+    let bottom = outputs.iter().fold(first.bottom(), |value, output| {
+        value.max(output.geometry.bottom())
+    });
+    KwinRect::new(left, top, right - left, bottom - top).context("KWin output union is unusable")
+}
+
+fn round_coordinate(value: f64) -> Result<i32> {
+    if !value.is_finite() || value < i32::MIN as f64 || value > i32::MAX as f64 {
+        anyhow::bail!("mapped coordinate is not a finite i32");
+    }
+    Ok(value.round() as i32)
 }
 
 impl TryFrom<KwinRawWindow> for WindowInfo {
@@ -1218,6 +1760,568 @@ mod adapter_tests {
         assert!(script.contains("workspace.activeClient = targetWindow;"));
         assert!(script.contains(r#""ReceiveResult""#));
         assert!(!script.contains("WindowsRunner"));
+    }
+}
+
+#[cfg(test)]
+mod element_click_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    const UUID: &str = "b4dfacf8-a559-43c9-8b1f-ecd5cfd78359";
+    const OTHER_UUID: &str = "11111111-2222-3333-4444-555555555555";
+    const PID: u32 = 4242;
+
+    fn rect(x: i32, y: i32, width: i32, height: i32) -> Value {
+        json!({"x": x, "y": y, "width": width, "height": height})
+    }
+
+    fn output(name: &str, geometry: Value, dpr: Value) -> Value {
+        json!({"name": name, "geometry": geometry, "devicePixelRatio": dpr})
+    }
+
+    fn window(uuid: &str, frame: Value, client: Value, output: &str) -> Value {
+        json!({
+            "uuid": uuid,
+            "pid": PID,
+            "frameGeometry": frame,
+            "clientGeometry": client,
+            "output": output,
+            "active": true,
+            "normalWindow": true,
+            "minimized": false,
+            "onCurrentDesktop": true
+        })
+    }
+
+    fn snapshot(windows: Vec<Value>, outputs: Vec<Value>) -> KwinElementClickSnapshot {
+        KwinElementClickSnapshot::from_json(
+            &json!({"backend": "kwin", "windows": windows, "outputs": outputs}).to_string(),
+        )
+        .unwrap()
+    }
+
+    fn target(atspi: [i32; 4], center: (i32, i32)) -> KwinElementClickTarget {
+        KwinElementClickTarget {
+            window_id: Some(kwin_window_id_from_uuid(UUID)),
+            pid: Some(PID),
+            frame: KwinElementFrame {
+                x: atspi[0],
+                y: atspi[1],
+                width: atspi[2],
+                height: atspi[3],
+            },
+            center,
+            require_exact_focus: false,
+        }
+    }
+
+    fn reporter_window() -> Value {
+        window(
+            UUID,
+            rect(246, 308, 800, 628),
+            rect(246, 336, 800, 600),
+            "DP-1",
+        )
+    }
+
+    #[test]
+    fn reporter_menu_center_maps_to_global_logical_and_raw_capture_points() {
+        let snapshot = snapshot(
+            vec![reporter_window()],
+            vec![output("DP-1", rect(0, 0, 2560, 1440), json!(1.5))],
+        );
+
+        let point = snapshot
+            .map_element_click(&target([0, 0, 800, 600], (32, 16)), 3840, 2160)
+            .unwrap();
+
+        assert_eq!(point.logical, (278, 352));
+        assert_eq!(point.capture, (417, 528));
+    }
+
+    fn dialog_window(caption: &str, skip_taskbar: bool) -> Value {
+        let mut dialog = reporter_window();
+        dialog["caption"] = json!(caption);
+        dialog["normalWindow"] = json!(false);
+        dialog["dialog"] = json!(true);
+        dialog["transient"] = json!(true);
+        dialog["skipTaskbar"] = json!(skip_taskbar);
+        dialog
+    }
+
+    #[test]
+    fn dialog_windows_are_listed_even_when_they_skip_the_taskbar() {
+        for caption in ["Save File", "Open File", "Confirm overwrite"] {
+            for skip_taskbar in [false, true] {
+                let json = json!({"windows": [dialog_window(caption, skip_taskbar)]}).to_string();
+                let listed = parse_kwin_windows(&json).unwrap();
+                assert_eq!(listed.len(), 1, "{caption}: skipTaskbar={skip_taskbar}");
+                assert_eq!(listed[0].title.as_deref(), Some(caption));
+            }
+        }
+    }
+
+    #[test]
+    fn dialog_element_clicks_map_even_when_they_skip_the_taskbar() {
+        for caption in ["Save File", "Open File", "Confirm overwrite"] {
+            for skip_taskbar in [false, true] {
+                let snapshot = snapshot(
+                    vec![dialog_window(caption, skip_taskbar)],
+                    vec![output("DP-1", rect(0, 0, 2560, 1440), json!(1.5))],
+                );
+                let point = snapshot
+                    .map_element_click(&target([0, 0, 800, 600], (32, 16)), 3840, 2160)
+                    .unwrap();
+                assert_eq!(point.logical, (278, 352));
+                assert_eq!(point.capture, (417, 528));
+            }
+        }
+    }
+
+    #[test]
+    fn interactive_transients_require_proven_top_level_input_capabilities() {
+        let mut transient = dialog_window("Tool window", true);
+        transient["dialog"] = json!(false);
+        transient["managed"] = json!(true);
+        transient["wantsInput"] = json!(true);
+        transient["specialWindow"] = json!(false);
+        transient["popupWindow"] = json!(false);
+        let json = json!({"windows": [transient.clone()]}).to_string();
+        assert_eq!(parse_kwin_windows(&json).unwrap().len(), 1);
+        let outputs = vec![output("DP-1", rect(0, 0, 2560, 1440), json!(1.5))];
+        assert!(snapshot(vec![transient.clone()], outputs.clone())
+            .map_element_click(&target([0, 0, 800, 600], (32, 16)), 3840, 2160)
+            .is_ok());
+        for flag in ["managed", "wantsInput", "specialWindow", "popupWindow"] {
+            let mut unproven = transient.clone();
+            unproven[flag] = Value::Null;
+            assert!(
+                parse_kwin_windows(&json!({"windows": [unproven.clone()]}).to_string())
+                    .unwrap()
+                    .is_empty(),
+                "{flag}"
+            );
+            let error = snapshot(vec![unproven], outputs.clone())
+                .map_element_click(&target([0, 0, 800, 600], (32, 16)), 3840, 2160)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("unsupported KWin window type"),
+                "{flag}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_dock_special_and_popup_windows_are_neither_listed_nor_mapped() {
+        for flag in ["desktopWindow", "dock", "specialWindow", "popupWindow"] {
+            let mut excluded = dialog_window("Excluded surface", true);
+            excluded[flag] = json!(true);
+            assert!(
+                parse_kwin_windows(&json!({"windows": [excluded.clone()]}).to_string())
+                    .unwrap()
+                    .is_empty(),
+                "{flag}"
+            );
+            let snapshot = snapshot(
+                vec![excluded],
+                vec![output("DP-1", rect(0, 0, 2560, 1440), json!(1.5))],
+            );
+            let error = snapshot
+                .map_element_click(&target([0, 0, 800, 600], (32, 16)), 3840, 2160)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("unsupported KWin window type"),
+                "{flag}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn same_pid_local_frames_cannot_borrow_focused_or_explicit_window_identity() {
+        let first = reporter_window();
+        let mut second = window(
+            OTHER_UUID,
+            rect(1100, 308, 800, 628),
+            rect(1100, 336, 800, 600),
+            "DP-1",
+        );
+        second["active"] = json!(false);
+        let snapshot = snapshot(
+            vec![first, second],
+            vec![output("DP-1", rect(0, 0, 2560, 1440), json!(1.5))],
+        );
+        for window_id in [None, Some(kwin_window_id_from_uuid(UUID))] {
+            let mut target = target([0, 0, 800, 600], (32, 16));
+            target.window_id = window_id;
+            assert!(snapshot.map_element_click(&target, 3840, 2160).is_err());
+        }
+    }
+
+    #[test]
+    fn unknown_or_other_desktop_visibility_never_dispatches() {
+        for visibility in [Value::Null, json!(false)] {
+            let mut window = reporter_window();
+            window["onCurrentDesktop"] = visibility;
+            let snapshot = snapshot(
+                vec![window],
+                vec![output("DP-1", rect(0, 0, 2560, 1440), json!(1.5))],
+            );
+            assert!(snapshot
+                .map_element_click(&target([0, 0, 800, 600], (32, 16)), 3840, 2160)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn equivalent_global_undecorated_signatures_share_one_point() {
+        let snapshot = snapshot(
+            vec![window(
+                UUID,
+                rect(100, 100, 200, 200),
+                rect(100, 100, 200, 200),
+                "DP-1",
+            )],
+            vec![output("DP-1", rect(0, 0, 1000, 800), json!(1.0))],
+        );
+        assert_eq!(
+            snapshot
+                .map_element_click(&target([100, 100, 200, 200], (110, 110)), 1000, 800)
+                .unwrap()
+                .logical,
+            (110, 110)
+        );
+    }
+
+    #[test]
+    fn asymmetric_and_undecorated_frames_use_actual_client_origin() {
+        let outputs = vec![output("DP-1", rect(0, 0, 1280, 720), json!(1.0))];
+        let asymmetric = snapshot(
+            vec![window(
+                UUID,
+                rect(100, 100, 800, 630),
+                rect(110, 130, 780, 600),
+                "DP-1",
+            )],
+            outputs.clone(),
+        );
+        assert_eq!(
+            asymmetric
+                .map_element_click(&target([0, 0, 780, 600], (40, 50)), 1280, 720)
+                .unwrap(),
+            KwinElementClickPoint {
+                logical: (150, 180),
+                capture: (150, 180)
+            }
+        );
+
+        let undecorated = snapshot(
+            vec![window(
+                UUID,
+                rect(300, 200, 640, 480),
+                rect(300, 200, 640, 480),
+                "DP-1",
+            )],
+            outputs,
+        );
+        assert_eq!(
+            undecorated
+                .map_element_click(&target([0, 0, 640, 480], (20, 30)), 1280, 720)
+                .unwrap()
+                .logical,
+            (320, 230)
+        );
+    }
+
+    #[test]
+    fn global_client_and_decorated_frames_do_not_apply_another_offset() {
+        let outputs = vec![output("DP-1", rect(0, 0, 2560, 1440), json!(1.5))];
+        for atspi in [[246, 336, 800, 600], [246, 308, 800, 628]] {
+            let snapshot = snapshot(vec![reporter_window()], outputs.clone());
+            let point = snapshot
+                .map_element_click(&target(atspi, (300, 400)), 3840, 2160)
+                .unwrap();
+            assert_eq!(point.logical, (300, 400));
+            assert_eq!(point.capture, (450, 600));
+        }
+    }
+
+    #[test]
+    fn signature_tolerance_is_one_logical_pixel_and_fractional_capture_rounds() {
+        let tolerant = snapshot(
+            vec![window(
+                UUID,
+                rect(100, 100, 200, 200),
+                rect(100, 100, 200, 200),
+                "DP-1",
+            )],
+            vec![output("DP-1", rect(0, 0, 1000, 800), json!(1.25))],
+        );
+        assert_eq!(
+            tolerant
+                .map_element_click(&target([1, -1, 201, 199], (10, 10)), 1250, 1000)
+                .unwrap()
+                .logical,
+            (109, 111)
+        );
+
+        let rounded = snapshot(
+            vec![window(
+                UUID,
+                rect(100, 100, 200, 200),
+                rect(100, 100, 200, 200),
+                "DP-1",
+            )],
+            vec![output("DP-1", rect(0, 0, 1000, 800), json!(1.25))],
+        );
+        let point = rounded
+            .map_element_click(&target([0, 0, 200, 200], (2, 3)), 1250, 1000)
+            .unwrap();
+        assert_eq!(point.logical, (102, 103));
+        assert_eq!(point.capture, (128, 129));
+    }
+
+    #[test]
+    fn negative_and_second_monitor_origins_are_preserved() {
+        let left = output("HDMI-1", rect(-1280, 0, 1280, 1024), json!(1.25));
+        let right = output("DP-1", rect(0, 0, 1600, 900), json!(1.25));
+        let snapshot = snapshot(
+            vec![window(
+                UUID,
+                rect(-1000, 100, 200, 200),
+                rect(-1000, 100, 200, 200),
+                "HDMI-1",
+            )],
+            vec![left, right],
+        );
+
+        let point = snapshot
+            .map_element_click(&target([0, 0, 200, 200], (10, 20)), 3600, 1280)
+            .unwrap();
+
+        assert_eq!(point.logical, (-990, 120));
+        assert_eq!(point.capture, (363, 150));
+    }
+
+    #[test]
+    fn mixed_unknown_and_mismatched_output_scales_fail() {
+        let window = reporter_window();
+        let mixed = snapshot(
+            vec![window.clone()],
+            vec![
+                output("DP-1", rect(0, 0, 1000, 800), json!(1.25)),
+                output("HDMI-1", rect(1000, 0, 1000, 800), json!(1.0)),
+            ],
+        );
+        let error = mixed
+            .map_element_click(&target([0, 0, 800, 600], (32, 16)), 2500, 1000)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("mixed or unknown"), "{error}");
+
+        let mismatch = snapshot(
+            vec![window],
+            vec![output("DP-1", rect(0, 0, 1000, 800), json!(1.0))],
+        );
+        assert!(mismatch
+            .map_element_click(&target([0, 0, 800, 600], (32, 16)), 2000, 1600)
+            .is_err());
+
+        let error = KwinElementClickSnapshot::from_json(
+            &json!({
+                "backend": "kwin",
+                "windows": [],
+                "outputs": [output("DP-1", rect(0, 0, 1000, 800), Value::Null)]
+            })
+            .to_string(),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(error.contains("devicePixelRatio"), "{error}");
+    }
+
+    #[test]
+    fn overlap_ambiguous_signature_and_out_of_frame_geometry_fail() {
+        let overlap = snapshot(
+            vec![reporter_window()],
+            vec![
+                output("DP-1", rect(0, 0, 2560, 1440), json!(1.5)),
+                output("HDMI-1", rect(0, 0, 2560, 1440), json!(1.5)),
+            ],
+        );
+        let error = overlap
+            .map_element_click(&target([0, 0, 800, 600], (32, 16)), 3840, 2160)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("overlapping or mirrored"), "{error}");
+
+        let ambiguous = snapshot(
+            vec![window(
+                UUID,
+                rect(1, 0, 200, 200),
+                rect(1, 0, 200, 200),
+                "DP-1",
+            )],
+            vec![output("DP-1", rect(0, 0, 1000, 800), json!(1.0))],
+        );
+        let error = ambiguous
+            .map_element_click(&target([0, 0, 200, 200], (110, 110)), 1000, 800)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("ambiguous KWin coordinate signature"),
+            "{error}"
+        );
+
+        let error = ambiguous
+            .map_element_click(&target([0, 0, 200, 200], (250, 10)), 1000, 800)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside"), "{error}");
+        let error = ambiguous
+            .map_element_click(&target([50, 50, 20, 20], (55, 55)), 1000, 800)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("matches neither"), "{error}");
+
+        let outside_output = snapshot(
+            vec![reporter_window()],
+            vec![output("DP-1", rect(1000, 1000, 100, 100), json!(1.0))],
+        );
+        let error = outside_output
+            .map_element_click(&target([0, 0, 800, 600], (32, 16)), 100, 100)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("outside every active KWin output"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn same_pid_requires_unique_frame_geometry_and_explicit_focus_is_exact() {
+        let mut first = window(
+            UUID,
+            rect(100, 100, 200, 200),
+            rect(100, 100, 200, 200),
+            "DP-1",
+        );
+        let mut second = window(
+            OTHER_UUID,
+            rect(400, 100, 200, 200),
+            rect(400, 100, 200, 200),
+            "DP-1",
+        );
+        first["active"] = json!(false);
+        second["active"] = json!(false);
+        let outputs = vec![output("DP-1", rect(0, 0, 1000, 800), json!(1.0))];
+        let ambiguous = snapshot(vec![first.clone(), second.clone()], outputs.clone());
+        let mut pid_target = target([0, 0, 200, 200], (10, 10));
+        pid_target.window_id = None;
+        let error = ambiguous
+            .map_element_click(&pid_target, 1000, 800)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("multiple same-PID KWin windows"), "{error}");
+
+        second["active"] = json!(true);
+        let focused = snapshot(vec![first.clone(), second], outputs.clone());
+        let error = focused
+            .map_element_click(&pid_target, 1000, 800)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("multiple same-PID KWin windows"), "{error}");
+
+        // Equal-size global frames still associate by their distinct origins.
+        pid_target.frame.x = 400;
+        pid_target.frame.y = 100;
+        pid_target.center = (410, 110);
+        assert_eq!(
+            focused
+                .map_element_click(&pid_target, 1000, 800)
+                .unwrap()
+                .logical,
+            (410, 110)
+        );
+        pid_target.window_id = Some(kwin_window_id_from_uuid(UUID));
+        let error = focused
+            .map_element_click(&pid_target, 1000, 800)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("different KWin window"), "{error}");
+        let mut mismatched_identity = target([0, 0, 200, 200], (10, 10));
+        mismatched_identity.pid = Some(PID + 1);
+        let error = focused
+            .map_element_click(&mismatched_identity, 1000, 800)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("root PID disagree"), "{error}");
+
+        let not_focused = snapshot(vec![first], outputs);
+        let mut exact_target = target([0, 0, 200, 200], (10, 10));
+        exact_target.require_exact_focus = true;
+        let error = not_focused
+            .map_element_click(&exact_target, 1000, 800)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("app-only focus is insufficient"), "{error}");
+    }
+
+    #[test]
+    fn distinct_same_pid_client_sizes_allow_local_frame_association() {
+        let first = reporter_window();
+        let second = window(
+            OTHER_UUID,
+            rect(1100, 308, 600, 428),
+            rect(1100, 336, 600, 400),
+            "DP-1",
+        );
+        let snapshot = snapshot(
+            vec![first, second],
+            vec![output("DP-1", rect(0, 0, 2560, 1440), json!(1.5))],
+        );
+        let mut target = target([0, 0, 600, 400], (32, 16));
+        target.window_id = None;
+        assert_eq!(
+            snapshot
+                .map_element_click(&target, 3840, 2160)
+                .unwrap()
+                .logical,
+            (1132, 352)
+        );
+    }
+
+    #[test]
+    fn snapshot_script_reads_only_coherent_frame_client_and_output_metadata() {
+        let script = kwin_window_script_source(":1.234", "/callback", "plugin").unwrap();
+        for required in [
+            "frameGeometry",
+            "clientGeometry",
+            "outputIdentity",
+            "activeOutputs",
+            "workspace.screens",
+            "read(output, \"enabled\")",
+            "devicePixelRatio",
+            "outputs: activeOutputs()",
+            "dialog: read(window, \"dialog\")",
+            "transient: read(window, \"transient\")",
+            "read(window, \"popupMenu\")",
+            "read(window, \"dropdownMenu\")",
+            "read(window, \"tooltip\")",
+            "read(window, \"comboBox\")",
+            "read(window, \"menu\")",
+            "window.desktops",
+            "workspace.currentDesktopForScreen(window.output)",
+            "read(window, \"onAllDesktops\")",
+        ] {
+            assert!(script.contains(required), "missing {required}");
+        }
+        assert!(!script.contains("bufferGeometry"));
+        assert!(!script.contains("shadow"));
+        assert!(!script.contains("read(window, \"onCurrentDesktop\")"));
     }
 }
 

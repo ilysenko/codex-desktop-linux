@@ -65,6 +65,14 @@ The separate `computer-use` component stores the Any App setting and exposes no
 MCP tools. Upstream owns browser control. Missing or ambiguous bundle contracts
 abort an enabled build.
 
+The current signed app's `nativeApplications` service supplies the native app
+picker. On Linux this feature uses the running-window backend and desktop-entry
+icons. It returns at most 20 running apps. Default and usage ordering put focused
+apps first; display-name ordering sorts that inventory alphabetically. It does
+not provide an installed-app catalog, usage history, or date-based filtering.
+The service preserves its array, nullable lookup, and icon-size contracts.
+The macOS and Windows implementations remain upstream-owned.
+
 `make install-native` builds `codex-computer-use-linux` and
 `codex-computer-use-cosmic` and `codex-computer-use-indicator` once before staging the package. Direct
 `./install.sh` builds may provide binaries in `target/release/` or set

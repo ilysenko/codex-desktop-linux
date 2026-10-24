@@ -1,6 +1,6 @@
 [package]
 name = "codex-computer-use-linux"
-version = "0.7.20"
+version = "0.7.24"
 edition = "2021"
 
 [[bin]]
@@ -47,7 +47,7 @@ skrifa = { version = "0.42", default-features = false, features = ["std"] }
 smithay-client-toolkit = { version = "0.21.1", default-features = false, features = ["calloop"] }
 tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "simd"] }
 xkbcommon-dl = "0.4.2"
-tokio = { version = "1.51.1", features = ["io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
+tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
 wayland-client = "0.31.11"
 wayland-protocols = { version = "0.32.9", features = ["client", "staging"] }
@@ -55,6 +55,6 @@ wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 # Pure-Rust X11 client (no libxcb). Native X11 sessions only: absolute window
 # origins for the EWMH backend (wmctrl -lG counts the frame offset twice,
 # upstream #157) and the root-window screenshot route (upstream #155).
-x11rb = "0.14"
+x11rb = { version = "0.14", features = ["xkb"] }
 xkeysym = "0.2.1"
 zbus = "5.14.0"

@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.24. Carry scoped semantic recovery, exact Unicode editable-text verification, Qt native actions, KWin fractional-scale and dialog targeting, and X11 dispatch monitoring. Preserve Codex identities, Chrome integration, avatar feedback and cancellation guards.
+
 - Synchronize the embedded Computer Use backend from v0.4.9 to standalone
   v0.7.6 as `0.7.6-linux-alpha1`. Carry the accessibility setup/guard, native
   AT-SPI actions, X11 geometry and screenshots, bounded KWin transactions,

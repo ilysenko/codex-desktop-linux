@@ -243,6 +243,8 @@ jobs:
           CODEX_SIGNED_EXTRACTED_APP="$extracted_asar" \
             node --test linux-features/computer-use-linux/unified.test.js \
               linux-features/computer-use-linux/resume.test.js \
+              linux-features/computer-use-linux/current-signed.test.js \
+              linux-features/computer-use-linux/native-applications.test.js \
               linux-features/account-switcher/test.js
       - name: Require signed renderer dependency regression
         env:

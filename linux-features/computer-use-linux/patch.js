@@ -16,6 +16,7 @@ const {
   matchesNativeSettingsVisibilityContract,
 } = require("./settings.js");
 const { applyUnifiedComputerUsePatch } = require("./unified.js");
+const { applyNativeApplicationsPatch } = require("./native-applications.js");
 
 module.exports = [
   mainBundlePatch({
@@ -43,6 +44,11 @@ module.exports = [
     order: 20_120,
     ciPolicy: "optional",
     apply: applyLinuxComputerUsePluginGatePatch,
+  }),
+  mainBundlePatch({
+    id: "native-applications",
+    order: 20_130,
+    apply: applyNativeApplicationsPatch,
   }),
   webviewAssetPatch({
     id: "ui-availability",

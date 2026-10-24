@@ -27,6 +27,12 @@ pub struct WindowBounds {
     pub height: u32,
 }
 
+pub(crate) fn app_id_leaf(app_id: &str) -> &str {
+    let app_id = app_id.trim();
+    let app_id = app_id.strip_suffix(".desktop").unwrap_or(app_id);
+    app_id.rsplit('.').next().unwrap_or(app_id)
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 pub struct WindowTarget {
     #[serde(default)]

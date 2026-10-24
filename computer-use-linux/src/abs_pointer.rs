@@ -28,7 +28,7 @@ pub(crate) struct PointerLanding {
     pub(crate) emitted: (i32, i32),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AbsPointerGeometry {
     max_x: i32,
     max_y: i32,
@@ -44,6 +44,10 @@ impl AbsPointerGeometry {
 
     fn axis_maxima(self) -> (i32, i32) {
         (self.max_x, self.max_y)
+    }
+
+    fn matches_dimensions(self, width: i32, height: i32) -> bool {
+        self == Self::from_dimensions(width, height)
     }
 
     fn clamp_coordinates(self, x: i32, y: i32) -> (i32, i32) {
@@ -95,6 +99,10 @@ impl AbsPointer {
         sleep(Duration::from_millis(500));
 
         Ok(Self { device, geometry })
+    }
+
+    pub fn matches_dimensions(&self, width: i32, height: i32) -> bool {
+        self.geometry.matches_dimensions(width, height)
     }
 
     /// Move the pointer to capture-pixel coordinates `(x, y)` and report
@@ -220,6 +228,15 @@ mod tests {
         let geometry = AbsPointerGeometry::from_dimensions(1920, 1080);
 
         assert_eq!(geometry.axis_maxima(), (1919, 1079));
+    }
+
+    #[test]
+    fn stale_capture_geometry_is_rejected_before_pointer_reuse() {
+        let cached = AbsPointerGeometry::from_dimensions(3840, 2160);
+
+        assert!(cached.matches_dimensions(3840, 2160));
+        assert!(!cached.matches_dimensions(2560, 1440));
+        assert!(!cached.matches_dimensions(3840, 1080));
     }
 
     #[test]
