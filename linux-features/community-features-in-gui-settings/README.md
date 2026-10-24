@@ -8,8 +8,9 @@ under their owning feature and are marked **Subfeature**. Each item
 has its own **Installed** / **Not installed** build status. Installed is green
 in both light and dark themes. Independent features
 start in a collapsed folder. Select a feature to see its manifest description,
-ID, requirements and conflicts below the tree. Public repository and local
-features are included; internal build plumbing is hidden.
+ID, requirements and conflicts below the tree. All public repository
+features are included, even when disabled. Local features appear only when
+explicitly enabled; internal build plumbing is hidden.
 
 This is a read-only view of the feature selection in this build. An installed
 feature is included in the build; this is not a runtime health check. The list
@@ -82,12 +83,24 @@ including `locales/`, travel in the minimal update-builder, so updater rebuilds
 retain translations. Browsing the tree does not read files or fetch language
 data at runtime.
 
-## Catalog snapshots
+## Catalog discovery and build state
 
-The complete catalog is generated at build time and embedded in the ASAR with
-the actual enabled set and catalog source commit. It is the catalog of this
-build's repository revision, not a live view of GitHub. No network requests
-are made by the list.
+A full source build discovers public repository feature manifests in memory,
+including disabled features, and merges the actual enabled set and subfeature
+settings. New features and metadata changes appear on the next build without
+regenerating or committing a catalog file. Feature manifests remain the source
+of truth; no generated dataset or synchronization test is kept in the source
+repository.
+
+Discovery reads declarations, never patch implementations. Invalid display
+entries are omitted with a diagnostic. Local metadata is considered only when
+that feature is enabled; disabled local entries never enter the generated view.
+Normal feature configuration and patch-integrity checks remain strict. The view
+is embedded in the ASAR; browsing it does not read files or make network requests.
+
+Catalog provenance accepts Git SHA-1 and SHA-256 commit hashes. Nix's
+`<commit>-dirty` provenance is normalized to its underlying hash before writing
+the snapshot; persisted snapshots contain only the canonical hash.
 
 Declared `requires` relationships define dependency branches; declarative
 `catalogSubfeatures` metadata defines internal branches. Names and conflicts do
@@ -98,14 +111,25 @@ Shared dependency nodes are counted once. Folder counts and the summary use
 the same rule. Missing catalog entries have an
 unknown status. Cycle references remain visible but do not expand recursively.
 
-Native deb/RPM/pacman package hooks preserve this small catalog in the selected
-feature's minimal update-builder, keeping disabled feature descriptions across
-updater rebuilds without shipping their implementations. Newly discovered
-metadata is merged and enabled status is recomputed for each build. Subfeature
-metadata is preserved too; a disabled parent always has uninstalled subfeatures.
-AppImage
-and Nix carry the same embedded list; their source builds discover the catalog
-from the repository.
+Native deb/RPM/pacman package hooks write a generated `catalog.json` into this
+feature's directory in the minimal update-builder. This snapshot comes from the
+actual built ASAR: all public repository entries plus enabled local entries.
+Disabled public descriptions survive rebuilds without shipping their
+implementations. Nothing is written back to the source checkout.
+
+A minimal builder uses the snapshot for absent public implementations and
+refreshes entries from the manifests still present. It discards prior local
+entries and recomputes selected local metadata, enabled flags and subfeature
+settings from the current configuration. The snapshot lives inside the selected
+feature tree so it survives the updater workspace copy, which omits top-level
+`.codex-linux/` metadata. Malformed snapshots fail validation. Full source
+checkouts have no generated snapshot and follow their current declarations.
+
+Legacy `catalog-snapshot.json` files are ignored; native hooks remove that owned
+file from package staging and its builder manifest, leaving source files alone.
+The hooks also reject an ASAR catalog containing disabled local entries before
+writing the new snapshot. AppImage and Nix carry the same generated view without
+an update-builder.
 
 ### Declaring subfeatures
 
@@ -132,6 +156,7 @@ Installed state also requires the owning feature to be included in the build.
 Module IDs are unique within the feature and must use the same lowercase
 letters/digits/hyphens as feature IDs. Low-level patch descriptors and ordinary
 configuration values are not counted as modules.
+Changes to these declarations are discovered during the next full source build.
 
 ## Validation
 
@@ -143,7 +168,8 @@ The adjacent tests cover semantic settings integration, ambiguous/missing
 anchors, idempotence and incomplete patches, catalog snapshots, dependency
 direction, shared edges/cycles, subfeature settings and counting, native section
 placement, green statuses, locale resources/fallback/extension, tree interaction,
-and preservation in native update-builders. Validate the
+dynamic public metadata discovery, private-metadata isolation, and native builder
+migration. Validate the
 feature alone against the current signed stable official bundle. On the built
 app, open **Settings → General**, expand/collapse branches, select features,
 and check dark/light themes and keyboard navigation. No feature selection changes

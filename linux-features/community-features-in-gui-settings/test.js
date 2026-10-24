@@ -7,11 +7,14 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { spawnSync } = require("node:child_process");
-const { UI, settingsContract, settingComponent, applySettingsPatch } = require("./patch.js");
+const { UI, descriptors, settingsContract, settingComponent, applySettingsPatch } = require("./patch.js");
 const { buildFeatureTree, renderCommunityFeaturesInGuiSettings } = require("./runtime.js");
 const { loadLocaleResources, createTranslator } = require("./i18n.js");
-const { CATALOG_ASSET, SNAPSHOT_NAME, buildCatalog, validateCatalog, readCatalogFromAsar, preserveUpdateBuilderCatalog } = require("./catalog.js");
+const { CATALOG_ASSET, CATALOG_NAME, SNAPSHOT_NAME, buildCatalog, validateCatalog,
+  readCatalogFromAsar, prepareUpdateBuilderCatalog } = require("./catalog.js");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
+const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+const { createPatchReport, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
 function temporary(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "community-features-in-gui-settings-test-"));
@@ -43,6 +46,7 @@ function fixture(t) {
   manifest(root, "alpha", { requires: ["beta"] });
   manifest(root, "beta", { conflicts: ["gamma"] });
   manifest(root, "internal", { internal: true });
+  manifest(root, "plain");
   manifest(path.join(root, "local"), "private");
   const assets = path.join(dir, "app/webview/assets");
   fs.mkdirSync(assets, { recursive: true });
@@ -52,55 +56,176 @@ function fixture(t) {
   return { dir, root, featureDir, assets, target, app: path.join(dir, "app"), context };
 }
 
-test("catalog contains disabled and local features, hides internal ones and uses the candidate selection", (t) => {
+function builderSnapshot(f, catalog = buildCatalog(f.context)) {
+  fs.writeFileSync(path.join(f.featureDir, CATALOG_NAME), JSON.stringify(catalog));
+}
+
+test("public entries include disabled features while local metadata requires explicit selection", (t) => {
   const f = fixture(t), catalog = buildCatalog(f.context);
-  assert.deepEqual(catalog.features.map((feature) => feature.id), ["alpha", "beta", "community-features-in-gui-settings", "private"]);
+  assert.deepEqual(catalog.features.map((feature) => feature.id), ["alpha", "beta", "community-features-in-gui-settings", "plain"]);
   assert.deepEqual(catalog.features.filter((feature) => feature.enabled).map((feature) => feature.id), ["alpha", "community-features-in-gui-settings"]);
   assert.deepEqual(catalog.features[0].requires, ["beta"]);
   assert.deepEqual(catalog.features[1].conflicts, ["gamma"]);
-  assert.equal(catalog.features.at(-1).origin, "local");
+  assert.equal(catalog.features.some((feature) => feature.origin === "local"), false);
+  const withLocal = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "private"] });
+  assert.equal(withLocal.features.find((feature) => feature.id === "private").enabled, true);
+  assert.equal(withLocal.features.find((feature) => feature.id === "private").origin, "local");
+  assert.equal(fs.existsSync(path.join(f.featureDir, CATALOG_NAME)), false);
 });
 
-test("frozen catalogs survive an enabled-only rebuild and recompute enabled flags", (t) => {
+test("disabled private metadata and legacy snapshots never enter the renderer", (t) => {
+  const f = fixture(t), marker = "DO-NOT-PUBLISH-DISABLED-PRIVATE-METADATA", warnings = [];
+  manifest(path.join(f.root, "local"), "private", { title: marker, description: marker });
+  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), JSON.stringify({
+    schemaVersion: 1, sourceCommit: null, features: [{ id: "private", title: marker, description: marker,
+      origin: "local", requires: [], conflicts: [], enabled: true }],
+  }));
+  t.mock.method(console, "warn", (warning) => warnings.push(warning));
+  assert.equal(applySettingsPatch(f.app, f.context).changed, true);
+  const generated = fs.readFileSync(path.join(f.app, CATALOG_ASSET), "utf8");
+  assert.equal(generated.includes(marker), false);
+  assert.equal(fs.readFileSync(f.target, "utf8").includes(marker), false);
+  assert.equal(JSON.parse(generated).features.some((feature) => feature.id === "private"), false);
+  manifest(path.join(f.root, "local"), "private", { title: "", description: false });
+  manifest(f.root, "unrelated-invalid", { title: "" });
+  assert.equal(applySettingsPatch(f.app, f.context).changed, false);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /unrelated-invalid/);
+});
+
+test("new and changed public declarations appear without generated source files", (t) => {
   const f = fixture(t), original = buildCatalog(f.context);
-  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), JSON.stringify(original));
-  fs.rmSync(path.join(f.root, "alpha"), { recursive: true });
-  fs.rmSync(path.join(f.root, "beta"), { recursive: true });
-  const rebuilt = buildCatalog({ ...f.context, enabledFeatureIds: ["community-features-in-gui-settings"] });
-  assert.equal(rebuilt.features.length, original.features.length);
+  assert.equal(fs.existsSync(path.join(f.featureDir, CATALOG_NAME)), false);
+  manifest(f.root, "plain", { title: "Updated public title", requires: ["beta"] });
+  const added = manifest(f.root, "added-feature", { entrypoints: { patchDescriptors: "./patch.js" } });
+  fs.writeFileSync(path.join(added, "patch.js"), 'throw Error("must not execute");');
+  const changed = buildCatalog(f.context);
+  assert.equal(changed.features.length, original.features.length + 1);
+  assert.equal(changed.features.find((feature) => feature.id === "plain").title, "Updated public title");
+  assert.deepEqual(changed.features.find((feature) => feature.id === "plain").requires, ["beta"]);
+  assert.equal(changed.features.find((feature) => feature.id === "added-feature").enabled, false);
+  assert.equal(fs.existsSync(path.join(f.featureDir, CATALOG_NAME)), false);
+});
+
+test("invalid unrelated public display metadata is diagnosed without hiding valid entries", (t) => {
+  const f = fixture(t), warnings = [];
+  manifest(f.root, "bad-description", { description: 42 });
+  manifest(f.root, "bad-subfeatures", { catalogSubfeatures: [{ id: "broken" }] });
+  manifest(path.join(f.root, "local"), "private", { title: "", description: false });
+  const catalog = buildCatalog(f.context, (warning) => warnings.push(warning));
+  assert.deepEqual(catalog.features.map((feature) => feature.id), ["alpha", "beta", "community-features-in-gui-settings", "plain"]);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /bad-description/);
+  assert.match(warnings[1], /bad-subfeatures/);
+});
+
+test("invalid selected local metadata stays nonfatal without weakening patch warnings", (t) => {
+  const f = fixture(t), id = "community-features-in-gui-settings";
+  manifest(path.join(f.root, "local"), "bad-title", { title: "" });
+  f.context.enabledFeatureIds.push("bad-title");
+  t.mock.method(console, "warn", () => {});
+  const descriptor = { ...descriptors[0], id: `feature:${id}:general-list`, featureId: id, sourceKind: "feature", enforceWhenEnabled: true };
+  const run = (patch = descriptor) => {
+    const report = createPatchReport();
+    report.enabledFeatures = [id];
+    applyExtractedAppPatchDescriptors(f.app, [patch], f.context, report, patch.phase);
+    return report;
+  };
+  const applied = run();
+  assert.equal(applied.patches[0].status, "applied");
+  assert.equal(applied.patches[0].warnings.length, 1);
+  assert.deepEqual(enabledFeatureFailuresFromReport(applied), []);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.app, CATALOG_ASSET), "utf8")).features.some((feature) => feature.id === "bad-title"), false);
+  const repeated = run();
+  assert.equal(repeated.patches[0].status, "already-applied");
+  assert.deepEqual(enabledFeatureFailuresFromReport(repeated), []);
+  const unexpected = run({ ...descriptor, apply: (...args) => {
+    const result = descriptor.apply(...args);
+    console.warn("WARN: unexpected native settings drift");
+    return result;
+  } });
+  assert.equal(enabledFeatureFailuresFromReport(unexpected).length, 1);
+});
+
+test("builder snapshots reject malformed data and disabled local metadata", (t) => {
+  const f = fixture(t), original = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "private"] });
+  builderSnapshot(f, original);
+  const file = path.join(f.featureDir, CATALOG_NAME);
+  assert.equal(buildCatalog(f.context).features.some((feature) => feature.id === "private"), false);
+  for (const mutate of [
+    (catalog) => { catalog.schemaVersion = 2; },
+    (catalog) => { catalog.features[0].title = ""; },
+    (catalog) => { catalog.features.find((feature) => feature.id === "private").enabled = false; },
+  ]) {
+    const invalid = JSON.parse(JSON.stringify(original));
+    mutate(invalid);
+    fs.writeFileSync(file, JSON.stringify(invalid));
+    assert.throws(() => buildCatalog(f.context), /invalid.*catalog|disabled local/);
+  }
+});
+
+test("updater workspace copies retain disabled public descriptions, provenance and current local metadata", (t) => {
+  const f = fixture(t), original = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "private"] });
+  original.sourceCommit = "0123456789abcdef".repeat(4);
+  builderSnapshot(f, original);
+  // copy_builder_bundle() copies linux-features/ but not root .codex-linux/.
+  assert.equal(fs.existsSync(path.join(f.dir, ".codex-linux")), false);
+  for (const id of ["alpha", "beta", "plain"]) fs.rmSync(path.join(f.root, id), { recursive: true });
+  const context = { ...f.context, enabledFeatureIds: ["community-features-in-gui-settings"] };
+  const rebuilt = buildCatalog(context);
+  assert.equal(rebuilt.sourceCommit, original.sourceCommit);
+  assert.deepEqual(rebuilt.features.map((feature) => feature.id), ["alpha", "beta", "community-features-in-gui-settings", "plain"]);
   assert.equal(rebuilt.features.find((feature) => feature.id === "alpha").enabled, false);
   assert.deepEqual(rebuilt.features.find((feature) => feature.id === "alpha").requires, ["beta"]);
-  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), '{"schemaVersion":2,"features":[]}');
-  assert.throws(() => buildCatalog(f.context), /invalid catalog/);
+  manifest(path.join(f.root, "local"), "private", { title: "Current selected local title" });
+  const selected = buildCatalog({ ...context, enabledFeatureIds: [...context.enabledFeatureIds, "private"] });
+  assert.equal(selected.features.find((feature) => feature.id === "private").title, "Current selected local title");
+  fs.rmSync(path.join(f.root, "local"), { recursive: true });
+  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), "malformed retired snapshot");
+  assert.deepEqual(buildCatalog(context), rebuilt);
 });
 
 test("Nix dirty revisions retain their commit hash without relaxing snapshot validation", (t) => {
-  const f = fixture(t), commit = "c0d3ac1dc70652dcf9034896efb6e212b02b4b1f";
+  const f = fixture(t), commits = ["c0d3ac1dc70652dcf9034896efb6e212b02b4b1f", "0123456789abcdef".repeat(4)];
   const script = `const fs=require("node:fs"),{buildCatalog}=require(${JSON.stringify(path.join(__dirname, "catalog.js"))});process.stdout.write(JSON.stringify(buildCatalog(JSON.parse(fs.readFileSync(0,"utf8")))));`;
   const build = (revision) => spawnSync(process.execPath, ["-e", script], {
     input: JSON.stringify(f.context), encoding: "utf8",
     env: { ...process.env, CODEX_LINUX_SOURCE_COMMIT: revision },
   });
-  for (const revision of [commit, `${commit}-dirty`]) {
+  for (const commit of commits) for (const revision of [commit, `${commit}-dirty`]) {
     const result = build(revision);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).sourceCommit, commit);
   }
   assert.notEqual(build("invalid-dirty").status, 0);
-  const invalid = JSON.parse(build(commit).stdout);
-  invalid.sourceCommit = `${commit}-dirty`;
+  const invalid = JSON.parse(build(commits[0]).stdout);
+  invalid.sourceCommit = `${commits[0]}-dirty`;
   assert.throws(() => validateCatalog(invalid), /invalid catalog/);
 });
 
-test("current internal manifests remove frozen public entries while absent features remain discoverable", (t) => {
-  const f = fixture(t), original = buildCatalog(f.context);
-  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), JSON.stringify(original));
-  const file = path.join(f.root, "alpha/feature.json"), data = JSON.parse(fs.readFileSync(file, "utf8"));
+test("SHA-256 source commits remain valid in packaged ASAR metadata", (t) => {
+  const f = fixture(t), catalog = buildCatalog(f.context);
+  catalog.sourceCommit = "0123456789abcdef".repeat(4);
+  const asar = path.join(f.dir, "app.asar");
+  writeAsar(asar, catalog);
+  assert.deepEqual(readCatalogFromAsar(asar), catalog);
+  for (const invalid of ["g".repeat(64), "f".repeat(65), "f".repeat(6)]) {
+    assert.throws(() => validateCatalog({ ...catalog, sourceCommit: invalid }), /invalid catalog/);
+  }
+});
+
+test("current manifests can hide internal and invalid entries from a builder snapshot", (t) => {
+  const f = fixture(t), file = path.join(f.root, "alpha/feature.json");
+  builderSnapshot(f);
+  const data = JSON.parse(fs.readFileSync(file, "utf8"));
   data.internal = true;
   fs.writeFileSync(file, JSON.stringify(data));
-  fs.rmSync(path.join(f.root, "beta"), { recursive: true });
-  const rebuilt = buildCatalog({ ...f.context, enabledFeatureIds: ["community-features-in-gui-settings"] });
-  assert.deepEqual(rebuilt.features.map((feature) => feature.id), ["beta", "community-features-in-gui-settings", "private"]);
+  const catalog = buildCatalog({ ...f.context, enabledFeatureIds: ["community-features-in-gui-settings"] });
+  assert.equal(catalog.features.some((feature) => feature.id === "alpha"), false);
+  manifest(f.root, "plain", { title: "" });
+  const warnings = [];
+  assert.equal(buildCatalog({ ...f.context, enabledFeatureIds: ["community-features-in-gui-settings"] }, (warning) => warnings.push(warning)).features.some((feature) => feature.id === "plain"), false);
+  assert.equal(warnings.length, 1);
 });
 
 function uiTweaksFixture(t) {
@@ -151,10 +276,10 @@ test("UI Tweaks exposes nine independently counted modules with parent-gated def
   assert.ok(JSON.stringify(detail.props.description).includes("ui-tweaks/dock-icon"));
 });
 
-test("subfeature metadata survives enabled-only update builders and never reports a child of a disabled parent installed", (t) => {
+test("public subfeature metadata survives enabled-only update builders and never reports a child of a disabled parent installed", (t) => {
   const f = uiTweaksFixture(t);
   const original = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "ui-tweaks"] });
-  fs.writeFileSync(path.join(f.featureDir, SNAPSHOT_NAME), JSON.stringify(original));
+  builderSnapshot(f, original);
   fs.rmSync(path.join(f.root, "ui-tweaks"), { recursive: true });
   const rebuilt = buildCatalog(f.context), modules = rebuilt.features.find((feature) => feature.id === "ui-tweaks").subfeatures;
   assert.equal(modules.length, 9);
@@ -348,7 +473,7 @@ test("dependency graph nests dependents under prerequisites and keeps independen
   const model = buildFeatureTree(buildCatalog(fixture(t).context));
   assert.deepEqual(model.roots, ["beta"]);
   assert.deepEqual(model.children.get("beta"), ["alpha"]);
-  assert.deepEqual(model.independent, ["community-features-in-gui-settings", "private"]);
+  assert.deepEqual(model.independent, ["community-features-in-gui-settings", "plain"]);
   assert.equal(model.familyCount, 2);
 });
 
@@ -440,11 +565,11 @@ test("keyboard navigation expands folders, selects details and collapses without
   assert.equal(item(render(), "independent").props["aria-expanded"], true);
   assert.equal(pressTreeKey(render, "ArrowDown", "independent"), "independent/community-features-in-gui-settings");
   assert.equal(collect(render(), (node) => node.type === "native-row").at(-1).props.label, "community-features-in-gui-settings title");
-  assert.equal(pressTreeKey(render, "End", "independent/community-features-in-gui-settings"), "independent/private");
-  assert.equal(pressTreeKey(render, "ArrowLeft", "independent/private"), "independent");
+  assert.equal(pressTreeKey(render, "End", "independent/community-features-in-gui-settings"), "independent/plain");
+  assert.equal(pressTreeKey(render, "ArrowLeft", "independent/plain"), "independent");
   pressTreeKey(render, "ArrowLeft", "independent");
   assert.equal(item(render(), "independent").props.tabIndex, 0);
-  assert.equal(item(render(), "independent/private"), undefined);
+  assert.equal(item(render(), "independent/plain"), undefined);
   assert.equal(pressTreeKey(render, "Home", "independent"), "dependencies");
 });
 
@@ -503,28 +628,58 @@ function writeAsar(file, catalog) {
   fs.writeFileSync(file, Buffer.concat([prefix, data]));
 }
 
-test("native package hook preserves the actual built catalog and minimal builder manifest", (t) => {
-  const catalog = buildCatalog(fixture(t).context);
+test("native hooks generate builder snapshots and remove only the staged legacy file", (t) => {
+  const f = fixture(t), catalog = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "private"] });
+  const sourceLegacy = path.join(f.featureDir, SNAPSHOT_NAME);
+  fs.writeFileSync(sourceLegacy, "source legacy file must remain untouched");
   for (const format of ["deb", "rpm", "pacman"]) {
-    const app = path.join(temporary(t), "opt/codex-desktop");
-    const builder = path.join(app, "update-builder");
+    const app = path.join(temporary(t), "opt/codex-desktop"), builder = path.join(app, "update-builder");
+    const feature = path.join(builder, "linux-features/community-features-in-gui-settings");
+    const manifestFile = path.join(builder, ".codex-linux/update-builder-manifest.txt");
     fs.mkdirSync(path.join(app, "resources"), { recursive: true });
-    fs.mkdirSync(path.join(builder, "linux-features/community-features-in-gui-settings"), { recursive: true });
-    fs.mkdirSync(path.join(builder, ".codex-linux"), { recursive: true });
-    fs.writeFileSync(path.join(builder, ".codex-linux/update-builder-manifest.txt"), "install.sh\n");
+    fs.cpSync(f.featureDir, feature, { recursive: true });
+    fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
+    fs.writeFileSync(path.join(feature, "keep.txt"), "unrelated owned resource");
+    fs.writeFileSync(manifestFile, `install.sh\nlinux-features/community-features-in-gui-settings/${SNAPSHOT_NAME}\n`);
     writeAsar(path.join(app, "resources/app.asar"), catalog);
-    assert.deepEqual(readCatalogFromAsar(path.join(app, "resources/app.asar")), catalog);
     const run = spawnSync("bash", [path.join(__dirname, "package.sh")], {
       env: { ...process.env, PACKAGE_FORMAT: format, PACKAGE_APP_DIR: app }, encoding: "utf8",
     });
     assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(builder, "linux-features/community-features-in-gui-settings", SNAPSHOT_NAME))), catalog);
-    assert.equal(fs.readFileSync(path.join(builder, ".codex-linux/update-builder-manifest.txt"), "utf8"),
-      "install.sh\nlinux-features/community-features-in-gui-settings/catalog-snapshot.json\n");
-    preserveUpdateBuilderCatalog(app);
-    assert.equal(fs.readFileSync(path.join(builder, ".codex-linux/update-builder-manifest.txt"), "utf8").split(SNAPSHOT_NAME).length, 2);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(feature, CATALOG_NAME), "utf8")), catalog);
+    assert.equal(fs.existsSync(path.join(feature, SNAPSHOT_NAME)), false);
+    assert.equal(fs.readFileSync(sourceLegacy, "utf8"), "source legacy file must remain untouched");
+    assert.equal(fs.existsSync(path.join(f.featureDir, CATALOG_NAME)), false);
+    assert.equal(fs.readFileSync(path.join(feature, "keep.txt"), "utf8"), "unrelated owned resource");
+    assert.equal(fs.readFileSync(manifestFile, "utf8"), "install.sh\nlinux-features/community-features-in-gui-settings/catalog.json\n");
+    prepareUpdateBuilderCatalog(app);
+    assert.equal(fs.readFileSync(manifestFile, "utf8").split(CATALOG_NAME).length, 2);
+    fs.rmSync(path.join(builder, ".codex-linux"), { recursive: true });
+    const rebuilt = buildCatalog({ feature: { dir: feature }, featurePatchOptions: { featuresRoot: path.join(builder, "linux-features") },
+      enabledFeatureIds: ["community-features-in-gui-settings"] });
+    assert.deepEqual(rebuilt.features.map((item) => item.id), catalog.features.filter((item) => item.origin === "repo").map((item) => item.id));
+    assert.equal(rebuilt.features.filter((item) => item.enabled).length, 1);
   }
-  assert.equal(preserveUpdateBuilderCatalog(temporary(t)), false);
+  assert.equal(prepareUpdateBuilderCatalog(temporary(t)), false);
+});
+
+test("native packaging rejects disabled private metadata before changing staged files", (t) => {
+  const f = fixture(t), catalog = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "private"] });
+  catalog.features.find((feature) => feature.id === "private").enabled = false;
+  const app = path.join(temporary(t), "app"), builder = path.join(app, "update-builder");
+  const feature = path.join(builder, "linux-features/community-features-in-gui-settings");
+  const manifestFile = path.join(builder, ".codex-linux/update-builder-manifest.txt");
+  fs.mkdirSync(path.join(app, "resources"), { recursive: true });
+  fs.mkdirSync(feature, { recursive: true });
+  fs.mkdirSync(path.dirname(manifestFile), { recursive: true });
+  fs.writeFileSync(path.join(feature, CATALOG_NAME), "unchanged staged snapshot");
+  fs.writeFileSync(path.join(feature, SNAPSHOT_NAME), "legacy snapshot");
+  fs.writeFileSync(manifestFile, "unchanged\n");
+  writeAsar(path.join(app, "resources/app.asar"), catalog);
+  assert.throws(() => prepareUpdateBuilderCatalog(app), /disabled local metadata/);
+  assert.equal(fs.readFileSync(manifestFile, "utf8"), "unchanged\n");
+  assert.equal(fs.readFileSync(path.join(feature, CATALOG_NAME), "utf8"), "unchanged staged snapshot");
+  assert.equal(fs.readFileSync(path.join(feature, SNAPSHOT_NAME), "utf8"), "legacy snapshot");
 });
 
 test("malformed ASAR/catalog snapshots fail before writing builder files", (t) => {

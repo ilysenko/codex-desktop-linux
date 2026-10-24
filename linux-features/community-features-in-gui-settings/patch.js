@@ -6,6 +6,7 @@ const { findMatchingBrace, escapeRegExp } = require("../../scripts/patches/lib/m
 const { buildFeatureTree, renderCommunityFeaturesInGuiSettings } = require("./runtime.js");
 const { buildCatalog, CATALOG_ASSET } = require("./catalog.js");
 const { loadLocaleResources, createTranslator } = require("./i18n.js");
+const { patchStatusFromChange } = require("../../scripts/lib/patch-report.js");
 
 const UI = "codexLinuxCommunityFeaturesInGuiSettings";
 const ID = "[A-Za-z_$][\\w$]*";
@@ -79,7 +80,11 @@ function applySettingsPatch(extractedDir, context = {}) {
   const [{ name, source }] = candidates;
   const contract = settingsContract(source);
   if (!contract) throw Error("community-features-in-gui-settings: native General settings contract missing or ambiguous");
-  const catalog = buildCatalog(context);
+  const catalogWarnings = [];
+  const catalog = buildCatalog(context, (warning) => {
+    catalogWarnings.push(warning);
+    console.warn(warning);
+  });
   const snapshot = `${JSON.stringify(catalog, null, 2)}\n`;
   const snapshotPath = path.join(extractedDir, CATALOG_ASSET);
   const component = settingComponent(contract, catalog);
@@ -90,20 +95,25 @@ function applySettingsPatch(extractedDir, context = {}) {
         !fs.existsSync(snapshotPath) || fs.readFileSync(snapshotPath, "utf8") !== snapshot) {
       throw Error("community-features-in-gui-settings: incomplete or inconsistent settings patch");
     }
-    return { changed: false };
+    return { changed: false, catalogWarnings };
   }
   if (fs.existsSync(snapshotPath)) throw Error("community-features-in-gui-settings: unexpected catalog asset");
   const patched = source.replace(contract.render[0], contract.render[0].replace("children:[", `children:[${render},`)) + `\n${component}\n`;
   // Resolve and validate every contract before writing either generated asset.
   fs.writeFileSync(snapshotPath, snapshot);
   fs.writeFileSync(path.join(assetsDir, name), patched);
-  return { changed: true };
+  return { changed: true, catalogWarnings };
+}
+
+function settingsPatchStatus(result, warnings) {
+  const catalogWarnings = new Set(result.catalogWarnings);
+  return patchStatusFromChange(Boolean(result.changed), warnings.filter((warning) => !catalogWarnings.has(warning)));
 }
 
 module.exports = {
   UI, settingsContract, settingComponent, applySettingsPatch,
   descriptors: [{
     id: "general-list", phase: "extracted-app:post-webview", order: 20_990,
-    ciPolicy: "optional", apply: applySettingsPatch,
+    ciPolicy: "optional", apply: applySettingsPatch, status: settingsPatchStatus,
   }],
 };
