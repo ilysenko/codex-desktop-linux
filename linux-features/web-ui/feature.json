@@ -1,0 +1,15 @@
+{
+  "id": "web-ui",
+  "title": "Web UI (experimental)",
+  "description": "Open the official interface in a browser through an authenticated, capability-protected bridge (listens on 0.0.0.0:4310 by default), using the installed Linux app as its host.",
+  "defaultEnabled": false,
+  "entrypoints": { "patchDescriptors": "./patch.js" },
+  "resources": [
+    { "source": "runtime.js", "target": ".codex-linux/features/web-ui/runtime.js", "mode": "0644" },
+    { "source": "catalog.js", "target": ".codex-linux/features/web-ui/catalog.js", "mode": "0644" },
+    { "source": "browser.js", "target": ".codex-linux/features/web-ui/browser.js", "mode": "0644" }
+  ],
+  "runtimeHooks": {
+    "launcher": { "source": "launcher.sh", "name": "web-ui.sh", "mode": "0755" }
+  }
+}
