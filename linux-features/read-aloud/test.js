@@ -29,7 +29,11 @@ const {
 } = require("../../scripts/patches/engine.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const { requireName } = require("../../scripts/patches/lib/minified-js.js");
-const { applyAgentWorkspaceMainBridgePatch } = require("../agent-workspace/patch.js");
+const {
+  SETTINGS_COMMAND_KEY: AGENT_WORKSPACE_COMMAND_KEY,
+  SETTINGS_PERMISSIONS_KEY: AGENT_WORKSPACE_PERMISSIONS_KEY,
+  applyAgentWorkspaceMainBridgePatch,
+} = require("../agent-workspace/patch.js");
 
 function twice(fn, source) {
   const patched = fn(source);
@@ -196,7 +200,7 @@ test("main bundle patch adds a Linux read aloud handler", () => {
   assert.doesNotThrow(() => new Function("require", "process", patched));
 });
 
-test("main fallback composes with native desktop apps and agent workspace in either order", async () => {
+test("main fallback composes with agent workspace while retaining only owned global-state keys", async () => {
   const source = [
     'let c=require("node:child_process"),o=require("node:fs"),i=require("node:path");',
     'class Host{handlers(){return {"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]}),"set-remote-wsl-connections-enabled":async()=>({})}}}',
@@ -216,12 +220,36 @@ test("main fallback composes with native desktop apps and agent workspace in eit
       platform: "linux", env: {},
     });
     const values = new Map();
+    let reads = 0;
+    let writes = 0;
     const host = new Host();
-    host.globalState = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
+    host.globalState = {
+      get: key => {
+        reads += 1;
+        return values.get(key);
+      },
+      set: (key, value) => {
+        writes += 1;
+        values.set(key, value);
+      },
+    };
     const handlers = host.handlers();
-    assert.deepEqual(await handlers["get-global-state"]({ params: { key: "setting" } }), { value: undefined });
-    assert.deepEqual(await handlers["set-global-state"]({ params: { key: "setting", value: true } }), { success: true });
-    assert.deepEqual(await handlers["get-global-state"]({ key: "setting" }), { value: true });
+    for (const key of [
+      "codex-linux-read-aloud-enabled",
+      "codex-linux-read-aloud-kokoro-speed",
+      AGENT_WORKSPACE_COMMAND_KEY,
+      AGENT_WORKSPACE_PERMISSIONS_KEY,
+    ]) {
+      assert.deepEqual(await handlers["set-global-state"]({ params: { key, value: true } }), { success: true });
+      assert.deepEqual(await handlers["get-global-state"]({ key }), { value: true });
+    }
+    assert.equal(reads, 4);
+    assert.equal(writes, 4);
+    await assert.rejects(handlers["get-global-state"]({ params: { key: "setting" } }), /Unsupported global-state key/);
+    await assert.rejects(handlers["set-global-state"]({ params: { key: "setting", value: false } }), /Unsupported global-state key/);
+    assert.equal(reads, 4);
+    assert.equal(writes, 4);
+    assert.equal(values.has("setting"), false);
   }
 });
 

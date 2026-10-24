@@ -13,6 +13,12 @@ const {
   codexLinuxStartMinimizedTrayReady, codexLinuxStartMinimizedAutostart,
   LABEL_IDS, LABEL_TRANSLATIONS, DESCRIPTION_IDS, DESCRIPTION_TRANSLATIONS,
 } = require("./patch.js");
+const {
+  SETTINGS_COMMAND_KEY: AGENT_WORKSPACE_COMMAND_KEY,
+  SETTINGS_PERMISSIONS_KEY: AGENT_WORKSPACE_PERMISSIONS_KEY,
+  applyAgentWorkspaceMainBridgePatch,
+} = require("../agent-workspace/patch.js");
+const { applyMainBundlePatch: applyReadAloudMainBundlePatch } = require("../read-aloud/patch.js");
 
 // Signed stable 26.1007.21434 startup contracts, with Electron services supplied by
 // the harness. This exercises the actual patched control flow and handlers.
@@ -58,6 +64,69 @@ test("main patch restores exactly one working global-state handler pair", async 
     JSON.parse(JSON.stringify(await handlers["get-global-state"]({ params: { key: SETTINGS_KEY } }))),
     { value: true },
   );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await handlers["set-global-state"]({ params: { key: BOOT_ONLY_SETTINGS_KEY, value: true } }))),
+    { success: true },
+  );
+  await assert.rejects(handlers["get-global-state"]({ params: { key: "setting" } }), /Unsupported global-state key/);
+  await assert.rejects(handlers["set-global-state"]({ params: { key: "setting", value: true } }), /Unsupported global-state key/);
+  assert.equal(values.has("setting"), false);
+});
+
+test("all three features compose their owned global-state keys in every patch order", async () => {
+  const patches = [applyMainPatch, applyReadAloudMainBundlePatch, applyAgentWorkspaceMainBridgePatch];
+  const orders = [
+    [patches[0], patches[1], patches[2]],
+    [patches[0], patches[2], patches[1]],
+    [patches[1], patches[0], patches[2]],
+    [patches[1], patches[2], patches[0]],
+    [patches[2], patches[0], patches[1]],
+    [patches[2], patches[1], patches[0]],
+  ];
+  const allowedKeys = [
+    SETTINGS_KEY,
+    BOOT_ONLY_SETTINGS_KEY,
+    "codex-linux-read-aloud-enabled",
+    "codex-linux-read-aloud-kokoro-speed",
+    AGENT_WORKSPACE_COMMAND_KEY,
+    AGENT_WORKSPACE_PERMISSIONS_KEY,
+  ];
+  for (const order of orders) {
+    const patched = order.reduce((source, patch) => patch(source), startupFixture());
+    assert.equal(order.reduce((source, patch) => patch(source), patched), patched);
+    assert.equal(patched.split('"get-global-state":async').length - 1, 1);
+    assert.equal(patched.split('"set-global-state":async').length - 1, 1);
+    const IpcHost = new Function("require", "process", `${patched};return IpcHost;`)(require, {
+      platform: "linux",
+      env: {},
+    });
+    const values = new Map();
+    let reads = 0;
+    let writes = 0;
+    const host = new IpcHost();
+    host.globalState = {
+      get(key) {
+        reads += 1;
+        return values.get(key);
+      },
+      set(key, value) {
+        writes += 1;
+        values.set(key, value);
+      },
+    };
+    const handlers = host.handlers();
+    for (const key of allowedKeys) {
+      assert.deepEqual(await handlers["set-global-state"]({ params: { key, value: key } }), { success: true });
+      assert.deepEqual(await handlers["get-global-state"]({ params: { key } }), { value: key });
+    }
+    assert.equal(reads, allowedKeys.length);
+    assert.equal(writes, allowedKeys.length);
+    await assert.rejects(handlers["get-global-state"]({ params: { key: "setting" } }), /Unsupported global-state key/);
+    await assert.rejects(handlers["set-global-state"]({ params: { key: "setting", value: true } }), /Unsupported global-state key/);
+    assert.equal(reads, allowedKeys.length);
+    assert.equal(writes, allowedKeys.length);
+    assert.equal(values.has("setting"), false);
+  }
 });
 
 test("main patch fails closed when the global-state handler owner is missing or duplicated", () => {

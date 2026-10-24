@@ -17,9 +17,17 @@ function warn(message, patchName) {
 const GLOBAL_STATE_GET_HANDLER = '"get-global-state":async';
 const GLOBAL_STATE_SET_HANDLER = '"set-global-state":async';
 const CURRENT_HANDLER_OWNER = '"set-remote-wsl-connections-enabled":';
-const GLOBAL_STATE_HANDLERS =
-  '"get-global-state":async({key,params}={})=>({value:this.globalState.get(key??params?.key)}),' +
-  '"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;this.globalState.set(k,v);return{success:!0}},';
+const GLOBAL_STATE_ALLOWLIST_MARKER = "/*codex-linux-global-state-allowlist*/";
+const GLOBAL_STATE_ALLOWED_CLAUSE =
+  `${JSON.stringify([SETTINGS_COMMAND_KEY, SETTINGS_PERMISSIONS_KEY])}.includes(k)||`;
+
+function globalStateHandlers() {
+  const allowed = `${GLOBAL_STATE_ALLOWLIST_MARKER}${GLOBAL_STATE_ALLOWED_CLAUSE}!1`;
+  return (
+    `"get-global-state":async({key,params}={})=>{let k=key??params?.key;if(!(${allowed}))throw Error(\`Unsupported global-state key\`);return{value:this.globalState.get(k)}},` +
+    `"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;if(!(${allowed}))throw Error(\`Unsupported global-state key\`);this.globalState.set(k,v);return{success:!0}},`
+  );
+}
 
 function countOccurrences(source, needle) {
   return source.split(needle).length - 1;
@@ -28,9 +36,16 @@ function countOccurrences(source, needle) {
 function ensureGlobalStateHandlers(source) {
   const getCount = countOccurrences(source, GLOBAL_STATE_GET_HANDLER);
   const setCount = countOccurrences(source, GLOBAL_STATE_SET_HANDLER);
-  if (getCount === 1 && setCount === 1) return source;
+  if (getCount === 1 && setCount === 1) {
+    const markerCount = countOccurrences(source, GLOBAL_STATE_ALLOWLIST_MARKER);
+    const allowedCount = countOccurrences(source, GLOBAL_STATE_ALLOWED_CLAUSE);
+    if (markerCount !== 2 || (allowedCount !== 0 && allowedCount !== 2)) return null;
+    return allowedCount === 2
+      ? source
+      : source.split(GLOBAL_STATE_ALLOWLIST_MARKER).join(GLOBAL_STATE_ALLOWLIST_MARKER + GLOBAL_STATE_ALLOWED_CLAUSE);
+  }
   if (getCount !== 0 || setCount !== 0 || countOccurrences(source, CURRENT_HANDLER_OWNER) !== 1) return null;
-  return source.replace(CURRENT_HANDLER_OWNER, GLOBAL_STATE_HANDLERS + CURRENT_HANDLER_OWNER);
+  return source.replace(CURRENT_HANDLER_OWNER, globalStateHandlers() + CURRENT_HANDLER_OWNER);
 }
 
 const NODE_MODULE_EXPRESSIONS = Object.freeze({
