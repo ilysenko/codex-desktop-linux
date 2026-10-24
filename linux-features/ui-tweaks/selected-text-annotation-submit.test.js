@@ -289,34 +289,30 @@ test("enabled patch changes one asset once and can coexist with another appended
   assert.equal(fs.readFileSync(app.target, "utf8"), patched);
 });
 
-test("current official ASAR matches the native regression fixture and accepts the patch", {
+// The behavioral tests above run a frozen excerpt of the native shortcut and
+// annotation code. Minified names and chunk boundaries change every upstream
+// release, so this signed test checks the semantic contract instead: the same
+// owner discovery the patch uses must find exactly one shortcut owner in the
+// current official ASAR, and the patch must apply once and validate.
+test("current official ASAR exposes one native shortcut owner and accepts the patch", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, (t) => {
   const assets = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, "webview", "assets");
-  const matches = fs.readdirSync(assets).filter((name) => /^app-initial-[A-Za-z0-9_-]+\.js$/u.test(name))
-    .map((name) => fs.readFileSync(path.join(assets, name), "utf8"))
-    .filter((source) => source.includes("clearAllUnreads") && source.includes("allowWithinEditable:"));
-  assert.equal(matches.length, 1);
-  assert.equal(matches[0].includes(official.KQs), true);
-  assert.equal(matches[0].includes(official.SYr), true);
-  const primary = fs.readdirSync(assets).filter((name) => /^app-primary-[A-Za-z0-9_-]+\.js$/u.test(name))
-    .map((name) => fs.readFileSync(path.join(assets, name), "utf8"));
-  assert.equal(primary.length, 1);
-  for (const symbol of ["Rnt", "flt"]) assert.equal(primary[0].includes(official[symbol]), true, symbol);
-  const cards = fs.readdirSync(assets).filter((name) => /^annotation-comment-editor-card-[A-Za-z0-9_-]+\.js$/u.test(name))
-    .map((name) => fs.readFileSync(path.join(assets, name), "utf8"));
-  assert.equal(cards.length, 1);
-  for (const symbol of ["Si", "_i", "gi", "Jr", "oa", "pa"]) assert.equal(cards[0].includes(official[symbol]), true, symbol);
-  assert.equal(shortcutContract(patchSource(matches[0])).state, "applied");
+  const owners = fs.readdirSync(assets).filter((name) => /^[A-Za-z0-9_-]+\.js$/u.test(name))
+    .map((name) => ({ name, source: fs.readFileSync(path.join(assets, name), "utf8") }))
+    .filter(({ source }) => source.includes("clearAllUnreads") && source.includes("allowWithinEditable:"))
+    .filter(({ source }) => {
+      try { return shortcutContract(source).state === "current"; } catch { return false; }
+    });
+  assert.equal(owners.length, 1);
+  assert.equal(shortcutContract(patchSource(owners[0].source)).state, "applied");
+
   const copy = fs.mkdtempSync(path.join(os.tmpdir(), "annotation-submit-official-"));
   t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
-  const copiedAssets = path.join(copy, "webview", "assets");
-  fs.mkdirSync(copiedAssets, { recursive: true });
-  for (const name of fs.readdirSync(assets).filter((name) =>
-    /^(?:app-initial-|app-primary-|annotation-editor-|annotation-comment-editor-card-).+\.js$/u.test(name))) {
-    fs.copyFileSync(path.join(assets, name), path.join(copiedAssets, name));
-  }
-  assert.equal(applyAnnotationSubmit(copy, enabledContext).changed, 1);
+  fs.cpSync(process.env.CODEX_SIGNED_EXTRACTED_APP, copy, { recursive: true });
+  const applied = applyAnnotationSubmit(copy, enabledContext);
+  assert.equal(applied.changed, 1);
+  assert.deepEqual(applied.targets, [path.join("webview", "assets", owners[0].name)]);
   const moreDetails = require("./patches/selected-text-more-details.js");
   const both = { feature: { settings: { tweaks: { selection: {
     annotationSubmit: { enabled: true }, moreDetails: { enabled: true },
