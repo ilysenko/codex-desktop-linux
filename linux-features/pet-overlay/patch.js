@@ -599,10 +599,10 @@ function buildPetOverlayMethods(settings) {
     // The KWin cursor bridge owns Wayland gestures; Chromium drag regions bypass its bounds and completion handling.
     "codexPetOverlayInstallTransparentRenderer(e){try{this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput();if(e.__codexPetOverlayTransparentRendererInstalled)return;e.__codexPetOverlayTransparentRendererInstalled=!0;let t=e.webContents,n=()=>{try{let n=`html,body,#root,main,[data-avatar-overlay-content-frame=\"true\"]{background:transparent!important;background-color:transparent!important;}[data-codex-window-type=\"electron\"].electron-opaque,[data-codex-window-type=\"electron\"].electron-opaque body{background:transparent!important;background-color:transparent!important;background-image:none!important;}`;this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput(),this.codexLinuxWholeWindowInput&&(n+=this.codexPetOverlayIsNativeKWin()?`html,body,#root,#root *{-webkit-app-region:no-drag!important;app-region:no-drag!important;}`:`html,body,#root,main,[data-avatar-overlay-content-frame=\"true\"]{-webkit-app-region:drag!important;app-region:drag!important;user-select:none!important;-webkit-user-select:none!important;}[data-avatar-overlay-hit-region=\"mascot\"],[data-avatar-mascot=\"true\"],.no-drag,[data-avatar-overlay-hit-region=\"notification-tray\"],[data-avatar-overlay-hit-region=\"notification-scroll-control\"]{-webkit-app-region:no-drag!important;app-region:no-drag!important;}`),t==null||t.isDestroyed?.()||t.insertCSS?.(n,{cssOrigin:`author`}),t==null||t.isDestroyed?.()||t.executeJavaScript?.(`try{document.documentElement.style.background=\"transparent\";document.body&&(document.body.style.background=\"transparent\")}catch{}`,!0)}catch{}};t?.on?.(`did-finish-load`,n),n()}catch{}}",
     "codexPetOverlayRestoreFocusableAfterInactiveShow(e){if(this.codexPetOverlayIsNativeKWin())return;try{let t=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.window!==e||this.codexPetOverlaySettings().mode===`passive`||e.setFocusable?.(!0)}catch{}},0);try{t.unref?.()}catch{}}catch{}}",
-    "codexPetOverlaySyncWindow(e,t=!1){if(process.platform!==`linux`||e==null||e.isDestroyed?.())return;this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput();let n=this.codexPetOverlaySettings(),r=n.mode!==`passive`,i=t&&r&&this.codexPetOverlayIsNativeKWin()&&e.isVisible?.()===!0;try{e.setTitle?.(`Codex Pet Overlay`)}catch{}try{!i&&e.setFocusable?.(r&&!t)}catch{}try{!i&&t&&r&&this.codexPetOverlayRestoreFocusableAfterInactiveShow(e)}catch{}try{e.setSkipTaskbar?.(!!n.skipTaskbar)}catch{}try{e.setAlwaysOnTop?.(!!n.alwaysOnTop)}catch{}try{e.setBackgroundColor?.(`#00000000`)}catch{}try{this.codexPetOverlayInstallTransparentRenderer(e)}catch{}try{e.setOpacity?.(1)}catch{}try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces,{visibleOnFullScreen:!!n.allWorkspaces})}catch{try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces)}catch{}}try{n.alwaysOnTop&&e.moveTop?.()}catch{}try{this.codexPetOverlayScheduleHyprlandHints(e)}catch{}try{this.codexPetOverlayScheduleKWinHints(e)}catch{}try{this.codexPetOverlayScheduleNiriHints(e)}catch{}}",
+    "codexPetOverlaySyncWindow(e,t=!1){if(process.platform!==`linux`||e==null||e.isDestroyed?.()){this.codexPetOverlayStopHyprlandProximity();return}this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput();let n=this.codexPetOverlaySettings(),r=n.mode!==`passive`,i=t&&r&&this.codexPetOverlayIsNativeKWin()&&e.isVisible?.()===!0;try{e.setTitle?.(`Codex Pet Overlay`)}catch{}try{!i&&e.setFocusable?.(r&&!t)}catch{}try{!i&&t&&r&&this.codexPetOverlayRestoreFocusableAfterInactiveShow(e)}catch{}try{e.setSkipTaskbar?.(!!n.skipTaskbar)}catch{}try{e.setAlwaysOnTop?.(!!n.alwaysOnTop)}catch{}try{e.setBackgroundColor?.(`#00000000`)}catch{}try{this.codexPetOverlayInstallTransparentRenderer(e)}catch{}try{e.setOpacity?.(1)}catch{}try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces,{visibleOnFullScreen:!!n.allWorkspaces})}catch{try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces)}catch{}}try{n.alwaysOnTop&&e.moveTop?.()}catch{}try{this.codexPetOverlayScheduleHyprlandHints(e)}catch{}try{this.codexPetOverlayScheduleKWinHints(e)}catch{}try{this.codexPetOverlayScheduleNiriHints(e)}catch{}try{this.codexPetOverlayStartHyprlandProximity()}catch{}}",
     "codexPetOverlayHyprlandSession(){if(process.platform!==`linux`)return!1;let e=[process.env.HYPRLAND_INSTANCE_SIGNATURE,process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return e.includes(`hyprland`)}",
     "codexPetOverlayShouldUseHyprland(){return process.platform===`linux`&&this.codexPetOverlaySettings().hyprland===!0&&this.codexPetOverlayHyprlandSession()}",
-    "codexPetOverlayHyprctl(e,t){if(this.codexPetOverlayHyprctlUnavailable)return;try{let n=typeof require==`function`?require(`node:child_process`):null;if(typeof n?.execFile!=`function`){this.codexPetOverlayHyprctlUnavailable=!0;return}n.execFile(`hyprctl`,e,{timeout:1200},(e,...n)=>{e?.code===`ENOENT`&&(this.codexPetOverlayHyprctlUnavailable=!0),typeof t==`function`&&t(e,...n)})}catch(e){e?.code===`ENOENT`&&(this.codexPetOverlayHyprctlUnavailable=!0);try{typeof t==`function`&&t(e)}catch{}}}",
+    "codexPetOverlayHyprctl(e,t){let n=typeof t==`function`?t:()=>{};if(this.codexPetOverlayHyprctlUnavailable){n(new Error(`hyprctl unavailable`));return}try{let r=typeof require==`function`?require(`node:child_process`):null;if(typeof r?.execFile!=`function`){this.codexPetOverlayHyprctlUnavailable=!0;n(new Error(`hyprctl unavailable`));return}r.execFile(`hyprctl`,e,{timeout:1200},(e,...t)=>{e?.code===`ENOENT`&&(this.codexPetOverlayHyprctlUnavailable=!0),n(e,...t)})}catch(e){e?.code===`ENOENT`&&(this.codexPetOverlayHyprctlUnavailable=!0);try{n(e)}catch{}}}",
     "codexPetOverlayLuaString(e){return String(e).replace(/\\\\/g,`\\\\\\\\`).replaceAll(`\"`,`\\\\\"`)}",
     "codexPetOverlayShouldFallbackHyprctl(e){return e!=null&&e.killed!==!0&&e.signal==null&&e.code!==`ETIMEDOUT`&&e.code!==`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`}",
     "codexPetOverlayHyprlandDispatch(e,t){this.codexPetOverlayHyprctl([`dispatch`,e],e=>{this.codexPetOverlayShouldFallbackHyprctl(e)&&Array.isArray(t)&&this.codexPetOverlayHyprctl([`dispatch`,...t])})}",
@@ -610,6 +610,13 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlaySelectHyprlandClient(e,t){if(!Array.isArray(e))return null;let n=this.codexPetOverlayRect(t),r=[];for(let i of e){if(i==null||typeof i.address!=`string`||!/^0x[0-9a-f]{1,16}$/i.test(i.address)||String(i.title??``)!==`Codex Pet Overlay`||i.floating!==!0||!(i.fullscreen===0||i.fullscreen===!1)||Number(i.pid)!==Number(process.pid))continue;let t=i.size,a=i.at;if(!Array.isArray(t)||!Array.isArray(a))continue;let o=Number(t[0]),s=Number(t[1]),c=Number(a[0]),l=Number(a[1]);if(![o,s,c,l].every(Number.isFinite)||o<=0||s<=0)continue;r.push({client:i,sizeScore:n==null?0:Math.abs(o-n.width)+Math.abs(s-n.height),positionScore:n==null?0:Math.abs(c-n.x)+Math.abs(l-n.y),area:o*s})}if(n!=null){let e=r.filter(e=>e.sizeScore<=16);if(e.length===1)return e[0].client;let t=e.filter(e=>e.positionScore<=80);return t.length===1?t[0].client:null}let i=r.filter(e=>e.area<=300000);return i.length===1?i[0].client:null}",
     "codexPetOverlayFindHyprlandClient(e,t){if(!this.codexPetOverlayShouldUseHyprland())return;let n=this.codexPetOverlayWindowBounds(e);this.codexPetOverlayHyprctl([`clients`,`-j`],(e,r)=>{if(e)return;let i;try{i=JSON.parse(String(r??``))}catch{return}let a=this.codexPetOverlaySelectHyprlandClient(i,n);a!=null&&typeof t==`function`&&t(a)})}",
     "codexPetOverlayApplyHyprlandHints(e){let t=this.codexPetOverlaySettings();if(process.platform!==`linux`||e==null||e.isDestroyed?.()||!this.codexPetOverlayShouldUseHyprland())return;this.codexPetOverlayFindHyprlandClient(e,n=>{if(e.isDestroyed?.()||this.window!==e)return;let r=`address:${n.address}`,i=this.codexPetOverlayDesiredWindowBounds,a=Number(i?.x),o=Number(i?.y),s=Math.round(a),c=Math.round(o);t.lockPosition&&[a,o].every(Number.isFinite)&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.move({ window = \"${r}\", x = ${s}, y = ${c} })`,[`movewindowpixel`,`exact ${s} ${c},${r}`]);t.allWorkspaces&&n.pinned!==!0&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.pin({ action = \"on\", window = \"${r}\" })`,[`pin`,r]);this.codexPetOverlayHyprlandSetProp(r,`decorate`,`0`);this.codexPetOverlayHyprlandSetProp(r,`no_shadow`,`1`);this.codexPetOverlayHyprlandSetProp(r,`no_blur`,`1`);this.codexPetOverlayHyprlandSetProp(r,`no_anim`,`1`);this.codexPetOverlayHyprlandSetProp(r,`border_size`,`0`);this.codexPetOverlayHyprlandSetProp(r,`rounding`,`0`);this.codexPetOverlayHyprlandSetProp(r,`opacity`,`1.0 override 1.0 override 1.0 override`);this.codexPetOverlayHyprlandSetProp(r,`opaque`,`0`);this.codexPetOverlayHyprlandSetProp(r,`force_rgbx`,`0`);t.alwaysOnTop&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.alter_zorder({ mode = \"top\", window = \"${r}\" })`,[`alterzorder`,`top,${r}`])})}",
+    "codexPetOverlayParseHyprlandCursor(e){let t=String(e??\`\`).trim();if(t.length===0)return null;let n=null;try{n=JSON.parse(t)}catch{n=null}if(n!=null&&typeof n===\`object\`&&n!==null){let r=Number(n.x),i=Number(n.y);return[r,i].every(Number.isFinite)?{x:r,y:i}:null}let o=t.split(\`,\`);if(o.length<2)return null;let r=Number(String(o[0]).trim()),i=Number(String(o[1]).trim());return[r,i].every(Number.isFinite)?{x:r,y:i}:null}",
+    "codexPetOverlayHyprlandCursorPoint(){let e=this.codexPetOverlayHyprlandCursor;if(e==null)return null;let t=Number(e.x),n=Number(e.y);return[t,n].every(Number.isFinite)?{x:t,y:n}:null}",
+    "codexPetOverlayHyprlandGeometry(e){let t=this.codexPetOverlayHyprlandClient;if(t==null||e==null||this.window!==e||this.codexPetOverlayHyprlandClientWindow!==e)return null;let n=Array.isArray(t.at)?t.at:null,r=Array.isArray(t.size)?t.size:null;if(n==null||r==null)return null;let i=Number(n[0]),a=Number(n[1]),o=Number(r[0]),s=Number(r[1]);return[i,a,o,s].every(Number.isFinite)&&o>0&&s>0?{x:i,y:a,width:o,height:s}:null}",
+    "codexPetOverlayHyprlandCursorPoll(){if(!this.codexPetOverlayShouldUseHyprland()||this.codexPetOverlayHyprlandCursorPending)return;this.codexPetOverlayHyprlandCursorPending=!0;this.codexPetOverlayHyprctl([`cursorpos`],(e,t)=>{this.codexPetOverlayHyprlandCursorPending=!1;let n=e?null:this.codexPetOverlayParseHyprlandCursor(t);this.codexPetOverlayHyprlandCursor=n})}",
+    "codexPetOverlayHyprlandClientRefresh(){if(!this.codexPetOverlayShouldUseHyprland()||this.codexPetOverlayHyprlandClientPending)return;let e=this.window;if(e==null||e.isDestroyed?.()){this.codexPetOverlayHyprlandClient=null;return}if(this.codexPetOverlayHyprlandClientWindow!=null&&this.codexPetOverlayHyprlandClientWindow!==e)this.codexPetOverlayHyprlandClient=null;this.codexPetOverlayHyprlandClientWindow=e;this.codexPetOverlayHyprlandClientPending=!0;this.codexPetOverlayHyprctl([`clients`,`-j`],(t,n)=>{this.codexPetOverlayHyprlandClientPending=!1;if(t||this.window!==e){this.codexPetOverlayHyprlandClient=null;return}let r;try{r=JSON.parse(String(n??``))}catch{this.codexPetOverlayHyprlandClient=null;return}this.codexPetOverlayHyprlandClient=this.codexPetOverlaySelectHyprlandClient(r,null)})}",
+    "codexPetOverlayStartHyprlandProximity(){if(!this.codexPetOverlayShouldUseHyprland()||this.codexPetOverlayHyprlandProximityTimer!=null)return;if(this.window==null||this.window.isDestroyed?.())return;let e=setInterval(()=>{let e=this.window;if(e==null||e.isDestroyed?.()){this.codexPetOverlayStopHyprlandProximity();return}try{this.codexPetOverlayHyprlandCursorPoll()}catch{}},100);try{e.unref?.()}catch{}this.codexPetOverlayHyprlandProximityTimer=e;let t=setInterval(()=>{let e=this.window;if(e==null||e.isDestroyed?.()){this.codexPetOverlayStopHyprlandProximity();return}try{this.codexPetOverlayHyprlandClientRefresh()}catch{}},1000);try{t.unref?.()}catch{}this.codexPetOverlayHyprlandClientTimer=t;try{this.codexPetOverlayHyprlandClientRefresh()}catch{}try{this.codexPetOverlayHyprlandCursorPoll()}catch{}}",
+    "codexPetOverlayStopHyprlandProximity(){let e=this.codexPetOverlayHyprlandProximityTimer;if(e!=null){try{clearInterval(e)}catch{}this.codexPetOverlayHyprlandProximityTimer=null}let t=this.codexPetOverlayHyprlandClientTimer;if(t!=null){try{clearInterval(t)}catch{}this.codexPetOverlayHyprlandClientTimer=null}this.codexPetOverlayHyprlandCursorPending=!1;this.codexPetOverlayHyprlandClientPending=!1;this.codexPetOverlayHyprlandCursor=null;this.codexPetOverlayHyprlandClient=null;this.codexPetOverlayHyprlandClientWindow=null}",
     "codexPetOverlayScheduleHyprlandHints(e){if(!this.codexPetOverlayShouldUseHyprland())return;try{this.codexPetOverlayHyprlandTimers?.forEach(clearTimeout)}catch{}this.codexPetOverlayHyprlandTimers=[0,80,300,1000,2500,5000,10000].map(t=>{let n=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.codexPetOverlayApplyHyprlandHints(e)}catch{}},t);try{n.unref?.()}catch{}return n})}",
     "codexPetOverlayKWinSession(){if(process.platform!==`linux`)return!1;let e=String(process.env.KDE_FULL_SESSION??``).toLowerCase();if(process.env.KDE_SESSION_VERSION||e===`1`||e===`true`)return!0;let t=[process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return t.includes(`kde`)||t.includes(`plasma`)}",
     "codexPetOverlayShouldUseKWin(){return process.platform===`linux`&&this.codexPetOverlaySettings().kwin===!0&&this.codexPetOverlayKWinSession()}",
@@ -885,6 +892,46 @@ function patchKWinProximityPublication(source) {
       method.match[0] + call + method.text.slice(method.match[0].length));
   }
   return patched;
+}
+
+function patchHyprlandProximity(source) {
+  const method = findAvatarOverlayMethod(source, /(?<![\w$.])updateCssPetControlsProximityTracking\([^{}]*\)\{/);
+  if (method?.text.includes("this.codexPetOverlayHyprlandCursorPoint(")) return source;
+  if (method == null) {
+    console.warn("WARN: Could not identify avatar overlay proximity tracking - skipping Hyprland proximity patch");
+    return source;
+  }
+  const bounds = [...method.text.matchAll(/([A-Za-z_$][\w$]*)\.getContentBounds\(\)/g)];
+  const cursor = [...method.text.matchAll(/([A-Za-z_$][\w$]*)\.screen\.getCursorScreenPoint\(\)/g)];
+  if (bounds.length !== 1 || cursor.length !== 1) {
+    console.warn("WARN: Avatar overlay proximity tracking contract changed - skipping Hyprland proximity patch");
+    return source;
+  }
+  // Wayland has no global cursor source for Chromium, so the compositor owns it.
+  const text = method.text
+    .replace(bounds[0][0], `(this.codexPetOverlayHyprlandGeometry(${bounds[0][1]})??${bounds[0][0]})`)
+    .replace(cursor[0][0], `(this.codexPetOverlayHyprlandCursorPoint()??${cursor[0][0]})`);
+  return replaceMethodText(source, method, text);
+}
+
+function patchHyprlandProximityCleanup(source) {
+  const overlayClass = findAvatarOverlayClass(source);
+  if (overlayClass == null) {
+    console.warn("WARN: Could not identify the avatar overlay class - skipping Hyprland proximity cleanup");
+    return source;
+  }
+  if (overlayClass.text.includes("this.codexPetOverlayStopHyprlandProximity()")) return source;
+  // The overlay publishes proximity from upstream's own tracking method, so the
+  // compositor poll has to stop with the window it was polling for.
+  const closePaths = [...overlayClass.text.matchAll(/this\.window=null/g)];
+  if (closePaths.length !== 1) {
+    console.warn("WARN: Avatar overlay close path changed - skipping Hyprland proximity cleanup");
+    return source;
+  }
+  const index = overlayClass.start + closePaths[0].index;
+  return source.slice(0, index) +
+    "this.window=null,this.codexPetOverlayStopHyprlandProximity()" +
+    source.slice(index + "this.window=null".length);
 }
 
 function patchKWinDragCleanup(source) {
@@ -1262,6 +1309,8 @@ function applyPetOverlayPatch(source, context) {
   patched = patchCompositorDragLifecycle(patched);
   patched = patchKWinGeometry(patched);
   patched = patchKWinCoordinateConsumers(patched);
+  patched = patchHyprlandProximity(patched);
+  patched = patchHyprlandProximityCleanup(patched);
   patched = patchKWinProximityPublication(patched);
   patched = patchKWinDragCleanup(patched);
   patched = patchKWinWindowSize(patched);

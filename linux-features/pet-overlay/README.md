@@ -120,6 +120,27 @@ Electron hint and stops issuing that Hyprland action.
 Hyprland command failures are ignored so launching Codex does not depend on
 `hyprctl` being present.
 
+### Pointer proximity
+
+Chromium cannot report a global cursor position on Wayland, so the upstream
+pointer-proximity tracking never sees a pointer leaving the visible mascot and
+the transparent overlay surface keeps accepting clicks. On Hyprland the
+compositor owns the real cursor position, so the feature polls
+`hyprctl cursorpos` and refreshes the overlay client's real rectangle from
+`hyprctl clients -j`.
+
+The poll only supplies data. Upstream's own proximity tracking stays the single
+publisher, so its guards (native layout, notch or pet controls) and its own
+enter and exit distances still decide when the pet controls expand. Inside that
+tracking method the compositor cursor and window rectangle replace the Electron
+values, because Wayland does not keep the Electron content bounds in sync with
+the compositor placement; when the compositor cannot be queried the Electron
+values are used unchanged.
+
+Polling starts with the overlay window and stops when that window closes.
+`hyprctl` failures and unreadable client records are ignored, so upstream's
+tracking stays in charge when the compositor cannot be queried.
+
 ## KDE Plasma Notes
 
 When `kwin` is enabled, the feature applies above-window, all-desktop,
@@ -278,6 +299,9 @@ For a manual check, enable the feature, rebuild, and launch the app:
   Tray controls should remain clickable.
 - Selecting a different pet should update the open overlay without restarting Codex.
 - On Hyprland, the pet should have no visible compositor border or shadow.
+- On Hyprland, moving the pointer away from the mascot should collapse the
+  controls, and moving it back should expand them again. The pointer position
+  used for that decision comes from the compositor, not from Chromium.
 - On Niri, the pet should open floating, avoid initial focus, and move by
   targeted window id.
 - On KDE Plasma Wayland, the pet should stay above normal windows and follow
