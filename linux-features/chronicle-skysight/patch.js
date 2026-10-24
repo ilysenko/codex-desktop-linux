@@ -7,11 +7,13 @@ const CHRONICLE_MODULE_EXPRESSIONS = Object.freeze({
 });
 const IDENTIFIER = "[A-Za-z_$][\\w$]*";
 const CURRENT_HANDLER_ANCHOR = '"set-remote-wsl-connections-enabled":';
-const LEGACY_HANDLER_ANCHOR = '"get-global-state":async({key:';
+const RETIRED_HANDLER_ANCHOR = '"get-global-state":async({key:';
 
 function chronicleHandlerAnchor(source) {
-  if (countOccurrences(source, CURRENT_HANDLER_ANCHOR) === 1) return CURRENT_HANDLER_ANCHOR;
-  if (countOccurrences(source, LEGACY_HANDLER_ANCHOR) === 1) return LEGACY_HANDLER_ANCHOR;
+  if (
+    countOccurrences(source, CURRENT_HANDLER_ANCHOR) === 1
+    && countOccurrences(source, RETIRED_HANDLER_ANCHOR) === 0
+  ) return CURRENT_HANDLER_ANCHOR;
   return null;
 }
 

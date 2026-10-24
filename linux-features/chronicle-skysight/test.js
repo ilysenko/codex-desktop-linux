@@ -60,7 +60,7 @@ function currentChronicleMainFixture() {
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
     "var Host=class{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}};var host=new Host;",
-    "var bridge={\"get-global-state\":async({key:e})=>null};",
+    "var bridge={\"set-remote-wsl-connections-enabled\":()=>null};",
   ].join("");
 }
 
@@ -202,6 +202,19 @@ test("chronicle-skysight fails closed for missing duplicate ambiguous mixed and 
     .replace("var $O=class", "var $P=class");
   const variants = {
     retiredRelease: retiredChronicleMainFixture(),
+    retiredHandlerAnchor: current.replace(
+      '"set-remote-wsl-connections-enabled":',
+      '"get-global-state":async({key:',
+    ),
+    missingHandlerAnchor: current.replace(
+      '"set-remote-wsl-connections-enabled":',
+      '"set-remote-wsl-connections-disabled":',
+    ),
+    duplicateHandlerAnchor: current.replace(
+      '"set-remote-wsl-connections-enabled":',
+      '"set-remote-wsl-connections-enabled":()=>null,"set-remote-wsl-connections-enabled":',
+    ),
+    mixedHandlerAnchors: `${current}var retiredBridge={"get-global-state":async({key:e})=>null};`,
     missing: current.replace("this.request(`skysightStatus`)", "this.request(`statusChanged`)"),
     missingReconciliationDependency: current.replace(
       "reconcileComputerHistoryPluginInstallation:e=>",

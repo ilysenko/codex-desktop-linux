@@ -293,17 +293,15 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
   };
   const bridgePayload = recordReplayBridgeSource(moduleExpressions);
   const helperPayload = recordReplayHelperSource(moduleExpressions);
-  const bridgeAnchor = patched.includes('"chronicle-permissions":async')
-    ? '"chronicle-permissions":async'
-    : '"get-global-state":async';
+  const bridgeAnchor = '"set-remote-wsl-connections-enabled":';
   const variants = {
     "missing current bridge handler": patched.replace(
       '"linux-record-replay-status":async',
       '"linux-record-replay-status-missing":async',
     ),
     "misplaced bridge payload": `${patched.replace(
-      `${bridgePayload},"get-global-state":async`,
-      '"get-global-state":async',
+      `${bridgePayload},${bridgeAnchor}`,
+      bridgeAnchor,
     )}var misplaced={${bridgePayload}};`,
     "duplicate bridge payload": patched.replace(
       `${bridgePayload},${bridgeAnchor}`,
@@ -322,18 +320,22 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
   }
 });
 
-test("record-and-replay rejects missing, duplicate, and mixed insertion anchors byte-identically", () => {
+test("record-and-replay rejects missing, duplicate, retired, and mixed insertion anchors byte-identically", () => {
   const current = applyChronicleSkysightMainBridgePatch(currentChronicleControllerFixture());
-  const legacy = 'let codexLinuxRecordReplayRun=()=>{};var bridge={"get-global-state":async({key:e})=>null};';
+  const retired = current.replace(
+    '"set-remote-wsl-connections-enabled":',
+    '"get-global-state":async({key:',
+  );
   const variants = {
-    missing: current
-      .replace('"chronicle-permissions":async', '"chronicle-permissions-missing":async')
-      .replace('"get-global-state":async({key:', '"get-global-state-missing":async({key:'),
-    "duplicate current": current.replace(
-      '"chronicle-permissions":async',
-      '"chronicle-permissions":async()=>null,"chronicle-permissions":async',
+    missing: current.replace(
+      '"set-remote-wsl-connections-enabled":',
+      '"set-remote-wsl-connections-disabled":',
     ),
-    "duplicate legacy": `${legacy},extra={"get-global-state":async({key:e})=>null}`,
+    "duplicate current": current.replace(
+      '"set-remote-wsl-connections-enabled":',
+      '"set-remote-wsl-connections-enabled":()=>null,"set-remote-wsl-connections-enabled":',
+    ),
+    "retired legacy owner": retired,
     "mixed current and legacy owners": `${current},extra={"get-global-state":async({key:e})=>null}`,
   };
 
@@ -341,7 +343,7 @@ test("record-and-replay rejects missing, duplicate, and mixed insertion anchors 
     const { value, warnings } = captureWarns(() => applyRecordReplayMainBridgePatch(source));
     assert.equal(value, source, name);
     assert.equal(warnings.length, 1, name);
-    assert.match(warnings[0], /uniquely resolve current \/ legacy bridge insertion point/, name);
+    assert.match(warnings[0], /uniquely resolve current signed-release bridge insertion point/, name);
   }
 });
 
