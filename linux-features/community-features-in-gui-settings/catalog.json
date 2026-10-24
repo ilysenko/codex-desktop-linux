@@ -1,0 +1,577 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": null,
+  "features": [
+    {
+      "id": "account-switcher",
+      "title": "Account Switcher",
+      "description": "Remember encrypted ChatGPT logins and switch accounts from the profile menu without restarting the desktop app.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [
+        "shared-app-server-socket"
+      ],
+      "subfeatures": []
+    },
+    {
+      "id": "agent-workspace",
+      "title": "Agent Workspaces",
+      "description": "Adds an opt-in Linux settings page and Electron bridge for agent-workspace-linux hidden desktop environments.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "api-key-model-visibility",
+      "title": "API Key Model Visibility",
+      "description": "Opt-in desktop model picker support for non-hidden models reported by API-key authenticated OpenAI-compatible providers.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "api-key-service-tier",
+      "title": "API Key Service Tier",
+      "description": "Opt-in Fast/service-tier UI and request support for API-key authenticated OpenAI-compatible providers.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "appshots",
+      "title": "Linux AppShots",
+      "description": "Opt-in AppShots composer integration that captures and crops a selected Linux window without core AppShots backend changes.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "authenticated-proxy",
+      "title": "Authenticated HTTP Proxy",
+      "description": "Opt-in launcher and main-process support for HTTP proxies that require username/password authentication.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "authored-message-visibility",
+      "title": "Keep Authored Messages Visible",
+      "description": "Keep assistant and user messages visible when completed tool activity collapses.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "automation-extensions",
+      "title": "Automation Extensions",
+      "description": "Optional multi-time scheduling and eager automation_update tool exposure.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "browser-proxy",
+      "title": "Browser Runtime Proxy",
+      "description": "Passes explicit standard proxy environment variables from the Codex app-server to Browser Use node_repl helpers.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "chatgpt-dil-markdown-fallback",
+      "title": "ChatGPT reply Markdown fallback",
+      "description": "Show the saved Markdown reply when the interactive reply renderer fails to start or render.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "chatgpt-dots-any-country",
+      "title": "ChatGPT Dots in Any Country",
+      "description": "Keep the ChatGPT Dots entry route visible when the account response is country-gated.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "chatgpt-sidebar-separate-history",
+      "title": "Separate ChatGPT Sidebar History",
+      "description": "Default the ChatGPT sidebar to Chat and remember the selected Chat/Work/All history filter.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "chronicle-skysight",
+      "title": "Chronicle / Skysight Activity Memory",
+      "description": "Opt-in Linux activity memory with Chronicle controls and a standalone Skysight MCP server.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "codex-micro",
+      "title": "Codex Micro hardware support",
+      "description": "Enables the upstream Work Louder Codex Micro service on Linux and adds narrow USB-C/Bluetooth hotplug and hidraw policy while reusing the official node-hid binding.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "community-features-in-gui-settings",
+      "title": "Community Features in GUI Settings",
+      "description": "Show a read-only community feature dependency tree with build status in Settings > General.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "community-profile-isolation",
+      "title": "Community Profile Isolation",
+      "description": "Pins ChatGPT Community to its own Codex state, Electron profile, CLI, and child-command environment for every launch path, including absolute updater relaunches.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [
+        "shared-app-server-socket"
+      ],
+      "subfeatures": []
+    },
+    {
+      "id": "computer-use-linux",
+      "title": "Linux Computer Use",
+      "description": "Optional Linux desktop-control UI and native MCP backend integration.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "copilot-reasoning-effort",
+      "title": "Copilot Reasoning Effort Defaults",
+      "description": "Opt-in patch that lets Copilot-auth sessions persist and select reasoning effort defaults on Linux.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "directory-only-working-tree-watch",
+      "title": "Directory-Only Working-Tree Watch",
+      "description": "Uses Watchbound for bounded Linux working-tree watching while retaining Codex Git-ignore and logical-path policy.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "filesystem-root-follow-ups",
+      "title": "Filesystem Root Follow-ups",
+      "description": "Allow follow-up messages in existing local tasks whose working directory is /.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "flatpak-chrome-native-messaging",
+      "title": "Flatpak Chrome Native Messaging",
+      "description": "Bridges the official Chrome extension host into the Flatpak Google Chrome sandbox without adding sandbox overrides.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "frameless-titlebar",
+      "title": "Frameless Titlebar",
+      "description": "Hide Linux titlebar overlay controls and native menu chrome for compositor-managed window decorations.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "global-dictation",
+      "title": "Global Dictation",
+      "description": "Opt-in global dictation hotkeys for Linux using X11 and XDG desktop portal backends.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "global-dictation-gnome",
+      "title": "GNOME Global Dictation Companion",
+      "description": "Opt-in, helper-authenticated GNOME Shell Ctrl+V companion for Global Dictation; requires manual extension activation.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [
+        "global-dictation"
+      ],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "linux-performance-workarounds",
+      "title": "Linux Performance Workarounds",
+      "description": "Optional measured renderer workarounds for affected Linux systems.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "mcp-helper-reaper",
+      "title": "MCP Helper Reaper",
+      "description": "Reaps orphaned MCP helpers after their Codex owner exits without touching live sessions.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "model-picker-default-presets",
+      "title": "Model Picker Default Presets",
+      "description": "Opt-in ChatGPT Default model-picker presets configured as ordered model and effort pairs.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "node-repl-reaper",
+      "title": "Browser Use node_repl Reaper",
+      "description": "Reaps Browser Use node_repl helper processes leaked by the upstream codex app-server: on launch, periodically while the app runs, and on exit.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "omarchy-theme",
+      "title": "Omarchy Theme",
+      "description": "Loads user CSS generated from the active Omarchy theme into ChatGPT Community.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "persistent-status-panel",
+      "title": "Persistent Status Panel",
+      "description": "Keep the Codex /status panel open across thread switches and app restarts until explicitly closed.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "pet-overlay",
+      "title": "Pet Overlay",
+      "description": "Optional Linux avatar overlay placement and compositor hints.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "preferred-editor-file-links",
+      "title": "Open source links in the preferred editor",
+      "description": "Open source and text file references in the selected editor with a plain click.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "project-group-last-updated-sort",
+      "title": "Project Group Last Updated Sorting",
+      "description": "Makes Last updated reorder project groups as well as their tasks in the Projects sidebar.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "project-task-sort",
+      "title": "Project Task Created Sorting",
+      "description": "Restores Created sorting for populated local tasks in the alternate Projects sidebar.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "read-aloud",
+      "title": "Read aloud",
+      "description": "Opt-in Linux read-aloud button for assistant responses.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "read-aloud-mcp",
+      "title": "Read Aloud MCP",
+      "description": "Disabled-by-default MCP plugin that lets the agent read text aloud through the Linux Read Aloud voice backend.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "reasoning-visibility",
+      "title": "Reasoning Visibility Setting",
+      "description": "Add an opt-in General setting to show available reasoning summaries and keep them expanded after completion.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "record-and-replay",
+      "title": "Record & Replay",
+      "description": "Opt-in Linux demo-to-skill recording workflow powered by codex-record-replay-linux.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [
+        "chronicle-skysight"
+      ],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "remote-control-ui",
+      "title": "Remote Control UI",
+      "description": "Adds opt-in Linux visibility patches for remote control and related settings surfaces.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "remote-mobile-control",
+      "title": "Experimental Remote Mobile Control",
+      "description": "Opt-in Linux adaptation for experimental Remote host and outbound-control flows.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "shallow-repository-watches",
+      "title": "Shallow Linux Repository Watches",
+      "description": "Prevents transient repository previews from recursively walking working trees and Git metadata on Electron's main thread.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [
+        "directory-only-working-tree-watch"
+      ],
+      "subfeatures": []
+    },
+    {
+      "id": "shared-app-server-socket",
+      "title": "Shared App-Server Socket",
+      "description": "Opt-in protocol-transparent Unix socket shared by ChatGPT Community and one or more ordinary app-server clients.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "start-minimized-to-tray",
+      "title": "Start Minimized to Tray",
+      "description": "Add opt-in General settings to start hidden in the existing Linux system tray, with a login-autostart-only option.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "thorium-chrome-plugin",
+      "title": "Thorium Chrome Plugin Support",
+      "description": "Adds disabled-by-default Thorium support to the bundled Chrome plugin on Linux.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "tray-usage",
+      "title": "Tray Usage",
+      "description": "Show the current Codex usage remaining in the Linux system-tray menu.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    },
+    {
+      "id": "ui-tweaks",
+      "title": "UI Tweaks",
+      "description": "Optional UI customization patches for ChatGPT Community.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": [
+        {
+          "id": "dock-icon",
+          "title": "Dock icon",
+          "description": "Expose the Dock icon selector and synchronize the selected icon with Linux windows, tray and supported launchers.",
+          "settingPath": "tweaks.appearance.dockIcon.enabled",
+          "enabledWhen": "true",
+          "nullishFallback": false,
+          "defaultEnabled": false,
+          "enabled": false
+        },
+        {
+          "id": "ui-font-size",
+          "title": "Extended UI font size",
+          "description": "Raise the UI font-size maximum to a configurable value.",
+          "settingPath": "tweaks.appearance.uiFontSize.enabled",
+          "enabledWhen": "true",
+          "nullishFallback": false,
+          "defaultEnabled": false,
+          "enabled": false
+        },
+        {
+          "id": "custom-font-input",
+          "title": "Custom font input",
+          "description": "Switch between installed fonts and a manually entered CSS font-family stack.",
+          "settingPath": "tweaks.appearance.customFontInput.enabled",
+          "nullishFallback": true,
+          "enabledWhen": "true",
+          "defaultEnabled": false,
+          "enabled": false
+        },
+        {
+          "id": "suggested-prompts",
+          "title": "Suggested prompts",
+          "description": "Expose Suggested Prompts in settings and enable project-aware cards on Home.",
+          "settingPath": "tweaks.home.suggestedPrompts.enabled",
+          "enabledWhen": "true",
+          "nullishFallback": false,
+          "defaultEnabled": false,
+          "enabled": false
+        },
+        {
+          "id": "model-list",
+          "title": "Expanded model picker",
+          "description": "Open the advanced picker by default and show models inline with their supported reasoning efforts.",
+          "settingPath": "tweaks.modelPicker.showModelsByDefault.enabled",
+          "enabledWhen": "not-false",
+          "nullishFallback": false,
+          "defaultEnabled": false,
+          "enabled": false
+        },
+        {
+          "id": "english-effort-labels",
+          "title": "English reasoning effort labels",
+          "description": "Keep reasoning effort names in English in the Simplified Chinese interface.",
+          "settingPath": "tweaks.reasoning.keepEffortLabelsEnglish.enabled",
+          "enabledWhen": "not-false",
+          "nullishFallback": false,
+          "defaultEnabled": true,
+          "enabled": false
+        },
+        {
+          "id": "selection-more-details",
+          "title": "Selection: More details",
+          "description": "Restore the selected-text More details action that asks Quick Chat to explain the selection.",
+          "settingPath": "tweaks.selection.moreDetails.enabled",
+          "nullishFallback": true,
+          "enabledWhen": "true",
+          "defaultEnabled": false,
+          "enabled": false
+        },
+        {
+          "id": "annotation-submit",
+          "title": "Annotation submit shortcut",
+          "description": "Send the active selected-text annotation with Ctrl+Enter without the regular composer intercepting it.",
+          "settingPath": "tweaks.selection.annotationSubmit.enabled",
+          "nullishFallback": true,
+          "enabledWhen": "true",
+          "defaultEnabled": false,
+          "enabled": false
+        },
+        {
+          "id": "sidebar-project-name",
+          "title": "Sidebar project names",
+          "description": "Apply a configurable style to project names in the sidebar.",
+          "settingPath": "tweaks.sidebar.projectName.enabled",
+          "enabledWhen": "not-false",
+          "nullishFallback": false,
+          "defaultEnabled": true,
+          "enabled": false
+        }
+      ]
+    },
+    {
+      "id": "wayland-global-shortcuts",
+      "title": "Wayland Global Shortcuts",
+      "description": "Use native Wayland portals for built-in popout, Mini/Pet, Appshots, voice and meeting shortcuts.",
+      "origin": "repo",
+      "enabled": false,
+      "requires": [],
+      "conflicts": [],
+      "subfeatures": []
+    }
+  ]
+}
