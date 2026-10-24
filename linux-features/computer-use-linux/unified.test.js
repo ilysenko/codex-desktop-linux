@@ -6,13 +6,13 @@ const test = require("node:test");
 const descriptors = require("./patch.js");
 
 // The current selector boundary: unified prerequisites, platform, feature flag,
-// and the legacy macOS service, followed by independent browser selection.
+// Windows/macOS service availability, followed by independent browser selection.
 const selector = [
-  'function select(f,l,t,u){let p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null,m=t.computerUse&&(!t.browserUseTinysky||l.platform!==`darwin`||u.enabled),h=[];return f&&t.browser&&h.push(`browser`),p&&h.push(`computer`),{computerUse:m,cuaReplSurfaces:h}}',
+  'function select(f,l,t,u){let p=f&&t.computerUse&&u.enabled&&(l.platform===`win32`||l.platform===`darwin`&&u.paths.serviceAppPath!=null),m=t.computerUse&&(!t.browserUseTinysky||l.platform!==`darwin`||u.enabled),h=[];return f&&t.browser&&h.push(`browser`),p&&h.push(`computer`),{computerUse:m,cuaReplSurfaces:h}}',
   'async function configure(e){let t=lookup(),i=constants.Kt({codexHome:e.codexHome,localVersion:t.plugin.localVersion,marketplaceName:t.marketplace.name,pluginName:t.plugin.name}),a=path.default.join(i,`.mcp.json`),c={};Object.assign(c,build(e));return e.nodeRepl!=null&&e.surfaces.length>0}',
-  'function build({browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n}){let l={};return s.includes(`browser`)&&(l.browser=`@oai/browser-desktop/service`),s.includes(`computer`)&&(l.sky=`@oai/sky/service`),{env:{...n?.env,CUA_REPL_ENABLED_SURFACES:s.join(`,`),[constants.Il]:JSON.stringify(l)}}}',
+  'function build({browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n}){let l={};return s.includes(`browser`)&&(l.browser=`@oai/browser-desktop/service`),s.includes(`computer`)&&(l.sky=`@oai/sky/service`),{env:{...n?.env,CUA_REPL_ENABLED_SURFACES:s.join(`,`),...n?.env.SKY_AUDIO_ATTACHMENTS===`1`?{SKY_ENABLE_AUDIO:s.includes(`computer`)?`1`:`0`,SKY_AUDIO_ATTACHMENTS:s.includes(`computer`)?`1`:`0`,NODE_REPL_ENABLE_AUDIO:`0`}:{},[constants.Il]:JSON.stringify(l)}}}',
   'async function initialize(e){let selection=e.selection,features=selection.desktopFeatureAvailability,backends=selection.browserBackends,surfaces=selection.cuaReplSurfaces,home=selection.codexHome,marketplace=selection.marketplaceName,marketplaces=e.marketplaces,skip=false,node=selection.nodeRepl,enabled=false;enabled=await configure({browserBackends:backends,deferTools:features.deferCuaTools,surfaces:surfaces,codexHome:home,marketplaceName:marketplace,marketplaces:marketplaces,nodeRepl:skip?void 0:node});return {selection:selection,cuaReplEnabled:enabled}}',
-  'async function threadConfig(e){let cached=e.cached,features=e.features,posture=features.browserUseTinysky?cached:null,selection=posture?.selection??await selectForThread(e),node=e.nodeRepl??selection.nodeRepl;return !posture?.cuaReplEnabled?{enabled:false}:build({browserBackends:selection.browserBackends,deferTools:selection.desktopFeatureAvailability.deferCuaTools,surfaces:selection.cuaReplSurfaces,nodeRepl:node})}',
+  'async function threadConfig(e){let connection=e.connection,local=connection!=null,cached=e.cached,features=e.features,posture=features.browserUseTinysky?cached:null,principal=local?await connection.getAuthenticatedPrincipal().catch(()=>null):null,selection=posture?.selection??await selectForThread(e),node=e.nodeRepl??selection.nodeRepl;return !posture?.cuaReplEnabled?{enabled:false}:build({browserBackends:selection.browserBackends,deferTools:selection.desktopFeatureAvailability.deferCuaTools,surfaces:selection.cuaReplSurfaces,nodeRepl:node})}',
 ].join("");
 function patch(source) {
   return descriptors.filter(d => ["ui-feature", "unified-runtime"].includes(d.id))
@@ -39,7 +39,7 @@ test("unified prerequisites, native feature flag, and other platforms retain the
   assert.deepEqual(surfaces(result, "linux", { nativeEnabled: false }), ["browser"]);
   assert.deepEqual(surfaces(result, "darwin"), ["browser"]);
   assert.deepEqual(surfaces(result, "darwin", { legacy: true }), ["browser", "computer"]);
-  assert.deepEqual(surfaces(result, "win32", { legacy: true }), ["browser"]);
+  assert.deepEqual(surfaces(result, "win32", { legacy: true }), ["browser", "computer"]);
   assert.equal(patch(result), result);
 });
 test("unified selector drift and ambiguous owners fail the build", () => {
@@ -113,7 +113,7 @@ test("unified helper uses a fresh binding across minified parameter and local co
       process: { env: { CODEX_LINUX_CUA_HOST_SOCKET: "/runtime/cua.sock" } },
     });
     const selection = {
-      browserBackends: ["native"], cuaReplSurfaces: ["computer"], nodeRepl: {},
+      browserBackends: ["native"], cuaReplSurfaces: ["computer"], nodeRepl: { env: {} },
       desktopFeatureAvailability: { deferCuaTools: true },
     };
     const cached = await initialize({ selection });
@@ -192,7 +192,7 @@ test("unified browser-only thread configuration receives its banner root", async
     path: { default: path }, constants: { Il: "services", Kt: () => "/trusted-plugin" }, process: { env: {} },
   });
   const selection = {
-    browserBackends: ["native"], cuaReplSurfaces: ["browser"], nodeRepl: {},
+    browserBackends: ["native"], cuaReplSurfaces: ["browser"], nodeRepl: { env: {} },
     desktopFeatureAvailability: { deferCuaTools: true },
   };
   const cached = await initialize({ selection });
@@ -211,6 +211,8 @@ test("unified propagation rejects missing, ambiguous, or changed builder consume
     selector + "configure(extra)",
     selector.replace("return {selection:selection", "return {selection:other"),
     selector.replace("selection=posture?.selection", "selection=other?.selection"),
+    // The retired pre-26.1021 thread configuration without the principal lookup.
+    selector.replace("principal=local?await connection.getAuthenticatedPrincipal().catch(()=>null):null,", ""),
   ]) {
     assert.throws(() => patch(changed), /unified.*contract/i);
   }

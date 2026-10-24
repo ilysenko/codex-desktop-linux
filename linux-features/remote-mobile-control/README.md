@@ -159,7 +159,8 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-status-read-guard` | `shared-boundary` | Sends `remoteControl/status/read` only to the local host, never Remote SSH or remote-control environment hosts. |
 | `linux-remote-control-status-wait` | `shared-boundary` | Gives the selected host a Linux-specific connection convergence window without changing host ownership. |
 | `linux-remote-control-enable-for-host-params` | `shared-boundary` | Uses the current enable/disable RPC parameter contract without choosing which host is targeted. |
-| `linux-remote-control-enablement-bridge` | `shared-boundary` | Loads outbound clients and auto-connects the remote-control environment owned by this Desktop without overwriting saved choices for other hosts. |
+| `linux-remote-control-enablement-bridge` | `shared-boundary` | Enables the current outbound remote-connections service on Linux without changing its service-owned auto-connect choices. |
+| `linux-remote-control-auto-connect-contract` | `outbound-control` | Validates the unique upstream service and settings caller that preserve an explicit auto-connect choice. |
 | `linux-remote-mobile-active-status` | `mobile-host` | Derives mobile active state from the local thread runtime. |
 
 The current upstream Connections bundle explicitly returns no action for
@@ -196,12 +197,10 @@ The main RPC boundaries are:
 - local host: `remoteControl/enable`, `remoteControl/disable`,
   `remoteControl/pairing/start`, `remoteControl/status/read`, and
   `remoteControl/status/changed`;
-- outbound Connections: `set-remote-control-connections-enabled`,
-  `refresh-remote-control-connections`, and
-  `set-remote-connection-auto-connect`;
+- outbound Connections: the current `remoteConnections` service methods
+  `setRemoteControlEnabled`, `refreshRemoteControl`, and `setAutoConnect`;
 - shared host routing: `set-experimental-feature-enablement-for-host`,
-  `refresh-remote-connections`, and `get-global-state` for the local
-  installation identity used by auto-connect;
+  and `refresh-remote-connections`;
 - Remote SSH: the existing `install-codex` action and its release parameter.
 
 Remote mobile daemon requirement:

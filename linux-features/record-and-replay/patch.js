@@ -167,10 +167,22 @@ function recordReplayHelperSource({ fsVar, pathVar }) {
   return `function codexLinuxRecordReplayWriteTempJson(e){let t=process.env.XDG_RUNTIME_DIR||process.env.TMPDIR||"/tmp",n=${pathVar}.join(t,"codex-record-replay-traces-"+(process.getuid?process.getuid():process.pid));${fsVar}.mkdirSync(n,{recursive:true,mode:448});try{if(${fsVar}.lstatSync(n).isSymbolicLink())throw Error("trace directory is a symlink");${fsVar}.chmodSync(n,448)}catch(r){throw r}let r=${pathVar}.join(n,"trace-"+Date.now()+"-"+process.pid+"-"+Math.random().toString(36).slice(2)+".json");${fsVar}.writeFileSync(r,String(e),{mode:384});return r}`;
 }
 
+const CURRENT_RECORD_REPLAY_BRIDGE_ANCHOR = '"set-remote-wsl-connections-enabled":';
+const RETIRED_RECORD_REPLAY_BRIDGE_ANCHOR = '"get-global-state":async({key:';
+
+function resolveRecordReplayMainBridgeAnchor(source) {
+  const currentCount = countOccurrences(source, CURRENT_RECORD_REPLAY_BRIDGE_ANCHOR);
+  const retiredCount = countOccurrences(source, RETIRED_RECORD_REPLAY_BRIDGE_ANCHOR);
+  if (currentCount === 1 && retiredCount === 0) return CURRENT_RECORD_REPLAY_BRIDGE_ANCHOR;
+  return null;
+}
+
 function hasCompleteRecordReplayMainBridgePatch(source) {
   const helperPayload = recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS);
   const bridgePayload = recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS);
-  const bridgeInsertion = `${bridgePayload},"get-global-state":async({key:`;
+  const resolved = resolveRecordReplayMainBridgeAnchor(source);
+  if (resolved == null) return false;
+  const bridgeInsertion = `${bridgePayload},${resolved}`;
   return countOccurrences(source, helperPayload) === 1
     && countOccurrences(source, bridgePayload) === 1
     && countOccurrences(source, bridgeInsertion) === 1;
@@ -194,16 +206,15 @@ function applyRecordReplayMainBridgePatch(currentSource) {
     return currentSource;
   }
 
-  let patchedSource = currentSource;
-  const handlerNeedle = `"get-global-state":async({key:`;
-  if (!currentSource.includes(handlerNeedle)) {
-    warn("Could not find global-state bridge insertion point", patchName);
+  const resolved = resolveRecordReplayMainBridgeAnchor(currentSource);
+  if (resolved == null) {
+    warn("Could not uniquely resolve current signed-release bridge insertion point", patchName);
     return currentSource;
   }
 
-  patchedSource = `${recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}\n${patchedSource.replace(
-    handlerNeedle,
-    `${recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS)},${handlerNeedle}`,
+  const patchedSource = `${recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}\n${currentSource.replace(
+    resolved,
+    `${recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS)},${resolved}`,
   )}`;
   return patchedSource;
 }

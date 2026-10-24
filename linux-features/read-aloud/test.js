@@ -29,6 +29,11 @@ const {
 } = require("../../scripts/patches/engine.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const { requireName } = require("../../scripts/patches/lib/minified-js.js");
+const {
+  SETTINGS_COMMAND_KEY: AGENT_WORKSPACE_COMMAND_KEY,
+  SETTINGS_PERMISSIONS_KEY: AGENT_WORKSPACE_PERMISSIONS_KEY,
+  applyAgentWorkspaceMainBridgePatch,
+} = require("../agent-workspace/patch.js");
 
 function twice(fn, source) {
   const patched = fn(source);
@@ -111,7 +116,7 @@ function createDeferredSettingsWrites({ writeKey, enabled = false, speed = 1.05 
 test("language routing uses dominant letters and preserves explicit overrides", () => {
   const source = [
     "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]})}};',
+    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]}),"set-remote-wsl-connections-enabled":async()=>({})}};',
   ].join("");
   const patched = twice(applyMainBundlePatch, source);
   const env = {};
@@ -153,10 +158,12 @@ test("language routing uses dominant letters and preserves explicit overrides", 
 test("main bundle patch adds a Linux read aloud handler", () => {
   const source = [
     "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-    "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+    "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
   ].join("");
   const patched = twice(applyMainBundlePatch, source);
   assert.match(patched, /"linux-read-aloud":async/);
+  assert.equal(patched.split('"get-global-state":async').length - 1, 1);
+  assert.equal(patched.split('"set-global-state":async').length - 1, 1);
   assert.match(patched, /function codexLinuxReadAloudSpeak\(input,options=\{\}\)/);
   assert.match(patched, /options\?\.requireEnabled!==!1/);
   assert.match(patched, /function codexLinuxReadAloudConfig/);
@@ -193,11 +200,74 @@ test("main bundle patch adds a Linux read aloud handler", () => {
   assert.doesNotThrow(() => new Function("require", "process", patched));
 });
 
+test("main fallback composes with agent workspace while retaining only owned global-state keys", async () => {
+  const source = [
+    'let c=require("node:child_process"),o=require("node:fs"),i=require("node:path");',
+    'class Host{handlers(){return {"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]}),"set-remote-wsl-connections-enabled":async()=>({})}}}',
+  ].join("");
+  for (const firstPass of [
+    applyAgentWorkspaceMainBridgePatch(applyMainBundlePatch(source)),
+    applyMainBundlePatch(applyAgentWorkspaceMainBridgePatch(source)),
+  ]) {
+    const patched = applyAgentWorkspaceMainBridgePatch(applyMainBundlePatch(firstPass));
+    assert.equal(patched, firstPass);
+    assert.equal(patched.split('"get-global-state":async').length - 1, 1);
+    assert.equal(patched.split('"set-global-state":async').length - 1, 1);
+    assert.equal(patched.split('"native-desktop-apps":async').length - 1, 1);
+    assert.equal(patched.split('"linux-read-aloud":async').length - 1, 1);
+    assert.equal(patched.split('"linux-agent-workspace":async').length - 1, 1);
+    const Host = new Function("require", "process", `${patched};return Host;`)(require, {
+      platform: "linux", env: {},
+    });
+    const values = new Map();
+    let reads = 0;
+    let writes = 0;
+    const host = new Host();
+    host.globalState = {
+      get: key => {
+        reads += 1;
+        return values.get(key);
+      },
+      set: (key, value) => {
+        writes += 1;
+        values.set(key, value);
+      },
+    };
+    const handlers = host.handlers();
+    for (const key of [
+      "codex-linux-read-aloud-enabled",
+      "codex-linux-read-aloud-kokoro-speed",
+      AGENT_WORKSPACE_COMMAND_KEY,
+      AGENT_WORKSPACE_PERMISSIONS_KEY,
+    ]) {
+      assert.deepEqual(await handlers["set-global-state"]({ params: { key, value: true } }), { success: true });
+      assert.deepEqual(await handlers["get-global-state"]({ key }), { value: true });
+    }
+    assert.equal(reads, 4);
+    assert.equal(writes, 4);
+    await assert.rejects(handlers["get-global-state"]({ params: { key: "setting" } }), /Unsupported global-state key/);
+    await assert.rejects(handlers["set-global-state"]({ params: { key: "setting", value: false } }), /Unsupported global-state key/);
+    assert.equal(reads, 4);
+    assert.equal(writes, 4);
+    assert.equal(values.has("setting"), false);
+  }
+});
+
+test("main fallback fails closed on missing or duplicate semantic owners", () => {
+  const missing = 'var h={handlers:{"unrelated":async()=>{}}};';
+  const duplicate = 'var a={handlers:{"set-remote-wsl-connections-enabled":async()=>{}}},b={handlers:{"set-remote-wsl-connections-enabled":async()=>{}}};';
+  for (const source of [missing, duplicate]) {
+    const { result, warnings } = captureWarnings(() => applyMainBundlePatch(source));
+    assert.equal(result, source);
+    assert.match(warnings.join("\n"), /unique global-state handler owner/);
+  }
+});
+
 test("main handler does not capture a function-local child-process alias from another feature", () => {
   const source = [
     'function injectedFeature(){let __codexChild=require(`node:child_process`);return __codexChild}',
     'let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);',
-    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]})}};',
+    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]}),"set-remote-wsl-connections-enabled":async()=>({})}};',
   ].join("");
   const patched = applyMainBundlePatch(source);
 
@@ -216,7 +286,7 @@ for (const [label, prefix] of [
   test(`main helper resolves builtins independently of ${label}`, () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-alias-"));
     try {
-      const source = prefix + 'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]})}};';
+      const source = prefix + 'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]}),"set-remote-wsl-connections-enabled":async()=>({})}};';
       const patched = twice(applyMainBundlePatch, source);
       const runtime = new Function("require", "process", `${patched};return {
         home:codexLinuxReadAloudHome,
@@ -244,7 +314,7 @@ test("main bundle helper preserves the official Electron binding across patch re
   const source = [
     '"use strict";',
     'let c=require("electron"),e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);',
-    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]})}};',
+    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]}),"set-remote-wsl-connections-enabled":async()=>({})}};',
   ].join("");
   const patched = applyMainBundlePatch(source);
 
@@ -468,7 +538,7 @@ test("main handler stores a chosen Kokoro model folder", async () => {
 
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     assert.doesNotMatch(patched, /\bo=o\.createWriteStream\b/);
@@ -527,7 +597,7 @@ test("main handler reports when a chosen Kokoro model folder is not speakable ye
 
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const requireStub = (name) => {
@@ -590,7 +660,7 @@ test("main handler honors Linux app-specific settings paths", async () => {
 
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const requireStub = (name) => {
@@ -640,7 +710,7 @@ test("main handler reports missing Python during download setup", async () => {
   try {
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const requireStub = (name) => {
@@ -684,7 +754,7 @@ test("main handler reads and clamps stored Kokoro pace", async () => {
 
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const requireStub = (name) => {
@@ -718,7 +788,7 @@ test("main handler enables native fallback by default but allows explicit disabl
   try {
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const requireStub = (name) => {
@@ -762,7 +832,7 @@ test("main handler treats the message button as an explicit speech request", asy
   try {
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const spawned = [];
@@ -833,7 +903,7 @@ test("main handler passes the configured Kokoro Python to the runner", async () 
 
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const spawned = [];
@@ -972,7 +1042,7 @@ test("main handler falls back to native speech without forcing spd-say voice typ
   try {
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const spawned = [];
@@ -1045,7 +1115,7 @@ test("main handler falls back to native speech without forcing spd-say voice typ
 test("native espeak fallback preserves English defaults and configured voices", () => {
   const source = [
     "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]})}};',
+    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]}),"set-remote-wsl-connections-enabled":async()=>({})}};',
   ].join("");
   const patched = twice(applyMainBundlePatch, source);
   for (const [text, overrides, expectedVoice] of [
@@ -1077,7 +1147,7 @@ test("main handler exposes Hugging Face Kokoro download defaults", async () => {
   try {
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const requireStub = (name) => {
@@ -1118,7 +1188,7 @@ test("main handler downloads setup files atomically", async () => {
   try {
     const source = [
       "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
-      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]})}};",
+      "var h={handlers:{\"set-vs-context\":async()=>{},\"native-desktop-apps\":async()=>({apps:[]}),\"set-remote-wsl-connections-enabled\":async()=>({})}};",
     ].join("");
     const patched = twice(applyMainBundlePatch, source);
     const target = path.join(root, "kokoro", "sample.bin");

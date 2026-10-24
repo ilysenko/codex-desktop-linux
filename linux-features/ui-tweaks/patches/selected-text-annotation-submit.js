@@ -66,10 +66,11 @@ function shortcutContract(source) {
     `(?<handler>${IDENT})=(?<event>${IDENT})=>\\{` +
       `(?<guard>/\\*${escapeRegExp(HANDLER_MARKER)}\\*/` +
         `if\\(${GUARD_NAME}\\(${escapeRegExp(command)},\\k<event>\\)\\)return;)?` +
-      `if\\(\\k<event>\\.target instanceof Element&&\\k<event>\\.target,!\\k<event>\\.defaultPrevented\\)`,
+      `let ${IDENT}=\\k<event>\\.target instanceof Element\\?\\k<event>\\.target:null;` +
+        `if\\(!\\k<event>\\.defaultPrevented\\)`,
     "app shortcut keydown handler");
   const event = handler.groups.event;
-  uniqueMatch(body, `${IDENT}\\(${escapeRegExp(command)},${escapeRegExp(event)}\\)&&` +
+  uniqueMatch(body, `${IDENT}\\(${escapeRegExp(command)},${escapeRegExp(event)}\\)\\)*&&\\(?` +
     `${escapeRegExp(event)}\\.preventDefault\\(\\)`, "app command dispatch");
   uniqueMatch(body, `onKeyDown:${escapeRegExp(handler.groups.handler)}(?=[,}])`, "registered shortcut handler");
   const injection = `/*${HANDLER_MARKER}*/if(${GUARD_NAME}(${command},${event}))return;`;
@@ -133,9 +134,17 @@ function applyAnnotationSubmit(extractedDir, context = {}) {
     const assets = path.join(extractedDir, "webview", "assets");
     const names = fs.readdirSync(assets);
     const candidates = names
-      .filter((name) => /^app-initial-[A-Za-z0-9_-]+\.js$/u.test(name))
+      .filter((name) => /^[A-Za-z0-9_-]+\.js$/u.test(name))
       .map((name) => ({ name, source: fs.readFileSync(path.join(assets, name), "utf8") }))
-      .filter(({ source }) => source.includes("clearAllUnreads") && source.includes("allowWithinEditable:"));
+      .filter(({ source }) => {
+        if (!source.includes("clearAllUnreads") || !source.includes("allowWithinEditable:")) return false;
+        try {
+          shortcutContract(source);
+          return true;
+        } catch {
+          return false;
+        }
+      });
     if (candidates.length !== 1) throw new Error(`Expected one app shortcut asset, found ${candidates.length}`);
     validateNativeEditor(assets, names);
     const asset = candidates[0];

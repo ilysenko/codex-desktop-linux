@@ -7,7 +7,6 @@ const {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
-  applyLinuxNativeDesktopAppsHandlerPatch,
   matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");
 
@@ -45,13 +44,6 @@ module.exports = [
     ciPolicy: "optional",
     apply: applyLinuxComputerUsePluginGatePatch,
   }),
-  mainBundlePatch({
-    id: "native-desktop-apps",
-    phase: "main-bundle",
-    order: 20_130,
-    ciPolicy: "optional",
-    apply: applyLinuxNativeDesktopAppsHandlerPatch,
-  }),
   webviewAssetPatch({
     id: "ui-availability",
     phase: "webview-asset",
@@ -76,7 +68,7 @@ module.exports = [
   webviewAssetPatch({
     id: "native-settings-visibility",
     order: 20_160,
-    pattern: /^app-initial-[^.]+\.js$/,
+    pattern: /^[A-Za-z0-9_-]+\.js$/,
     assetMatch: matchesNativeSettingsVisibilityContract,
     missingDescription: "Plugins presentation filter",
     skipDescription: "Linux native Settings visibility patch",

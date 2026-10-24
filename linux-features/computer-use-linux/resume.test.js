@@ -37,8 +37,16 @@ function resumeHarness(source) {
   const resumeSource = owner(source, call.index);
   const cache = only(resumeSource, new RegExp(`=(${IDENT})\\?await (${IDENT})\\((${IDENT})\\):null,${IDENT}=\\1\\?(${IDENT})\\(\\):`, "g"));
   const select = only(resumeSource, new RegExp(`\\?\\.selection\\?\\?await (${IDENT})\\(`, "g"));
-  const config = only(resumeSource, new RegExp(`let ${IDENT}=await (${IDENT})\\(\\{\\.\\.\\.${IDENT},selection:${call[4]}\\}\\)`, "g"));
-  const identity = only(resumeSource, new RegExp(`(${IDENT})\\(${cache[3]}\\.getCachedAuthenticatedPrincipal\\?\\.\\(\\)\\)`, "g"));
+  const config = only(resumeSource, new RegExp(
+    `let ${call[1]}=await (${IDENT})\\(\\{\\.\\.\\.(${IDENT}),selection:${call[4]},` +
+    `hostServicesPipePath:${IDENT}\\|\\|!${IDENT}\\.computerAudio\\?\\2\\.hostServicesPipePath:null\\}\\)`,
+    "g",
+  ));
+  const principal = only(resumeSource, new RegExp(
+    `(${IDENT})=${cache[1]}\\?await ${cache[3]}\\.getAuthenticatedPrincipal\\(\\)\\.catch\\(\\(\\)=>null\\):null`,
+    "g",
+  ));
+  const identity = only(resumeSource, new RegExp(`(${IDENT})\\(${principal[1]}\\)`, "g"));
   const env = only(resumeSource, new RegExp(`\\[(${IDENT})\\]:${IDENT},\\[(${IDENT})\\]:(${IDENT})\\.default\\.env\\.CODEX_APP_TOOLS_PIPE_PATH\\?\\?\`\`,\\[(${IDENT})\\]:`, "g"));
   const fallback = only(resumeSource, new RegExp(`\\?\\{\\.\\.\\.${IDENT},\\.\\.\\.(${IDENT})\\}`, "g"));
   const cleanup = only(resumeSource, new RegExp(`\\)\\),(${IDENT})\\(${IDENT}\\[\`mcp_servers\\.node_repl\`\\],${call[4]}\\.cuaReplSurfaces\\)`, "g"));
@@ -70,7 +78,12 @@ function resumeHarness(source) {
   const sharedResume = vm.runInNewContext(`${buildSource}\n(${resumeSource})`, globals);
   return async (selection, enabled = true) => {
     cached = { selection, cuaReplEnabled: enabled };
-    return sharedResume({ appServerConnection: { hostConfig: { kind: "local" }, getCachedAuthenticatedPrincipal: () => ({}) } });
+    return sharedResume({
+      appServerConnection: {
+        hostConfig: { kind: "local" },
+        getAuthenticatedPrincipal: async () => ({}),
+      },
+    });
   };
 }
 

@@ -28,7 +28,7 @@ function applyMain(source) {
   const bridge = unique(source, new RegExp(
     `(case\\\`mcp-request\\\`:\\{)${IDENT}\\(\\)\\.debug\\(\\\`app_server\\.bridge_received\\\`,\\{safe:\\{messageType:\\\`mcp-request\\\`,requestId:String\\((${IDENT})\\.request\\.id\\),method:\\2\\.request\\.method,originWebcontentsId:(${IDENT})\\.id,originHostId:\\2\\.hostId`, "g"));
   const config = unique(source, new RegExp(
-    `\\[\\.\\.\\.${IDENT}\\.${IDENT}\\((${IDENT})\\.globalState,\\1\\.hostConfig\\),\\.\\.\\.await \\1\\.secretAuthStorageConfigOverrides,\\.\\.\\.await ${IDENT}\\(\\1\\),${IDENT}\\(\\1\\)\\]`, "g"));
+    `\\[\\.\\.\\.${IDENT}\\.${IDENT}\\((${IDENT})\\.globalState,\\1\\.hostConfig\\),\\.\\.\\.await \\1\\.secretAuthStorageConfigOverrides,\\.\\.\\.await ${IDENT}\\(\\1\\)\\]`, "g"));
   if (!bridge || !config || !source.includes("sendAppServerResponseToView") || !source.includes("getAllHostIds")) {
     console.warn("WARN: Account switcher main-process contract drifted - skipping patch");
     return source;

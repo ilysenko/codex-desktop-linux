@@ -106,6 +106,9 @@ function appFixture(t, source = official.KQs) {
   return { root, assets, target };
 }
 
+const currentShortcutSource = official.KQs
+  .replace("Kqt(n,e)&&e.preventDefault()", "(Kqt(n,e))&&(e.preventDefault())");
+
 function withWarnings(callback) {
   const messages = [];
   const warn = console.warn;
@@ -131,6 +134,12 @@ test("patch discovers renamed native symbols, preserves registration and memo sl
   assert.equal(patchSource(patched), patched);
   assert.equal(patched.replace(`/*${HANDLER_MARKER}*/if(${GUARD_NAME}(renamed_n,renamed_e))return;`, "")
     .slice(0, renamed.length), renamed);
+});
+
+test("patch accepts the current shortcut target normalization and grouped dispatch", () => {
+  const patched = patchSource(currentShortcutSource);
+  assert.equal(shortcutContract(patched).state, "applied");
+  assert.equal(patchSource(patched), patched);
 });
 
 test("unpatched capture handler reproduces loss of the initial unsaved annotation body", async () => {
@@ -220,6 +229,11 @@ test("missing, ambiguous, changed, and partially patched contracts leave assets 
     official.KQs + official.KQs,
     official.KQs.replace("Kqt(n,e)&&e.preventDefault()", "Kqt(n,e)"),
     official.KQs.replace("onKeyDown:p", "onKeyDown:otherHandler"),
+    // The retired pre-26.1021 target guard is no longer accepted.
+    official.KQs.replace(
+      "p=e=>{let target=e.target instanceof Element?e.target:null;if(!e.defaultPrevented){",
+      "p=e=>{if(e.target instanceof Element&&e.target,!e.defaultPrevented){",
+    ),
     official.KQs.replace("id:n,accelerator:", "id:otherCommand,accelerator:"),
     official.KQs + `/*${RUNTIME_MARKER}*/`,
     patched.replace("return withinEditor(event.target)", "return false&&withinEditor(event.target)"),

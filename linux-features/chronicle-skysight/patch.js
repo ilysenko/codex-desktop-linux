@@ -6,6 +6,16 @@ const CHRONICLE_MODULE_EXPRESSIONS = Object.freeze({
   pathVar: 'require("node:path")',
 });
 const IDENTIFIER = "[A-Za-z_$][\\w$]*";
+const CURRENT_HANDLER_ANCHOR = '"set-remote-wsl-connections-enabled":';
+const RETIRED_HANDLER_ANCHOR = '"get-global-state":async({key:';
+
+function chronicleHandlerAnchor(source) {
+  if (
+    countOccurrences(source, CURRENT_HANDLER_ANCHOR) === 1
+    && countOccurrences(source, RETIRED_HANDLER_ANCHOR) === 0
+  ) return CURRENT_HANDLER_ANCHOR;
+  return null;
+}
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
@@ -183,14 +193,15 @@ function chronicleControllerContract(source) {
   };
   const helper = recordReplayRuntimeHelperSource(CHRONICLE_MODULE_EXPRESSIONS);
   const bridge = chronicleSkysightBridgeSource();
-  const bridgeInsertion = `${bridge},"get-global-state":async({key:`;
-  const handlerCount = countOccurrences(source, `"get-global-state":async({key:`);
+  const handlerAnchor = chronicleHandlerAnchor(source);
+  const bridgeInsertion = handlerAnchor == null ? null : `${bridge},${handlerAnchor}`;
+  const handlerCount = handlerAnchor == null ? 0 : 1;
   const currentCoherent = coherentContract(current);
   const patchedCoherent = coherentContract(patched);
   const helperCount = countOccurrences(source, helper);
   const helperMarkerCount = countOccurrences(source, "function codexLinuxChronicleRequest(");
   const bridgeCount = countOccurrences(source, bridge);
-  const bridgeInsertionCount = countOccurrences(source, bridgeInsertion);
+  const bridgeInsertionCount = bridgeInsertion == null ? 0 : countOccurrences(source, bridgeInsertion);
 
   if (
     currentCoherent
@@ -201,7 +212,7 @@ function chronicleControllerContract(source) {
     && helperCount === 0
     && helperMarkerCount === 0
     && bridgeCount === 0
-    && bridgeInsertionCount === 0
+    && (bridgeInsertion == null || bridgeInsertionCount === 0)
     && handlerCount === 1
   ) return "current";
   if (
@@ -228,7 +239,11 @@ function applyChronicleSkysightMainBridgePatch(currentSource) {
     return currentSource;
   }
 
-  const handlerNeedle = `"get-global-state":async({key:`;
+  const handlerNeedle = chronicleHandlerAnchor(currentSource);
+  if (handlerNeedle == null) {
+    warn("Could not find current main handler object", patchName);
+    return currentSource;
+  }
   const helper = recordReplayRuntimeHelperSource(CHRONICLE_MODULE_EXPRESSIONS);
   const bridge = chronicleSkysightBridgeSource();
   const init = chronicleControllerInitMatches(currentSource, false)[0];

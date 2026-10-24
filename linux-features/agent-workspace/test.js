@@ -83,8 +83,7 @@ function syntheticMainBundle() {
   return [
     "let c=require(`node:child_process`),o=require(`node:fs`),i=require(`node:path`);",
     "class Host{handlers(){return {",
-    '"get-global-state":async({key:t})=>({value:this.globalState.get(t)}),',
-    '"set-global-state":async({key:t,value:n})=>(this.globalState.set(t,n),{success:!0})',
+    '"set-remote-wsl-connections-enabled":async()=>({})',
     "}}}",
   ].join("");
 }
@@ -500,8 +499,7 @@ test("main bridge patch captures explicit Node modules despite nearby require ca
     "function distractors(){let __codexChild=require(`node:child_process`).spawn(`true`);let t=require('node:path').join(`a`,`b`);let n=require(\"node:fs\").existsSync(`a`)}",
     "let c=require(\"node:child_process\"),o=require('node:fs'),i=require(`node:path`);",
     "class Host{handlers(){return {",
-    '"get-global-state":async({key:t})=>({value:this.globalState.get(t)}),',
-    '"set-global-state":async({key:t,value:n})=>(this.globalState.set(t,n),{success:!0})',
+    '"set-remote-wsl-connections-enabled":async()=>({})',
     "}}}",
   ].join("");
   const patched = applyAgentWorkspaceMainBridgePatch(quotedBundle);
@@ -588,6 +586,38 @@ test("main bridge patch adds an allowlisted linux-agent-workspace handler", () =
   assert.match(warnings.join("\n"), /Could not find global-state handler insertion point/);
 });
 
+test("main bridge limits global-state access to agent workspace settings", async () => {
+  const values = new Map([[SETTINGS_COMMAND_KEY, "/opt/agent-workspace-linux"]]);
+  let reads = 0;
+  let writes = 0;
+  const globalState = {
+    get(key) {
+      reads += 1;
+      return values.get(key);
+    },
+    set(key, value) {
+      writes += 1;
+      values.set(key, value);
+    },
+  };
+  const { handlers } = buildBridgeHarness({ globalState });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await handlers["get-global-state"]({ params: { key: SETTINGS_COMMAND_KEY } }))),
+    { value: "/opt/agent-workspace-linux" },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await handlers["set-global-state"]({ params: { key: SETTINGS_PERMISSIONS_KEY, value: "/permissions.json" } }))),
+    { success: true },
+  );
+  assert.equal(reads, 1);
+  assert.equal(writes, 1);
+  await assert.rejects(handlers["get-global-state"]({ params: { key: "setting" } }), /Unsupported global-state key/);
+  await assert.rejects(handlers["set-global-state"]({ params: { key: "setting", value: true } }), /Unsupported global-state key/);
+  assert.equal(reads, 1);
+  assert.equal(writes, 1);
+  assert.equal(values.has("setting"), false);
+});
+
 test("main bridge generator does not carry removed conversation monitor observe code", () => {
   const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
   assert.doesNotMatch(patchSource, /case\\`workspaceObserve\\`/);
@@ -606,7 +636,10 @@ test("main bridge patch upgrades stale installed agent workspace handlers", () =
     'default:throw Error(`unsupported agent workspace action`)}}',
     'catch(e){return{ok:false,action:__codexActionName,message:e instanceof Error?e.message:String(e)}}},',
   ].join("");
-  const legacy = syntheticMainBundle().replace('"get-global-state":async({key:t})=>', `${legacyHandler}"get-global-state":async({key:t})=>`);
+  const legacy = syntheticMainBundle().replace(
+    '"set-remote-wsl-connections-enabled":',
+    `${legacyHandler}"set-remote-wsl-connections-enabled":`,
+  );
 
   const upgraded = applyAgentWorkspaceMainBridgePatch(legacy);
   assert.match(upgraded, /"linux-agent-workspace-pick-app":async/);
@@ -1799,7 +1832,6 @@ test("agent-workspace settings infer runtime dependencies from the current setti
 
     assert.equal(fs.existsSync(path.join(assetsDir, "runtime-test.js")), true);
     assert.equal(fs.existsSync(path.join(assetsDir, "settings-page-test.js")), true);
-
     const { value: result, warnings } = captureWarns(() => patchAgentWorkspaceSettingsAssets(tempApp));
 
     assert.equal(result.matched, true);
@@ -1815,6 +1847,34 @@ test("agent-workspace settings infer runtime dependencies from the current setti
     assert.match(settingsSource, /AgentWorkspacesSettings/);
     assert.match(fs.readFileSync(path.join(assetsDir, "settings-page-test.js"), "utf8"), /agent-workspaces/);
     assert.match(fs.readFileSync(path.join(assetsDir, "app-initial-test.js"), "utf8"), new RegExp(SETTINGS_ASSET));
+  } finally {
+    fs.rmSync(tempApp, { recursive: true, force: true });
+  }
+});
+
+test("agent-workspace settings reject duplicate semantic owners atomically", () => {
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-agent-workspace-duplicate-owner-"));
+  try {
+    const { assetsDir } = writeSyntheticExtractedApp(tempApp);
+    fs.writeFileSync(
+      path.join(assetsDir, "settings-page-lazy-test.js"),
+      syntheticCurrentSettingsNavigation(),
+    );
+    const before = new Map(
+      fs.readdirSync(assetsDir).map((name) => [name, fs.readFileSync(path.join(assetsDir, name))]),
+    );
+
+    const { value: result, warnings } = captureWarns(() => patchAgentWorkspaceSettingsAssets(tempApp));
+
+    assert.equal(result.matched, false);
+    assert.equal(result.changed, 0);
+    assert.match(result.reason, /uniquely resolve webview settings semantic owners/);
+    assert.match(result.reason, /navigation=2/);
+    assert.ok(warnings.some((warning) => warning.includes("navigation=2")));
+    assert.equal(fs.existsSync(path.join(assetsDir, SETTINGS_ASSET)), false);
+    for (const [name, source] of before) {
+      assert.deepEqual(fs.readFileSync(path.join(assetsDir, name)), source, name);
+    }
   } finally {
     fs.rmSync(tempApp, { recursive: true, force: true });
   }

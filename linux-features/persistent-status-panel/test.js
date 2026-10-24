@@ -10,11 +10,12 @@ const test = require("node:test");
 const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
-const { patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
+const { patchUniqueAssetFile } = require("../../scripts/patches/lib/assets.js");
 const {
   STORAGE_KEY,
   applyPersistentStatusPanelPatch,
   descriptors,
+  matchesPersistentStatusPanelContract,
 } = require("./patch.js");
 
 const currentComposerSource =
@@ -120,26 +121,70 @@ test("same-alias status consumers in adjacent functions do not cross owner bound
   ]);
 });
 
-test("descriptor patches the current app-primary composer status bundle", () => {
+test("descriptor locates and patches the current semantic composer status bundle", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "persistent-status-panel-assets-"));
   try {
     const assetsDir = path.join(tempDir, "webview", "assets");
     const assetPath = path.join(
       assetsDir,
-      "app-primary-a0bff570446b.js",
+      "composer-content-a0bff570446b.js",
     );
     fs.mkdirSync(assetsDir, { recursive: true });
     fs.writeFileSync(assetPath, liftedStatusStateComposerSource);
 
-    const result = patchAssetFiles(tempDir, descriptors[0].pattern, descriptors[0].apply, "missing");
+    fs.writeFileSync(path.join(assetsDir, "app-primary-other.js"), "const unrelated=true");
+    const result = patchUniqueAssetFile(
+      tempDir,
+      descriptors[0].pattern,
+      descriptors[0].assetMatch,
+      descriptors[0].apply,
+      "missing",
+      "ambiguous",
+    );
     const patched = fs.readFileSync(assetPath, "utf8");
 
-    assert.deepEqual(result, { matched: 1, changed: 1 });
+    assert.deepEqual(result, {
+      matched: 1,
+      changed: 1,
+      assetName: "composer-content-a0bff570446b.js",
+    });
     assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
     assert.match(patched, new RegExp(`localStorage\\.setItem\\(\\\`${STORAGE_KEY}\\\`,\\\`1\\\`\\)`));
     assert.match(patched, new RegExp(`localStorage\\.removeItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("persistent status descriptor recognizes pristine and patched semantic contracts", () => {
+  assert.equal(matchesPersistentStatusPanelContract(liftedStatusStateComposerSource), true);
+  assert.equal(
+    matchesPersistentStatusPanelContract(applyPersistentStatusPanelPatch(liftedStatusStateComposerSource)),
+    true,
+  );
+  assert.equal(matchesPersistentStatusPanelContract(currentComposerSource), false);
+});
+
+test("partial, duplicate, and unrelated persistent markers fail closed byte-identically", () => {
+  const complete = applyPersistentStatusPanelPatch(liftedStatusStateComposerSource);
+  const variants = [
+    complete.replace("localStorage.setItem", "localStorage.changedSetItem"),
+    complete + complete,
+    liftedStatusStateComposerSource.replace(
+      "function nW(){",
+      `function unrelated(){return \`${STORAGE_KEY}\`}function nW(){`,
+    ),
+  ];
+
+  for (const source of variants) {
+    const { value: patched, warnings } = captureWarns(() =>
+      applyPersistentStatusPanelPatch(source),
+    );
+    assert.equal(patched, source);
+    assert.equal(matchesPersistentStatusPanelContract(source), false);
+    assert.deepEqual(warnings, [
+      "WARN: Found incomplete or ambiguous persistent status panel patch - leaving bundle unchanged",
+    ]);
   }
 });
 

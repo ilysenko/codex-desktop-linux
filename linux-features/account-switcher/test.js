@@ -393,7 +393,7 @@ test("identity uses the current desktop user_id authority ahead of chatgpt_user_
 });
 
 test("semantic contracts preserve renamed symbols, reject partial drift, and route the Polish menu action", async () => {
-  const main = 'async function handle(view,message){switch(message.type){case`mcp-request`:{log().debug(`app_server.bridge_received`,{safe:{messageType:`mcp-request`,requestId:String(message.request.id),method:message.request.method,originWebcontentsId:view.id,originHostId:message.hostId}});this.sendAppServerResponseToView();this.appServerConnectionRegistry.getAllHostIds();break}}}async function config(options){return[...helpers.computeConfig(options.globalState,options.hostConfig),...await options.secretAuthStorageConfigOverrides,...await extras(options),mode(options)]}';
+  const main = 'async function handle(view,message){switch(message.type){case`mcp-request`:{log().debug(`app_server.bridge_received`,{safe:{messageType:`mcp-request`,requestId:String(message.request.id),method:message.request.method,originWebcontentsId:view.id,originHostId:message.hostId}});this.sendAppServerResponseToView();this.appServerConnectionRegistry.getAllHostIds();break}}}async function config(options){return[...helpers.computeConfig(options.globalState,options.hostConfig),...await options.secretAuthStorageConfigOverrides,...await extras(options)]}';
   const ui = 'import{MenuItem as Item}from"./menu.js";function Profile(props){let memo=(0,Cache.c)(275),{sidebarFooter:footer,ambientUsage:usage,hideUsage:hidden,open:opened,onClose:close}=props,disabled=hidden!==void 0,scope=read(atom);let fmt=intl();fmt.formatMessage({id:`codex.profileDropdown.copyUserIdForEmail`});let label;label=`codex.profileDropdown.settingsPage`;let settings;settings=(0,UI.jsx)(Item,{leftIconAsset:asset,keyboardShortcut:shortcut,onClick:settingsClick,children:label});let group=(0,UI.jsxs)(UI.Fragment,{children:[divider,identity,settings]});let alternate=(0,UI.jsx)(Layout,{accountIcon:icon,accountSwitcher:switcher,additionalItems:items,onCloseMenu:close,onTogglePet:pet});Bridge.dispatchMessage(`avatar-overlay-open`,{});return(0,UI.jsxs)(`div`,{children:[group,workspace,analytics,more]})}';
   for (const [source, apply, drift] of [[main, applyMain, "secretAuthStorageConfigOverrides"], [ui, applyUi, "accountSwitcher"]]) {
     const patched = apply(source);
@@ -405,13 +405,16 @@ test("semantic contracts preserve renamed symbols, reject partial drift, and rou
   }
   const patched = applyUi(ui);
   const config = vm.runInNewContext(applyMain(main) + ";config", {
-    helpers: { computeConfig: () => ["base"] }, extras: async () => ["extras"], mode: () => "mode",
+    helpers: { computeConfig: () => ["base"] }, extras: async () => ["extras"],
   });
   for (const id of ["local", "ssh-test", "durable"]) {
     const overrides = await config({ hostConfig: { id }, globalState: {}, secretAuthStorageConfigOverrides: ["policy"] });
-    assert.deepEqual(Array.from(overrides), ["base", "policy", "extras", "mode",
+    assert.deepEqual(Array.from(overrides), ["base", "policy", "extras",
       ...(id === "local" ? ['cli_auth_credentials_store="file"', "features.secret_auth_storage=false"] : [])]);
   }
+  // The retired pre-26.1021 config list with a trailing call is no longer accepted.
+  const retiredConfig = main.replace("await extras(options)]", "await extras(options),mode(options)]");
+  assert.equal(applyMain(retiredConfig), retiredConfig);
   for (const invalid of [ui.replace('import{MenuItem as Item}from"./menu.js";', ""), 'import{Other as Item}from"./other.js";' + ui]) {
     assert.equal(applyUi(invalid), invalid, "unverified or ambiguous imports must fail closed");
   }

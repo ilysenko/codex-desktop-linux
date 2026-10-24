@@ -36,6 +36,11 @@ test("shared backend fails closed for missing and ambiguous lifecycle anchors", 
   }
   const misleading = "function unrelated(e){if(wrongCheck(e)||otherCheck(e))return;}" + source;
   assert.equal(registrationContract(misleading).bareModifier, "Rk");
+  const retiredWithoutRegistrationCallback = source.replace(
+    "o=r==null?t:{onRegistrationChanged:t.onRegistrationChanged,onPressed:",
+    "o=r==null?t:{onPressed:",
+  );
+  assert.throws(() => registrationContract(retiredWithoutRegistrationCallback), /ownership callbacks drifted/);
 });
 
 for (const features of [{dictation: true}, {shortcuts: true}, {dictation: true, shortcuts: true}]) {

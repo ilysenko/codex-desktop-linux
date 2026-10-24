@@ -59,7 +59,7 @@ function currentChronicleControllerFixture() {
     "N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{await archive({codexHome:V.codexHome,reason:`skysight_gate_enabled`})&&U.broadcastQueryCacheInvalidation([`skills`])}}));",
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var Host=class{constructor(){this.options=appOptions;let i={};this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>[],()=>[],{}):void 0}}};",
-    "var bridge={\"get-global-state\":async({key:e})=>null};",
+    "var bridge={\"set-remote-wsl-connections-enabled\":()=>null};",
   ].join("");
 }
 
@@ -293,18 +293,19 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
   };
   const bridgePayload = recordReplayBridgeSource(moduleExpressions);
   const helperPayload = recordReplayHelperSource(moduleExpressions);
+  const bridgeAnchor = '"set-remote-wsl-connections-enabled":';
   const variants = {
     "missing current bridge handler": patched.replace(
       '"linux-record-replay-status":async',
       '"linux-record-replay-status-missing":async',
     ),
     "misplaced bridge payload": `${patched.replace(
-      `${bridgePayload},"get-global-state":async`,
-      '"get-global-state":async',
+      `${bridgePayload},${bridgeAnchor}`,
+      bridgeAnchor,
     )}var misplaced={${bridgePayload}};`,
     "duplicate bridge payload": patched.replace(
-      `${bridgePayload},"get-global-state":async`,
-      `${bridgePayload},${bridgePayload},"get-global-state":async`,
+      `${bridgePayload},${bridgeAnchor}`,
+      `${bridgePayload},${bridgePayload},${bridgeAnchor}`,
     ),
     "helper-only partial": `${helperPayload}\n${chroniclePatched}`,
     "duplicate helper payload": `${helperPayload}\n${patched}`,
@@ -316,6 +317,33 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
     assert.equal(value, drifted, name);
     assert.equal(warnings.length, 1, name);
     assert.match(warnings[0], /incomplete Record & Replay main bridge patch/, name);
+  }
+});
+
+test("record-and-replay rejects missing, duplicate, retired, and mixed insertion anchors byte-identically", () => {
+  const current = applyChronicleSkysightMainBridgePatch(currentChronicleControllerFixture());
+  const retired = current.replace(
+    '"set-remote-wsl-connections-enabled":',
+    '"get-global-state":async({key:',
+  );
+  const variants = {
+    missing: current.replace(
+      '"set-remote-wsl-connections-enabled":',
+      '"set-remote-wsl-connections-disabled":',
+    ),
+    "duplicate current": current.replace(
+      '"set-remote-wsl-connections-enabled":',
+      '"set-remote-wsl-connections-enabled":()=>null,"set-remote-wsl-connections-enabled":',
+    ),
+    "retired legacy owner": retired,
+    "mixed current and legacy owners": `${current},extra={"get-global-state":async({key:e})=>null}`,
+  };
+
+  for (const [name, source] of Object.entries(variants)) {
+    const { value, warnings } = captureWarns(() => applyRecordReplayMainBridgePatch(source));
+    assert.equal(value, source, name);
+    assert.equal(warnings.length, 1, name);
+    assert.match(warnings[0], /uniquely resolve current signed-release bridge insertion point/, name);
   }
 });
 

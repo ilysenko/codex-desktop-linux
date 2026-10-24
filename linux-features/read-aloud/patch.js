@@ -76,8 +76,55 @@ function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
 }
 
+const GLOBAL_STATE_GET_HANDLER = '"get-global-state":async';
+const GLOBAL_STATE_SET_HANDLER = '"set-global-state":async';
+const CURRENT_HANDLER_OWNER = '"set-remote-wsl-connections-enabled":';
+const GLOBAL_STATE_ALLOWLIST_MARKER = "/*codex-linux-global-state-allowlist*/";
+const GLOBAL_STATE_ALLOWED_CLAUSE =
+  `${JSON.stringify([SETTINGS_KEY, KOKORO_SPEED_KEY])}.includes(k)||`;
+
+function globalStateHandlers() {
+  const allowed = `${GLOBAL_STATE_ALLOWLIST_MARKER}${GLOBAL_STATE_ALLOWED_CLAUSE}!1`;
+  return (
+    `"get-global-state":async({key,params}={})=>{let k=key??params?.key;if(!(${allowed}))throw Error(\`Unsupported global-state key\`);return{value:this.globalState.get(k)}},` +
+    `"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;if(!(${allowed}))throw Error(\`Unsupported global-state key\`);this.globalState.set(k,v);return{success:!0}},`
+  );
+}
+
+function count(source, needle) {
+  return source.split(needle).length - 1;
+}
+
+function ensureGlobalStateHandlers(source) {
+  const getCount = count(source, GLOBAL_STATE_GET_HANDLER);
+  const setCount = count(source, GLOBAL_STATE_SET_HANDLER);
+  if (getCount === 1 && setCount === 1) {
+    const markerCount = count(source, GLOBAL_STATE_ALLOWLIST_MARKER);
+    const allowedCount = count(source, GLOBAL_STATE_ALLOWED_CLAUSE);
+    if (markerCount !== 2 || (allowedCount !== 0 && allowedCount !== 2)) return null;
+    return allowedCount === 2
+      ? source
+      : source.split(GLOBAL_STATE_ALLOWLIST_MARKER).join(GLOBAL_STATE_ALLOWLIST_MARKER + GLOBAL_STATE_ALLOWED_CLAUSE);
+  }
+  if (getCount !== 0 || setCount !== 0) return null;
+  const currentOwners = count(source, CURRENT_HANDLER_OWNER);
+  if (currentOwners !== 1) return null;
+  return source.replace(CURRENT_HANDLER_OWNER, globalStateHandlers() + CURRENT_HANDLER_OWNER);
+}
+
 function applyMainBundlePatch(source) {
-  if (source.includes(`"${HANDLER_NAME}":async`)) {
+  const originalSource = source;
+  source = ensureGlobalStateHandlers(source);
+  if (source == null) {
+    warn("Could not find unique global-state handler owner", "read aloud main-bundle patch");
+    return originalSource;
+  }
+  const installedHandlerCount = count(source, `"${HANDLER_NAME}":async`);
+  if (installedHandlerCount > 1) {
+    warn("Found duplicate read aloud handlers", "read aloud main-bundle patch");
+    return originalSource;
+  }
+  if (installedHandlerCount === 1) {
     return source;
   }
 
@@ -135,14 +182,7 @@ function applyMainBundlePatch(source) {
   ].join("");
 
   const handler = `"${HANDLER_NAME}":async(e)=>codexLinuxReadAloudHandle(e),`;
-  const needle = `"native-desktop-apps":`;
-  const handlerIndex = source.indexOf(needle);
-  if (handlerIndex === -1) {
-    warn("Could not find native-desktop-apps handler", "read aloud main-bundle patch");
-    return source;
-  }
-
-  const withHandler = source.slice(0, handlerIndex) + handler + source.slice(handlerIndex);
+  const withHandler = source.replace(GLOBAL_STATE_GET_HANDLER, handler + GLOBAL_STATE_GET_HANDLER);
   const helperInsertAt = withHandler.startsWith(`"use strict";`)
     ? `"use strict";`.length
     : withHandler.startsWith(`'use strict';`)

@@ -1735,6 +1735,12 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.match(patched, /new n\.kn\(qae,/);
   assert.match(patched, /new n\.On\(/);
   assert.match(patched, /supportsReconnect\(\)\{return!0\}/);
+
+  const negotiated = source.replace(
+    "let i=new n.On(r,void 0,8);return n.Dn(r,{onPongTimeout:",
+    "let i=new n.On(r,void 0,8,compression);r.off(`error`,onError);logger.info(`app_server_connection.compression_negotiated`);return n.Dn(r,{onPongTimeout:",
+  );
+  assert.notEqual(applySharedAppServerSocketPatch(negotiated), negotiated);
 });
 
 test("durable hosts retain their upstream transport even when kind is local", () => {

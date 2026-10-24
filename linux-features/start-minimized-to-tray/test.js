@@ -13,13 +13,20 @@ const {
   codexLinuxStartMinimizedTrayReady, codexLinuxStartMinimizedAutostart,
   LABEL_IDS, LABEL_TRANSLATIONS, DESCRIPTION_IDS, DESCRIPTION_TRANSLATIONS,
 } = require("./patch.js");
+const {
+  SETTINGS_COMMAND_KEY: AGENT_WORKSPACE_COMMAND_KEY,
+  SETTINGS_PERMISSIONS_KEY: AGENT_WORKSPACE_PERMISSIONS_KEY,
+  applyAgentWorkspaceMainBridgePatch,
+} = require("../agent-workspace/patch.js");
+const { applyMainBundlePatch: applyReadAloudMainBundlePatch } = require("../read-aloud/patch.js");
 
 // Signed stable 26.1007.21434 startup contracts, with Electron services supplied by
 // the harness. This exercises the actual patched control flow and handlers.
 const windowModeFixture = 'class MessageHandler{setPrimaryWindowMode(e,t){let n=g.BrowserWindow.fromWebContents(e);if(!n||n.isDestroyed())return;let r=this.windowManager.getPrimaryWindow();if(!r||r.isDestroyed()||r.id!==n.id)return;if(!this.shouldShowPrimaryWindow()&&!n.isVisible()){n.once(`show`,()=>this.setPrimaryWindowMode(e,t));return}let i=RAe(t);if((0,W.default)(this.primaryWindowMode,t)){i!=null&&this.showPrimaryWindow(n);return}if(this.primaryWindowMode=t,i!=null){this.primaryWindowRestoreBounds??={bounds:n.getNormalBounds(),wasMaximized:n.isMaximized(),wasFullScreen:n.isFullScreen()},n.isFullScreen()&&n.setFullScreen(!1),n.isMaximized()&&n.unmaximize(),n.setResizable(!0);let e=g.screen.getDisplayMatching(n.getNormalBounds()).workAreaSize,t=process.platform===`win32`?{width:Math.max(0,n.getBounds().width-n.getContentBounds().width),height:Math.max(0,n.getBounds().height-n.getContentBounds().height)}:{width:0,height:0},r={width:e.width-t.width,height:e.height-t.height},a={width:Math.min(i.width,r.width),height:Math.min(i.height,r.height)},o=process.platform===`win32`,s=o&&(a.width>=r.width*VY||a.height>=r.height*VY),c=this.windowManager.getPrimaryMinimumSize();n.setMaximizable(o),n.setFullScreenable(!1),n.setMinimumSize(Math.min(c.width,a.width),Math.min(c.height,a.height)),n.setSize(a.width,a.height),s||n.center(),this.showPrimaryWindow(n),s&&n.maximize();return}if(n.setResizable(!0),n.setMaximizable(!0),n.setFullScreenable(!0),this.primaryWindowRestoreBounds){let{bounds:e,wasMaximized:t,wasFullScreen:r}=this.primaryWindowRestoreBounds;this.primaryWindowRestoreBounds=null;let i=this.windowManager.getPrimaryMinimumSize();n.setMinimumSize(i.width,i.height);let a={...e,width:Math.max(e.width,i.width),height:Math.max(e.height,i.height)};n.isMaximized()&&n.unmaximize(),n.setBounds(a),t&&n.maximize(),r&&n.setFullScreen(!0)}this.windowManager.syncPrimaryMinimumSize(),this.showPrimaryWindow(n)}showPrimaryWindow(e){e.isVisible()||(e.show(),e.focus())}}';
 
 function startupFixture() {
-  return windowModeFixture + `class WindowManager{install(window,maximized){if(maximized){this.pendingRestoredMaximization=new Set([window]);let apply=()=>{window.isDestroyed()||(window.maximize(),this.pendingRestoredMaximization.delete(window))};window.once(\`ready-to-show\`,()=>{window.isDestroyed()||(window.isVisible()?apply():window.once(\`show\`,apply))})}}}
+  return windowModeFixture + `class IpcHost{handlers(){return {"set-remote-wsl-connections-enabled":async()=>({})}}}
+class WindowManager{install(window,maximized){if(maximized){this.pendingRestoredMaximization=new Set([window]);let apply=()=>{window.isDestroyed()||(window.maximize(),this.pendingRestoredMaximization.delete(window))};window.once(\`ready-to-show\`,()=>{window.isDestroyed()||(window.isVisible()?apply():window.once(\`show\`,apply))})}}}
 async function startup(e={isBackgroundLaunch:false}){let V=await m.O({moduleDir:__dirname}),unused=0;
 let options={canHideLastWindowToTray:Z9,isRemoteHostedPIPEnabled:noop,shouldShowPrimaryWindow:()=>!e.isBackgroundLaunch};
 let Ke=process.env.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,qe=(e,t=!0)=>{if(!t){e.showInactive();return}e.isMinimized()&&e.restore(),e.show(),e.focus()},Je=async(e,t)=>{try{U.hotkeyWindowLifecycleManager.hide();let t=U.getPrimaryWindow()??await Ce(\`/\`);if(t==null)return;qe(t)}catch(e){throw e}};
@@ -34,6 +41,104 @@ let gt=st;gt==null?gt=await U.ensureWindow({background:e.isBackgroundLaunch}):gt
 gt&&(st==null&&!e.isBackgroundLaunch&&_e.handleInitialWindowVisible(),gt!==st&&!e.isBackgroundLaunch&&qe(gt,!Ke));xe=!0;
 return {secondInstance:Je,trayOpen:Ye,interactive:e.onInteractiveLaunch,shouldShow:options.shouldShowPrimaryWindow,backfill:backfill.shouldShow,progress:progress.shouldShow};}`;
 }
+
+test("main patch restores exactly one working global-state handler pair", async () => {
+  const source = startupFixture();
+  const patched = applyMainPatch(source);
+  assert.equal(patched.split('"get-global-state":async').length - 1, 1);
+  assert.equal(patched.split('"set-global-state":async').length - 1, 1);
+  const IpcHost = vm.runInNewContext(`${patched};IpcHost`, { setTimeout, clearTimeout });
+  const values = new Map();
+  const host = new IpcHost();
+  host.globalState = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
+  const handlers = host.handlers();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await handlers["get-global-state"]({ params: { key: SETTINGS_KEY } }))),
+    {},
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await handlers["set-global-state"]({ params: { key: SETTINGS_KEY, value: true } }))),
+    { success: true },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await handlers["get-global-state"]({ params: { key: SETTINGS_KEY } }))),
+    { value: true },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await handlers["set-global-state"]({ params: { key: BOOT_ONLY_SETTINGS_KEY, value: true } }))),
+    { success: true },
+  );
+  await assert.rejects(handlers["get-global-state"]({ params: { key: "setting" } }), /Unsupported global-state key/);
+  await assert.rejects(handlers["set-global-state"]({ params: { key: "setting", value: true } }), /Unsupported global-state key/);
+  assert.equal(values.has("setting"), false);
+});
+
+test("all three features compose their owned global-state keys in every patch order", async () => {
+  const patches = [applyMainPatch, applyReadAloudMainBundlePatch, applyAgentWorkspaceMainBridgePatch];
+  const orders = [
+    [patches[0], patches[1], patches[2]],
+    [patches[0], patches[2], patches[1]],
+    [patches[1], patches[0], patches[2]],
+    [patches[1], patches[2], patches[0]],
+    [patches[2], patches[0], patches[1]],
+    [patches[2], patches[1], patches[0]],
+  ];
+  const allowedKeys = [
+    SETTINGS_KEY,
+    BOOT_ONLY_SETTINGS_KEY,
+    "codex-linux-read-aloud-enabled",
+    "codex-linux-read-aloud-kokoro-speed",
+    AGENT_WORKSPACE_COMMAND_KEY,
+    AGENT_WORKSPACE_PERMISSIONS_KEY,
+  ];
+  for (const order of orders) {
+    const patched = order.reduce((source, patch) => patch(source), startupFixture());
+    assert.equal(order.reduce((source, patch) => patch(source), patched), patched);
+    assert.equal(patched.split('"get-global-state":async').length - 1, 1);
+    assert.equal(patched.split('"set-global-state":async').length - 1, 1);
+    const IpcHost = new Function("require", "process", `${patched};return IpcHost;`)(require, {
+      platform: "linux",
+      env: {},
+    });
+    const values = new Map();
+    let reads = 0;
+    let writes = 0;
+    const host = new IpcHost();
+    host.globalState = {
+      get(key) {
+        reads += 1;
+        return values.get(key);
+      },
+      set(key, value) {
+        writes += 1;
+        values.set(key, value);
+      },
+    };
+    const handlers = host.handlers();
+    for (const key of allowedKeys) {
+      assert.deepEqual(await handlers["set-global-state"]({ params: { key, value: key } }), { success: true });
+      assert.deepEqual(await handlers["get-global-state"]({ params: { key } }), { value: key });
+    }
+    assert.equal(reads, allowedKeys.length);
+    assert.equal(writes, allowedKeys.length);
+    await assert.rejects(handlers["get-global-state"]({ params: { key: "setting" } }), /Unsupported global-state key/);
+    await assert.rejects(handlers["set-global-state"]({ params: { key: "setting", value: true } }), /Unsupported global-state key/);
+    assert.equal(reads, allowedKeys.length);
+    assert.equal(writes, allowedKeys.length);
+    assert.equal(values.has("setting"), false);
+  }
+});
+
+test("main patch fails closed when the global-state handler owner is missing or duplicated", () => {
+  const source = startupFixture();
+  const missing = source.replace('"set-remote-wsl-connections-enabled":', '"changed-handler":');
+  const duplicate = source + 'class OtherIpcHost{handlers(){return {"set-remote-wsl-connections-enabled":async()=>({})}}}';
+  for (const drift of [missing, duplicate]) {
+    const result = captureWarnings(() => applyMainPatch(drift));
+    assert.equal(result.value, drift);
+    assert.deepEqual(result.warnings, ["WARN: Start minimized to tray global-state handler owner missing or ambiguous"]);
+  }
+});
 
 async function runStartup({ preference = true, onlyOnBoot = false, env = {}, cgroup = "0::/user.slice/app.slice/app-codex.scope\n", platform = "linux", argv = ["ChatGPT"], ready = true, existing = false, setup = Promise.resolve(), beforeFinish = null, background = false, upstreamBackground = false } = {}) {
   const calls = [];

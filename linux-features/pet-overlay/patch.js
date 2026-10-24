@@ -847,10 +847,19 @@ function patchKWinCoordinateConsumers(source) {
   for (const name of KWIN_COORDINATE_CONSUMERS) {
     const method = findAvatarOverlayMethod(patched, new RegExp(`(?<![\\w$.])${name}\\([^{}]*\\)\\{`));
     if (method?.text.includes("this.codexPetOverlayKWinGeometry(")) continue;
+    if (name === "updateCssPetControlsProximityTracking" &&
+        method?.text.includes("this.codexPetOverlayKWinProximity()") &&
+        /this\.stopPetControlsProximity\?\?=/.test(method.text)) continue;
     const reads = method && [...method.text.matchAll(/([A-Za-z_$][\w$]*)\.getContentBounds\(\)/g)];
-    if (reads?.length !== 1) return source;
-    const [read] = reads;
-    let text = method.text.replace(read[0], `(this.codexPetOverlayKWinGeometry(${read[1]})??${read[0]})`);
+    const currentProximityHelper = name === "updateCssPetControlsProximityTracking" &&
+      reads?.length === 0 &&
+      /this\.stopPetControlsProximity\?\?=/.test(method.text) &&
+      /process\.platform===`darwin`&&!this\.isNotchEnabled\?this\.nativeAppearanceBridge:null,[A-Za-z_$][\w$]*,\(\)=>\{this\.updatePetPointerProximity\(\)\},this\.isNotchEnabled\?100:[A-Za-z_$][\w$]*/.test(method.text);
+    if (reads?.length !== 1 && !currentProximityHelper) return source;
+    const [read] = reads ?? [];
+    let text = read == null
+      ? method.text
+      : method.text.replace(read[0], `(this.codexPetOverlayKWinGeometry(${read[1]})??${read[0]})`);
     if (name === "updateCssPetControlsProximityTracking") {
       text = method.match[0] + "if(this.codexPetOverlayIsNativeKWin()&&this.codexPetOverlayKWinProximity()){if(this.petControlsProximityTimer!=null){clearInterval(this.petControlsProximityTimer);this.petControlsProximityTimer=null}return;}" + text.slice(method.match[0].length);
     }
@@ -1154,8 +1163,17 @@ function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpe
     findAvatarOverlayMethod(source, /(?<![\w$.])sendLayoutToRenderer\([^{}]*\)\{/)?.text.includes("codexPetOverlayNativeDrag:"),
     ...["setPointerRegions", "sendLayoutToRenderer"].map(name => findAvatarOverlayMethod(source,
       new RegExp(`(?<![\\w$.])${name}\\([^{}]*\\)\\{`))?.text.includes("this.codexPetOverlayKWinProximity()")),
-    ...KWIN_COORDINATE_CONSUMERS.map(name => findAvatarOverlayMethod(source,
-      new RegExp(`(?<![\\w$.])${name}\\([^{}]*\\)\\{`))?.text.includes("this.codexPetOverlayKWinGeometry(")),
+    ...KWIN_COORDINATE_CONSUMERS.map(name => {
+      const method = findAvatarOverlayMethod(
+        source,
+        new RegExp(`(?<![\\w$.])${name}\\([^{}]*\\)\\{`),
+      );
+      return method?.text.includes("this.codexPetOverlayKWinGeometry(") ||
+        name === "updateCssPetControlsProximityTracking" &&
+          method?.text.includes("this.codexPetOverlayKWinProximity()") &&
+          /this\.stopPetControlsProximity\?\?=/.test(method.text) &&
+          /\(\)=>\{this\.updatePetPointerProximity\(\)\},this\.isNotchEnabled\?100:[A-Za-z_$][\w$]*/.test(method.text);
+    }),
     source.includes("codexPetOverlaySettings(){"),
     findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes(NATIVE_DRAW_CONSTRAINT),
     findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayKWinLayout("),

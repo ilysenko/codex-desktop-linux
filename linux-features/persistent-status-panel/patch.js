@@ -3,6 +3,44 @@
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
 const STORAGE_KEY = "codex-linux-persistent-status-panel-open";
+const RAW_SETTER = "codexLinuxSetPersistentStatusPanelOpenState";
+
+function patchedPersistentStatusPanelCandidates(source) {
+  const identifier = "([A-Za-z_$][\\w$]*)";
+  const storageLiteral = `\`${STORAGE_KEY}\``;
+  const pattern = new RegExp(
+    `\\[${identifier},${RAW_SETTER}\\]=\\(0,${identifier}\\.useState\\)` +
+      `\\(\\(\\)=>\\{try\\{return localStorage\\.getItem\\(${storageLiteral}\\)===\`1\`\\}` +
+      `catch\\{return!1\\}\\}\\),${identifier}=e=>\\{try\\{e\\?localStorage\\.setItem\\(` +
+      `${storageLiteral},\`1\`\\):localStorage\\.removeItem\\(${storageLiteral}\\)\\}` +
+      `catch\\{\\}${RAW_SETTER}\\(e\\)\\}`,
+    "gu",
+  );
+  return [...source.matchAll(pattern)].filter((candidate) => {
+    const setter = candidate[3];
+    const owner = findContainingFunction(source, candidate.index);
+    return owner != null &&
+      owner.text.includes(`setIsStatusMenuOpen:${setter}`) &&
+      owner.text.includes(`onClose:()=>${setter}(!1)`);
+  });
+}
+
+function hasCompletePersistentStatusPanelPatch(source) {
+  return patchedPersistentStatusPanelCandidates(source).length === 1 &&
+    source.split(STORAGE_KEY).length - 1 === 3;
+}
+
+function matchesPersistentStatusPanelContract(source) {
+  if (source.includes(STORAGE_KEY)) return hasCompletePersistentStatusPanelPatch(source);
+  if (!source.includes("composer.statusSlashCommand.description")) return false;
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    return applyPersistentStatusPanelPatch(source) !== source;
+  } finally {
+    console.warn = originalWarn;
+  }
+}
 
 function findContainingFunction(source, index) {
   let searchFrom = index;
@@ -41,6 +79,9 @@ function findContainingFunction(source, index) {
 
 function applyPersistentStatusPanelPatch(source) {
   if (source.includes(STORAGE_KEY)) {
+    if (!hasCompletePersistentStatusPanelPatch(source)) {
+      console.warn("WARN: Found incomplete or ambiguous persistent status panel patch - leaving bundle unchanged");
+    }
     return source;
   }
 
@@ -64,10 +105,9 @@ function applyPersistentStatusPanelPatch(source) {
 
   const candidate = candidates[0];
   const [stateNeedle, isOpen, setIsOpen, reactModule] = candidate;
-  const rawSetter = "codexLinuxSetPersistentStatusPanelOpenState";
   const replacement =
-    `[${isOpen},${rawSetter}]=(0,${reactModule}.useState)(()=>{try{return localStorage.getItem(\`${STORAGE_KEY}\`)===\`1\`}catch{return!1}}),` +
-    `${setIsOpen}=e=>{try{e?localStorage.setItem(\`${STORAGE_KEY}\`,\`1\`):localStorage.removeItem(\`${STORAGE_KEY}\`)}catch{}${rawSetter}(e)}`;
+    `[${isOpen},${RAW_SETTER}]=(0,${reactModule}.useState)(()=>{try{return localStorage.getItem(\`${STORAGE_KEY}\`)===\`1\`}catch{return!1}}),` +
+    `${setIsOpen}=e=>{try{e?localStorage.setItem(\`${STORAGE_KEY}\`,\`1\`):localStorage.removeItem(\`${STORAGE_KEY}\`)}catch{}${RAW_SETTER}(e)}`;
   return source.slice(0, candidate.index) + replacement +
     source.slice(candidate.index + stateNeedle.length);
 }
@@ -78,7 +118,8 @@ const patches = [
     phase: "webview-asset",
     order: 20_800,
     ciPolicy: "optional",
-    pattern: /^app-primary-[^.]+\.js$/,
+    pattern: /^[A-Za-z0-9_-]+\.js$/,
+    assetMatch: matchesPersistentStatusPanelContract,
     missingDescription: "composer status panel bundle",
     skipDescription: "persistent status panel patch",
     apply: applyPersistentStatusPanelPatch,
@@ -88,5 +129,6 @@ const patches = [
 module.exports = {
   STORAGE_KEY,
   applyPersistentStatusPanelPatch,
+  matchesPersistentStatusPanelContract,
   descriptors: patches,
 };

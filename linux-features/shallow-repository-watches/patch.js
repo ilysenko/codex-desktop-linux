@@ -9,7 +9,7 @@ const PARCEL_METADATA_WATCH_MARKER = "codexLinuxShallowParcelMetadataWatch";
 const LOCAL_FILE_WATCH_METHOD =
   /async startFileWatch\((?<options>[A-Za-z_$][\w$]*)\)\{(?=let [^{}]{0,180}?await this\.platformPath\(\),[^{}]{0,180}?\(0,[A-Za-z_$][\w$]*\.watch\)\(this\.getFileSystemPath\(\k<options>\.path\),\{recursive:\k<options>\.recursive\})/gu;
 const PARCEL_WORKING_TREE_WATCH =
-  /process\.platform===`linux`\?(?<helper>[A-Za-z_$][\w$]*)\((?<options>[A-Za-z_$][\w$]*),\{ignoredPaths:\[[A-Za-z_$][\w$]*\.posix\.join\(\k<options>\.path,`\.git`\),\.\.\.[A-Za-z_$][\w$]*\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
+  /startWorkingTreeWatch:\((?<remote>[A-Za-z_$][\w$]*),(?<options>[A-Za-z_$][\w$]*),(?<ignored>[A-Za-z_$][\w$]*)\)=>\{if\(!\k<remote>\.isLocal\)return \k<remote>\.startFileWatch\(\k<options>\);if\(process\.platform===`linux`\)return (?<helper>[A-Za-z_$][\w$]*)\(\k<options>,\{ignoredPaths:\[[A-Za-z_$][\w$]*\.default\.join\(\k<options>\.path,`\.git`\),\.\.\.\k<ignored>\]\}\);if\(\k<ignored>\.length===0\)return (?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
 const PARCEL_METADATA_WATCH =
   /process\.platform===`linux`&&(?<options>[A-Za-z_$][\w$]*)\.recursive!==!1\?(?<helper>[A-Za-z_$][\w$]*)\(\k<options>,\{ignoredPaths:\[\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
 
@@ -85,7 +85,7 @@ function patchWorkerSource(source) {
   if (parcelMatches.length === 1) {
     finalSource = finalSource.replace(
       PARCEL_WORKING_TREE_WATCH,
-      `/*${PARCEL_WATCH_MARKER}*/$<host>.startFileWatch($<options>)`,
+      `startWorkingTreeWatch:($<remote>,$<options>,$<ignored>)=>{if(!$<remote>.isLocal)return $<remote>.startFileWatch($<options>);if(process.platform===\`linux\`)return /*${PARCEL_WATCH_MARKER}*/$<host>.startFileWatch($<options>);if($<ignored>.length===0)return $<host>.startFileWatch($<options>)`,
     );
     changed += 1;
   }

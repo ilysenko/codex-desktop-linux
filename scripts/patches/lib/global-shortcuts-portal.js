@@ -23,6 +23,7 @@ function registrationContract(source) {
   if (end === -1) throw new Error("global shortcut registration function is incomplete");
   const body = source.slice(match.index, end + 1);
   const ownership = new RegExp(`let (${IDENT})=n\\?\\.ownership,(${IDENT})=t\\.onReleased,(${IDENT})=t\\.onCancelled,(${IDENT})=\\1==null\\?t:\\{` +
+    `onRegistrationChanged:t\\.onRegistrationChanged,` +
     `onPressed:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&t\\.onPressed\\(\\)\\},` +
     `onReleased:\\2==null\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\2\\(\\)\\},` +
     `onCancelled:\\3==null\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\3\\(\\)\\}\\}`, "u");
