@@ -63,6 +63,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The updater no longer leaks a ~2 GB `workspaces/<version>` directory per
+  release under `~/.cache/codex-update-manager`. Cache cleanup only pruned
+  superseded upstream `.deb` files, so every rebuilt candidate's extracted app
+  and package stayed on disk indefinitely (one long-running install reached
+  34 workspaces / 59 GB). Cleanup now also removes workspaces that no persisted
+  path still references, keeping the active build, the rebuilt package, the
+  rollback package, and any in-flight install transaction, and it never follows
+  a symlinked workspace root.
 - The documented `UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app`
   invocation (also `make rebuild`, `rebuild-install`, `inspect-upstream`, and
   `rebuild-next`) no longer fails with "Only one upstream .deb path may be

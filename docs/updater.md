@@ -108,7 +108,10 @@ ${XDG_CACHE_HOME:-~/.cache}/codex-update-manager
 Use `status --json` and `diagnose --json` instead of editing persisted JSON.
 Candidate packages are content-addressed. Conservative cache cleanup retains
 the installed source, current candidate, and immediately previous rollback
-artifact.
+artifact. Build workspaces under `workspaces/<version>` are removed once no
+persisted path (active workspace, rebuilt package, rollback package, or an
+in-flight install transaction) points into them, so only the installed build,
+its rollback, and any build in progress stay on disk.
 
 The authoritative service log is the user journal:
 
