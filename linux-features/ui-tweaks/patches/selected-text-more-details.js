@@ -254,12 +254,12 @@ export function ${OPEN_EXPORT}(scope, input) {
 
 function overlayContract(source, references = []) {
   const header = uniqueMatch(source,
-    `function (${IDENT})\\(${IDENT}\\)\\{let (${IDENT})=\\(0,${IDENT}\\.c\\)\\((8|9)\\),` +
+    `function (${IDENT})\\(${IDENT}\\)\\{let (${IDENT})=\\(0,${IDENT}\\.c\\)\\((8)\\),` +
       `\\{onAddResponseTextAnnotation:(${IDENT}),onOpenSideChat:(${IDENT}),targetContainerRefs:${IDENT},targetSelector:${IDENT}\\}=${IDENT},(${IDENT})=${IDENT}\\(\\);`,
     "Codex selected-text overlay");
   const overlay = functionAt(source, header.index);
   const parent = uniqueMatch(source,
-    `function (${IDENT})\\(${IDENT}\\)\\{let (${IDENT})=\\(0,${IDENT}\\.c\\)\\((18|22)\\),` +
+    `function (${IDENT})\\(${IDENT}\\)\\{let (${IDENT})=\\(0,${IDENT}\\.c\\)\\((18)\\),` +
       `\\{actions:${IDENT},canOpenSideChat:${IDENT},scopeToThread:${IDENT},targetSelector:${IDENT}\\}=${IDENT},` +
       `(${IDENT})=(${IDENT})\\((${IDENT})\\),`, "Codex overlay scope");
   const parentFunction = functionAt(source, parent.index);

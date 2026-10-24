@@ -161,6 +161,9 @@ test("missing, ambiguous, mixed, and drifted contracts leave every asset unchang
       'function DuplicateActions(){let f=$r();return f.formatMessage({id:`selectedTextOverlay.moreDetails`})}'),
     (app) => fs.writeFileSync(path.join(app.assets, "app-initial-duplicate.js"), initialFixture()),
     (app) => fs.writeFileSync(app.primary, primaryFixture() + `/*${OVERLAY_MARKER}*/`),
+    // Only the current signed release's 18-slot parent and 8-slot leaf caches are accepted.
+    (app) => fs.writeFileSync(app.primary, primaryFixture().replace("t=(0,Cache.c)(18)", "t=(0,Cache.c)(22)")),
+    (app) => fs.writeFileSync(app.primary, primaryFixture().replace("t=(0,Cache.c)(8)", "t=(0,Cache.c)(9)")),
     (app) => {
       applySelectedTextMoreDetails(app.root, enabledContext);
       fs.writeFileSync(app.primary, fs.readFileSync(app.primary, "utf8").replace("onMoreDetails:codexLinuxMoreDetails==null", "onMoreDetails:broken==null"));
