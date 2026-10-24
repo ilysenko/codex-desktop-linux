@@ -107,10 +107,6 @@ function appFixture(t, source = official.KQs) {
 }
 
 const currentShortcutSource = official.KQs
-  .replace(
-    "p=e=>{if(e.target instanceof Element&&e.target,!e.defaultPrevented){",
-    "p=e=>{let target=e.target instanceof Element?e.target:null;if(!e.defaultPrevented){",
-  )
   .replace("Kqt(n,e)&&e.preventDefault()", "(Kqt(n,e))&&(e.preventDefault())");
 
 function withWarnings(callback) {
@@ -233,6 +229,11 @@ test("missing, ambiguous, changed, and partially patched contracts leave assets 
     official.KQs + official.KQs,
     official.KQs.replace("Kqt(n,e)&&e.preventDefault()", "Kqt(n,e)"),
     official.KQs.replace("onKeyDown:p", "onKeyDown:otherHandler"),
+    // The retired pre-26.1021 target guard is no longer accepted.
+    official.KQs.replace(
+      "p=e=>{let target=e.target instanceof Element?e.target:null;if(!e.defaultPrevented){",
+      "p=e=>{if(e.target instanceof Element&&e.target,!e.defaultPrevented){",
+    ),
     official.KQs.replace("id:n,accelerator:", "id:otherCommand,accelerator:"),
     official.KQs + `/*${RUNTIME_MARKER}*/`,
     patched.replace("return withinEditor(event.target)", "return false&&withinEditor(event.target)"),

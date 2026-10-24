@@ -7,7 +7,6 @@ const {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
-  applyLinuxNativeDesktopAppsHandlerPatch,
   matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");
 
@@ -44,13 +43,6 @@ module.exports = [
     order: 20_120,
     ciPolicy: "optional",
     apply: applyLinuxComputerUsePluginGatePatch,
-  }),
-  mainBundlePatch({
-    id: "native-desktop-apps",
-    phase: "main-bundle",
-    order: 20_130,
-    ciPolicy: "optional",
-    apply: applyLinuxNativeDesktopAppsHandlerPatch,
   }),
   webviewAssetPatch({
     id: "ui-availability",

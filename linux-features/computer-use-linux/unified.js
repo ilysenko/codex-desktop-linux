@@ -49,7 +49,7 @@ function lifecycleContract(source, builder, syncSource) {
   const resumeOwner = enclosingFunction(source, resume.index);
   uniqueMatch(source.slice(resumeOwner.start, resumeOwner.end), new RegExp(
     `(?<cached>${ID})=${ID}\\.browserUseTinysky\\?${ID}:null,` +
-    `(?:${ID}=${ID}\\?await ${ID}\\.getAuthenticatedPrincipal\\(\\)\\.catch\\(\\(\\)=>null\\):null,)?` +
+    `${ID}=${ID}\\?await ${ID}\\.getAuthenticatedPrincipal\\(\\)\\.catch\\(\\(\\)=>null\\):null,` +
     `${escapeRegExp(resume.groups.selection)}=\\k<cached>\\?\\.selection\\?\\?await ${ID}\\(`, "g"),
   "expected thread configuration to reuse the cached selection");
   if (sync.groups.context != null && sync.groups.selection !== cached.groups.selection) {
