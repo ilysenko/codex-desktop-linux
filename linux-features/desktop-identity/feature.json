@@ -1,0 +1,9 @@
+{
+  "id": "desktop-identity",
+  "title": "Community Desktop Identity",
+  "description": "Use the ChatGPT Community desktop entry as Electron's desktop name so notifications and child processes resolve the installed Community icon.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

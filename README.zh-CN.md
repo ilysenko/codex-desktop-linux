@@ -250,6 +250,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `community-profile-isolation` | 将 Community 的 Codex/Electron 状态与子进程 CLI 解析和官方 ChatGPT 隔离 | [文档](linux-features/community-profile-isolation/README.md) |
 | `computer-use-linux` | Linux desktop-control UI 与原生 MCP backend | [文档](linux-features/computer-use-linux/README.md) |
 | `copilot-reasoning-effort` | Copilot auth 的 reasoning-effort 默认值 | [文档](linux-features/copilot-reasoning-effort/README.md) |
+| `desktop-identity` | 通知与子进程使用 Community 桌面入口标识，以正确显示图标 | [文档](linux-features/desktop-identity/README.md) |
 | `directory-only-working-tree-watch` | 有界 Watchbound 工作树监听 | [文档](linux-features/directory-only-working-tree-watch/README.md) |
 | `filesystem-root-follow-ups` | 允许工作目录为 `/` 的现有本地任务继续发送消息 | [文档](linux-features/filesystem-root-follow-ups/README.md) |
 | `flatpak-chrome-native-messaging` | 将官方 Chrome 扩展连接到 Flatpak Google Chrome | [文档](linux-features/flatpak-chrome-native-messaging/README.md) |
