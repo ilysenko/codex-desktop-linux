@@ -149,7 +149,13 @@ have audited package builds on amd64 OpenRC and remain disabled by default.
 Their cleanup and device-key store hooks use `flock`, so each declares
 `sys-apps/util-linux` in `gentoo.dependencies.RDEPEND`; a combined build includes
 that runtime dependency only once. No additional bootstrap, Portage build, or
-merge dependencies are introduced. Other repository features remain unsupported
+merge dependencies are introduced. `community-features-in-gui-settings` also
+supports the updater-free ebuild path without adding dependencies or package
+hooks: its catalog is embedded in ASAR and regenerated from the full source
+checkout on manual updates. No separate updater-builder snapshot is needed.
+See the [catalog's Gentoo validation scope](../linux-features/community-features-in-gui-settings/README.md#gentoo)
+for the distinction between packaging checks and live GUI/update acceptance.
+Other repository features remain unsupported
 until separately audited and declared.
 The [remote mobile feature](../linux-features/remote-mobile-control/README.md)
 uses its existing Desktop-owned app-server and declarative cold-start resource.

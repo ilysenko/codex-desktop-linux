@@ -263,8 +263,9 @@ bits are rejected.
 Gentoo support is opt-in per feature and separate from the disabled-by-default
 user configuration. Do not mark a feature supported without its adjacent tests,
 an official-bundle build, and acceptance for the environments it claims.
-`ui-tweaks` and `remote-mobile-control` currently declare Gentoo support; other
-repository features require their own audit and declaration. This framework adds
+`ui-tweaks`, `remote-mobile-control` and `community-features-in-gui-settings`
+currently declare Gentoo support; other repository features require their own
+audit and declaration. This framework adds
 no systemd-specific integration. Native validation uses amd64 OpenRC; Gentoo
 ARM64 and systemd runtime environments have not been tested.
 

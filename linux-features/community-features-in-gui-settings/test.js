@@ -12,7 +12,10 @@ const { buildFeatureTree, renderCommunityFeaturesInGuiSettings } = require("./ru
 const { loadLocaleResources, createTranslator } = require("./i18n.js");
 const { CATALOG_ASSET, CATALOG_NAME, SNAPSHOT_NAME, buildCatalog, validateCatalog,
   readCatalogFromAsar, prepareUpdateBuilderCatalog } = require("./catalog.js");
-const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
+const { loadLinuxFeaturePatchDescriptors, enabledLinuxFeaturePackageHooks,
+  stageEnabledLinuxFeatureInstall } = require("../../scripts/lib/linux-features.js");
+const { gentooFeaturePlan, validateGentooFeatureSnapshot,
+  renderGentooEbuild } = require("../../scripts/lib/gentoo-feature-support.js");
 const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { createPatchReport, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
@@ -828,4 +831,101 @@ test("feature remains disabled by default and enabled descriptors require no oth
   assert.equal(loadLinuxFeaturePatchDescriptors({ featuresConfigPath: config }).some((patch) => patch.featureId === "community-features-in-gui-settings"), false);
   fs.writeFileSync(config, '{"enabled":["community-features-in-gui-settings"]}');
   assert.deepEqual(loadLinuxFeaturePatchDescriptors({ featuresConfigPath: config }).map((patch) => patch.id), ["feature:community-features-in-gui-settings:general-list"]);
+});
+
+test("Gentoo catalog support adds no dependency, hook, or ebuild lifecycle code", (t) => {
+  const root = path.resolve(__dirname, "../.."), id = "community-features-in-gui-settings";
+  const config = path.join(temporary(t), "features.json");
+  const options = { featuresRoot: path.join(root, "linux-features"), featuresConfigPath: config };
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "feature.json"), "utf8"));
+  assert.equal(manifest.defaultEnabled, false);
+  assert.equal(manifest.gentoo.supported, true);
+  fs.writeFileSync(config, JSON.stringify({ enabled: [] }));
+  const disabled = gentooFeaturePlan(options);
+  fs.writeFileSync(config, JSON.stringify({ enabled: [id] }));
+  const enabled = gentooFeaturePlan(options);
+  assert.deepEqual(enabled.enabled, [id]);
+  assert.deepEqual(enabled.dependencies, { bootstrap: [], BDEPEND: [], DEPEND: [], RDEPEND: [], IDEPEND: [] });
+  assert.deepEqual(enabledLinuxFeaturePackageHooks({ ...options, packageFormat: "ebuild" }), []);
+  for (const packageFormat of ["deb", "rpm", "pacman"]) {
+    const hooks = enabledLinuxFeaturePackageHooks({ ...options, packageFormat });
+    assert.equal(hooks.length, 1);
+    assert.equal(hooks[0].path, path.join(__dirname, "package.sh"));
+  }
+  const template = fs.readFileSync(path.join(root, "packaging/gentoo/codex-desktop.ebuild.template"), "utf8");
+  for (const arch of ["amd64", "arm64"]) {
+    assert.equal(renderGentooEbuild(template, enabled, arch, "fixture.tar.xz"),
+      renderGentooEbuild(template, disabled, arch, "fixture.tar.xz"));
+  }
+});
+
+test("Gentoo catalog preflight still rejects the updater and unaudited features", (t) => {
+  const root = path.resolve(__dirname, "../.."), config = path.join(temporary(t), "features.json");
+  fs.writeFileSync(config, '{"enabled":["community-features-in-gui-settings"]}');
+  const run = (updater) => spawnSync("bash", ["scripts/build-gentoo.sh", "--preflight"], {
+    cwd: root, encoding: "utf8",
+    env: { ...process.env, CODEX_LINUX_FEATURES_CONFIG: config, PACKAGE_WITH_UPDATER: updater },
+  });
+  const enabled = run("0");
+  assert.equal(enabled.status, 0, enabled.stderr);
+  const updater = run("1");
+  assert.notEqual(updater.status, 0);
+  assert.match(updater.stderr, /Portage owns native updates/);
+  fs.writeFileSync(config, '{"enabled":["community-features-in-gui-settings","pet-overlay"]}');
+  const unsupported = run("0");
+  assert.notEqual(unsupported.status, 0);
+  assert.match(unsupported.stderr, /does not support.*pet-overlay/);
+});
+
+test("Gentoo source rebuilds refresh the ASAR catalog without persisting a builder snapshot", (t) => {
+  const f = fixture(t), id = "community-features-in-gui-settings", config = path.join(f.dir, "features.json");
+  fs.cpSync(__dirname, f.featureDir, { recursive: true });
+  manifest(f.root, "plain", { gentoo: { supported: true },
+    catalogSubfeatures: [{ id: "option", title: "Option", description: "Test option", settingPath: "tweaks.option.enabled" }],
+    tweaks: { option: { enabled: true } } });
+  const options = { featuresRoot: f.root, featuresConfigPath: config };
+  const context = { feature: { dir: f.featureDir }, featurePatchOptions: options };
+  const build = (revision) => {
+    const enabled = revision === 1 ? [id] : [id, "plain"];
+    fs.writeFileSync(config, JSON.stringify({ enabled, settings: { plain: { tweaks: { option: { enabled: false } } } } }));
+    const app = path.join(f.dir, `build-${revision}`), state = path.join(app, ".codex-linux");
+    fs.mkdirSync(path.join(app, "resources"), { recursive: true });
+    fs.mkdirSync(state, { recursive: true });
+    const catalog = buildCatalog(context);
+    const asar = path.join(app, "resources/app.asar");
+    writeAsar(asar, catalog);
+    fs.writeFileSync(path.join(state, "build-info.json"), JSON.stringify({ linuxFeatures: { enabled } }));
+    const report = { enabledFeatures: enabled, patches: [{ name: `feature:${id}:general-list`,
+      sourceKind: "feature", featureId: id, enforceWhenEnabled: true, status: "applied" }] };
+    const reportPath = path.join(state, "patch-report.json");
+    fs.writeFileSync(reportPath, JSON.stringify(report));
+    stageEnabledLinuxFeatureInstall(app, options);
+    assert.deepEqual(validateGentooFeatureSnapshot(app, options).enabled, enabled);
+    const before = fs.readFileSync(asar);
+    assert.equal(prepareUpdateBuilderCatalog(app), false);
+    assert.deepEqual(fs.readFileSync(asar), before);
+    assert.equal(fs.existsSync(path.join(app, "update-builder")), false);
+    assert.equal(fs.existsSync(path.join(f.featureDir, CATALOG_NAME)), false);
+    assert.equal(fs.existsSync(path.join(f.featureDir, SNAPSHOT_NAME)), false);
+    assert.deepEqual(readCatalogFromAsar(asar), catalog);
+    report.patches[0].status = "failed";
+    fs.writeFileSync(reportPath, JSON.stringify(report));
+    assert.throws(() => validateGentooFeatureSnapshot(app, options), /failed enabled features/);
+    report.patches[0].status = "applied";
+    fs.writeFileSync(reportPath, JSON.stringify(report));
+    fs.writeFileSync(config, '{"enabled":[]}');
+    assert.throws(() => validateGentooFeatureSnapshot(app, options), /snapshot.*match/);
+    return catalog;
+  };
+  const first = build(1);
+  manifest(f.root, "alpha", { title: "Updated public description", requires: ["beta"] });
+  manifest(f.root, "new-public");
+  const second = build(2);
+  assert.equal(first.features.some(feature => feature.id === "new-public"), false);
+  assert.equal(second.features.some(feature => feature.id === "new-public"), true);
+  assert.equal(second.features.find(feature => feature.id === "alpha").title, "Updated public description");
+  assert.equal(first.features.find(feature => feature.id === "plain").enabled, false);
+  assert.equal(second.features.find(feature => feature.id === "plain").enabled, true);
+  assert.equal(second.features.find(feature => feature.id === "plain").subfeatures[0].enabled, false);
+  assert.equal(second.features.some(feature => feature.origin === "local"), false);
 });

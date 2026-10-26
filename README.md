@@ -57,18 +57,21 @@ cd codex-desktop-linux
 | Fedora | `make bootstrap-native` | Builds and installs an RPM |
 | openSUSE | `make bootstrap-native` | Builds and installs an RPM |
 | Arch, Manjaro, EndeavourOS | `make bootstrap-native` | Builds and installs a pacman package |
-| Gentoo | `make bootstrap-native` | Builds a local ebuild and installs through Portage; supports `ui-tweaks` and `remote-mobile-control`, no updater |
+| Gentoo | `make bootstrap-native` | Builds a local ebuild and installs through Portage; audited features only, no updater |
 | NixOS or another Nix system | `nix run github:ilysenko/codex-desktop-linux` | Builds and runs the flake output; see [Nix](docs/nix.md) |
 | Atomic desktops or another distribution | `make build-app && make appimage` | Produces a local AppImage without the native updater |
 
 Gentoo's application merge ignores `EMERGE_DEFAULT_OPTS` to install through the
 generated ebuild rather than reuse a binary package. Global Portage settings are unchanged.
 Gentoo has a phase-aware dependency and package-resource framework for audited
-features. `ui-tweaks` and `remote-mobile-control` are supported and remain
+features. `ui-tweaks`, `remote-mobile-control` and
+`community-features-in-gui-settings` are supported and remain
 disabled by default; other repository features require their own support
 declarations. Remote mobile control uses the existing Desktop-owned app-server;
-the ebuild does not install or enable a remote-control service. See the
-[Gentoo feature contract](docs/linux-features-architecture.md#gentoo-feature-contract).
+the ebuild does not install or enable a remote-control service. The read-only
+community catalog is embedded in ASAR and needs no extra Gentoo dependency or
+updater snapshot; see its [Gentoo scope](linux-features/community-features-in-gui-settings/README.md#gentoo)
+and the [Gentoo feature contract](docs/linux-features-architecture.md#gentoo-feature-contract).
 Gentoo's local ebuild path has been tested on OpenRC; a Gentoo systemd
 environment has not been tested. See [Gentoo validation scope](docs/native-setup.md#gentoo-local-ebuild).
 

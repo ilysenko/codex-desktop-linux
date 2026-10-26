@@ -53,15 +53,17 @@ cd codex-desktop-linux
 | Fedora | `make bootstrap-native` | 构建并安装 RPM |
 | openSUSE | `make bootstrap-native` | 构建并安装 RPM |
 | Arch、Manjaro、EndeavourOS | `make bootstrap-native` | 构建并安装 pacman 软件包 |
-| Gentoo | `make bootstrap-native` | 构建本地 ebuild 并通过 Portage 安装；支持 `ui-tweaks` 和 `remote-mobile-control`，不含更新器 |
+| Gentoo | `make bootstrap-native` | 构建本地 ebuild 并通过 Portage 安装；仅支持已审计的功能，不含更新器 |
 | NixOS 或其他 Nix 系统 | `nix run github:ilysenko/codex-desktop-linux` | 构建并运行 flake；参阅 [Nix](docs/nix.md) |
 | Atomic 桌面或其他发行版 | `make build-app && make appimage` | 生成不含原生更新器的本地 AppImage |
 
 Gentoo 的应用合并会忽略 `EMERGE_DEFAULT_OPTS`，从生成的 ebuild 安装载荷，而非复用
 二进制包缓存；不会修改全局 Portage 配置。
-Gentoo 已提供分阶段依赖和包资源框架；现已支持 `ui-tweaks` 和
-`remote-mobile-control`，且仍默认关闭。手机远程控制沿用由 Desktop 管理的
+Gentoo 已提供分阶段依赖和包资源框架；现已支持 `ui-tweaks`、
+`remote-mobile-control` 和 `community-features-in-gui-settings`，且仍默认关闭。手机远程控制沿用由 Desktop 管理的
 app-server；ebuild 不安装或启用远程控制服务。
+只读社区功能目录嵌入 ASAR，无需额外 Gentoo 依赖或更新构建器快照；
+打包验证与实机 GUI 验收的区别见[目录功能的 Gentoo 说明](linux-features/community-features-in-gui-settings/README.md#gentoo)。
 其他仓库功能需单独审查并声明支持。字段约定见[Gentoo 功能契约](docs/linux-features-architecture.md#gentoo-feature-contract)。
 Gentoo 本地 ebuild 安装路径已在 OpenRC 环境测试，尚未测试 Gentoo systemd
 环境；验证范围见[Gentoo 原生安装说明](docs/native-setup.md#gentoo-local-ebuild)。

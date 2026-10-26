@@ -3,6 +3,9 @@
   "title": "Community Features in GUI Settings",
   "description": "Show a read-only community feature dependency tree with build status in Settings > General.",
   "defaultEnabled": false,
+  "gentoo": {
+    "supported": true
+  },
   "entrypoints": {
     "patchDescriptors": "./patch.js"
   },

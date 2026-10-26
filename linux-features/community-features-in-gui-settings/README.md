@@ -36,6 +36,38 @@ make install-native
 The feature is disabled in committed defaults. Removing its ID and rebuilding
 removes the section. It creates no user data and needs no cleanup.
 
+### Gentoo
+
+Gentoo uses the existing `make bootstrap-native` / `make install-native` path
+with `PACKAGE_WITH_UPDATER=0`. This feature adds no bootstrap, Portage build,
+runtime or merge dependencies, no launcher hook, and no OpenRC/systemd service.
+Its Node.js code runs only in the regular-user builder, which already needs
+Node.js for ASAR patching; the installed view runs inside upstream Electron.
+
+The catalog is embedded in `resources/app.asar` and Portage installs that accepted
+ASAR unchanged. Gentoo has no minimal update-builder, so the deb/RPM/pacman
+snapshot hook is deliberately **not** registered for `ebuild`. It would have
+nothing to preserve and does not justify a Node.js runtime dependency.
+`make update-native` fast-forwards the source checkout and rebuilds the catalog
+from that checkout's manifests and current feature configuration before
+repackaging/reinstalling through Portage. No catalog snapshot or feature source
+needs to be persisted outside the ASAR for this manual update path. This differs
+from the updater's partial source tree described below.
+
+Validation on amd64 OpenRC includes a signed official-bundle build with this
+feature alone, plus a real Portage installation and same-version remerge in an
+isolated ROOT. The second full-source build enabled UI Tweaks and its custom-font
+subfeature; the installed ASAR remained byte-identical to the accepted build and
+the embedded catalog reflected the new selection. The empty test ROOT used
+`--nodeps`, so its expected unresolved-soname warnings are not a dependency-closure
+audit or evidence of a fresh Gentoo installation working.
+
+A temporary native Wayland launch of the rebuilt application was checked by the
+user in Settings → General: the catalog, installed states and font subfeature
+were visible. This did not replace the host package or local feature choices.
+Keyboard navigation, theme switching, a host-root upgrade, Gentoo ARM64 and
+systemd runtime acceptance are not claimed by these checks.
+
 ## UI and data
 
 The feature reuses the upstream section/header/content, row layout, secondary
@@ -226,3 +258,9 @@ feature alone against the current signed stable official bundle. On the built
 app, open **Settings → General**, expand/collapse branches, select features,
 and check dark/light themes and keyboard navigation. No feature selection changes
 when browsing.
+
+Gentoo regressions additionally cover default-off selection, empty dependency
+phases, unchanged amd64/arm64 ebuilds and other native hooks, the updater and
+unaudited-feature guards, and full-source catalog refresh without a builder
+snapshot. The fixture tests do not perform a host Portage merge or live GUI
+interaction.
