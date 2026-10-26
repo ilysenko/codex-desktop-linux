@@ -11,6 +11,7 @@
     "hide": "收起",
     "enabled": "已安装",
     "available": "未安装",
+    "subfeatureStatus": "{enabled}/{total} 已安装",
     "summary": "本次构建安装 {enabled} 项 · 支持 {total} 项",
     "note": "依赖功能需要父项，子功能归属于父项。子功能分别计数，分组父项不再重复计数。已安装表示包含在本次构建中，不代表运行状态。",
     "families": "有依赖关系",

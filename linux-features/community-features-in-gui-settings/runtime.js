@@ -66,12 +66,19 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
     width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor",
     strokeWidth: 1.2, "aria-hidden": true, style: { flexShrink: 0 },
   }, h("path", { d: folder ? "M1.5 4V3A1 1 0 0 1 2.5 2h4l1.5 2h5.5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" : "M3 1.5h6l4 4v9H3Zm6 0v4h4" }));
-  const status = (feature) => feature.enabled === null ? words.missing : feature.enabled ? words.enabled : words.available;
-  const statusLabel = (feature) => h("span", {
-    className: "text-xs text-secondary",
-    style: { flexShrink: 0, fontWeight: feature.enabled ? 600 : 400,
-      color: feature.enabled ? "var(--color-text-success)" : undefined },
-  }, status(feature));
+  const installedCount = (feature) => !feature.enabled ? 0 : feature.subfeatures?.length
+    ? feature.subfeatures.filter(item => item.enabled).length : 1;
+  const status = (feature) => feature.enabled === null ? words.missing : feature.subfeatures?.length
+    ? format("subfeatureStatus", { enabled: installedCount(feature), total: feature.subfeatures.length })
+    : feature.enabled ? words.enabled : words.available;
+  const statusLabel = (feature) => {
+    const installed = installedCount(feature) > 0;
+    return h("span", {
+      className: "text-xs text-secondary",
+      style: { flexShrink: 0, fontWeight: installed ? 600 : 400,
+        color: installed ? "var(--color-text-success)" : undefined },
+    }, status(feature));
+  };
   const renderNode = ({ id, key, parent, level, ancestors = [], collection, ids, count }) => {
     const feature = id ? tree.nodes.get(id) : null, cycle = id != null && ancestors.includes(id);
     const children = ids ?? (cycle ? [] : tree.children.get(id));
@@ -100,7 +107,6 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
     icon(hasChildren || !feature),
     h("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere", fontWeight: feature ? 400 : 600 }, title: feature?.description }, label),
     !feature && h("span", { className: "text-xs text-secondary" }, String(count ?? ids.length)),
-    feature?.subfeatures?.length > 0 && h("span", { className: "text-xs text-secondary" }, String(feature.subfeatures.length)),
     feature?.kind === "subfeature" && h("span", { className: "text-xs text-secondary" }, words.subfeature),
     feature?.requires.length > 1 && h("span", { className: "text-xs text-secondary" }, words.multiple),
     cycle && h("span", { className: "text-xs text-secondary" }, words.cycle),

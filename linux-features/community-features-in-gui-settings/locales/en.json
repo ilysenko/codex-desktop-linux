@@ -6,6 +6,7 @@
     "hide": "Hide",
     "enabled": "Installed",
     "available": "Not installed",
+    "subfeatureStatus": "{enabled}/{total} installed",
     "summary": "{enabled} installed in this build · {total} supported",
     "note": "Dependency children require their parent; subfeatures belong to their parent. Each subfeature counts once; its grouping parent is not counted again. Installed means included in this build, not runtime health.",
     "families": "Dependency groups",

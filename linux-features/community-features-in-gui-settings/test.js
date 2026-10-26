@@ -276,6 +276,53 @@ test("UI Tweaks exposes nine independently counted modules with parent-gated def
   assert.ok(JSON.stringify(detail.props.description).includes("ui-tweaks/dock-icon"));
 });
 
+test("subfeature parents show zero, partial and complete installation counts while collapsed and selected", (t) => {
+  const f = uiTweaksFixture(t);
+  const original = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "ui-tweaks"] });
+  for (const [locale, suffix, installedWord, absentWord, punctuation] of [
+    ["zh-CN", "已安装", "已安装", "未安装", "，"],
+    ["en-US", "installed", "Installed", "Not installed", ", "],
+    ["de-DE", "installed", "Installed", "Not installed", ", "],
+  ]) for (const [enabled, count] of [[false, 0], [true, 0], [true, 1], [true, 9]]) {
+    const catalog = structuredClone(original), parent = catalog.features.find(feature => feature.id === "ui-tweaks");
+    parent.enabled = enabled;
+    for (const subfeature of parent.subfeatures) {
+      subfeature.enabled = count === 9 || count === 1 && subfeature.id === "custom-font-input";
+    }
+    const before = JSON.stringify(catalog), expected = `${count}/9 ${suffix}`;
+    const render = uiHarness(catalog, locale);
+    summaryRow(render()).props.control.props.onClick();
+    item(render(), "independent").children[0].props.onClick(clickEvent());
+    const row = item(render(), "independent/ui-tweaks"), status = row.children[0].children.at(-1);
+    assert.equal(row.props["aria-expanded"], false);
+    assert.equal(status.children[0], expected, `${locale}: ${enabled}/${count}`);
+    assert.equal(row.props["aria-label"], `UI Tweaks${punctuation}${expected}`);
+    assert.equal(status.props.style.color, count > 0 ? "var(--color-text-success)" : undefined);
+    assert.equal(row.children[0].children.some(node => node?.type === "span" && node.children[0] === "9"), false);
+    row.children[0].props.onClick(clickEvent());
+    assert.equal(collect(render(), node => node.type === "native-row").at(-1).props.control.children[0], expected);
+    row.children[0].children[0].props.onClick(clickEvent());
+    const font = item(render(), "independent/ui-tweaks/ui-tweaks/custom-font-input");
+    assert.equal(font.children[0].children.at(-1).children[0], count > 0 ? installedWord : absentWord);
+    assert.equal(buildFeatureTree(catalog).enabled, count + 2);
+    assert.equal(buildFeatureTree(catalog).total, 13);
+    assert.equal(JSON.stringify(catalog), before);
+  }
+});
+
+test("a parent's subfeature status excludes dependent features and leaves their leaf statuses unchanged", (t) => {
+  const f = uiTweaksFixture(t);
+  manifest(f.root, "dependent", { requires: ["ui-tweaks"] });
+  const catalog = buildCatalog({ ...f.context,
+    enabledFeatureIds: ["community-features-in-gui-settings", "ui-tweaks", "dependent"] });
+  const parent = catalog.features.find(feature => feature.id === "ui-tweaks");
+  for (const subfeature of parent.subfeatures) subfeature.enabled = subfeature.id === "custom-font-input";
+  const render = uiHarness(catalog);
+  summaryRow(render()).props.control.props.onClick();
+  assert.equal(item(render(), "dependencies/ui-tweaks").children[0].children.at(-1).children[0], "1/9 已安装");
+  assert.equal(item(render(), "dependencies/ui-tweaks/dependent").children[0].children.at(-1).children[0], "已安装");
+});
+
 test("public subfeature metadata survives enabled-only update builders and never reports a child of a disabled parent installed", (t) => {
   const f = uiTweaksFixture(t);
   const original = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "ui-tweaks"] });
@@ -438,6 +485,7 @@ test("a new resource file adds a locale and feature translations with per-messag
   assert.equal(language.locale, "fr");
   assert.equal(language.messages.show, "Show");
   assert.equal(language.format("summary", { enabled: 1, total: 4 }), "4 disponibles · 1 activées");
+  assert.equal(language.format("subfeatureStatus", { enabled: 1, total: 9 }), "1/9 installed");
   const catalog = buildCatalog(fixture(t).context), original = JSON.stringify(catalog);
   const render = uiHarness(catalog, "fr-CA", "linux", resources);
   assert.equal(collect(render(), (node) => node.type === "native-header")[0].props.title, "Fonctionnalités communautaires");

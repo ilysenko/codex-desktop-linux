@@ -4,8 +4,12 @@ The optional `community-features-in-gui-settings` feature adds a separate
 **Community features** section at the top of **Settings → General**, above the
 existing General section. Expand its catalog to browse an explorer-style tree.
 A prerequisite is the parent of its dependents; internal subfeatures appear
-under their owning feature and are marked **Subfeature**. Each item
-has its own **Installed** / **Not installed** build status. Installed is green
+under their owning feature and are marked **Subfeature**. Leaf items
+have their own **Installed** / **Not installed** build status. A feature with
+subfeatures instead shows its installed/total count, such as **1/9 installed**,
+in both the collapsed tree row and selected detail row. This counts only its own
+subfeatures, not dependent features; **0/9**, **1/9** and **9/9** distinguish none,
+some and all installed. Zero-installed parents are not marked green. Installed is green
 in both light and dark themes. Independent features
 start in a collapsed folder. Select a feature to see its manifest description,
 ID, requirements and conflicts below the tree. All public repository
