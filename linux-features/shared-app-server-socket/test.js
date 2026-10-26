@@ -1803,7 +1803,6 @@ async function connectPatchedBundle(source = syntheticBundle(), {
       ws.on("upgrade", () => { this.sawUpgrade = true; });
       this.ws = ws;
       ws.on("message", data => this.handler?.(data));
-      ws.on("close", () => { this.disposed = true; });
     }
     setMessageHandler(handler) { this.handler = handler; }
     send(data) { this.ws.send(data); }
@@ -1834,7 +1833,8 @@ async function connectPatchedBundle(source = syntheticBundle(), {
   assert.notEqual(patched, source);
   const injected = patched.slice(patched.indexOf("class CodexLinuxSharedAppServerSocketTransport"), patched.indexOf("function b5(e)"));
   const context = {
-    n: { kn: WebSocket, Codec, On: Adapter, Dn(_ws, options) {
+    n: { kn: WebSocket, Codec, On: Adapter, Dn(ws, options) {
+      assert.equal(ws, socket, "keepalive must use the connection WebSocket");
       diagnostics.keepAliveStarted = true;
       pongTimeout = options.onPongTimeout;
     } },
@@ -1871,7 +1871,6 @@ test("patched current bundle returns an open connection adapter with codec messa
   const event = await closed;
   assert.equal(event.code, 1000);
   assert.equal(connection.readyState, 3);
-  assert.equal(connection.codec.disposed, true);
   assert.equal(stream.destroyed, true);
 });
 
