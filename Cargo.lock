@@ -488,7 +488,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "codex-computer-use-linux"
-version = "0.7.25"
+version = "0.7.27"
 dependencies = [
  "anyhow",
  "atspi",

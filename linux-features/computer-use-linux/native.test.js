@@ -82,7 +82,7 @@ test('trusted service validates requests before backend launch', async () => {
   await assert.rejects(handleRpc({ method: 'drag', app: 'editor', params: {} }), /not supported/);
   await assert.rejects(handleRpc({ method: 'click', app: 'editor', params: { window_id: 22 } }), /parameter/);
   for (const params of [
-    {max_nodes:0}, {max_nodes:2001}, {max_depth:-1}, {max_depth:65},
+    {max_nodes:0}, {max_nodes:10001}, {max_depth:-1}, {max_depth:65},
     {max_width:0}, {max_height:4097}, {max_bytes:1023}, {max_bytes:4194305},
     {scale:0}, {scale:1.1}, {format:'webp'}, {quality:0}, {quality:96},
   ]) {
@@ -162,6 +162,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if(r.method === 'notifications/initialized') { initialized=true; return; }
   if(!initialized) process.exit(9);
   const {name,arguments:a} = r.params;
+  // The host pages a tree from the backend's cache; that read is not a desktop call.
+  if(name === 'get_tree_page') return reply({structuredContent:{nodes:[],offset:a.offset,next_offset:null,node_count:1,message:''},content:[]});
   require('node:fs').appendFileSync(${JSON.stringify(log)}, line+'\\n');
   if (${capture}) {
     if(name === 'get_app_state') return reply({content:[{type:'text',text:JSON.stringify({accessibility_tree:[{name:'Document'}],window_context:{focused},...(a.include_screenshot ? {screenshot_error:'requested window is not focused'} : {})})}]});
@@ -451,3 +453,92 @@ for (const captureMalformed of ['missing-image', 'uncropped']) {
     await assert.rejects(service.handleRpc({method:'screenshot',app:'editor'}), /targeted screenshot/);
   });
 }
+
+// Like the real backend: a large tree comes back as its leading nodes, the whole tree
+// stays cached, and get_tree_page pages it. Each snapshot replaces the cache.
+async function spillFixture(t, { nodes = 500, spill = true, nameBytes = 20, treeBudgetBytes } = {}) {
+  const { mkdtemp, writeFile: write, rm: remove } = await import('node:fs/promises');
+  const { tmpdir: tmp } = await import('node:os');
+  const { join: joinPath } = await import('node:path');
+  const dir = await mkdtemp(joinPath(tmp(), 'cul-spill-native-'));
+  const script = joinPath(dir, 'backend.cjs');
+  await write(script, `
+let cache = [], sequence = 0;
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  const r = JSON.parse(line);
+  const reply = result => process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n');
+  if (r.method === 'initialize') return reply({protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}});
+  if (r.method === 'notifications/initialized') return;
+  const {name, arguments: a} = r.params;
+  if (name === 'get_tree_page') {
+    const start = Math.min(a.offset ?? 0, cache.length), end = Math.min(start + 100, cache.length);
+    return reply({structuredContent:{nodes:cache.slice(start, end), offset:start, next_offset:end < cache.length ? end : null, node_count:cache.length, message:''}, content:[]});
+  }
+  const call = sequence++;
+  cache = Array.from({length:${nodes}}, (_, index) => ({index, role:'push button', name:'Node '+index+' of call '+call+' '+'x'.repeat(${nameBytes})}));
+  // A failed spill write: no accessibility_tree_spill, only the leading nodes.
+  reply({structuredContent:{accessibility_tree:cache.slice(0, 3), accessibility_tree_truncated:false,
+    ...(${spill} ? {accessibility_tree_spill:{path:'/run/user/1000/codex-computer-use-linux/trees/tree-1-2-'+call+'.json', node_count:cache.length, bytes:1, inline_node_count:3}} : {})}, content:[]});
+});
+`);
+  const { createNativeBackendService } = await import('./native-backend-service.mjs');
+  const service = createNativeBackendService({ command: process.execPath, args: [script], timeoutMs: 5000, ...(treeBudgetBytes ? {treeBudgetBytes} : {}) });
+  t.after(async () => { service.shutdown(); await remove(dir, {recursive:true, force:true}); });
+  return service;
+}
+
+test('a large tree reaches the agent whole, and concurrent snapshots each get their own', async t => {
+  const service = await spillFixture(t);
+  const state = await service.handleRpc({method:'get_app_state', app:'editor', params:{max_nodes:10000}});
+  assert.equal(state.accessibility_tree.length, 500);
+  assert.equal(state.accessibility_tree.at(-1).index, 499);
+  assert.match(state.accessibility_tree.at(-1).name, /^Node 499 of call 0 /);
+  assert.equal(state.accessibility_tree_spill, undefined);
+  assert.equal(state.accessibility_tree_note, undefined);
+  // Each snapshot replaces the cache; calls are serialized, so each pages its own.
+  const [a, b] = await Promise.all([
+    service.handleRpc({method:'get_app_state', app:'editor', params:{}}),
+    service.handleRpc({method:'get_app_state', app:'editor', params:{}}),
+  ]);
+  assert.ok(a.accessibility_tree.every(node => node.name.includes('of call 1 ')));
+  assert.ok(b.accessibility_tree.every(node => node.name.includes('of call 2 ')));
+  assert.equal(a.accessibility_tree.length, 500);
+});
+
+test('a tree the backend could not spill to a file is still returned whole', async t => {
+  const service = await spillFixture(t, {spill:false});
+  const state = await service.handleRpc({method:'get_app_state', app:'editor', params:{}});
+  assert.equal(state.accessibility_tree.length, 500);
+});
+
+test('a tree larger than the bridge comes back partial and says so', async t => {
+  const service = await spillFixture(t, {nameBytes:1000, treeBudgetBytes:200_000});
+  const state = await service.handleRpc({method:'get_app_state', app:'editor', params:{}});
+  assert.ok(state.accessibility_tree.length > 3 && state.accessibility_tree.length < 500, String(state.accessibility_tree.length));
+  assert.ok(Buffer.byteLength(JSON.stringify(state)) <= 200_000 + 4096);
+  assert.equal(state.accessibility_tree_truncated, true);
+  assert.match(state.accessibility_tree_note, new RegExp(`${state.accessibility_tree.length} of 500 nodes`));
+});
+
+test('the native client passes the partial-tree marker to the agent', async () => {
+  const { installLinuxComputerUse } = await import('./native-client.mjs');
+  const original = globalThis.nodeRepl;
+  const writes = [];
+  const response = {accessibility_tree:[{index:0,role:'frame',states:[],actions:[]}], window_context:{focused:true},
+    accessibility_tree_truncated:true, accessibility_tree_note:'Partial tree: 1 of 9 nodes fit the host bridge.'};
+  globalThis.nodeRepl = { write:value=>writes.push(value), rpc:async () => response };
+  try {
+    const app = await installLinuxComputerUse({}).getApp('editor');
+    const state = JSON.parse(await app.getAXState({emit:false, disableDiffing:true}));
+    assert.equal(state.accessibility_tree_truncated, true);
+    assert.match(state.accessibility_tree_note, /1 of 9 nodes/);
+  } finally {
+    globalThis.nodeRepl = original;
+  }
+});
+
+test('native max_nodes accepts the backend cap of 10000', async () => {
+  const { validateNativeRequest } = await import('./native-protocol.mjs');
+  assert.doesNotThrow(() => validateNativeRequest({method:'get_app_state', params:{max_nodes:10000}}));
+  assert.throws(() => validateNativeRequest({method:'get_app_state', params:{max_nodes:10001}}), /Invalid native max_nodes/);
+});

@@ -100,6 +100,8 @@ export function installLinuxComputerUse(cua) {
       const accessibilityState = {
         accessibility_tree: compactTree,
         window_context: result.window_context,
+        accessibility_tree_truncated: result.accessibility_tree_truncated,
+        accessibility_tree_note: result.accessibility_tree_note,
         accessibility_error: result.accessibility_error,
         window_error: result.window_error,
       };
@@ -114,6 +116,8 @@ export function installLinuxComputerUse(cua) {
       return JSON.stringify({
         accessibility_tree: options?.compact === false ? result.accessibility_tree : compactTree,
         window_context: result.window_context,
+        accessibility_tree_truncated: result.accessibility_tree_truncated,
+        accessibility_tree_note: result.accessibility_tree_note,
         coordinates: { accessibility_bounds: 'screen', input: 'window-relative screenshot capture coordinates', guidance: 'Do not pass accessibility bounds directly to click or scroll; display scaling can differ. Use screenshot coordinate_width and coordinate_height.' },
         accessibility_error: result.accessibility_error,
         window_error: result.window_error,

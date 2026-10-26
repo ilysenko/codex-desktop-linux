@@ -10,6 +10,13 @@ triggers:
 - Desktop cold-start/after-exit scan hooks;
 - a Codex `SessionStart` hook merged into `CODEX_HOME/hooks.json`.
 
+The `SessionStart` command does not embed an AppImage mount or Nix store path,
+so an approved hook stays approved across launches and updates. It finds the
+reaper through `CODEX_LINUX_APP_DIR`, which the running app passes to Codex.
+deb, RPM, and pacman installs also keep their install directory as a fallback
+for Codex sessions started outside the app; AppImage and Nix builds have no
+such fallback, so those sessions skip the hook.
+
 These triggers schedule short delayed cleanup passes for configured or
 app-scoped helper roots that were adopted by init or user systemd after their
 Codex owner exited. Live Codex parents are inspected only to discover their MCP

@@ -40,7 +40,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.25. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.27. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -96,7 +96,10 @@ app's `get_app_state` snapshot and ask for a snapshot of the target. On GNOME
 Wayland with a scaled monitor, portal pointer input multiplies the stream point
 by the monitor scale, matching mutter's logical layout mode. After targeted
 typing, focus feedback reports an incomplete search or an app without an AT-SPI
-tree instead of a false "no focused element" warning.
+tree instead of a false "no focused element" warning. Chromium can mark a
+`document web` focused alongside the ChatGPT composer; the focus probe keeps
+searching that document and reports the composer, and a non-editable focus no
+longer claims the typed text went nowhere.
 
 On Wayland, portal `press_key` sends modifiers and named keys as keysyms
 resolved by the compositor's active keymap, so Ctrl shortcuts still work when
@@ -124,9 +127,17 @@ case-insensitive and accepts a full reverse-DNS desktop ID or its final
 dot-separated segment. Exact matches take precedence, ambiguous aliases are
 rejected, and an unresolved explicit `app_id` returns an empty scoped tree
 rather than falling back to the desktop. `accessibility_tree_truncated=true`
-means the node, depth, or read budget stopped traversal with unread elements
-left; recover by scoping to a narrower target and raising `max_nodes` or
-`max_depth` (hard caps 2000 and 64), not by lowering `max_nodes`.
+means the node, depth, read, or time budget stopped traversal with unread
+elements left; recover by scoping to a narrower target and raising `max_nodes`
+or `max_depth` (hard caps 10000 and 64), not by lowering `max_nodes`. A large
+page in the embedded browser can use up the default budget before the
+composer. A snapshot stops reading at 10 seconds and returns what it read,
+marked truncated. When a result would pass 32,000 bytes, the tree comes back
+as its leading nodes plus `accessibility_tree_spill`: a private JSON file
+(under `$XDG_RUNTIME_DIR/codex-computer-use-linux/trees`, or `~/.cache`)
+holding the whole tree with the same `element_index` values. `get_tree_page`
+pages through the same cached tree for hosts that cannot read files. The file
+lasts until the next snapshot or until the server exits.
 
 Plain left element/selector clicks prefer a native AT-SPI `click`, `press`, or
 `toggle` action, resolved by name against the live action list. Entry `activate`

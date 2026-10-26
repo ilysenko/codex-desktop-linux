@@ -227,6 +227,119 @@ test("session hook merge preserves existing SessionStart hook and deduplicates r
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+function reaperHookCommand(codexHome) {
+  const hooks = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
+  const commands = hooks.hooks.SessionStart.flatMap((entry) => entry.hooks ?? [])
+    .map((hook) => hook.command)
+    .filter((command) => command.includes("codex-mcp-helper-reaper-session"));
+  assert.equal(commands.length, 1);
+  return commands[0];
+}
+
+function writeLoggingReaper(appDir) {
+  writeExecutable(
+    path.join(appDir, ".codex-linux", "mcp-helper-reaper", "codex-mcp-helper-reaper"),
+    "#!/usr/bin/env bash\nprintf '%s %s\\n' \"$0\" \"$*\" >> \"$CODEX_MCP_HELPER_REAPER_TEST_LOG\"\n",
+  );
+}
+
+test("session hook command stays stable across AppImage mount paths", async () => {
+  const tempDir = makeTempDir("codex-mcp-helper-reaper-appimage-");
+  const codexHome = path.join(tempDir, "codex-home");
+  const mountA = path.join(tempDir, ".mount_chatgptAAAAAA");
+  const mountB = path.join(tempDir, ".mount_chatgptBBBBBB");
+  const appDirA = path.join(mountA, "opt", "codex-desktop");
+  const appDirB = path.join(mountB, "opt", "codex-desktop");
+  const callLog = path.join(tempDir, "calls.log");
+  writeLoggingReaper(appDirA);
+  writeLoggingReaper(appDirB);
+
+  run("bash", [INSTALL_SESSION_HOOK], {
+    env: { CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDirA, APPDIR: mountA },
+  });
+  const firstCommand = reaperHookCommand(codexHome);
+  run("bash", [INSTALL_SESSION_HOOK], {
+    env: { CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDirB, APPDIR: `${mountB}/` },
+  });
+  const secondCommand = reaperHookCommand(codexHome);
+
+  assert.equal(secondCommand, firstCommand);
+  assert.doesNotMatch(secondCommand, /\.mount_/);
+
+  // Outside the app the temporary mount is gone, so the hook does nothing.
+  run("sh", ["-c", secondCommand], {
+    env: { CODEX_LINUX_APP_DIR: "", CODEX_MCP_HELPER_REAPER_TEST_LOG: callLog },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(fs.existsSync(callLog), false);
+
+  // Inside the app the hook follows the current mount.
+  run("sh", ["-c", secondCommand], {
+    env: {
+      CODEX_LINUX_APP_DIR: appDirB,
+      CODEX_MCP_HELPER_REAPER_TEST_LOG: callLog,
+      CODEX_MCP_HELPER_REAPER_DELAY: "0",
+    },
+  });
+  const calls = await waitForFileContent(callLog, (content) => content.includes("--quiet"));
+  assert.equal(calls.trim().split("\n").length, 1);
+  assert.ok(calls.startsWith(`${appDirB}/.codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper `));
+  assert.ok(calls.includes(`--app-dir ${appDirB} `));
+  assert.match(calls, /--codex-parent \d+ --include-orphans/);
+
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("session hook command has no Nix store fallback", () => {
+  const tempDir = makeTempDir("codex-mcp-helper-reaper-nix-");
+  const codexHome = path.join(tempDir, "codex-home");
+  const appDir = path.join(tempDir, "opt", "codex-desktop");
+  writeLoggingReaper(appDir);
+
+  // The installer only needs an executable reaper at the given app dir; the
+  // fallback decision depends on the path prefix alone.
+  const storeApp = "/nix/store/0000000000000000000000000000000a-codex-desktop/opt/codex-desktop";
+  const shim = path.join(tempDir, "install-session-hook.sh");
+  fs.writeFileSync(
+    shim,
+    fs.readFileSync(INSTALL_SESSION_HOOK, "utf8").replace(
+      'reaper="$app_dir/.codex-linux',
+      `reaper=${JSON.stringify(appDir)}"/.codex-linux`,
+    ),
+  );
+
+  run("bash", [shim], {
+    env: { CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: storeApp, APPDIR: "" },
+  });
+  const command = reaperHookCommand(codexHome);
+  assert.doesNotMatch(command, /\/nix\/store/);
+  assert.match(command, /\|\| codex_mcp_reaper_app=''; /);
+
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("native session hook falls back to its install directory outside the app", async () => {
+  const tempDir = makeTempDir("codex-mcp-helper-reaper-native-");
+  const codexHome = path.join(tempDir, "codex-home");
+  const appDir = path.join(tempDir, "opt", "codex-desktop");
+  const callLog = path.join(tempDir, "calls.log");
+  writeLoggingReaper(appDir);
+
+  run("bash", [INSTALL_SESSION_HOOK], {
+    env: { CODEX_HOME: codexHome, CODEX_LINUX_APP_DIR: appDir, APPDIR: "" },
+  });
+  const command = reaperHookCommand(codexHome);
+
+  run("sh", ["-c", command], {
+    env: { CODEX_LINUX_APP_DIR: "", CODEX_MCP_HELPER_REAPER_TEST_LOG: callLog },
+  });
+  const calls = await waitForFileContent(callLog, (content) => content.includes("--quiet"));
+  assert.ok(calls.startsWith(`${appDir}/.codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper `));
+  assert.ok(calls.includes(`--app-dir ${appDir} `));
+
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
 test("cold-start hook launches a short all-parent scan", async () => {
   const tempDir = makeTempDir("codex-mcp-helper-reaper-cold-");
   const appDir = path.join(tempDir, "app");

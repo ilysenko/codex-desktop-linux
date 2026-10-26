@@ -17,7 +17,7 @@ function validateParameters(params) {
     }
   };
   if (params.include_screenshot !== undefined && typeof params.include_screenshot !== 'boolean') throw new Error('Invalid native include_screenshot parameter');
-  integer('max_nodes', 1, 2000);
+  integer('max_nodes', 1, 10000);
   integer('max_depth', 0, 64);
   integer('max_width', 1, 4096);
   integer('max_height', 1, 4096);

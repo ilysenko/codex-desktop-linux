@@ -13,8 +13,25 @@ hooks_file="$codex_home/hooks.json"
 
 mkdir -p "$codex_home"
 
-CODEX_MCP_HELPER_REAPER_APP_DIR="$app_dir" \
-CODEX_MCP_HELPER_REAPER_BINARY="$reaper" \
+# The persisted command must not change between launches, or Codex treats the
+# hook as modified and asks for review again. The running app exports its
+# current location as CODEX_LINUX_APP_DIR, so the hook resolves it at run time.
+# A native install keeps its stable directory as the fallback for sessions
+# started outside the app. An AppImage mount changes on every launch and a Nix
+# store path on every rebuild, so those get none.
+fallback_app_dir="$app_dir"
+appimage_dir="${APPDIR:-}"
+appimage_dir="${appimage_dir%/}"
+if [ -n "$appimage_dir" ]; then
+    case "$app_dir" in
+        "$appimage_dir"|"$appimage_dir"/*) fallback_app_dir="" ;;
+    esac
+fi
+case "$app_dir" in
+    /nix/store/*) fallback_app_dir="" ;;
+esac
+
+CODEX_MCP_HELPER_REAPER_FALLBACK_APP_DIR="$fallback_app_dir" \
 CODEX_MCP_HELPER_REAPER_HOOKS_FILE="$hooks_file" \
 python3 - <<'PY'
 import json
@@ -24,16 +41,21 @@ from pathlib import Path
 
 marker = "codex-mcp-helper-reaper-session"
 hooks_file = Path(os.environ["CODEX_MCP_HELPER_REAPER_HOOKS_FILE"])
-reaper = Path(os.environ["CODEX_MCP_HELPER_REAPER_BINARY"])
-app_dir = Path(os.environ["CODEX_MCP_HELPER_REAPER_APP_DIR"])
+fallback_app_dir = os.environ.get("CODEX_MCP_HELPER_REAPER_FALLBACK_APP_DIR", "")
+reaper_rel = ".codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper"
 
 command = (
+    f'codex_mcp_reaper_app="${{CODEX_LINUX_APP_DIR:-}}"; '
+    f'[ -n "$codex_mcp_reaper_app" ] '
+    f'|| codex_mcp_reaper_app={shlex.quote(fallback_app_dir)}; '
+    f'codex_mcp_reaper="$codex_mcp_reaper_app/{reaper_rel}"; '
     f'if [ "${{CODEX_MCP_HELPER_REAPER_DISABLE:-}}" != "1" ] '
-    f'&& [ -x {shlex.quote(str(reaper))} ]; then '
-    f'{shlex.quote(str(reaper))} '
+    f'&& [ -n "$codex_mcp_reaper_app" ] '
+    f'&& [ -x "$codex_mcp_reaper" ]; then '
+    f'"$codex_mcp_reaper" '
     f'--codex-parent "$PPID" '
     f'--include-orphans '
-    f'--app-dir {shlex.quote(str(app_dir))} '
+    f'--app-dir "$codex_mcp_reaper_app" '
     f'--delay "${{CODEX_MCP_HELPER_REAPER_DELAY:-3}}" '
     f'--passes "${{CODEX_MCP_HELPER_REAPER_PASSES:-3}}" '
     f'--interval "${{CODEX_MCP_HELPER_REAPER_INTERVAL:-2}}" '
