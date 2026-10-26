@@ -1761,7 +1761,12 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
 
 // Distinct codec and connection adapter mirror the current upstream contract.
 // The codec deliberately has no readyState or close method.
-async function connectPatchedBundle(source = syntheticBundle()) {
+async function connectPatchedBundle(source = syntheticBundle(), {
+  bindings = {},
+  handshakeHeaders = { "frame-limit": "32" },
+  afterOpen = () => {},
+  diagnostics = {},
+} = {}) {
   let socket;
   let pongTimeout;
   const stream = new PassThrough();
@@ -1772,9 +1777,17 @@ async function connectPatchedBundle(source = syntheticBundle()) {
       socket = this;
       options.createConnection();
       queueMicrotask(() => {
-        this.emit("upgrade", { headers: { "frame-limit": "32" } });
-        this.readyState = 1;
-        this.emit("open");
+        try {
+          this.emit("upgrade", { headers: handshakeHeaders });
+          this.readyState = 1;
+          this.emit("open");
+          afterOpen(this);
+        } catch (error) {
+          // Keep a broken generated handler from escaping the test runner.
+          // The public connect result must still reject the original error.
+          diagnostics.unhandledError = error;
+          this.terminate();
+        }
       });
     }
     send(data) { this.sent = data; }
@@ -1821,11 +1834,16 @@ async function connectPatchedBundle(source = syntheticBundle()) {
   assert.notEqual(patched, source);
   const injected = patched.slice(patched.indexOf("class CodexLinuxSharedAppServerSocketTransport"), patched.indexOf("function b5(e)"));
   const context = {
-    n: { kn: WebSocket, Codec, On: Adapter, Dn(_ws, options) { pongTimeout = options.onPongTimeout; } },
+    n: { kn: WebSocket, Codec, On: Adapter, Dn(_ws, options) {
+      diagnostics.keepAliveStarted = true;
+      pongTimeout = options.onPongTimeout;
+    } },
     qae: "ws://localhost/rpc", frameLimit: 64, frameHeader: "frame-limit",
     process, require, console, setTimeout, clearTimeout,
   };
   context["n$"] = context.n;
+  Object.assign(context, bindings);
+  diagnostics.stream = stream;
   vm.runInNewContext(`${injected};globalThis.Transport=CodexLinuxSharedAppServerSocketTransport`, context);
   const transport = new context.Transport("/unused/socket", async () => []);
   transport.ensureAuthority = async () => {};
@@ -1872,6 +1890,39 @@ test("patch follows renamed minified bindings containing dollar signs", async ()
   assert.equal(connection.readyState, 1);
   await connection.close(1000, "finished");
 });
+
+test("handoff errors reject the connection before keepalive and release the proxy", async () => {
+  const failure = new Error("codec receive buffer failed");
+  const diagnostics = {};
+  await assert.rejects(
+    connectPatchedBundle(syntheticBundle(), {
+      diagnostics,
+      afterOpen(socket) { socket.emit("error", failure); },
+    }),
+    error => error === failure,
+  );
+  assert.equal(diagnostics.unhandledError, undefined);
+  assert.equal(diagnostics.keepAliveStarted, undefined);
+  assert.equal(diagnostics.stream.destroyed, true);
+});
+
+for (const { label, symbol, value, headers, expectedLimit } of [
+  { label: "default frame limit", symbol: "frameLimit", value: 64, headers: {}, expectedLimit: 64 },
+  { label: "frame header", symbol: "frameHeader", value: "frame-limit", headers: { "frame-limit": "32" }, expectedLimit: 32 },
+]) {
+  test(`generated transport preserves a ${label} binding named like its local socket`, async () => {
+    // Rename native locals first so the upstream fixture itself remains valid.
+    const source = syntheticBundle().replace(/\bt\b/g, "nativeTemp").replaceAll(symbol, "t");
+    const { connection } = await connectPatchedBundle(source, {
+      bindings: { t: value },
+      handshakeHeaders: headers,
+    });
+    assert.equal(connection.readyState, 1);
+    connection.send("x".repeat(expectedLimit));
+    assert.throws(() => connection.send("x".repeat(expectedLimit + 1)), /frame too large/);
+    await connection.close(1000, "finished");
+  });
+}
 
 test("patch rejects ambiguous or disconnected codec and adapter lifecycles", () => {
   const source = syntheticBundle();

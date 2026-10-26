@@ -68,6 +68,67 @@ function findTransportSymbols(source) {
   };
 }
 
+// Serialized into the app bundle. Dependencies are passed by the outer method
+// so minified upstream bindings cannot be captured by this function's locals.
+async function connectSharedSocket({
+  WebSocket, MessageCodec, ConnectionAdapter, keepAlive,
+  url, maximumFrameBytes, maximumFrameHeader,
+}) {
+  await this.ensureAuthority();
+  let proxyStream = null;
+  const socket = new WebSocket(url, {
+    perMessageDeflate: false,
+    createConnection: () => (proxyStream = this.createProxyStream()),
+  });
+  let firstError = null;
+  const recordError = error => { firstError ??= error; };
+  socket.on("error", recordError);
+  socket.once("close", () => {
+    proxyStream?.destroy();
+    socket.off("error", recordError);
+  });
+  try {
+    socket.once("upgrade", response => {
+      const limit = Number(response.headers[maximumFrameHeader]);
+      if (Number.isSafeInteger(limit) && limit > 0) maximumFrameBytes = limit;
+    });
+    const messages = new MessageCodec(socket, false);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => onError(Error("shared app-server websocket open timed out")), 30e3);
+      timer.unref();
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.off("open", onOpen);
+        socket.off("error", onError);
+        socket.off("close", onClose);
+      };
+      const onOpen = () => { cleanup(); resolve(); };
+      const onError = error => { cleanup(); reject(error); };
+      const onClose = () => onError(Error("shared app-server websocket closed before opening"));
+      socket.once("open", onOpen);
+      socket.once("error", onError);
+      socket.once("close", onClose);
+    });
+    // The codec and WebSocket can fail after open but before this continuation.
+    // Keep the recorder until the adapter has installed its own error handler.
+    if (firstError != null) throw firstError;
+    const connection = new ConnectionAdapter(socket, undefined, maximumFrameBytes, messages);
+    socket.off("error", recordError);
+    keepAlive(socket, {
+      onPongTimeout: () => {
+        connection.terminationReason = "pong_timeout";
+        socket.terminate();
+      },
+    });
+    return connection;
+  } catch (error) {
+    proxyStream?.destroy();
+    socket.terminate();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    throw error;
+  }
+}
+
 function sharedTransportClassSource(symbols) {
   return (
     "class CodexLinuxSharedAppServerSocketTransport{" +
@@ -89,7 +150,7 @@ function sharedTransportClassSource(symbols) {
     "async ensureAuthority(){if(this.disposed)throw Error(`shared app-server socket transport is disposed`);if(this.authorityReady)return this.authorityReady;if(this.authority&&this.authority.exitCode==null&&this.authority.signalCode==null){if(this.authorityError)throw this.authorityError;return}let e=this.startAuthority();this.authorityReady=e;try{return await e}finally{this.authorityReady===e&&(this.authorityReady=null)}}" +
     "async startAuthority(){let e=process.env.CODEX_CLI_PATH;if(!e)throw Error(`shared app-server socket requires CODEX_CLI_PATH`);this.authorityError=null;let t=await this.getConfigOverrides();if(this.disposed)throw Error(`shared app-server socket transport was disposed during startup`);if(!Array.isArray(t)||t.some(e=>typeof e!==`string`))throw Error(`shared app-server socket received invalid config overrides`);await this.acquireOwnership();if(this.disposed){this.releaseOwnedPaths(!0);throw Error(`shared app-server socket transport was disposed during startup`)}let n=require(`node:fs`),r;try{r=require(`node:child_process`).spawn(e,[...t.flatMap(e=>[`-c`,e]),`app-server`,`--listen`,`unix://${this.socketPath}`],{env:process.env,stdio:`ignore`}),this.authority=r}catch(e){this.releaseOwnedPaths();throw e}try{this.recordAuthorityIdentity(r),await new Promise((e,t)=>{let i=!1,a,o=()=>{clearTimeout(a),clearTimeout(u),r.off(`error`,s),r.off(`exit`,l),r.off(`close`,l)},c=(n,u)=>{if(i)return;i=!0,o(),n?t(n):e(u)},s=e=>{this.authorityError=e,c(e)},l=()=>c(Error(`shared app-server authority exited before socket creation`)),h=()=>{if(i)return;try{let s=this.readSocketPath(),e=s.identity;if(s.target){if(typeof process.getuid==`function`&&e.uid!==process.getuid())return c(Error(`shared app-server socket has unexpected owner`));this.socketIdentity={dev:e.dev,ino:e.ino};return c(null)}}catch(e){if(e?.code!==`ENOENT`)return c(e)}a=setTimeout(h,100),a.unref?.()},u=setTimeout(()=>c(Error(`shared app-server socket creation timed out`)),1e4);r.once(`error`,s),r.once(`exit`,l),r.once(`close`,l),h(),u.unref?.()}),this.publishAttachedCliRecord(r,e),r.on(`error`,e=>{this.authorityError=e;for(let t of this.proxyStreams)t.destroy(e)}),r.once(`exit`,()=>{this.authority===r&&(this.authority=null,this.releaseOwnedPaths(!0))})}catch(e){this.authority=null;(await this.stopAuthority(r))&&this.releaseOwnedPaths();throw e}}" +
     "createProxyStream(){let c=process.env.CODEX_CLI_PATH;if(!c)throw Error(`shared app-server socket requires CODEX_CLI_PATH`);let e=require(`node:child_process`).spawn(c,[`app-server`,`proxy`,`--sock`,this.socketPath],{env:process.env,stdio:[`pipe`,`pipe`,`pipe`]}),t=e.stdin,n=e.stdout,r=e.stderr;if(t==null||n==null||r==null)throw e.kill(),Error(`shared app-server proxy stdio was unavailable`);let i=``;r.on(`data`,e=>{i=`${i}${e.toString(`utf8`)}`.slice(-4000)});let a=new(require(`node:stream`).Duplex)({read(){n.resume()},write(e,n,r){t.write(e,n,r)},final(e){t.end(),e()},destroy(t,n){e.kill(),n(t)}});Object.assign(a,{setKeepAlive:()=>a,setNoDelay:()=>a,setTimeout:()=>a});let o=e=>a.destroy(e);t.on(`error`,o),n.on(`data`,e=>{a.push(e)||n.pause()}),n.on(`end`,()=>a.push(null)),e.on(`error`,o),e.on(`close`,(e,n)=>{t.removeListener(`error`,o),e===0?a.push(null):a.destroy(Error(`shared app-server proxy exited (${e??n??`unknown`}): ${i.trim()}`))}),this.proxyStreams.add(a),a.once(`close`,()=>this.proxyStreams.delete(a));return a}" +
-    `async connect(){await this.ensureAuthority();let e={current:null},t=new ${symbols.namespace}.${symbols.webSocketClass}(${symbols.webSocketUrl},{perMessageDeflate:!1,createConnection:()=>(e.current=this.createProxyStream(),e.current)});let maximumFrameBytes=${symbols.maximumFrameBytes};t.once(\`upgrade\`,e=>{let t=Number(e.headers[${symbols.maximumFrameHeader}]);Number.isSafeInteger(t)&&t>0&&(maximumFrameBytes=t)});let messages=new ${symbols.namespace}.${symbols.codecClass}(t,!1);t.once(\`close\`,()=>e.current?.destroy());try{await new Promise((n,r)=>{let i=setTimeout(()=>o(Error(\`shared app-server websocket open timed out\`)),3e4);i.unref();let a=()=>{clearTimeout(i),t.off(\`error\`,o),t.off(\`close\`,s)},o=e=>{a(),r(e)},s=()=>o(Error(\`shared app-server websocket closed before opening\`));t.once(\`open\`,()=>{a(),n()}),t.once(\`error\`,o),t.once(\`close\`,s)})}catch(n){e.current?.destroy(),t.terminate(),await new Promise(e=>setTimeout(e,0));throw n}let connection=new ${symbols.namespace}.${symbols.adapterClass}(t,void 0,maximumFrameBytes,messages);${symbols.namespace}.${symbols.keepAlive}(t,{onPongTimeout:()=>{connection.terminationReason=\`pong_timeout\`,t.terminate()}});return connection}}`
+    `connect(){return (${connectSharedSocket.toString()}).call(this,{WebSocket:${symbols.namespace}.${symbols.webSocketClass},MessageCodec:${symbols.namespace}.${symbols.codecClass},ConnectionAdapter:${symbols.namespace}.${symbols.adapterClass},keepAlive:${symbols.namespace}.${symbols.keepAlive},url:${symbols.webSocketUrl},maximumFrameBytes:${symbols.maximumFrameBytes},maximumFrameHeader:${symbols.maximumFrameHeader}})}}`
   );
 }
 
