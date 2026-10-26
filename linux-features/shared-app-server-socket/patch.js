@@ -1,6 +1,7 @@
 "use strict";
 
 const { readSocketPath } = require("./socket-path.js");
+const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
 const IDENT = "[A-Za-z_$][\\w$]*";
 
@@ -16,25 +17,54 @@ function findTransportSymbols(source) {
       classMatches[0].index >= selectionLogIndex) return null;
   const [classMatch] = classMatches;
 
-  const sshClassSource = source.slice(classMatch.index, selectionLogIndex);
-  const webSocketMatch = sshClassSource.match(
-    new RegExp(`new (${IDENT})\\.(${IDENT})\\((${IDENT}),\\{perMessageDeflate:!1,[^}]{0,160}createConnection:`),
-  );
-  if (webSocketMatch == null) return null;
-  const [, namespace, webSocketClass, webSocketUrl] = webSocketMatch;
-  const lifecycleMatch = sshClassSource.match(
-    new RegExp(
-      `let ${IDENT}=new ${namespace}\\.(${IDENT})\\((${IDENT}),[^;]{0,160}\\);[\\s\\S]{0,800}?${namespace}\\.(${IDENT})\\(\\2,\\{onPongTimeout:`,
-    ),
-  );
-  if (lifecycleMatch == null) return null;
+  const sshRegion = source.slice(classMatch.index, selectionLogIndex);
+  const connectMatches = [...sshRegion.matchAll(
+    new RegExp(`async connectToRemoteAppServer\\(${IDENT},${IDENT}\\)\\{`, "g"),
+  )];
+  if (connectMatches.length !== 1) return null;
+  const connectStart = connectMatches[0].index;
+  const connectEnd = findMatchingBrace(sshRegion, sshRegion.indexOf("{", connectStart));
+  if (connectEnd < 0) return null;
+  // Keep injected transports and unrelated methods out of uniqueness checks.
+  const sshClassSource = sshRegion.slice(connectStart, connectEnd + 1);
+  const webSocketMatches = [...sshClassSource.matchAll(
+    new RegExp(`(${IDENT})=new (${IDENT})\\.(${IDENT})\\((${IDENT}),\\{perMessageDeflate:!1,[^}]{0,160}createConnection:`, "g"),
+  )];
+  if (webSocketMatches.length !== 1) return null;
+  const [, socket, namespace, webSocketClass, webSocketUrl] = webSocketMatches[0];
+
+  // Follow the returned connection and its codec, rather than selecting the
+  // first WebSocket wrapper. Upstream constructs the codec before opening and
+  // logs compression between constructing the adapter and starting keepalive.
+  const adapterMatches = [...sshClassSource.matchAll(
+    new RegExp(`let (${IDENT})=new ${escapeRegExp(namespace)}\\.(${IDENT})\\(${escapeRegExp(socket)},void 0,(${IDENT}),(${IDENT})\\);return `, "g"),
+  )];
+  if (adapterMatches.length !== 1) return null;
+  const [, adapter, adapterClass, frameLimit, codec] = adapterMatches[0];
+  const codecMatches = [...sshClassSource.matchAll(
+    new RegExp(`let ${escapeRegExp(codec)}=new ${escapeRegExp(namespace)}\\.(${IDENT})\\(${escapeRegExp(socket)},${IDENT}!=null\\);`, "g"),
+  )];
+  const keepAliveMatches = [...sshClassSource.matchAll(
+    new RegExp(`${escapeRegExp(namespace)}\\.(${IDENT})\\(${escapeRegExp(socket)},\\{onPongTimeout:\\(\\)=>\\{${escapeRegExp(adapter)}\\.terminationReason=\x60pong_timeout\x60,${escapeRegExp(socket)}\\.terminate\\(\\)\\}\\}\\),this\\.hasConnected=!0,${escapeRegExp(adapter)}(?=[})])`, "g"),
+  )];
+  const frameLimitMatches = [...sshClassSource.matchAll(
+    new RegExp(`let ${escapeRegExp(frameLimit)}=(${IDENT});${escapeRegExp(socket)}\\.once\\(\x60upgrade\x60,(${IDENT})=>\\{let (${IDENT})=Number\\(\\2\\.headers\\[(${IDENT})\\]\\);Number\\.isSafeInteger\\(\\3\\)&&\\3>0&&\\(${escapeRegExp(frameLimit)}=\\3\\)\\}\\);`, "g"),
+  )];
+  if (codecMatches.length !== 1 || keepAliveMatches.length !== 1 || frameLimitMatches.length !== 1 ||
+      webSocketMatches[0].index >= frameLimitMatches[0].index ||
+      frameLimitMatches[0].index >= codecMatches[0].index ||
+      codecMatches[0].index >= adapterMatches[0].index ||
+      adapterMatches[0].index >= keepAliveMatches[0].index) return null;
 
   return {
     namespace,
     webSocketClass,
     webSocketUrl,
-    adapterClass: lifecycleMatch[1],
-    keepAlive: lifecycleMatch[3],
+    codecClass: codecMatches[0][1],
+    adapterClass,
+    keepAlive: keepAliveMatches[0][1],
+    maximumFrameBytes: frameLimitMatches[0][1],
+    maximumFrameHeader: frameLimitMatches[0][4],
   };
 }
 
@@ -59,7 +89,7 @@ function sharedTransportClassSource(symbols) {
     "async ensureAuthority(){if(this.disposed)throw Error(`shared app-server socket transport is disposed`);if(this.authorityReady)return this.authorityReady;if(this.authority&&this.authority.exitCode==null&&this.authority.signalCode==null){if(this.authorityError)throw this.authorityError;return}let e=this.startAuthority();this.authorityReady=e;try{return await e}finally{this.authorityReady===e&&(this.authorityReady=null)}}" +
     "async startAuthority(){let e=process.env.CODEX_CLI_PATH;if(!e)throw Error(`shared app-server socket requires CODEX_CLI_PATH`);this.authorityError=null;let t=await this.getConfigOverrides();if(this.disposed)throw Error(`shared app-server socket transport was disposed during startup`);if(!Array.isArray(t)||t.some(e=>typeof e!==`string`))throw Error(`shared app-server socket received invalid config overrides`);await this.acquireOwnership();if(this.disposed){this.releaseOwnedPaths(!0);throw Error(`shared app-server socket transport was disposed during startup`)}let n=require(`node:fs`),r;try{r=require(`node:child_process`).spawn(e,[...t.flatMap(e=>[`-c`,e]),`app-server`,`--listen`,`unix://${this.socketPath}`],{env:process.env,stdio:`ignore`}),this.authority=r}catch(e){this.releaseOwnedPaths();throw e}try{this.recordAuthorityIdentity(r),await new Promise((e,t)=>{let i=!1,a,o=()=>{clearTimeout(a),clearTimeout(u),r.off(`error`,s),r.off(`exit`,l),r.off(`close`,l)},c=(n,u)=>{if(i)return;i=!0,o(),n?t(n):e(u)},s=e=>{this.authorityError=e,c(e)},l=()=>c(Error(`shared app-server authority exited before socket creation`)),h=()=>{if(i)return;try{let s=this.readSocketPath(),e=s.identity;if(s.target){if(typeof process.getuid==`function`&&e.uid!==process.getuid())return c(Error(`shared app-server socket has unexpected owner`));this.socketIdentity={dev:e.dev,ino:e.ino};return c(null)}}catch(e){if(e?.code!==`ENOENT`)return c(e)}a=setTimeout(h,100),a.unref?.()},u=setTimeout(()=>c(Error(`shared app-server socket creation timed out`)),1e4);r.once(`error`,s),r.once(`exit`,l),r.once(`close`,l),h(),u.unref?.()}),this.publishAttachedCliRecord(r,e),r.on(`error`,e=>{this.authorityError=e;for(let t of this.proxyStreams)t.destroy(e)}),r.once(`exit`,()=>{this.authority===r&&(this.authority=null,this.releaseOwnedPaths(!0))})}catch(e){this.authority=null;(await this.stopAuthority(r))&&this.releaseOwnedPaths();throw e}}" +
     "createProxyStream(){let c=process.env.CODEX_CLI_PATH;if(!c)throw Error(`shared app-server socket requires CODEX_CLI_PATH`);let e=require(`node:child_process`).spawn(c,[`app-server`,`proxy`,`--sock`,this.socketPath],{env:process.env,stdio:[`pipe`,`pipe`,`pipe`]}),t=e.stdin,n=e.stdout,r=e.stderr;if(t==null||n==null||r==null)throw e.kill(),Error(`shared app-server proxy stdio was unavailable`);let i=``;r.on(`data`,e=>{i=`${i}${e.toString(`utf8`)}`.slice(-4000)});let a=new(require(`node:stream`).Duplex)({read(){n.resume()},write(e,n,r){t.write(e,n,r)},final(e){t.end(),e()},destroy(t,n){e.kill(),n(t)}});Object.assign(a,{setKeepAlive:()=>a,setNoDelay:()=>a,setTimeout:()=>a});let o=e=>a.destroy(e);t.on(`error`,o),n.on(`data`,e=>{a.push(e)||n.pause()}),n.on(`end`,()=>a.push(null)),e.on(`error`,o),e.on(`close`,(e,n)=>{t.removeListener(`error`,o),e===0?a.push(null):a.destroy(Error(`shared app-server proxy exited (${e??n??`unknown`}): ${i.trim()}`))}),this.proxyStreams.add(a),a.once(`close`,()=>this.proxyStreams.delete(a));return a}" +
-    `async connect(){await this.ensureAuthority();let e={current:null},t=new ${symbols.namespace}.${symbols.webSocketClass}(${symbols.webSocketUrl},{perMessageDeflate:!1,createConnection:()=>(e.current=this.createProxyStream(),e.current)});t.once(\`close\`,()=>e.current?.destroy());try{await new Promise((n,r)=>{let i=setTimeout(()=>o(Error(\`shared app-server websocket open timed out\`)),3e4);i.unref();let a=()=>{clearTimeout(i),t.off(\`error\`,o),t.off(\`close\`,s)},o=e=>{a(),r(e)},s=()=>o(Error(\`shared app-server websocket closed before opening\`));t.once(\`open\`,()=>{a(),n()}),t.once(\`error\`,o),t.once(\`close\`,s)})}catch(n){e.current?.destroy(),t.terminate(),await new Promise(e=>setTimeout(e,0));throw n}${symbols.namespace}.${symbols.keepAlive}(t,{onPongTimeout:()=>t.terminate()});return new ${symbols.namespace}.${symbols.adapterClass}(t)}}`
+    `async connect(){await this.ensureAuthority();let e={current:null},t=new ${symbols.namespace}.${symbols.webSocketClass}(${symbols.webSocketUrl},{perMessageDeflate:!1,createConnection:()=>(e.current=this.createProxyStream(),e.current)});let maximumFrameBytes=${symbols.maximumFrameBytes};t.once(\`upgrade\`,e=>{let t=Number(e.headers[${symbols.maximumFrameHeader}]);Number.isSafeInteger(t)&&t>0&&(maximumFrameBytes=t)});let messages=new ${symbols.namespace}.${symbols.codecClass}(t,!1);t.once(\`close\`,()=>e.current?.destroy());try{await new Promise((n,r)=>{let i=setTimeout(()=>o(Error(\`shared app-server websocket open timed out\`)),3e4);i.unref();let a=()=>{clearTimeout(i),t.off(\`error\`,o),t.off(\`close\`,s)},o=e=>{a(),r(e)},s=()=>o(Error(\`shared app-server websocket closed before opening\`));t.once(\`open\`,()=>{a(),n()}),t.once(\`error\`,o),t.once(\`close\`,s)})}catch(n){e.current?.destroy(),t.terminate(),await new Promise(e=>setTimeout(e,0));throw n}let connection=new ${symbols.namespace}.${symbols.adapterClass}(t,void 0,maximumFrameBytes,messages);${symbols.namespace}.${symbols.keepAlive}(t,{onPongTimeout:()=>{connection.terminationReason=\`pong_timeout\`,t.terminate()}});return connection}}`
   );
 }
 
@@ -97,7 +127,7 @@ function applySharedAppServerSocketPatch(source) {
     return source;
   }
   const configOverridesPattern = new RegExp(
-    `return new ${symbols.namespace}\\.(${IDENT})\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator,getConfigOverrides:(async\\(\\)=>\\[[^\\]]{1,1000}\\])\\}\\)`,
+    `return new ${escapeRegExp(symbols.namespace)}\\.(${IDENT})\\(\\{hostConfig:e\\.hostConfig,repoRoot:e\\.repoRoot,resourcesPath:e\\.resourcesPath,defaultOriginator:e\\.defaultOriginator,getConfigOverrides:(async\\(\\)=>\\[[^\\]]{1,1000}\\])\\}\\)`,
     "g",
   );
   const configOverridesMatches = [...factorySource.matchAll(configOverridesPattern)];

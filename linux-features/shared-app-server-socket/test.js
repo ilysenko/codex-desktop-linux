@@ -680,6 +680,7 @@ function loadInjectedTransport({ spawnImpl, WebSocketImpl = null, fsImpl = fs, t
   const namespace = {
     WS: WebSocketImpl ?? DefaultWebSocket,
     keepAlive() {},
+    Codec: class {},
     Adapter,
   };
   const source = sharedTransportClassSource({
@@ -688,10 +689,15 @@ function loadInjectedTransport({ spawnImpl, WebSocketImpl = null, fsImpl = fs, t
     webSocketUrl: "url",
     keepAlive: "keepAlive",
     adapterClass: "Adapter",
+    codecClass: "Codec",
+    maximumFrameBytes: "frameLimit",
+    maximumFrameHeader: "frameHeader",
   });
   const context = {
     n: namespace,
     url: "ws://localhost/rpc",
+    frameLimit: 16777216,
+    frameHeader: "frame-limit",
     process,
     console,
     require(id) {
@@ -855,9 +861,11 @@ async function spawnOrphanAuthority(socketPath, alias = false) {
 function syntheticBundle() {
   return [
     "var gC=class{options;kind=`websocket`;logger=i.i(`AppServerTransportSshWebsocket`);proxyStreams=new Set;hasConnected=!1;supportsReconnect(){return!0}",
-    "async connect(){let t={current:null},r=new n.kn(qae,{perMessageDeflate:!1,createConnection:()=>",
-    "(t.current=this.createSshProxyStream(),t.current)});r.once(`close`,()=>{t.current?.destroy()});try{await Xae(r)}catch(e){throw r.once(`error`,()=>void 0),t.current?.destroy(),r.terminate(),e}",
-    "let i=new n.On(r,void 0,8);return n.Dn(r,{onPongTimeout:()=>{i.reason=`timeout`,r.terminate()}}),this.hasConnected=!0,i}};",
+    "async connectToRemoteAppServer(e,t){return this.runWithSshStartupGate(async()=>{let t={current:null},r=new n.kn(qae,{perMessageDeflate:!1,createConnection:()=>",
+    "(t.current=this.createSshProxyStream(),t.current)});r.once(`close`,()=>{t.current?.destroy()});",
+    "let s=frameLimit;r.once(`upgrade`,e=>{let t=Number(e.headers[frameHeader]);Number.isSafeInteger(t)&&t>0&&(s=t)});let c=new n.Codec(r,headers!=null);",
+    "try{await opened(r)}catch(e){throw t.current?.destroy(),r.terminate(),e}",
+    "let i=new n.On(r,void 0,s,c);return this.logger.info(`app_server_connection.compression_negotiated`,{safe:{compression:c.compression}}),n.Dn(r,{onPongTimeout:()=>{i.terminationReason=`pong_timeout`,r.terminate()}}),this.hasConnected=!0,i})}};",
     "function b5(e){let t=_C(e.hostConfig);if(t)return v5.info(`[ssh-websocket-v0] selected app-server transport`),new gC(t);",
     "if(e.transportKind===`remote-control`)return new Remote(e);",
     "if(n.no(e.hostConfig))return new hoe({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator});",
@@ -1715,7 +1723,15 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   const source = syntheticBundle();
   const patched = applySharedAppServerSocketPatch(source);
   assert.notEqual(patched, source);
-  assert.equal(applySharedAppServerSocketPatch(patched), patched);
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    assert.equal(applySharedAppServerSocketPatch(patched), patched);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.deepEqual(warnings, [], "an already applied patch must not report drift");
   assert.match(patched, /CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET/);
   assert.match(patched, /hostConfig\.kind===`local`/);
   assert.match(
@@ -1737,10 +1753,148 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.match(patched, /supportsReconnect\(\)\{return!0\}/);
 
   const negotiated = source.replace(
-    "let i=new n.On(r,void 0,8);return n.Dn(r,{onPongTimeout:",
-    "let i=new n.On(r,void 0,8,compression);r.off(`error`,onError);logger.info(`app_server_connection.compression_negotiated`);return n.Dn(r,{onPongTimeout:",
+    "return this.logger.info(`app_server_connection.compression_negotiated`,",
+    "return r.off(`error`,onError),this.logger.info(`app_server_connection.compression_negotiated`,",
   );
   assert.notEqual(applySharedAppServerSocketPatch(negotiated), negotiated);
+});
+
+// Distinct codec and connection adapter mirror the current upstream contract.
+// The codec deliberately has no readyState or close method.
+async function connectPatchedBundle(source = syntheticBundle()) {
+  let socket;
+  let pongTimeout;
+  const stream = new PassThrough();
+  class WebSocket extends EventEmitter {
+    readyState = 0;
+    constructor(_url, options) {
+      super();
+      socket = this;
+      options.createConnection();
+      queueMicrotask(() => {
+        this.emit("upgrade", { headers: { "frame-limit": "32" } });
+        this.readyState = 1;
+        this.emit("open");
+      });
+    }
+    send(data) { this.sent = data; }
+    close(code, reason) {
+      this.readyState = 3;
+      this.emit("close", code, Buffer.from(reason));
+    }
+    terminate() { this.close(1006, "terminated"); }
+  }
+  class Codec {
+    constructor(ws, compressionOffered = false) {
+      this.compressionOffered = compressionOffered;
+      ws.on("upgrade", () => { this.sawUpgrade = true; });
+      this.ws = ws;
+      ws.on("message", data => this.handler?.(data));
+      ws.on("close", () => { this.disposed = true; });
+    }
+    setMessageHandler(handler) { this.handler = handler; }
+    send(data) { this.ws.send(data); }
+    finishSending() { return Promise.resolve(); }
+    finishReceiving() { return Promise.resolve(); }
+  }
+  class Adapter {
+    constructor(ws, _principal, maximumFrameBytes, codec) {
+      this.readyState = ws.readyState;
+      this.ws = ws;
+      this.maximumFrameBytes = maximumFrameBytes;
+      this.codec = codec;
+      codec.setMessageHandler(data => this.onmessage?.({ type: "message", data }));
+      ws.on("close", (code, reason) => {
+        codec.finishReceiving().then(() => {
+          this.readyState = ws.readyState;
+          this.onclose?.({ code, reason: reason.toString(), failureReason: this.terminationReason });
+        });
+      });
+    }
+    send(data) {
+      if (Buffer.byteLength(data) > this.maximumFrameBytes) throw new Error("frame too large");
+      this.codec.send(data);
+    }
+    close(code, reason) { return this.codec.finishSending().then(() => this.ws.close(code, reason)); }
+  }
+  const patched = applySharedAppServerSocketPatch(source);
+  assert.notEqual(patched, source);
+  const injected = patched.slice(patched.indexOf("class CodexLinuxSharedAppServerSocketTransport"), patched.indexOf("function b5(e)"));
+  const context = {
+    n: { kn: WebSocket, Codec, On: Adapter, Dn(_ws, options) { pongTimeout = options.onPongTimeout; } },
+    qae: "ws://localhost/rpc", frameLimit: 64, frameHeader: "frame-limit",
+    process, require, console, setTimeout, clearTimeout,
+  };
+  context["n$"] = context.n;
+  vm.runInNewContext(`${injected};globalThis.Transport=CodexLinuxSharedAppServerSocketTransport`, context);
+  const transport = new context.Transport("/unused/socket", async () => []);
+  transport.ensureAuthority = async () => {};
+  transport.createProxyStream = () => stream;
+  const connection = await transport.connect();
+  return { connection, socket, stream, pongTimeout };
+}
+
+test("patched current bundle returns an open connection adapter with codec message and close lifecycle", async () => {
+  const { connection, socket, stream } = await connectPatchedBundle();
+  assert.equal(connection.readyState, 1, "startup needs the returned connection to be open");
+  assert.equal(typeof connection.close, "function", "startup failure cleanup needs a connection close method");
+  assert.equal(connection.codec.compressionOffered, false);
+  assert.equal(connection.codec.sawUpgrade, true, "the codec must observe the handshake before open");
+  assert.equal(connection.maximumFrameBytes, 32, "preserve the proxy's advertised frame limit");
+  let received;
+  connection.onmessage = event => { received = event.data; };
+  socket.emit("message", "initialized");
+  assert.equal(received, "initialized");
+  connection.send("initialize");
+  assert.equal(socket.sent, "initialize");
+  assert.throws(() => connection.send("x".repeat(33)), /frame too large/);
+  const closed = new Promise(resolve => { connection.onclose = resolve; });
+  await connection.close(1000, "finished");
+  const event = await closed;
+  assert.equal(event.code, 1000);
+  assert.equal(connection.readyState, 3);
+  assert.equal(connection.codec.disposed, true);
+  assert.equal(stream.destroyed, true);
+});
+
+test("patched connection reports pong timeout while releasing the proxy stream", async () => {
+  const { connection, stream, pongTimeout } = await connectPatchedBundle();
+  assert.equal(typeof connection.close, "function", "keepalive must target a connection adapter");
+  const closed = new Promise(resolve => { connection.onclose = resolve; });
+  pongTimeout();
+  assert.equal((await closed).failureReason, "pong_timeout");
+  assert.equal(stream.destroyed, true);
+});
+
+test("patch follows renamed minified bindings containing dollar signs", async () => {
+  const renamed = syntheticBundle().replace(/\b(n|r|i|s|c)\b/g, "$&$");
+  const { connection } = await connectPatchedBundle(renamed);
+  assert.equal(connection.readyState, 1);
+  await connection.close(1000, "finished");
+});
+
+test("patch rejects ambiguous or disconnected codec and adapter lifecycles", () => {
+  const source = syntheticBundle();
+  const codec = "let c=new n.Codec(r,headers!=null);";
+  const cases = [
+    source.replace(codec, `${codec}${codec}`),
+    source.replace(codec, "let c=new n.Codec(otherSocket,headers!=null);"),
+    source.replace("new n.On(r,void 0,s,c)", "new n.On(r,void 0,s,otherCodec)"),
+    source.replace("this.hasConnected=!0,i})", "this.hasConnected=!0,c})"),
+    source.replace("i.terminationReason=`pong_timeout`", "otherAdapter.terminationReason=`pong_timeout`"),
+  ];
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    for (const unsupported of cases) {
+      assert.notEqual(unsupported, source, "each case must change the upstream contract");
+      assert.equal(applySharedAppServerSocketPatch(unsupported), unsupported);
+    }
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, cases.length);
 });
 
 test("durable hosts retain their upstream transport even when kind is local", () => {
@@ -1767,8 +1921,8 @@ test("patch rejects retired, duplicate, and mixed transport layouts", () => {
   const current = syntheticBundle();
   const patched = applySharedAppServerSocketPatch(current);
   const retired = current.replace(
-    "let i=new n.On(r,void 0,8);return n.Dn(r,{onPongTimeout:()=>{i.reason=`timeout`,r.terminate()}}),this.hasConnected=!0,i",
-    "return n.Dn(r,{onPongTimeout:()=>{r.terminate()}}),this.hasConnected=!0,new n.On(r)",
+    "let i=new n.On(r,void 0,s,c);",
+    "let i=new n.On(r,void 0,s);",
   );
 
   for (const source of [retired, current + current, current + patched, patched + patched]) {
