@@ -27,13 +27,6 @@ validate the alias and its target, including ownership, directory permissions,
 and listener identity. Cleanup removes only the owned alias; the CLI owns the
 target socket. Unsafe targets and replaced aliases fail closed.
 
-The shared transport uses upstream's connection adapter with its separate
-message codec created before the WebSocket opens. This preserves connection
-state, message delivery, queued-send close handling, negotiated frame limits,
-and pong-timeout reporting. The codec alone is not a connection adapter.
-Errors received before the adapter takes ownership reject startup and close the
-proxy, including errors delivered immediately after the WebSocket opens.
-
 The feature preserves the configuration overrides supplied by the official
 local transport. It forwards each opaque override as an ordered `-c` argument
 before the `app-server` subcommand when it starts the shared authority. It does
