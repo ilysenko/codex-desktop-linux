@@ -62,15 +62,14 @@ function run(f, args, env = {}) {
   return childProcess.spawnSync(f.runner, args, { encoding: "utf8", env: { ...f.env, ...env } });
 }
 
-function terminal(f, args, answers) {
+function terminal(f, args) {
   const result = childProcess.spawnSync("python3", ["-B", "-c", `
 import errno, json, os, pty, select, subprocess, sys, time
-command, answers = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+command = json.loads(sys.argv[1])
 master, slave = pty.openpty()
 child = subprocess.Popen(command, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
 os.close(slave)
 output = b''
-sent = 0
 deadline = time.monotonic() + 15
 try:
     while True:
@@ -86,16 +85,13 @@ try:
                 break
             if not chunk: break
             output += chunk
-            if output.count(b'[y/N] ') > sent and sent < len(answers):
-                os.write(master, (answers[sent] + '\\n').encode())
-                sent += 1
         elif child.poll() is not None:
             break
 finally:
     os.close(master)
     child.wait(timeout=5)
 print(json.dumps({'status': child.returncode, 'output': output.decode(errors='replace')}))
-  `, JSON.stringify([f.runner, ...args]), JSON.stringify(answers)], { encoding: "utf8", env: f.env, timeout: 20000 });
+  `, JSON.stringify([f.runner, ...args])], { encoding: "utf8", env: f.env, timeout: 20000 });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }
@@ -164,27 +160,30 @@ test("a skip requires a local input and retains architecture, control, and paylo
   assert.match(run(wrongArch, [skip, wrongArch.file], { ARCH: "amd64" }).stderr, /architecture is 'arm64', expected 'amd64'/);
 });
 
-test("terminal local builds ask once, default to verification, and honor only this invocation's choice", (t) => {
-  for (const [answers, skipped, prompts] of [[[""], false, 1], [["no"], false, 1], [["yes"], true, 1], [["maybe", "y"], true, 2]]) {
+test("terminal local builds verify without input and skip only with an explicit flag", (t) => {
+  for (const fromEnvironment of [false, true]) {
     const f = fixture(t);
-    const result = terminal(f, [f.file], answers);
+    if (fromEnvironment) f.env.UPSTREAM_DEB = f.file;
+    const result = terminal(f, fromEnvironment ? [] : [f.file]);
     assert.equal(result.status, 0, result.output);
-    assert.equal(result.output.split("[y/N] ").length - 1, prompts);
-    assert.equal(JSON.parse(fs.readFileSync(f.metadata)).signatureVerification, skipped ? "skipped" : "verified");
-    if (skipped) assert.equal(fs.existsSync(f.calls), false);
-    fs.rmSync(f.metadata);
-    const next = run(f, [f.file]);
-    assert.equal(next.status, 0, next.stderr);
+    assert.doesNotMatch(result.output, /\[y\/N\]|Skip OpenAI official/);
+    assert.equal(fs.existsSync(f.calls), true);
     assert.equal(JSON.parse(fs.readFileSync(f.metadata)).signatureVerification, "verified");
   }
   const explicit = fixture(t);
-  const result = terminal(explicit, [skip, explicit.file], []);
+  const result = terminal(explicit, [skip, explicit.file]);
   assert.equal(result.status, 0, result.output);
   assert.doesNotMatch(result.output, /\[y\/N\]/);
+  assert.equal(fs.existsSync(explicit.calls), false);
+  assert.equal(JSON.parse(fs.readFileSync(explicit.metadata)).signatureVerification, "skipped");
+  const next = terminal(explicit, [explicit.file]);
+  assert.equal(next.status, 0, next.output);
+  assert.doesNotMatch(next.output, /\[y\/N\]|Skip OpenAI official/);
+  assert.equal(JSON.parse(fs.readFileSync(explicit.metadata)).signatureVerification, "verified");
 });
 
-test("real transactional install and rebuild forward the decision once and preserve the app on later failure", (t) => {
-  for (const [entrypoint, explicit] of [["install.sh", false], ["install.sh", true], ["scripts/rebuild-candidate.sh", true]]) {
+test("real transactional install and rebuild forward explicit verification flags without prompting", (t) => {
+  for (const [entrypoint, explicit] of [["install.sh", false], ["install.sh", true], ["scripts/rebuild-candidate.sh", false], ["scripts/rebuild-candidate.sh", true]]) {
     const f = fixture(t);
     const app = path.join(f.root, "app");
     const features = path.join(f.root, "features");
@@ -201,16 +200,16 @@ test("real transactional install and rebuild forward the decision once and prese
       REBUILD_REPORT_DIR: reports, CODEX_KEEP_REJECTED_CANDIDATE: "0", CODEX_ASAR_BIN: asar,
       CODEX_LINUX_FEATURES_CONFIG: config, CODEX_LINUX_FEATURES_ROOT: features,
       CODEX_INSTALL_TRANSACTION_ACTIVE: "0",
-    } }, explicit ? [skip, f.file] : [f.file], explicit ? [] : ["yes"]);
+    } }, explicit ? [skip, f.file] : [f.file]);
     assert.notEqual(result.status, 0, "the fixture forces a later ASAR-tool failure");
     assert.match(result.output, /Extracting a temporary app\.asar copy/);
-    assert.equal(result.output.split("[y/N] ").length - 1, explicit ? 0 : 1);
+    assert.doesNotMatch(result.output, /\[y\/N\]/);
     assert.equal(fs.readFileSync(path.join(app, "previous-app"), "utf8"), "preserve me");
     assert.equal(fs.existsSync(path.join(app, "ChatGPT")), false);
     const [transaction] = fs.readdirSync(path.join(reports, "transactions"));
     const metadata = JSON.parse(fs.readFileSync(path.join(reports, "transactions", transaction, "upstream-linux-package.json")));
-    assert.equal(metadata.signatureVerification, "skipped");
-    assert.equal(fs.existsSync(f.calls), false);
+    assert.equal(metadata.signatureVerification, explicit ? "skipped" : "verified");
+    assert.equal(fs.existsSync(f.calls), !explicit);
   }
 });
 

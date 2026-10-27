@@ -53,8 +53,8 @@ Usage: ./install.sh [OPTIONS] [path/to/chatgpt_*.deb]
 
 Builds the custom distribution from OpenAI's official Linux package. With no
 path, the package is resolved through signed stable APT metadata. Local packages
-are verified against that metadata too. An interactive local build asks whether
-to skip verification for this invocation; the default answer is no.
+are verified against that metadata too, without prompting or reading user input.
+Only the explicit skip flag selects an unverified local build.
 
 Options:
   -h, --help     Show this help message and exit

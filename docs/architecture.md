@@ -45,9 +45,9 @@ that index. Wrong signatures, hashes, package names, versions, architectures,
 or incomplete payloads fail closed.
 
 Local input reuses package bytes while retaining signed verification by default.
-An interactive local build asks whether to skip for this invocation (default
-No); `--skip-oai-official-sig-verification` explicitly selects that exception.
-Non-interactive builds verify by default. The exception retains structural
+All builds verify without prompting or reading user input. Only
+`--skip-oai-official-sig-verification` selects the local exception.
+The exception retains structural
 checks and records `signatureVerification: "skipped"` in build provenance; it
 does not follow automatically from a signature or digest failure. Nix's offline
 builds use that explicit exception with their independently hash-verified pins.

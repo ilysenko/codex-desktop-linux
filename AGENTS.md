@@ -16,10 +16,10 @@ manager that rebuilds from the signed stable APT repository.
   and package SHA-256 values by default, including explicitly supplied local
   packages. `latest` URLs are never a trust root. A local-package build may
   skip this official verification for that invocation only via
-  `--skip-oai-official-sig-verification` or an affirmative terminal prompt;
-  retain structural checks and record the skip in build provenance. With no
-  flag, interactive local builds ask with default No; non-interactive builds
-  verify. Never silently fall back to a skip after verification failure.
+  `--skip-oai-official-sig-verification` only; retain structural checks and
+  record the skip in build provenance. With no flag, all builds verify without
+  prompting or reading user input, including interactive local builds. Never
+  silently fall back to a skip after verification failure.
 - Never execute upstream maintainer scripts. Extract the data payload only.
 - A clean build with no enabled ASAR feature and no required core patch must
   preserve `resources/app.asar` byte-for-byte.

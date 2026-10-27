@@ -89,7 +89,7 @@ make install-native
 UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 ```
 
-بسته محلی به‌صورت پیش‌فرض با metadata امضاشده stable از نظر version، architecture، اندازه و SHA-256 تطبیق داده می‌شود؛ بدنه بسته دوباره دانلود نمی‌شود. در ترمینال تعاملی، اگر flag زیر داده نشده باشد، درباره رد کردن اعتبارسنجی رسمی فقط برای همین build پرسیده می‌شود (`[y/N]`، پیش‌فرض No). build غیرتعاملی به‌صورت پیش‌فرض اعتبارسنجی می‌کند:
+بسته محلی به‌صورت پیش‌فرض با metadata امضاشده stable از نظر version، architecture، اندازه و SHA-256 تطبیق داده می‌شود؛ بدنه بسته دوباره دانلود نمی‌شود. همه buildها، حتی در ترمینال تعاملی، بدون پرسش یا خواندن ورودی کاربر اعتبارسنجی می‌کنند. فقط flag صریح زیر برای همان اجرا استثنا را انتخاب می‌کند:
 
 ```bash
 ./install.sh --skip-oai-official-sig-verification /path/to/chatgpt_<version>_<arch>.deb
@@ -316,7 +316,7 @@ buildها تراکنشی‌اند: ابتدا candidate اعتبارسنجی م�
 | اجرای ChatGPT رسمی و Community با هم تداخل دارد | تمام processهای `ChatGPT` را کامل ببندید؛ هر دو app به‌طور پیش‌فرض profile بالادستی را share می‌کنند |
 | AppImage از Flatpak Chrome باز می‌شود ولی extension می‌گوید `Native transport disconnected` | `flatpak-chrome-native-messaging` را فعال کنید؛ [راهنمای Flatpak Chrome](docs/troubleshooting.md#appimage-opens-from-flatpak-chrome-but-the-extension-cannot-connect) را ببینید |
 | ادغام Browser/Chrome پس از migration وصل نمی‌شود | ChatGPT و Chrome را کامل ببندید و repair محدود موجود در [Troubleshooting](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect) را انجام دهید |
-| signature یا package verification شکست می‌خورد | زمان سیستم، شبکه، `gpgv`، architecture و فضای دیسک را بررسی کنید؛ استثنای عمدی محلی فقط با تأیید یا flag همان build انتخاب می‌شود |
+| signature یا package verification شکست می‌خورد | زمان سیستم، شبکه، `gpgv`، architecture و فضای دیسک را بررسی کنید؛ build محلیِ عمداً تأییدنشده به flag صریح همان اجرا نیاز دارد |
 | برنامه launch نمی‌شود | `/opt/codex-desktop/start.sh --diagnose` را اجرا کنید |
 | برنامه از XWayland استفاده می‌کند یا به Electron flag دائمی نیاز دارد | session تأییدشده Wayland به‌صورت خودکار native backend را انتخاب می‌کند؛ با `CODEX_OZONE_PLATFORM=x11\|wayland` backend را pin کنید یا در `~/.config/codex-desktop/electron-flags.conf` هر flag را در یک خط بگذارید، مثلاً `--ozone-platform=x11` |
 | AppImage خطای sandbox می‌دهد | user namespaces را فعال کنید یا بسته native نصب کنید؛ `--no-sandbox` خودکار اضافه نمی‌شود |

@@ -126,8 +126,7 @@ UPSTREAM_DEB=/absolute/path/chatgpt_<version>_<arch>.deb make install-native
 
 The build verifies the local body against signed stable metadata by default,
 including control fields, size, and SHA-256, then checks the required payload.
-Interactive local builds ask whether to skip official verification for this
-invocation (default No); non-interactive builds verify. The explicit
+All builds verify without prompting or reading user input. Only the explicit
 `--skip-oai-official-sig-verification` installer option retains structural
 checks and records the skip; see [local package verification](build-and-packaging.md#build-the-application-tree).
 Gentoo independently checks signed provenance again before packaging.

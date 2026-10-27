@@ -13,7 +13,7 @@ Default builds stop on a signature or hash failure. Confirm system time, HTTPS a
 `persistent.oaistatic.com`, `gpgv`, the pinned key fingerprint, and sufficient
 disk space. An explicit package must match host architecture and be named
 `chatgpt` in control metadata.
-For an intentional local-only exception, see the per-invocation prompt and
+For an intentional unverified local build, see the explicit
 `--skip-oai-official-sig-verification` in
 [Build and packaging](build-and-packaging.md#build-the-application-tree).
 

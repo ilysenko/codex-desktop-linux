@@ -46,10 +46,9 @@ the pinned key authenticates `InRelease`, its digest authenticates `Packages`,
 and the indexed size/SHA-256 and package control fields must match the local
 file. Only metadata is fetched; the package body is reused.
 
-For a local input without a skip flag, an interactive terminal asks whether to
-skip official verification for this build (`[y/N]`, default No). Non-interactive
-builds verify without reading piped answers. An affirmative answer or this flag
-chooses the exception for this invocation only:
+All builds verify without prompting or reading user input, whether or not a
+terminal is attached. Only this explicit flag selects the local exception for
+this invocation:
 
 ```bash
 ./install.sh --skip-oai-official-sig-verification /path/to/chatgpt_<version>_<arch>.deb

@@ -11,23 +11,6 @@ map_upstream_architecture() {
     esac
 }
 
-choose_local_package_verification() {
-    [ "${SKIP_OAI_OFFICIAL_SIG_VERIFICATION:-0}" -eq 0 ] || return 0
-    # Only a human terminal can grant the per-invocation exception. Piped input
-    # and unattended updater builds retain signed verification by default.
-    [ -t 0 ] && [ -t 2 ] || return 0
-    local answer
-    while true; do
-        printf 'Skip OpenAI official signed-repository verification for this local package for this build? [y/N] ' >&2
-        IFS= read -r answer || error "Could not read the verification choice"
-        case "$answer" in
-            y|Y|[yY][eE][sS]) SKIP_OAI_OFFICIAL_SIG_VERIFICATION=1; return 0 ;;
-            ""|n|N|[nN][oO]) return 0 ;;
-            *) printf 'Please answer yes or no.\n' >&2 ;;
-        esac
-    done
-}
-
 resolve_upstream_linux_package() {
     local metadata_path="$1"
     local architecture
@@ -39,7 +22,6 @@ resolve_upstream_linux_package() {
         UPSTREAM_DEB_PATH="$(realpath "$PROVIDED_UPSTREAM_DEB_PATH")"
         info "Using explicitly provided upstream Linux package: $UPSTREAM_DEB_PATH"
         validate_upstream_linux_package "$UPSTREAM_DEB_PATH" "$architecture"
-        choose_local_package_verification
         if [ "${SKIP_OAI_OFFICIAL_SIG_VERIFICATION:-0}" -eq 1 ]; then
             warn "Skipping OpenAI official signed-repository verification for this local package for this build"
             write_local_upstream_metadata "$metadata_path" "$UPSTREAM_DEB_PATH" "$architecture"

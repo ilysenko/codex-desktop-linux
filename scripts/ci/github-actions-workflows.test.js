@@ -48,7 +48,7 @@ test("CI runs the complete workflow regression suite", () => {
   assert.match(nixGate, /test "\$NIX_VM_RESULT" = success/);
 });
 
-test("normal CI and container smoke run local package verification consent regressions", () => {
+test("normal CI and container smoke run local package verification policy regressions", () => {
   const suite = "scripts/lib/install-verification.test.js";
   for (const source of [
     job(read(".github/workflows/ci.yml"), "source-and-node"),

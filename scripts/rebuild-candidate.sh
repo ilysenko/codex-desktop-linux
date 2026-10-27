@@ -9,8 +9,8 @@ usage() {
 Usage: scripts/rebuild-candidate.sh [--install] [--skip-oai-official-sig-verification] [path/to/chatgpt_*.deb]
 
 Builds from an explicitly supplied official package or resolves the current
-package through OpenAI's signed stable APT index. Local builds ask about a
-per-invocation skip in a terminal; unattended builds verify by default.
+package through OpenAI's signed stable APT index. Local builds verify without
+prompting; only the explicit skip flag selects an unverified local build.
 
 Environment:
   CODEX_NEXT_APP_DIR   Candidate destination (default: ./codex-app-next)

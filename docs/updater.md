@@ -31,8 +31,9 @@ tools but does not install them in the application runtime. The workspace build
 uses `CODEX_INSTALL_TRANSACTION_ACTIVE=1` to stage its app directly rather than
 promoting it over the managed installation.
 Unattended rebuilds pass no signature-skip flag: local package input retains
-signed stable metadata verification without a terminal prompt. A manual
-installer's skip choice is not persisted as an updater preference.
+signed stable metadata verification without prompting, as interactive builds
+do too. A manual installer's explicit skip flag is not persisted as an updater
+preference.
 The installer receives the same effective `repository_url` used for discovery
 and download, overriding any unrelated inherited repository environment value.
 

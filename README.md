@@ -131,9 +131,8 @@ UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 
 The local package is verified against the signed stable metadata by default,
 including its version, architecture, size, and SHA-256, without downloading its
-body again. Without a skip flag, a terminal asks whether to skip official
-verification for this build (`[y/N]`, default No); non-interactive builds verify.
-To choose the local exception explicitly:
+body again. All builds verify without prompting or reading user input,
+including interactive local builds. To choose the local exception explicitly:
 
 ```bash
 ./install.sh --skip-oai-official-sig-verification /path/to/chatgpt_<version>_<arch>.deb
@@ -466,7 +465,7 @@ output layout, parallelism, and payload inspection.
 | Official and Community launches interfere | Fully exit every `ChatGPT` process; both apps share the upstream profile |
 | AppImage opens from Flatpak Chrome, but the extension says `Native transport disconnected` | Enable `flatpak-chrome-native-messaging`; see [Flatpak Chrome setup](docs/troubleshooting.md#appimage-opens-from-flatpak-chrome-but-the-extension-cannot-connect) |
 | Browser/Chrome extension cannot connect after migration | Exit ChatGPT and Chrome completely, then follow the narrow cache repair in [Troubleshooting](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect) |
-| Signature or package verification fails | Check time, network, `gpgv`, architecture, and disk space; intentional local exceptions use the documented per-build prompt or flag |
+| Signature or package verification fails | Check time, network, `gpgv`, architecture, and disk space; intentional unverified local builds require the documented explicit flag |
 | App does not launch | Run `/opt/codex-desktop/start.sh --diagnose` |
 | App uses XWayland or needs persistent Electron flags | A confirmed Wayland session selects the native backend automatically; pin one with `CODEX_OZONE_PLATFORM=x11\|wayland`, or put one flag per line in `~/.config/codex-desktop/electron-flags.conf`, for example `--ozone-platform=x11` |
 | AppImage reports a sandbox error | Enable user namespaces or install a native package; `--no-sandbox` is not added automatically |

@@ -10,7 +10,8 @@ input. Nix has already checked its pinned hash; sandboxed builds do not fetch
 live APT metadata to repeat signature verification. Build provenance records
 `signatureVerification: "skipped"` for this step. Pins are refreshed through
 signed metadata as described below. Ordinary local `.deb` builds outside these
-Nix entrypoints retain the shared installer's verification/prompt behavior.
+Nix entrypoints verify by default without prompting; only the explicit flag
+selects an unverified local build.
 
 These inputs are official Linux `.deb` files. Nix wraps the official runtime
 directly instead of replacing Electron or rebuilding upstream native modules.
