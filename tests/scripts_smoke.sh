@@ -207,6 +207,7 @@ for (const architecture of ["amd64", "arm64"]) {
 NODE
 
 node --test launcher/start.test.js tests/deb-prerm.test.js scripts/lib/upstream-linux-package.test.js \
+  scripts/lib/install-verification.test.js \
   scripts/automation/upstream-linux-package-watchdog/test.js \
   scripts/patch-linux-window-ui.test.js scripts/patches/runner.test.js \
   scripts/patches/lib/asar-layout.test.js \

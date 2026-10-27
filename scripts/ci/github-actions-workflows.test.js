@@ -48,6 +48,20 @@ test("CI runs the complete workflow regression suite", () => {
   assert.match(nixGate, /test "\$NIX_VM_RESULT" = success/);
 });
 
+test("normal CI and container smoke run local package verification consent regressions", () => {
+  const suite = "scripts/lib/install-verification.test.js";
+  for (const source of [
+    job(read(".github/workflows/ci.yml"), "source-and-node"),
+    read("tests/scripts_smoke.sh"),
+  ]) {
+    const commands = source.replace(/\\\r?\n/g, " ").split("\n").map(line => line.trim());
+    assert.ok(commands.some(line => line.startsWith("node --test ") && line.split(/\s+/).includes(suite)),
+      `the normal test entrypoint must execute ${suite}`);
+  }
+  const core = read("scripts/ci/container-entrypoint.sh").split("run_core() {", 2)[1].split("\n}", 1)[0];
+  assert.match(core, /bash tests\/scripts_smoke\.sh/);
+});
+
 test("official Linux validation runs fully on every pull request but not hourly", () => {
   const workflow = read(".github/workflows/upstream-build-app.yml");
   assert.doesNotMatch(workflow, /^  schedule:/m);
