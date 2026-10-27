@@ -28,7 +28,10 @@ make install-native
 ```
 
 `install-native` does not open the feature wizard. With no local feature file,
-it uses the committed empty configuration and preserves the official ASAR.
+it uses the committed empty configuration. Required core compatibility patches
+still apply; ASAR extraction is skipped only when both core and enabled feature
+descriptor sets are empty. See the [ASAR invariant](build-and-packaging.md#baseline-asar-invariant)
+for hash comparisons and unchanged-report behavior.
 
 ## Guided installer
 

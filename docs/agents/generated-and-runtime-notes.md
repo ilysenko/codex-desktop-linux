@@ -24,9 +24,13 @@ official package. Its runtime, native modules, commands, libraries, locales, and
 Owl metadata remain upstream-owned. `start.sh` and `.codex-linux/` are generated
 from repository templates and feature manifests.
 
-With no ASAR features, compare the staged and package `resources/app.asar`
-SHA-256 values. Any difference is a build bug. With features, consult the patch
-report and staged feature manifest.
+When both required core and enabled feature descriptor sets are empty, compare
+`resources/app.asar` from the verified official input `.deb` with the staged
+app's copy: their SHA-256 values must match and no extraction occurs. With
+active descriptors, consult the patch report for core/feature outcomes and
+hashes; no reported changes still preserve the official archive. An empty
+feature config does not imply an empty core registry. In either case, the ASAR
+inside a custom output package must match that output's staged copy.
 
 Expected generated metadata under `codex-app/.codex-linux/` includes build-info
 schema v2, the enabled feature snapshot, launcher hook directories, the

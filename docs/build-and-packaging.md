@@ -81,12 +81,28 @@ Useful diagnostics:
 ## Baseline ASAR invariant
 
 `linux-features/features.example.json` contains no enabled features. For that
-configuration, the installer copies `resources/app.asar` directly and compares
-its SHA-256 with the package payload. No ASAR extraction tool runs.
+configuration, enabled-feature descriptors are empty; required core descriptors
+are still discovered independently. The installer skips ASAR extraction only
+when both sets are empty:
 
-If a selected feature contains patch descriptors, the installer patches a
-temporary extraction, repacks deterministically, and writes a feature-aware
-patch report. An enabled feature drift blocks candidate acceptance.
+| Required core descriptors | Enabled feature descriptors | ASAR handling |
+|---|---|---|
+| None | None | No extraction; preserve the official input ASAR byte-for-byte |
+| Present | None | Extract a temporary copy and run core descriptors |
+| None | Present | Extract a temporary copy and run feature descriptors |
+| Present | Present | Extract a temporary copy and run both sets |
+
+Entering the patch flow does not necessarily change bytes. The patch report
+records core and feature outcomes and the official-input/staged ASAR hashes.
+If no descriptor reports a change, the installer keeps the original archive;
+otherwise it repacks deterministically. An enabled feature drift blocks
+candidate acceptance. Do not infer a permanently empty core registry from an
+empty feature configuration.
+
+Compare `resources/app.asar` in the verified official `.deb` with the staged
+app's copy to audit patching. Separately, the copy inside a custom output
+package must match that output's staged ASAR; this packaging comparison does
+not imply equality with the official input when patches changed it.
 
 ## Package formats
 
@@ -209,8 +225,8 @@ bash tests/scripts_smoke.sh
 ./scripts/ci-local.sh all
 ```
 
-Inspect the final packages for the `ChatGPT` ELF, byte identity of clean
-`app.asar`, bundled commands, desktop files, AppArmor policy, update-builder,
+Inspect the final packages for the `ChatGPT` ELF, the ASAR identity/report
+contract above, bundled commands, desktop files, AppArmor policy, update-builder,
 and absence of upstream package-manager configuration.
 
 Package inspection should also confirm the payload architecture matches the

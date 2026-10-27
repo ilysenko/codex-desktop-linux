@@ -180,7 +180,11 @@ Feature self-tests live inside each feature directory. Run them with:
 node --test linux-features/*/test.js
 ```
 
-The default core patch registry is empty. A core compatibility patch requires a
-reproduced blocker on the official Linux package and a regression test. Use
+The [core patch registry](../scripts/patches/core/README.md) contains only
+required compatibility patches for reproduced blockers with regression tests.
+An empty feature selection does not disable those core descriptors. Only when
+both sets are empty does the installer skip ASAR extraction and preserve the
+official archive unconditionally. Active descriptors and actual byte changes
+are distinguished in the [ASAR invariant](../docs/build-and-packaging.md#baseline-asar-invariant). Use
 `linux-features/` for additions that are useful for some users but not mandatory
 for every Linux build.

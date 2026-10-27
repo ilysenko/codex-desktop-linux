@@ -23,6 +23,11 @@ fixtures and fail closed.
 Build with `features.example.json`, inspect `.codex-linux/build-info.json`, and
 compare the official and staged `resources/app.asar` hashes. Confirm no runtime
 replacement, external CLI, or local content server appears in the staged tree.
+The hashes must match when neither required core nor enabled feature descriptors
+exist. Otherwise inspect core/feature outcomes and hashes in the patch report;
+an unchanged report must retain the official archive. Empty feature selection
+alone does not guarantee equality. The custom output package's ASAR must match
+its staged copy.
 Confirm the desktop name is **ChatGPT Community**, its icon has the community
 mark, and the package/bin/path identity is still `codex-desktop`.
 

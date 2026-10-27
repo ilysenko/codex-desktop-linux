@@ -98,9 +98,11 @@ cleanup, supported sessions/architectures, and tests there.
 ## Lifecycle
 
 1. The installer validates enabled manifests and relationships.
-2. If any enabled feature has ASAR descriptors, a temporary ASAR copy is
-   extracted, patched, deterministically repacked, and reported. Otherwise ASAR
-   is never opened.
+2. If required core or enabled feature ASAR descriptors exist, a temporary ASAR
+   copy is extracted and patched. The patch report explains both sets of
+   outcomes; only reported changes trigger deterministic repacking. With no
+   descriptors in either set, ASAR is never extracted and stays byte-identical
+   to the verified official input. Empty feature selection alone is insufficient.
 3. Declarative app resources and launcher hooks are staged.
 4. Remaining legacy stage hooks run.
 5. Native package resources/dependencies/hooks are applied to package staging.
