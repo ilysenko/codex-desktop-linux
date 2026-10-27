@@ -634,10 +634,10 @@ async function readWebSocketUpgrade(child) {
   });
 }
 
-async function stopChild(child) {
+async function stopChild(child, signal = "SIGTERM") {
   if (child == null || child.exitCode != null || child.signalCode != null) return;
   const closed = new Promise((resolve) => child.once("close", resolve));
-  child.kill();
+  child.kill(signal);
   await closed;
 }
 
@@ -1469,6 +1469,23 @@ test("attached CLI verifier reports redacted failure categories", () => {
   }
 });
 
+test("attached CLI fixture cleanup does not wait for an already signaled writer", async () => {
+  const writer = spawn("bash", ["-c", 'IFS= read -r _; printf x'], {
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  const exited = once(writer, "exit");
+  const readerClosed = once(writer.stdout, "close");
+  writer.stdout.destroy();
+  await readerClosed;
+  writer.stdin.end("write\n");
+  const [code, signal] = await exited;
+  assert.equal(code, null);
+  assert.equal(signal, "SIGPIPE");
+  assert.equal(writer.exitCode, null);
+  assert.equal(writer.signalCode, "SIGPIPE");
+  await stopChild(writer, "SIGKILL");
+});
+
 for (const { name, owner = false, changes, accepted = false, retarget = false } of [
   { name: "accepts owner CPU accounting changes", owner: true, changes: { utime: "1" }, accepted: true },
   { name: "accepts authority scheduling changes", changes: { state: "R" }, accepted: true },
@@ -1519,10 +1536,7 @@ for (const { name, owner = false, changes, accepted = false, retarget = false } 
           overridePath: statPath,
         }),
       );
-      if (writer.exitCode == null) {
-        writer.kill("SIGKILL");
-        await once(writer, "exit");
-      }
+      await stopChild(writer, "SIGKILL");
       writer = null;
       assert.equal(result.code, accepted ? 0 : 1);
       assert.equal(result.signal, null);
@@ -1536,7 +1550,7 @@ for (const { name, owner = false, changes, accepted = false, retarget = false } 
         ]);
       }
     } finally {
-      if (writer != null && writer.exitCode == null) writer.kill("SIGKILL");
+      await stopChild(writer, "SIGKILL");
       removeAttachedCliFixture(fixture);
     }
   });
