@@ -339,7 +339,8 @@ function normalizeLinuxFeatureManifest(featuresRoot, candidate) {
   if (manifest.defaultEnabled === true) {
     throw new Error(`Linux feature '${id}' must be disabled by default; defaultEnabled true is not allowed`);
   }
-  if (manifest.internal != null && typeof manifest.internal !== "boolean") {
+  if (Object.prototype.hasOwnProperty.call(manifest, "internal") &&
+      typeof manifest.internal !== "boolean") {
     throw new Error(`Linux feature '${id}' internal must be a boolean`);
   }
   if (manifest.entrypoints != null) {

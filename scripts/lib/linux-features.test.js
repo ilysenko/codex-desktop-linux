@@ -27,6 +27,30 @@ const {
 
 const manifestCases = require("../../tests/fixtures/linux-features/manifest-validation.json");
 
+test("internal accepts only omission or booleans for repository and local manifests", (t) => {
+  for (const origin of ["repo", "local"]) {
+    for (const scenario of manifestCases.internal) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `codex-feature-internal-${origin}-${scenario.label}-`));
+      t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+      const featureDir = path.join(root, origin === "local" ? "local/probe" : "probe");
+      fs.mkdirSync(featureDir, { recursive: true });
+      const manifest = { id: "probe" };
+      if (Object.prototype.hasOwnProperty.call(scenario, "value")) manifest.internal = scenario.value;
+      fs.writeFileSync(path.join(featureDir, "feature.json"), JSON.stringify(manifest));
+      fs.writeFileSync(path.join(featureDir, "README.md"), "# Internal fixture\n");
+      if (scenario.error) {
+        assert.throws(() => discoverLinuxFeatureManifests({ featuresRoot: root }), (failure) => {
+          assert.ok(failure.message.includes(scenario.error), failure.message);
+          return true;
+        });
+      } else {
+        const [feature] = discoverLinuxFeatureManifests({ featuresRoot: root });
+        assert.equal(feature.manifest.internal, scenario.value === true);
+      }
+    }
+  }
+});
+
 test("defaultEnabled accepts only omission or boolean false for repository, local, and internal features", (t) => {
   for (const origin of ["repo", "local", "internal"]) {
     for (const scenario of manifestCases.defaultEnabled) {

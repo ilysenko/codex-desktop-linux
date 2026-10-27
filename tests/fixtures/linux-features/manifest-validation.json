@@ -28,6 +28,18 @@
     { "label": "array", "value": [], "error": "defaultEnabled must be a boolean" },
     { "label": "object", "value": {}, "error": "defaultEnabled must be a boolean" }
   ],
+  "internal": [
+    { "label": "omitted" },
+    { "label": "false", "value": false },
+    { "label": "true", "value": true },
+    { "label": "null", "value": null, "error": "internal must be a boolean" },
+    { "label": "zero", "value": 0, "error": "internal must be a boolean" },
+    { "label": "one", "value": 1, "error": "internal must be a boolean" },
+    { "label": "string-false", "value": "false", "error": "internal must be a boolean" },
+    { "label": "string-true", "value": "true", "error": "internal must be a boolean" },
+    { "label": "array", "value": [], "error": "internal must be a boolean" },
+    { "label": "object", "value": {}, "error": "internal must be a boolean" }
+  ],
   "directories": [
     { "label": "public", "directory": "probe", "id": "probe" },
     { "label": "private", "directory": "local/private-probe", "id": "private-probe" },

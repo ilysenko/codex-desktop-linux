@@ -21,6 +21,26 @@ SPEC.loader.exec_module(feature_picker)
 
 
 class FeaturePickerModelTests(unittest.TestCase):
+    def test_internal_accepts_only_omission_or_booleans_for_repository_and_local_manifests(self):
+        for origin in ("repo", "local"):
+            for case in MANIFEST_CASES["internal"]:
+                with self.subTest(origin=origin, case=case["label"]), tempfile.TemporaryDirectory() as temp:
+                    root = pathlib.Path(temp)
+                    directory = root / ("local/probe" if origin == "local" else "probe")
+                    directory.mkdir(parents=True)
+                    data = {"id": "probe"}
+                    if "value" in case:
+                        data["internal"] = case["value"]
+                    (directory / "feature.json").write_text(json.dumps(data))
+                    (directory / "README.md").write_text("# Internal fixture\n")
+                    if "error" in case:
+                        with self.assertRaises(feature_picker.SelectionError) as failure:
+                            feature_picker.discover_features(root)
+                        self.assertIn(case["error"], str(failure.exception))
+                    else:
+                        features = feature_picker.discover_features(root)
+                        self.assertEqual(list(features), [] if case.get("value") is True else ["probe"])
+
     def test_default_enabled_types_for_repository_local_and_internal_features(self):
         for origin in ("repo", "local", "internal"):
             for case in MANIFEST_CASES["defaultEnabled"]:
