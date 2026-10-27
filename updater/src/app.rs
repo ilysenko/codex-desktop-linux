@@ -469,7 +469,7 @@ async fn check(
         Err(error) => return fail_check(config, state, paths, previous_state.clone(), error),
     };
     state.last_successful_check_at = Some(Utc::now());
-    let _ = cache_cleanup::prune(&paths.cache_dir, state);
+    let _ = cache_cleanup::prune(&paths.cache_dir, &config.workspace_root, state);
 
     let same_failed_candidate = previous_status == UpdateStatus::Failed
         && previous_sha256.as_deref() == Some(metadata.sha256.as_str());
@@ -794,7 +794,7 @@ async fn install_ready_with_launcher(
     state.clear_install_auth_retry_block();
     state.install_after_app_exit_requested = false;
     state.save_updater(&paths.state_file)?;
-    let _ = cache_cleanup::prune(&paths.cache_dir, state);
+    let _ = cache_cleanup::prune(&paths.cache_dir, &config.workspace_root, state);
     if config.notifications {
         let _ = notify::send(
             "codex-desktop updated",
@@ -1417,6 +1417,88 @@ mod replacement_tests {
         state.artifact_paths.package_candidate_sha256 = state.upstream_package_sha256.clone();
         state.status = UpdateStatus::ReadyToInstall;
         state
+    }
+
+    #[tokio::test]
+    async fn unchanged_check_prunes_the_configured_workspace_root() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let paths = fixture_paths(dir.path());
+        paths.ensure_dirs()?;
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.notifications = false;
+        config.workspace_root = dir.path().join("custom-builds");
+        config.builder_bundle_root = dir.path().join("builder");
+        fs::create_dir_all(config.builder_bundle_root.join("scripts/lib"))?;
+        let metadata = serde_json::json!({
+            "package": "chatgpt", "version": "fixture", "architecture": "amd64",
+            "repositoryPath": "pool/fixture.deb", "sha256": "fixture-sha256",
+            "size": 0, "repository": config.repository_url,
+        });
+        fs::write(
+            config.builder_bundle_root.join("scripts/lib/upstream-linux-package.js"),
+            format!(
+                "require('node:fs').writeFileSync(process.argv[process.argv.indexOf('--metadata') + 1], JSON.stringify({metadata}));"
+            ),
+        )?;
+        let stale = config.workspace_root.join("workspaces/stale");
+        let other_root = paths.cache_dir.join("workspaces/unselected");
+        fs::create_dir_all(&stale)?;
+        fs::create_dir_all(&other_root)?;
+        let mut state = PersistedState::new(true);
+        state.installed_upstream_version = Some("fixture".into());
+        state.installed_upstream_sha256 = Some("fixture-sha256".into());
+
+        check(&config, &mut state, &paths, false, false).await?;
+
+        assert_eq!(state.status, UpdateStatus::Idle);
+        assert!(
+            !stale.exists(),
+            "successful checks must prune the configured build root"
+        );
+        assert!(
+            other_root.is_dir(),
+            "unselected workspace roots must remain untouched"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn successful_install_prunes_the_configured_workspace_root() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let paths = fixture_paths(dir.path());
+        paths.ensure_dirs()?;
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.notifications = false;
+        config.app_executable_path = dir.path().join("not-running");
+        config.workspace_root = dir.path().join("custom-builds");
+        let stale = config.workspace_root.join("workspaces/stale");
+        let other_root = paths.cache_dir.join("workspaces/unselected");
+        fs::create_dir_all(&stale)?;
+        fs::create_dir_all(&other_root)?;
+        let package = dir.path().join("candidate.deb");
+        fs::write(&package, b"fixture package")?;
+        let mut state = ready_state(package);
+        // Simulate a successful package command after honoring the real launch
+        // gate; this fixture never executes pkexec or a system installation.
+        let launcher = dir.path().join("successful-launcher");
+        fs::write(
+            &launcher,
+            "#!/bin/sh\nIFS= read -r token || exit 125\n[ \"$token\" = go ]\n",
+        )?;
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700))?;
+
+        install_ready_with_launcher(&config, &mut state, &paths, true, false, &launcher).await?;
+
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert!(
+            !stale.exists(),
+            "successful installs must prune the configured build root"
+        );
+        assert!(
+            other_root.is_dir(),
+            "unselected workspace roots must remain untouched"
+        );
+        Ok(())
     }
 
     fn write_fake_pkexec(root: &Path) -> Result<PathBuf> {

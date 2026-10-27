@@ -125,12 +125,20 @@ ${XDG_CACHE_HOME:-~/.cache}/codex-update-manager
 ```
 
 Use `status --json` and `diagnose --json` instead of editing persisted JSON.
-Candidate packages are content-addressed. Conservative cache cleanup retains
-the installed source, current candidate, and immediately previous rollback
-artifact. Build workspaces under `workspaces/<version>` are removed once no
-persisted path (active workspace, rebuilt package, rollback package, or an
-in-flight install transaction) points into them, so only the installed build,
-its rollback, and any build in progress stay on disk.
+Official downloads are content-addressed; persisted candidate metadata binds
+each rebuilt package to its signed upstream digest. Conservative cache cleanup
+retains the installed source, current candidate, and immediately previous
+rollback artifact. Downloads are pruned under the XDG cache's `packages/` independently
+of build workspaces. Both building and workspace cleanup use the effective
+`workspace_root` from `config.toml`, which defaults to that XDG cache directory;
+workspace directories are its `workspaces/<version>` children.
+
+Cleanup examines only direct child directories of that selected `workspaces/`
+root. It removes a workspace once no persisted path (active workspace, rebuilt
+package, rollback package, or an in-flight install transaction) points into it,
+using both lexical paths and canonical paths where available. Symlink roots and
+symlink entries are not followed. Changing `workspace_root` neither moves the
+download cache nor scans or migrates previously configured workspace roots.
 
 The authoritative service log is the user journal:
 
