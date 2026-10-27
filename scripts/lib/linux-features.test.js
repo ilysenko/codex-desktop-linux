@@ -9,6 +9,7 @@ const test = require("node:test");
 
 const {
   enabledFeatureIdsFromBuildInfo,
+  enabledLinuxFeaturesConfig,
   enabledLinuxFeaturePackageDependencies,
   enabledLinuxFeaturePackageFiles,
   enabledLinuxFeaturePackagePlan,
@@ -1101,6 +1102,79 @@ test("native package plans strictly validate the current feature config", (t) =>
     ),
     /could not read Linux features config.*file does not exist/i,
   );
+});
+
+test("strict settings validation rejects malformed input in config and every native package plan", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-settings-validation-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { featuresRoot, id } = makePackageFeatureRoot(root, {});
+  const appDir = path.join(root, "app");
+  writeBuildInfoSnapshot(appDir, [id]);
+  const configPath = path.join(featuresRoot, "features.json");
+  const warnings = [];
+  t.mock.method(console, "warn", (message) => warnings.push(message));
+  const invalid = [
+    ...[[], "bad", 0, false].map((value) => [value, /settings must be an object/]),
+    ...[[], "bad", 0, false, null].map((value) => [
+      { [id]: value }, /package-framework-fixture.*settings.*must be an object/,
+    ]),
+    [{ INVALID: {} }, /Invalid Linux feature settings id.*INVALID/],
+    [{ "bad key": {} }, /Invalid Linux feature settings id.*bad key/],
+  ];
+  for (const [settings, reason] of invalid) {
+    fs.writeFileSync(configPath, JSON.stringify({ enabled: [id], settings }));
+    const diagnostic = (error) => {
+      assert.ok(error.message.includes(configPath), error.message);
+      assert.match(error.message, reason);
+      return true;
+    };
+    assert.throws(() => linuxFeaturesConfig({ featuresRoot, strictConfig: true }), diagnostic);
+    for (const packageFormat of ["deb", "rpm", "pacman", "ebuild"]) {
+      assert.throws(() => enabledLinuxFeaturePackagePlan({
+        featuresRoot, appDir, packageFormat,
+      }), diagnostic);
+    }
+    assert.equal(warnings.length, 0, "strict settings validation throws without warning and ignoring");
+    assert.deepEqual(linuxFeaturesConfig({ featuresRoot }).settings, {});
+    assert.equal(warnings.length, 1);
+    assert.match(warnings.pop(), reason);
+  }
+});
+
+test("valid settings preserve nested values, disabled settings, aliases, and enabled-only export", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-valid-settings-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { featuresRoot, id } = makePackageFeatureRoot(root, {});
+  const configPath = path.join(featuresRoot, "features.json");
+  const appDir = path.join(root, "app");
+  writeBuildInfoSnapshot(appDir, [id]);
+  const options = { featuresRoot, strictConfig: true };
+  const nested = { nested: { list: [1, null, false], featureOwned: null } };
+  for (const settings of [undefined, null, {}, { [id]: nested }]) {
+    fs.writeFileSync(configPath, JSON.stringify({ enabled: [id], settings }));
+    assert.deepEqual(linuxFeaturesConfig(options).settings, settings ?? {});
+    assert.deepEqual(enabledLinuxFeaturePackagePlan({ ...options, appDir, packageFormat: "deb" }), {
+      resources: [], dependencies: [],
+    });
+  }
+  const warnings = [];
+  t.mock.method(console, "warn", (message) => warnings.push(message));
+  fs.writeFileSync(configPath, JSON.stringify({ enabled: [id], settings: {
+    [id]: nested,
+    dormant: { keep: true },
+    "open-target-discovery": null,
+    "zed-opener": [],
+    "conversation-mode": "retired",
+  } }));
+  assert.deepEqual(linuxFeaturesConfig(options).settings, { [id]: nested, dormant: { keep: true } });
+  assert.deepEqual(enabledLinuxFeaturesConfig(options), { enabled: [id], settings: { [id]: nested } });
+  assert.deepEqual(warnings, []);
+
+  fs.writeFileSync(configPath, JSON.stringify({ enabled: [id], settings: {
+    [id]: nested, dormant: [], INVALID: {},
+  } }));
+  assert.deepEqual(linuxFeaturesConfig({ featuresRoot }).settings, { [id]: nested });
+  assert.equal(warnings.length, 2, "non-strict reading retains valid entries while warning about invalid ones");
 });
 
 test("native package plans reject missing or malformed app feature snapshots", (t) => {

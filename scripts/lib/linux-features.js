@@ -199,11 +199,14 @@ function enabledFeatureIdsFromBuildInfo(appDir) {
   return ids;
 }
 
-function normalizeLinuxFeatureSettings(value, sourcePath) {
+function normalizeLinuxFeatureSettings(value, sourcePath, options = {}) {
   if (value == null) {
     return {};
   }
   if (typeof value !== "object" || Array.isArray(value)) {
+    if (options.strict === true) {
+      throw new Error(`Linux features config ${sourcePath} settings must be an object`);
+    }
     console.warn(`WARN: Linux features config ${sourcePath} settings must be an object`);
     return {};
   }
@@ -211,6 +214,9 @@ function normalizeLinuxFeatureSettings(value, sourcePath) {
   const settings = {};
   for (const [rawId, rawSettings] of Object.entries(value)) {
     if (typeof rawId !== "string" || !FEATURE_ID_PATTERN.test(rawId)) {
+      if (options.strict === true) {
+        throw new Error(`Invalid Linux feature settings id in ${sourcePath}: ${String(rawId)}`);
+      }
       console.warn(`WARN: Invalid Linux feature settings id in ${sourcePath}: ${String(rawId)}`);
       continue;
     }
@@ -219,6 +225,9 @@ function normalizeLinuxFeatureSettings(value, sourcePath) {
       continue;
     }
     if (rawSettings == null || typeof rawSettings !== "object" || Array.isArray(rawSettings)) {
+      if (options.strict === true) {
+        throw new Error(`Linux feature '${rawId}' settings in ${sourcePath} must be an object`);
+      }
       console.warn(`WARN: Linux feature '${rawId}' settings in ${sourcePath} must be an object`);
       continue;
     }
@@ -240,7 +249,9 @@ function linuxFeaturesConfig(options = {}) {
   const available = linuxFeatureManifestMap(options);
   return {
     enabled: expandEnabledFeatureDependencies(normalizedEnabled, available),
-    settings: normalizeLinuxFeatureSettings(config.settings, configPath),
+    settings: normalizeLinuxFeatureSettings(config.settings, configPath, {
+      strict: options.strictConfig === true,
+    }),
     configPath,
   };
 }

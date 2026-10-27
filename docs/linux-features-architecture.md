@@ -22,9 +22,19 @@ configuration:
 remains enabled for updater rebuilds because its validated snapshot is included
 in the custom package's minimal update-builder.
 
-Known retired IDs are discarded during config loading. Other unknown IDs,
-duplicate IDs, malformed settings, default-enabled manifests, unmet
-requirements, and conflicts are errors.
+Known retired IDs and their aliases are discarded during config loading. Other
+unknown enabled IDs, default-enabled manifests, unmet requirements, and
+conflicts are errors. Strict configuration reads (`strictConfig: true`),
+including native package plans, also reject duplicate enabled IDs and malformed
+settings. Non-strict reads warn and ignore malformed settings entries (or the
+whole malformed settings container) and deduplicate enabled IDs.
+
+The entire `settings` field may be omitted or `null`. Otherwise it must be an
+object keyed by syntactically valid feature IDs, with non-null, non-array
+objects as values. Nested business fields remain feature-owned. Retired IDs
+are filtered before validating their values. Settings for disabled features
+are retained; the package/update-builder snapshot exports only enabled feature
+settings.
 
 ## Manifest
 
