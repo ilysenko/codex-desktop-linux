@@ -199,9 +199,8 @@ The main RPC boundaries are:
   `remoteControl/status/changed`;
 - outbound Connections: the current `remoteConnections` service methods
   `setRemoteControlEnabled`, `refreshRemoteControl`, and `setAutoConnect`;
-- shared host routing: `set-experimental-feature-enablement-for-host`,
-  and `refresh-remote-connections`;
-- Remote SSH: the existing `install-codex` action and its release parameter.
+- shared host routing: `set-experimental-feature-enablement-for-host`
+  and `refresh-remote-connections`.
 
 Remote mobile daemon requirement:
 

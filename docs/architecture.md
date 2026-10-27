@@ -83,7 +83,7 @@ the official browser registry.
 | Optional feature framework | `scripts/lib/linux-features.*`, `linux-features/` |
 | ASAR descriptors and reports | `scripts/patches/`, `scripts/patch-linux-window-ui.js`, `scripts/lib/patch-report.js` |
 | Cross-format payload assembly | `scripts/lib/package-common.sh`, `packaging/` |
-| Native update state machine | `updater/src/`, `packaging/update-builder/` |
+| Native update state machine | `updater/src/`; rebuild payload: `scripts/lib/package-common.sh` |
 | Reproducible Nix packaging | `flake.nix`, `nix/` |
 | Upstream drift automation | `scripts/automation/upstream-linux-package-watchdog/`, `.github/workflows/upstream-build-app.yml` |
 

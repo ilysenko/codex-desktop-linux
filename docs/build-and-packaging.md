@@ -235,7 +235,10 @@ MAX_BUILD_THREADS=4 PACKAGE_WITH_UPDATER=0 make install-native
 
 ## Update-builder payload
 
-`packaging/update-builder/` contains only source verification/extraction,
+`stage_update_builder_bundle()` in
+[`scripts/lib/package-common.sh`](../scripts/lib/package-common.sh) assembles
+the minimal rebuild payload under `/opt/codex-desktop/update-builder/` in native
+package staging. It contains only source verification/extraction,
 feature selection/descriptors/resources, the ASAR toolchain, package templates,
 required build helpers, and already staged release executables for enabled
 native features. It excludes the full repository, Cargo workspaces, and

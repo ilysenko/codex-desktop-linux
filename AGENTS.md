@@ -45,8 +45,8 @@ manager that rebuilds from the signed stable APT repository.
   `scripts/patch-linux-window-ui.js`, `scripts/lib/patch-report.js`.
 - Packaging: `scripts/build-*.sh`, `scripts/lib/package-common.sh`,
   `packaging/`.
-- Updater: `updater/src/`; minimal rebuild payload:
-  `packaging/update-builder/`.
+- Updater: `updater/src/`; minimal rebuild payload assembled by
+  `stage_update_builder_bundle()` in `scripts/lib/package-common.sh`.
 - Signed-release automation:
   `scripts/automation/upstream-linux-package-watchdog/`.
 - Nix: `flake.nix`, `nix/upstream-linux-packages.json`, `nix/*.nix`.
