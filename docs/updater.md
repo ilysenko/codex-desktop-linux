@@ -33,6 +33,8 @@ promoting it over the managed installation.
 Unattended rebuilds pass no signature-skip flag: local package input retains
 signed stable metadata verification without a terminal prompt. A manual
 installer's skip choice is not persisted as an updater preference.
+The installer receives the same effective `repository_url` used for discovery
+and download, overriding any unrelated inherited repository environment value.
 
 Enabled feature drift rejects the candidate. Disabled features are neither
 loaded nor probed. Native helper binaries belong to the project release package

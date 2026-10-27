@@ -75,6 +75,7 @@ pub async fn build_update(
         .arg(upstream_package)
         .env("CODEX_INSTALL_TRANSACTION_ACTIVE", "1")
         .env("CODEX_INSTALL_DIR", &app)
+        .env("CODEX_UPSTREAM_LINUX_REPOSITORY", &config.repository_url)
         .env(
             "CODEX_PATCH_REPORT_JSON",
             workspace.join("reports/patch-report.json"),
@@ -254,6 +255,121 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
+
+    #[test]
+    fn rebuild_verification_uses_the_configured_repository() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "CODEX_UPSTREAM_LINUX_REPOSITORY",
+            "UPSTREAM_DEB",
+        ]);
+        std::env::set_var(
+            "CODEX_UPSTREAM_LINUX_REPOSITORY",
+            "https://unrelated-inherited.invalid/deb",
+        );
+        std::env::remove_var("UPSTREAM_DEB");
+        let runtime = tokio::runtime::Runtime::new()?;
+        let root = tempdir()?;
+        let paths = RuntimePaths {
+            config_file: root.path().join("config/config.toml"),
+            state_file: root.path().join("state/state.json"),
+            log_file: root.path().join("state/service.log"),
+            cache_dir: root.path().join("cache"),
+            state_dir: root.path().join("state"),
+            config_dir: root.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+        let source = root.path().join("builder-source");
+        for relative in REQUIRED_BUNDLE_ENTRIES {
+            let path = source.join(relative);
+            if path.extension().is_some() {
+                fs::create_dir_all(path.parent().unwrap())?;
+                fs::write(&path, "fixture")?;
+            } else {
+                fs::create_dir_all(path)?;
+            }
+        }
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        for helper in ["install-helpers.sh", "upstream-linux-package.sh"] {
+            fs::copy(
+                repo.join("scripts/lib").join(helper),
+                source.join("scripts/lib").join(helper),
+            )?;
+        }
+        // Exercise the production shell resolver through the real build_update
+        // command path. External package/control verification is a fixture spy;
+        // the source-verifier tests cover its cryptographic checks separately.
+        fs::write(
+            source.join("install.sh"),
+            r#"#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="$PWD"
+WORK_DIR="$(mktemp -d)"
+ARCH=amd64
+. "$SCRIPT_DIR/scripts/lib/install-helpers.sh"
+. "$SCRIPT_DIR/scripts/lib/upstream-linux-package.sh"
+dpkg-deb() {
+    case "$3" in
+        Package) printf 'chatgpt\n' ;;
+        Version) printf '26.1021.22027\n' ;;
+        Architecture) printf 'amd64\n' ;;
+        *) return 1 ;;
+    esac
+}
+parse_args "$@"
+mkdir -p "$CODEX_INSTALL_DIR"
+resolve_upstream_linux_package "$CODEX_INSTALL_DIR/upstream.json"
+"#,
+        )?;
+        fs::set_permissions(source.join("install.sh"), fs::Permissions::from_mode(0o755))?;
+        fs::write(
+            source.join("scripts/lib/upstream-linux-package.js"),
+            r#"const fs = require('node:fs');
+const args = process.argv.slice(2);
+const option = name => args[args.indexOf(name) + 1];
+fs.writeFileSync(process.env.CODEX_INSTALL_DIR + '/verifier-args.json', JSON.stringify(args));
+fs.writeFileSync(option('--metadata'), '{}');
+console.log(option('--local-package'));
+"#,
+        )?;
+        for script in ["build-deb.sh", "build-rpm.sh", "build-pacman.sh"] {
+            let script = source.join("scripts").join(script);
+            fs::write(
+                &script,
+                "#!/bin/sh\nset -eu\nmkdir -p \"$DIST_DIR_OVERRIDE\"\nprintf fixture > \"$DIST_DIR_OVERRIDE/candidate.deb\"\n",
+            )?;
+            fs::set_permissions(script, fs::Permissions::from_mode(0o755))?;
+        }
+        let upstream = root.path().join("upstream.deb");
+        fs::write(&upstream, b"package fixture")?;
+        let mut config = RuntimeConfig::default_with_paths(&paths);
+        config.builder_bundle_root = source;
+        for repository in [
+            "https://review-mirror.invalid/openai".to_owned(),
+            RuntimeConfig::default().repository_url,
+        ] {
+            config.repository_url = repository;
+            let artifacts = runtime.block_on(build_update(
+                &config,
+                &mut PersistedState::new(true),
+                &paths,
+                "repository-fixture",
+                &upstream,
+            ))?;
+            let args: Vec<String> = serde_json::from_slice(&fs::read(
+                artifacts.workspace_dir.join("codex-app/verifier-args.json"),
+            )?)?;
+            let repository_index = args.iter().position(|arg| arg == "--repository").unwrap();
+            assert_eq!(args[repository_index + 1], config.repository_url);
+            let package_index = args
+                .iter()
+                .position(|arg| arg == "--local-package")
+                .unwrap();
+            assert_eq!(args[package_index + 1], upstream.to_str().unwrap());
+            assert!(artifacts.package_path.is_file());
+        }
+        Ok(())
+    }
 
     #[test]
     fn find_package_accepts_each_supported_native_format() -> Result<()> {
