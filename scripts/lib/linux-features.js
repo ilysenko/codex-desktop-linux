@@ -6,6 +6,7 @@ const { validateGentooAtom } = require("./gentoo-dependencies.js");
 
 const FEATURE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const LOCAL_FEATURES_DIR = "local";
+const FEATURE_ENTRYPOINTS = new Set(["patchDescriptors", "stageHook", "cleanupHook"]);
 const RESERVED_TOP_LEVEL_NAMES = new Set([
   LOCAL_FEATURES_DIR,
   "README.md",
@@ -330,6 +331,19 @@ function normalizeLinuxFeatureManifest(featuresRoot, candidate) {
   }
   if (manifest.internal != null && typeof manifest.internal !== "boolean") {
     throw new Error(`Linux feature '${id}' internal must be a boolean`);
+  }
+  if (manifest.entrypoints != null) {
+    if (typeof manifest.entrypoints !== "object" || Array.isArray(manifest.entrypoints)) {
+      throw new Error(`Linux feature '${id}' in ${candidate.manifestPath}: entrypoints must be an object`);
+    }
+    for (const key of Object.keys(manifest.entrypoints)) {
+      if (!FEATURE_ENTRYPOINTS.has(key)) {
+        throw new Error(
+          `Linux feature '${id}' in ${candidate.manifestPath}: unknown entrypoint '${key}'; ` +
+          `supported entrypoints: ${[...FEATURE_ENTRYPOINTS].join(", ")}`,
+        );
+      }
+    }
   }
 
   const relativeDir = path.relative(featuresRoot, candidate.dir);

@@ -9,7 +9,10 @@ const test = require("node:test");
 
 const {
   enabledFeatureIdsFromBuildInfo,
+  disabledLinuxFeatureCleanupHooks,
+  discoverLinuxFeatureManifests,
   enabledLinuxFeaturesConfig,
+  enabledLinuxFeatureStageHooks,
   enabledLinuxFeaturePackageDependencies,
   enabledLinuxFeaturePackageFiles,
   enabledLinuxFeaturePackagePlan,
@@ -20,6 +23,54 @@ const {
   stageEnabledLinuxFeaturePackageResources,
   stageEnabledLinuxFeatureInstall,
 } = require("./linux-features.js");
+
+const manifestCases = require("../../tests/fixtures/linux-features/manifest-validation.json");
+
+test("manifest discovery validates entrypoint declarations without executing modules", (t) => {
+  for (const { label, error, ...manifest } of manifestCases.entrypoints) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `codex-entrypoints-${label}-`));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+      id: "unsafe-link", ...manifest, featureOwned: { keep: true },
+    });
+    fs.writeFileSync(path.join(featureDir, "patch.js"), "throw Error('metadata discovery must not load modules');");
+    const options = { featuresRoot };
+    if (error) {
+      for (const load of [discoverLinuxFeatureManifests, loadEnabledLinuxFeatures, loadLinuxFeaturePatchDescriptors]) {
+        assert.throws(() => load(options), (failure) => {
+          assert.ok(failure.message.includes(path.join(featureDir, "feature.json")), failure.message);
+          assert.ok(failure.message.includes(error), failure.message);
+          if (!error.includes("must be an object")) {
+            assert.match(failure.message, /patchDescriptors, stageHook, cleanupHook/);
+          }
+          return true;
+        });
+      }
+    } else {
+      const [feature] = discoverLinuxFeatureManifests(options);
+      assert.deepEqual(feature.manifest.featureOwned, { keep: true });
+      assert.deepEqual(loadEnabledLinuxFeatures(options).map(({ id }) => id), ["unsafe-link"]);
+    }
+  }
+});
+
+test("stage and disabled cleanup entrypoints remain discoverable without executing hooks", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-hook-entrypoints-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { featureDir, featuresRoot } = makeFeatureRoot(root, {
+    id: "unsafe-link", entrypoints: { stageHook: "./stage.sh", cleanupHook: "./cleanup.sh" },
+  });
+  for (const name of ["stage.sh", "cleanup.sh"]) {
+    fs.writeFileSync(path.join(featureDir, name), "exit 99\n");
+  }
+  assert.deepEqual(enabledLinuxFeatureStageHooks({ featuresRoot }), [
+    { id: "unsafe-link", path: path.join(featureDir, "stage.sh") },
+  ]);
+  fs.writeFileSync(path.join(featuresRoot, "features.json"), '{"enabled":[]}');
+  assert.deepEqual(disabledLinuxFeatureCleanupHooks({ featuresRoot }), [
+    { id: "unsafe-link", path: path.join(featureDir, "cleanup.sh") },
+  ]);
+});
 
 test("known retired feature ids are ignored while arbitrary unknown ids fail", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-retired-feature-"));

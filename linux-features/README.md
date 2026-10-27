@@ -154,6 +154,12 @@ Gentoo additionally requires an audited `gentoo.supported` declaration and
 separates bootstrap/build/runtime/install dependencies; see the
 [Gentoo feature contract](../docs/linux-features-architecture.md#gentoo-feature-contract).
 
+The supported `entrypoints` keys are `patchDescriptors`, `stageHook`, and
+`cleanupHook` (for disabled-feature cleanup). Omission, `null`, and `{}` mean
+no entrypoints. Other container types and unknown keys fail discovery in both
+the build loader and setup picker; discovery does not execute the declared code.
+Paths must stay inside the feature directory.
+
 Feature patching uses only `entrypoints.patchDescriptors`. Descriptor modules
 may export an array directly or `{ descriptors: [...] }`; `.patches`,
 `.default`, and `mainBundlePatch` feature entrypoint aliases are intentionally

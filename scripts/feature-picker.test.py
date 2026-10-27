@@ -9,6 +9,9 @@ import unittest
 
 MODULE_PATH = pathlib.Path(__file__).with_name("feature-picker.py")
 REPO_ROOT = MODULE_PATH.parent.parent
+MANIFEST_CASES = json.loads(
+    (REPO_ROOT / "tests/fixtures/linux-features/manifest-validation.json").read_text()
+)
 SPEC = importlib.util.spec_from_file_location("feature_picker", MODULE_PATH)
 feature_picker = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -18,6 +21,29 @@ SPEC.loader.exec_module(feature_picker)
 
 
 class FeaturePickerModelTests(unittest.TestCase):
+    def test_manifest_entrypoint_declarations_without_executing_modules(self):
+        for case in MANIFEST_CASES["entrypoints"]:
+            with self.subTest(case=case["label"]), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                directory = root / "probe"
+                directory.mkdir()
+                manifest = directory / "feature.json"
+                data = {"id": "probe", "featureOwned": {"keep": True}}
+                if "entrypoints" in case:
+                    data["entrypoints"] = case["entrypoints"]
+                manifest.write_text(json.dumps(data))
+                (directory / "README.md").write_text("# Probe\n")
+                (directory / "patch.js").write_text("throw Error('must not execute');")
+                if "error" in case:
+                    with self.assertRaises(feature_picker.SelectionError) as failure:
+                        feature_picker.discover_features(root)
+                    self.assertIn(str(manifest), str(failure.exception))
+                    self.assertIn(case["error"], str(failure.exception))
+                    if "must be an object" not in case["error"]:
+                        self.assertIn("patchDescriptors, stageHook, cleanupHook", str(failure.exception))
+                else:
+                    self.assertEqual(list(feature_picker.discover_features(root)), ["probe"])
+
     def test_global_shortcut_features_are_independent_and_leave_no_derived_selection(self):
         features = feature_picker.discover_features(REPO_ROOT / "linux-features")
         for feature_id in ("global-dictation", "wayland-global-shortcuts"):

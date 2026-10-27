@@ -60,7 +60,11 @@ settings.
 
 Use `stageHook` only when the operation cannot be represented declaratively.
 Feature patching supports only `entrypoints.patchDescriptors`; removed legacy
-entrypoint aliases are rejected.
+entrypoint aliases are rejected. `entrypoints` may be omitted, `null`, or an
+empty object. Otherwise it must be an object containing only `patchDescriptors`,
+`stageHook`, and `cleanupHook`; unknown keys fail during manifest discovery in
+both the build loader and setup picker, without executing modules or hooks.
+Entrypoint paths remain relative to and inside the owning feature directory.
 
 Manifest fields:
 
@@ -72,6 +76,7 @@ Manifest fields:
 | `internal` | Optional boolean for build-owned plumbing hidden from public feature selection |
 | `entrypoints.patchDescriptors` | Optional ASAR descriptor module |
 | `entrypoints.stageHook` | Last-resort app staging script |
+| `entrypoints.cleanupHook` | Cleanup script discovered for disabled features |
 | `resources` | Declarative files copied into the app tree |
 | `runtimeHooks` | Launcher environment and lifecycle extensions |
 | `packageResources` | Declarative files outside the app tree in native packages |

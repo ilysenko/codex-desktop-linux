@@ -1,0 +1,18 @@
+{
+  "entrypoints": [
+    { "label": "omitted" },
+    { "label": "null", "entrypoints": null },
+    { "label": "empty", "entrypoints": {} },
+    { "label": "patch", "entrypoints": { "patchDescriptors": "./patch.js" } },
+    { "label": "stage", "entrypoints": { "stageHook": "./stage.sh" } },
+    { "label": "cleanup", "entrypoints": { "cleanupHook": "./cleanup.sh" } },
+    { "label": "all", "entrypoints": { "patchDescriptors": "./patch.js", "stageHook": "./stage.sh", "cleanupHook": "./cleanup.sh" } },
+    { "label": "typo", "entrypoints": { "patchDescriptros": "./patch.js" }, "error": "patchDescriptros" },
+    { "label": "retired", "entrypoints": { "patchMainBundle": "./patch.js" }, "error": "patchMainBundle" },
+    { "label": "unknown", "entrypoints": { "patchDescriptors": "./patch.js", "other": "./other.js" }, "error": "other" },
+    { "label": "array", "entrypoints": [], "error": "entrypoints must be an object" },
+    { "label": "string", "entrypoints": "./patch.js", "error": "entrypoints must be an object" },
+    { "label": "number", "entrypoints": 1, "error": "entrypoints must be an object" },
+    { "label": "boolean", "entrypoints": false, "error": "entrypoints must be an object" }
+  ]
+}
