@@ -21,6 +21,27 @@ SPEC.loader.exec_module(feature_picker)
 
 
 class FeaturePickerModelTests(unittest.TestCase):
+    def test_default_enabled_types_for_repository_local_and_internal_features(self):
+        for origin in ("repo", "local", "internal"):
+            for case in MANIFEST_CASES["defaultEnabled"]:
+                with self.subTest(origin=origin, case=case["label"]), tempfile.TemporaryDirectory() as temp:
+                    root = pathlib.Path(temp)
+                    directory = root / ("local/probe" if origin == "local" else "probe")
+                    directory.mkdir(parents=True)
+                    data = {"id": "probe", "internal": origin == "internal"}
+                    if "value" in case:
+                        data["defaultEnabled"] = case["value"]
+                    (directory / "feature.json").write_text(json.dumps(data))
+                    (directory / "README.md").write_text("# Default fixture\n")
+                    if "error" in case:
+                        with self.assertRaises(feature_picker.SelectionError) as failure:
+                            feature_picker.discover_features(root)
+                        self.assertIn(case["error"], str(failure.exception))
+                    else:
+                        features = feature_picker.discover_features(root)
+                        self.assertEqual(list(features), [] if origin == "internal" else ["probe"])
+                        self.assertEqual(feature_picker.SelectionModel(features).ordered_selected(), [])
+
     def test_feature_ids_match_public_local_and_alternate_directories(self):
         for case in MANIFEST_CASES["directories"]:
             with self.subTest(case=case["label"]), tempfile.TemporaryDirectory() as temp:

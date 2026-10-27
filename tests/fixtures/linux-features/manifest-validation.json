@@ -15,6 +15,19 @@
     { "label": "number", "entrypoints": 1, "error": "entrypoints must be an object" },
     { "label": "boolean", "entrypoints": false, "error": "entrypoints must be an object" }
   ],
+  "defaultEnabled": [
+    { "label": "omitted" },
+    { "label": "false", "value": false },
+    { "label": "true", "value": true, "error": "defaultEnabled true is not allowed" },
+    { "label": "string-false", "value": "false", "error": "defaultEnabled must be a boolean" },
+    { "label": "string-true", "value": "true", "error": "defaultEnabled must be a boolean" },
+    { "label": "string-yes", "value": "yes", "error": "defaultEnabled must be a boolean" },
+    { "label": "zero", "value": 0, "error": "defaultEnabled must be a boolean" },
+    { "label": "one", "value": 1, "error": "defaultEnabled must be a boolean" },
+    { "label": "null", "value": null, "error": "defaultEnabled must be a boolean" },
+    { "label": "array", "value": [], "error": "defaultEnabled must be a boolean" },
+    { "label": "object", "value": {}, "error": "defaultEnabled must be a boolean" }
+  ],
   "directories": [
     { "label": "public", "directory": "probe", "id": "probe" },
     { "label": "private", "directory": "local/private-probe", "id": "private-probe" },

@@ -332,6 +332,10 @@ function normalizeLinuxFeatureManifest(featuresRoot, candidate) {
   if (!fs.existsSync(readmePath) || isDirectory(readmePath)) {
     throw new Error(`Linux feature '${id}' must include README.md next to feature.json`);
   }
+  if (Object.prototype.hasOwnProperty.call(manifest, "defaultEnabled") &&
+      typeof manifest.defaultEnabled !== "boolean") {
+    throw new Error(`Linux feature '${id}' defaultEnabled must be a boolean (false when provided)`);
+  }
   if (manifest.defaultEnabled === true) {
     throw new Error(`Linux feature '${id}' must be disabled by default; defaultEnabled true is not allowed`);
   }

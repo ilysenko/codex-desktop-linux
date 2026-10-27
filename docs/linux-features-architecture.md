@@ -77,7 +77,7 @@ Manifest fields:
 |---|---|
 | `id` | Stable configuration ID matching the directory name |
 | `title`, `description` | User-facing wizard and documentation text |
-| `defaultEnabled` | Must be `false` for every repository and local feature |
+| `defaultEnabled` | Omitted means `false`; an explicit value must be boolean `false`, including local and internal features |
 | `internal` | Optional boolean for build-owned plumbing hidden from public feature selection |
 | `entrypoints.patchDescriptors` | Optional ASAR descriptor module |
 | `entrypoints.stageHook` | Last-resort app staging script |

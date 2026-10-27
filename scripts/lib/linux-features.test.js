@@ -27,6 +27,33 @@ const {
 
 const manifestCases = require("../../tests/fixtures/linux-features/manifest-validation.json");
 
+test("defaultEnabled accepts only omission or boolean false for repository, local, and internal features", (t) => {
+  for (const origin of ["repo", "local", "internal"]) {
+    for (const scenario of manifestCases.defaultEnabled) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `codex-feature-default-${origin}-${scenario.label}-`));
+      t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+      const featureDir = path.join(root, origin === "local" ? "local/probe" : "probe");
+      fs.mkdirSync(featureDir, { recursive: true });
+      const manifest = { id: "probe", internal: origin === "internal" };
+      if (Object.prototype.hasOwnProperty.call(scenario, "value")) manifest.defaultEnabled = scenario.value;
+      fs.writeFileSync(path.join(featureDir, "feature.json"), JSON.stringify(manifest));
+      fs.writeFileSync(path.join(featureDir, "README.md"), "# Default fixture\n");
+      fs.writeFileSync(path.join(root, "features.json"), '{"enabled":[]}');
+      if (scenario.error) {
+        assert.throws(() => discoverLinuxFeatureManifests({ featuresRoot: root }), (failure) => {
+          assert.ok(failure.message.includes(scenario.error), failure.message);
+          assert.match(failure.message, /probe/);
+          return true;
+        });
+      } else {
+        const [feature] = discoverLinuxFeatureManifests({ featuresRoot: root });
+        assert.equal(feature.manifest.defaultEnabled, false);
+        assert.deepEqual(loadEnabledLinuxFeatures({ featuresRoot: root }), []);
+      }
+    }
+  }
+});
+
 test("feature IDs match their declaring directory in public, local, and alternate roots", (t) => {
   for (const scenario of manifestCases.directories) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), `codex-feature-directory-${scenario.label}-`));

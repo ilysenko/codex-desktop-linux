@@ -95,6 +95,9 @@ Each feature directory must include:
 - optional `test.js` — self-contained tests for the feature
 
 Repository-owned build plumbing may set `"internal": true` in `feature.json`.
+Every manifest defaults to disabled when `defaultEnabled` is omitted. If
+provided, it must be the JSON boolean `false`; `true`, `null`, numbers, strings,
+arrays, and objects are rejected for repository, local, and internal features.
 Internal features are hidden from the setup wizard and public feature summary,
 cannot be selected through native `features.json`, and must be explicitly
 allowlisted by the owning build integration.
