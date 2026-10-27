@@ -2,6 +2,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -25,6 +26,60 @@ const {
 } = require("./linux-features.js");
 
 const manifestCases = require("../../tests/fixtures/linux-features/manifest-validation.json");
+
+test("feature IDs match their declaring directory in public, local, and alternate roots", (t) => {
+  for (const scenario of manifestCases.directories) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `codex-feature-directory-${scenario.label}-`));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const featuresRoot = path.join(root, scenario.root ?? "linux-features");
+    const featureDir = path.join(featuresRoot, scenario.directory);
+    fs.mkdirSync(featureDir, { recursive: true });
+    fs.writeFileSync(path.join(featureDir, "feature.json"), JSON.stringify({ id: scenario.id }));
+    fs.writeFileSync(path.join(featureDir, "README.md"), "# Directory fixture\n");
+    const config = path.join(featuresRoot, "features.json");
+    fs.writeFileSync(config, JSON.stringify({ enabled: [scenario.id] }));
+    if (scenario.error) {
+      assert.throws(() => loadEnabledLinuxFeatures({ featuresRoot }), (failure) => {
+        assert.ok(failure.message.includes(scenario.id), failure.message);
+        assert.ok(failure.message.includes(path.basename(featureDir)), failure.message);
+        assert.match(failure.message, /must match.*directory/);
+        return true;
+      });
+    } else {
+      const [feature] = loadEnabledLinuxFeatures({ featuresRoot });
+      assert.equal(feature.id, scenario.id);
+      assert.equal(feature.relativeDir, scenario.directory);
+      const result = childProcess.spawnSync(process.execPath, [__dirname + "/linux-features.js", "--enabled-feature-dirs0"], {
+        encoding: "utf8",
+        env: { ...process.env, CODEX_LINUX_FEATURES_ROOT: featuresRoot, CODEX_LINUX_FEATURES_CONFIG: config },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, `${scenario.id}\0${scenario.directory}\0`);
+    }
+  }
+});
+
+test("directory matching uses the declaration path and preserves duplicate and reserved-directory rules", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-feature-directory-rules-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const featuresRoot = path.join(root, "features");
+  const target = path.join(root, "differently-named-target");
+  fs.mkdirSync(featuresRoot);
+  fs.mkdirSync(target);
+  fs.writeFileSync(path.join(target, "feature.json"), '{"id":"linked"}');
+  fs.writeFileSync(path.join(target, "README.md"), "# Linked\n");
+  fs.symlinkSync(target, path.join(featuresRoot, "linked"));
+  for (const name of [".ignored", "README.md"]) {
+    fs.mkdirSync(path.join(featuresRoot, name));
+    fs.writeFileSync(path.join(featuresRoot, name, "feature.json"), '{"id":"INVALID"}');
+  }
+  assert.deepEqual(discoverLinuxFeatureManifests({ featuresRoot }).map(({ id }) => id), ["linked"]);
+  const localDir = path.join(featuresRoot, "local/linked");
+  fs.mkdirSync(localDir, { recursive: true });
+  fs.copyFileSync(path.join(target, "feature.json"), path.join(localDir, "feature.json"));
+  fs.copyFileSync(path.join(target, "README.md"), path.join(localDir, "README.md"));
+  assert.throws(() => discoverLinuxFeatureManifests({ featuresRoot }), /Duplicate Linux feature id 'linked'/);
+});
 
 test("manifest discovery validates entrypoint declarations without executing modules", (t) => {
   for (const { label, error, ...manifest } of manifestCases.entrypoints) {

@@ -21,6 +21,45 @@ SPEC.loader.exec_module(feature_picker)
 
 
 class FeaturePickerModelTests(unittest.TestCase):
+    def test_feature_ids_match_public_local_and_alternate_directories(self):
+        for case in MANIFEST_CASES["directories"]:
+            with self.subTest(case=case["label"]), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp) / case.get("root", "linux-features")
+                directory = root / case["directory"]
+                directory.mkdir(parents=True)
+                (directory / "feature.json").write_text(json.dumps({"id": case["id"]}))
+                (directory / "README.md").write_text("# Directory fixture\n")
+                if case.get("error"):
+                    with self.assertRaises(feature_picker.SelectionError) as failure:
+                        feature_picker.discover_features(root)
+                    self.assertIn(case["id"], str(failure.exception))
+                    self.assertIn(directory.name, str(failure.exception))
+                    self.assertIn("must match", str(failure.exception))
+                else:
+                    features = feature_picker.discover_features(root)
+                    self.assertEqual(list(features), [case["id"]])
+                    self.assertEqual(features[case["id"]].local, case["directory"].startswith("local/"))
+
+    def test_directory_matching_uses_declaration_path_and_preserves_discovery_rules(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp) / "features"
+            target = pathlib.Path(temp) / "differently-named-target"
+            root.mkdir()
+            target.mkdir()
+            (target / "feature.json").write_text('{"id":"linked"}')
+            (target / "README.md").write_text("# Linked\n")
+            (root / "linked").symlink_to(target, target_is_directory=True)
+            for name in (".ignored", "README.md"):
+                (root / name).mkdir()
+                (root / name / "feature.json").write_text('{"id":"INVALID"}')
+            self.assertEqual(list(feature_picker.discover_features(root)), ["linked"])
+            local = root / "local/linked"
+            local.mkdir(parents=True)
+            (local / "feature.json").write_text('{"id":"linked"}')
+            (local / "README.md").write_text("# Linked local\n")
+            with self.assertRaisesRegex(feature_picker.SelectionError, "Duplicate feature id: linked"):
+                feature_picker.discover_features(root)
+
     def test_manifest_entrypoint_declarations_without_executing_modules(self):
         for case in MANIFEST_CASES["entrypoints"]:
             with self.subTest(case=case["label"]), tempfile.TemporaryDirectory() as temp:

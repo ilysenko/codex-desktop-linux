@@ -322,6 +322,12 @@ function normalizeLinuxFeatureManifest(featuresRoot, candidate) {
   }
 
   const id = assertFeatureId(manifest.id, `Linux feature id in ${candidate.manifestPath}`);
+  const directoryName = path.basename(candidate.dir);
+  if (id !== directoryName) {
+    throw new Error(
+      `Linux feature id '${id}' in ${candidate.manifestPath} must match its directory name '${directoryName}'`,
+    );
+  }
   const readmePath = path.join(candidate.dir, "README.md");
   if (!fs.existsSync(readmePath) || isDirectory(readmePath)) {
     throw new Error(`Linux feature '${id}' must include README.md next to feature.json`);

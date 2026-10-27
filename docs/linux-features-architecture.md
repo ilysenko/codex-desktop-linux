@@ -5,6 +5,11 @@ Repository features live in `linux-features/<id>/`; private local features live
 in the gitignored `linux-features/local/<id>/`. Every feature requires adjacent
 `feature.json` and `README.md` files.
 
+The manifest `id` must equal the declaring feature directory's final name:
+`<id>` in both repository and `local/<id>` paths, including alternate feature
+roots. Discovery checks the declaration path, not a symlink target's name, and
+reports mismatches without renaming directories or migrating private features.
+
 Features are always disabled by default. Enable them only in the gitignored
 configuration:
 

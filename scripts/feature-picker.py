@@ -85,6 +85,10 @@ def discover_features(root: pathlib.Path) -> dict[str, Feature]:
         feature_id = data.get("id")
         if not isinstance(feature_id, str) or not ID_RE.fullmatch(feature_id):
             raise SelectionError(f"{manifest}: invalid feature id")
+        if feature_id != manifest.parent.name:
+            raise SelectionError(
+                f"{manifest}: feature id '{feature_id}' must match its directory name '{manifest.parent.name}'"
+            )
         if data.get("defaultEnabled") is True:
             raise SelectionError(
                 f"{manifest}: defaultEnabled true is not allowed"

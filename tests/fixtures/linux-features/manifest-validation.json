@@ -14,5 +14,13 @@
     { "label": "string", "entrypoints": "./patch.js", "error": "entrypoints must be an object" },
     { "label": "number", "entrypoints": 1, "error": "entrypoints must be an object" },
     { "label": "boolean", "entrypoints": false, "error": "entrypoints must be an object" }
+  ],
+  "directories": [
+    { "label": "public", "directory": "probe", "id": "probe" },
+    { "label": "private", "directory": "local/private-probe", "id": "private-probe" },
+    { "label": "alternate-root", "root": "alternate-features", "directory": "probe", "id": "probe" },
+    { "label": "public-mismatch", "directory": "folder-name", "id": "different-id", "error": true },
+    { "label": "private-mismatch", "directory": "local/folder-name", "id": "different-id", "error": true },
+    { "label": "alternate-root-mismatch", "root": "alternate-features", "directory": "folder-name", "id": "different-id", "error": true }
   ]
 }
