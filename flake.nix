@@ -567,7 +567,9 @@
               ${lib.optionalString watchboundEnabled ''
               export CODEX_WATCHBOUND_PACKAGE_ROOT="${watchboundPackage}/lib/node_modules"
               ''}
-              bash "$source_dir/install.sh" "${upstreamDeb}"
+              # Nix verified the signed-release pin's fixed-output hash; the
+              # sandbox cannot fetch live APT metadata during this build.
+              bash "$source_dir/install.sh" --skip-oai-official-sig-verification "${upstreamDeb}"
 
               app="$out/opt/codex-desktop"
               test -d "$app"
@@ -819,7 +821,8 @@
               --arch ${officialPackage.architecture}
             rm -rf -- "$upstream_contract_root"
             export CODEX_ASAR_BIN="${pkgs.asar}/bin/asar"
-            ${pkgs.bash}/bin/bash ${sourceRoot}/install.sh ${upstreamDeb} "$@"
+            # The fixed-output upstreamDeb has already passed Nix hash verification.
+            ${pkgs.bash}/bin/bash ${sourceRoot}/install.sh --skip-oai-official-sig-verification ${upstreamDeb} "$@"
 
             dynamic_linker="$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)"
             node ${sourceRoot}/nix/elf-runtime.cjs fix \

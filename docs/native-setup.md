@@ -118,16 +118,19 @@ bash scripts/bootstrap-wizard.sh
 
 ## Build from a local package
 
-For an official package already downloaded from a source you trust:
+For an already-downloaded official package:
 
 ```bash
 UPSTREAM_DEB=/absolute/path/chatgpt_<version>_<arch>.deb make install-native
 ```
 
-The build checks control metadata, architecture, required payload, and records
-the computed SHA-256. It does not independently prove the file's provenance,
-because signed repository discovery is intentionally skipped for explicit
-local input.
+The build verifies the local body against signed stable metadata by default,
+including control fields, size, and SHA-256, then checks the required payload.
+Interactive local builds ask whether to skip official verification for this
+invocation (default No); non-interactive builds verify. The explicit
+`--skip-oai-official-sig-verification` installer option retains structural
+checks and records the skip; see [local package verification](build-and-packaging.md#build-the-application-tree).
+Gentoo independently checks signed provenance again before packaging.
 
 ## Gentoo local ebuild
 

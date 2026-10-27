@@ -28,7 +28,7 @@
 | Change ASAR matching | the feature's descriptor | patch runner/report policy, raw official-ASAR probe |
 | Change package content | `scripts/lib/package-common.sh` | deb/RPM/pacman/AppImage/Nix and updater bundle |
 | Change update behavior | `updater/src/` | service files, notification/desktop actions, persisted-state migration |
-| Refresh official pins | `scripts/ci/update-official-linux-pins.sh` | both architectures and signed metadata |
+| Refresh official pins | `scripts/ci/update-nix-hashes.sh` | both architectures and signed metadata |
 | Change public commands | `Makefile` or CLI source | README EN/ZH and relevant operations guide |
 
 The official Linux package supplies the complete application runtime and

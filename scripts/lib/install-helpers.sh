@@ -43,6 +43,7 @@ trap 'error "Failed at line $LINENO (exit code $?)"' ERR
 
 FRESH_INSTALL=0
 PROVIDED_UPSTREAM_DEB_PATH="${UPSTREAM_DEB:-}"
+SKIP_OAI_OFFICIAL_SIG_VERIFICATION=0
 INSPECT_ONLY=0
 REPORT_DIR=""
 
@@ -51,7 +52,9 @@ usage() {
 Usage: ./install.sh [OPTIONS] [path/to/chatgpt_*.deb]
 
 Builds the custom distribution from OpenAI's official Linux package. With no
-path, the package is resolved through signed stable APT metadata.
+path, the package is resolved through signed stable APT metadata. Local packages
+are verified against that metadata too. An interactive local build asks whether
+to skip verification for this invocation; the default answer is no.
 
 Options:
   -h, --help     Show this help message and exit
@@ -59,6 +62,9 @@ Options:
   --inspect      Inspect the package and write reports without installing
   --report-dir DIR
                  Directory for --inspect reports (default: ./dist-next/rebuild)
+  --skip-oai-official-sig-verification
+                 Skip signed repository verification for a supplied local .deb
+                 for this invocation only; structural checks still apply
 
 Environment variables:
   CODEX_INSTALL_DIR   Override the install directory (default: ./codex-app)
@@ -92,6 +98,9 @@ parse_args() {
             --inspect)
                 INSPECT_ONLY=1
                 ;;
+            --skip-oai-official-sig-verification)
+                SKIP_OAI_OFFICIAL_SIG_VERIFICATION=1
+                ;;
             --report-dir)
                 shift
                 [ $# -gt 0 ] || error "--report-dir requires a directory"
@@ -118,6 +127,9 @@ parse_args() {
         esac
         shift
     done
+    if [ "${SKIP_OAI_OFFICIAL_SIG_VERIFICATION:-0}" -eq 1 ] && [ -z "$PROVIDED_UPSTREAM_DEB_PATH" ]; then
+        error "--skip-oai-official-sig-verification requires a local .deb path or UPSTREAM_DEB"
+    fi
 }
 
 validate_app_identity() {

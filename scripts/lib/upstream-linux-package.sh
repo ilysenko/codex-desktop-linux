@@ -11,9 +11,27 @@ map_upstream_architecture() {
     esac
 }
 
+choose_local_package_verification() {
+    [ "${SKIP_OAI_OFFICIAL_SIG_VERIFICATION:-0}" -eq 0 ] || return 0
+    # Only a human terminal can grant the per-invocation exception. Piped input
+    # and unattended updater builds retain signed verification by default.
+    [ -t 0 ] && [ -t 2 ] || return 0
+    local answer
+    while true; do
+        printf 'Skip OpenAI official signed-repository verification for this local package for this build? [y/N] ' >&2
+        IFS= read -r answer || error "Could not read the verification choice"
+        case "$answer" in
+            y|Y|[yY][eE][sS]) SKIP_OAI_OFFICIAL_SIG_VERIFICATION=1; return 0 ;;
+            ""|n|N|[nN][oO]) return 0 ;;
+            *) printf 'Please answer yes or no.\n' >&2 ;;
+        esac
+    done
+}
+
 resolve_upstream_linux_package() {
     local metadata_path="$1"
     local architecture
+    local -a verifier_args=()
     architecture="$(map_upstream_architecture "$ARCH")"
 
     if [ -n "$PROVIDED_UPSTREAM_DEB_PATH" ]; then
@@ -21,8 +39,13 @@ resolve_upstream_linux_package() {
         UPSTREAM_DEB_PATH="$(realpath "$PROVIDED_UPSTREAM_DEB_PATH")"
         info "Using explicitly provided upstream Linux package: $UPSTREAM_DEB_PATH"
         validate_upstream_linux_package "$UPSTREAM_DEB_PATH" "$architecture"
-        write_local_upstream_metadata "$metadata_path" "$UPSTREAM_DEB_PATH" "$architecture"
-        return 0
+        choose_local_package_verification
+        if [ "${SKIP_OAI_OFFICIAL_SIG_VERIFICATION:-0}" -eq 1 ]; then
+            warn "Skipping OpenAI official signed-repository verification for this local package for this build"
+            write_local_upstream_metadata "$metadata_path" "$UPSTREAM_DEB_PATH" "$architecture"
+            return 0
+        fi
+        verifier_args=(--local-package "$UPSTREAM_DEB_PATH")
     fi
 
     info "Resolving official chatgpt/$architecture from signed stable APT metadata"
@@ -32,7 +55,8 @@ resolve_upstream_linux_package() {
             --metadata "$metadata_path" \
             --key-base64 "$SCRIPT_DIR/assets/openai-codex-linux-repository-key.gpg.base64" \
             --arch "$architecture" \
-            --repository "${CODEX_UPSTREAM_LINUX_REPOSITORY:-https://persistent.oaistatic.com/codex-app-prod/linux/deb}"
+            --repository "${CODEX_UPSTREAM_LINUX_REPOSITORY:-https://persistent.oaistatic.com/codex-app-prod/linux/deb}" \
+            "${verifier_args[@]}"
     )"
     validate_upstream_linux_package "$UPSTREAM_DEB_PATH" "$architecture"
 }
@@ -77,6 +101,7 @@ const metadata = {
   size: bytes.length,
   depends: field("Depends"),
   explicitlyProvided: true,
+  signatureVerification: "skipped",
 };
 fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
 fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);

@@ -44,6 +44,14 @@ the architecture-specific `Packages` file, then the package SHA-256 recorded in
 that index. Wrong signatures, hashes, package names, versions, architectures,
 or incomplete payloads fail closed.
 
+Local input reuses package bytes while retaining signed verification by default.
+An interactive local build asks whether to skip for this invocation (default
+No); `--skip-oai-official-sig-verification` explicitly selects that exception.
+Non-interactive builds verify by default. The exception retains structural
+checks and records `signatureVerification: "skipped"` in build provenance; it
+does not follow automatically from a signature or digest failure. Nix's offline
+builds use that explicit exception with their independently hash-verified pins.
+
 The upstream source/key setup and maintainer scripts are never copied into the
 custom package. This prevents an official package-manager transaction from
 owning or replacing `/opt/codex-desktop`.

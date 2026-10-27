@@ -89,7 +89,13 @@ make install-native
 UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 ```
 
-بسته محلی همچنان از نظر package name، architecture، control metadata، کامل‌بودن payload و ثبت SHA-256 بررسی می‌شود. چون در این حالت discovery از repository امضاشده انجام نمی‌شود، مسئولیت اطمینان از منبع فایل با کاربر است. ورودی‌های قدیمی `.dmg`، `DMG=` و `CODEX_DMG_*` عمداً پشتیبانی نمی‌شوند.
+بسته محلی به‌صورت پیش‌فرض با metadata امضاشده stable از نظر version، architecture، اندازه و SHA-256 تطبیق داده می‌شود؛ بدنه بسته دوباره دانلود نمی‌شود. در ترمینال تعاملی، اگر flag زیر داده نشده باشد، درباره رد کردن اعتبارسنجی رسمی فقط برای همین build پرسیده می‌شود (`[y/N]`، پیش‌فرض No). build غیرتعاملی به‌صورت پیش‌فرض اعتبارسنجی می‌کند:
+
+```bash
+./install.sh --skip-oai-official-sig-verification /path/to/chatgpt_<version>_<arch>.deb
+```
+
+این استثنا فقط برای همان اجراست؛ بررسی package name، قالب version، architecture و کامل‌بودن payload ادامه دارد و `signatureVerification: "skipped"` در metadata ثبت می‌شود. مسئولیت منبع فایل در این حالت با کاربر است. خطای اعتبارسنجی هرگز خودکار این استثنا را فعال نمی‌کند. ورودی‌های قدیمی `.dmg`، `DMG=` و `CODEX_DMG_*` عمداً پشتیبانی نمی‌شوند.
 
 ### پیش از نصب
 
@@ -163,7 +169,7 @@ rm -rf -- ./codex-app
 | قابلیت | وضعیت پیش‌فرض | نحوه ارائه |
 |---|---|---|
 | runtime رسمی ChatGPT لینوکس | همیشه | کپی از payload داده بسته رسمی `.deb` پس از اعتبارسنجی |
-| اعتبارسنجی منبع امضاشده | همیشه | کلید repository pinشده → `InRelease` → SHA-256 مربوط به `Packages` → SHA-256 بسته |
+| اعتبارسنجی منبع امضاشده | پیش‌فرض فعال | کلید repository pinشده → `InRelease` → SHA-256 مربوط به `Packages` → SHA-256 بسته؛ استثنای صریح محلی ثبت می‌شود |
 | بسته‌های native برای deb، RPM و pacman | build دستی | `make deb`، `make rpm` یا `make pacman` |
 | AppImage | build دستی | `make appimage`؛ بدون bypass خودکار sandbox یا updater bundled |
 | Nix flake | build دستی | `nix run github:ilysenko/codex-desktop-linux` |
@@ -310,7 +316,7 @@ buildها تراکنشی‌اند: ابتدا candidate اعتبارسنجی م�
 | اجرای ChatGPT رسمی و Community با هم تداخل دارد | تمام processهای `ChatGPT` را کامل ببندید؛ هر دو app به‌طور پیش‌فرض profile بالادستی را share می‌کنند |
 | AppImage از Flatpak Chrome باز می‌شود ولی extension می‌گوید `Native transport disconnected` | `flatpak-chrome-native-messaging` را فعال کنید؛ [راهنمای Flatpak Chrome](docs/troubleshooting.md#appimage-opens-from-flatpak-chrome-but-the-extension-cannot-connect) را ببینید |
 | ادغام Browser/Chrome پس از migration وصل نمی‌شود | ChatGPT و Chrome را کامل ببندید و repair محدود موجود در [Troubleshooting](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect) را انجام دهید |
-| signature یا package verification شکست می‌خورد | bypass نکنید؛ زمان سیستم، شبکه، `gpgv`، architecture و فضای دیسک را بررسی کنید |
+| signature یا package verification شکست می‌خورد | زمان سیستم، شبکه، `gpgv`، architecture و فضای دیسک را بررسی کنید؛ استثنای عمدی محلی فقط با تأیید یا flag همان build انتخاب می‌شود |
 | برنامه launch نمی‌شود | `/opt/codex-desktop/start.sh --diagnose` را اجرا کنید |
 | برنامه از XWayland استفاده می‌کند یا به Electron flag دائمی نیاز دارد | session تأییدشده Wayland به‌صورت خودکار native backend را انتخاب می‌کند؛ با `CODEX_OZONE_PLATFORM=x11\|wayland` backend را pin کنید یا در `~/.config/codex-desktop/electron-flags.conf` هر flag را در یک خط بگذارید، مثلاً `--ozone-platform=x11` |
 | AppImage خطای sandbox می‌دهد | user namespaces را فعال کنید یا بسته native نصب کنید؛ `--no-sandbox` خودکار اضافه نمی‌شود |

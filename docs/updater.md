@@ -30,6 +30,9 @@ installed `/opt/codex-desktop` tree. It contains its own minimal Node/ASAR build
 tools but does not install them in the application runtime. The workspace build
 uses `CODEX_INSTALL_TRANSACTION_ACTIVE=1` to stage its app directly rather than
 promoting it over the managed installation.
+Unattended rebuilds pass no signature-skip flag: local package input retains
+signed stable metadata verification without a terminal prompt. A manual
+installer's skip choice is not persisted as an updater preference.
 
 Enabled feature drift rejects the candidate. Disabled features are neither
 loaded nor probed. Native helper binaries belong to the project release package

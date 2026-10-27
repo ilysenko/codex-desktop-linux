@@ -34,19 +34,38 @@ This is a Linux `.deb`-only source pipeline. Retired source inputs and
 compatibility variables are rejected rather than emulated; the official
 Electron runtime and native modules are preserved directly.
 
-Use an explicit already-downloaded package that you trust:
+Use an already-downloaded package to avoid downloading the package body again:
 
 ```bash
 ./install.sh /path/to/chatgpt_<version>_<arch>.deb
 UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 ```
 
-The explicit package is validated for package name, version, architecture, and
-required payload, and its SHA-256 is recorded in build metadata. Supplying a
-local file deliberately skips signed repository discovery, so the caller is
-responsible for its provenance. Source package formats from the retired build
-architecture are rejected with a clear error and have no compatibility
-fallback.
+Local packages are verified against the same signed stable metadata by default:
+the pinned key authenticates `InRelease`, its digest authenticates `Packages`,
+and the indexed size/SHA-256 and package control fields must match the local
+file. Only metadata is fetched; the package body is reused.
+
+For a local input without a skip flag, an interactive terminal asks whether to
+skip official verification for this build (`[y/N]`, default No). Non-interactive
+builds verify without reading piped answers. An affirmative answer or this flag
+chooses the exception for this invocation only:
+
+```bash
+./install.sh --skip-oai-official-sig-verification /path/to/chatgpt_<version>_<arch>.deb
+```
+
+The flag requires a local path (positional or `UPSTREAM_DEB`). It skips official
+metadata discovery and its signature/version/digest comparison, while retaining
+package-name, version-format, architecture, payload-completeness checks, and
+SHA-256 recording. The caller owns provenance in that mode. A verification
+failure never automatically chooses the exception, and the choice is not saved
+to feature or updater settings. The supported compatibility baseline remains
+the latest signed stable package. `scripts/rebuild-candidate.sh` accepts the
+same flag.
+
+Source package formats from the retired build architecture are rejected with a
+clear error and have no compatibility fallback.
 
 Inspection writes reports without promoting an app:
 
@@ -57,6 +76,10 @@ make inspect-upstream
 Generated metadata under `.codex-linux/build-info.json` uses schema v2 and
 records `upstreamLinuxPackage` version, architecture, repository path, and
 SHA-256.
+`upstreamLinuxPackage.signatureVerification` records `verified` for successful
+signed-repository verification and `skipped` for the explicit local exception;
+metadata without a recorded result is `unknown`. Nix's hash-verified fixed
+input uses the explicit exception during offline builds; see [Nix](nix.md).
 
 ## Running the generated app
 
@@ -192,7 +215,7 @@ launcher still enforces the sandbox policy.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `UPSTREAM_DEB` | signed stable discovery | Use an explicitly trusted local official package |
+| `UPSTREAM_DEB` | signed stable discovery | Reuse a local package body; signed verification remains the default |
 | `APP_DIR` | `./codex-app` | Generated active app directory |
 | `NEXT_APP_DIR` | `./codex-app-next` | Side-by-side candidate directory |
 | `PACKAGE_WITH_UPDATER` | `1` (`0` on Gentoo) | Include the native updater when supported |

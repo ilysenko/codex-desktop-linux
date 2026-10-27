@@ -13,7 +13,13 @@ manager that rebuilds from the signed stable APT repository.
 - Support only the latest signed stable OpenAI Linux package on `amd64` and
   `arm64`. Remove obsolete drift paths in the same change.
 - Trust `InRelease` through the pinned repository key, then verify `Packages`
-  and package SHA-256 values. `latest` URLs are never a trust root.
+  and package SHA-256 values by default, including explicitly supplied local
+  packages. `latest` URLs are never a trust root. A local-package build may
+  skip this official verification for that invocation only via
+  `--skip-oai-official-sig-verification` or an affirmative terminal prompt;
+  retain structural checks and record the skip in build provenance. With no
+  flag, interactive local builds ask with default No; non-interactive builds
+  verify. Never silently fall back to a skip after verification failure.
 - Never execute upstream maintainer scripts. Extract the data payload only.
 - A clean build with no enabled ASAR feature and no required core patch must
   preserve `resources/app.asar` byte-for-byte.
@@ -123,7 +129,12 @@ make appimage
 builds, packages, and installs for the current distribution.
 `make bootstrap-native` installs build dependencies first and then performs the
 same native installation. A local `UPSTREAM_DEB` is structural input, not a
-replacement trust root for the signed repository.
+replacement trust root for the signed repository. It avoids the package-body
+download; default verification still uses signed stable metadata. The explicit
+local exception above does not add compatibility support for older packages.
+Nix build/installer entrypoints pass that exception for their fixed-output
+input, whose pinned hash Nix has already verified; they do not claim fresh APT
+signature verification. Native updater rebuilds keep default verification.
 
 Run the relevant subset, and use `./scripts/ci-local.sh all` for broad changes:
 
@@ -139,7 +150,7 @@ nix flake check
 
 Package/update/launcher/framework changes are cross-format unless explicitly
 scoped. When changing payloads, inspect all supported output formats. Refresh
-Nix pins through `scripts/ci/update-official-linux-pins.sh`, never by inventing
+Nix pins through `scripts/ci/update-nix-hashes.sh`, never by inventing
 hashes.
 
 ## Change expectations

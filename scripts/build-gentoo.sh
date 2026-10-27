@@ -39,8 +39,8 @@ export TMPDIR="${TMPDIR:-${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-dev/tmp}"
 mkdir -p "$TMPDIR"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
-# Local deb arguments bypass signed discovery in install.sh. Revalidate the
-# build provenance against the pinned signed index before producing an ebuild.
+# A local build can explicitly skip signed discovery. Independently revalidate
+# provenance against the pinned signed index before producing an ebuild.
 node "$SCRIPT_DIR/lib/upstream-linux-package.js" --metadata-only \
     --output-dir "$scratch/signed" --metadata "$scratch/signed.json" \
     --key-base64 "$REPO_DIR/assets/openai-codex-linux-repository-key.gpg.base64" \

@@ -123,15 +123,27 @@ guided flow, non-interactive settings, updater selection, and cleanup.
 ### Use an already downloaded official package
 
 Normally the build resolves `amd64` or `arm64` from the signed stable index.
-You can instead provide a local package that you already trust:
+You can reuse an already-downloaded package body:
 
 ```bash
 UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 ```
 
-The local package is still checked for package name, architecture, control
-metadata, payload completeness, and SHA-256 recording. Because signed
-repository discovery is skipped, the caller is responsible for its origin.
+The local package is verified against the signed stable metadata by default,
+including its version, architecture, size, and SHA-256, without downloading its
+body again. Without a skip flag, a terminal asks whether to skip official
+verification for this build (`[y/N]`, default No); non-interactive builds verify.
+To choose the local exception explicitly:
+
+```bash
+./install.sh --skip-oai-official-sig-verification /path/to/chatgpt_<version>_<arch>.deb
+```
+
+The exception applies only to this invocation and still checks package name,
+version format, architecture, and payload completeness. Build metadata records
+`signatureVerification: "skipped"`; the caller is responsible for provenance.
+Verification errors never silently enable the exception. See
+[Build and packaging](docs/build-and-packaging.md#build-the-application-tree).
 Old `.dmg`, `DMG=`, and `CODEX_DMG_*` inputs are intentionally unsupported.
 
 ### Before you install
@@ -240,7 +252,7 @@ state.
 | Capability | Default | How it is provided |
 |---|---|---|
 | Official ChatGPT Linux runtime | Always | Copied from the verified official `.deb` data payload |
-| Signed source verification | Always | Pinned repository key → `InRelease` → `Packages` SHA-256 → package SHA-256 |
+| Signed source verification | Enabled | Pinned repository key → `InRelease` → `Packages` SHA-256 → package SHA-256; explicit local exceptions are recorded |
 | Native deb, RPM, and pacman packages | Manual build | `make deb`, `make rpm`, or `make pacman` |
 | AppImage | Manual build | `make appimage`; no automatic sandbox bypass or bundled updater |
 | Nix flake | Manual build | `nix run github:ilysenko/codex-desktop-linux` |
@@ -454,7 +466,7 @@ output layout, parallelism, and payload inspection.
 | Official and Community launches interfere | Fully exit every `ChatGPT` process; both apps share the upstream profile |
 | AppImage opens from Flatpak Chrome, but the extension says `Native transport disconnected` | Enable `flatpak-chrome-native-messaging`; see [Flatpak Chrome setup](docs/troubleshooting.md#appimage-opens-from-flatpak-chrome-but-the-extension-cannot-connect) |
 | Browser/Chrome extension cannot connect after migration | Exit ChatGPT and Chrome completely, then follow the narrow cache repair in [Troubleshooting](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect) |
-| Signature or package verification fails | Do not bypass it; check time, network, `gpgv`, architecture, and disk space |
+| Signature or package verification fails | Check time, network, `gpgv`, architecture, and disk space; intentional local exceptions use the documented per-build prompt or flag |
 | App does not launch | Run `/opt/codex-desktop/start.sh --diagnose` |
 | App uses XWayland or needs persistent Electron flags | A confirmed Wayland session selects the native backend automatically; pin one with `CODEX_OZONE_PLATFORM=x11\|wayland`, or put one flag per line in `~/.config/codex-desktop/electron-flags.conf`, for example `--ozone-platform=x11` |
 | AppImage reports a sandbox error | Enable user namespaces or install a native package; `--no-sandbox` is not added automatically |

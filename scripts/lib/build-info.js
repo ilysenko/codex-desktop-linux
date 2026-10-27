@@ -300,6 +300,7 @@ function buildInfo(options) {
       fileName: path.basename(packagePath),
       sizeBytes: fs.statSync(packagePath).size,
       sha256: sha256File(packagePath),
+      signatureVerification: metadata.signatureVerification ?? "unknown",
     },
     source: sourceInfo(repoDir, env),
     linuxTarget: linuxTargetInfo(target),

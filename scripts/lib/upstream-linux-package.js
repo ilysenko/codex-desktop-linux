@@ -105,6 +105,19 @@ function verifyIndexedFile(filePath, expected, label) {
   }
 }
 
+function verifyPackageControl(filePath, expected) {
+  const result = childProcess.spawnSync("dpkg-deb", ["--field", filePath], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`Could not read package control metadata for ${filePath}: ${result.stderr?.trim()}`);
+  }
+  const [control] = parseDeb822(result.stdout);
+  for (const [field, key] of [["Package", "package"], ["Version", "version"], ["Architecture", "architecture"]]) {
+    if (control?.[field] !== expected[key]) {
+      throw new Error(`Package ${field} mismatch: signed index expects ${expected[key]}, got ${control?.[field] ?? "missing"}`);
+    }
+  }
+}
+
 async function download(url, destination) {
   const response = await fetch(url, { redirect: "follow" });
   if (!response.ok) throw new Error(`Download failed (${response.status}) for ${url}`);
@@ -136,8 +149,15 @@ function verifyInRelease(inReleasePath, keyPath, expectedFingerprint = EXPECTED_
   return extractClearSignedPayload(fs.readFileSync(inReleasePath, "utf8"));
 }
 
-async function resolveOfficialPackage(options) {
+async function resolveOfficialPackage(options, expectedFingerprint = EXPECTED_FINGERPRINT) {
   const architecture = mapMachineArch(options.architecture);
+  if (options.localPackagePath != null && options.metadataOnly) {
+    throw new Error("--local-package cannot be combined with --metadata-only");
+  }
+  const localPackagePath = options.localPackagePath == null ? null : path.resolve(options.localPackagePath);
+  if (localPackagePath != null && !fs.statSync(localPackagePath).isFile()) {
+    throw new Error(`Local package must be a file: ${localPackagePath}`);
+  }
   const repository = (options.repository ?? DEFAULT_REPOSITORY).replace(/\/+$/, "");
   const outputDir = path.resolve(options.outputDir);
   fs.mkdirSync(outputDir, { recursive: true });
@@ -148,7 +168,7 @@ async function resolveOfficialPackage(options) {
 
   const inReleasePath = path.join(outputDir, "InRelease");
   await download(`${repository}/dists/stable/InRelease`, inReleasePath);
-  const releasePayload = verifyInRelease(inReleasePath, keyPath);
+  const releasePayload = verifyInRelease(inReleasePath, keyPath, expectedFingerprint);
   const releaseEntries = parseReleaseSha256(releasePayload);
   const packagesRelative = `main/binary-${architecture}/Packages`;
   const indexedPackages = releaseEntries.get(packagesRelative);
@@ -161,11 +181,16 @@ async function resolveOfficialPackage(options) {
 
   let packagePath = null;
   if (!options.metadataOnly) {
-    packagePath = path.join(outputDir, `chatgpt_${metadata.version}_${architecture}.deb`);
-    await download(`${repository}/${metadata.repositoryPath}`, packagePath);
+    packagePath = localPackagePath ?? path.join(outputDir, `chatgpt_${metadata.version}_${architecture}.deb`);
+    if (localPackagePath == null) await download(`${repository}/${metadata.repositoryPath}`, packagePath);
     verifyIndexedFile(packagePath, metadata, path.basename(packagePath));
+    verifyPackageControl(packagePath, metadata);
   }
-  const result = { ...metadata, repository, path: packagePath };
+  const result = {
+    ...metadata, repository, path: packagePath,
+    ...(localPackagePath != null ? { explicitlyProvided: true } : {}),
+    signatureVerification: "verified",
+  };
   fs.writeFileSync(options.metadataPath, `${JSON.stringify(result, null, 2)}\n`);
   return result;
 }
@@ -187,7 +212,7 @@ async function main() {
     i += 2;
   }
   if (!values["--output-dir"] || !values["--metadata"] || !values["--key-base64"]) {
-    throw new Error("Usage: upstream-linux-package.js --output-dir DIR --metadata FILE --key-base64 FILE [--arch ARCH] [--repository URL] [--metadata-only]");
+    throw new Error("Usage: upstream-linux-package.js --output-dir DIR --metadata FILE --key-base64 FILE [--arch ARCH] [--repository URL] [--metadata-only | --local-package FILE]");
   }
   const result = await resolveOfficialPackage({
     outputDir: values["--output-dir"],
@@ -196,6 +221,7 @@ async function main() {
     architecture: values["--arch"] ?? os.arch(),
     repository: values["--repository"],
     metadataOnly,
+    localPackagePath: values["--local-package"],
   });
   process.stdout.write(`${result.path ?? values["--metadata"]}\n`);
 }
@@ -217,6 +243,7 @@ module.exports = {
   selectChatgptPackage,
   sha256File,
   verifyIndexedFile,
+  verifyPackageControl,
   verifyInRelease,
   verifySigningKey,
 };

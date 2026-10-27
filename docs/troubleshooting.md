@@ -6,13 +6,16 @@ Run the verifier test suite and inspect the generated metadata:
 
 ```bash
 node --test scripts/lib/upstream-linux-package.test.js
-./install.sh --inspect --report-dir /tmp/codex-inspect
+./install.sh --inspect --report-dir "$HOME/.cache/codex-desktop-dev/inspect"
 ```
 
-Do not bypass a signature or hash failure. Confirm system time, HTTPS access to
+Default builds stop on a signature or hash failure. Confirm system time, HTTPS access to
 `persistent.oaistatic.com`, `gpgv`, the pinned key fingerprint, and sufficient
 disk space. An explicit package must match host architecture and be named
 `chatgpt` in control metadata.
+For an intentional local-only exception, see the per-invocation prompt and
+`--skip-oai-official-sig-verification` in
+[Build and packaging](build-and-packaging.md#build-the-application-tree).
 
 ## The app does not launch
 

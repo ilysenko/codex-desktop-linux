@@ -12,9 +12,12 @@ const {
   mapMachineArch,
   parseReleaseSha256,
   selectChatgptPackage,
+  resolveOfficialPackage,
+  sha256File,
   verifyIndexedFile,
   verifyInRelease,
 } = require("./upstream-linux-package.js");
+const { makeDeb } = require("../../tests/lib/upstream-package-fixture.js");
 
 function run(command, args, options = {}) {
   return childProcess.execFileSync(command, args, { encoding: "utf8", ...options });
@@ -101,4 +104,105 @@ test("InRelease verification accepts the signing key and rejects tampering or a 
   fs.writeFileSync(tamperedPath, fs.readFileSync(inReleasePath, "utf8").replace("Codename: stable", "Codename: testing"));
   assert.throws(() => verifyInRelease(tamperedPath, signer.keyPath, signer.fingerprint), /signature verification failed/);
   assert.match(extractClearSignedPayload(fs.readFileSync(inReleasePath, "utf8")), /Codename: stable/);
+});
+
+test("signed resolution verifies local packages without downloading their bodies and fails closed", { timeout: 30000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-local-signed-package-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const signer = createSigningFixture(root, "Local Package Signer");
+  const wrong = createSigningFixture(root, "Other Package Signer");
+  const keyBase64Path = path.join(root, "key.base64");
+  fs.writeFileSync(keyBase64Path, fs.readFileSync(signer.keyPath).toString("base64"));
+  const cases = [
+    { name: "local amd64" },
+    { name: "local arm64", architecture: "arm64" },
+    { name: "downloaded amd64", download: true },
+    { name: "tampered signature", tamperSignature: true, error: /signature verification failed/ },
+    { name: "wrong signer", wrongSigner: true, error: /signature verification failed/ },
+    { name: "wrong pinned key", wrongKey: true, error: /expected fingerprint/ },
+    { name: "unsigned index", unsigned: true, error: /signature verification failed/ },
+    { name: "index hash mismatch", tamperIndex: true, error: /Packages.*SHA256 mismatch/ },
+    { name: "local hash mismatch", tamperPackage: true, error: /SHA256 mismatch/ },
+    { name: "local size mismatch", tamperSize: true, error: /size mismatch/ },
+    { name: "wrong control package", packageName: "other", error: /Package Package mismatch/ },
+    { name: "wrong control version", version: "26.1020.1", error: /Package Version mismatch/ },
+    { name: "wrong control architecture", controlArchitecture: "arm64", error: /Package Architecture mismatch/ },
+    { name: "missing index architecture", missingArchitecture: true, error: /does not index/ },
+    { name: "unsupported architecture", architecture: "armv7l", error: /Unsupported architecture/ },
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.name, async (t) => {
+      const current = fs.mkdtempSync(path.join(root, "case-"));
+      const architecture = scenario.architecture ?? "amd64";
+      const file = makeDeb(current, {
+        packageName: scenario.packageName,
+        version: scenario.version,
+        architecture: scenario.controlArchitecture ?? architecture,
+      });
+      const body = fs.readFileSync(file);
+      const packageRelative = "pool/main/c/chatgpt/input.deb";
+      const packagesRelative = `main/binary-${architecture}/Packages`;
+      const packages = Buffer.from([
+        "Package: chatgpt", "Version: 26.1021.22027", `Architecture: ${architecture}`,
+        `Filename: ${packageRelative}`, `Size: ${body.length}`, `SHA256: ${sha256File(file)}`, "",
+      ].join("\n"));
+      const packagesPath = path.join(current, "Packages");
+      fs.writeFileSync(packagesPath, packages);
+      const releasePath = path.join(current, "Release");
+      fs.writeFileSync(releasePath, `Codename: stable\nSHA256:\n ${sha256File(packagesPath)} ${packages.length} ${scenario.missingArchitecture ? "other/Packages" : packagesRelative}\n`);
+      const inReleasePath = path.join(current, "InRelease");
+      childProcess.execFileSync("gpg", [
+        "--homedir", scenario.wrongSigner ? wrong.home : signer.home,
+        "--batch", "--yes", "--pinentry-mode", "loopback", "--passphrase", "",
+        "--output", inReleasePath, "--clearsign", releasePath,
+      ]);
+      let inRelease = fs.readFileSync(inReleasePath, "utf8");
+      if (scenario.tamperSignature) inRelease = inRelease.replace("Codename: stable", "Codename: changed");
+      if (scenario.unsigned) inRelease = fs.readFileSync(releasePath, "utf8");
+      if (scenario.tamperPackage) {
+        const changed = Buffer.from(body); changed[changed.length - 1] ^= 1;
+        fs.writeFileSync(file, changed);
+      }
+      if (scenario.tamperSize) fs.appendFileSync(file, "extra");
+      const fixtureKey = scenario.wrongKey ? path.join(current, "wrong.base64") : keyBase64Path;
+      if (scenario.wrongKey) fs.writeFileSync(fixtureKey, fs.readFileSync(wrong.keyPath).toString("base64"));
+      const requested = [];
+      const repository = "https://fixture.invalid";
+      t.mock.method(globalThis, "fetch", async (url) => {
+        requested.push(url);
+        if (url === `${repository}/dists/stable/InRelease`) return new Response(inRelease);
+        if (url === `${repository}/dists/stable/${packagesRelative}`) {
+          return new Response(scenario.tamperIndex ? packages.toString().replace("26.1021", "26.1022") : packages);
+        }
+        if (url === `${repository}/${packageRelative}`) return new Response(body);
+        throw Error(`Unexpected request: ${url}`);
+      });
+      const options = {
+        architecture, repository, keyBase64Path: fixtureKey,
+        outputDir: path.join(current, "verified"), metadataPath: path.join(current, "metadata.json"),
+        ...(scenario.download ? {} : { localPackagePath: file }),
+      };
+      if (scenario.error) {
+        await assert.rejects(resolveOfficialPackage(options, signer.fingerprint), scenario.error);
+        assert.equal(fs.existsSync(options.metadataPath), false);
+      } else {
+        const result = await resolveOfficialPackage(options, signer.fingerprint);
+        assert.equal(result.signatureVerification, "verified");
+        assert.equal(result.version, "26.1021.22027");
+        assert.equal(result.architecture, architecture);
+        assert.equal(result.sha256, sha256File(file));
+        if (!scenario.download) {
+          assert.equal(result.path, file);
+          assert.equal(result.explicitlyProvided, true);
+        }
+      }
+      assert.equal(requested.some(url => url.includes("/pool/")), scenario.download === true);
+    });
+  }
+});
+
+test("local-package cannot be combined with metadata-only resolution", async () => {
+  await assert.rejects(resolveOfficialPackage({
+    architecture: "amd64", localPackagePath: "unused.deb", metadataOnly: true,
+  }), /cannot be combined/);
 });

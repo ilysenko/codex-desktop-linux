@@ -110,15 +110,25 @@ make install-native
 
 ### 使用已下载的官方软件包
 
-默认构建会从签名 stable index 中选择 `amd64` 或 `arm64`。也可以提供你已
-信任的本地软件包：
+默认构建会从签名 stable index 中选择 `amd64` 或 `arm64`。也可以复用已下载的
+本地软件包，避免再次下载包体：
 
 ```bash
 UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 ```
 
-本地包仍会检查 package name、architecture、control metadata、payload
-完整性，并记录 SHA-256。但由于跳过了签名仓库发现，来源真实性由调用者负责。
+本地包默认仍用签名 stable metadata 核对版本、architecture、大小和 SHA-256。
+未带跳过开关时，交互终端会询问本次是否跳过官方验证（`[y/N]`，默认不跳过）；
+非交互构建默认验证。也可以显式选择仅对本次构建生效的例外：
+
+```bash
+./install.sh --skip-oai-official-sig-verification /path/to/chatgpt_<version>_<arch>.deb
+```
+
+该开关要求提供本地包，仍检查 package name、版本格式、architecture 和 payload
+完整性，并记录 SHA-256 与 `signatureVerification: "skipped"`；此时来源由调用者
+负责。选择不会保存到配置，验签失败也不会自动改为跳过。
+详见[构建与打包](docs/build-and-packaging.md#build-the-application-tree)。
 旧 `.dmg`、`DMG=` 和 `CODEX_DMG_*` 输入已明确不再支持。
 
 ### 安装前须知
@@ -216,7 +226,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | 能力 | 默认状态 | 提供方式 |
 |---|---|---|
 | 官方 ChatGPT Linux runtime | 始终启用 | 来自已验证官方 `.deb` 的 data payload |
-| 签名来源验证 | 始终启用 | 固定 repository key → `InRelease` → `Packages` SHA-256 → package SHA-256 |
+| 签名来源验证 | 默认启用 | 固定 repository key → `InRelease` → `Packages` SHA-256 → package SHA-256；显式本地例外会记录在构建元数据中 |
 | deb、RPM、pacman 原生包 | 手动构建 | `make deb`、`make rpm`、`make pacman` |
 | AppImage | 手动构建 | `make appimage`；不绕过 sandbox，不含原生 updater |
 | Nix flake | 手动构建 | `nix run github:ilysenko/codex-desktop-linux` |
@@ -415,7 +425,7 @@ make appimage
 | 官方与 Community 启动互相影响 | 完全退出所有 `ChatGPT` 进程；两者共享上游 profile |
 | Flatpak Chrome 能打开 AppImage，但扩展显示 `Native transport disconnected` | 启用 `flatpak-chrome-native-messaging`；参阅 [Flatpak Chrome 设置](docs/troubleshooting.md#appimage-opens-from-flatpak-chrome-but-the-extension-cannot-connect) |
 | 迁移后 Browser/Chrome extension 无法连接 | 完全退出 ChatGPT 与 Chrome，再按[故障排除](docs/troubleshooting.md#browser-or-chrome-plugin-is-visible-but-cannot-connect)执行窄范围 cache repair |
-| 签名或软件包验证失败 | 不要绕过；检查系统时间、网络、`gpgv`、architecture 和磁盘空间 |
+| 签名或软件包验证失败 | 检查系统时间、网络、`gpgv`、architecture 和磁盘空间；有意选择本地例外时，使用文档中的单次构建确认或开关 |
 | 应用无法启动 | 运行 `/opt/codex-desktop/start.sh --diagnose` |
 | 应用使用 XWayland，或需要持久化 Electron 参数 | 确认为 Wayland 会话时会自动选择原生后端；可用 `CODEX_OZONE_PLATFORM=x11\|wayland` 固定后端，或在 `~/.config/codex-desktop/electron-flags.conf` 中每行写一个参数，例如 `--ozone-platform=x11` |
 | AppImage 报 sandbox 错误 | 启用 user namespaces 或安装原生包；不会自动添加 `--no-sandbox` |
