@@ -118,6 +118,15 @@ as `feature:<feature-id>:<descriptor-id>`. Supported phases are
 `extracted-app:post-webview`. Descriptors must be idempotent and fail softly
 unless the feature deliberately declares a required acceptance surface.
 
+An enabled patch entrypoint with an invalid export or descriptor aborts loading
+before patch execution: every descriptor must be an object with a nonempty
+string `id` (or `name`) and an `apply` function. Diagnostics identify the
+feature, module path, and offending item. These input errors cannot become an
+empty successful patch report. Empty descriptor arrays and resource-only
+features are valid; disabled feature modules are not loaded. Execution warnings
+from valid descriptors are reported separately and remain subject to candidate
+acceptance checks.
+
 Features may share ordinary patch libraries in `scripts/patches/lib/`. For
 example, `global-dictation` and `wayland-global-shortcuts` each install an
 idempotent portal backend from that directory and select their own command IDs.

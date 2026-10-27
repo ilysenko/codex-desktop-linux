@@ -577,19 +577,17 @@ function prefixedFeaturePatchId(feature, descriptorId) {
 }
 
 function wrapFeaturePatchDescriptor(feature, descriptor, sourcePath, index, featureIndex) {
-  if (descriptor == null || typeof descriptor !== "object") {
-    console.warn(`WARN: Linux feature '${feature.id}' patch descriptor ${index + 1} must be an object`);
-    return null;
+  const label = `Linux feature '${feature.id}' patch descriptor ${index + 1} in ${sourcePath}`;
+  if (descriptor == null || typeof descriptor !== "object" || Array.isArray(descriptor)) {
+    throw new Error(`${label} must be an object`);
   }
   if (typeof descriptor.apply !== "function") {
-    console.warn(`WARN: Linux feature '${feature.id}' patch descriptor ${index + 1} must export apply`);
-    return null;
+    throw new Error(`${label} must export an apply function`);
   }
 
   const descriptorId = descriptor.id ?? descriptor.name;
   if (typeof descriptorId !== "string" || descriptorId.length === 0) {
-    console.warn(`WARN: Linux feature '${feature.id}' patch descriptor ${index + 1} must have id or name`);
-    return null;
+    throw new Error(`${label} must have id or name`);
   }
 
   const wrappedId = prefixedFeaturePatchId(feature, descriptorId);
@@ -630,16 +628,15 @@ function featurePatchDescriptorListFromExports(feature, moduleExports, sourcePat
   const exported = moduleExports?.descriptors ??
     moduleExports;
   if (exported == null) {
-    console.warn(`WARN: Linux feature '${feature.id}' patchDescriptors entrypoint must export descriptors`);
-    return [];
+    throw new Error(
+      `Linux feature '${feature.id}' patchDescriptors entrypoint ${sourcePath} must export descriptors`,
+    );
   }
 
   const descriptors = Array.isArray(exported) ? exported : [exported];
-  return descriptors
-    .map((descriptor, index) =>
-      wrapFeaturePatchDescriptor(feature, descriptor, sourcePath, index, featureIndex),
-    )
-    .filter(Boolean);
+  return descriptors.map((descriptor, index) =>
+    wrapFeaturePatchDescriptor(feature, descriptor, sourcePath, index, featureIndex),
+  );
 }
 
 function loadLinuxFeaturePatchDescriptors(options = {}) {
