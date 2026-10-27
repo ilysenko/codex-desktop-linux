@@ -171,8 +171,13 @@ not supported.
 Descriptor patches use the same shape as `scripts/patches/core/**/patch.js`.
 They can target `main-bundle`, `extracted-app:pre-webview`, `webview-asset`, or
 `extracted-app:post-webview`. Feature descriptor ids are namespaced as
-`feature:<feature-id>:<descriptor-id>` in patch reports and are optional by
-default.
+`feature:<feature-id>:<descriptor-id>` in patch reports. `ciPolicy` defaults to
+`optional`, but enabled-feature acceptance defaults to enforced
+(`enforceWhenEnabled: true`): warnings or optional skips still reject the
+candidate. Only an explicitly optional descriptor may opt out with
+`enforceWhenEnabled: false`; required core and integrity checks remain in force.
+See the [descriptor status table](../docs/linux-features-architecture.md#asar-descriptors)
+for successful and not-applicable outcomes.
 
 Feature self-tests live inside each feature directory. Run them with:
 

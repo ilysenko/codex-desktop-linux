@@ -87,8 +87,10 @@ Quit-confirmation dialog and defers early shell-environment startup so browser
 initialization does not overwrite libuv's child-process signal handler. See the
 [core patch registry](../scripts/patches/core/README.md) for reproduction evidence
 and retirement criteria. Patch reports remain the candidate-acceptance contract.
-An enabled feature's missing or drifted required surface rejects promotion;
-disabled features do not participate.
+Enabled feature descriptors default to enforced acceptance even when their
+execution policy is optional: warnings or drift reject promotion unless an
+optional descriptor explicitly opts out with `enforceWhenEnabled: false`.
+Target/gate skips are not applicable; disabled feature modules are not loaded.
 
 The committed feature config is empty. Features stage declarative resources,
 runtime hooks, package hooks, or narrowly scoped ASAR descriptors. Native helper

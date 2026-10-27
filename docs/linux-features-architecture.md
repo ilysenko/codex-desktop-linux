@@ -137,8 +137,26 @@ in the installed package/update-builder only when enabled.
 Descriptor modules export an array or `{ descriptors: [] }`. IDs are reported
 as `feature:<feature-id>:<descriptor-id>`. Supported phases are
 `main-bundle`, `extracted-app:pre-webview`, `webview-asset`, and
-`extracted-app:post-webview`. Descriptors must be idempotent and fail softly
-unless the feature deliberately declares a required acceptance surface.
+`extracted-app:post-webview`. Descriptors must be idempotent. Execution policy
+and candidate acceptance are separate: `ciPolicy` defaults to `optional`, so
+ordinary execution errors may be recorded as warnings or optional skips;
+`enforceWhenEnabled` defaults to `true`, so those outcomes still reject a
+candidate when the owning feature is explicitly enabled. The standard build
+runs `patch-linux-window-ui.js --enforce-critical`, which checks both
+`criticalFailuresFromReport` and `enabledFeatureFailuresFromReport`.
+
+| Report status | Default acceptance for an enabled feature |
+|---|---|
+| `applied`, `already-applied` | Successful |
+| `applied-with-warnings`, `skipped-optional` | Rejected; execution continued but the enabled surface was not validated |
+| `skipped-target`, `skipped-disabled` | Not applicable to this target or descriptor enable gate; not an acceptance failure |
+| `failed-required`, `failed-integrity` | Rejected by the independent critical-failure check |
+
+A descriptor may explicitly set `enforceWhenEnabled: false` only with
+`ciPolicy: "optional"`. This exempts that descriptor from enabled-feature
+acceptance, but cannot bypass required core or integrity failures. Use this
+only for intentionally best-effort behavior, never to conceal enabled-feature
+drift. Required core policy remains independent of feature selection.
 
 An enabled patch entrypoint with an invalid export or descriptor aborts loading
 before patch execution: every descriptor must be an object with a nonempty
@@ -308,8 +326,9 @@ node --test scripts/lib/linux-features.test.js linux-features/*/test.js
 ```
 
 An `applied-with-warnings` or optional skip is not evidence that a feature
-works. Required feature surfaces must apply cleanly before the candidate is
-accepted.
+works. Enabled descriptors must apply cleanly before the candidate is accepted,
+unless they carry the explicit optional exemption described above; target and
+descriptor-gate skips retain their not-applicable semantics.
 
 ## Retirement policy
 
