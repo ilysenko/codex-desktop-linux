@@ -34,7 +34,7 @@ const CHRONICLE_TMP_DIR_NAME: &str = "codex_chronicle";
 const CHRONICLE_STARTED_PID_FILE_NAME: &str = "chronicle-started.pid";
 const CHRONICLE_SCREEN_RECORDING_DIR: &str = "chronicle/screen_recording";
 const DEFAULT_INTERVAL_SECONDS: u64 = 60;
-const TEN_MINUTE_RESOURCE_LIMIT: usize = 36;
+const SIX_HOUR_RESOURCE_LIMIT: usize = 360;
 const TEN_MINUTE_WINDOW_SECONDS: i64 = 10 * 60;
 const SIX_HOUR_ROLLUP_SECONDS: i64 = 6 * 60 * 60;
 const SIX_HOUR_ROLLUP_REFRESH_SECONDS: i64 = 60 * 60;
@@ -2539,8 +2539,8 @@ fn write_6h_rollup_if_due(paths: &SkysightPaths) -> Result<Option<PathBuf>> {
 }
 
 fn write_6h_rollup(paths: &SkysightPaths) -> Result<PathBuf> {
-    let ten_minute_resources = recent_10min_resources(paths)?;
     let now = Utc::now();
+    let ten_minute_resources = recent_10min_resources(paths, now)?;
     let recent_segments =
         recent_segment_metadata(paths, now, ChronoDuration::seconds(SIX_HOUR_ROLLUP_SECONDS))?;
     let path = paths.resources_dir.join(format!(
@@ -2711,7 +2711,7 @@ fn write_resource_with_summary_agent(
     let ran_at = now_timestamp();
     let temp_output = output_path.with_extension("md.summary-agent.tmp");
     let prompt = summary_agent_prompt(level, input_summary);
-    match run_summary_agent(paths, &prompt, &temp_output) {
+    match run_summary_agent(paths, level, &prompt, &temp_output) {
         Ok(()) => {
             let next_run_at = next_summary_agent_run_after(Some(&ran_at));
             let summary = fs::read_to_string(&temp_output)
@@ -2749,8 +2749,13 @@ fn write_resource_with_summary_agent(
     }
 }
 
-fn run_summary_agent(paths: &SkysightPaths, prompt: &str, output_path: &Path) -> Result<()> {
-    let spec = summary_agent_command_spec(paths, output_path);
+fn run_summary_agent(
+    paths: &SkysightPaths,
+    level: &str,
+    prompt: &str,
+    output_path: &Path,
+) -> Result<()> {
+    let spec = summary_agent_command_spec(paths, output_path, level);
     let mut command = Command::new(&spec.executable);
     command
         .args(&spec.args)
@@ -2785,6 +2790,7 @@ struct SummaryAgentCommandSpec {
 fn summary_agent_command_spec(
     paths: &SkysightPaths,
     output_path: &Path,
+    level: &str,
 ) -> SummaryAgentCommandSpec {
     let executable = env::var("CODEX_SKYSIGHT_CODEX_CLI_PATH")
         .or_else(|_| env::var("CODEX_CLI_PATH"))
@@ -2810,7 +2816,12 @@ fn summary_agent_command_spec(
         args.push("--model".to_string());
         args.push(model);
     }
-    for image in recent_chronicle_frame_paths(&chronicle_screen_recording_dir(), 8) {
+    for image in recent_chronicle_frame_paths(
+        &chronicle_screen_recording_dir(),
+        Utc::now(),
+        summary_window(level),
+        8,
+    ) {
         args.push("--image".to_string());
         args.push(image.to_string_lossy().to_string());
     }
@@ -2886,40 +2897,114 @@ fn consolidation_model_from_config() -> Option<String> {
     None
 }
 
-fn recent_chronicle_frame_paths(screen_recording_dir: &Path, limit: usize) -> Vec<PathBuf> {
+fn summary_window(level: &str) -> ChronoDuration {
+    ChronoDuration::seconds(if level == "6h" {
+        SIX_HOUR_ROLLUP_SECONDS
+    } else {
+        TEN_MINUTE_WINDOW_SECONDS
+    })
+}
+
+fn sample_paths(paths: Vec<PathBuf>, limit: usize) -> Vec<PathBuf> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    if paths.len() <= limit {
+        return paths;
+    }
+    if limit == 1 {
+        return paths.into_iter().rev().take(1).collect();
+    }
+    (0..limit)
+        .map(|index| paths[index * (paths.len() - 1) / (limit - 1)].clone())
+        .collect()
+}
+
+fn recent_chronicle_frame_paths(
+    screen_recording_dir: &Path,
+    ending_at: DateTime<Utc>,
+    window: ChronoDuration,
+    limit: usize,
+) -> Vec<PathBuf> {
     let mut frames = Vec::new();
     collect_chronicle_frame_paths(screen_recording_dir, &mut frames);
-    frames.sort();
-    frames.reverse();
-    frames.truncate(limit);
-    frames.reverse();
-    frames
+    let starting_at = ending_at - window;
+    let mut frames = frames
+        .into_iter()
+        .filter_map(|path| {
+            let (captured_at, capture_id) = chronicle_frame_timestamp(&path)?;
+            (captured_at >= starting_at && captured_at <= ending_at).then_some((
+                captured_at,
+                capture_id,
+                path,
+            ))
+        })
+        .collect::<Vec<_>>();
+    frames.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.components().count().cmp(&b.2.components().count()))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    // The latest and sparse JPEGs of one capture contain the same image.
+    frames.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    sample_paths(frames.into_iter().map(|(_, _, path)| path).collect(), limit)
+}
+
+fn chronicle_frame_timestamp(path: &Path) -> Option<(DateTime<Utc>, String)> {
+    let name = path.file_name()?.to_str()?;
+    let capture_id = if let Some(prefix) = name.strip_suffix("-latest.jpg") {
+        prefix
+    } else if name.starts_with("frame-") && name.ends_with(".jpg") {
+        path.parent()?.file_name()?.to_str()?
+    } else {
+        return None;
+    };
+    let (_, display_id) = capture_id.get(20..)?.split_once("display-")?;
+    if capture_id.get(19..20)? != "Z"
+        || display_id.is_empty()
+        || !display_id.chars().all(|ch| ch.is_ascii_digit())
+        || capture_id.get(20..29)? != "-display-"
+    {
+        return None;
+    }
+    let naive = NaiveDateTime::parse_from_str(capture_id.get(..19)?, "%Y-%m-%dT%H-%M-%S").ok()?;
+    Some((
+        DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc),
+        capture_id.to_string(),
+    ))
 }
 
 fn collect_chronicle_frame_paths(dir: &Path, frames: &mut Vec<PathBuf>) {
+    // Do not escape the recording tree or recurse through symlink cycles.
+    if !fs::symlink_metadata(dir).is_ok_and(|metadata| metadata.is_dir()) {
+        return;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             collect_chronicle_frame_paths(&path, frames);
-        } else if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".jpg"))
-        {
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "jpg") {
             frames.push(path);
         }
     }
 }
 
 fn summary_agent_prompt(level: &str, input_summary: &str) -> String {
+    let ending_at = Utc::now();
+    let starting_at = ending_at - summary_window(level);
     format!(
-        "{prompt}\n# Inputs\n- Summary level: `{level}`\n- Time range: recent Chronicle screen buffer\n- Current summarization time: `{now}`\n\nBEGIN UNTRUSTED OBSERVED INPUT\n{input_summary}\nEND UNTRUSTED OBSERVED INPUT\n",
+        "{prompt}\n# Inputs\n- Summary level: `{level}`\n- UTC evidence window: `{starting_at}` through `{ending_at}`\n\nUse only observations timestamped inside this window. Attached images are samples, not continuous coverage. Older citations in child summaries do not establish activity in this window. Diagnostic readiness is not evidence of user activity or completed work. Report missing evidence or capture gaps explicitly.\n\nBEGIN UNTRUSTED OBSERVED INPUT\n{input_summary}\nEND UNTRUSTED OBSERVED INPUT\n",
         prompt = linux_summarizer_prompt(),
         level = level,
-        now = now_timestamp(),
+        starting_at = starting_at.to_rfc3339(),
+        ending_at = ending_at.to_rfc3339(),
         input_summary = input_summary,
     )
 }
@@ -2955,24 +3040,31 @@ fn read_segment_metadata(path: &Path) -> Result<SegmentMetadata> {
         .with_context(|| format!("failed to parse segment metadata {}", path.display()))
 }
 
-fn recent_10min_resources(paths: &SkysightPaths) -> Result<Vec<PathBuf>> {
+fn recent_10min_resources(paths: &SkysightPaths, ending_at: DateTime<Utc>) -> Result<Vec<PathBuf>> {
     if !paths.resources_dir.exists() {
         return Ok(Vec::new());
     }
-    let mut entries: Vec<PathBuf> = fs::read_dir(&paths.resources_dir)?
+    let starting_at = ending_at - ChronoDuration::seconds(SIX_HOUR_ROLLUP_SECONDS);
+    let mut entries: Vec<(DateTime<Utc>, PathBuf)> = fs::read_dir(&paths.resources_dir)?
         .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_file()))
         .map(|entry| entry.path())
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains("-10min-"))
+                .is_some_and(|name| name.contains("-10min-") && name.ends_with(".md"))
+        })
+        .filter_map(|path| {
+            let generated_at = resource_timestamp(&path)?;
+            (generated_at >= starting_at && generated_at <= ending_at)
+                .then_some((generated_at, path))
         })
         .collect();
     entries.sort();
-    entries.reverse();
-    entries.truncate(TEN_MINUTE_RESOURCE_LIMIT);
-    entries.reverse();
-    Ok(entries)
+    Ok(sample_paths(
+        entries.into_iter().map(|(_, path)| path).collect(),
+        SIX_HOUR_RESOURCE_LIMIT,
+    ))
 }
 
 fn format_10min_resource(
@@ -3205,10 +3297,7 @@ fn timestamp(value: &str) -> Option<DateTime<Utc>> {
 
 fn resource_timestamp(path: &Path) -> Option<DateTime<Utc>> {
     let name = path.file_name()?.to_str()?;
-    if name.len() < 19 {
-        return None;
-    }
-    let prefix = &name[..19];
+    let prefix = name.get(..19)?;
     let naive = NaiveDateTime::parse_from_str(prefix, "%Y-%m-%dT%H-%M-%S").ok()?;
     Some(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
 }
@@ -4093,6 +4182,112 @@ echo '__CODEX_RAPIDOCR_JSON__{{"rapidocr":"3.9.1","onnxruntime":"1.22.0","lang_t
         }
     }
 
+    fn write_test_frame(root: &Path, relative: &str) -> PathBuf {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"test frame").unwrap();
+        path
+    }
+
+    #[test]
+    fn recent_frames_use_capture_time_instead_of_directory_order_or_mtime() {
+        let temp = tempfile::tempdir().unwrap();
+        let now = timestamp("2026-10-27T18:30:00Z").unwrap();
+        // These stale files have a fresh mtime, as copied/restored recordings can.
+        write_test_frame(temp.path(), "2026-10-02T14-07-49Z-display-0-latest.jpg");
+        write_test_frame(
+            temp.path(),
+            "1min/2026-10-02T14-07-49Z-display-0/frame-0-2026-10-02T14-07Z.jpg",
+        );
+        let earlier = write_test_frame(
+            temp.path(),
+            "1min/2026-10-27T18-25-00Z-display-0/frame-0-2026-10-27T18-25Z.jpg",
+        );
+        let later = write_test_frame(temp.path(), "2026-10-27T18-29-00Z-display-0-latest.jpg");
+        write_test_frame(temp.path(), "2026-10-27T18-30-01Z-display-0-latest.jpg");
+        write_test_frame(temp.path(), "unknown.jpg");
+        assert_eq!(
+            recent_chronicle_frame_paths(temp.path(), now, summary_window("10min"), 8),
+            vec![earlier, later],
+        );
+    }
+
+    #[test]
+    fn recent_frames_return_no_images_for_a_gap_and_ignore_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let now = timestamp("2026-10-27T18:30:00Z").unwrap();
+        write_test_frame(temp.path(), "2026-10-27T18-19-59Z-display-0-latest.jpg");
+        let external =
+            write_test_frame(outside.path(), "2026-10-27T18-29-00Z-display-0-latest.jpg");
+        std::os::unix::fs::symlink(outside.path(), temp.path().join("linked-dir")).unwrap();
+        std::os::unix::fs::symlink(
+            &external,
+            temp.path()
+                .join("2026-10-27T18-29-00Z-display-0-latest.jpg"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(temp.path(), temp.path().join("cycle")).unwrap();
+        assert!(
+            recent_chronicle_frame_paths(temp.path(), now, summary_window("10min"), 8).is_empty()
+        );
+        assert!(recent_chronicle_frame_paths(temp.path(), now, summary_window("6h"), 0).is_empty());
+    }
+
+    #[test]
+    fn recent_frames_sample_the_whole_window_and_deduplicate_capture_copies() {
+        let temp = tempfile::tempdir().unwrap();
+        let now = timestamp("2026-10-27T18:30:00Z").unwrap();
+        let mut originals = Vec::new();
+        for index in 0..12 {
+            let at = now - ChronoDuration::minutes(330 - index * 30);
+            let id = format!("{}-display-0", at.format("%Y-%m-%dT%H-%M-%SZ"));
+            originals.push(write_test_frame(temp.path(), &format!("{id}-latest.jpg")));
+            write_test_frame(
+                temp.path(),
+                &format!("1min/{id}/frame-0-{}.jpg", at.format("%Y-%m-%dT%H-%MZ")),
+            );
+        }
+        let selected = recent_chronicle_frame_paths(temp.path(), now, summary_window("6h"), 8);
+        assert_eq!(selected.len(), 8);
+        assert_eq!(selected.first(), originals.first());
+        assert_eq!(selected.last(), originals.last());
+        assert_eq!(
+            recent_chronicle_frame_paths(temp.path(), now, summary_window("6h"), 1),
+            vec![originals.last().unwrap().clone()]
+        );
+        assert_eq!(
+            recent_chronicle_frame_paths(temp.path(), now, summary_window("10min"), 8),
+            vec![originals.last().unwrap().clone()]
+        );
+    }
+
+    #[test]
+    fn six_hour_resources_cover_the_time_window_instead_of_only_36_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = SkysightPaths::new(temp.path().join("runtime"), temp.path().join("resources"));
+        fs::create_dir_all(&paths.resources_dir).unwrap();
+        let now = timestamp("2026-10-27T18:30:00Z").unwrap();
+        let mut expected = Vec::new();
+        for index in 0..=72 {
+            let at = now - ChronoDuration::minutes(360 - index * 5);
+            let name = format!(
+                "{}-abcd-10min-linux-activity.md",
+                at.format("%Y-%m-%dT%H-%M-%S")
+            );
+            expected.push(write_test_frame(&paths.resources_dir, &name));
+        }
+        for name in [
+            "2026-10-27T12-29-59-abcd-10min-linux-activity.md",
+            "2026-10-27T18-30-01-abcd-10min-linux-activity.md",
+            "2026-10-27T18-29-00-abcd-6h-linux-activity.md",
+            "malformed-10min-linux-activity.md",
+        ] {
+            write_test_frame(&paths.resources_dir, name);
+        }
+        assert_eq!(recent_10min_resources(&paths, now).unwrap(), expected);
+    }
+
     #[test]
     fn summary_agent_command_uses_chronicle_memgen_contract() {
         let _guard = env_guard();
@@ -4108,7 +4303,7 @@ echo '__CODEX_RAPIDOCR_JSON__{{"rapidocr":"3.9.1","onnxruntime":"1.22.0","lang_t
 
         let paths = SkysightPaths::new(temp.path().join("runtime"), temp.path().join("resources"));
         let output_path = temp.path().join("summary.md");
-        let spec = summary_agent_command_spec(&paths, &output_path);
+        let spec = summary_agent_command_spec(&paths, &output_path, "10min");
 
         assert_eq!(spec.executable, "/usr/bin/codex-test");
         assert!(spec
