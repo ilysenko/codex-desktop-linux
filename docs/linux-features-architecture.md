@@ -91,9 +91,30 @@ Manifest fields:
 | `requires` | Other feature IDs that must be enabled |
 | `conflicts` | Feature IDs that cannot be enabled together |
 
-Unknown keys and unsafe paths fail validation. A manifest title or description
-does not replace the adjacent README; document setup, settings, side effects,
-cleanup, supported sessions/architectures, and tests there.
+The table describes framework fields, not a whitelist of top-level keys.
+Manifest normalization preserves feature-owned top-level extensions for both
+repository and private features. Their consumers own semantic validation when
+using them; retaining a field does not mean its value has been validated.
+Existing examples include:
+
+| Extension field | Consumer and handling |
+|---|---|
+| `presets` | `model-picker-default-presets/patch.js` validates model/effort preset entries |
+| `petOverlay` | `pet-overlay/patch.js` normalizes overlay defaults and user overrides |
+| `catalogSubfeatures` | `community-features-in-gui-settings/catalog.js` validates subfeature metadata |
+| `officialBundleAuditScenarios` | `scripts/ci/verify-official-linux-features.js` validates audit scenario names and settings containers |
+
+Framework-defined structures have their own constrained keys: `entrypoints`
+rejects unknown entrypoint types during discovery, `runtimeHooks` rejects
+unsupported hook names when planning app resources, and `packageDependencies`
+rejects unsupported package formats when planning dependencies. A top-level
+extension does not register an executable entrypoint or make a misspelled key
+inside `entrypoints` valid. Unsafe paths fail their corresponding resource or
+entrypoint checks.
+
+A manifest title or description does not replace the adjacent README; document
+setup, settings, side effects, cleanup, supported sessions/architectures, and
+tests there.
 
 ## Lifecycle
 
