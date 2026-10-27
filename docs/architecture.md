@@ -124,9 +124,14 @@ user-authored plugins.
 ## Updates
 
 The Rust updater polls signed metadata, downloads into a
-version/architecture/SHA cache, runs the minimal packaged update-builder, and
-builds a sibling candidate. Atomic promotion happens only after the app exits.
-The previous managed artifact is retained for rollback. Legacy schema-v1
+version/architecture/SHA cache, and builds a native package in the configured
+workspace with the minimal packaged update-builder. After the managed app exits,
+it authorizes the package manager through `pkexec`, using a durable transaction
+and command-owner identity to reconcile interrupted installs. Package-manager
+failure can leave partial changes; this is distinct from the atomic sibling
+directory exchange used for manual generated-tree rebuilds. The previous
+managed package is retained for rollback. See [Updater](updater.md) for both
+workflows. Legacy schema-v1
 candidate state is reset without deleting installed or rollback packages. A
 schema-2 interrupted package transaction whose owner identity cannot survive a
 reboot is instead retained as failed evidence behind a manual-recovery barrier;

@@ -355,9 +355,11 @@ manifest。已知 retired ID 会被忽略以迁移旧配置；任意未知 ID �
 
 ## 更新
 
-原生包默认包含 `codex-update-manager`。其 user service 使用同一签名 APT
+deb、RPM 和 pacman 包默认包含 `codex-update-manager`。其 user service 使用同一签名 APT
 metadata 检查更新，按 version/architecture/SHA-256 缓存官方包，使用当前启用
-扩展重建原生包，并等待应用退出后再切换。上一份已管理软件包会保留用于回滚。
+扩展在独立 workspace 中重建原生包，并等待受管应用退出后授权包管理器安装。
+持久事务用于恢复中断或部分完成的安装；此流程不使用手动生成树重建的目录原子交换。
+上一份已管理软件包会保留用于回滚。
 
 ```bash
 codex-update-manager status
@@ -381,7 +383,8 @@ PACKAGE_WITH_UPDATER=0 make package
 make install
 ```
 
-AppImage 与仓库内生成应用不包含原生包 updater。参阅[更新器](docs/updater.md)。
+AppImage、仓库内生成应用、Nix 和手动更新的 Gentoo 产物不使用此原生包 updater。
+参阅[更新器](docs/updater.md)。
 
 ## 构建、打包与运行
 

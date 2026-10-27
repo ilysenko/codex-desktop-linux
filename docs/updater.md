@@ -22,10 +22,14 @@ working app.
 
 ## Rebuild
 
-The packaged update-builder extracts the official payload, applies only the
-locally enabled features, generates the selected package format, and places the
-result beside the active install. It contains its own minimal Node/ASAR build
-tools but does not install them in the application runtime.
+The packaged update-builder extracts the official payload, applies required
+core patches and locally enabled features, and generates a deb, RPM, or pacman
+candidate. Its application tree and package outputs live in
+`<workspace_root>/workspaces/<version>/codex-app` and `dist/`, separate from the
+installed `/opt/codex-desktop` tree. It contains its own minimal Node/ASAR build
+tools but does not install them in the application runtime. The workspace build
+uses `CODEX_INSTALL_TRANSACTION_ACTIVE=1` to stage its app directly rather than
+promoting it over the managed installation.
 
 Enabled feature drift rejects the candidate. Disabled features are neither
 loaded nor probed. Native helper binaries belong to the project release package
@@ -35,10 +39,25 @@ it contains no Cargo workspace.
 
 ## Promotion and rollback
 
-Building may proceed while ChatGPT is running. Promotion does not: the updater
-waits for process exit, then performs the same atomic candidate exchange used by
-manual rebuilds. A durable journal recovers interrupted promotion, and the
-immediately previous managed package remains the rollback target.
+Building may proceed while the managed app is running. Installation waits for
+its process exit, then uses `pkexec` to authorize the distribution's native
+package manager. The immediately previous managed package remains the rollback
+target. Native installation and manual generated-tree promotion use different
+transactions:
+
+| Workflow | Candidate location | Replacement and recovery |
+|---|---|---|
+| Native updater | Configured workspace, with a rebuilt app and native package | Durable package transaction, authorized package-manager install, ownership-aware reconciliation |
+| Direct `install.sh` / `make rebuild-install` generated tree | Sibling of the target app directory | Atomic directory exchange of an existing tree, with a separate promotion journal and previous-tree backup |
+
+Before releasing the privileged command, the updater persists the package
+identity and exact command-process owner behind a launch gate. After an
+interruption it checks that owner, then verifies package-manager state and
+installation effects before recording success. A nonzero package-manager exit
+may follow partial file changes; it does not promise an unchanged installation
+tree. An uncertain outcome retains the durable transaction for reconciliation;
+unclassifiable ownership eventually requires the manual recovery described
+below. Do not delete the journal to force another installation.
 
 Automated user-local operations cannot override the running-app guard or
 silently accept unverified input. A failed privileged installation remains
@@ -135,8 +154,8 @@ Update that installation from a trusted checkout with:
 PACKAGE_WITH_UPDATER=0 make update-native
 ```
 
-AppImage, direct `codex-app/`, and Nix outputs follow their own replacement
-workflow and do not use this mutable package updater.
+AppImage, direct `codex-app/`, Nix, and manual-update Gentoo outputs follow their
+own replacement workflows and do not use this mutable native package updater.
 
 ## Recovery
 

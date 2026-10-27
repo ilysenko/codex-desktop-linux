@@ -388,12 +388,14 @@ and [feature architecture](docs/linux-features-architecture.md).
 
 ## Updates
 
-Native packages include `codex-update-manager` by default. Its user service
+deb, RPM, and pacman packages include `codex-update-manager` by default. Its user service
 polls the same signed APT metadata, caches official packages by
 version/architecture/SHA-256, reconstructs the selected native package with the
-currently enabled features, and waits for the application to exit before
-promotion. The immediately previous managed package remains available for
-rollback.
+currently enabled features in a separate workspace, and waits for the managed
+application to exit before an authorized package-manager install. A durable
+transaction supports recovery from interrupted or partially applied installs;
+this does not use the manual generated-tree directory exchange. The immediately
+previous managed package remains available for rollback.
 
 ```bash
 codex-update-manager status
@@ -417,8 +419,8 @@ PACKAGE_WITH_UPDATER=0 make package
 make install
 ```
 
-AppImage and repository-only generated apps do not include the native package
-updater. Full behavior and recovery steps are documented in
+AppImage, repository-only generated apps, Nix, and manual-update Gentoo outputs
+do not use the native package updater. Full behavior and recovery steps are documented in
 [Updater](docs/updater.md).
 
 ## Build, package, and run

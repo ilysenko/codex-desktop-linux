@@ -49,8 +49,12 @@ A generated tree containing a downloaded replacement Electron, an external CLI
 bundle, rebuilt upstream native modules, or a local webview HTTP server signals
 that retired architecture has been reintroduced.
 
-Updater candidates are siblings of the active tree and are promoted atomically.
-Do not manually rename an active/candidate pair or delete its recovery journal.
+Manual generated-tree candidates are siblings of the target tree; replacing an
+existing tree uses atomic directory exchange and a promotion journal. Native
+updater candidates instead live in the configured build workspace and install
+through the package manager, with a durable package transaction and owner-based
+recovery. Package failure may leave partial changes. Do not manually rename an
+active/candidate pair or delete either workflow's recovery journal.
 An old root-owned `codex-app.backup-*` is disposable only after verifying it is
 not the active tree or the updater's recorded rollback artifact.
 
