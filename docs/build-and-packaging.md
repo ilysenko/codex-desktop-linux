@@ -63,6 +63,11 @@ to feature or updater settings. The supported compatibility baseline remains
 the latest signed stable package. `scripts/rebuild-candidate.sh` accepts the
 same flag.
 
+Local verification failures distinguish an unavailable or invalid signed index
+from a package that does not match the current signed stable release. They
+retain the technical cause and name the explicit skip flag for an intentional
+unverified local build; the failure still stops the build.
+
 Source package formats from the retired build architecture are rejected with a
 clear error and have no compatibility fallback.
 

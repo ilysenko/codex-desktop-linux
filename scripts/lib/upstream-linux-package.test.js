@@ -2,7 +2,9 @@
 
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
+const { once } = require("node:events");
 const fs = require("node:fs");
+const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -122,13 +124,16 @@ test("signed resolution verifies local packages without downloading their bodies
     { name: "wrong pinned key", wrongKey: true, error: /expected fingerprint/ },
     { name: "unsigned index", unsigned: true, error: /signature verification failed/ },
     { name: "index hash mismatch", tamperIndex: true, error: /Packages.*SHA256 mismatch/ },
-    { name: "local hash mismatch", tamperPackage: true, error: /SHA256 mismatch/ },
-    { name: "local size mismatch", tamperSize: true, error: /size mismatch/ },
-    { name: "wrong control package", packageName: "other", error: /Package Package mismatch/ },
-    { name: "wrong control version", version: "26.1020.1", error: /Package Version mismatch/ },
-    { name: "wrong control architecture", controlArchitecture: "arm64", error: /Package Architecture mismatch/ },
+    { name: "local hash mismatch", tamperPackage: true, mismatch: true, error: /SHA256 mismatch/ },
+    { name: "local size mismatch", tamperSize: true, mismatch: true, error: /size mismatch/ },
+    { name: "wrong control package", packageName: "other", mismatch: true, error: /Package Package mismatch/ },
+    { name: "wrong control version", version: "26.1020.1", mismatch: true, error: /Package Version mismatch/ },
+    { name: "wrong control architecture", controlArchitecture: "arm64", mismatch: true, error: /Package Architecture mismatch/ },
     { name: "missing index architecture", missingArchitecture: true, error: /does not index/ },
     { name: "unsupported architecture", architecture: "armv7l", error: /Unsupported architecture/ },
+    { name: "unavailable signed index", unavailable: true, error: /Download failed \(503\)/ },
+    { name: "index network failure", networkFailure: true, error: /fixture network failure/ },
+    { name: "remote package hash mismatch", download: true, tamperDownload: true, error: /SHA256 mismatch/ },
   ];
   for (const scenario of cases) {
     await t.test(scenario.name, async (t) => {
@@ -170,11 +175,19 @@ test("signed resolution verifies local packages without downloading their bodies
       const repository = "https://fixture.invalid";
       t.mock.method(globalThis, "fetch", async (url) => {
         requested.push(url);
+        if (scenario.unavailable) return new Response("unavailable", { status: 503 });
+        if (scenario.networkFailure) throw new TypeError("fixture network failure");
         if (url === `${repository}/dists/stable/InRelease`) return new Response(inRelease);
         if (url === `${repository}/dists/stable/${packagesRelative}`) {
           return new Response(scenario.tamperIndex ? packages.toString().replace("26.1021", "26.1022") : packages);
         }
-        if (url === `${repository}/${packageRelative}`) return new Response(body);
+        if (url === `${repository}/${packageRelative}`) {
+          if (scenario.tamperDownload) {
+            const changed = Buffer.from(body); changed[changed.length - 1] ^= 1;
+            return new Response(changed);
+          }
+          return new Response(body);
+        }
         throw Error(`Unexpected request: ${url}`);
       });
       const options = {
@@ -183,7 +196,21 @@ test("signed resolution verifies local packages without downloading their bodies
         ...(scenario.download ? {} : { localPackagePath: file }),
       };
       if (scenario.error) {
-        await assert.rejects(resolveOfficialPackage(options, signer.fingerprint), scenario.error);
+        await assert.rejects(resolveOfficialPackage(options, signer.fingerprint), (error) => {
+          assert.match(error.message, scenario.error);
+          if (scenario.download || architecture === "armv7l") {
+            assert.doesNotMatch(error.message, /--skip-oai-official-sig-verification/);
+          } else {
+            assert.match(error.message, scenario.mismatch
+              ? /Local package does not match the current signed stable release/
+              : /Could not fetch or verify the signed stable index/);
+            assert.match(error.message, /intentional unverified local build/);
+            assert.match(error.message, /--skip-oai-official-sig-verification/);
+            assert.ok(error.cause instanceof Error);
+            assert.match(error.cause.message, scenario.error);
+          }
+          return true;
+        });
         assert.equal(fs.existsSync(options.metadataPath), false);
       } else {
         const result = await resolveOfficialPackage(options, signer.fingerprint);
@@ -199,6 +226,40 @@ test("signed resolution verifies local packages without downloading their bodies
       assert.equal(requested.some(url => url.includes("/pool/")), scenario.download === true);
     });
   }
+});
+
+test("local-package CLI explains unavailable signed metadata and the explicit unverified option", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-local-verification-message-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = makeDeb(path.join(root, "package"));
+  const requested = [];
+  const server = http.createServer((request, response) => {
+    requested.push(request.url);
+    response.writeHead(503); response.end("fixture index unavailable");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const metadataPath = path.join(root, "metadata.json");
+  const child = childProcess.spawn(process.execPath, [
+    path.join(__dirname, "upstream-linux-package.js"),
+    "--output-dir", path.join(root, "verified"), "--metadata", metadataPath,
+    "--key-base64", path.resolve(__dirname, "../../assets/openai-codex-linux-repository-key.gpg.base64"),
+    "--arch", "amd64", "--repository", `http://127.0.0.1:${server.address().port}`,
+    "--local-package", file,
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "", stderr = "";
+  child.stdout.setEncoding("utf8").on("data", data => { stdout += data; });
+  child.stderr.setEncoding("utf8").on("data", data => { stderr += data; });
+  const [status] = await once(child, "close");
+  assert.equal(status, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /Could not fetch or verify the signed stable index/);
+  assert.match(stderr, /Download failed \(503\)/);
+  assert.match(stderr, /--skip-oai-official-sig-verification/);
+  assert.match(stderr, /intentional unverified local build/);
+  assert.deepEqual(requested, ["/dists/stable/InRelease"]);
+  assert.equal(fs.existsSync(metadataPath), false);
 });
 
 test("local-package cannot be combined with metadata-only resolution", async () => {

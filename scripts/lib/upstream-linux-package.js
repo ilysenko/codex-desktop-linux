@@ -149,6 +149,15 @@ function verifyInRelease(inReleasePath, keyPath, expectedFingerprint = EXPECTED_
   return extractClearSignedPayload(fs.readFileSync(inReleasePath, "utf8"));
 }
 
+function localPackageVerificationFailure(error, context) {
+  return new Error(
+    `${context}\n` +
+    "For an intentional unverified local build, pass --skip-oai-official-sig-verification to install.sh; structural checks still apply.\n" +
+    `Cause: ${error instanceof Error ? error.message : String(error)}`,
+    { cause: error },
+  );
+}
+
 async function resolveOfficialPackage(options, expectedFingerprint = EXPECTED_FINGERPRINT) {
   const architecture = mapMachineArch(options.architecture);
   if (options.localPackagePath != null && options.metadataOnly) {
@@ -162,29 +171,44 @@ async function resolveOfficialPackage(options, expectedFingerprint = EXPECTED_FI
   const outputDir = path.resolve(options.outputDir);
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const keyPath = path.join(outputDir, "codex-linux-repository-key.gpg");
-  const keyBase64 = fs.readFileSync(options.keyBase64Path, "utf8").replace(/\s+/g, "");
-  fs.writeFileSync(keyPath, Buffer.from(keyBase64, "base64"), { mode: 0o600 });
+  let metadata;
+  try {
+    const keyPath = path.join(outputDir, "codex-linux-repository-key.gpg");
+    const keyBase64 = fs.readFileSync(options.keyBase64Path, "utf8").replace(/\s+/g, "");
+    fs.writeFileSync(keyPath, Buffer.from(keyBase64, "base64"), { mode: 0o600 });
 
-  const inReleasePath = path.join(outputDir, "InRelease");
-  await download(`${repository}/dists/stable/InRelease`, inReleasePath);
-  const releasePayload = verifyInRelease(inReleasePath, keyPath, expectedFingerprint);
-  const releaseEntries = parseReleaseSha256(releasePayload);
-  const packagesRelative = `main/binary-${architecture}/Packages`;
-  const indexedPackages = releaseEntries.get(packagesRelative);
-  if (!indexedPackages) throw new Error(`Signed InRelease does not index ${packagesRelative}`);
+    const inReleasePath = path.join(outputDir, "InRelease");
+    await download(`${repository}/dists/stable/InRelease`, inReleasePath);
+    const releasePayload = verifyInRelease(inReleasePath, keyPath, expectedFingerprint);
+    const releaseEntries = parseReleaseSha256(releasePayload);
+    const packagesRelative = `main/binary-${architecture}/Packages`;
+    const indexedPackages = releaseEntries.get(packagesRelative);
+    if (!indexedPackages) throw new Error(`Signed InRelease does not index ${packagesRelative}`);
 
-  const packagesPath = path.join(outputDir, `Packages.${architecture}`);
-  await download(`${repository}/dists/stable/${packagesRelative}`, packagesPath);
-  verifyIndexedFile(packagesPath, indexedPackages, packagesRelative);
-  const metadata = selectChatgptPackage(fs.readFileSync(packagesPath, "utf8"), architecture);
+    const packagesPath = path.join(outputDir, `Packages.${architecture}`);
+    await download(`${repository}/dists/stable/${packagesRelative}`, packagesPath);
+    verifyIndexedFile(packagesPath, indexedPackages, packagesRelative);
+    metadata = selectChatgptPackage(fs.readFileSync(packagesPath, "utf8"), architecture);
+  } catch (error) {
+    if (localPackagePath == null) throw error;
+    throw localPackageVerificationFailure(error,
+      "Could not fetch or verify the signed stable index for the local package.");
+  }
 
   let packagePath = null;
   if (!options.metadataOnly) {
     packagePath = localPackagePath ?? path.join(outputDir, `chatgpt_${metadata.version}_${architecture}.deb`);
     if (localPackagePath == null) await download(`${repository}/${metadata.repositoryPath}`, packagePath);
-    verifyIndexedFile(packagePath, metadata, path.basename(packagePath));
-    verifyPackageControl(packagePath, metadata);
+    try {
+      verifyIndexedFile(packagePath, metadata, path.basename(packagePath));
+      verifyPackageControl(packagePath, metadata);
+    } catch (error) {
+      if (localPackagePath == null) throw error;
+      const context = typeof error.code === "string"
+        ? "Could not read the local package for verification against the current signed stable release."
+        : `Local package does not match the current signed stable release (${metadata.version}, ${architecture}).`;
+      throw localPackageVerificationFailure(error, context);
+    }
   }
   const result = {
     ...metadata, repository, path: packagePath,
