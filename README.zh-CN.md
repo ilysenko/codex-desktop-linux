@@ -420,7 +420,7 @@ make appimage
 | 应用使用 XWayland，或需要持久化 Electron 参数 | 确认为 Wayland 会话时会自动选择原生后端；可用 `CODEX_OZONE_PLATFORM=x11\|wayland` 固定后端，或在 `~/.config/codex-desktop/electron-flags.conf` 中每行写一个参数，例如 `--ozone-platform=x11` |
 | AppImage 报 sandbox 错误 | 启用 user namespaces 或安装原生包；不会自动添加 `--no-sandbox` |
 | 上游更新后启用扩展发生 drift | 禁用该扩展确认 clean baseline，并在 issue 中附上 patch report |
-| updater 等待应用退出 | 关闭官方与 Community 进程，检查 `codex-update-manager status --json` |
+| updater 等待应用退出 | 关闭受管应用（默认 `/opt/codex-desktop/ChatGPT`）；用 `codex-update-manager diagnose --json` 检查 `appExecutable` 和 `appRunning` |
 | 旧 `codex-app.backup-*` 出现权限错误 | 先确认精确路径，再按 root-owned backup 流程处理；不要盲删 wildcard |
 
 完整指南：[故障排除](docs/troubleshooting.md)。

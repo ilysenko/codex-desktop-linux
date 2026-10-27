@@ -459,7 +459,7 @@ output layout, parallelism, and payload inspection.
 | App uses XWayland or needs persistent Electron flags | A confirmed Wayland session selects the native backend automatically; pin one with `CODEX_OZONE_PLATFORM=x11\|wayland`, or put one flag per line in `~/.config/codex-desktop/electron-flags.conf`, for example `--ozone-platform=x11` |
 | AppImage reports a sandbox error | Enable user namespaces or install a native package; `--no-sandbox` is not added automatically |
 | Enabled feature drifts after an upstream release | Disable that feature to confirm the clean baseline and attach its patch report to an issue |
-| Updater waits for application exit | Close official and Community processes, then inspect `codex-update-manager status --json` |
+| Updater waits for application exit | Close the managed app (default `/opt/codex-desktop/ChatGPT`); inspect `appExecutable` and `appRunning` with `codex-update-manager diagnose --json` |
 | Old `codex-app.backup-*` reports permission errors | Inspect the exact path and follow the root-owned backup procedure; never delete a wildcard blindly |
 
 Full guide: [Troubleshooting](docs/troubleshooting.md).

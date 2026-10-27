@@ -159,10 +159,25 @@ own replacement workflows and do not use this mutable native package updater.
 
 ## Recovery
 
-If state says `WaitingForAppExit`, fully close both official **ChatGPT** and
-**ChatGPT Community**; the shared upstream process name/profile can otherwise
-keep the guard active. If installation failed, fix the reported package-manager
-or polkit problem and run `install-ready`.
+`WaitingForAppExit` waits for the configured managed executable. The updater
+scans `/proc/<pid>/exe` and compares its link target exactly with
+`app_executable_path` in its `config.toml`, defaulting to
+`/opt/codex-desktop/ChatGPT`. Changing that setting changes which executable is
+monitored. Process names and profile directories do not participate, so the
+guard does not automatically cover official, portable, or separately installed
+copies at other paths.
+
+Close the matching managed app. `status --json` shows persisted waiting state;
+`diagnose --json` includes `appExecutable` and `appRunning` from the same live
+path check. If installation failed, fix the reported package-manager or polkit
+problem and run `install-ready`.
+
+Separately, official **ChatGPT** and **ChatGPT Community** share the upstream
+`Codex` profile by default and must not run concurrently. The optional
+[`community-profile-isolation`](../linux-features/community-profile-isolation/README.md)
+feature provides separate Community state and bundled CLI resolution. This
+profile constraint and its explicit isolation option do not change the
+updater's executable-path matching rule.
 
 Use `rollback` only after confirming the retained artifact is the version you
 want. `make clean-state` deletes updater state and cache, including the managed
