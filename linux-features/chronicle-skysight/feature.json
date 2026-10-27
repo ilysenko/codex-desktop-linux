@@ -3,6 +3,20 @@
   "title": "Chronicle / Skysight Activity Memory",
   "description": "Opt-in Linux activity memory with Chronicle controls and a standalone Skysight MCP server.",
   "defaultEnabled": false,
+  "catalogSubfeatures": [
+    {
+      "id": "chronicle-controls",
+      "title": "Chronicle controls",
+      "description": "Provide Chronicle activity-capture controls; capture still requires runtime opt-in.",
+      "enabledWhen": "parent"
+    },
+    {
+      "id": "skysight-mcp",
+      "title": "Skysight MCP",
+      "description": "Ship the standalone activity-memory MCP plugin for querying captured desktop context.",
+      "enabledWhen": "parent"
+    }
+  ],
   "entrypoints": {
     "patchDescriptors": "./patch.js",
     "stageHook": "./stage.sh",

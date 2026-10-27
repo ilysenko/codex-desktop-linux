@@ -90,3 +90,14 @@ Validate descriptor ownership and artifact-only staging with:
 ```bash
 node --test linux-features/computer-use-linux/test.js linux-features/computer-use-linux/*.test.js
 ```
+
+## Catalog subfeatures
+
+The community feature catalog lists these user-facing capabilities separately:
+
+- **Native computer control** (`native-control`): Ship the native computer-use bridge and backend; Any App access still requires runtime enablement and OS permissions.
+- **Running application picker** (`running-app-picker`): Populate the native application picker with running Linux windows and desktop-entry icons.
+
+These declarations use `enabledWhen: "parent"`: all are included whenever this
+feature is built. They add no independent configuration switches and do not
+report runtime activation, permissions, external dependencies or backend health.

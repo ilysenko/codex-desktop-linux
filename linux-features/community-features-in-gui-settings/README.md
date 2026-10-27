@@ -137,8 +137,13 @@ an update-builder.
 
 ### Declaring subfeatures
 
-Feature manifests can expose user-facing modules without executing their patch
-code. `ui-tweaks/feature.json` declares its nine modules this way:
+Feature manifests expose distinct user-facing capabilities without executing
+their patch code. A subfeature can either have its own build setting or ship
+whenever its parent feature is selected. Neither form reports runtime activation
+or health.
+
+For a setting-controlled subfeature, `ui-tweaks/feature.json` declares its nine
+modules this way:
 
 ```json
 {
@@ -161,6 +166,49 @@ Module IDs are unique within the feature and must use the same lowercase
 letters/digits/hyphens as feature IDs. Low-level patch descriptors and ordinary
 configuration values are not counted as modules.
 Changes to these declarations are discovered during the next full source build.
+
+Capabilities that always ship together use an explicit parent-selection rule:
+
+```json
+{
+  "catalogSubfeatures": [{
+    "id": "multi-time-schedules",
+    "title": "Multiple schedule times",
+    "description": "Support multiple times in an automation recurrence rule.",
+    "enabledWhen": "parent"
+  }]
+}
+```
+
+`"parent"` inherits the feature's build selection exactly. Do not supply
+`settingPath` or `nullishFallback`, or create a setting merely to populate the
+catalog. Generated snapshots retain the parent rule with `defaultEnabled: true`
+and the effective `enabled` flag; this does not enable the parent feature by
+default. Existing setting-controlled snapshots remain supported. During minimal
+updater rebuilds, retained public subfeature descriptions keep their rule while
+their installed flags are recomputed from the new selection.
+
+The declared groups are:
+
+| Feature | Separately listed capabilities | Selection |
+|---|---|---|
+| `agent-workspace` | Workspace controls; agent workspace skill | Parent |
+| `automation-extensions` | Multiple schedule times; eager automation tool | Parent |
+| `chronicle-skysight` | Chronicle controls; Skysight MCP | Parent |
+| `computer-use-linux` | Native computer control; running application picker | Parent |
+| `linux-performance-workarounds` | Sidebar scrolling; tab layout; streaming Markdown | Parent |
+| `remote-mobile-control` | Mobile Remote host; control other devices | Parent |
+| `shared-app-server-socket` | Shared app-server authority; attached CLI | Parent |
+| `ui-tweaks` | Nine UI customization modules | Individual build settings |
+
+The remaining features stay single entries. Do not split a single workflow into
+its internal steps, count each patch descriptor or helper, or turn ordinary
+options into catalog items. For example, dictation gestures, start-hidden login
+options, model presets and Pet compositor backends are not separate installed
+capabilities. Browser control remains upstream-owned and is not a subfeature of
+Linux Computer Use. Record & Replay remains a dependent feature, not a Chronicle
+subfeature. Backend installation, account eligibility, device pairing and runtime
+permissions still follow each feature's README.
 
 ## Validation
 

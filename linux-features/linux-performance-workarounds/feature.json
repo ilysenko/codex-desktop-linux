@@ -3,6 +3,26 @@
   "title": "Linux Performance Workarounds",
   "description": "Optional measured renderer workarounds for affected Linux systems.",
   "defaultEnabled": false,
+  "catalogSubfeatures": [
+    {
+      "id": "sidebar-scrolling",
+      "title": "Sidebar scrolling workaround",
+      "description": "Apply the measured Linux sidebar scrolling workaround.",
+      "enabledWhen": "parent"
+    },
+    {
+      "id": "tab-layout",
+      "title": "Tab layout workaround",
+      "description": "Disable the affected app-shell tab layout animation.",
+      "enabledWhen": "parent"
+    },
+    {
+      "id": "streaming-markdown",
+      "title": "Streaming Markdown workaround",
+      "description": "Reduce the affected streaming Markdown animation overhead.",
+      "enabledWhen": "parent"
+    }
+  ],
   "entrypoints": {
     "patchDescriptors": "./patch.js"
   }

@@ -16,3 +16,14 @@ import tools.
 
 See [Linux Chronicle / Skysight](../../docs/linux-chronicle-skysight.md) for the
 capture lifecycle, privacy boundaries, runtime paths, and OCR configuration.
+
+## Catalog subfeatures
+
+The community feature catalog lists these user-facing capabilities separately:
+
+- **Chronicle controls** (`chronicle-controls`): Provide Chronicle activity-capture controls; capture still requires runtime opt-in.
+- **Skysight MCP** (`skysight-mcp`): Ship the standalone activity-memory MCP plugin for querying captured desktop context.
+
+These declarations use `enabledWhen: "parent"`: all are included whenever this
+feature is built. They add no independent configuration switches and do not
+report runtime activation, permissions, external dependencies or backend health.

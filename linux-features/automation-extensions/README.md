@@ -17,3 +17,14 @@ an update when those private bundle shapes change. Validate it with:
 ```bash
 node --test linux-features/automation-extensions/test.js
 ```
+
+## Catalog subfeatures
+
+The community feature catalog lists these user-facing capabilities separately:
+
+- **Multiple schedule times** (`multi-time-schedules`): Support multiple times in an automation recurrence rule.
+- **Eager automation tool** (`eager-automation-tool`): Expose automation_update without waiting for dynamic tool discovery.
+
+These declarations use `enabledWhen: "parent"`: all are included whenever this
+feature is built. They add no independent configuration switches and do not
+report runtime activation, permissions, external dependencies or backend health.

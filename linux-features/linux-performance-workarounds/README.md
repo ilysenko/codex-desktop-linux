@@ -24,3 +24,15 @@ measured regression and run:
 ```bash
 node --test linux-features/linux-performance-workarounds/test.js
 ```
+
+## Catalog subfeatures
+
+The community feature catalog lists these user-facing capabilities separately:
+
+- **Sidebar scrolling workaround** (`sidebar-scrolling`): Apply the measured Linux sidebar scrolling workaround.
+- **Tab layout workaround** (`tab-layout`): Disable the affected app-shell tab layout animation.
+- **Streaming Markdown workaround** (`streaming-markdown`): Reduce the affected streaming Markdown animation overhead.
+
+These declarations use `enabledWhen: "parent"`: all are included whenever this
+feature is built. They add no independent configuration switches and do not
+report runtime activation, permissions, external dependencies or backend health.

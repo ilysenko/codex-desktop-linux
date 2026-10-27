@@ -3,6 +3,20 @@
   "title": "Automation Extensions",
   "description": "Optional multi-time scheduling and eager automation_update tool exposure.",
   "defaultEnabled": false,
+  "catalogSubfeatures": [
+    {
+      "id": "multi-time-schedules",
+      "title": "Multiple schedule times",
+      "description": "Support multiple times in an automation recurrence rule.",
+      "enabledWhen": "parent"
+    },
+    {
+      "id": "eager-automation-tool",
+      "title": "Eager automation tool",
+      "description": "Expose automation_update without waiting for dynamic tool discovery.",
+      "enabledWhen": "parent"
+    }
+  ],
   "entrypoints": {
     "patchDescriptors": "./patch.js"
   }

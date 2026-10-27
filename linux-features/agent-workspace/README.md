@@ -208,3 +208,14 @@ Run the feature tests with:
 ```bash
 node --test linux-features/agent-workspace/test.js
 ```
+
+## Catalog subfeatures
+
+The community feature catalog lists these user-facing capabilities separately:
+
+- **Workspace controls** (`workspace-controls`): Provide profile editing, workspace lifecycle and viewer controls for a separately installed Agent Workspace backend.
+- **Agent workspace skill** (`agent-skill`): Ship the progressive skill entrypoint for agents to use hidden desktop workspaces.
+
+These declarations use `enabledWhen: "parent"`: all are included whenever this
+feature is built. They add no independent configuration switches and do not
+report runtime activation, permissions, external dependencies or backend health.

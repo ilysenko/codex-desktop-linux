@@ -14,11 +14,14 @@ function validateSubfeatures(subfeatures = []) {
   const seen = new Set();
   if (!Array.isArray(subfeatures)) throw Error("community-features-in-gui-settings: invalid subfeatures");
   for (const item of subfeatures) {
+    const inheritsParent = item?.enabledWhen === "parent";
     if (typeof item?.id !== "string" || !FEATURE_ID.test(item.id) || seen.has(item.id) ||
         typeof item.title !== "string" || !item.title.trim() || typeof item.description !== "string" ||
-        typeof item.settingPath !== "string" || !SETTING_PATH.test(item.settingPath) ||
-        item.settingPath.split(".").some((part) => ["__proto__", "prototype", "constructor"].includes(part)) ||
-        !["true", "not-false"].includes(item.enabledWhen) || typeof item.nullishFallback !== "boolean" ||
+        (inheritsParent
+          ? Object.hasOwn(item, "settingPath") || Object.hasOwn(item, "nullishFallback") || item.defaultEnabled !== true
+          : typeof item.settingPath !== "string" || !SETTING_PATH.test(item.settingPath) ||
+            item.settingPath.split(".").some((part) => ["__proto__", "prototype", "constructor"].includes(part)) ||
+            !["true", "not-false"].includes(item.enabledWhen) || typeof item.nullishFallback !== "boolean") ||
         typeof item.defaultEnabled !== "boolean" || typeof item.enabled !== "boolean") {
       throw Error("community-features-in-gui-settings: invalid or duplicate subfeature");
     }
@@ -35,11 +38,13 @@ function settingValue(settings, settingPath) {
 function catalogSubfeatures(manifest) {
   if (manifest.catalogSubfeatures == null) return [];
   if (!Array.isArray(manifest.catalogSubfeatures)) throw Error("community-features-in-gui-settings: invalid subfeatures");
-  return validateSubfeatures(manifest.catalogSubfeatures.map((item) => ({
-    ...item, enabledWhen: item.enabledWhen ?? "true", nullishFallback: item.nullishFallback ?? false,
-    defaultEnabled: typeof item.settingPath === "string" ? settingValue(manifest, item.settingPath) : undefined,
-    enabled: false,
-  })));
+  return validateSubfeatures(manifest.catalogSubfeatures.map((item) => item?.enabledWhen === "parent"
+    ? { ...item, defaultEnabled: true, enabled: false }
+    : {
+      ...item, enabledWhen: item?.enabledWhen ?? "true", nullishFallback: item?.nullishFallback ?? false,
+      defaultEnabled: typeof item?.settingPath === "string" ? settingValue(manifest, item.settingPath) : undefined,
+      enabled: false,
+    }));
 }
 
 function validateCatalogFeature(feature) {
@@ -54,6 +59,9 @@ function validateCatalogFeature(feature) {
   validateSubfeatures(feature.subfeatures);
   if (feature.enabled === false && feature.subfeatures?.some((item) => item.enabled)) {
     throw Error("community-features-in-gui-settings: enabled subfeature has a disabled parent");
+  }
+  if (feature.subfeatures?.some((item) => item.enabledWhen === "parent" && item.enabled !== feature.enabled)) {
+    throw Error("community-features-in-gui-settings: subfeature must inherit its parent's build status");
   }
   return feature;
 }
@@ -135,6 +143,7 @@ function buildCatalog(context = {}, onWarning = console.warn) {
       id: feature.id, title: feature.title, description: feature.description, origin: feature.origin,
       requires: feature.requires, conflicts: feature.conflicts, enabled: enabled.has(feature.id),
       subfeatures: (feature.subfeatures ?? []).map((item) => {
+        if (item.enabledWhen === "parent") return { ...item, enabled: enabled.has(feature.id) };
         const override = settingValue(settings.get(feature.id), item.settingPath);
         const value = override === undefined || item.nullishFallback && override === null ? item.defaultEnabled : override;
         return { ...item, enabled: enabled.has(feature.id) && (item.enabledWhen === "true" ? value === true : value !== false) };

@@ -3,6 +3,20 @@
   "title": "Shared App-Server Socket",
   "description": "Opt-in protocol-transparent Unix socket shared by ChatGPT Community and one or more ordinary app-server clients.",
   "defaultEnabled": false,
+  "catalogSubfeatures": [
+    {
+      "id": "shared-authority",
+      "title": "Shared app-server authority",
+      "description": "Let ordinary app-server clients attach to Desktop's existing authority through its private Unix socket.",
+      "enabledWhen": "parent"
+    },
+    {
+      "id": "attached-cli",
+      "title": "Attached CLI",
+      "description": "Provide codex-desktop --cli for CLI commands attached to the running Desktop authority.",
+      "enabledWhen": "parent"
+    }
+  ],
   "entrypoints": {
     "patchDescriptors": "./patch.js"
   },

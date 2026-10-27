@@ -3,6 +3,20 @@
   "title": "Agent Workspaces",
   "description": "Adds an opt-in Linux settings page and Electron bridge for agent-workspace-linux hidden desktop environments.",
   "defaultEnabled": false,
+  "catalogSubfeatures": [
+    {
+      "id": "workspace-controls",
+      "title": "Workspace controls",
+      "description": "Provide profile editing, workspace lifecycle and viewer controls for a separately installed Agent Workspace backend.",
+      "enabledWhen": "parent"
+    },
+    {
+      "id": "agent-skill",
+      "title": "Agent workspace skill",
+      "description": "Ship the progressive skill entrypoint for agents to use hidden desktop workspaces.",
+      "enabledWhen": "parent"
+    }
+  ],
   "entrypoints": {
     "patchDescriptors": "./patch.js"
   },

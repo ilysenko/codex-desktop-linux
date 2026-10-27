@@ -9,6 +9,20 @@
       "RDEPEND": ["sys-apps/util-linux"]
     }
   },
+  "catalogSubfeatures": [
+    {
+      "id": "mobile-host",
+      "title": "Mobile Remote host",
+      "description": "Adapt this Linux installation for experimental mobile Remote hosting, subject to account and pairing requirements.",
+      "enabledWhen": "parent"
+    },
+    {
+      "id": "outbound-control",
+      "title": "Control other devices",
+      "description": "Expose outbound Remote enrollment and connection discovery without bypassing account authorization.",
+      "enabledWhen": "parent"
+    }
+  ],
   "entrypoints": {
     "patchDescriptors": "./patch.js",
     "stageHook": "./stage.sh"

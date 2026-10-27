@@ -178,3 +178,14 @@ adapter, configuration-override callback, and `app-server proxy` command. The
 descriptor leaves an unknown bundle byte-identical and reports a warning. When
 the feature is enabled, candidate acceptance treats that warning as a failure
 and rejects the build instead of installing a partial patch.
+
+## Catalog subfeatures
+
+The community feature catalog lists these user-facing capabilities separately:
+
+- **Shared app-server authority** (`shared-authority`): Let ordinary app-server clients attach to Desktop's existing authority through its private Unix socket.
+- **Attached CLI** (`attached-cli`): Provide codex-desktop --cli for CLI commands attached to the running Desktop authority.
+
+These declarations use `enabledWhen: "parent"`: all are included whenever this
+feature is built. They add no independent configuration switches and do not
+report runtime activation, permissions, external dependencies or backend health.

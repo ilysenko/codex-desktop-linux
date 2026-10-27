@@ -3,6 +3,20 @@
   "title": "Linux Computer Use",
   "description": "Optional Linux desktop-control UI and native MCP backend integration.",
   "defaultEnabled": false,
+  "catalogSubfeatures": [
+    {
+      "id": "native-control",
+      "title": "Native computer control",
+      "description": "Ship the native computer-use bridge and backend; Any App access still requires runtime enablement and OS permissions.",
+      "enabledWhen": "parent"
+    },
+    {
+      "id": "running-app-picker",
+      "title": "Running application picker",
+      "description": "Populate the native application picker with running Linux windows and desktop-entry icons.",
+      "enabledWhen": "parent"
+    }
+  ],
   "entrypoints": {
     "patchDescriptors": "./patch.js",
     "stageHook": "./stage.sh"
