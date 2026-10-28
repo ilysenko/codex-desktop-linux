@@ -34,6 +34,8 @@ const {
   sliderAssetMatch,
   sliderPatchContract,
   upstreamDefaultSelectionAssetMatch,
+  upstreamResetEffectAssetMatch,
+  upstreamResetEffectContract,
 } = require("./patch.js");
 
 function context(presets) {
@@ -73,6 +75,19 @@ function powerSelectionResolverFixture(name = "Picker") {
     'h=e?.sliderSettings?.filter(({modelSlug:e})=>(a||o)&&c==="default"||p.some(({slug:t})=>t===e))??[],',
     'g=((a||o)&&c==="default"&&h.length>0?h:[...m,...h]).filter(({modelSlug:e})=>!u?.has(e));',
     "return{isTppConversation:a,selectionMode:c,powerSettings:g}}",
+  ].join("");
+}
+
+function upstreamResetEffectFixture(name = "ResetPowerPicker") {
+  return [
+    `function ${name}(e){`,
+    "let{canRenderPowerPickerSurface:n,fallbackPowerSelection:r,isModelSettingsLoading:i,menuView:a,onReset:o,powerSelectionsWithXHigh:s,resetContextKey:c,selectedPowerSelectionWithXHigh:l,skipExperimentExposure:u}=e,",
+    "v=resolveFallback({canInitializePowerPicker:n,fallbackPowerSelection:r,menuView:a,selectedPowerSelection:l,showXHighInSimplePicker:!u});",
+    "let y=v,b=(0,React.useRef)(null),x=y?.id??null,S=x==null?null:`${c}:${x}`,C=s.length>0,w;",
+    "w=e=>{y?.id===e&&o(y)};let T=(0,React.useEffectEvent)(w),E;",
+    "E=()=>{if(!i){if(!C){b.current=null;return}x!=null&&S!=null&&b.current!==S&&(b.current=S,T(x))}};",
+    "let D=[x,S,C,i];return(0,React.useEffect)(E,D),s}",
+    "function Next(){}",
   ].join("");
 }
 
@@ -419,6 +434,75 @@ test("upstream Default-selection compatibility audit fails closed on missing and
   assert.equal(upstreamDefaultSelectionAssetMatch(
     fixture + powerSelectionResolverFixture("DuplicatePicker"), "fixture.js", presets,
   ), false);
+});
+
+test("upstream reset effect is reset-context scoped and selects the resolved fallback pair", () => {
+  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
+  const source = upstreamResetEffectFixture();
+  assert.equal(upstreamResetEffectContract(source), "current");
+  assert.equal(upstreamResetEffectAssetMatch(source, "fixture.js", presets), true);
+
+  const hooks = { refs: [] };
+  const selections = [];
+  const render = (resetContextKey) => {
+    const effects = [];
+    let refIndex = 0;
+    const React = {
+      useEffect(effect) {
+        effects.push(effect);
+      },
+      useEffectEvent(callback) {
+        return callback;
+      },
+      useRef(value) {
+        const index = refIndex++;
+        hooks.refs[index] ??= { current: value };
+        return hooks.refs[index];
+      },
+    };
+    evaluate(source, "ResetPowerPicker(input)", {
+      React,
+      input: {
+        canRenderPowerPickerSurface: true,
+        fallbackPowerSelection: { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
+        isModelSettingsLoading: false,
+        menuView: "simple",
+        onReset: (selection) => selections.push(plain(selection)),
+        powerSelectionsWithXHigh: [{ id: "gpt-6-astra:medium" }],
+        resetContextKey,
+        selectedPowerSelectionWithXHigh: null,
+        skipExperimentExposure: false,
+      },
+      resolveFallback: ({ fallbackPowerSelection }) => fallbackPowerSelection,
+    });
+    for (const effect of effects) effect();
+  };
+
+  render(JSON.stringify([null, "local", "/repo"]));
+  render(JSON.stringify([null, "local", "/repo"]));
+  render(JSON.stringify(["created", "local", "/repo"]));
+  render(JSON.stringify([null, "local", "/repo"]));
+  assert.deepEqual(selections, [
+    { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
+    { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
+    { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
+  ]);
+});
+
+test("upstream reset-effect compatibility audit fails closed on missing, ambiguous, and partial drift", () => {
+  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
+  const fixture = upstreamResetEffectFixture();
+  for (const source of [
+    "function unrelated(){}",
+    fixture + upstreamResetEffectFixture("DuplicateResetPowerPicker"),
+    fixture.replace("resetContextKey:c,", "resetKey:c,"),
+    fixture.replace("`${c}:${x}`", "`${x}`"),
+    fixture.replace("o(y)", "o(e)"),
+    fixture.replace("(0,React.useEffect)(E,D)", "E()"),
+  ]) {
+    assert.equal(upstreamResetEffectContract(source), "drifted");
+    assert.equal(upstreamResetEffectAssetMatch(source, "fixture.js", presets), false);
+  }
 });
 
 test("slider patch fails closed on drift, duplicate, and partial states", () => {
@@ -869,14 +953,14 @@ test("feature descriptors load alone and alongside ui-tweaks", () => {
       featuresRoot: root,
       featuresConfigPath: configPath,
     });
-    assert.equal(alone.length, 6);
+    assert.equal(alone.length, 7);
     assert.ok(alone.every(({ featureId }) => featureId === "model-picker-default-presets"));
     const [scenario] = require("./feature.json").officialBundleAuditScenarios;
     writeConfig(["model-picker-default-presets"], scenario.settings.presets);
     assert.equal(loadLinuxFeaturePatchDescriptors({
       featuresRoot: root,
       featuresConfigPath: configPath,
-    }).length, 6);
+    }).length, 7);
     writeConfig(["model-picker-default-presets", "ui-tweaks"]);
     const together = loadLinuxFeaturePatchDescriptors({
       featuresRoot: root,

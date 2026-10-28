@@ -482,6 +482,150 @@ function upstreamDefaultSelectionAssetMatch(source, _assetName, context = {}) {
   return upstreamSliderFilterCondition(section, condition) != null;
 }
 
+function upstreamResetEffectSection(source) {
+  return uniqueFunctionWithMarkers(source, [
+    "fallbackPowerSelection:",
+    "isModelSettingsLoading:",
+    "onReset:",
+    "resetContextKey:",
+    "selectedPowerSelectionWithXHigh:",
+    ".useEffectEvent)(",
+  ]);
+}
+
+function upstreamResetEffectAliases(section) {
+  const properties = [
+    "fallbackPowerSelection",
+    "isModelSettingsLoading",
+    "onReset",
+    "resetContextKey",
+    "selectedPowerSelectionWithXHigh",
+  ];
+  const destructurings = [
+    ...(section?.source ?? "").matchAll(
+      new RegExp(`\\{([^{}]+)\\}=${IDENT}(?=,|;)`, "gu"),
+    ),
+  ].filter((match) =>
+    properties.every((property) =>
+      new RegExp(`(?:^|,)${property}:${IDENT}(?=,|$)`, "u").test(match[1]),
+    )
+  );
+  if (destructurings.length !== 1) return null;
+  const aliases = {};
+  for (const property of properties) {
+    const match = new RegExp(`(?:^|,)${property}:(${IDENT})(?=,|$)`, "u").exec(
+      destructurings[0][1],
+    );
+    if (match == null) return null;
+    aliases[property] = match[1];
+  }
+  return aliases;
+}
+
+function uniqueMatch(source, pattern) {
+  const matches = [...source.matchAll(pattern)];
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function upstreamResetEffectContract(source) {
+  const section = upstreamResetEffectSection(source);
+  if (section == null) return "drifted";
+  const aliases = upstreamResetEffectAliases(section);
+  if (aliases == null) return "drifted";
+  const {
+    fallbackPowerSelection: fallback,
+    isModelSettingsLoading: loading,
+    onReset,
+    resetContextKey: resetContext,
+    selectedPowerSelectionWithXHigh: selected,
+  } = aliases;
+
+  const resolution = uniqueMatch(
+    section.source,
+    new RegExp(
+      `(${IDENT})=${IDENT}\\(\\{[^{}]{0,1200}?fallbackPowerSelection:${fallback},` +
+        `[^{}]{0,1200}?selectedPowerSelection:${selected},[^{}]{0,1200}?\\}\\)`,
+      "gu",
+    ),
+  );
+  if (resolution == null) return "drifted";
+  const resolved = resolution[1];
+  const selection = uniqueMatch(
+    section.source,
+    new RegExp(`(?:let\\s+|,)(${IDENT})=${resolved}(?=,)`, "gu"),
+  )?.[1];
+  if (selection == null) return "drifted";
+  const selectedId = uniqueMatch(
+    section.source,
+    new RegExp(`(${IDENT})=${selection}\\?\\.id\\?\\?null`, "gu"),
+  )?.[1];
+  if (selectedId == null) return "drifted";
+  const resetScope = uniqueMatch(
+    section.source,
+    new RegExp(
+      `(${IDENT})=${selectedId}==null\\?null:\\x60\\$\\{${resetContext}\\}:` +
+        `\\$\\{${selectedId}\\}\\x60`,
+      "gu",
+    ),
+  )?.[1];
+  if (resetScope == null) return "drifted";
+  const resetCallback = uniqueMatch(
+    section.source,
+    new RegExp(
+      `(${IDENT})=(${IDENT})=>\\{${selection}\\?\\.id===\\2&&${onReset}\\(${selection}\\)\\}`,
+      "gu",
+    ),
+  )?.[1];
+  if (resetCallback == null) return "drifted";
+  const resetEvent = uniqueMatch(
+    section.source,
+    new RegExp(
+      `(${IDENT})=\\(0,${IDENT}\\.useEffectEvent\\)\\(${resetCallback}\\)`,
+      "gu",
+    ),
+  )?.[1];
+  const resetRef = uniqueMatch(
+    section.source,
+    new RegExp(`(${IDENT})=\\(0,${IDENT}\\.useRef\\)\\(null\\)`, "gu"),
+  )?.[1];
+  if (resetEvent == null || resetRef == null) return "drifted";
+
+  const effect = uniqueMatch(
+    section.source,
+    new RegExp(
+      `(${IDENT})=\\(\\)=>\\{if\\(!${loading}\\)\\{if\\(!(${IDENT})\\)\\{` +
+        `${resetRef}\\.current=null;return\\}${selectedId}!=null&&${resetScope}!=null&&` +
+        `${resetRef}\\.current!==${resetScope}&&\\(${resetRef}\\.current=${resetScope},` +
+        `${resetEvent}\\(${selectedId}\\)\\)\\}\\}`,
+      "gu",
+    ),
+  );
+  if (effect == null) return "drifted";
+  const active = effect[2];
+  const dependencies = uniqueMatch(
+    section.source,
+    new RegExp(
+      `(${IDENT})=\\[${selectedId},${resetScope},${active},${loading}\\]`,
+      "gu",
+    ),
+  )?.[1];
+  if (dependencies == null) return "drifted";
+  return uniqueMatch(
+    section.source,
+    new RegExp(
+      `\\(0,${IDENT}\\.useEffect\\)\\(${effect[1]},${dependencies}\\)`,
+      "gu",
+    ),
+  ) == null
+    ? "drifted"
+    : "current";
+}
+
+function upstreamResetEffectAssetMatch(source, _assetName, context = {}) {
+  return normalizePresets(context).length > 0 &&
+    upstreamResetEffectContract(source) === "current";
+}
+
 function sliderPatchContract(source) {
   const markerCount = source.split(SLIDER_PATCH_MARKER).length - 1;
   const sliderSection = sliderResolverSection(source);
@@ -911,6 +1055,18 @@ const descriptors = [
     apply: (source) => source,
   },
   {
+    id: "model-picker-default-presets-upstream-reset-effect",
+    phase: "webview-asset",
+    order: 20_797.5,
+    ciPolicy: "optional",
+    pattern: JS_ASSET_PATTERN,
+    enabled: (context = {}) => normalizePresets(context).length > 0,
+    assetMatch: upstreamResetEffectAssetMatch,
+    missingDescription: "upstream model picker reset-effect bundle",
+    skipDescription: "model picker upstream reset-effect compatibility audit",
+    apply: (source) => source,
+  },
+  {
     id: "model-picker-default-presets-catalog",
     phase: "webview-asset",
     order: 20_798,
@@ -1003,4 +1159,6 @@ module.exports = {
   sliderAssetMatch,
   sliderPatchContract,
   upstreamDefaultSelectionAssetMatch,
+  upstreamResetEffectAssetMatch,
+  upstreamResetEffectContract,
 };
