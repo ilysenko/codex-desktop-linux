@@ -662,9 +662,13 @@ function upstreamResetEffectContract(source) {
     effectPredicateIndex,
     dependencyIndex,
   ]);
+  const mutationSuffix =
+    "(?:\\+\\+|--|(?:\\*\\*|<<|>>>|>>|&&|\\|\\||\\?\\?|[+\\-*/%&|^])=|=(?!=|>)|=>)";
+  const jsTrivia = "(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\r\\n]*(?:\\r?\\n|$))*";
   for (const match of auditedScope.matchAll(
     new RegExp(
-      `${IDENT}\\[\\d+\\](?:!==|=)(${escapeRegExp(active)})(?![\\w$])`,
+      `${IDENT}\\[\\d+\\](?:!==|=)(${escapeRegExp(active)})(?![\\w$])` +
+        `(?!${jsTrivia}${mutationSuffix})`,
       "gu",
     ),
   )) {

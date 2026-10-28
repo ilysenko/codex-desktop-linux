@@ -505,6 +505,7 @@ test("upstream reset effect is reset-context scoped and selects the resolved fal
 test("upstream reset-effect compatibility audit fails closed on missing, ambiguous, and partial drift", () => {
   const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
   const fixture = upstreamResetEffectFixture();
+  const memoizedFixture = upstreamResetEffectFixture("MemoizedResetPowerPicker", true);
   for (const source of [
     "function unrelated(){}",
     fixture + upstreamResetEffectFixture("DuplicateResetPowerPicker"),
@@ -550,6 +551,12 @@ test("upstream reset-effect compatibility audit fails closed on missing, ambiguo
       "return(0,React.useEffect)(E,D),C=!1,s}",
     ),
     fixture.replace("(0,React.useEffect)(E,D)", "E()"),
+    memoizedFixture.replace("cache[0]=C", "cache[0]=C=!1"),
+    memoizedFixture.replace("cache[2]=C", "cache[2]=C=!1"),
+    memoizedFixture.replace("cache[0]=C", "cache[0]=C++"),
+    memoizedFixture.replace("cache[2]=C", "cache[2]=C++"),
+    memoizedFixture.replace("cache[0]=C", "cache[0]=C+=1"),
+    memoizedFixture.replace("cache[2]=C", "cache[2]=C+=1"),
   ]) {
     assert.doesNotThrow(() => new Function(source));
     assert.equal(upstreamResetEffectContract(source), "drifted");
