@@ -31,7 +31,11 @@ function owner(source, index) {
 // Run the actual packaged helper and per-thread override function with inert
 // external dependencies. No Electron, app-server, profile, or network is used.
 function resumeHarness(source) {
-  const builder = only(source, new RegExp(`function (${IDENT})\\(\\{browserBackends:(${IDENT}),deferTools:${IDENT},surfaces:${IDENT},nodeRepl:${IDENT}\\}`, "g"));
+  const builder = only(source, new RegExp(
+    `function (${IDENT})\\(\\{browserBackends:(${IDENT}),deferTools:${IDENT},surfaces:${IDENT},` +
+    `nodeRepl:${IDENT},accessBootstrapPath:(${IDENT})\\}`,
+    "g",
+  ));
   const call = only(source, new RegExp(`(${IDENT})\\[\`mcp_servers\\.\\$\\{(${IDENT})\\.(${IDENT})\\}\`\\]=${builder[1]}\\(\\{browserBackends:(${IDENT})\\.browserBackends,`, "g"));
   const buildSource = owner(source, builder.index);
   const resumeSource = owner(source, call.index);
@@ -53,7 +57,12 @@ function resumeHarness(source) {
   const pathAlias = only(buildSource, new RegExp(`(${IDENT})\\.default\\.join\\(${IDENT},\`scripts\`,\`native-service\\.mjs\`\\)`, "g"));
   const services = only(buildSource, new RegExp(`\\[(${IDENT})\\.(${IDENT})\\]:JSON\\.stringify\\(${IDENT}\\)`, "g"));
   const backends = only(buildSource, new RegExp(`\\[(${IDENT})\\]:${builder[2]}\\.join\\(\`,\`\\)`, "g"));
-  const executable = only(buildSource, new RegExp(`command:${IDENT}\\.env\\[(${IDENT})\\.(${IDENT})\\],args:\\[${IDENT}\\.default\\.join\\(${IDENT}\\.env\\[\\1\\.(${IDENT})\\]`, "g"));
+  const executable = only(buildSource, new RegExp(
+    `command:${IDENT}\\.env\\[(${IDENT})\\.(${IDENT})\\],args:\\[\\.\\.\\.${builder[3]}==null\\?\\[\\]:` +
+    `\\[\`--import\`,\\(0,${IDENT}\\.pathToFileURL\\)\\(${builder[3]}\\)\\.href\\],` +
+    `${IDENT}\\.default\\.join\\(${IDENT}\\.env\\[\\1\\.(${IDENT})\\]`,
+    "g",
+  ));
 
   let cached;
   const constants = { [services[2]]: "services", [executable[2]]: "node", [executable[3]]: "packageRoot", [call[3]]: "cua_repl" };
@@ -69,7 +78,7 @@ function resumeHarness(source) {
     [config[1]]: async () => ({ "mcp_servers.node_repl": { command: "/node", env: { node: "/node", packageRoot: "/bundled" } } }),
     [identity[1]]: () => "test-identity",
     [env[1]]: "identity", [env[2]]: "toolsPipe", [env[4]]: "browserIdentity",
-    [env[3]]: { default: { env: {} } },
+    [env[3]]: { default: { env: { CODEX_APP_SERVER_USE_LOCAL_DAEMON: "1" } } },
     [fallback[1]]: { "mcp_servers.cua_repl": { enabled: false } },
     [cleanup[1]]: () => {},
     process: { env: { CODEX_LINUX_CUA_HOST_SOCKET: "/runtime/cua.sock" } },
