@@ -97,7 +97,8 @@ function applyUnifiedComputerUsePatch(source) {
   // its cached selection, then pass that context through both builder calls.
   const builderPattern = new RegExp(
     `function (?<builder>[\\w$]+)\\(\\{browserBackends:(?<backends>[\\w$]+),deferTools:(?<defer>[\\w$]+),` +
-      `surfaces:(?<surfaces>[\\w$]+),nodeRepl:(?<nodeRepl>[\\w$]+)\\}(?<rootParam>,(?<pluginRoot>[\\w$]+))?\\)\\{`,
+      `surfaces:(?<surfaces>[\\w$]+),nodeRepl:(?<nodeRepl>[\\w$]+),` +
+      `accessBootstrapPath:(?<accessBootstrapPath>[\\w$]+)\\}(?<rootParam>,(?<pluginRoot>[\\w$]+))?\\)\\{`,
     "g",
   );
   const builders = [...source.matchAll(builderPattern)];
@@ -124,12 +125,14 @@ function applyUnifiedComputerUsePatch(source) {
     `SKY_AUDIO_ATTACHMENTS:${surfaces}\\.includes\\(\`computer\`\\)\\?\`1\`:\`0\`,` +
     "NODE_REPL_ENABLE_AUDIO:`0`\\}:\\{\\},)";
   const currentBannerPattern = new RegExp(
-    `CUA_REPL_ENABLED_SURFACES:${surfaces}\\.join\\(\`,\`\\),${audioEnvironmentPattern}` +
+    `CUA_REPL_NODE_REPL_PATH:${builder.groups.nodeRepl}\\?\\.command,` +
+      `CUA_REPL_ENABLED_SURFACES:${surfaces}\\.join\\(\`,\`\\),${audioEnvironmentPattern}` +
       `\\[(?<constants>[\\w$]+)\\.(?<constant>[\\w$]+)\\]:JSON\\.stringify\\((?<services>[\\w$]+)\\)`,
     "g",
   );
   const patchedBannerPattern = new RegExp(
-    `CUA_REPL_ENABLED_SURFACES:${surfaces}\\.join\\(\`,\`\\),CODEX_LINUX_CUA_HOST_SOCKET:process\\.env\\.CODEX_LINUX_CUA_HOST_SOCKET,` +
+    `CUA_REPL_NODE_REPL_PATH:${builder.groups.nodeRepl}\\?\\.command,` +
+      `CUA_REPL_ENABLED_SURFACES:${surfaces}\\.join\\(\`,\`\\),CODEX_LINUX_CUA_HOST_SOCKET:process\\.env\\.CODEX_LINUX_CUA_HOST_SOCKET,` +
       `NODE_REPL_JS_BANNER:\`await import\\("@oai/cua/tinyskyAlt"\\);await\\(await import\\(\\$\\{JSON\\.stringify\\((?<path>[\\w$]+)\\.default\\.join\\((?<pluginRoot>[\\w$]+),\`scripts\`,\`native-client\\.mjs\`\\)\\)\\}\\)\\)\\.installLinuxComputerUse\\(cua\\);\`,` +
       audioEnvironmentPattern +
       `\\[(?<constants>[\\w$]+)\\.(?<constant>[\\w$]+)\\]:JSON\\.stringify\\((?<services>[\\w$]+)\\)`,
@@ -138,7 +141,8 @@ function applyUnifiedComputerUsePatch(source) {
   const currentBanners = [...builderSource.matchAll(currentBannerPattern)];
   const patchedBanners = [...builderSource.matchAll(patchedBannerPattern)];
   const callPattern = new RegExp(
-    `Object\\.assign\\([\\w$]+,${builder.groups.builder}\\((?<argument>[\\w$]+)(?<rootArg>,(?<pluginRoot>[\\w$]+))?\\)\\)`,
+    `Object\\.assign\\([\\w$]+,${builder.groups.builder}\\(\\{\\.\\.\\.(?<argument>[\\w$]+),` +
+      `accessBootstrapPath:(?<accessBootstrapPath>[\\w$]+)\\}(?<rootArg>,(?<pluginRoot>[\\w$]+))?\\)\\)`,
     "g",
   );
   const calls = [...source.matchAll(callPattern)];
@@ -192,8 +196,8 @@ function applyUnifiedComputerUsePatch(source) {
   // helper binding, including nested scopes that capture the injected value.
   const builderRoot = freshBuilderRoot(builderSource);
   const pathAlias = root.groups.path;
-  const { backends, defer, nodeRepl } = builder.groups;
-  if ([backends, defer, surfaces, nodeRepl].includes(pathAlias)) {
+  const { backends, defer, nodeRepl, accessBootstrapPath } = builder.groups;
+  if ([backends, defer, surfaces, nodeRepl, accessBootstrapPath].includes(pathAlias)) {
     throw new Error("Linux unified Computer Use contract drift: native config builder shadows the path module");
   }
   const edits = [
@@ -214,6 +218,7 @@ function applyUnifiedComputerUsePatch(source) {
       index: builderOwner.start + banner.index,
       length: banner[0].length,
       replacement:
+        `CUA_REPL_NODE_REPL_PATH:${nodeRepl}?.command,` +
         `CUA_REPL_ENABLED_SURFACES:${surfaces}.join(\`,\`),` +
         `CODEX_LINUX_CUA_HOST_SOCKET:process.env.CODEX_LINUX_CUA_HOST_SOCKET,` +
         `NODE_REPL_JS_BANNER:\`await import("@oai/cua/tinyskyAlt");await(await import(\${JSON.stringify(${pathAlias}.default.join(${builderRoot},\`scripts\`,\`native-client.mjs\`))})).installLinuxComputerUse(cua);\`,` +
@@ -233,7 +238,7 @@ function applyUnifiedComputerUsePatch(source) {
     {
       index: calls[0].index,
       length: calls[0][0].length,
-      replacement: publishRoot + calls[0][0].replace(`(${calls[0].groups.argument})`, `(${calls[0].groups.argument},${pluginRoot})`),
+      replacement: publishRoot + calls[0][0].slice(0, -2) + `,${pluginRoot}` + calls[0][0].slice(-2),
     },
     {
       index: lifecycle.sync.index,

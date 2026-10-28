@@ -48,13 +48,6 @@ const CODEX_MICRO_GATE_CONTRACTS = [
       source.includes("case`codex-micro`:return")
       && source.includes('"codex-micro":'),
   },
-  {
-    description: "Codex Micro debug-panel gate",
-    gateCount: 1,
-    routeCount: 0,
-    anchor: (source) =>
-      source.includes("codexMicro.onboarding.debugStatus"),
-  },
 ];
 const WATCH_TOPOLOGY_FUNCTION = new RegExp(
   `function (${JS_IDENT})\\((${JS_IDENT})\\)\\{return ` +

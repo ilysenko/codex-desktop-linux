@@ -1113,8 +1113,8 @@ function remoteMobileConversationHydrationGuardPattern({ patched = false, flags 
     ? `/\\*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}\\*/`
     : "";
   const hostGuard = patched
-    ? "this\\.manager\\.getHostId\\(\\)!==`durable`&&this\\.manager\\.getHostId\\(\\)!==`local`\\|\\|"
-    : "this\\.manager\\.getHostId\\(\\)!==`durable`\\|\\|";
+    ? "!this\\.manager\\.isCloudHost&&this\\.manager\\.getHostId\\(\\)!==`local`\\|\\|"
+    : "!this\\.manager\\.isCloudHost\\|\\|";
   const methodGuard = patched
     ? `(?<notification>${DEVICE_KEY_IDENT})\\.method!==\`turn/started\`&&` +
       `\\k<notification>\\.method!==\`turn/completed\`&&` +
@@ -1184,7 +1184,7 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
   const { conversation, notification, pending, ignore, delivery } = contract.match.groups;
   const replacement =
     `return ${pending}==null?/*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}*/` +
-    "this.manager.getHostId()!==`durable`&&this.manager.getHostId()!==`local`||" +
+    "!this.manager.isCloudHost&&this.manager.getHostId()!==`local`||" +
     `${notification}.method!==\`turn/started\`&&${notification}.method!==\`turn/completed\`&&` +
     `(this.manager.getHostId()!==\`local\`||${notification}.method!==\`item/started\`&&` +
     `${notification}.method!==\`item/completed\`)||` +

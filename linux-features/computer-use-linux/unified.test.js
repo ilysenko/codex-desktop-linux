@@ -9,8 +9,8 @@ const descriptors = require("./patch.js");
 // Windows/macOS service availability, followed by independent browser selection.
 const selector = [
   'function select(f,l,t,u){let p=f&&t.computerUse&&u.enabled&&(l.platform===`win32`||l.platform===`darwin`&&u.paths.serviceAppPath!=null),m=t.computerUse&&(!t.browserUseTinysky||l.platform!==`darwin`||u.enabled),h=[];return f&&t.browser&&h.push(`browser`),p&&h.push(`computer`),{computerUse:m,cuaReplSurfaces:h}}',
-  'async function configure(e){let t=lookup(),i=constants.Kt({codexHome:e.codexHome,localVersion:t.plugin.localVersion,marketplaceName:t.marketplace.name,pluginName:t.plugin.name}),a=path.default.join(i,`.mcp.json`),c={};Object.assign(c,build(e));return e.nodeRepl!=null&&e.surfaces.length>0}',
-  'function build({browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n}){let l={};return s.includes(`browser`)&&(l.browser=`@oai/browser-desktop/service`),s.includes(`computer`)&&(l.sky=`@oai/sky/service`),{env:{...n?.env,CUA_REPL_ENABLED_SURFACES:s.join(`,`),...n?.env.SKY_AUDIO_ATTACHMENTS===`1`?{SKY_ENABLE_AUDIO:s.includes(`computer`)?`1`:`0`,SKY_AUDIO_ATTACHMENTS:s.includes(`computer`)?`1`:`0`,NODE_REPL_ENABLE_AUDIO:`0`}:{},[constants.Il]:JSON.stringify(l)}}}',
+  'async function configure(e){let t=lookup(),enabled=e.nodeRepl!=null&&e.surfaces.length>0,i=constants.Kt({codexHome:e.codexHome,localVersion:t.plugin.localVersion,marketplaceName:t.marketplace.name,pluginName:t.plugin.name}),a=path.default.join(i,`.mcp.json`),bootstrap=path.default.join(i,`require-browser-access.mjs`),c={};Object.assign(c,build({...e,accessBootstrapPath:bootstrap}));return enabled}',
+  'function build({browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n,accessBootstrapPath:a}){let l={};return s.includes(`browser`)&&(l.browser=`@oai/browser-desktop/service`),s.includes(`computer`)&&(l.sky=`@oai/sky/service`),{env:{...n?.env,CUA_REPL_NODE_REPL_PATH:n?.command,CUA_REPL_ENABLED_SURFACES:s.join(`,`),...n?.env.SKY_AUDIO_ATTACHMENTS===`1`?{SKY_ENABLE_AUDIO:s.includes(`computer`)?`1`:`0`,SKY_AUDIO_ATTACHMENTS:s.includes(`computer`)?`1`:`0`,NODE_REPL_ENABLE_AUDIO:`0`}:{},[constants.Il]:JSON.stringify(l)}}}',
   'async function initialize(e){let selection=e.selection,features=selection.desktopFeatureAvailability,backends=selection.browserBackends,surfaces=selection.cuaReplSurfaces,home=selection.codexHome,marketplace=selection.marketplaceName,marketplaces=e.marketplaces,skip=false,node=selection.nodeRepl,enabled=false;enabled=await configure({browserBackends:backends,deferTools:features.deferCuaTools,surfaces:surfaces,codexHome:home,marketplaceName:marketplace,marketplaces:marketplaces,nodeRepl:skip?void 0:node});return {selection:selection,cuaReplEnabled:enabled}}',
   'async function threadConfig(e){let connection=e.connection,local=connection!=null,cached=e.cached,features=e.features,posture=features.browserUseTinysky?cached:null,principal=local?await connection.getAuthenticatedPrincipal().catch(()=>null):null,selection=posture?.selection??await selectForThread(e),node=e.nodeRepl??selection.nodeRepl;return !posture?.cuaReplEnabled?{enabled:false}:build({browserBackends:selection.browserBackends,deferTools:selection.desktopFeatureAvailability.deferCuaTools,surfaces:selection.cuaReplSurfaces,nodeRepl:node})}',
 ].join("");
@@ -26,8 +26,8 @@ function surfaces(source, platform, { ready = true, enabled = true, legacy = fal
 test("unified Linux native selection uses the native setting and retains browser control", () => {
   assert.deepEqual(surfaces(selector, "linux"), ["browser"]);
   assert.deepEqual(surfaces(patch(selector), "linux"), ["browser", "computer"]);
-  assert.match(patch(selector), /build\(e,i\)/);
-  assert.match(patch(selector), /function build\(\{browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n\},codexLinuxCuaPluginRoot\)/);
+  assert.match(patch(selector), /build\(\{\.\.\.e,accessBootstrapPath:bootstrap\},i\)/);
+  assert.match(patch(selector), /function build\(\{browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n,accessBootstrapPath:a\},codexLinuxCuaPluginRoot\)/);
   assert.match(patch(selector), /\.sky=path\.default\.join\(codexLinuxCuaPluginRoot,`scripts`,`native-service\.mjs`\)/);
   assert.match(patch(selector), /NODE_REPL_JS_BANNER:.*native-client\.mjs/);
   assert.match(patch(selector), /CODEX_LINUX_CUA_HOST_SOCKET:process\.env\.CODEX_LINUX_CUA_HOST_SOCKET/);
@@ -101,7 +101,7 @@ test("unified helper uses a fresh binding across minified parameter and local co
   // binding, while a local collision can shadow or redeclare the injected root.
   for (const root of ["b", "d", "s", "n", "l"]) {
     const current = selector.replace("i=constants.Kt", `${root}=constants.Kt`)
-      .replace("join(i,`.mcp.json`)", `join(${root},\`.mcp.json\`)`);
+      .replaceAll("join(i,", `join(${root},`);
     assert.doesNotThrow(() => new vm.Script(current));
     const patched = patch(current);
     assert.doesNotThrow(() => new vm.Script(patched));
@@ -133,14 +133,14 @@ test("unified helper avoids existing generated names in locals and nested scopes
   const current = selector.replace("let l={};return s.includes",
     "let codexLinuxCuaPluginRoot=1;function nested(codexLinuxCuaPluginRoot1){return codexLinuxCuaPluginRoot1}let l={};return s.includes");
   const patched = patch(current);
-  assert.match(patched, /nodeRepl:n\},codexLinuxCuaPluginRoot2\)/);
+  assert.match(patched, /nodeRepl:n,accessBootstrapPath:a\},codexLinuxCuaPluginRoot2\)/);
   assert.doesNotThrow(() => new vm.Script(patched));
   assert.equal(patch(patched), patched);
 });
 
 test("unified helper validates caller and helper root relationships separately", () => {
   const patched = patch(selector);
-  assert.throws(() => patch(patched.replace("build(e,i)", "build(e,other)")), /unified.*contract/i);
+  assert.throws(() => patch(patched.replace("accessBootstrapPath:bootstrap},i)", "accessBootstrapPath:bootstrap},other)")), /unified.*contract/i);
   assert.throws(() => patch(patched.replace(
     "join(codexLinuxCuaPluginRoot,`scripts`,`native-service.mjs`)",
     "join(other,`scripts`,`native-service.mjs`)")), /unified.*contract/i);
@@ -229,7 +229,7 @@ test("unified propagation rejects missing, ambiguous, or changed builder consume
 
 
 test("unified builder patch fails closed when its bindings shadow the path module", () => {
-  for (const binding of ["b", "d", "s", "n"]) {
+  for (const binding of ["b", "d", "s", "n", "a"]) {
     const start = selector.indexOf("function build(");
     const end = selector.indexOf("async function initialize(");
     const builder = selector.slice(start, end).replace(new RegExp(`\\b${binding}\\b`, "g"), "path");

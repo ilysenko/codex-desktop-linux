@@ -18,7 +18,6 @@ const {
   LOCAL_DEFAULT_PATCH_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
   LOCAL_COMPOSER_RESOLVER_MARKER,
-  LOCAL_DRAFT_SELECTION_MARKER,
   SLIDER_PATCH_MARKER,
   applyCatalogPatch,
   applyExistingChatOptimisticPatch,
@@ -107,7 +106,7 @@ function localComposerFixture(name = "LocalComposer") {
     "let He=available.find(Wqr),Ue=Power(available,{includeUltraInSlider:true,sliderModelsConfig:serverConfig,stripGptPrefix:true}),",
     "Ge=Ue,Ke=zae(Ge,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "picker({resetContextKey:JSON.stringify([conversationId,hostId,host.cwd])});",
-    "composer.mode.local.model.custom;let scratch=(0,React.useRef)(null),choose=function(e,t,n){let callback=()=>{};return draftSelection==null?select(normalize(e),t,callback,n):draftSelection.selectModelAndReasoningEffort(normalize(e),t,callback)};",
+    "composer.mode.local.model.custom;async function choose(e,t){let n=normalize(e);await(draftSelection==null?select(n,t):draftSelection.setModelAndReasoningEffort(n,t))}",
     "function normalize(e){return e}let selected=manualSelection?choose(`gpt-5.6-sol`,`high`):null;",
     "let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "render({onSelectDefault:reset});",
@@ -524,18 +523,10 @@ test("local composer uses configured pairs and lowers only its config threshold"
     (patchedComposer.match(new RegExp(LOCAL_COMPOSER_CONFIG_MARKER, "g")) ?? []).length,
     1,
   );
-  assert.equal(
-    (patchedComposer.match(new RegExp(LOCAL_DRAFT_SELECTION_MARKER, "g")) ?? []).length,
-    1,
-  );
   assert.match(patchedComposer, /gpt-5\.6-sol:medium/);
   assert.match(
     patchedComposer,
     /sliderModelsConfig:serverConfig==null\?serverConfig:codexLinuxLocalDefaultPresetConfig/,
-  );
-  assert.match(
-    patchedComposer,
-    /codexLinuxLocalDraftDefaultScope=conversationId==null\?JSON\.stringify\(\[hostId,host\.cwd\]\):null/,
   );
   const runComposer = ({
     available,
@@ -610,13 +601,7 @@ test("local composer uses configured pairs and lowers only its config threshold"
   });
   assert.equal(unavailableDefault.result.fallback.id, "gpt-5.6-sol:high");
   assert.equal(unavailableDefault.result.reset.id, "gpt-5.6-sol:high");
-  assert.deepEqual(unavailableDefault.selections, [
-    {
-      effort: "high",
-      model: "gpt-5.6-sol",
-      options: { persistAsDefault: false },
-    },
-  ]);
+  assert.deepEqual(unavailableDefault.selections, []);
 
   const configuredDefault = runComposer({
     available: [
@@ -624,11 +609,7 @@ test("local composer uses configured pairs and lowers only its config threshold"
       { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
     ],
   });
-  assert.deepEqual(configuredDefault.selections[0], {
-    effort: "medium",
-    model: "gpt-5.6-sol",
-    options: { persistAsDefault: false },
-  });
+  assert.deepEqual(configuredDefault.selections, []);
 
   const gatedOut = runComposer({
     available: [
@@ -703,9 +684,9 @@ test("local composer uses configured pairs and lowers only its config threshold"
     hookState: lifecycleHooks,
   });
   const nextDraft = runComposer({ available: lifecycleAvailable, hookState: lifecycleHooks });
-  assert.equal(firstDraft.selections.length, 1);
+  assert.equal(firstDraft.selections.length, 0);
   assert.equal(createdConversation.selections.length, 0);
-  assert.equal(nextDraft.selections.length, 1);
+  assert.equal(nextDraft.selections.length, 0);
 
   const manuallySelected = runComposer({
     available: [
@@ -714,12 +695,10 @@ test("local composer uses configured pairs and lowers only its config threshold"
     ],
     manualSelection: true,
   });
-  assert.equal(manuallySelected.result.selected.persistAsDefault, false);
   assert.deepEqual(manuallySelected.selections, [
     {
       effort: "high",
       model: "gpt-5.6-sol",
-      options: { persistAsDefault: false },
     },
   ]);
 });

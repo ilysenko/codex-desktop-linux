@@ -121,7 +121,7 @@ const LOCAL_FILE_WATCH_METHOD =
   new RegExp(`${LOCAL_FILE_WATCH_METHOD_PREFIX}${LOCAL_FILE_WATCH_CURRENT_BODY}`, "gu");
 const CURRENT_LOCAL_HOST_CLASS = new RegExp(
   `var (?<localHostClass>${IDENTIFIER_PATTERN})=class\\{` +
-    `runsInsideWsl;workspaceRoot=new ${IDENTIFIER_PATTERN}\\(this\\);` +
+    `runsInsideWsl;processOwner;workspaceRoot=new ${IDENTIFIER_PATTERN}\\(this\\);` +
     "hostConfig=\\{id:`local`,display_name:`Local`,kind:`local`\\};" +
     "id=`local`;isLocal=!0;",
   "gu",
@@ -142,16 +142,16 @@ const CURRENT_GIT_ROUTE_PREFIX_PATTERN =
   "case`git`:\\{let " +
   `(?<ignoreSource>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\\(\\),` +
   `(?<localHost>${IDENTIFIER_PATTERN})=new ` +
-  `(?<localHostClass>${IDENTIFIER_PATTERN})\\(\\k<ignoreSource>\\);return\\{git:\\{` +
-  "(?=[\\s\\S]{0,900}?getEnvironment:async\\(\\)=>\\{if\\(" +
+  `(?<localHostClass>${IDENTIFIER_PATTERN})\\(\\k<ignoreSource>,[\\s\\S]{0,600}?\\);` +
+  "return\\{git:\\{watchIgnoreSources:\\k<ignoreSource>\\?void 0:\\{" +
+  `getEnvironment:async\\(\\)=>${IDENTIFIER_PATTERN}\\(\\),getWatchTargets:${IDENTIFIER_PATTERN}\\},` +
+  `createExecutionHost:(?<executionConfig>${IDENTIFIER_PATTERN})=>\\{` +
+  `if\\(\\k<executionConfig>\\.id===\\k<localHost>\\.id&&!${IDENTIFIER_PATTERN}\\(\\k<executionConfig>\\)\\)` +
+  "return \\k<localHost>;if\\(" +
   `(?<mainConnection>${IDENTIFIER_PATTERN})==null\\)throw Error\\(` +
   "`Git hosts require a main RPC connection`" +
-  "\\);return \\k<mainConnection>\\.getLocalGitIgnoreEnvironment\\(\\)\\}," +
-  `getWatchTargets:${IDENTIFIER_PATTERN}\\},createExecutionHost:` +
-  `(?<executionConfig>${IDENTIFIER_PATTERN})=>\\{if\\(\\k<mainConnection>==null\\)` +
-  "throw Error\\(`Git hosts require a main RPC connection`\\);return new " +
-  `${IDENTIFIER_PATTERN}\\(\\k<mainConnection>,\\k<executionConfig>\\)\\},)` +
-  "[\\s\\S]{0,900}?" +
+  "\\);return new " +
+  `${IDENTIFIER_PATTERN}\\(\\k<mainConnection>,\\k<executionConfig>\\)\\},` +
   "startMetadataWatch:\\(" +
   `(?<metadataHost>${IDENTIFIER_PATTERN}),(?<metadataOptions>${IDENTIFIER_PATTERN})\\)=>` +
   "\\k<metadataHost>\\.isLocal\\?process\\.platform===`linux`&&" +

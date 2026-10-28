@@ -83,10 +83,9 @@ policy and its Ultra/XHigh visibility gates:
 Selecting **Default** again and creating a new chat both use the resolved
 default pair. Manual model selection remains upstream-owned.
 
-For an unsent local draft, selecting a configured pair is kept in draft state
-instead of being persisted as the account's upstream default. This lets the
-new conversation start with configured combinations that the server accepts
-for a conversation but does not expose as persistable default presets.
+The current local composer applies a selected Default pair through its normal
+per-conversation model setter. No account-default persistence override is
+needed.
 
 ## Updates
 
@@ -101,7 +100,7 @@ rejects the build/update candidate and preserves the working installation.
 The composer context requires the current separate host-ID binding; the retired
 host-object context shape is rejected.
 The official-bundle CI audit includes populated presets so all six
-descriptors are checked, including the new upstream Default-selection
+descriptors are checked, including the upstream Default-selection
 compatibility audit and the local composer resolver.
 
 ## Test

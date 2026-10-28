@@ -19,7 +19,7 @@ const {
   patchCodexMicroHotplugSource,
 } = require("./patch.js");
 
-const [appShellContract, dictationContract, composerContract, settingsContract, debugPanelContract] =
+const [appShellContract, dictationContract, composerContract, settingsContract] =
   CODEX_MICRO_GATE_CONTRACTS;
 
 function appShellSource(gates = 3) {
@@ -55,13 +55,6 @@ function settingsVisibilitySource() {
   ].join(";");
 }
 
-function debugPanelSource() {
-  return [
-    "const message=`codexMicro.onboarding.debugStatus`",
-    "const enabled=gg(`3207467860`)",
-  ].join(";");
-}
-
 function createExtractedApp(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-micro-test-"));
   const assets = path.join(root, "webview", "assets");
@@ -74,7 +67,6 @@ function createExtractedApp(t) {
     settingsVisibilitySource(),
     "utf8",
   );
-  fs.writeFileSync(path.join(assets, "debug.js"), debugPanelSource(), "utf8");
   fs.writeFileSync(path.join(assets, "unrelated.js"), "const unrelated=true", "utf8");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { assets, root };
@@ -93,7 +85,6 @@ test("Codex Micro feature gate patches every current callsite", () => {
     [dictationSource(), dictationContract],
     [composerSource(), composerContract],
     [settingsVisibilitySource(), settingsContract],
-    [debugPanelSource(), debugPanelContract],
   ];
 
   let patchedCallsites = 0;
@@ -119,7 +110,7 @@ test("Codex Micro feature gate patches every current callsite", () => {
       patched,
     );
   }
-  assert.equal(patchedCallsites, 7);
+  assert.equal(patchedCallsites, 6);
 });
 
 test("Codex Micro feature gate rejects incomplete or drifted contracts", () => {
@@ -159,25 +150,25 @@ test("Codex Micro feature gate discovers and patches all current semantic bundle
   assert.equal(discovery.reason, null);
   assert.deepEqual(
     discovery.matches.map(({ assetName }) => assetName).sort(),
-    ["composer.js", "debug.js", "dictation.js", "settings.js", "shell.js"],
+    ["composer.js", "dictation.js", "settings.js", "shell.js"],
   );
 
   const result = patchCodexMicroFeatureGateAssets(root);
   assert.equal(result.matched, 1);
-  assert.equal(result.changed, 5);
-  const patched = ["composer.js", "debug.js", "dictation.js", "settings.js", "shell.js"]
+  assert.equal(result.changed, 4);
+  const patched = ["composer.js", "dictation.js", "settings.js", "shell.js"]
     .map((name) => fs.readFileSync(path.join(assets, name), "utf8"))
     .join(";");
   assert.equal(patched.includes(CODEX_MICRO_GATE_ID), false);
   assert.equal(
     patched.split(CODEX_MICRO_GATE_MARKER).length - 1,
-    7,
+    6,
   );
   assert.deepEqual(patchCodexMicroFeatureGateAssets(root), {
     matched: 1,
     changed: 0,
     reason: null,
-    targets: ["shell.js", "dictation.js", "composer.js", "settings.js", "debug.js"],
+    targets: ["shell.js", "dictation.js", "composer.js", "settings.js"],
   });
 });
 
@@ -191,7 +182,7 @@ test("Codex Micro feature gate fails closed on an extra current callsite", (t) =
   const result = patchCodexMicroFeatureGateAssets(root);
   assert.equal(result.matched, 0);
   assert.equal(result.changed, 0);
-  assert.match(result.reason, /Found 6 Codex Micro feature-gate bundles/);
+  assert.match(result.reason, /Found 5 Codex Micro feature-gate bundles/);
   assert.equal(
     fs.readFileSync(path.join(assets, "shell.js"), "utf8"),
     appShellSource(),

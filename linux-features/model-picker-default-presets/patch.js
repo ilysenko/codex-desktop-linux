@@ -12,8 +12,6 @@ const LOCAL_COMPOSER_CONFIG_MARKER =
   "codex-linux-model-picker-default-presets-local-composer-config";
 const LOCAL_COMPOSER_RESOLVER_MARKER =
   "codex-linux-model-picker-default-presets-local-composer-resolver";
-const LOCAL_DRAFT_SELECTION_MARKER =
-  "codex-linux-model-picker-default-presets-local-draft-selection";
 const EXISTING_CHAT_OPTIMISTIC_MARKER =
   "codex-linux-model-picker-default-presets-existing-chat-optimistic-selection";
 const EXISTING_CHAT_PRESET_IDS_KEY = "codexLinuxExistingChatDefaultPresetIds";
@@ -674,20 +672,17 @@ function localComposerRuntime(config) {
     "let codexLinuxAvailable=codexLinuxSelections.filter(({id:codexLinuxId})=>codexLinuxLocalDefaultPresetIds.has(codexLinuxId));" +
     "return codexLinuxAvailable.find(({id:codexLinuxId})=>codexLinuxId===codexLinuxLocalDefaultPresetConfig.codexLinuxDefaultPresetId)??codexLinuxAvailable[0]??null}" +
     "function codexLinuxLocalDefaultPresetFallback(codexLinuxEnabled,codexLinuxSelections,codexLinuxUpstreamDefault){" +
-    "return codexLinuxEnabled?codexLinuxLocalDefaultPresetSelection(codexLinuxSelections)?.id??codexLinuxUpstreamDefault:codexLinuxUpstreamDefault}" +
-    "function codexLinuxLocalDefaultPresetOptions(codexLinuxEnabled,codexLinuxDraft,codexLinuxModel,codexLinuxEffort,codexLinuxOptions){" +
-    "return codexLinuxOptions??(codexLinuxEnabled&&codexLinuxDraft&&codexLinuxLocalDefaultPresetIds.has(`${codexLinuxModel}:${codexLinuxEffort}`)?{persistAsDefault:!1}:void 0)}"
+    "return codexLinuxEnabled?codexLinuxLocalDefaultPresetSelection(codexLinuxSelections)?.id??codexLinuxUpstreamDefault:codexLinuxUpstreamDefault}"
   );
 }
 
 const LOCAL_COMPOSER_FALLBACK_PATTERN =
   /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)==null\?void 0:`\$\{\4\.model\}:\$\{\4\.defaultReasoningEffort\}`\)/gu;
 const LOCAL_COMPOSER_SELECTION_PATTERN = new RegExp(
-  `(?<handler>[A-Za-z_$][\\w$]*)=function\\((?<model>[A-Za-z_$][\\w$]*),(?<effort>[A-Za-z_$][\\w$]*),` +
-    `(?<options>[A-Za-z_$][\\w$]*)\\)\\{[\\s\\S]{0,500}?return (?<delegate>[A-Za-z_$][\\w$]*)==null\\?` +
-    `(?<base>[A-Za-z_$][\\w$]*)\\((?<normalizer>[A-Za-z_$][\\w$]*)\\(\\k<model>\\),\\k<effort>,` +
-    `(?<callback>[A-Za-z_$][\\w$]*),\\k<options>\\):\\k<delegate>\\.selectModelAndReasoningEffort\\(` +
-    `\\k<normalizer>\\(\\k<model>\\),\\k<effort>,\\k<callback>\\)\\}`,
+  `async function (?<handler>[A-Za-z_$][\\w$]*)\\((?<model>[A-Za-z_$][\\w$]*),(?<effort>[A-Za-z_$][\\w$]*)\\)\\{` +
+    `let (?<normalized>[A-Za-z_$][\\w$]*)=(?<normalizer>[A-Za-z_$][\\w$]*)\\(\\k<model>\\);` +
+    `await\\((?<delegate>[A-Za-z_$][\\w$]*)==null\\?(?<base>[A-Za-z_$][\\w$]*)\\(\\k<normalized>,\\k<effort>\\):` +
+    `\\k<delegate>\\.setModelAndReasoningEffort\\(\\k<normalized>,\\k<effort>\\)\\)\\}`,
   "gu",
 );
 
@@ -704,9 +699,8 @@ function localComposerResetContext(section) {
 
 function localComposerConfigContract(source) {
   const markerCount = source.split(LOCAL_COMPOSER_CONFIG_MARKER).length - 1;
-  const draftMarkerCount = source.split(LOCAL_DRAFT_SELECTION_MARKER).length - 1;
   const section = localComposerSection(source);
-  if (markerCount === 0 && draftMarkerCount === 0) {
+  if (markerCount === 0) {
     if (section == null) return "drifted";
     const configMatches = section.source.match(/sliderModelsConfig:[A-Za-z_$][\w$]*/g) ?? [];
     const fallbackMatches = section.source.match(LOCAL_COMPOSER_FALLBACK_PATTERN) ?? [];
@@ -720,12 +714,11 @@ function localComposerConfigContract(source) {
   }
   if (
     markerCount === 1 &&
-    draftMarkerCount === 1 &&
     section != null &&
     section.source.includes(":codexLinuxLocalDefaultPresetConfig") &&
     (section.source.match(/codexLinuxLocalDefaultPresetFallback\(/g) ?? []).length === 2 &&
-    (section.source.match(/codexLinuxLocalDefaultPresetSelection\(/g) ?? []).length === 1 &&
-    section.source.includes(`/*${LOCAL_DRAFT_SELECTION_MARKER}*/`)
+    (section.source.match(/codexLinuxLocalDefaultPresetSelection\(/g) ?? []).length === 0 &&
+    (section.source.match(LOCAL_COMPOSER_SELECTION_PATTERN) ?? []).length === 1
   ) {
     return "applied";
   }
@@ -862,25 +855,16 @@ function applyLocalComposerConfigPatch(source, context = {}) {
   const configMatch = /sliderModelsConfig:([A-Za-z_$][\w$]*)/u.exec(section.source);
   const fallbackMatches = [...section.source.matchAll(LOCAL_COMPOSER_FALLBACK_PATTERN)];
   const selectionMatches = [...section.source.matchAll(LOCAL_COMPOSER_SELECTION_PATTERN)];
-  const selectionMatch = selectionMatches.length === 1 ? selectionMatches[0] : null;
   const resetContext = localComposerResetContext(section);
-  const reactAlias = /\(0,([A-Za-z_$][\w$]*)\.useRef\)\(/u.exec(section.source)?.[1];
   if (
     configMatch == null ||
     fallbackMatches.length !== 2 ||
-    selectionMatch == null ||
-    resetContext == null ||
-    reactAlias == null
+    selectionMatches.length !== 1 ||
+    resetContext == null
   ) {
     return source;
   }
   const configVariable = configMatch[1];
-  const defaultSelectionsVariable = fallbackMatches[1][3];
-  const {
-    conversation: conversationVariable,
-    cwdOwner: cwdOwnerExpression,
-    hostId: hostIdExpression,
-  } = resetContext;
   let patchedSection = section.source.replace(
     configMatch[0],
     `sliderModelsConfig:${configVariable}==null?${configVariable}:codexLinuxLocalDefaultPresetConfig`,
@@ -888,29 +872,6 @@ function applyLocalComposerConfigPatch(source, context = {}) {
   patchedSection = patchedSection.replace(
     LOCAL_COMPOSER_FALLBACK_PATTERN,
     `$1=$2($3,codexLinuxLocalDefaultPresetFallback(${configVariable}!=null,$3,$4==null?void 0:\`${"${$4.model}:${$4.defaultReasoningEffort}"}\`))`,
-  );
-  const patchedSelectionMatches = [...patchedSection.matchAll(LOCAL_COMPOSER_SELECTION_PATTERN)];
-  if (patchedSelectionMatches.length !== 1) return source;
-  const currentSelection = patchedSelectionMatches[0];
-  const selectionGroups = currentSelection.groups;
-  const patchedSelection = currentSelection[0]
-    .replace(
-      "return ",
-      "codexLinuxLocalDraftDefaultRef.current=codexLinuxLocalDraftDefaultScope;return ",
-    )
-    .replace(
-      `,${selectionGroups.options}):${selectionGroups.delegate}`,
-      `,codexLinuxLocalDefaultPresetOptions(${configVariable}!=null,${conversationVariable}==null,${selectionGroups.model},${selectionGroups.effort},${selectionGroups.options})):${selectionGroups.delegate}`,
-    );
-  const draftRuntime =
-    `/*${LOCAL_DRAFT_SELECTION_MARKER}*/;let codexLinuxLocalDraftDefaultRef=(0,${reactAlias}.useRef)(null),` +
-    `codexLinuxLocalDraftDefaultScope=${conversationVariable}==null?JSON.stringify([${hostIdExpression},${cwdOwnerExpression}.cwd]):null,` +
-    `codexLinuxLocalDraftDefaultSelection=${configVariable}==null?null:codexLinuxLocalDefaultPresetSelection(${defaultSelectionsVariable});` +
-    `(0,${reactAlias}.useEffect)(()=>{if(codexLinuxLocalDraftDefaultScope==null){codexLinuxLocalDraftDefaultRef.current=null;return}codexLinuxLocalDraftDefaultSelection==null||codexLinuxLocalDraftDefaultRef.current===codexLinuxLocalDraftDefaultScope||(codexLinuxLocalDraftDefaultRef.current=codexLinuxLocalDraftDefaultScope,` +
-    `${selectionGroups.handler}(codexLinuxLocalDraftDefaultSelection.model,codexLinuxLocalDraftDefaultSelection.reasoningEffort,{persistAsDefault:!1}))},[codexLinuxLocalDraftDefaultScope,codexLinuxLocalDraftDefaultSelection?.id]);`;
-  patchedSection = patchedSection.replace(
-    currentSelection[0],
-    patchedSelection + draftRuntime,
   );
   const patchedSource =
     source.slice(0, section.start) +
@@ -1021,7 +982,6 @@ module.exports = {
   EXISTING_CHAT_OPTIMISTIC_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
   LOCAL_COMPOSER_RESOLVER_MARKER,
-  LOCAL_DRAFT_SELECTION_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   THINKING_EFFORT_TO_EFFORT,
   JS_ASSET_PATTERN,

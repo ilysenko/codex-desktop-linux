@@ -57,13 +57,16 @@ function patchNativeSenderTrace(dispatch) {
   const { findMatchingBrace } = require("../../../scripts/patches/lib/minified-js.js");
   const source = dispatch.source;
   const header = unique(source, `^async function ${dispatch.name.replace(/\$/gu, "\\$")}\\((${IDENT}),(${IDENT})\\)\\{`, "native sender header");
-  const call = unique(source, `let (${IDENT})=await (${IDENT})\\.get\\(${IDENT}\\)\\.startCompletionStream\\(\\{assertRequestCurrent:`, "native completion stream call");
+  const call = unique(source, `let (${IDENT})=await (${IDENT})\\.get\\(${IDENT}\\)\\.startCompletionStream\\(\\{`, "native completion stream call");
   if (call[2] !== header[1]) throw new Error("Native stream scope changed");
-  const optionsStart = call.index + call[0].indexOf("{assertRequestCurrent:");
+  const optionsStart = call.index + call[0].lastIndexOf("{");
   const optionsEnd = findMatchingBrace(source, optionsStart);
   if (optionsEnd < 0) throw new Error("Missing native stream options");
   const options = source.slice(optionsStart, optionsEnd + 1);
   const fields = properties(options);
+  if (fields.get("assertRequestCurrent") == null || fields.get("request") == null) {
+    throw new Error("Native stream request contract changed");
+  }
   const marked = source.includes(NATIVE_TRACE_MARKER);
   const pending = unique(options, `inFlightPrepared:(${IDENT})\\.inFlightPrepared`, "native prepared cache")[1];
   const setup = `/*${NATIVE_TRACE_MARKER}*/const ${TRACE}=codexLinuxQuickChatTraceFor(${header[1]},${header[2]}.conversationId);${TRACE}?.event("native-sender-entered");`;

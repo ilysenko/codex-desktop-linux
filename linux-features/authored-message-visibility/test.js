@@ -12,7 +12,7 @@ const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } =
 
 // Current signed-package partition and classifier, anchored by semantics rather
 // than the bundle filename or minified aliases.
-const fixture = "function xO(e,{hasFollowingFinalAnswer:t=!1,keepMcpAppEntriesPersistent:n=!1,mcpServerStatuses:r,renderMcpApps:a=!1}={}){let i=[],o=[],s=[],c=[],l=null;for(let u of e){o.push(u),SO({unit:u,hasFollowingFinalAnswer:t,keepMcpAppEntriesPersistent:n,mcpServerStatuses:r,renderMcpApps:a})?s.push(u):i.push(u)}return{collapsibleUnits:i,expandedUnits:o,persistentUnits:s,preToggleUnits:c,workedForItem:l}}function SO({unit:e,hasFollowingFinalAnswer:t,keepMcpAppEntriesPersistent:n,mcpServerStatuses:r,renderMcpApps:a}){if(e.kind!==`standalone`)return!1;let i=e.item.item;return i.type===`user-input-response`?!i.completed:i.type===`mcp-tool-call`&&MH(i)||i.type===`assistant-message`&&Vi(i)||i.type===`dynamic-tool-call`&&qh(i)||n&&a&&i.type===`mcp-tool-call`&&CO({item:i,mcpServerStatuses:r})?!0:i.type===`user-message`&&(i.steeringStatus===`pending`||i.wasInHistoryPreview===!0||i.deliveryStatus===`not-sent`||i.hookFeedback===!0||!t)}";
+const fixture = "function xO(e,{hasFollowingFinalAnswer:t=!1,isTurnInProgress:turn=!1,keepMcpAppEntriesPersistent:n=!1,mcpServerStatuses:r,renderMcpApps:a=!1}={}){let i=[],o=[],s=[],c=[],l=null;for(let u of e){o.push(u),SO({unit:u,hasFollowingFinalAnswer:t,keepMcpAppEntriesPersistent:n,mcpServerStatuses:r,renderMcpApps:a})?s.push(u):i.push(u)}return{collapsibleUnits:i,expandedUnits:o,persistentUnits:s,preToggleUnits:c,workedForItem:l}}function SO({unit:e,hasFollowingFinalAnswer:t,keepMcpAppEntriesPersistent:n,mcpServerStatuses:r,renderMcpApps:a}){if(e.kind!==`standalone`)return!1;let i=e.item.item;return i.type===`user-input-response`?!i.completed:i.type===`mcp-tool-call`&&MH(i)||i.type===`assistant-message`&&Vi(i)||i.type===`dynamic-tool-call`&&qh(i)||n&&a&&i.type===`mcp-tool-call`&&CO({item:i,mcpServerStatuses:r})?!0:i.type===`user-message`&&(i.steeringStatus===`pending`||i.followsInterruptedFinalAnswer===!0||i.wasInHistoryPreview===!0||i.deliveryStatus===`not-sent`||i.hookFeedback===!0||!t)}";
 function partition(source, units, options) {
   return vm.runInNewContext(source + ";xO", { MH: item => item.persist, Vi: item => item.final, qh: item => item.interactive, CO: ({item}) => item.interactive })(units, options);
 }
@@ -20,13 +20,13 @@ const unit = (type, id, extra = {}) => ({kind:"standalone",item:{item:{type,id,.
 const ids = units => Array.from(units, unit => unit.item.item.id);
 
 test("commentary stays visible in order while tools collapse; expansion contains each item once", () => {
-  const units = [unit("assistant-message","c1"),unit("exec","tool"),unit("user-message","steering",{steeringStatus:"accepted"}),unit("assistant-message","c2"),unit("user-message","ordinary"),unit("user-message","hook",{hookFeedback:true})];
-  assert.deepEqual(ids(partition(fixture,units,{hasFollowingFinalAnswer:true}).persistentUnits), ["hook"]);
+  const units = [unit("assistant-message","c1"),unit("exec","tool"),unit("user-message","steering",{steeringStatus:"accepted"}),unit("assistant-message","c2"),unit("user-message","ordinary"),unit("user-message","interrupted",{followsInterruptedFinalAnswer:true}),unit("user-message","hook",{hookFeedback:true})];
+  assert.deepEqual(ids(partition(fixture,units,{hasFollowingFinalAnswer:true}).persistentUnits), ["interrupted","hook"]);
   const patched = apply(fixture);
   assert.notEqual(patched, fixture);
   for (let toggle = 0; toggle < 3; toggle++) {
     const result = partition(patched, units);
-    assert.deepEqual(ids(result.persistentUnits), ["c1","steering","c2","ordinary","hook"]);
+    assert.deepEqual(ids(result.persistentUnits), ["c1","steering","c2","ordinary","interrupted","hook"]);
     assert.deepEqual(ids(result.collapsibleUnits), ["tool"]);
     assert.deepEqual(ids(result.expandedUnits), ids(units));
   }

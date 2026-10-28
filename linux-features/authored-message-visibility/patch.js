@@ -17,6 +17,7 @@ const currentPattern = new RegExp(
     String.raw`\k<item>\.type===\`assistant-message\`&&(?<assistantFilter>${identifier})\(\k<item>\)` +
     classifierTools +
     String.raw`\k<item>\.type===\`user-message\`&&\(\k<item>\.steeringStatus===\`pending\`\|\|` +
+    String.raw`\k<item>\.followsInterruptedFinalAnswer===!0\|\|` +
     String.raw`\k<item>\.wasInHistoryPreview===!0\|\|` +
     String.raw`\k<item>\.deliveryStatus===\`not-sent\`\|\|\k<item>\.hookFeedback===!0\|\|!\k<following>\)\}`,
   "g",
@@ -44,7 +45,7 @@ function applyAuthoredMessageVisibilityPatch(source) {
   const assistantFilter = match.groups.assistantFilter;
   const assistantBefore = `${item}.type===\`assistant-message\`&&${assistantFilter}(${item})`;
   const assistantAfter = `${item}.type===\`assistant-message\``;
-  const before = `${item}.type===\`user-message\`&&(${item}.steeringStatus===\`pending\`||${item}.wasInHistoryPreview===!0||${item}.deliveryStatus===\`not-sent\`||${item}.hookFeedback===!0||!${match.groups.following})`;
+  const before = `${item}.type===\`user-message\`&&(${item}.steeringStatus===\`pending\`||${item}.followsInterruptedFinalAnswer===!0||${item}.wasInHistoryPreview===!0||${item}.deliveryStatus===\`not-sent\`||${item}.hookFeedback===!0||!${match.groups.following})`;
   const after = `${item}.type===\`assistant-message\`||${item}.type===\`user-message\``;
   const replacement = match[0]
     .replace(assistantBefore, assistantAfter)
