@@ -614,20 +614,37 @@ function upstreamResetEffectContract(source) {
       `(${IDENT})=!${showXHigh}&&${canInitialize}&&${menuView}===([\\x60'"])simple\\2(?=,|;)`,
       "gu",
     ),
-  )?.[1];
-  if (pickerReady !== active) return "drifted";
+  );
+  if (pickerReady == null || pickerReady[1] !== active) return "drifted";
+  const activeWrites = [
+    ...section.source.matchAll(
+      new RegExp(
+        `(?<![\\w$?.])${escapeRegExp(active)}\\s*` +
+          `(?:\\+\\+|--|(?:\\*\\*|>>>|>>|<<|&&|\\|\\||\\?\\?|[+*/%&|^\\-])?=(?!=|>))|` +
+          `(?<![\\w$])(?:\\+\\+|--)\\s*${escapeRegExp(active)}(?![\\w$])`,
+        "gu",
+      ),
+    ),
+  ];
+  if (
+    activeWrites.length !== 1 ||
+    activeWrites[0].index !== pickerReady.index ||
+    pickerReady.index >= effect.index
+  ) {
+    return "drifted";
+  }
   const dependencies = uniqueMatch(
     section.source,
     new RegExp(
       `(${IDENT})=\\[${selectedId},${resetScope},${active},${loading}\\]`,
       "gu",
     ),
-  )?.[1];
-  if (dependencies == null) return "drifted";
+  );
+  if (dependencies == null || effect.index >= dependencies.index) return "drifted";
   return uniqueMatch(
     section.source,
     new RegExp(
-      `\\(0,${IDENT}\\.useEffect\\)\\(${effect[1]},${dependencies}\\)`,
+      `\\(0,${IDENT}\\.useEffect\\)\\(${effect[1]},${dependencies[1]}\\)`,
       "gu",
     ),
   ) == null

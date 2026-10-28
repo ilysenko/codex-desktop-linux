@@ -506,6 +506,14 @@ test("upstream reset-effect compatibility audit fails closed on missing, ambiguo
     fixture.replace("C=!u&&h&&a===`simple`", "C=globalThis.unrelated"),
     fixture.replace(
       "C=!u&&h&&a===`simple`,w;",
+      "C=!u&&h&&a===`simple`;C=!1;let w;",
+    ),
+    fixture.replace(
+      "C=!u&&h&&a===`simple`,w;",
+      "C=!u&&h&&a===`simple`;C=globalThis.unrelated;let w;",
+    ),
+    fixture.replace(
+      "C=!u&&h&&a===`simple`,w;",
       "C=!u&&h&&a===`simple`,Q=!u&&h&&a===`simple`,w;",
     ),
     fixture.replace("(0,React.useEffect)(E,D)", "E()"),
