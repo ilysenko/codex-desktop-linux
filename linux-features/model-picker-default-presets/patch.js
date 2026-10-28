@@ -30,6 +30,16 @@ const EFFORT_TO_THINKING_EFFORT = Object.freeze({
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+function identifierSpellingPattern(identifier) {
+  return [...identifier].map((character) => {
+    const hex = character.codePointAt(0).toString(16)
+      .replace(/[a-f]/gu, (digit) => `[${digit}${digit.toUpperCase()}]`);
+    const fixedHex = character.codePointAt(0).toString(16).padStart(4, "0")
+      .replace(/[a-f]/gu, (digit) => `[${digit}${digit.toUpperCase()}]`);
+    return `(?:${escapeRegExp(character)}|\\\\u${fixedHex}|\\\\u\\{0*${hex}\\})`;
+  }).join("");
+}
 const THINKING_EFFORT_TO_EFFORT = Object.freeze(
   Object.fromEntries(
     Object.entries(EFFORT_TO_THINKING_EFFORT).map(([effort, thinkingEffort]) => [
@@ -616,23 +626,6 @@ function upstreamResetEffectContract(source) {
     ),
   );
   if (pickerReady == null || pickerReady[1] !== active) return "drifted";
-  const activeWrites = [
-    ...section.source.matchAll(
-      new RegExp(
-        `(?<![\\w$?.])${escapeRegExp(active)}\\s*` +
-          `(?:\\+\\+|--|(?:\\*\\*|>>>|>>|<<|&&|\\|\\||\\?\\?|[+*/%&|^\\-])?=(?!=|>))|` +
-          `(?<![\\w$])(?:\\+\\+|--)\\s*${escapeRegExp(active)}(?![\\w$])`,
-        "gu",
-      ),
-    ),
-  ];
-  if (
-    activeWrites.length !== 1 ||
-    activeWrites[0].index !== pickerReady.index ||
-    pickerReady.index >= effect.index
-  ) {
-    return "drifted";
-  }
   const dependencies = uniqueMatch(
     section.source,
     new RegExp(
@@ -641,15 +634,52 @@ function upstreamResetEffectContract(source) {
     ),
   );
   if (dependencies == null || effect.index >= dependencies.index) return "drifted";
-  return uniqueMatch(
+  const effectRegistration = uniqueMatch(
     section.source,
     new RegExp(
       `\\(0,${IDENT}\\.useEffect\\)\\(${effect[1]},${dependencies[1]}\\)`,
       "gu",
     ),
-  ) == null
-    ? "drifted"
-    : "current";
+  );
+  if (
+    effectRegistration == null ||
+    dependencies.index >= effectRegistration.index
+  ) {
+    return "drifted";
+  }
+  const auditedScope = section.source;
+  const activeOccurrences = [
+    ...auditedScope.matchAll(
+      new RegExp(`(?<![\\w$])${identifierSpellingPattern(active)}(?![\\w$])`, "gu"),
+    ),
+  ].map((match) => match.index);
+  const effectPredicateIndex =
+    effect.index + effect[0].indexOf(`if(!${active})`) + "if(!".length;
+  const dependencyIndex =
+    dependencies.index + dependencies[0].indexOf(`,${active},`) + 1;
+  const allowedActiveOccurrences = new Set([
+    pickerReady.index,
+    effectPredicateIndex,
+    dependencyIndex,
+  ]);
+  for (const match of auditedScope.matchAll(
+    new RegExp(
+      `${IDENT}\\[\\d+\\](?:!==|=)(${escapeRegExp(active)})(?![\\w$])`,
+      "gu",
+    ),
+  )) {
+    allowedActiveOccurrences.add(
+      match.index + match[0].length - active.length,
+    );
+  }
+  if (
+    pickerReady.index >= effect.index ||
+    activeOccurrences.length !== allowedActiveOccurrences.size ||
+    activeOccurrences.some((index) => !allowedActiveOccurrences.has(index))
+  ) {
+    return "drifted";
+  }
+  return "current";
 }
 
 function upstreamResetEffectAssetMatch(source, _assetName, context = {}) {

@@ -78,15 +78,21 @@ function powerSelectionResolverFixture(name = "Picker") {
   ].join("");
 }
 
-function upstreamResetEffectFixture(name = "ResetPowerPicker") {
+function upstreamResetEffectFixture(name = "ResetPowerPicker", memoized = false) {
+  const effect =
+    "E=()=>{if(!i){if(!C){b.current=null;return}x!=null&&S!=null&&b.current!==S&&(b.current=S,T(x))}}";
   return [
     `function ${name}(e){`,
     "let{canRenderPowerPickerSurface:n,fallbackPowerSelection:r,isModelSettingsLoading:i,menuView:a,onReset:o,powerSelectionsWithXHigh:s,resetContextKey:c,selectedPowerSelectionWithXHigh:l,showXHighInSimplePicker:u}=e,",
     "h=n&&s.length>0,v=resolveFallback({canInitializePowerPicker:h,fallbackPowerSelection:r,menuView:a,selectedPowerSelection:l,showXHighInSimplePicker:u});",
     "let y=v,b=(0,React.useRef)(null),x=y?.id??null,S=x==null?null:`${c}:${x}`,C=!u&&h&&a===`simple`,w;",
     "w=e=>{y?.id===e&&o(y)};let T=(0,React.useEffectEvent)(w),E;",
-    "E=()=>{if(!i){if(!C){b.current=null;return}x!=null&&S!=null&&b.current!==S&&(b.current=S,T(x))}};",
-    "let D=[x,S,C,i];return(0,React.useEffect)(E,D),s}",
+    memoized
+      ? `cache[0]!==C?(${effect},cache[0]=C,cache[1]=E):E=cache[1];`
+      : `${effect};`,
+    memoized
+      ? "let D;return cache[2]!==C?(D=[x,S,C,i],cache[2]=C,cache[3]=D):D=cache[3],(0,React.useEffect)(E,D),s}"
+      : "let D=[x,S,C,i];return(0,React.useEffect)(E,D),s}",
     "function Next(){}",
   ].join("");
 }
@@ -441,6 +447,9 @@ test("upstream reset effect is reset-context scoped and selects the resolved fal
   const source = upstreamResetEffectFixture();
   assert.equal(upstreamResetEffectContract(source), "current");
   assert.equal(upstreamResetEffectAssetMatch(source, "fixture.js", presets), true);
+  const memoizedSource = upstreamResetEffectFixture("MemoizedResetPowerPicker", true);
+  assert.equal(upstreamResetEffectContract(memoizedSource), "current");
+  assert.equal(upstreamResetEffectAssetMatch(memoizedSource, "fixture.js", presets), true);
 
   const hooks = { refs: [] };
   const selections = [];
@@ -514,10 +523,35 @@ test("upstream reset-effect compatibility audit fails closed on missing, ambiguo
     ),
     fixture.replace(
       "C=!u&&h&&a===`simple`,w;",
+      "C=!u&&h&&a===`simple`;[C]=[!1];let w;",
+    ),
+    fixture.replace(
+      "C=!u&&h&&a===`simple`,w;",
+      "C=!u&&h&&a===`simple`;({C}={C:!1});let w;",
+    ),
+    fixture.replace(
+      "C=!u&&h&&a===`simple`,w;",
+      "C=!u&&h&&a===`simple`;for(C of [!1]);let w;",
+    ),
+    fixture.replace(
+      "C=!u&&h&&a===`simple`,w;",
+      "C=!u&&h&&a===`simple`;C/*comment*/=!1;let w;",
+    ),
+    fixture.replace(
+      "C=!u&&h&&a===`simple`,w;",
+      "C=!u&&h&&a===`simple`;\\u0043=!1;let w;",
+    ),
+    fixture.replace(
+      "C=!u&&h&&a===`simple`,w;",
       "C=!u&&h&&a===`simple`,Q=!u&&h&&a===`simple`,w;",
+    ),
+    fixture.replace(
+      "return(0,React.useEffect)(E,D),s}",
+      "return(0,React.useEffect)(E,D),C=!1,s}",
     ),
     fixture.replace("(0,React.useEffect)(E,D)", "E()"),
   ]) {
+    assert.doesNotThrow(() => new Function(source));
     assert.equal(upstreamResetEffectContract(source), "drifted");
     assert.equal(upstreamResetEffectAssetMatch(source, "fixture.js", presets), false);
   }
