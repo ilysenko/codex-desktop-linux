@@ -543,13 +543,19 @@ function upstreamResetEffectContract(source) {
   const resolution = uniqueMatch(
     section.source,
     new RegExp(
-      `(${IDENT})=${IDENT}\\(\\{[^{}]{0,1200}?fallbackPowerSelection:${fallback},` +
-        `[^{}]{0,1200}?selectedPowerSelection:${selected},[^{}]{0,1200}?\\}\\)`,
+      `(${IDENT})=${IDENT}\\(\\{[^{}]{0,1200}?canInitializePowerPicker:(${IDENT}),` +
+        `[^{}]{0,1200}?fallbackPowerSelection:${fallback},` +
+        `[^{}]{0,1200}?menuView:(${IDENT}),` +
+        `[^{}]{0,1200}?selectedPowerSelection:${selected},` +
+        `[^{}]{0,1200}?showXHighInSimplePicker:(${IDENT})[^{}]{0,1200}?\\}\\)`,
       "gu",
     ),
   );
   if (resolution == null) return "drifted";
   const resolved = resolution[1];
+  const canInitialize = resolution[2];
+  const menuView = resolution[3];
+  const showXHigh = resolution[4];
   const selection = uniqueMatch(
     section.source,
     new RegExp(`(?:let\\s+|,)(${IDENT})=${resolved}(?=,)`, "gu"),
@@ -602,6 +608,14 @@ function upstreamResetEffectContract(source) {
   );
   if (effect == null) return "drifted";
   const active = effect[2];
+  const pickerReady = uniqueMatch(
+    section.source,
+    new RegExp(
+      `(${IDENT})=!${showXHigh}&&${canInitialize}&&${menuView}===([\\x60'"])simple\\2(?=,|;)`,
+      "gu",
+    ),
+  )?.[1];
+  if (pickerReady !== active) return "drifted";
   const dependencies = uniqueMatch(
     section.source,
     new RegExp(

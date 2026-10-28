@@ -81,9 +81,9 @@ function powerSelectionResolverFixture(name = "Picker") {
 function upstreamResetEffectFixture(name = "ResetPowerPicker") {
   return [
     `function ${name}(e){`,
-    "let{canRenderPowerPickerSurface:n,fallbackPowerSelection:r,isModelSettingsLoading:i,menuView:a,onReset:o,powerSelectionsWithXHigh:s,resetContextKey:c,selectedPowerSelectionWithXHigh:l,skipExperimentExposure:u}=e,",
-    "v=resolveFallback({canInitializePowerPicker:n,fallbackPowerSelection:r,menuView:a,selectedPowerSelection:l,showXHighInSimplePicker:!u});",
-    "let y=v,b=(0,React.useRef)(null),x=y?.id??null,S=x==null?null:`${c}:${x}`,C=s.length>0,w;",
+    "let{canRenderPowerPickerSurface:n,fallbackPowerSelection:r,isModelSettingsLoading:i,menuView:a,onReset:o,powerSelectionsWithXHigh:s,resetContextKey:c,selectedPowerSelectionWithXHigh:l,showXHighInSimplePicker:u}=e,",
+    "h=n&&s.length>0,v=resolveFallback({canInitializePowerPicker:h,fallbackPowerSelection:r,menuView:a,selectedPowerSelection:l,showXHighInSimplePicker:u});",
+    "let y=v,b=(0,React.useRef)(null),x=y?.id??null,S=x==null?null:`${c}:${x}`,C=!u&&h&&a===`simple`,w;",
     "w=e=>{y?.id===e&&o(y)};let T=(0,React.useEffectEvent)(w),E;",
     "E=()=>{if(!i){if(!C){b.current=null;return}x!=null&&S!=null&&b.current!==S&&(b.current=S,T(x))}};",
     "let D=[x,S,C,i];return(0,React.useEffect)(E,D),s}",
@@ -471,7 +471,7 @@ test("upstream reset effect is reset-context scoped and selects the resolved fal
         powerSelectionsWithXHigh: [{ id: "gpt-6-astra:medium" }],
         resetContextKey,
         selectedPowerSelectionWithXHigh: null,
-        skipExperimentExposure: false,
+        showXHighInSimplePicker: false,
       },
       resolveFallback: ({ fallbackPowerSelection }) => fallbackPowerSelection,
     });
@@ -479,9 +479,13 @@ test("upstream reset effect is reset-context scoped and selects the resolved fal
   };
 
   render(JSON.stringify([null, "local", "/repo"]));
+  assert.equal(selections.length, 1, "initial draft resets to the resolved fallback");
   render(JSON.stringify([null, "local", "/repo"]));
+  assert.equal(selections.length, 1, "the same draft context resets only once");
   render(JSON.stringify(["created", "local", "/repo"]));
+  assert.equal(selections.length, 2, "the created conversation has its own reset context");
   render(JSON.stringify([null, "local", "/repo"]));
+  assert.equal(selections.length, 3, "the next draft resets to the resolved fallback");
   assert.deepEqual(selections, [
     { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
     { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
@@ -498,6 +502,12 @@ test("upstream reset-effect compatibility audit fails closed on missing, ambiguo
     fixture.replace("resetContextKey:c,", "resetKey:c,"),
     fixture.replace("`${c}:${x}`", "`${x}`"),
     fixture.replace("o(y)", "o(e)"),
+    fixture.replace("C=!u&&h&&a===`simple`", "C=!1"),
+    fixture.replace("C=!u&&h&&a===`simple`", "C=globalThis.unrelated"),
+    fixture.replace(
+      "C=!u&&h&&a===`simple`,w;",
+      "C=!u&&h&&a===`simple`,Q=!u&&h&&a===`simple`,w;",
+    ),
     fixture.replace("(0,React.useEffect)(E,D)", "E()"),
   ]) {
     assert.equal(upstreamResetEffectContract(source), "drifted");
