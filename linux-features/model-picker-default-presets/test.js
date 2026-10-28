@@ -88,7 +88,7 @@ function upstreamResetEffectFixture(name = "ResetPowerPicker", memoized = false)
     "let y=v,b=(0,React.useRef)(null),x=y?.id??null,S=x==null?null:`${c}:${x}`,C=!u&&h&&a===`simple`,w;",
     "w=e=>{y?.id===e&&o(y)};let T=(0,React.useEffectEvent)(w),E;",
     memoized
-      ? `cache[0]!==C?(${effect},cache[0]=C,cache[1]=E):E=cache[1];`
+      ? `cache[0]!==C||cache[4]!==i?(${effect},cache[0]=C,cache[4]=i,cache[1]=E):E=cache[1];`
       : `${effect};`,
     memoized
       ? "let D;return cache[2]!==C?(D=[x,S,C,i],cache[2]=C,cache[3]=D):D=cache[3],(0,React.useEffect)(E,D),s}"
@@ -557,6 +557,35 @@ test("upstream reset-effect compatibility audit fails closed on missing, ambiguo
     memoizedFixture.replace("cache[2]=C", "cache[2]=C++"),
     memoizedFixture.replace("cache[0]=C", "cache[0]=C+=1"),
     memoizedFixture.replace("cache[2]=C", "cache[2]=C+=1"),
+    ...["cache[0]=C", "cache[2]=C"].flatMap((anchor) =>
+      ["\r", " ", " "].map((terminator) =>
+        memoizedFixture.replace(anchor, `${anchor}//comment${terminator}=!1`)
+      )
+    ),
+    ...[
+      ["cache[0]!==C", "cache[0]!==C"],
+      ["cache[0]=C", "cache[0]=C"],
+      ["cache[2]!==C", "cache[2]!==C"],
+      ["cache[2]=C", "cache[2]=C"],
+    ].flatMap(([anchor, read]) => [
+      `${read}//comment\r=!1`,
+      `${read}//comment =!1`,
+      `${read}//comment =!1`,
+      `${read}//comment\n=!1`,
+      `${read}/*comment*/=!1`,
+      `${read} =!1`,
+      `${read}||=!1`,
+      `${read}??=!1`,
+      `${read}&&=!1`,
+    ].map((replacement) => memoizedFixture.replace(anchor, replacement)))
+      .filter((source) => {
+        try {
+          new Function(source);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
   ]) {
     assert.doesNotThrow(() => new Function(source));
     assert.equal(upstreamResetEffectContract(source), "drifted");

@@ -662,13 +662,13 @@ function upstreamResetEffectContract(source) {
     effectPredicateIndex,
     dependencyIndex,
   ]);
-  const mutationSuffix =
-    "(?:\\+\\+|--|(?:\\*\\*|<<|>>>|>>|&&|\\|\\||\\?\\?|[+\\-*/%&|^])=|=(?!=|>)|=>)";
-  const jsTrivia = "(?:\\s|/\\*[\\s\\S]*?\\*/|//[^\\r\\n]*(?:\\r?\\n|$))*";
+  // Compiler-cache reads are allowed only when the very next token is one the
+  // signed bundle uses after them. Listing the allowed tokens (instead of the
+  // forbidden ones) rejects assignments, updates, comments, and line breaks.
+  const cacheReadSuffix = "(?=,|\\|\\|(?!=)|\\?(?![?.=]))";
   for (const match of auditedScope.matchAll(
     new RegExp(
-      `${IDENT}\\[\\d+\\](?:!==|=)(${escapeRegExp(active)})(?![\\w$])` +
-        `(?!${jsTrivia}${mutationSuffix})`,
+      `${IDENT}\\[\\d+\\](?:!==|=)(${escapeRegExp(active)})${cacheReadSuffix}`,
       "gu",
     ),
   )) {
