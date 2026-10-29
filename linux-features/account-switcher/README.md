@@ -109,7 +109,8 @@ also check credential-file decoding and the idle-check protocol in a disposable,
 unauthenticated app server. This does not test OAuth with real accounts.
 
 Set `CODEX_ACCOUNT_SWITCHER_OFFICIAL_DIR` to a directory containing the original
-signed main and profile-dropdown JavaScript bundles to also run the current
+signed main-process chunks (`early-bootstrap*.js`) and profile-dropdown
+JavaScript bundle to also run the current
 bundle contract tests, or set `CODEX_SIGNED_EXTRACTED_APP` to the extracted ASAR
 root as the signed-baseline CI job does on both architectures.
 Enabled feature builds fail closed on missing or

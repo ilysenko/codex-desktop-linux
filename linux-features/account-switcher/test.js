@@ -393,7 +393,7 @@ test("identity uses the current desktop user_id authority ahead of chatgpt_user_
 });
 
 test("semantic contracts preserve renamed symbols, reject partial drift, and route the Polish menu action", async () => {
-  const main = 'async function handle(view,message){switch(message.type){case`mcp-request`:{log().debug(`app_server.bridge_received`,{safe:{messageType:`mcp-request`,requestId:String(message.request.id),method:message.request.method,originWebcontentsId:view.id,originHostId:message.hostId}});this.sendAppServerResponseToView();this.appServerConnectionRegistry.getAllHostIds();break}}}async function config(options){return[...helpers.computeConfig(options.globalState,options.hostConfig),...await options.secretAuthStorageConfigOverrides,...await extras(options)]}';
+  const main = 'async function handle(view,message){switch(message.type){case"mcp-request":{log().debug("app_server.bridge_received",{safe:{messageType:"mcp-request",requestId:String(message.request.id),method:message.request.method,originWebcontentsId:view.id,originHostId:message.hostId}});this.sendAppServerResponseToView();this.appServerConnectionRegistry.getAllHostIds();break}}}async function config(options){return[...(0,helpers.computeConfig)(options.globalState,options.hostConfig),...await options.secretAuthStorageConfigOverrides,...await extras(options)]}';
   const ui = 'import{MenuItem as Item}from"./menu.js";function Profile(props){let memo=(0,Cache.c)(275),{sidebarFooter:footer,ambientUsage:usage,hideUsage:hidden,open:opened,onClose:close}=props,disabled=hidden!==void 0,scope=read(atom);let fmt=intl();fmt.formatMessage({id:`codex.profileDropdown.copyUserIdForEmail`});let label;label=`codex.profileDropdown.settingsPage`;let settings;settings=(0,UI.jsx)(Item,{leftIconAsset:asset,keyboardShortcut:shortcut,onClick:settingsClick,children:label});let group=(0,UI.jsxs)(UI.Fragment,{children:[divider,identity,settings]});let alternate=(0,UI.jsx)(Layout,{accountIcon:icon,accountSwitcher:switcher,additionalItems:items,onCloseMenu:close,onTogglePet:pet});Bridge.dispatchMessage(`avatar-overlay-open`,{});return(0,UI.jsxs)(`div`,{children:[group,workspace,analytics,more]})}';
   for (const [source, apply, drift] of [[main, applyMain, "secretAuthStorageConfigOverrides"], [ui, applyUi, "accountSwitcher"]]) {
     const patched = apply(source);
@@ -553,15 +553,19 @@ test("latest bundled CLI decodes the isolated OAuth file and supports the idle-c
 const official = process.env.CODEX_ACCOUNT_SWITCHER_OFFICIAL_DIR;
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
 test("official main and both profile layouts patch uniquely and remain valid JavaScript", { skip: !official && !signedApp }, () => {
-  for (const [prefix, apply] of [["main-", applyMain], ["profile-dropdown-items-", applyUi]]) {
-    const directory = official || path.join(signedApp, prefix === "main-" ? ".vite/build" : "webview/assets");
-    const names = fs.readdirSync(directory).filter(file => file.startsWith(prefix) && file.endsWith(".js"));
+  for (const [prefix, apply] of [["early-bootstrap", applyMain], ["profile-dropdown-items-", applyUi]]) {
+    const directory = official || path.join(signedApp, prefix === "early-bootstrap" ? ".vite/build" : "webview/assets");
+    // rspack spreads the main process over chunks; exactly one must hold the contract.
+    const names = fs.readdirSync(directory).filter(file => file.startsWith(prefix) && file.endsWith(".js")).filter(name => {
+      const source = fs.readFileSync(path.join(directory, name), "utf8");
+      return apply(source) !== source;
+    });
     assert.equal(names.length, 1, `expected a unique ${prefix} bundle`);
     const source = fs.readFileSync(path.join(directory, names[0]), "utf8");
     const patched = apply(source);
     assert.notEqual(patched, source);
     assert.equal(apply(patched), patched);
-    if (prefix === "main-") {
+    if (prefix === "early-bootstrap") {
       new vm.Script(patched);
       assert.equal(patched.split("app.quit(").length, source.split("app.quit(").length);
       assert.equal(patched.split("app.relaunch(").length, source.split("app.relaunch(").length);

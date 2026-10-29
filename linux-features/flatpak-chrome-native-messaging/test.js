@@ -170,16 +170,19 @@ test("feature stages the relay and lifecycle hooks only when enabled", () => {
 });
 
 test("Settings detector adds only the explicit Flatpak Chrome profile", () => {
+  // Signed rspack/SWC shape of the upstream Chromium profile resolver.
   const source = "function Va({browserFamily:e,chromeConfigHome:t,homeDir:r," +
-    "localAppDataDir:i,roamingAppDataDir:a,platform:o,xdgConfigHome:s}){" +
-    "let c=n.as[e];if(o===`darwin`)return[(0,p.join)(r,...c.macos.userDataDirectorySegments)];" +
-    "if(o===`win32`)return[i,a];if(o===`linux`){let i=n.R({chromeConfigHome:" +
-    "e===`chrome`?t:void 0,homeDir:r,xdgConfigHome:s});return c.linux.installations.map(" +
-    "e=>(0,p.join)(i,e.userDataDirName))}return[]}";
+    "localAppDataDir:n,roamingAppDataDir:i,platform:s,xdgConfigHome:a}){" +
+    "let o=rX.Yp[e];if(\"darwin\"===s)return[(0,en.join)(r,...o.macos.userDataDirectorySegments)];" +
+    "if(\"win32\"===s)return[n,i];if(\"linux\"===s){let n=(0,r0.E)({chromeConfigHome:" +
+    "\"chrome\"===e?t:void 0,homeDir:r,xdgConfigHome:a});return o.linux.installations.map(" +
+    "e=>(0,en.join)(n,e.userDataDirName))}return[]}";
   const patched = applyFlatpakChromeProfileRoot(source);
+  assert.notEqual(patched, source);
+  assert.equal(applyFlatpakChromeProfileRoot(patched), patched);
   const sandbox = {
-    n: {
-      as: {
+    rX: {
+      Yp: {
         chrome: {
           linux: { installations: [{ userDataDirName: "google-chrome" }] },
           macos: { userDataDirectorySegments: ["Library", "Chrome"] },
@@ -189,9 +192,9 @@ test("Settings detector adds only the explicit Flatpak Chrome profile", () => {
           macos: { userDataDirectorySegments: ["Library", "Edge"] },
         },
       },
-      R: ({ homeDir }) => `${homeDir}/.config`,
     },
-    p: { join: path.join },
+    r0: { E: ({ homeDir }) => `${homeDir}/.config` },
+    en: { join: path.join },
     process: { env: { CODEX_CHROME_USER_DATA_DIR: "/flatpak/google-chrome" } },
   };
   const resolveProfiles = vm.runInNewContext(`${patched}; Va`, sandbox);
@@ -207,8 +210,43 @@ test("Settings detector adds only the explicit Flatpak Chrome profile", () => {
     [...resolveProfiles({ browserFamily: "chrome", homeDir: "/home/test", platform: "darwin" })],
     ["/home/test/Library/Chrome"],
   );
-  assert.throws(() => applyFlatpakChromeProfileRoot("function unrelated(){}"), /found 0/);
-  assert.throws(() => applyFlatpakChromeProfileRoot(`${source}${source}`), /found 2/);
+  sandbox.process.env = {};
+  assert.deepEqual(
+    [...resolveProfiles({ browserFamily: "chrome", homeDir: "/home/test", platform: "linux" })],
+    ["/home/test/.config/google-chrome"],
+  );
+  for (const [input, count] of [["function unrelated(){}", 0], [`${source}${source}`, 2]]) {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      assert.equal(applyFlatpakChromeProfileRoot(input), input);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.match(warnings.join("\n"), new RegExp(`found ${count}`));
+  }
+});
+
+const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
+test("signed main-process chunks hold exactly one Linux profile resolver", { skip: !signedApp }, () => {
+  const directory = path.join(signedApp, ".vite/build");
+  const changed = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    for (const name of fs.readdirSync(directory).filter((file) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(file))) {
+      const source = fs.readFileSync(path.join(directory, name), "utf8");
+      const patched = applyFlatpakChromeProfileRoot(source);
+      if (patched !== source) changed.push(patched);
+    }
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(changed.length, 1);
+  assert.equal(applyFlatpakChromeProfileRoot(changed[0]), changed[0]);
+  assert.doesNotThrow(() => new vm.Script(changed[0]));
+  assert.equal(changed[0].match(/process\.env\.CODEX_CHROME_USER_DATA_DIR/g).length, 1);
 });
 
 test("launcher points upstream diagnostics at the Flatpak Chrome profile", () => {
