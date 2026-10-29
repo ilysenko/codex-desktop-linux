@@ -217,7 +217,7 @@ function writeSyntheticExtractedApp(root) {
   const assetsDir = path.join(root, "webview", "assets");
   fs.mkdirSync(buildDir, { recursive: true });
   fs.mkdirSync(assetsDir, { recursive: true });
-  fs.writeFileSync(path.join(buildDir, "main.js"), syntheticMainBundle());
+  fs.writeFileSync(path.join(buildDir, "early-bootstrap.js"), syntheticMainBundle());
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "codex" }));
   fs.writeFileSync(path.join(assetsDir, "local-conversation-thread-test.js"), staleConversationMonitorBundle());
   fs.writeFileSync(path.join(assetsDir, "composer-test.js"), syntheticComposerBundle());
@@ -2321,7 +2321,7 @@ test("agent-workspace feature participates in ASAR patching and reports", () => 
           warnings.every((warning) => !warning.includes("Agent Workspaces")),
           warnings.join("\n"),
         );
-        assert.match(fs.readFileSync(path.join(buildDir, "main.js"), "utf8"), /"linux-agent-workspace":async/);
+        assert.match(fs.readFileSync(path.join(buildDir, "early-bootstrap.js"), "utf8"), /"linux-agent-workspace":async/);
         assert.ok(fs.existsSync(path.join(assetsDir, SETTINGS_ASSET)));
         assert.match(fs.readFileSync(path.join(assetsDir, SETTINGS_ASSET), "utf8"), /AgentWorkspacesSettings/);
         assert.match(fs.readFileSync(path.join(assetsDir, "settings-page-test.js"), "utf8"), /agent-workspaces/);

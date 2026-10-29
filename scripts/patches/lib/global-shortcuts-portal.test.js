@@ -30,17 +30,38 @@ test("shared backend fails closed for missing and ambiguous lifecycle anchors", 
   const source = mainBundleFixture();
   for (const input of [source.replace("generation:0", "generation:1"), source + source,
     source.replace("beginCapture()", "renamedCapture()"), source.replace("suspendDepth+=1", "suspendDepth+=2"),
-    source.replace("status:`loading`", "status:`pending`"), source.replace("flushAndDisposeContext:n", "flushContext:n"),
+    source.replace('status:"loading"', 'status:"pending"'), source.replace("flushAndDisposeContext:r", "flushContext:r"),
     source.replace("markAppQuitting:()=>", "markQuitting:()=>")]) {
     assert.throws(() => installPortalBackend(input));
   }
   const misleading = "function unrelated(e){if(wrongCheck(e)||otherCheck(e))return;}" + source;
   assert.equal(registrationContract(misleading).bareModifier, "Rk");
   const retiredWithoutRegistrationCallback = source.replace(
-    "o=r==null?t:{onRegistrationChanged:t.onRegistrationChanged,onPressed:",
-    "o=r==null?t:{onPressed:",
+    "o=null==i?t:{onRegistrationChanged:t.onRegistrationChanged,onPressed:",
+    "o=null==i?t:{onPressed:",
   );
   assert.throws(() => registrationContract(retiredWithoutRegistrationCallback), /ownership callbacks drifted/);
+  const retiredMinifier = source.replaceAll('"win32"===process.platform', "process.platform===`win32`")
+    .replace("o=null==i?t:", "o=i==null?t:").replace("(e,t,r){var n;let i=r?.ownership", "(e,t,n){var q;let i=n?.ownership");
+  assert.throws(() => registrationContract(retiredMinifier), /registration function matched 0 times/);
+});
+
+test("shared backend installs into the rspack module that owns the registration function", () => {
+  const source = mainBundleFixture();
+  const chunk = (owner, other) => `exports.ids=[916],exports.modules={11(e,t,r){"use strict";${owner}},22(e,t,r){"use strict";${other}}};`;
+  const patched = installPortalBackend(chunk(source, ""));
+  const ownerStart = patched.indexOf('11(e,t,r){"use strict";');
+  const otherStart = patched.indexOf('22(e,t,r){"use strict";');
+  const injected = patched.indexOf("var codexLinuxGlobalShortcutsPatch=");
+  assert.ok(ownerStart < injected && injected < otherStart);
+  assert.ok(patched.startsWith("exports.ids=[916]"));
+  assert.doesNotThrow(() => new vm.Script(patched));
+  assert.equal(installPortalBackend(patched), patched);
+
+  const accessStart = source.indexOf("var accessState=");
+  const accessEnd = source.indexOf("async function shutdownApp(");
+  const split = chunk(source.slice(0, accessStart) + source.slice(accessEnd), source.slice(accessStart, accessEnd));
+  assert.throws(() => installPortalBackend(split), /application access readiness is outside the global shortcut module/);
 });
 
 for (const features of [{dictation: true}, {shortcuts: true}, {dictation: true, shortcuts: true}]) {

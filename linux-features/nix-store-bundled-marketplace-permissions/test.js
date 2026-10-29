@@ -144,7 +144,7 @@ function patchFixture(t, source) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const buildDir = path.join(root, ".vite", "build");
   fs.mkdirSync(buildDir, { recursive: true });
-  const mainPath = path.join(buildDir, "main-fixture.js");
+  const mainPath = path.join(buildDir, "early-bootstrap.js");
   fs.writeFileSync(mainPath, source);
   const configPath = path.join(root, "features.json");
   fs.writeFileSync(configPath, JSON.stringify({ enabled: [FEATURE_ID] }));

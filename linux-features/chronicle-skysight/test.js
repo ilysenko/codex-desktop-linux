@@ -32,23 +32,8 @@ function captureWarns(fn) {
   }
 }
 
-function retiredChronicleMainFixture() {
-  return [
-    "var Base={Tf:class{}};",
-    "var Empty={state:`stopped`,currentSegmentEventsPath:null,currentSegmentMetadataPath:null};",
-    "var Hse=class{dependencies;cachedStatus=Empty;desiredState=`stopped`;pendingOperation=Promise.resolve();pendingStatus=null;constructor(e){this.dependencies=e}getCachedStatus(){return this.cachedStatus}status(){return this.pendingStatus??=this.request(`skysightStatus`).finally(()=>{this.pendingStatus=null}),this.pendingStatus}enable(){return this.desiredState=`running`,this.runSerialized(async()=>(await this.dependencies.archiveLegacyChronicleSkill(),this.dependencies.reconcileComputerHistoryPluginInstallation(!0),this.request(`skysightStart`)))}reconcileEnabled(){return this.desiredState=`running`,this.runSerialized(async()=>{await this.dependencies.archiveLegacyChronicleSkill(),this.dependencies.reconcileComputerHistoryPluginInstallation(!0);let e=await this.status();return e.state===`stopped`?this.request(`skysightStart`):(this.desiredState===`running`&&(this.desiredState=e.state),e)})}disable(){return this.desiredState=`stopped`,this.runSerialized(async()=>{let e=this.cachedStatus.state===`stopped`?this.cachedStatus:await this.stopRecorder();return this.dependencies.reconcileComputerHistoryPluginInstallation(!1),e})}stop(){return this.desiredState=`stopped`,this.runSerialized(()=>this.stopRecorder())}pause(e){let t=this.desiredState,n=e==null?`paused`:`running`;return this.desiredState=n,this.runSerialized(()=>this.requestPauseResume(`skysightPause`,e)).catch(e=>{throw this.desiredState===n&&(this.desiredState=t),e})}resume(){return this.desiredState=`running`,this.runSerialized(async()=>{let e=await this.status();return e.state===`stopped`?this.request(`skysightStart`):e.state===`running`?e:this.requestPauseResume(`skysightResume`)})}getSettings(){return this.dependencies.request({method:`skysightGetSettings`,params:{}})}updateSettings(e){return this.dependencies.request({method:`skysightUpdateSettings`,params:{settings:e}})}clearHistory(e,t){return this.dependencies.request({method:`skysightClearHistory`,params:{interval:t,scope:e}}).then(e=>(this.cachedStatus=e,e))}requestPauseResume(e,t){return this.dependencies.request({method:e,params:t==null?{}:{duration:t}}).then(e=>(this.cachedStatus=e,e))}request(e){return this.dependencies.request({method:e,params:{}}).then(e=>(this.cachedStatus=e,e))}async stopRecorder(){let e=await this.request(`skysightStop`);if(e.state!==`stopped`||e.currentSegmentEventsPath!=null||e.currentSegmentMetadataPath!=null)throw Error(`invalid stop`);return e}runSerialized(e){let t=this.pendingOperation.then(e,e);return this.pendingOperation=t.then(()=>{},()=>{}),t}};",
-    "var $O=class extends Base.Tf{constructor(e,t,n,r,i,a){super(),this.appServerConnection=e,this.getController=t,this.isEligible=n,this.loadApplications=r,this.loadApplicationsByBundleIdentifier=i,this.history=a}async getState(){this.isEligible();return this.getController().status()}async setEnabled(e){return e?this.appServerConnection.enableSkysightChronicle():this.getController().disable()}async pause(){return this.getController().pause()}async resume(){return this.appServerConnection.resumeChronicleSidecar()}async getSettings(){return this.getController().getSettings()}async updateSettings(e){return this.getController().updateSettings(e)}async listApplications(){return this.isEligible(),this.loadApplications()}async resolveApplications(e){return this.isEligible(),this.loadApplicationsByBundleIdentifier(e)}async listHistory(){return this.isEligible(),this.history.list()}async listHistorySuggestions(){return this.isEligible(),this.history.listSuggestions()}async listHistorySummaryIntervals({sinceMs:e}){return this.isEligible(),this.history.listSummaryIntervals(e)}async clearHistory(e,t){await this.getController().clearHistory(e,t)}};",
-    "function Cr(){return{skysight:false}}let N=process.platform===`darwin`,xe;",
-    "var Ce={requestComputerUseWorker(e){return globalThis.worker(e)}},Xe={reconcileComputerHistoryPluginInstallation(e){return globalThis.reconcileComputerHistoryPluginInstallation(e)}},U={broadcastQueryCacheInvalidation(){}},V={codexHome:`/tmp`};async function archive(e){return globalThis.archiveLegacyChronicleSkill(e)}",
-    "N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{await archive({codexHome:V.codexHome,reason:`skysight_gate_enabled`})&&U.broadcastQueryCacheInvalidation([`skills`])}}));",
-    "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
-    "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicleSidecar:()=>xe.resume()};",
-    "var Host=class{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}};var host=new Host;",
-    "var bridge={\"get-global-state\":async({key:e})=>null};",
-  ].join("");
-}
-
-function currentChronicleMainFixture() {
+// Previous Vite/rolldown minifier shape (template literals, `x==null`, `var X=class`).
+function retiredMinifierChronicleMainFixture() {
   return [
     "var Base={Tf:class{}};",
     "var Empty={state:`stopped`,currentSegmentEventsPath:null,currentSegmentMetadataPath:null};",
@@ -61,6 +46,23 @@ function currentChronicleMainFixture() {
     "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
     "var Host=class{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}};var host=new Host;",
     "var bridge={\"set-remote-wsl-connections-enabled\":()=>null};",
+  ].join("");
+}
+
+// Current rspack/SWC minifier shape (double quotes, Yoda comparisons, class declarations).
+function currentChronicleMainFixture() {
+  return [
+    "var Base={TF:class{}};",
+    "let Empty={state:\"stopped\",eventStreamRootPath:null,currentSegmentEventsPath:null,currentSegmentMetadataPath:null,suppressedEventsPath:null,startedAtMs:null,endedAtMs:null};",
+    "class Hse{dependencies;cachedStatus=Empty;desiredState=\"stopped\";pendingOperation=Promise.resolve();finishPendingPauseResume=null;pendingStatus=null;constructor(e){this.dependencies=e}getCachedStatus(){return this.cachedStatus}shouldReconcileAfterServiceRespawn(){return\"running\"===this.desiredState}status(){return null==this.pendingStatus&&(this.pendingStatus=this.request(\"skysightStatus\").then(e=>(\"stopped\"===e.state&&this.finishPendingPauseResume?.(e),e)).finally(()=>{this.pendingStatus=null})),this.pendingStatus}enable(){return this.desiredState=\"running\",this.runSerialized(()=>this.withFailedEnableRollback(async()=>(await this.dependencies.archiveLegacyChronicleSkill(),this.dependencies.reconcileComputerHistoryPluginInstallation(!0),this.request(\"skysightStart\")))).catch(e=>{throw\"running\"===this.desiredState&&(this.desiredState=\"stopped\"),e})}reconcileEnabled(){return this.desiredState=\"running\",this.runSerialized(()=>this.withFailedEnableRollback(async()=>{await this.dependencies.archiveLegacyChronicleSkill(),this.dependencies.reconcileComputerHistoryPluginInstallation(!0);let e=await this.status();return\"stopped\"!==e.state?(\"running\"===this.desiredState&&(this.desiredState=e.state),e):this.request(\"skysightStart\")}))}disable(){let e=this.desiredState;return this.desiredState=\"stopped\",this.runSerialized(async()=>{let e=\"stopped\"===this.cachedStatus.state?this.cachedStatus:await this.stopRecorder();return this.dependencies.reconcileComputerHistoryPluginInstallation(!1),e}).catch(t=>{throw\"stopped\"===this.desiredState&&(this.desiredState=e),t})}stop(){return this.desiredState=\"stopped\",this.runSerialized(()=>this.stopRecorder())}pause(e){let t=this.desiredState,r=null==e?\"paused\":\"running\";return this.desiredState=r,this.runSerialized(()=>this.requestPauseResume(\"skysightPause\",e)).catch(e=>{throw this.desiredState===r&&(this.desiredState=t),e})}resume(){let e=this.desiredState;return this.desiredState=\"running\",this.runSerialized(async()=>{let e=await this.status();return\"stopped\"===e.state?this.request(\"skysightStart\"):\"running\"===e.state?e:this.requestPauseResume(\"skysightResume\")}).catch(t=>{throw\"running\"===this.desiredState&&(this.desiredState=e),t})}getSettings(){return this.dependencies.request({method:\"skysightGetSettings\",params:{}})}updateSettings(e){return this.dependencies.request({method:\"skysightUpdateSettings\",params:{settings:e}})}clearHistory(e,t){return this.dependencies.request({method:\"skysightClearHistory\",params:{interval:t,scope:e}}).then(e=>(this.cachedStatus=e,e))}requestPauseResume(e,t){return new Promise((r,n)=>{this.finishPendingPauseResume=r,(\"skysightPause\"===e?this.dependencies.request({method:e,params:null==t?{}:{duration:t}}):this.dependencies.request({method:e,params:{}})).then(r,n)}).then(e=>(this.cachedStatus=e,e)).finally(()=>{this.finishPendingPauseResume=null})}request(e){return this.dependencies.request({method:e,params:{}}).then(e=>(this.cachedStatus=e,e))}async withFailedEnableRollback(e){try{return await e()}catch(e){try{await this.stopRecorder()}catch(t){throw AggregateError([e,t],\"Failed to enable Chronicle and stop the recorder during rollback\")}throw e}}async stopRecorder(){let e=await this.request(\"skysightStop\");if(\"stopped\"!==e.state||null!=e.currentSegmentEventsPath||null!=e.currentSegmentMetadataPath)throw Error(\"Chronicle stopped but did not close its current segment\");return e}runSerialized(e){let t=this.pendingOperation.then(e,e);return this.pendingOperation=t.then(()=>{},()=>{}),t}}",
+    "class $O extends Base.TF{appServerConnection;getController;isEligible;loadApplications;loadApplicationsByBundleIdentifier;history;constructor(e,t,r,n,i,s){super(),this.appServerConnection=e,this.getController=t,this.isEligible=r,this.loadApplications=n,this.loadApplicationsByBundleIdentifier=i,this.history=s}async getState(){let e=this.#tt(),[t,r]=await Promise.all([this.appServerConnection.isChronicleFeatureConfigured(),e.status()]);return this.#tr(t,r.state)}async retryActivation(){this.#tn();try{await this.appServerConnection.reconcileSkysightChronicle()}catch{}return this.getState()}async setEnabled(e){if(!e)return this.#ti();try{let e=await this.appServerConnection.enableSkysightChronicle();return await this.#ts(!0),this.#tr(!0,e.state)}catch(e){if(\"pending\"===e)return await this.#ts(!0),{enabled:!0,recorderState:\"stopped\",activationState:\"waiting_for_permissions\"};throw e}}async pause(){let e=await this.#tt().pause();return this.#tr(!0,e.state)}async resume(){this.#tn();let e=await this.appServerConnection.resumeChronicle();return this.#tr(e.enabled,e.running?\"running\":\"stopped\")}async getSettings(){return this.#tt().getSettings()}async updateSettings(e){return this.#tt().updateSettings(e)}async listApplications(){return this.#tn(),this.loadApplications()}async resolveApplications(e){return this.#tn(),this.loadApplicationsByBundleIdentifier(e)}async listHistory(){return this.#tn(),this.history.list()}async listHistorySuggestions(){return this.#tn(),this.history.listSuggestions()}async listHistorySummaryIntervals({sinceMs:e}){return this.#tn(),this.history.listSummaryIntervals(e)}async clearHistory(e,t){await this.#tt().clearHistory(e,t)}async #ti(){return this.#tt().disable()}#tr(e,t){return{enabled:e,recorderState:t}}async #ts(e){await this.appServerConnection.sendAppServerRequest(\"config/value/write\",{keyPath:\"chronicle\",value:e})}#tn(){if(!this.isEligible())throw Error(\"Chronicle is not available\")}#tt(){this.#tn();let e=this.getController();if(null==e)throw Error(\"Chronicle is unavailable\");return e}}",
+    "function Cr(){return{skysight:false}}let N=\"darwin\"===process.platform,xe;",
+    "var Ce={requestComputerUseWorker(e){return globalThis.worker(e)}},Xe={reconcileComputerHistoryPluginInstallation(e){return globalThis.reconcileComputerHistoryPluginInstallation(e)}},U={broadcastQueryCacheInvalidation(){}},V={codexHome:\"/tmp\"};async function archive(e){return globalThis.archiveLegacyChronicleSkill(e)}",
+    "N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{null!=await archive({codexHome:V.codexHome,reason:\"skysight_gate_enabled\"})&&U.broadcastQueryCacheInvalidation([\"skills\"])}}));",
+    "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
+    "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
+    "class Host{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:\"darwin\"===process.platform&&null!=this.options.getSkysightRecorderController?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}}var host=new Host;",
+    "class Bridge{handlers={\"set-remote-wsl-connections-enabled\":async()=>null}}var bridge=new Bridge().handlers;",
   ].join("");
 }
 
@@ -182,26 +184,54 @@ test("chronicle-skysight owns the activity-memory bridge", () => {
   assert.equal(applyChronicleSkysightMainBridgePatch(patched), patched);
   assert.match(patched, /"chronicle-permissions":async/);
   assert.match(patched, /"linux-record-replay-skysight-start":async/);
-  assert.match(patched, /request:process\.platform===`linux`\?codexLinuxChronicleRequest:/);
-  assert.match(patched, /reconcileComputerHistoryPluginInstallation:process\.platform===`linux`\?\(\)=>\{\}:/);
-  assert.match(patched, /archiveLegacyChronicleSkill:process\.platform===`linux`\?async\(\)=>\{\}:/);
-  assert.match(patched, /chronicle:process\.platform===`darwin`/);
-  assert.doesNotMatch(patched, /chronicle:\(process\.platform===`darwin`\|\|process\.platform===`linux`\)/);
-  assert.match(patched, /getSkysightRecorderController:\(\)=>process\.platform===`linux`\|\|Cr\(\)\.skysight\?xe:null/);
+  assert.match(patched, /\(N\|\|"linux"===process\.platform\)&&\(xe=new Hse\(/);
+  assert.match(patched, /request:"linux"===process\.platform\?codexLinuxChronicleRequest:/);
+  assert.match(patched, /reconcileComputerHistoryPluginInstallation:"linux"===process\.platform\?\(\)=>\{\}:/);
+  assert.match(patched, /archiveLegacyChronicleSkill:"linux"===process\.platform\?async\(\)=>\{\}:/);
+  assert.match(patched, /chronicle:"darwin"===process\.platform&&/);
+  assert.doesNotMatch(patched, /chronicle:[^?]*"linux"===process\.platform/);
+  assert.match(patched, /getSkysightRecorderController:\(\)=>"linux"===process\.platform\|\|Cr\(\)\.skysight\?xe:null/);
   assert.doesNotMatch(patched, /"linux-record-replay-start":async/);
   assert.doesNotMatch(patched, /"linux-record-replay-draft-skill":async/);
+});
+
+test("chronicle-skysight patches exactly one signed main-process chunk", { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, () => {
+  const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite/build");
+  const chunks = fs.readdirSync(buildDir).filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name));
+  assert.ok(chunks.length > 1);
+  const patchedChunks = [];
+  for (const name of chunks) {
+    const source = fs.readFileSync(path.join(buildDir, name), "utf8");
+    const { value: patched } = captureWarns(() => applyChronicleSkysightMainBridgePatch(source));
+    if (patched === source) {
+      assert.equal(chronicleControllerContract(source), "drifted", name);
+      continue;
+    }
+    patchedChunks.push(name);
+    assert.equal(chronicleControllerContract(source), "current", name);
+    assert.equal(chronicleControllerContract(patched), "patched", name);
+    const again = captureWarns(() => applyChronicleSkysightMainBridgePatch(patched));
+    assert.equal(again.value, patched, name);
+    assert.deepEqual(again.warnings, [], name);
+    assert.doesNotThrow(() => new (require("node:vm").Script)(patched, { filename: name }), name);
+  }
+  assert.equal(patchedChunks.length, 1, patchedChunks.join(","));
 });
 
 test("chronicle-skysight fails closed for missing duplicate ambiguous mixed and partial contracts", () => {
   const current = currentChronicleMainFixture();
   const patched = applyChronicleSkysightMainBridgePatch(current);
-  const serviceStart = current.indexOf("var $O=class");
-  const serviceEnd = current.indexOf(";function Cr", serviceStart) + 1;
+  const serviceStart = current.indexOf("class $O extends");
+  const serviceEnd = current.indexOf("function Cr", serviceStart);
   const duplicateService = current
     .slice(serviceStart, serviceEnd)
-    .replace("var $O=class", "var $P=class");
+    .replace("class $O extends", "class $P extends");
+  const controllerStart = current.indexOf("class Hse{");
+  const duplicateController = current
+    .slice(controllerStart, serviceStart)
+    .replace("class Hse{", "class Hsf{");
   const variants = {
-    retiredRelease: retiredChronicleMainFixture(),
+    retiredMinifier: retiredMinifierChronicleMainFixture(),
     retiredHandlerAnchor: current.replace(
       '"set-remote-wsl-connections-enabled":',
       '"get-global-state":async({key:',
@@ -215,7 +245,11 @@ test("chronicle-skysight fails closed for missing duplicate ambiguous mixed and 
       '"set-remote-wsl-connections-enabled":()=>null,"set-remote-wsl-connections-enabled":',
     ),
     mixedHandlerAnchors: `${current}var retiredBridge={"get-global-state":async({key:e})=>null};`,
-    missing: current.replace("this.request(`skysightStatus`)", "this.request(`statusChanged`)"),
+    missing: current.replace('this.request("skysightStatus")', 'this.request("statusChanged")'),
+    missingRollback: current.replace("Failed to enable Chronicle and stop the recorder during rollback", "Failed"),
+    duplicateController: current.slice(0, serviceStart) + duplicateController + current.slice(serviceStart),
+    missingServiceGate: current.replace('chronicle:"darwin"===process.platform&&', 'chronicle:"win32"===process.platform&&'),
+    mismatchedGetter: current.replace("getSkysightRecorderController:()=>Cr().skysight?xe:null", "getSkysightRecorderController:()=>Cr().skysight?ye:null"),
     missingReconciliationDependency: current.replace(
       "reconcileComputerHistoryPluginInstallation:e=>",
       "reconcileHistoryPluginInstallation:e=>",
@@ -225,12 +259,12 @@ test("chronicle-skysight fails closed for missing duplicate ambiguous mixed and 
       "archiveChronicleSkill:async()=>",
     ),
     ambiguousArchiveDependency: current
-      + "var duplicateArchive={archiveLegacyChronicleSkill:async()=>{await archive({reason:`skysight_gate_enabled`})}};",
+      + "var duplicateArchive={archiveLegacyChronicleSkill:async()=>{await archive({reason:\"skysight_gate_enabled\"})}};",
     duplicate: current + current,
     ambiguous: current.slice(0, serviceEnd) + duplicateService + current.slice(serviceEnd),
     mixed: current + patched,
     partial: patched.replace(
-      "getSkysightRecorderController:()=>process.platform===`linux`||Cr().skysight?xe:null",
+      'getSkysightRecorderController:()=>"linux"===process.platform||Cr().skysight?xe:null',
       "getSkysightRecorderController:()=>Cr().skysight?xe:null",
     ),
     missingSettings: current.replace("async getSettings()", "async readSettings()"),

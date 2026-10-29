@@ -10,29 +10,89 @@ function replaceUnique(source, pattern, replacement, description) {
   return source.replace(pattern, replacement);
 }
 
+// Minifier-neutral fragments for the rspack/SWC main-process chunks: string
+// literals may be quoted or template literals, and null checks may be Yoda.
+function literal(value) {
+  const escaped = escapeRegExp(value);
+  return `(?:"${escaped}"|\`${escaped}\`)`;
+}
+
+function platformIs(name) {
+  return `(?:${literal(name)}===process\\.platform|process\\.platform===${literal(name)})`;
+}
+
+function isNull(expression) {
+  return `(?:null==${expression}|${expression}==null)`;
+}
+
+function notNull(expression) {
+  return `(?:null!=${expression}|${expression}!=null)`;
+}
+
+const MODULE_HEADER = /(?:^|[{,])\d+\((?:[A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*){0,2})?\)\{/g;
+
+// rspack chunks hold many module factories. Injected code shares the module
+// scope of the registration function, so every lifecycle anchor it captures
+// must live in that same factory.
+function moduleStartAt(source, index) {
+  let start = 0;
+  for (const match of source.matchAll(MODULE_HEADER)) {
+    if (match.index > index) break;
+    start = match.index;
+  }
+  return start;
+}
+
+function assertSameModule(source, anchorIndex, index, description) {
+  if (moduleStartAt(source, anchorIndex) !== moduleStartAt(source, index)) {
+    throw new Error(`${description} is outside the global shortcut module`);
+  }
+}
+
 function registrationContract(source) {
   const pattern = new RegExp(
-    `function (?<name>${IDENT})\\(e,t,n\\)\\{[\\s\\S]{0,500}?;` +
-    `if\\(process\\.platform===\`win32\`&&${IDENT}\\(e\\)\\)return ${IDENT}\\(e,${IDENT}\\);` +
-    `if\\((?<bareModifier>${IDENT})\\(e\\)\\|\\|(?<special>${IDENT})\\(e\\)\\)return ` +
-    `${IDENT}\\(e\\)\\|\\|\\k<special>\\(e\\)\\?${IDENT}\\(e,${IDENT},n\\?\\.bareModifierTrigger\\):null;`, "gu");
+    `function (?<name>${IDENT})\\((?<accelerator>${IDENT}),(?<callbacks>${IDENT}),(?<options>${IDENT})\\)\\{[\\s\\S]{0,500}?;` +
+    `if\\(${platformIs("win32")}&&${IDENT}\\(\\k<accelerator>\\)\\)return [\\s\\S]{0,1500}?;` +
+    `if\\((?<bareModifier>${IDENT})\\(\\k<accelerator>\\)\\|\\|(?<special>${IDENT})\\(\\k<accelerator>\\)\\)return ` +
+    `${IDENT}\\(\\k<accelerator>\\)\\|\\|\\k<special>\\(\\k<accelerator>\\)\\?[\\s\\S]{0,4000}?` +
+    `\\(\\k<accelerator>,${IDENT},\\k<options>\\?\\.bareModifierTrigger\\):null;`, "gu");
   const matches = [...source.matchAll(pattern)];
   if (matches.length !== 1) throw new Error(`global shortcut registration function matched ${matches.length} times`);
   const match = matches[0];
   const end = findMatchingBrace(source, source.indexOf("{", match.index));
   if (end === -1) throw new Error("global shortcut registration function is incomplete");
+  if (match.index > 0 && !";}".includes(source[match.index - 1])) {
+    throw new Error("global shortcut registration function is not a statement-level declaration");
+  }
   const body = source.slice(match.index, end + 1);
-  const ownership = new RegExp(`let (${IDENT})=n\\?\\.ownership,(${IDENT})=t\\.onReleased,(${IDENT})=t\\.onCancelled,(${IDENT})=\\1==null\\?t:\\{` +
-    `onRegistrationChanged:t\\.onRegistrationChanged,` +
-    `onPressed:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&t\\.onPressed\\(\\)\\},` +
-    `onReleased:\\2==null\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\2\\(\\)\\},` +
-    `onCancelled:\\3==null\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\3\\(\\)\\}\\}`, "u");
+  const { callbacks: t, options: n } = match.groups;
+  const ownership = new RegExp(`let (${IDENT})=${escapeRegExp(n)}\\?\\.ownership,(${IDENT})=${escapeRegExp(t)}\\.onReleased,(${IDENT})=${escapeRegExp(t)}\\.onCancelled,(${IDENT})=${isNull("\\1")}\\?${escapeRegExp(t)}:\\{` +
+    `onRegistrationChanged:${escapeRegExp(t)}\\.onRegistrationChanged,` +
+    `onPressed:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&${escapeRegExp(t)}\\.onPressed\\(\\)\\},` +
+    `onReleased:${isNull("\\2")}\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\2\\(\\)\\},` +
+    `onCancelled:${isNull("\\3")}\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\3\\(\\)\\}\\}`, "u");
   if (!ownership.test(body)) throw new Error("global shortcut ownership callbacks drifted");
   return { ...match.groups, start: match.index, end: end + 1, body };
 }
 
 function registrationFunction(source) {
   return registrationContract(source).name;
+}
+
+// Inserts statement-level code into the registration function's module scope.
+function insertBeforeRegistration(source, code) {
+  const { start } = registrationContract(source);
+  return source.slice(0, start) + code + source.slice(start);
+}
+
+// Replaces one unique anchor that must share the registration function's
+// module scope, because the replacement references injected helpers.
+function replaceInRegistrationModule(source, pattern, replacement, description) {
+  const { start } = registrationContract(source);
+  const matches = [...source.matchAll(new RegExp(pattern.source, `${pattern.flags.replace("g", "")}g`))];
+  if (matches.length !== 1) throw new Error(`${description} matched ${matches.length} times`);
+  assertSameModule(source, start, matches[0].index, description);
+  return source.replace(pattern, replacement);
 }
 
 function tagCommand(source, id, accelerator, callback) {
@@ -368,57 +428,71 @@ function codexLinuxGlobalShortcutsActivate(entry, generation) {
 function installPortalBackend(source) {
   if (source.includes(PATCH_MARKER)) return source;
   const contract = registrationContract(source);
+  const { accelerator: e, callbacks: t } = contract;
   const entryMatch = contract.body.match(new RegExp(
-    `if\\(\\[\\.\\.\\.(?<registry>${IDENT})\\]\\.some\\(e=>e\\.registrationHotkey===(?<key>${IDENT})\\)\\)return null;` +
-    `let (?<entry>${IDENT})=\\{onCancelled:(?<callbacks>${IDENT})\\.onCancelled,hotkey:e,onPressed:${IDENT},registrationHotkey:\\k<key>,generation:0,registered:!1\\},${IDENT}=(?<activate>${IDENT})\\(\\k<entry>\\)`, "u"));
+    `if\\(\\[\\.\\.\\.(?<registry>${IDENT})\\]\\.some\\((?<item>${IDENT})=>\\k<item>\\.registrationHotkey===(?<key>${IDENT})\\)\\)return null;` +
+    `let (?<entry>${IDENT})=\\{onCancelled:(?<callbacks>${IDENT})\\.onCancelled,hotkey:${escapeRegExp(e)},onPressed:[\\s\\S]{0,400}?,registrationHotkey:\\k<key>,generation:0,registered:!1\\},${IDENT}=(?<activate>${IDENT})\\(\\k<entry>\\)`, "u"));
   if (!entryMatch) throw new Error("global shortcut registry lifecycle was not found");
   const { registry, entry, callbacks, activate } = entryMatch.groups;
-  const electron = contract.body.match(/([\w$]+)\.globalShortcut\.register\(/)?.[1] ??
-    source.match(new RegExp(`function ${escapeRegExp(activate)}\\(e\\)\\{[^}]*?(${IDENT})\\.globalShortcut\\.register`, "u"))?.[1];
+  const electron = contract.body.match(new RegExp(`(${IDENT})\\.globalShortcut\\.unregister\\(`, "u"))?.[1];
   if (!electron) throw new Error("global shortcut Electron backend was not found");
   let body = contract.body.replace(`let ${entry}={onCancelled:`,
-    `let ${entry}={linuxCommandId:t.linuxCommandId,linuxCallbacks:{...${callbacks},onUnavailable:t.onUnavailable},onCancelled:`);
-  body = replaceUnique(body, /handlesRelease:([\w$]+)!=null/u,
-    (_match, watcher) => `handlesRelease:${watcher}!=null||${entry}.portalRegistration!=null`, "release-aware registration handle");
+    `let ${entry}={linuxCommandId:${t}.linuxCommandId,linuxCallbacks:{...${callbacks},onUnavailable:${t}.onUnavailable},onCancelled:`);
+  body = replaceUnique(body, new RegExp(`handlesRelease:${notNull(`(${IDENT})`)}(?=,unregister:)`, "u"),
+    (match) => `${match}||null!=${entry}.portalRegistration`, "release-aware registration handle");
   body = replaceUnique(body, new RegExp(`${escapeRegExp(electron)}\\.globalShortcut\\.unregister\\(${escapeRegExp(entry)}\\.registrationHotkey\\)`, "u"),
-    `${entry}.portalRegistration!=null?${entry}.portalRegistration.unregister():${electron}.globalShortcut.unregister(${entry}.registrationHotkey)`, "registration disposal");
+    `null!=${entry}.portalRegistration?${entry}.portalRegistration.unregister():${electron}.globalShortcut.unregister(${entry}.registrationHotkey)`, "registration disposal");
   let patched = source.slice(0, contract.start) + body + source.slice(contract.end);
-  const accessPattern = new RegExp(`function (?<getAccess>${IDENT})\\(\\)\\{if\\(!(?<accessReady>${IDENT})\\)return\\{status:\`loading\`\\};let\\{codexLocalAccess:e,workCloudAccess:t,workLocalAccess:n\\}=${IDENT};return\\{status:\`ready\`,codexLocalAccess:e,workCloudAccess:t,workLocalAccess:n\\}\\}`, "u");
-  const accessMatches = [...patched.matchAll(new RegExp(accessPattern.source, "gu"))];
-  if (accessMatches.length !== 1) throw new Error("application access readiness was not found uniquely");
-  const { getAccess, accessReady } = accessMatches[0].groups;
+  const anchorText = body.slice(0, 120);
+  const uniqueAnchor = (pattern, description) => {
+    const matches = [...patched.matchAll(new RegExp(pattern.source, `${pattern.flags.replace("g", "")}g`))];
+    if (matches.length !== 1) throw new Error(`${description} matched ${matches.length} times`);
+    assertSameModule(patched, patched.indexOf(anchorText), matches[0].index, description);
+    return matches[0];
+  };
+  const { getAccess, accessReady } = uniqueAnchor(new RegExp(`function (?<getAccess>${IDENT})\\(\\)\\{if\\(!(?<accessReady>${IDENT})\\)return\\{status:${literal("loading")}\\};let\\{codexLocalAccess:e,workCloudAccess:t,workLocalAccess:(?<local>${IDENT})\\}=${IDENT};return\\{status:${literal("ready")},codexLocalAccess:e,workCloudAccess:t,workLocalAccess:\\k<local>\\}\\}`, "u"),
+    "application access readiness").groups;
+  uniqueAnchor(new RegExp(`${escapeRegExp(accessReady)}&&\\(${IDENT}\\|\\|${IDENT}\\)&&${IDENT}\\.forEach\\((${IDENT})=>\\{\\1\\(\\)\\}\\),${IDENT}\\}`, "u"), "application access publication");
   patched = replaceUnique(patched,
-    new RegExp(`${escapeRegExp(accessReady)}&&\\(${IDENT}\\|\\|${IDENT}\\)&&${IDENT}\\.forEach\\(e=>\\{e\\(\\)\\}\\),${IDENT}\\}`, "u"),
+    new RegExp(`${escapeRegExp(accessReady)}&&\\(${IDENT}\\|\\|${IDENT}\\)&&${IDENT}\\.forEach\\((${IDENT})=>\\{\\1\\(\\)\\}\\),${IDENT}\\}`, "u"),
     match => match.replace(/,([\w$]+)\}$/u, ",codexLinuxGlobalShortcutsPortalSchedule(),$1}"), "application access publication");
-  patched = replaceUnique(patched,
-    new RegExp(`markAppQuitting:\\(\\)=>\\{(?=${IDENT}\\.markAppQuitting\\(\\),${IDENT}\\.markAppQuitting\\(\\),${IDENT}\\.dispose\\(\\)\\})`, "u"),
+  const quitting = new RegExp(`markAppQuitting:\\(\\)=>\\{(?=(?:${IDENT}(?:\\?\\.|\\.)markAppQuitting\\(\\),){2,}${IDENT}\\.dispose\\(\\)\\})`, "u");
+  uniqueAnchor(quitting, "accepted application quit before window cleanup");
+  patched = replaceUnique(patched, quitting,
     match => `${match}codexLinuxGlobalShortcutsPortalShutdown();`, "accepted application quit before window cleanup");
-  patched = replaceUnique(patched,
-    new RegExp(`async function ${IDENT}\\(\\{hotkeyWindowLifecycleManager:e,globalDictationLifecycleManager:t,flushAndDisposeContext:n,disposables:r\\}\\)\\{(?=e\\.dispose\\(\\),t\\.dispose\\(\\),await )`, "u"),
+  const shutdown = new RegExp(`async function ${IDENT}\\(\\{hotkeyWindowLifecycleManager:(${IDENT}),globalDictationLifecycleManager:(${IDENT}),flushAndDisposeContext:${IDENT},disposables:${IDENT}\\}\\)\\{(?=\\1\\.dispose\\(\\),\\2\\.dispose\\(\\),await )`, "u");
+  uniqueAnchor(shutdown, "application shutdown before shortcut disposal");
+  patched = replaceUnique(patched, shutdown,
     match => `${match}await codexLinuxGlobalShortcutsPortalShutdown();`, "application shutdown before shortcut disposal");
-  const suspendPattern = new RegExp(`function (?<suspend>${IDENT})\\(\\)\\{if\\((?<depth>${IDENT})\\+=1,\\k<depth>===1\\)\\{`, "u");
-  const suspendMatch = patched.match(suspendPattern);
-  if (!suspendMatch) throw new Error("global shortcut suspension was not found");
-  const { depth } = suspendMatch.groups;
-  patched = replaceUnique(patched, suspendPattern,
-    (match) => `${match}codexLinuxGlobalShortcutsCaptureReady=codexLinuxGlobalShortcutsPortalPause();`, "global shortcut suspension");
-  patched = replaceUnique(patched,
-    new RegExp(`for\\(let e of ${escapeRegExp(registry)}\\)e\\.onCancelled\\?\\.\\(\\),e\\.registered=!1,${escapeRegExp(electron)}\\.globalShortcut\\.unregister\\(e\\.registrationHotkey\\)`, "u"),
-    `for(let e of ${registry})e.onCancelled?.(),e.registered=!1,e.portalRegistration==null&&${electron}.globalShortcut.unregister(e.registrationHotkey)`, "suspended registrations");
-  patched = replaceUnique(patched,
-    new RegExp(`function ${escapeRegExp(activate)}\\(e\\)\\{let t=\\+\\+e\\.generation;`, "u"),
-    (match) => `${match}if(codexLinuxGlobalShortcutsUsesWayland()&&e.linuxCommandId!=null&&e.hotkey.includes(\`+\`))return codexLinuxGlobalShortcutsActivate(e,t);`, "Wayland registration adapter");
-  patched = replaceUnique(patched,
-    new RegExp(`beginCapture\\(\\)\\{if\\(this\\.origin\\.isDestroyed\\(\\)\\)return null;let e=${escapeRegExp(electron)}\\.BrowserWindow\\.fromWebContents\\(this\\.origin\\);return e==null\\|\\|!e\\.isFocused\\(\\)\\?null:new (${IDENT})\\(this\\.origin,e\\)\\}`, "u"),
-    (_match, Capture) => `async beginCapture(){if(this.origin.isDestroyed())return null;let e=${electron}.BrowserWindow.fromWebContents(this.origin);if(e==null||!e.isFocused())return null;let t=new ${Capture}(this.origin,e);try{await codexLinuxGlobalShortcutsCaptureReady;if(this.origin.isDestroyed()||e.isDestroyed()||!e.isFocused()){t[Symbol.dispose]();return null}return t}catch(n){t[Symbol.dispose]();console.warn(\`[linux-global-shortcuts] Unable to prepare shortcut capture\`,n);return null}}`, "shortcut capture readiness");
+  // Capture suspension: the first nested suspend pauses the portal session and
+  // stops unregistering Electron accelerators that a portal registration owns.
+  const suspend = new RegExp(`if\\(1===\\((?<depth>${IDENT})\\+=1\\)\\)for\\(let (?<item>${IDENT}) of\\((?<effects>(?:${IDENT}\\(!0\\),)*)${escapeRegExp(registry)}\\)\\)` +
+    `\\k<item>\\.onCancelled\\?\\.\\(\\),\\k<item>\\.registered=!1,${escapeRegExp(electron)}\\.globalShortcut\\.unregister\\(\\k<item>\\.registrationHotkey\\)`, "u");
+  const { depth } = uniqueAnchor(suspend, "global shortcut suspension").groups;
+  patched = replaceUnique(patched, suspend, (_match, depthVar, item, effects) =>
+    `if(1===(${depthVar}+=1))for(let ${item} of(codexLinuxGlobalShortcutsCaptureReady=codexLinuxGlobalShortcutsPortalPause(),${effects}${registry}))` +
+    `${item}.onCancelled?.(),${item}.registered=!1,null==${item}.portalRegistration&&${electron}.globalShortcut.unregister(${item}.registrationHotkey)`,
+  "global shortcut suspension");
+  const activation = new RegExp(`function ${escapeRegExp(activate)}\\((${IDENT})\\)\\{let (${IDENT})=\\+\\+\\1\\.generation;`, "u");
+  uniqueAnchor(activation, "Wayland registration adapter");
+  patched = replaceUnique(patched, activation,
+    (match, item, generation) => `${match}if(codexLinuxGlobalShortcutsUsesWayland()&&null!=${item}.linuxCommandId&&${item}.hotkey.includes("+"))return codexLinuxGlobalShortcutsActivate(${item},${generation});`, "Wayland registration adapter");
+  const capture = new RegExp(`beginCapture\\(\\)\\{if\\(this\\.origin\\.isDestroyed\\(\\)\\)return null;let (${IDENT})=${escapeRegExp(electron)}\\.BrowserWindow\\.fromWebContents\\(this\\.origin\\);return ${notNull("\\1")}&&\\1\\.isFocused\\(\\)\\?new (${IDENT})\\(this\\.origin,\\1\\):null\\}`, "u");
+  uniqueAnchor(capture, "shortcut capture readiness");
+  patched = replaceUnique(patched, capture,
+    (_match, _window, Capture) => `async beginCapture(){if(this.origin.isDestroyed())return null;let e=${electron}.BrowserWindow.fromWebContents(this.origin);if(null==e||!e.isFocused())return null;let t=new ${Capture}(this.origin,e);try{await codexLinuxGlobalShortcutsCaptureReady;if(this.origin.isDestroyed()||e.isDestroyed()||!e.isFocused()){t[Symbol.dispose]();return null}return t}catch(n){t[Symbol.dispose]();console.warn("[linux-global-shortcuts] Unable to prepare shortcut capture",n);return null}}`, "shortcut capture readiness");
   const functions = [codexLinuxGlobalShortcutsUsesWayland, codexLinuxGlobalShortcutsNativePath,
     codexLinuxGlobalShortcutsLines, codexLinuxGlobalShortcutsRequested, codexLinuxGlobalShortcutsUnavailable,
     codexLinuxGlobalShortcutsPortalRegistration, codexLinuxGlobalShortcutsPortalPause, codexLinuxGlobalShortcutsPortalShutdown,
     codexLinuxGlobalShortcutsPortalSchedule, codexLinuxGlobalShortcutsPortalStart,
     codexLinuxGlobalShortcutsPaste, codexLinuxGlobalShortcutsActivate];
-  return `var codexLinuxGlobalShortcutsPatch=${JSON.stringify(PATCH_MARKER)},codexLinuxGlobalShortcutsPortalRegistrations=new Set(),codexLinuxGlobalShortcutsPortalBackend=null,codexLinuxGlobalShortcutsPortalQueue=Promise.resolve(),codexLinuxGlobalShortcutsPortalScheduled=false,codexLinuxGlobalShortcutsShuttingDown=false,codexLinuxGlobalShortcutsCaptureReady=Promise.resolve();` +
-    `function codexLinuxGlobalShortcutsAccessReady(){return ${getAccess}().status===\`ready\`}function codexLinuxGlobalShortcutsIsSuspended(){return ${depth}>0}function codexLinuxGlobalShortcutsManagerHas(e){return ${registry}.has(e)}` +
-    functions.map(String).join("") + patched;
+  return insertBeforeRegistration(patched,
+    `var codexLinuxGlobalShortcutsPatch=${JSON.stringify(PATCH_MARKER)},codexLinuxGlobalShortcutsPortalRegistrations=new Set(),codexLinuxGlobalShortcutsPortalBackend=null,codexLinuxGlobalShortcutsPortalQueue=Promise.resolve(),codexLinuxGlobalShortcutsPortalScheduled=false,codexLinuxGlobalShortcutsShuttingDown=false,codexLinuxGlobalShortcutsCaptureReady=Promise.resolve();` +
+    `function codexLinuxGlobalShortcutsAccessReady(){return"ready"===${getAccess}().status}function codexLinuxGlobalShortcutsIsSuspended(){return ${depth}>0}function codexLinuxGlobalShortcutsManagerHas(e){return ${registry}.has(e)}` +
+    functions.map(String).join(""));
 }
 
-module.exports = { IDENT, PATCH_MARKER, replaceUnique, registrationContract, registrationFunction, tagCommand, installPortalBackend };
+module.exports = {
+  IDENT, PATCH_MARKER, literal, platformIs, replaceUnique, registrationContract, registrationFunction,
+  insertBeforeRegistration, replaceInRegistrationModule, tagCommand, installPortalBackend,
+};

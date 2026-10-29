@@ -7,10 +7,10 @@ function applyWaylandGlobalShortcutsPatch(source) {
     let patched = source;
     for (const [id, key, callback] of [
       ["hotkeyWindow", "e", "onPressed:\\(\\)=>\\{this\\.handleHotkeyWindowHotkeyPressed\\(\\)\\}"],
-      ["openAvatarOverlay", IDENT, `onPressed:\\(\\)=>\\{if\\(!${IDENT}\\(\\)\\)\\{${IDENT}\\(\\);return\\}${IDENT}\\(\\)\\.catch\\([\\s\\S]{0,200}?Failed to toggle pet from global hotkey`],
+      ["openAvatarOverlay", IDENT, `onPressed:\\(\\)=>\\{${IDENT}\\(\\)\\?${IDENT}\\(\\)\\.catch\\([\\s\\S]{0,200}?"Failed to toggle pet from global hotkey"`],
       ["appshots", "this\\.configuredHotkey", "onPressed:\\(\\)=>this\\.#[A-Za-z_$][\\w$]*\\(\\)"],
-      ["realtimeVoice", IDENT, `onPressed:\\(\\)=>\\{${IDENT}\\.powerMonitor\\.getSystemIdleState\\(1\\)!==\`locked\`&&${IDENT}\\(\\)\\}`],
-      ["meetings", IDENT, `onPressed:\\(\\)=>\\{${IDENT}===${IDENT}&&${IDENT}\\.powerMonitor\\.getSystemIdleState\\(1\\)!==\`locked\`&&${IDENT}\\(\\)\\}`],
+      ["realtimeVoice", IDENT, `onPressed:\\(\\)=>\\{"locked"!==${IDENT}\\.powerMonitor\\.getSystemIdleState\\(1\\)&&${IDENT}\\(\\)\\}`],
+      ["meetings", IDENT, `onPressed:\\(\\)=>\\{${IDENT}===${IDENT}&&"locked"!==${IDENT}\\.powerMonitor\\.getSystemIdleState\\(1\\)&&${IDENT}\\(\\)\\}`],
     ]) {
       patched = tagCommand(patched, id, key, callback);
     }

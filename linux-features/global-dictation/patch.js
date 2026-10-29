@@ -1,7 +1,14 @@
 "use strict";
 
 const PATCH_MARKER = "codex-linux-global-dictation-v3";
-const { installPortalBackend, registrationContract } = require("../../scripts/patches/lib/global-shortcuts-portal.js");
+const {
+  insertBeforeRegistration,
+  installPortalBackend,
+  literal,
+  platformIs,
+  registrationContract,
+  replaceInRegistrationModule,
+} = require("../../scripts/patches/lib/global-shortcuts-portal.js");
 const IDENT = "[A-Za-z_$][\\w$]*";
 
 function warn(message) {
@@ -10,15 +17,6 @@ function warn(message) {
 
 function escapeRegexLiteral(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function replaceUnique(source, pattern, replacement, description) {
-  const globalPattern = new RegExp(pattern.source, `${pattern.flags.replace("g", "")}g`);
-  const matches = [...source.matchAll(globalPattern)];
-  if (matches.length !== 1) {
-    throw new Error(`${description} matched ${matches.length} times`);
-  }
-  return source.replace(pattern, replacement);
 }
 
 function codexLinuxGlobalDictationReleaseWatcher(accelerator, onReleased) {
@@ -40,6 +38,9 @@ function codexLinuxGlobalDictationReleaseWatcher(accelerator, onReleased) {
   child.once("error", finish);
   child.once("exit", () => finish());
   return {
+    get isActive() {
+      return !finished;
+    },
     dispose: () => {
       finished = true;
       child.kill();
@@ -70,89 +71,105 @@ function helperSource() {
   ].map(String).join("");
 }
 
+const UNSUPPORTED_RELEASE_WATCHING = "Global dictation hotkey release watching is not supported.";
+const UNSUPPORTED_PASTE = "Global dictation paste is not supported on this OS.";
+
+// A switch-case label run such as case"win32":case"aix":...case"linux":...
+// that ends in the upstream "not supported" throw.
+function unsupportedPlatformCases(message) {
+  const label = `case(?:"[a-z0-9]+"|\`[a-z0-9]+\`):`;
+  return new RegExp(
+    `(?<before>(?:${label})*)case${literal("linux")}:(?<after>(?:${label})*)throw Error\\(${literal(message)}\\)`,
+    "u",
+  );
+}
+
+function hotkeyRegistration(registerFunction, gesture, optionsPattern) {
+  return new RegExp(
+    `${escapeRegexLiteral(registerFunction)}\\((?<accelerator>${IDENT}),\\{(?<callbacks>(?:(?!\\},\\{(?:ownership:|bareModifierTrigger:))[\\s\\S]){0,1200}?` +
+      `shortcutGestures\\.press\\(${literal(gesture)},[\\s\\S]{0,300}?` +
+      `shortcutGestures\\.release\\(${literal(gesture)}\\)[\\s\\S]{0,300}?` +
+      `shortcutGestures\\.cancelPress\\(${literal(gesture)}\\)[\\s\\S]{0,120}?)\\},` +
+      `\\{${optionsPattern}\\}\\)`,
+    "u",
+  );
+}
+
 function applyLinuxGlobalDictationMainProcessPatch(source) {
   if (source.includes(PATCH_MARKER)) {
     return source;
   }
-  if (!source.includes("Global dictation hotkey release watching is not supported.")) {
+  if (!source.includes(UNSUPPORTED_RELEASE_WATCHING)) {
     warn("release watcher sentinel was not found");
     return source;
   }
 
   try {
     const { name: registerFunction, bareModifier: bareModifierTestFunction } = registrationContract(source);
-    const registerFunctionPattern = escapeRegexLiteral(registerFunction);
-    let patched = helperSource() + source;
-    const currentValidation = new RegExp(
-      `function (${IDENT})\\(e\\)\\{(?=if\\(process\\.platform===\`win32\`&&${IDENT}\\(e\\)\\)return[\\s\\S]{0,220}?;let ${IDENT}=${IDENT}\\(e,process\\.platform,\\{allowUnmodified:!0\\}\\))`,
-      "u",
-    );
-    patched = replaceUnique(
-      patched,
-      currentValidation,
-      (_original, functionName) =>
-        `function ${functionName}(e){if(process.platform===\`linux\`&&${bareModifierTestFunction}(e))return\`Modifier-only shortcuts are not supported for global dictation on Linux.\`;`,
+    let patched = insertBeforeRegistration(source, helperSource());
+    const replace = (pattern, replacement, description) => {
+      patched = replaceInRegistrationModule(patched, pattern, replacement, description);
+    };
+
+    replace(
+      new RegExp(
+        `function (${IDENT})\\((${IDENT})\\)\\{(?=if\\(${platformIs("win32")}&&${IDENT}\\(\\2\\)\\)return[\\s\\S]{0,220}?;let ${IDENT}=${IDENT}\\(\\2,process\\.platform,\\{allowUnmodified:!0\\}\\))`,
+        "u",
+      ),
+      (_original, functionName, accelerator) =>
+        `function ${functionName}(${accelerator}){if("linux"===process.platform&&${bareModifierTestFunction}(${accelerator}))return"Modifier-only shortcuts are not supported for global dictation on Linux.";`,
       "Linux modifier-only validation",
     );
 
-    patched = replaceUnique(
-      patched,
-      /case`aix`:case`android`:case`cygwin`:case`freebsd`:case`haiku`:case`linux`:case`netbsd`:case`openbsd`:case`sunos`:throw Error\(`Global dictation hotkey release watching is not supported\.`\)/u,
-      "case`linux`:{let n=codexLinuxGlobalDictationReleaseWatcher(e,t);if(n==null)throw Error(`Global dictation hotkey release watching is not supported.`);return n}case`aix`:case`android`:case`cygwin`:case`freebsd`:case`haiku`:case`netbsd`:case`openbsd`:case`sunos`:throw Error(`Global dictation hotkey release watching is not supported.`)",
-      "Linux release watcher platform branch",
-    );
-    patched = replaceUnique(
-      patched,
+    replace(
       new RegExp(
-        "function (" + IDENT + ")\\(\\)\\{return process\\.platform===`darwin`\\|\\|process\\.platform===`win32`\\}",
+        `(?<header>function ${IDENT}\\((?<accelerator>${IDENT}),(?<onReleased>${IDENT})\\)\\{switch\\(process\\.platform\\)\\{case${literal("darwin")}:[\\s\\S]{0,1500}?)` +
+          unsupportedPlatformCases(UNSUPPORTED_RELEASE_WATCHING).source,
         "u",
       ),
-      (_original, functionName) =>
-        "function " + functionName + "(){return process.platform===`darwin`||process.platform===`win32`||process.platform===`linux`}",
+      (...args) => {
+        const { header, accelerator, onReleased, before, after } = args.at(-1);
+        return `${header}case"linux":{let n=codexLinuxGlobalDictationReleaseWatcher(${accelerator},${onReleased});if(null==n)throw Error(${JSON.stringify(UNSUPPORTED_RELEASE_WATCHING)});return n}${before}${after}throw Error(${JSON.stringify(UNSUPPORTED_RELEASE_WATCHING)})`;
+      },
+      "Linux release watcher platform branch",
+    );
+
+    replace(
+      new RegExp(`function (${IDENT})\\(\\)\\{return ?${platformIs("darwin")}\\|\\|${platformIs("win32")}\\}`, "u"),
+      (original) => `${original.slice(0, -1)}||"linux"===process.platform}`,
       "global dictation platform capability",
     );
 
-    patched = replaceUnique(
-      patched,
-      /case`aix`:case`android`:case`cygwin`:case`freebsd`:case`haiku`:case`linux`:case`netbsd`:case`openbsd`:case`sunos`:throw Error\(`Global dictation paste is not supported on this OS\.`\)/u,
-      "case`linux`:if(codexLinuxGlobalShortcutsUsesWayland()){await codexLinuxGlobalShortcutsPaste();return}await codexLinuxGlobalDictationPasteX11();return;case`aix`:case`android`:case`cygwin`:case`freebsd`:case`haiku`:case`netbsd`:case`openbsd`:case`sunos`:throw Error(`Global dictation paste is not supported on this OS.`)",
+    replace(
+      unsupportedPlatformCases(UNSUPPORTED_PASTE),
+      (...args) => {
+        const { before, after } = args.at(-1);
+        return `case"linux":if(codexLinuxGlobalShortcutsUsesWayland()){await codexLinuxGlobalShortcutsPaste();return}await codexLinuxGlobalDictationPasteX11();return;${before}${after}throw Error(${JSON.stringify(UNSUPPORTED_PASTE)})`;
+      },
       "Linux global dictation paste branch",
     );
 
-    const holdRegistration = new RegExp(
-      `${registerFunctionPattern}\\(e,\\{((?:(?!\\},\\{(?:ownership:|bareModifierTrigger:))[\\s\\S]){0,1200}?shortcutGestures\\.press\\(\`primary\`,[\\s\\S]{0,300}?` +
-        `shortcutGestures\\.release\\(\`primary\`\\)[\\s\\S]{0,300}?` +
-        `shortcutGestures\\.cancelPress\\(\`primary\`\\)[\\s\\S]{0,120}?)\\},` +
-        `\\{ownership:(${IDENT})(,bareModifierTrigger:\`cancellablePress\`)\\}\\)`,
-      "u",
-    );
-    patched = replaceUnique(
-      patched,
-      holdRegistration,
-      (_original, callbacks, ownershipVar, extraOptions) =>
-        `${registerFunction}(e,{linuxCommandId:"globalDictationHold",${callbacks},onUnavailable:n=>{this.handleLinuxHotkeyUnavailable(\`hold\`,n)}},{ownership:${ownershipVar}${extraOptions}})`,
+    replace(
+      hotkeyRegistration(registerFunction, "primary", `ownership:(?<ownership>${IDENT}),bareModifierTrigger:${literal("cancellablePress")}`),
+      (...args) => {
+        const { accelerator, callbacks, ownership } = args.at(-1);
+        return `${registerFunction}(${accelerator},{linuxCommandId:"globalDictationHold",${callbacks},onUnavailable:n=>{this.handleLinuxHotkeyUnavailable("hold",n)}},{ownership:${ownership},bareModifierTrigger:"cancellablePress"})`;
+      },
       "hold hotkey registration",
     );
 
-    const toggleRegistration = new RegExp(
-      registerFunctionPattern +
-        `\\(e,\\{((?:(?!\\},\\{(?:ownership:|bareModifierTrigger:))[\\s\\S]){0,1200}?shortcutGestures\\.press\\(\`single-tap\`,[\\s\\S]{0,300}?` +
-        `shortcutGestures\\.release\\(\`single-tap\`\\)[\\s\\S]{0,300}?` +
-        `shortcutGestures\\.cancelPress\\(\`single-tap\`\\)[\\s\\S]{0,120}?)\\},` +
-        `\\{bareModifierTrigger:\`cancellablePress\`,ownership:(${IDENT})\\}\\)`,
-      "u",
-    );
-    patched = replaceUnique(
-      patched,
-      toggleRegistration,
-      (_original, callbacks, ownershipVar) => registerFunction + `(e,{linuxCommandId:"globalDictationSingleTap",${callbacks},onUnavailable:n=>{this.handleLinuxHotkeyUnavailable(\`toggle\`,n)}},{bareModifierTrigger:\`cancellablePress\`,ownership:${ownershipVar}})`,
+    replace(
+      hotkeyRegistration(registerFunction, "single-tap", `bareModifierTrigger:${literal("cancellablePress")},ownership:(?<ownership>${IDENT})`),
+      (...args) => {
+        const { accelerator, callbacks, ownership } = args.at(-1);
+        return `${registerFunction}(${accelerator},{linuxCommandId:"globalDictationSingleTap",${callbacks},onUnavailable:n=>{this.handleLinuxHotkeyUnavailable("toggle",n)}},{bareModifierTrigger:"cancellablePress",ownership:${ownership}})`;
+      },
       "toggle hotkey registration",
     );
 
-    patched = replaceUnique(
-      patched,
+    replace(
       /unregisterHotkey\(\)\{/u,
-      "handleLinuxHotkeyUnavailable(e,t){console.warn(`[linux-global-dictation] ${e} hotkey backend became unavailable`,t);if(e===`hold`)this.unregisterHotkey();else this.unregisterToggleHotkey()}unregisterHotkey(){",
+      'handleLinuxHotkeyUnavailable(e,t){console.warn(`[linux-global-dictation] ${e} hotkey backend became unavailable`,t);if("hold"===e)this.unregisterHotkey();else this.unregisterToggleHotkey()}unregisterHotkey(){',
       "hotkey failure cleanup method",
     );
     return installPortalBackend(patched);

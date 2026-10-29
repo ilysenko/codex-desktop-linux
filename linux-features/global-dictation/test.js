@@ -119,13 +119,43 @@ test("global dictation stays disabled until selected", () => {
   }
 });
 
+test("main patch installs into exactly one signed main-process chunk", { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, () => {
+  const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite/build");
+  const chunks = fs.readdirSync(buildDir).filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name));
+  assert.ok(chunks.length > 1);
+  const patchedChunks = [];
+  const previousWarn = console.warn;
+  console.warn = () => {};
+  try {
+    for (const name of chunks) {
+      const source = fs.readFileSync(path.join(buildDir, name), "utf8");
+      const patched = applyLinuxGlobalDictationMainProcessPatch(source);
+      if (patched === source) continue;
+      patchedChunks.push(name);
+      assert.equal(applyLinuxGlobalDictationMainProcessPatch(patched), patched, name);
+      assert.doesNotThrow(() => new vm.Script(patched, { filename: name }), name);
+      for (const marker of ['linuxCommandId:"globalDictationHold"', 'linuxCommandId:"globalDictationSingleTap"',
+        "codexLinuxGlobalDictationReleaseWatcher(", "await codexLinuxGlobalDictationPasteX11()",
+        "Modifier-only shortcuts are not supported for global dictation on Linux.", "codex-linux-global-shortcuts-portal-v1"]) {
+        assert.ok(patched.includes(marker), `${name}: ${marker}`);
+      }
+      // Injected helpers share the owning module's scope instead of the chunk prologue.
+      assert.ok(patched.startsWith(source.slice(0, 200)), name);
+    }
+  } finally {
+    console.warn = previousWarn;
+  }
+  assert.equal(patchedChunks.length, 1, patchedChunks.join(","));
+});
+
 test("main patch enables Linux and preserves the other platform gates", () => {
   const patched = applyPatchTwice(mainBundleFixture());
   assert.match(
     patched,
-    /function W7\(\)\{return process\.platform===`darwin`\|\|process\.platform===`win32`\|\|process\.platform===`linux`\}/,
+    /function W7\(\)\{return"darwin"===process\.platform\|\|"win32"===process\.platform\|\|"linux"===process\.platform\}/,
   );
-  assert.match(patched, /case`linux`:if\(codexLinuxGlobalShortcutsUsesWayland\(\)\)/);
+  assert.match(patched, /return;case"linux":if\(codexLinuxGlobalShortcutsUsesWayland\(\)\)/);
+  assert.match(patched, /return;case"aix":case"android":case"cygwin":case"freebsd":case"haiku":case"netbsd":case"openbsd":case"sunos":throw Error\("Global dictation paste is not supported on this OS\."\)/);
   assert.match(
     patched,
     /await codexLinuxGlobalDictationPasteX11\(\)/,
@@ -136,15 +166,15 @@ test("main patch enables Linux and preserves the other platform gates", () => {
 
 test("main patch accepts the verified Windows-first registration and validation layout", () => {
   const patched = applyPatchTwice(mainBundleFixture());
-  assert.match(patched, /process\.platform===`linux`&&Rk\(e\).*Modifier-only shortcuts/u);
+  assert.match(patched, /function fA\(e\)\{if\("linux"===process\.platform&&Rk\(e\)\)return"Modifier-only shortcuts/u);
   assert.match(patched, /codexLinuxGlobalShortcutsPortalRegistration/u);
 });
 
 test("modifier validation is scoped to the registration function", () => {
   const source = "function unrelated(e){if(unrelatedCheck(e)||otherCheck(e))return;}" + mainBundleFixture();
   const patched = applyPatchTwice(source);
-  assert.match(patched, /process\.platform===`linux`&&Rk\(e\).*Modifier-only shortcuts/u);
-  assert.doesNotMatch(patched, /linux`&&unrelatedCheck\(e\)/);
+  assert.match(patched, /"linux"===process\.platform&&Rk\(e\)\)return"Modifier-only shortcuts/u);
+  assert.doesNotMatch(patched, /"linux"===process\.platform&&unrelatedCheck\(e\)/);
 });
 
 test("dictation registration failures clean up only their own action", () => {
@@ -160,12 +190,12 @@ test("dictation registration failures clean up only their own action", () => {
 });
 
 test("main patch rejects retired, partial, duplicate, and ambiguous toggle registrations", () => {
-  const current = "eA(e,{onPressed:()=>{this.ensureHotkeyReleaseWatchers(),this.shortcutGestures.press(`single-tap`,Wl(e)||process.platform===`win32`&&oP(e))},onReleased:()=>this.shortcutGestures.release(`single-tap`),onCancelled:()=>this.shortcutGestures.cancelPress(`single-tap`)},{bareModifierTrigger:`cancellablePress`,ownership:t})";
-  const retired = "eA(e,{onPressed:()=>{this.handleToggleHotkeyPressed()}},{bareModifierTrigger:`release`,ownership:t})";
+  const current = 'eA(e,{onRegistrationChanged:()=>this.publishShortcutRecovery(),onPressed:()=>{this.setupWindowFocused||(this.ensureHotkeyReleaseWatchers(),this.shortcutGestures.press("single-tap",Wl(e)||"win32"===process.platform&&oP(e)))},onReleased:()=>{this.setupWindowFocused||this.shortcutGestures.release("single-tap")},onCancelled:()=>{this.setupWindowFocused||this.shortcutGestures.cancelPress("single-tap")}},{bareModifierTrigger:"cancellablePress",ownership:t})';
+  const retired = 'eA(e,{onPressed:()=>{this.handleToggleHotkeyPressed()}},{bareModifierTrigger:"release",ownership:t})';
   const fixture = mainBundleFixture();
   const variants = {
     retired: fixture.replace(current, retired),
-    partial: fixture.replace(",onCancelled:()=>this.shortcutGestures.cancelPress(`single-tap`)", ""),
+    partial: fixture.replace(',onCancelled:()=>{this.setupWindowFocused||this.shortcutGestures.cancelPress("single-tap")}', ""),
     duplicate: fixture.replace(current, `${current},${current}`),
     ambiguous: fixture + `function duplicate(e,t){return ${current}}`,
   };
@@ -183,17 +213,16 @@ test("main patch handles dollar signs in minified identifiers", () => {
     .split("Lk")
     .join("L$k");
   const patched = applyPatchTwice(source);
-  assert.match(patched, /function e\$A\(e,t,n\)/);
-  assert.match(patched, /e\$A\(e,\{linuxCommandId:"globalDictationHold",onPressed:/);
-  assert.match(patched, /Rk\(e\)\)return`Modifier-only shortcuts/);
+  assert.match(patched, /function e\$A\(e,t,r\)/);
+  assert.match(patched, /e\$A\(e,\{linuxCommandId:"globalDictationHold",onRegistrationChanged:/);
+  assert.match(patched, /Rk\(e\)\)return"Modifier-only shortcuts/);
 });
 
 test("main patch fails closed when the ownership release alias drifts", () => {
   const source = mainBundleFixture()
-    .replace(",i=t.onReleased,a=", ",q=t.onReleased,a=")
     .replace(
-      "onReleased:i==null?void 0:()=>{r.isOwner()&&i()}}",
-      "onReleased:q==null?void 0:()=>{r.isOwner()&&q()}}",
+      "onReleased:null==s?void 0:()=>{i.isOwner()&&s()}",
+      "onReleased:null==s?void 0:()=>{i.isOwner()&&q()}",
     );
   assert.notEqual(source, mainBundleFixture());
   assert.equal(applyLinuxGlobalDictationMainProcessPatch(source), source);
@@ -228,10 +257,11 @@ test("X11 paste propagates xdotool failures", async () => {
 test("X11 hold mode starts the bounded release watcher", () => {
   const patched = applyPatchTwice(mainBundleFixture());
   assert.match(patched, /function codexLinuxGlobalDictationReleaseWatcher\(/);
-  assert.match(patched, /case`linux`:\{let n=codexLinuxGlobalDictationReleaseWatcher\(e,t\)/);
+  assert.match(patched, /return r\}case"linux":\{let n=codexLinuxGlobalDictationReleaseWatcher\(e,t\);if\(null==n\)throw Error\("Global dictation hotkey release watching is not supported\."\);return n\}case"win32":case"aix":/);
+  assert.doesNotMatch(patched, /case"haiku":case"linux":/);
   assert.match(
     patched,
-    /process\.platform===`linux`&&Rk\(e\)\)return`Modifier-only shortcuts are not supported for global dictation on Linux\.`/,
+    /"linux"===process\.platform&&Rk\(e\)\)return"Modifier-only shortcuts are not supported for global dictation on Linux\."/,
   );
 });
 
