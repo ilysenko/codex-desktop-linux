@@ -69,7 +69,7 @@ test("an explicitly empty core registry leaves an extracted official-style app u
   const webviewDir = path.join(root, "webview", "assets");
   fs.mkdirSync(buildDir, { recursive: true });
   fs.mkdirSync(webviewDir, { recursive: true });
-  const mainPath = path.join(buildDir, "main-fixture.js");
+  const mainPath = path.join(buildDir, "early-bootstrap.js");
   const assetPath = path.join(webviewDir, "app-initial-fixture.js");
   fs.writeFileSync(mainPath, "const officialMain=true;\n");
   fs.writeFileSync(assetPath, "const officialWebview=true;\n");
@@ -140,7 +140,7 @@ test("CLI rejects drift in an explicitly enabled feature", (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, ".vite", "build"), { recursive: true });
   fs.mkdirSync(path.join(root, "webview", "assets"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".vite", "build", "main-fixture.js"), "const main=true;\n");
+  fs.writeFileSync(path.join(root, ".vite", "build", "early-bootstrap.js"), "const main=true;\n");
   fs.writeFileSync(path.join(root, "webview", "assets", "app-initial-fixture.js"), "const webview=true;\n");
   const config = path.join(root, "features.json");
   const report = path.join(root, "report.json");
@@ -164,7 +164,7 @@ function patchFeatureFixture(t, moduleSource, manifest = {}) {
   const featuresRoot = path.join(root, "features");
   const featureDir = path.join(featuresRoot, "probe");
   const appDir = path.join(root, "app");
-  const mainPath = path.join(appDir, ".vite", "build", "main.js");
+  const mainPath = path.join(appDir, ".vite", "build", "early-bootstrap.js");
   const config = path.join(featuresRoot, "features.json");
   fs.mkdirSync(featureDir, { recursive: true });
   fs.mkdirSync(path.dirname(mainPath), { recursive: true });

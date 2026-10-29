@@ -151,3 +151,63 @@ test("missing required phase remains fail-closed", () => {
   assert.equal(report.patches[0].unavailable, true);
   assert.equal(criticalFailuresFromReport(report).length, 1);
 });
+
+test("main-process descriptors patch only the rspack chunk that holds their anchor", () => {
+  const { applyMainProcessChunkPatchDescriptors } = require("./engine.js");
+  const descriptors = normalizePatchDescriptors([
+    mainBundlePatch({
+      id: "anchored",
+      apply(source) {
+        if (!source.includes("ANCHOR")) {
+          console.warn("WARN: anchor missing - skipping anchored patch");
+          return source;
+        }
+        return source.replace("ANCHOR", "PATCHED");
+      },
+    }),
+    mainBundlePatch({
+      id: "missing",
+      apply(source) {
+        console.warn("WARN: nothing to patch - skipping missing patch");
+        return source;
+      },
+    }),
+  ]);
+  const report = createPatchReport();
+  const chunks = applyMainProcessChunkPatchDescriptors(
+    [
+      { name: "early-bootstrap.js", source: "entry" },
+      { name: "early-bootstrap-916-0123456789abcdef.js", source: "x ANCHOR y" },
+    ],
+    descriptors,
+    {},
+    report,
+  );
+
+  assert.deepEqual(chunks.map(({ source }) => source), ["entry", "x PATCHED y"]);
+  const anchored = report.patches.find((patch) => patch.name === "anchored");
+  assert.equal(anchored.status, "applied");
+  assert.deepEqual(anchored.chunks, ["early-bootstrap-916-0123456789abcdef.js"]);
+  assert.equal(anchored.warnings, undefined);
+  const missing = report.patches.find((patch) => patch.name === "missing");
+  assert.equal(missing.status, "skipped-optional");
+  assert.match(missing.reason, /^missing matched no main-process chunk: nothing to patch/);
+});
+
+test("a main-process descriptor that throws on every chunk keeps its error", () => {
+  const { applyMainProcessChunkPatchDescriptors } = require("./engine.js");
+  const report = createPatchReport();
+  applyMainProcessChunkPatchDescriptors(
+    [{ name: "early-bootstrap.js", source: "entry" }],
+    normalizePatchDescriptors([mainBundlePatch({
+      id: "throws",
+      apply() {
+        throw new Error("expected one current contract");
+      },
+    })]),
+    {},
+    report,
+  );
+  assert.equal(report.patches[0].status, "skipped-optional");
+  assert.match(report.patches[0].reason, /expected one current contract/);
+});

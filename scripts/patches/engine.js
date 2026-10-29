@@ -346,6 +346,83 @@ function applyMainBundlePatchDescriptors(source, descriptors, context, report) {
   return { patchedSource: patched, warnings, coreWarnings, requiredCoreWarnings };
 }
 
+// Applies main-process descriptors to the rspack chunk set. Each descriptor
+// is tried against every chunk; only the chunks it actually changes keep the
+// result. A descriptor that changes no chunk reports the diagnostics of the
+// chunks it tried, so a moved or removed anchor still fails closed.
+function applyMainProcessChunkPatchDescriptors(chunks, descriptors, context, report) {
+  const sources = chunks.map(({ name, source }) => ({ name, source }));
+  for (const descriptor of descriptors.filter((patch) => patch.phase === PHASE_MAIN_BUNDLE)) {
+    if (!descriptorAppliesTo(descriptor, context)) {
+      recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_TARGET, null, context);
+      continue;
+    }
+    if (!descriptorEnabled(descriptor, context)) {
+      recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_DISABLED, null, context);
+      continue;
+    }
+
+    const attempts = sources.map((chunk) => {
+      const result = runDescriptorApply(
+        descriptor,
+        () => descriptor.apply(chunk.source, context),
+        chunk.source,
+      );
+      return { chunk, result, changed: result.error == null && result.value !== chunk.source };
+    });
+    const changed = attempts.filter((attempt) => attempt.changed);
+    if (changed.length > 0) {
+      const warnings = changed.flatMap((attempt) => attempt.result.warnings);
+      for (const attempt of changed) {
+        attempt.chunk.source = attempt.result.value;
+      }
+      context.reportWarnings = warnings;
+      recordDescriptorPatch(
+        report,
+        descriptor,
+        patchStatusFromDescriptorChange(descriptor, true, warnings),
+        warnings[0] ?? null,
+        context,
+        {
+          ...(strategyMetadata(changed.flatMap((attempt) => attempt.result.strategies)) ?? {}),
+          chunks: changed.map((attempt) => attempt.chunk.name),
+        },
+      );
+      delete context.reportWarnings;
+      continue;
+    }
+
+    // Nothing changed. A clean no-op on some chunk means the contract is
+    // already satisfied; otherwise report the first diagnostic.
+    if (attempts.some((attempt) => attempt.result.error == null && attempt.result.warnings.length === 0)) {
+      recordDescriptorPatch(
+        report,
+        descriptor,
+        patchStatusFromDescriptorChange(descriptor, false, []),
+        null,
+        context,
+      );
+      continue;
+    }
+    const integrity = attempts.find((attempt) => isPatchIntegrityError(attempt.result.error));
+    const failed = integrity ?? attempts.find((attempt) => attempt.result.error != null);
+    const warnings = attempts.flatMap((attempt) => attempt.result.warnings);
+    if (failed != null && warnings.length === 0) {
+      context.reportWarnings = [`WARN: ${describePatchError(descriptor, failed.result.error)}`];
+      recordDescriptorError(report, descriptor, failed.result.error, context, failed.result.strategies);
+      delete context.reportWarnings;
+      rethrowPatchIntegrityError(failed.result.error);
+      continue;
+    }
+    const reason = `${descriptor.id} matched no main-process chunk` +
+      (warnings[0] == null ? "" : `: ${warnings[0].replace(/^WARN:\s*/, "")}`);
+    context.reportWarnings = [`WARN: ${reason}`];
+    recordDescriptorPatch(report, descriptor, descriptorFailureStatus(descriptor), reason, context);
+    delete context.reportWarnings;
+  }
+  return sources;
+}
+
 function defaultWebviewMissingWarning(extractedDir, descriptor) {
   const missingDescription = descriptor.missingDescription ?? "webview asset bundle";
   const skipDescription = descriptor.skipDescription ?? descriptor.id;
@@ -481,6 +558,7 @@ module.exports = {
   SKIPPED_TARGET: PATCH_STATUS_SKIPPED_TARGET,
   applyExtractedAppPatchDescriptors,
   applyMainBundlePatchDescriptors,
+  applyMainProcessChunkPatchDescriptors,
   applyWebviewAssetPatchDescriptors,
   assertUniquePatchIds,
   descriptorAppliesTo,

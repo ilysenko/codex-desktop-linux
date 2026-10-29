@@ -11,13 +11,18 @@ function readDirectoryNames(dir) {
   return fs.readdirSync(dir);
 }
 
-function findMainBundle(extractedDir) {
-  const buildDir = path.join(extractedDir, ".vite", "build");
-  const mainBundle = readDirectoryNames(buildDir).find((name) =>
-    /^main(?:-[^.]+)?\.js$/.test(name),
-  );
+// The official main process is an rspack build: the `early-bootstrap.js`
+// entry plus numbered `early-bootstrap-<id>-<hash>.js` chunks. Main-process
+// code is spread across several chunks, so patches search all of them.
+const MAIN_PROCESS_CHUNK_PATTERN = /^early-bootstrap(?:-\d+-[0-9a-f]+)?\.js$/;
 
-  return mainBundle == null ? null : { buildDir, mainBundle };
+function findMainProcessChunks(extractedDir) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  const chunks = readDirectoryNames(buildDir)
+    .filter((name) => MAIN_PROCESS_CHUNK_PATTERN.test(name))
+    .sort();
+
+  return chunks.length === 0 ? null : { buildDir, chunks };
 }
 
 function findIconAsset(extractedDir) {
@@ -209,7 +214,8 @@ module.exports = {
   findCodexRequestWebviewAsset,
   findIconAsset,
   findImportedAsset,
-  findMainBundle,
+  MAIN_PROCESS_CHUNK_PATTERN,
+  findMainProcessChunks,
   findRequiredWebviewAsset,
   patchAssetFiles,
   patchUniqueAssetFile,

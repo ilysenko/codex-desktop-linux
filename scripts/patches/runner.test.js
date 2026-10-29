@@ -176,3 +176,34 @@ test("missing main bundle records enabled feature drift", (t) => {
     true,
   );
 });
+
+test("main-process chunks are the rspack early-bootstrap entry and its numbered chunks", () => {
+  const { findMainProcessChunks } = require("./lib/assets.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-rspack-chunks-"));
+  try {
+    const buildDir = path.join(root, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    for (const name of [
+      "early-bootstrap.js",
+      "early-bootstrap-916-2f6483d5bfd826f1.js",
+      "early-bootstrap-87-929aa7e5d829f2a8.js",
+      "worker.js",
+      "worker-904-f6f849be9d0ea1f7.js",
+      "preload.js",
+      "main-legacy.js",
+    ]) {
+      fs.writeFileSync(path.join(buildDir, name), "");
+    }
+    assert.deepEqual(findMainProcessChunks(root), {
+      buildDir,
+      chunks: [
+        "early-bootstrap-87-929aa7e5d829f2a8.js",
+        "early-bootstrap-916-2f6483d5bfd826f1.js",
+        "early-bootstrap.js",
+      ],
+    });
+    assert.equal(findMainProcessChunks(path.join(root, "missing")), null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

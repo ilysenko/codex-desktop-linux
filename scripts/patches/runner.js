@@ -15,11 +15,12 @@ const {
   enabledLinuxFeatureIds,
 } = require("../lib/linux-features.js");
 const {
-  findMainBundle,
+  findMainProcessChunks,
 } = require("./lib/assets.js");
 const {
   applyExtractedAppPatchDescriptors,
   applyMainBundlePatchDescriptors,
+  applyMainProcessChunkPatchDescriptors,
   applyWebviewAssetPatchDescriptors,
   discoverCorePatchDescriptors,
   normalizePatchDescriptors,
@@ -124,13 +125,13 @@ function patchExtractedApp(extractedDir, options = {}) {
     report.enabledFeatures = [...baseContext.enabledFeatureIds];
   }
 
-  const main = findMainBundle(extractedDir);
+  const main = findMainProcessChunks(extractedDir);
   if (report != null) {
-    report.mainBundle = main?.mainBundle ?? null;
-    report.target = main == null ? null : path.join(main.buildDir, main.mainBundle);
+    report.mainBundle = main?.chunks ?? null;
+    report.target = main?.buildDir ?? null;
   }
   if (main == null && patchDescriptors.some((descriptor) => descriptor.phase === PHASE_MAIN_BUNDLE)) {
-    const reason = `Could not find main bundle in ${path.join(extractedDir, ".vite", "build")}`;
+    const reason = `Could not find main-process chunks in ${path.join(extractedDir, ".vite", "build")}`;
     console.warn(`WARN: ${reason} — skipping enabled main-bundle feature patches`);
     recordUnavailablePhasePatchDescriptors(
       patchDescriptors,
@@ -153,11 +154,21 @@ function patchExtractedApp(extractedDir, options = {}) {
   assetContext.report = report;
 
   if (main != null && patchDescriptors.some((descriptor) => descriptor.phase === PHASE_MAIN_BUNDLE)) {
-    const target = path.join(main.buildDir, main.mainBundle);
-    const source = fs.readFileSync(target, "utf8");
-    const { patchedSource } = applyMainBundlePatches(source, assetContext, report);
-    if (patchedSource !== source) {
-      fs.writeFileSync(target, patchedSource, "utf8");
+    const chunks = main.chunks.map((name) => ({
+      name,
+      source: fs.readFileSync(path.join(main.buildDir, name), "utf8"),
+    }));
+    const original = new Map(chunks.map(({ name, source }) => [name, source]));
+    const patched = applyMainProcessChunkPatchDescriptors(
+      chunks,
+      mainBundlePatchDescriptors(assetContext),
+      assetContext,
+      report,
+    );
+    for (const { name, source } of patched) {
+      if (source !== original.get(name)) {
+        fs.writeFileSync(path.join(main.buildDir, name), source, "utf8");
+      }
     }
   }
 
@@ -189,8 +200,8 @@ function patchExtractedApp(extractedDir, options = {}) {
   validateMainProcessSyntax(extractedDir);
 
   console.log("Applied Linux patch descriptors:", {
-    target: main == null ? null : path.join(main.buildDir, main.mainBundle),
-    mainBundle: main?.mainBundle ?? null,
+    target: main?.buildDir ?? null,
+    mainBundle: main?.chunks ?? null,
     iconAsset,
     featureCount: baseContext.enabledFeatureIds.length,
   });
