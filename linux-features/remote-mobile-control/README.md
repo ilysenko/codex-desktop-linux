@@ -57,8 +57,12 @@ not been tested.
 
 What it changes:
 
-- Replaces the upstream native `remote-control-device-key.node` path with a
-  Linux JavaScript ECDSA P-256 key provider.
+- Replaces the upstream native `remote-control-device-key.node` addon with a
+  Linux JavaScript ECDSA P-256 key store. The upstream device-key provider
+  still serializes and validates every signing payload; only its addon is
+  swapped.
+- Adds the bare `Remote-control client key material missing` 403 detail to the
+  upstream re-enrollment predicate, which only recognizes the prefixed form.
 - Lets the remote-control Connections UI render on Linux when upstream marks
   the feature unavailable or withholds the remote-control visibility rollout.
 - Keeps the `Control other devices` settings tab reachable on Linux so this
