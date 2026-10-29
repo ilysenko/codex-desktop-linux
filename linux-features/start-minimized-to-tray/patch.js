@@ -86,6 +86,10 @@ async function codexLinuxStartMinimizedTrayReady(setup, isReady, timeoutMs = 300
   }
 }
 
+// Seven upstream references: both startup window creations, both reveal
+// decisions, the renderer mode gate, and both startup-progress windows.
+const EXPECTED_LAUNCH_PARTS = 8;
+
 function unique(source, pattern) {
   const matches = [...source.matchAll(pattern)];
   return matches.length === 1 ? matches[0] : null;
@@ -94,7 +98,7 @@ function unique(source, pattern) {
 function backgroundContract(source, first) {
   if (!first) return null;
   const pattern = new RegExp(
-    `let (${ID})=process\\.env\\.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,(${ID})=`,
+    `let (${ID})="1"===process\\.env\\.CODEX_ELECTRON_START_IN_BACKGROUND,(${ID})=`,
     "g",
   );
   const matches = [...source.matchAll(pattern)].filter(
@@ -104,7 +108,17 @@ function backgroundContract(source, first) {
 }
 
 function firstWindowContract(source, background) {
-  return unique(source, new RegExp(`let (${ID})=(?:${ID}\\.deepLinks\\.isWakeOnlyLaunch\\(\\)&&!${ID}\\?null:)?await (${ID})\\.ensureWindow\\(\\{background:${escapeRegExp(background)}\\}\\);\\1\\?\\.once\\(\`show\`,\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),\\1!=null&&!${escapeRegExp(background)}&&\\(?(?:(${ID})\\(\\1,!(${ID})\\))(?:,\\3\\.handleInitialWindowVisible\\(\\))?\\)?`, "g"));
+  const bg = escapeRegExp(background);
+  return unique(source, new RegExp(`let (${ID})=${ID}\\.deepLinks\\.isWakeOnlyLaunch\\(\\)&&!${ID}\\?null:await (${ID})\\.ensureWindow\\(\\{background:${bg}\\}\\);\\1\\?\\.once\\("show",\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),null==\\1\\|\\|${bg}\\|\\|(${ID})\\(\\1,!(${ID})\\)`, "g"));
+}
+
+// The startup window-services call passes upstream's tray readiness predicate;
+// the window-services factory destructures the same property name, so require
+// the passed value to be the tray readiness function declaration.
+function trayReadyContract(source, fromIndex) {
+  const matches = [...source.slice(fromIndex).matchAll(new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"))]
+    .filter((match) => unique(source, new RegExp(`function ${escapeRegExp(match[1])}\\(\\)\\{return ${ID}&&${ID}\\?\\.isReady\\(\\)===!0\\}`, "g")));
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function windowModeContract(source) {
@@ -128,14 +142,13 @@ function hasCompleteMainPatch(source, state, startup) {
   const launchBackground = `(${startup[1]}.isBackgroundLaunch||codexLinuxStartMinimized)`;
   const first = firstWindowContract(source, launchBackground);
   const windowMode = windowModeContract(source);
-  const trayReady = unique(source.slice(state.index), new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"));
-  const traySetup = unique(source, new RegExp(`let codexLinuxStartMinimizedTraySetup=\\((${ID})\\|\\|process\\.platform===\`linux\`\\)\\?(${ID})\\(\\):null;`, "g"));
+  const trayReady = trayReadyContract(source, state.index);
+  const traySetup = unique(source, new RegExp(`let codexLinuxStartMinimizedTraySetup=\\((${ID})\\|\\|"linux"===process\\.platform\\)\\?(${ID})\\(\\):null;`, "g"));
   if (!first || !windowMode || !trayReady || !traySetup) return false;
   const clearHidden = `codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`;
   const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}try\\{${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}if\\(!(${ID})&&\\(!codexLinuxStartMinimizedRequested\\|\\|${escapeRegExp(first[2])}\\.getPrimaryWindow\\(\\)==null\\)\\)return null;${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   if (!activations || !trayActivation || !unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{\\(${ID}\\|\\|codexLinuxStartMinimizedRequested\\)&&${escapeRegExp(activations[1])}\\(\\);return\\}`, "g"))) return false;
-  const expectedLaunchParts = first[0].includes("isWakeOnlyLaunch") ? 8 : 9;
   return [
     codexLinuxStartMinimizedTrayReady.toString(),
     codexLinuxStartMinimizedAutostart.toString(),
@@ -143,9 +156,9 @@ function hasCompleteMainPatch(source, state, startup) {
     state[0] + preferenceDeclaration(state[1]),
     trayReadinessStatement(first[2], trayReady[1]) + first[0],
     windowMode[0] + hiddenWindowModeBody(...windowMode.slice(1, 4)),
-    `${startup[1]}.onInteractiveLaunch=()=>{${clearHidden}${first[1]}!=null&&!${first[1]}.isDestroyed()&&${first[4]}(${first[1]}),`,
+    `${startup[1]}.onInteractiveLaunch=()=>{${clearHidden}null==${first[1]}||${first[1]}.isDestroyed()||${first[4]}(${first[1]}),`,
   ].every(exactlyOnce) && source.split(clearHidden).length === 4 &&
-    source.split(launchBackground).length === expectedLaunchParts;
+    source.split(launchBackground).length === EXPECTED_LAUNCH_PARTS;
 }
 
 function applyMainPatch(source) {
@@ -154,7 +167,7 @@ function applyMainPatch(source) {
     console.warn("WARN: Start minimized to tray global-state handler owner missing or ambiguous");
     return source;
   }
-  const state = unique(source, new RegExp(`let (${ID})=await ${ID}\\.${ID}\\(\\{moduleDir:__dirname\\}\\),`, "g"));
+  const state = unique(source, new RegExp(`let (${ID})=await \\(0,${ID}\\.${ID}\\)\\(\\{moduleDir:__dirname\\}\\),`, "g"));
   const startup = unique(source, new RegExp(`shouldShowPrimaryWindow:\\(\\)=>!\\(?(${ID})\\.isBackgroundLaunch`, "g"));
   const owner = startup?.[1] ?? "__missing";
   const launchBackground = source.includes(`function ${MAIN_MARKER}(`)
@@ -174,18 +187,17 @@ function applyMainPatch(source) {
     return source;
   }
   const launchPattern = escapeRegExp(launchBackground);
-  const trayReady = unique(source.slice(state?.index ?? 0), new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"));
-  const traySetup = unique(source, new RegExp(`\\((${ID})\\|\\|process\\.platform===\`linux\`\\)&&(${ID})\\(\\);`, "g"));
-  const last = unique(source, new RegExp(`(${ID})!==(${ID})&&!${launchPattern}&&(${ID})\\(\\1,!(${ID})\\)`, "g"));
+  const trayReady = trayReadyContract(source, state?.index ?? 0);
+  const traySetup = unique(source, new RegExp(`;\\((${ID})\\|\\|"linux"===process\\.platform\\)&&(${ID})\\(\\);`, "g"));
+  const last = unique(source, new RegExp(`(${ID})===(${ID})\\|\\|${launchPattern}\\|\\|(${ID})\\(\\1,!(${ID})\\)`, "g"));
   // The current upstream bundle already defers restored maximization until
   // show. Require that contract instead of carrying the retired custom patch.
-  const maximize = unique(source, new RegExp(`${ID}\\.once\\(\`ready-to-show\`,\\(\\)=>\\{(${ID})\\.isDestroyed\\(\\)\\|\\|\\(\\1\\.isVisible\\(\\)\\?(${ID})\\(\\):\\1\\.once\\(\`show\`,\\2\\)\\)\\}\\)`, "g"));
+  const maximize = unique(source, new RegExp(`${ID}\\.once\\("ready-to-show",\\(\\)=>\\{(${ID})\\.isDestroyed\\(\\)\\|\\|\\(\\1\\.isVisible\\(\\)\\?(${ID})\\(\\):\\1\\.once\\("show",\\2\\)\\)\\}\\)`, "g"));
   const windowMode = windowModeContract(source);
-  const expectedLaunchParts = first?.[0].includes("isWakeOnlyLaunch") ? 8 : 9;
   if (!background || !state || !startup || !trayReady || !traySetup || !first || !last || !maximize || !windowMode ||
       first[4] !== background[2] || first[5] !== background[1] ||
       last[2] !== first[1] || last[3] !== first[4] || last[4] !== first[5] ||
-      source.split(launchBackground).length !== expectedLaunchParts ||
+      source.split(launchBackground).length !== EXPECTED_LAUNCH_PARTS ||
       source.split(`background:${launchBackground}`).length !== 3 ||
       source.split(`shouldShow:()=>!${launchBackground}`).length !== 3) {
     console.warn("WARN: Start minimized to tray startup contract missing or ambiguous");
@@ -193,8 +205,8 @@ function applyMainPatch(source) {
   }
   const windowModeEnd = findMatchingBrace(source, source.indexOf("{", windowMode.index));
   const windowModeBody = source.slice(windowMode.index, windowModeEnd + 1);
-  const deferredMode = `if(!this.shouldShowPrimaryWindow()&&!${windowMode[3]}.isVisible()){${windowMode[3]}.once(\`show\`,()=>this.setPrimaryWindowMode(${windowMode[1]},${windowMode[2]}));return}`;
-  if (!unique(windowModeBody, new RegExp(`let ${ID}=${ID}\\(${escapeRegExp(windowMode[2])}\\);if\\(`, "g")) ||
+  const deferredMode = `if(!this.shouldShowPrimaryWindow()&&!${windowMode[3]}.isVisible())return void ${windowMode[3]}.once("show",()=>this.setPrimaryWindowMode(${windowMode[1]},${windowMode[2]}));`;
+  if (!unique(windowModeBody, new RegExp(`let ${ID}="onboarding"!==${escapeRegExp(windowMode[2])}\\.mode\\?null:`, "g")) ||
       windowModeBody.split(deferredMode).length !== 2 ||
       !windowModeBody.includes(`this.showPrimaryWindow(${windowMode[3]})`) ||
       !windowModeBody.includes("this.windowManager.syncPrimaryMinimumSize()")) {
@@ -204,7 +216,7 @@ function applyMainPatch(source) {
   const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{try\\{${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{if\\(!(${ID})\\)return null;${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   const queuedActivation = unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{(${ID})&&${activations?.[1] ?? "__missing"}\\(\\);return\\}`, "g"));
-  const interactive = unique(source, new RegExp(`${escapeRegExp(owner)}\\.onInteractiveLaunch=\\(\\)=>\\{${first[1]}!=null&&!${first[1]}\\.isDestroyed\\(\\)&&${first[4]}\\(${first[1]}\\),`, "g"));
+  const interactive = unique(source, new RegExp(`${escapeRegExp(owner)}\\.onInteractiveLaunch=\\(\\)=>\\{null==${first[1]}\\|\\|${first[1]}\\.isDestroyed\\(\\)\\|\\|${first[4]}\\(${first[1]}\\),`, "g"));
   if (!activations || !trayActivation || !queuedActivation || !interactive) {
     console.warn("WARN: Start minimized to tray activation contract missing or ambiguous");
     return source;
@@ -214,14 +226,13 @@ function applyMainPatch(source) {
   patched = patched.replace(background[0],
     `console.info(\`[start-minimized-to-tray] startup preference\`,codexLinuxStartMinimizedPreferences);${background[0]}`);
   patched = patched.replace(traySetup[0],
-    `let codexLinuxStartMinimizedTraySetup=(${traySetup[1]}||process.platform===\`linux\`)?${traySetup[2]}():null;`);
+    `;let codexLinuxStartMinimizedTraySetup=(${traySetup[1]}||"linux"===process.platform)?${traySetup[2]}():null;`);
   patched = patched.replace(first[0],
     trayReadinessStatement(first[2], trayReady[1]) + first[0]);
   // Reuse upstream's background creation, attribution, and progress-window
   // guards, leaving its actual background-launch lifecycle state untouched.
-  // Seven references above account for both creations, both attribution/show
-  // decisions, the renderer mode gate, and both startup-progress windows.
-  // Reject additional references rather than patching an unverified consumer.
+  // EXPECTED_LAUNCH_PARTS rejects additional references rather than patching
+  // an unverified consumer.
   patched = patched.replaceAll(launchBackground, `(${launchBackground}||codexLinuxStartMinimized)`);
   patched = patched.replace(windowMode[0], windowMode[0] + hiddenWindowModeBody(...windowMode.slice(1, 4)));
   const clearHidden = `codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`;
@@ -234,6 +245,8 @@ function applyMainPatch(source) {
   patched = patched.replace(queuedActivation[0], queuedActivation[0]
     .replace(`${queuedActivation[1]}&&`, `(${queuedActivation[1]}||codexLinuxStartMinimizedRequested)&&`));
   patched = patched.replace(interactive[0], interactive[0].replace("=>{", `=>{${clearHidden}`));
+  // rspack chunks are CommonJS files; these helpers become chunk-scoped
+  // declarations visible to the startup module factory below them.
   return installGlobalStateHandlers(`${codexLinuxStartMinimizedAutostart.toString()}\n${codexLinuxStartMinimizedPreference.toString()}\n${codexLinuxStartMinimizedTrayReady.toString()}\n${patched}`);
 }
 

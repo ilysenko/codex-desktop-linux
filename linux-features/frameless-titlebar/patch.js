@@ -5,41 +5,43 @@ const CHROME_MAPPING_ASSET_PATTERN = /^app-shared-[A-Za-z0-9_-]+\.js$/;
 const CURRENT_CHROME_MAPPING = "case`win32`:case`linux`:return`application-menu`";
 const PATCHED_CHROME_MAPPING = "case`win32`:return`application-menu`;case`linux`:return`native`";
 
+// The rspack main-process chunks use literal-first comparisons, double-quoted
+// strings, and early returns inside the window-options switch.
 const currentWindowOptionsPattern = new RegExp(
-  `(${IDENT})===\\\`win32\\\`\\|\\|\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}`,
+  `if\\("win32"===(${IDENT})\\|\\|"linux"===\\1\\)return\\{titleBarStyle:"hidden",titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\};`,
   "g",
 );
 const patchedWindowOptionsPattern = new RegExp(
-  `(${IDENT})===\\\`win32\\\`\\?\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}:` +
-    `\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`\\}`,
+  `if\\("win32"===(${IDENT})\\)return\\{titleBarStyle:"hidden",titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\};` +
+    `if\\("linux"===\\1\\)return\\{titleBarStyle:"hidden"\\};`,
   "g",
 );
 const detachedWindowPrefix =
-  `case\\\`detached\\\`:return (${IDENT})===\\\`darwin\\\`\\?` +
-  `(\\{titleBarStyle:\\\`hiddenInset\\\`,titleBarOverlay:!0,trafficLightPosition:${IDENT}\\(${IDENT},${IDENT}\\)\\}):`;
+  `case"detached":if\\("darwin"===(${IDENT})\\)return` +
+  `(\\{titleBarStyle:"hiddenInset",titleBarOverlay:!0,trafficLightPosition:${IDENT}\\([^()]*\\)\\});`;
 const currentDetachedOptionsPattern = new RegExp(
-  detachedWindowPrefix + `\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}`,
+  detachedWindowPrefix + `return\\{titleBarStyle:"hidden",titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}`,
   "g",
 );
 const patchedDetachedOptionsPattern = new RegExp(
-  detachedWindowPrefix + `\\1===\\\`linux\\\`\\?\\{titleBarStyle:\\\`hidden\\\`\\}:` +
-    `\\{titleBarStyle:\\\`hidden\\\`,titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}`,
+  detachedWindowPrefix + `if\\("linux"===\\1\\)return\\{titleBarStyle:"hidden"\\};` +
+    `return\\{titleBarStyle:"hidden",titleBarOverlay:(${IDENT})\\((${IDENT})\\)\\}`,
   "g",
 );
 const currentZoomOverlayPattern = new RegExp(
-  `\\(process\\.platform===\\\`win32\\\`\\|\\|process\\.platform===\\\`linux\\\`\\)&&\\(this\\.windowZooms\\.set\\((${IDENT})\\.id,(${IDENT})\\),\\1\\.setTitleBarOverlay\\((${IDENT})\\(\\2\\)\\)\\)`,
+  `\\("win32"===process\\.platform\\|\\|"linux"===process\\.platform\\)&&\\(this\\.windowZooms\\.set\\((${IDENT})\\.id,(${IDENT})\\),\\1\\.setTitleBarOverlay\\((${IDENT})\\(\\2\\)\\)\\)`,
   "g",
 );
 const patchedZoomOverlayPattern = new RegExp(
-  `process\\.platform===\\\`win32\\\`&&\\(this\\.windowZooms\\.set\\((${IDENT})\\.id,(${IDENT})\\),\\1\\.setTitleBarOverlay\\((${IDENT})\\(\\2\\)\\)\\)`,
+  `"win32"===process\\.platform&&\\(this\\.windowZooms\\.set\\((${IDENT})\\.id,(${IDENT})\\),\\1\\.setTitleBarOverlay\\((${IDENT})\\(\\2\\)\\)\\)`,
   "g",
 );
 const currentOverlaySyncPattern = new RegExp(
-  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`&&process\\.platform!==\\\`linux\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`detached\\\`\\)return;`,
+  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\("win32"!==process\\.platform&&"linux"!==process\\.platform\\|\\|"primary"!==\\2&&"detached"!==\\2\\)return;`,
   "g",
 );
 const patchedOverlaySyncPattern = new RegExp(
-  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\(process\\.platform!==\\\`win32\\\`\\|\\|\\2!==\\\`primary\\\`&&\\2!==\\\`detached\\\`\\)return;`,
+  `installApplicationMenuTitleBarOverlaySync\\((${IDENT}),(${IDENT})\\)\\{if\\("win32"!==process\\.platform\\|\\|"primary"!==\\2&&"detached"!==\\2\\)return;`,
   "g",
 );
 
@@ -103,25 +105,25 @@ function applyFramelessTitlebarMainPatch(source) {
     .replace(
       currentWindowOptionsPattern,
       (_match, platform, overlayHelper, zoom) =>
-        `${platform}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelper}(${zoom})}:` +
-        `${platform}===\`linux\`?{titleBarStyle:\`hidden\`}`,
+        `if("win32"===${platform})return{titleBarStyle:"hidden",titleBarOverlay:${overlayHelper}(${zoom})};` +
+        `if("linux"===${platform})return{titleBarStyle:"hidden"};`,
     )
     .replace(
       currentDetachedOptionsPattern,
       (_match, platform, darwinOptions, overlayHelper, zoom) =>
-        `case\`detached\`:return ${platform}===\`darwin\`?${darwinOptions}:` +
-        `${platform}===\`linux\`?{titleBarStyle:\`hidden\`}:` +
-        `{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelper}(${zoom})}`,
+        `case"detached":if("darwin"===${platform})return${darwinOptions};` +
+        `if("linux"===${platform})return{titleBarStyle:"hidden"};` +
+        `return{titleBarStyle:"hidden",titleBarOverlay:${overlayHelper}(${zoom})}`,
     )
     .replace(
       currentZoomOverlayPattern,
       (_match, windowAlias, zoomAlias, overlayHelper) =>
-        `process.platform===\`win32\`&&(this.windowZooms.set(${windowAlias}.id,${zoomAlias}),${windowAlias}.setTitleBarOverlay(${overlayHelper}(${zoomAlias})))`,
+        `"win32"===process.platform&&(this.windowZooms.set(${windowAlias}.id,${zoomAlias}),${windowAlias}.setTitleBarOverlay(${overlayHelper}(${zoomAlias})))`,
     )
     .replace(
       currentOverlaySyncPattern,
       (_match, windowAlias, windowTypeAlias) =>
-        `installApplicationMenuTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if(process.platform!==\`win32\`||${windowTypeAlias}!==\`primary\`&&${windowTypeAlias}!==\`detached\`)return;`,
+        `installApplicationMenuTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if("win32"!==process.platform||"primary"!==${windowTypeAlias}&&"detached"!==${windowTypeAlias})return;`,
     );
 
   if (framelessTitlebarMainContract(patched) !== "patched") {

@@ -31,23 +31,23 @@ function captureWarnings(callback) {
 function officialMainFixture() {
   return [
     "function j9(e=1){return{height:Math.round(30*e)}}",
-    "function A9(e,t){return{x:e.x*t,y:e.y*t}}const k9={x:10,y:12};",
+    "function A9(e,t){return{x:e*t,y:e*t}}",
     "class WindowManager{setWindowZoom(e,t){let n=_.BrowserWindow.fromWebContents(e),r=n&&this.windowAppearances.get(n.id);",
-    "n!=null&&(r===`primary`||process.platform===`darwin`&&r===`detached`)&&(process.platform===`darwin`?n.setWindowButtonPosition(A9(k9,t)):",
-    "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t))))}",
-    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`detached`)return;",
-    "let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(j9(this.windowZooms.get(e.id)))};return _.nativeTheme.on(`updated`,n),n(),()=>{_.nativeTheme.off(`updated`,n)}}}",
-    "function windowOptions({appearance:e,opaqueWindowSurfaceEnabled:t,platform:n,windowZoom:r=1}){switch(e){",
-    "case`primary`:return n===`darwin`?{titleBarStyle:`hiddenInset`,trafficLightPosition:A9(k9,r),acceptFirstMouse:!0,...t?{}:{vibrancy:`menu`}}:",
-    "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}:{titleBarStyle:`default`};",
-    "case`detached`:return n===`darwin`?{titleBarStyle:`hiddenInset`,titleBarOverlay:!0,trafficLightPosition:A9(k9,r)}:{titleBarStyle:`hidden`,titleBarOverlay:j9(r)};",
-    "case`secondary`:return n===`darwin`?t?{titleBarStyle:`default`}:{vibrancy:`menu`,titleBarStyle:`default`}:{titleBarStyle:`default`}}}",
+    'null!=n&&("primary"===r||"darwin"===process.platform&&"detached"===r)&&("darwin"===process.platform?n.setWindowButtonPosition(A9(44,t)):',
+    '("win32"===process.platform||"linux"===process.platform)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t))))}',
+    'installApplicationMenuTitleBarOverlaySync(e,t){if("win32"!==process.platform&&"linux"!==process.platform||"primary"!==t&&"detached"!==t)return;',
+    'let n=()=>{e.isDestroyed()||e.setTitleBarOverlay(j9(this.windowZooms.get(e.id)))};return _.nativeTheme.on("updated",n),n(),()=>{_.nativeTheme.off("updated",n)}}}',
+    "function windowOptions({appearance:e,opaqueWindowSurfaceEnabled:t,platform:r,windowZoom:n=1}){switch(e){",
+    'case"primary":if("darwin"===r)return{titleBarStyle:"hiddenInset",trafficLightPosition:A9(44,n),acceptFirstMouse:!0,...t?{}:{vibrancy:"menu"}};',
+    'if("win32"===r||"linux"===r)return{titleBarStyle:"hidden",titleBarOverlay:j9(n)};return{titleBarStyle:"default"};',
+    'case"detached":if("darwin"===r)return{titleBarStyle:"hiddenInset",titleBarOverlay:!0,trafficLightPosition:A9(44,n)};return{titleBarStyle:"hidden",titleBarOverlay:j9(n)};',
+    'case"secondary":if("darwin"===r)return t?{titleBarStyle:"default"}:{vibrancy:"menu",titleBarStyle:"default"};return{titleBarStyle:"default"}}}',
   ].join("");
 }
 
 function aliasedMainFixture() {
-  const aliases = { j9: "overlay", A9: "buttonPosition", k9: "position", e: "windowType", t: "zoom", n: "platform", r: "windowZoom" };
-  return officialMainFixture().replace(/\b(j9|A9|k9|e|t|n|r)\b/g, (alias) => aliases[alias]);
+  const aliases = { j9: "overlay", A9: "buttonPosition", e: "windowType", t: "zoom", n: "windowZoom", r: "platform" };
+  return officialMainFixture().replace(/\b(j9|A9|e|t|n|r)\b/g, (alias) => aliases[alias]);
 }
 
 function evaluateMainFixture(source, platform, appearance) {
@@ -146,10 +146,10 @@ test("main-process patch preserves current minified aliases", () => {
   const patched = applyFramelessTitlebarMainPatch(source);
   assert.notEqual(patched, source);
   assert.equal(framelessTitlebarMainContract(patched), "patched");
-  assert.match(patched, /platform===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:overlay\(windowZoom\)/);
-  assert.match(patched, /platform===`linux`\?\{titleBarStyle:`hidden`\}/);
-  assert.match(patched, /this\.windowZooms\.set\(platform\.id,zoom\),platform\.setTitleBarOverlay\(overlay\(zoom\)\)/);
-  assert.match(patched, /installApplicationMenuTitleBarOverlaySync\(windowType,zoom\)\{if\(process\.platform!==`win32`\|\|zoom!==`primary`&&zoom!==`detached`\)return;/);
+  assert.match(patched, /if\("win32"===platform\)return\{titleBarStyle:"hidden",titleBarOverlay:overlay\(windowZoom\)\};if\("linux"===platform\)return\{titleBarStyle:"hidden"\};/);
+  assert.match(patched, /if\("darwin"===platform\)return\{titleBarStyle:"hiddenInset",titleBarOverlay:!0,trafficLightPosition:buttonPosition\(44,windowZoom\)\};if\("linux"===platform\)return\{titleBarStyle:"hidden"\};/);
+  assert.match(patched, /:"win32"===process\.platform&&\(this\.windowZooms\.set\(windowZoom\.id,zoom\),windowZoom\.setTitleBarOverlay\(overlay\(zoom\)\)\)/);
+  assert.match(patched, /installApplicationMenuTitleBarOverlaySync\(windowType,zoom\)\{if\("win32"!==process\.platform\|\|"primary"!==zoom&&"detached"!==zoom\)return;/);
   assert.equal(applyFramelessTitlebarMainPatch(patched), patched);
 });
 
@@ -164,16 +164,16 @@ test("main-process patch rejects incomplete, duplicate, and mixed contracts byte
   const current = officialMainFixture();
   const patched = applyFramelessTitlebarMainPatch(current);
   const currentAnchors = [
-    "n===`win32`||n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}",
-    "case`detached`:return n===`darwin`?{titleBarStyle:`hiddenInset`,titleBarOverlay:!0,trafficLightPosition:A9(k9,r)}:{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}",
-    "(process.platform===`win32`||process.platform===`linux`)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t)))",
-    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`&&process.platform!==`linux`||t!==`primary`&&t!==`detached`)return;",
+    'if("win32"===r||"linux"===r)return{titleBarStyle:"hidden",titleBarOverlay:j9(n)};',
+    'case"detached":if("darwin"===r)return{titleBarStyle:"hiddenInset",titleBarOverlay:!0,trafficLightPosition:A9(44,n)};return{titleBarStyle:"hidden",titleBarOverlay:j9(n)}',
+    '("win32"===process.platform||"linux"===process.platform)&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t)))',
+    'installApplicationMenuTitleBarOverlaySync(e,t){if("win32"!==process.platform&&"linux"!==process.platform||"primary"!==t&&"detached"!==t)return;',
   ];
   const patchedAnchors = [
-    "n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}:n===`linux`?{titleBarStyle:`hidden`}",
-    "case`detached`:return n===`darwin`?{titleBarStyle:`hiddenInset`,titleBarOverlay:!0,trafficLightPosition:A9(k9,r)}:n===`linux`?{titleBarStyle:`hidden`}:{titleBarStyle:`hidden`,titleBarOverlay:j9(r)}",
-    "process.platform===`win32`&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t)))",
-    "installApplicationMenuTitleBarOverlaySync(e,t){if(process.platform!==`win32`||t!==`primary`&&t!==`detached`)return;",
+    'if("win32"===r)return{titleBarStyle:"hidden",titleBarOverlay:j9(n)};if("linux"===r)return{titleBarStyle:"hidden"};',
+    'case"detached":if("darwin"===r)return{titleBarStyle:"hiddenInset",titleBarOverlay:!0,trafficLightPosition:A9(44,n)};if("linux"===r)return{titleBarStyle:"hidden"};return{titleBarStyle:"hidden",titleBarOverlay:j9(n)}',
+    '"win32"===process.platform&&(this.windowZooms.set(n.id,t),n.setTitleBarOverlay(j9(t)))',
+    'installApplicationMenuTitleBarOverlaySync(e,t){if("win32"!==process.platform||"primary"!==t&&"detached"!==t)return;',
   ];
   const sources = [current + current, patched + patched, current + patched];
   for (let index = 0; index < currentAnchors.length; index++) {
@@ -189,9 +189,10 @@ test("main-process patch rejects incomplete, duplicate, and mixed contracts byte
     );
   }
   sources.push(
-    current.replace("titleBarOverlay:j9(r)", "titleBarOverlay:j9(r,1)"),
-    patched.replace("n===`linux`?{titleBarStyle:`hidden`}", "n===`linux`?{titleBarStyle:`default`}"),
-    current.replace("trafficLightPosition:A9(k9,r)}:{titleBarStyle:`hidden`", "trafficLightPosition:A9(k9,r,1)}:{titleBarStyle:`hidden`"),
+    current.replace("titleBarOverlay:j9(n)", "titleBarOverlay:j9(n,1)"),
+    patched.replace('if("linux"===r)return{titleBarStyle:"hidden"}', 'if("linux"===r)return{titleBarStyle:"default"}'),
+    current.replace('trafficLightPosition:A9(44,n)};return{titleBarStyle:"hidden"', 'trafficLightPosition:A9(44,n),x:1};return{titleBarStyle:"hidden"'),
+    current.replace('"win32"===process.platform||"linux"===process.platform)&&(this', '"linux"===process.platform||"win32"===process.platform)&&(this'),
   );
   for (const source of sources) {
     const result = captureWarnings(() => applyFramelessTitlebarMainPatch(source));
@@ -276,3 +277,34 @@ test("webview descriptor selects the current shared chrome mapping across hash c
   assert.equal(descriptor.assetMatch(applyFramelessTitlebarWebviewPatch(officialWebviewFixture())), true);
   assert.equal(descriptor.assetMatch("export{chrome}"), false);
 });
+
+test(
+  "both descriptors match the current signed release exactly once",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+    const buildDir = path.join(root, ".vite", "build");
+    const chunks = fs.readdirSync(buildDir).filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name));
+    const owners = [];
+    for (const name of chunks) {
+      const source = fs.readFileSync(path.join(buildDir, name), "utf8");
+      const result = captureWarnings(() => applyFramelessTitlebarMainPatch(source));
+      if (result.value === source) {
+        assert.equal(result.warnings.length, 1, name);
+        continue;
+      }
+      assert.deepEqual(result.warnings, [], name);
+      assert.equal(framelessTitlebarMainContract(result.value), "patched");
+      new vm.Script(result.value, { filename: name });
+      assert.equal(applyFramelessTitlebarMainPatch(result.value), result.value);
+      owners.push(name);
+    }
+    assert.equal(owners.length, 1);
+
+    const assetsDir = path.join(root, "webview", "assets");
+    const assets = fs.readdirSync(assetsDir)
+      .filter((name) => CHROME_MAPPING_ASSET_PATTERN.test(name))
+      .filter((name) => framelessTitlebarWebviewContract(fs.readFileSync(path.join(assetsDir, name), "utf8")) === "current");
+    assert.equal(assets.length, 1);
+  },
+);

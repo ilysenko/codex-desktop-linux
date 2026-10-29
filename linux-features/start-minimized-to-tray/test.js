@@ -20,25 +20,23 @@ const {
 } = require("../agent-workspace/patch.js");
 const { applyMainBundlePatch: applyReadAloudMainBundlePatch } = require("../read-aloud/patch.js");
 
-// Signed stable 26.1007.21434 startup contracts, with Electron services supplied by
-// the harness. This exercises the actual patched control flow and handlers.
-const windowModeFixture = 'class MessageHandler{setPrimaryWindowMode(e,t){let n=g.BrowserWindow.fromWebContents(e);if(!n||n.isDestroyed())return;let r=this.windowManager.getPrimaryWindow();if(!r||r.isDestroyed()||r.id!==n.id)return;if(!this.shouldShowPrimaryWindow()&&!n.isVisible()){n.once(`show`,()=>this.setPrimaryWindowMode(e,t));return}let i=RAe(t);if((0,W.default)(this.primaryWindowMode,t)){i!=null&&this.showPrimaryWindow(n);return}if(this.primaryWindowMode=t,i!=null){this.primaryWindowRestoreBounds??={bounds:n.getNormalBounds(),wasMaximized:n.isMaximized(),wasFullScreen:n.isFullScreen()},n.isFullScreen()&&n.setFullScreen(!1),n.isMaximized()&&n.unmaximize(),n.setResizable(!0);let e=g.screen.getDisplayMatching(n.getNormalBounds()).workAreaSize,t=process.platform===`win32`?{width:Math.max(0,n.getBounds().width-n.getContentBounds().width),height:Math.max(0,n.getBounds().height-n.getContentBounds().height)}:{width:0,height:0},r={width:e.width-t.width,height:e.height-t.height},a={width:Math.min(i.width,r.width),height:Math.min(i.height,r.height)},o=process.platform===`win32`,s=o&&(a.width>=r.width*VY||a.height>=r.height*VY),c=this.windowManager.getPrimaryMinimumSize();n.setMaximizable(o),n.setFullScreenable(!1),n.setMinimumSize(Math.min(c.width,a.width),Math.min(c.height,a.height)),n.setSize(a.width,a.height),s||n.center(),this.showPrimaryWindow(n),s&&n.maximize();return}if(n.setResizable(!0),n.setMaximizable(!0),n.setFullScreenable(!0),this.primaryWindowRestoreBounds){let{bounds:e,wasMaximized:t,wasFullScreen:r}=this.primaryWindowRestoreBounds;this.primaryWindowRestoreBounds=null;let i=this.windowManager.getPrimaryMinimumSize();n.setMinimumSize(i.width,i.height);let a={...e,width:Math.max(e.width,i.width),height:Math.max(e.height,i.height)};n.isMaximized()&&n.unmaximize(),n.setBounds(a),t&&n.maximize(),r&&n.setFullScreen(!0)}this.windowManager.syncPrimaryMinimumSize(),this.showPrimaryWindow(n)}showPrimaryWindow(e){e.isVisible()||(e.show(),e.focus())}}';
+// Signed stable 26.1027.30824 (rspack) startup contracts, with Electron services
+// supplied by the harness. This exercises the actual patched control flow and handlers.
+const windowModeFixture = 'class MessageHandler{' + "setPrimaryWindowMode(e,t){let r=ea.BrowserWindow.fromWebContents(e);if(!r||r.isDestroyed())return;let n=this.windowManager.getPrimaryWindow();if(!n||n.isDestroyed()||n.id!==r.id)return;if(!this.shouldShowPrimaryWindow()&&!r.isVisible())return void r.once(\"show\",()=>this.setPrimaryWindowMode(e,t));let i=\"onboarding\"!==t.mode?null:\"v2\"===t.onboardingVariant?{width:1090,height:760}:{width:560,height:560};if(ra()(this.primaryWindowMode,t)){null!=i&&this.showPrimaryWindow(r);return}if(this.primaryWindowMode=t,null!=i){null==this.primaryWindowRestoreBounds&&(this.primaryWindowRestoreBounds={bounds:r.getNormalBounds(),wasMaximized:r.isMaximized(),wasFullScreen:r.isFullScreen()}),r.isFullScreen()&&r.setFullScreen(!1),r.isMaximized()&&r.unmaximize(),r.setResizable(!0);let e=ea.screen.getDisplayMatching(r.getNormalBounds()).workAreaSize,t=\"win32\"===process.platform?{width:Math.max(0,r.getBounds().width-r.getContentBounds().width),height:Math.max(0,r.getBounds().height-r.getContentBounds().height)}:{width:0,height:0},n={width:e.width-t.width,height:e.height-t.height},s={width:Math.min(i.width,n.width),height:Math.min(i.height,n.height)},a=\"win32\"===process.platform,o=a&&(s.width>=.9*n.width||s.height>=.9*n.height),l=this.windowManager.getPrimaryMinimumSize();r.setMaximizable(a),r.setFullScreenable(!1),r.setMinimumSize(Math.min(l.width,s.width),Math.min(l.height,s.height)),r.setSize(s.width,s.height),o||r.center(),this.showPrimaryWindow(r),o&&r.maximize();return}if(r.setResizable(!0),r.setMaximizable(!0),r.setFullScreenable(!0),this.primaryWindowRestoreBounds){let{bounds:e,wasMaximized:t,wasFullScreen:n}=this.primaryWindowRestoreBounds;this.primaryWindowRestoreBounds=null;let i=this.windowManager.getPrimaryMinimumSize();r.setMinimumSize(i.width,i.height);let s={...e,width:Math.max(e.width,i.width),height:Math.max(e.height,i.height)};r.isMaximized()&&r.unmaximize(),r.setBounds(s),t&&r.maximize(),n&&r.setFullScreen(!0)}this.windowManager.syncPrimaryMinimumSize(),this.showPrimaryWindow(r)}showPrimaryWindow(e){e.isVisible()||(e.show(),e.focus())}" + '}';
 
 function startupFixture() {
-  return windowModeFixture + `class IpcHost{handlers(){return {"set-remote-wsl-connections-enabled":async()=>({})}}}
-class WindowManager{install(window,maximized){if(maximized){this.pendingRestoredMaximization=new Set([window]);let apply=()=>{window.isDestroyed()||(window.maximize(),this.pendingRestoredMaximization.delete(window))};window.once(\`ready-to-show\`,()=>{window.isDestroyed()||(window.isVisible()?apply():window.once(\`show\`,apply))})}}}
-async function startup(e={isBackgroundLaunch:false}){let V=await m.O({moduleDir:__dirname}),unused=0;
-let options={canHideLastWindowToTray:Z9,isRemoteHostedPIPEnabled:noop,shouldShowPrimaryWindow:()=>!e.isBackgroundLaunch};
-let Ke=process.env.CODEX_ELECTRON_START_IN_BACKGROUND===\`1\`,qe=(e,t=!0)=>{if(!t){e.showInactive();return}e.isMinimized()&&e.restore(),e.show(),e.focus()},Je=async(e,t)=>{try{U.hotkeyWindowLifecycleManager.hide();let t=U.getPrimaryWindow()??await Ce(\`/\`);if(t==null)return;qe(t)}catch(e){throw e}};
-let We={deepLinks:{queueProcessArgs:()=>!0}};w(e=>{let n=!1;if(We.deepLinks.queueProcessArgs(e)){n&&Je();return}Je()});
-let Ye=async(e,t)=>{if(!xe)return null;U.hotkeyWindowLifecycleManager.hide();let n=U.getPrimaryWindow(),r=n??await Ce(e);return r==null?null:(qe(r),r)},Qe=()=>setup;
-(L||process.platform===\`linux\`)&&Qe();
-let st=await U.ensureWindow({background:e.isBackgroundLaunch});st?.once(\`show\`,()=>{_e.handleInitialWindowVisible()}),st!=null&&!e.isBackgroundLaunch&&(qe(st,!Ke),_e.handleInitialWindowVisible());
-e.onInteractiveLaunch=()=>{st!=null&&!st.isDestroyed()&&qe(st),noop()};
-let backfill={shouldShow:()=>!e.isBackgroundLaunch},progress={shouldShow:()=>!e.isBackgroundLaunch};
+  return windowModeFixture + `class IpcHost{handlers={"set-remote-wsl-connections-enabled":async()=>({})}}
+class WindowManager{install(F,x){if(x){this.pendingRestoredMaximization=new Set;this.pendingRestoredMaximization.add(F);let e=()=>{F.isDestroyed()||(F.maximize(),this.pendingRestoredMaximization.delete(F))};F.once("ready-to-show",()=>{F.isDestroyed()||(F.isVisible()?e():F.once("show",e))})}}}
+function eR7(){return eR5&&eR2?.isReady()===!0}
+async function startup(e={isBackgroundLaunch:false}){let V=await (0,m.O)({moduleDir:__dirname}),unused=0;
+let options={canHideLastWindowToTray:eR7,isRemoteHostedPIPEnabled:noop,shouldShowPrimaryWindow:()=>!e.isBackgroundLaunch};
+let Ke="1"===process.env.CODEX_ELECTRON_START_IN_BACKGROUND,qe=(e,t=!0)=>{if(!t){e.showInactive(),_e.handleInitialWindowVisible();return}e.isMinimized()&&e.restore(),e.show(),_e.handleInitialWindowVisible(),e.focus()},Je=async(e,t)=>{try{U.hotkeyWindowLifecycleManager.hide();let t=U.getPrimaryWindow()??await Ce("/");if(null==t)return;qe(t)}catch(e){throw e}},Ye=async(e,t)=>{if(!xe)return null;U.hotkeyWindowLifecycleManager.hide();let n=U.getPrimaryWindow(),r=n??await Ce(e);return null==r?null:(qe(r),r)},Qe=()=>setup;(L||"linux"===process.platform)&&Qe();
+let st=We.deepLinks.isWakeOnlyLaunch()&&!eX?null:await U.ensureWindow({background:e.isBackgroundLaunch});st?.once("show",()=>{_e.handleInitialWindowVisible()}),null==st||e.isBackgroundLaunch||qe(st,!Ke);
+e.onInteractiveLaunch=()=>{null==st||st.isDestroyed()||qe(st),noop()};
+let backfill={shouldShow:()=>!e.isBackgroundLaunch&&!We.deepLinks.isWakeOnlyLaunch()},progress={shouldShow:()=>!e.isBackgroundLaunch&&!We.deepLinks.isWakeOnlyLaunch()};
 await beforeFinish?.(Je,Ye,e.onInteractiveLaunch);
-let gt=st;gt==null?gt=await U.ensureWindow({background:e.isBackgroundLaunch}):gt.isDestroyed()&&(gt=null);
-gt&&(st==null&&!e.isBackgroundLaunch&&_e.handleInitialWindowVisible(),gt!==st&&!e.isBackgroundLaunch&&qe(gt,!Ke));xe=!0;
+let gt=st;if(null==gt&&(!We.deepLinks.isWakeOnlyLaunch()||eX)?gt=await U.ensureWindow({background:e.isBackgroundLaunch}):gt?.isDestroyed()&&(gt=null),gt){gt!==st&&gt.once("show",()=>{_e.handleInitialWindowVisible()}),gt===st||e.isBackgroundLaunch||qe(gt,!Ke)}
+xe=!0,w(e=>{let n=!1;if(We.deepLinks.queueProcessArgs(e)){n&&Je();return}n?Je():Je({channel:"shortcut"})});
 return {secondInstance:Je,trayOpen:Ye,interactive:e.onInteractiveLaunch,shouldShow:options.shouldShowPrimaryWindow,backfill:backfill.shouldShow,progress:progress.shouldShow};}`;
 }
 
@@ -51,7 +49,7 @@ test("main patch restores exactly one working global-state handler pair", async 
   const values = new Map();
   const host = new IpcHost();
   host.globalState = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
-  const handlers = host.handlers();
+  const handlers = host.handlers;
   assert.deepEqual(
     JSON.parse(JSON.stringify(await handlers["get-global-state"]({ params: { key: SETTINGS_KEY } }))),
     {},
@@ -114,7 +112,7 @@ test("all three features compose their owned global-state keys in every patch or
         values.set(key, value);
       },
     };
-    const handlers = host.handlers();
+    const handlers = host.handlers;
     for (const key of allowedKeys) {
       assert.deepEqual(await handlers["set-global-state"]({ params: { key, value: key } }), { success: true });
       assert.deepEqual(await handlers["get-global-state"]({ params: { key } }), { value: key });
@@ -169,7 +167,8 @@ async function runStartup({ preference = true, onlyOnBoot = false, env = {}, cgr
       if (cgroup instanceof Error) throw cgroup;
       return cgroup;
     } }; },
-    U, Z9: () => ready, setup, beforeFinish, launch: { isBackgroundLaunch: upstreamBackground },
+    U, eR5: true, eR2: { isReady: () => ready }, setup, beforeFinish, launch: { isBackgroundLaunch: upstreamBackground },
+    We: { deepLinks: { isWakeOnlyLaunch: () => false, queueProcessArgs: () => true } }, eX: false,
     L: platform === "win32", xe: false, noop: () => {}, __dirname: "/bundle",
     Ce: async () => mockWindow, _e: { handleInitialWindowVisible: () => calls.push("attribution") },
     setTimeout, clearTimeout,
@@ -186,7 +185,7 @@ test("hidden cold launch avoids show/focus and attribution, even with an existin
     const { calls, handlers } = await runStartup({ existing });
     assert.deepEqual(calls, []);
     await handlers.trayOpen("/", {});
-    assert.deepEqual(calls, ["hideHotkey", "show", "focus"]);
+    assert.deepEqual(calls, ["hideHotkey", "show", "attribution", "focus"]);
   }
 });
 
@@ -196,7 +195,7 @@ test("current background guards suppress progress windows until interactive acti
     assert.equal(guard(), false);
   }
   hidden.handlers.interactive();
-  assert.deepEqual(hidden.calls, ["show", "focus"]);
+  assert.deepEqual(hidden.calls, ["show", "attribution", "focus"]);
   for (const guard of [hidden.handlers.shouldShow, hidden.handlers.backfill, hidden.handlers.progress]) {
     assert.equal(guard(), true);
   }
@@ -211,7 +210,7 @@ test("upstream background-launch state remains independent from the feature pref
     assert.deepEqual(background.calls, []);
     assert.equal(background.handlers.shouldShow(), false);
     await background.handlers.secondInstance();
-    assert.deepEqual(background.calls, ["hideHotkey", "show", "focus"]);
+    assert.deepEqual(background.calls, ["hideHotkey", "show", "attribution", "focus"]);
     // Clearing our preference decision cannot rewrite upstream launch state.
     assert.equal(background.handlers.shouldShow(), false);
     assert.equal(background.handlers.backfill(), false);
@@ -221,12 +220,12 @@ test("upstream background-launch state remains independent from the feature pref
 test("second launch reveals the hidden window through the upstream handler", async () => {
   const { calls, handlers } = await runStartup();
   await handlers.secondInstance();
-  assert.deepEqual(calls, ["hideHotkey", "show", "focus"]);
+  assert.deepEqual(calls, ["hideHotkey", "show", "attribution", "focus"]);
 });
 
 test("boot-only works independently, overrides all-starts preference, and leaves manual starts visible", async () => {
   for (const preference of [true, false, null]) {
-    assert.deepEqual((await runStartup({ preference, onlyOnBoot: true })).calls, ["show", "focus", "attribution"]);
+    assert.deepEqual((await runStartup({ preference, onlyOnBoot: true })).calls, ["show", "attribution", "focus"]);
     for (const marker of [
       { argv: ["ChatGPT", "--codex-autostart", "--ozone-platform=wayland"] },
       { env: { DESKTOP_AUTOSTART_ID: "session-client" } },
@@ -236,7 +235,7 @@ test("boot-only works independently, overrides all-starts preference, and leaves
       const hidden = await runStartup({ preference, onlyOnBoot: true, ...marker });
       assert.deepEqual(hidden.calls, []);
       await hidden.handlers.secondInstance();
-      assert.deepEqual(hidden.calls, ["hideHotkey", "show", "focus"]);
+      assert.deepEqual(hidden.calls, ["hideHotkey", "show", "attribution", "focus"]);
     }
   }
 });
@@ -245,15 +244,15 @@ test("boot-only still falls back on unavailable tray, reveals on activation, and
   const options = { onlyOnBoot: true, preference: false, argv: ["ChatGPT", "--codex-autostart"] };
   const tray = await runStartup(options);
   await tray.handlers.trayOpen("/", {});
-  assert.deepEqual(tray.calls, ["hideHotkey", "show", "focus"]);
+  assert.deepEqual(tray.calls, ["hideHotkey", "show", "attribution", "focus"]);
   for (const overrides of [
     { ready: false }, { platform: "win32" },
     { argv: [...options.argv, "codex://threads/123"] },
     { argv: [...options.argv, "/home/user/file.txt"] },
     { argv: ["ChatGPT"], cgroup: Error("unavailable") },
-  ]) assert.deepEqual((await runStartup({ ...options, ...overrides })).calls, ["show", "focus", "attribution"]);
+  ]) assert.deepEqual((await runStartup({ ...options, ...overrides })).calls, ["show", "attribution", "focus"]);
   for (const onlyOnBoot of [false, null, "true"]) {
-    assert.deepEqual((await runStartup({ ...options, onlyOnBoot })).calls, ["show", "focus", "attribution"]);
+    assert.deepEqual((await runStartup({ ...options, onlyOnBoot })).calls, ["show", "attribution", "focus"]);
   }
 });
 
@@ -287,8 +286,8 @@ test("launcher captures login autostart before the native process moves into a C
     assert.equal(directive, "electron-arg --codex-autostart\n");
     const args = ["ChatGPT", directive.trim().slice("electron-arg ".length)];
     assert.deepEqual((await runStartup({ preference: false, onlyOnBoot: true, argv: args, cgroup: nativeScope })).calls, []);
-    assert.deepEqual((await runStartup({ preference: false, onlyOnBoot: false, argv: args, cgroup: nativeScope })).calls, ["show", "focus", "attribution"]);
-    assert.deepEqual((await runStartup({ onlyOnBoot: true, argv: [...args, "codex://threads/123"], cgroup: nativeScope })).calls, ["show", "focus", "attribution"]);
+    assert.deepEqual((await runStartup({ preference: false, onlyOnBoot: false, argv: args, cgroup: nativeScope })).calls, ["show", "attribution", "focus"]);
+    assert.deepEqual((await runStartup({ onlyOnBoot: true, argv: [...args, "codex://threads/123"], cgroup: nativeScope })).calls, ["show", "attribution", "focus"]);
   }
   for (const cgroup of [nativeScope, "0::/app-codex@autostart.service.bak\n", "0::/autostart.service\n", "malformed:/app-codex@autostart.service\n", ""]) {
     fs.writeFileSync(cgroupFile, cgroup);
@@ -346,19 +345,19 @@ test("the standard launcher forwards automatic and explicit login markers withou
 test("a queued second-instance deep link also reveals the hidden window", async () => {
   const { calls, secondInstanceArgs } = await runStartup();
   secondInstanceArgs(["ChatGPT", "codex://threads/123"]);
-  assert.deepEqual(calls, ["hideHotkey", "show", "focus"]);
+  assert.deepEqual(calls, ["hideHotkey", "show", "attribution", "focus"]);
   const normal = await runStartup({ preference: false });
   normal.secondInstanceArgs(["ChatGPT", "codex://threads/123"]);
-  assert.deepEqual(normal.calls, ["show", "focus", "attribution"]);
+  assert.deepEqual(normal.calls, ["show", "attribution", "focus"]);
 });
 
 test("tray and second-instance activation reveal an existing hidden window before host readiness", async () => {
   for (const activate of [(second) => second(), (_, tray) => tray("/", {})]) {
     const { calls } = await runStartup({ beforeFinish: activate });
-    assert.deepEqual(calls, ["hideHotkey", "show", "focus"]);
+    assert.deepEqual(calls, ["hideHotkey", "show", "attribution", "focus"]);
   }
   const { calls } = await runStartup({ preference: false, beforeFinish: (second) => second() });
-  assert.deepEqual(calls, ["show", "focus", "attribution", "hideHotkey", "show", "focus"]);
+  assert.deepEqual(calls, ["show", "attribution", "focus", "hideHotkey", "show", "attribution", "focus"]);
 });
 
 test("saved maximization waits for explicit reveal instead of showing a hidden startup window", () => {
@@ -395,10 +394,9 @@ function windowModeHarness(hidden, initiallyVisible = !hidden) {
     getPrimaryMinimumSize: () => ({ width: 500, height: 500 }),
     syncPrimaryMinimumSize: () => calls.push("syncPrimaryMinimumSize") };
   const context = {
-    g: { BrowserWindow: { fromWebContents: () => window }, screen: { getDisplayMatching: () => ({ workAreaSize: { width: 1280, height: 800 } }) } },
-    W: { default: (a, b) => JSON.stringify(a) === JSON.stringify(b) },
-    RAe: mode => mode.mode === "onboarding" ? { width: 1090, height: 760 } : null,
-    VY: 0.9, process: { platform: "linux" }, setTimeout, clearTimeout,
+    ea: { BrowserWindow: { fromWebContents: () => window }, screen: { getDisplayMatching: () => ({ workAreaSize: { width: 1280, height: 800 } }) } },
+    ra: () => (a, b) => JSON.stringify(a) === JSON.stringify(b),
+    process: { platform: "linux" }, setTimeout, clearTimeout,
   };
   const Handler = vm.runInNewContext(`${applyMainPatch(startupFixture())};MessageHandler`, context);
   const handler = new Handler(); handler.windowManager = manager; handler.shouldShowPrimaryWindow = () => true;
@@ -461,7 +459,7 @@ test("disabled/unset/invalid preference, non-Linux, files, and URIs preserve vis
     { argv: ["ChatGPT", "/home/user/file.txt"] },
   ]) {
     const { calls } = await runStartup(options);
-    assert.deepEqual(calls, ["show", "focus", "attribution"]);
+    assert.deepEqual(calls, ["show", "attribution", "focus"]);
   }
   assert.deepEqual((await runStartup({ preference: false, background: true })).calls,
     ["showInactive", "attribution"]);
@@ -472,7 +470,7 @@ test("failed or unavailable tray leaves the window visible", async () => {
   const rejection = Promise.reject(Error("no tray"));
   rejection.catch(() => {});
   for (const options of [{ ready: false }, { setup: rejection, ready: false }]) {
-    assert.deepEqual((await runStartup(options)).calls, ["show", "focus", "attribution"]);
+    assert.deepEqual((await runStartup(options)).calls, ["show", "attribution", "focus"]);
   }
 });
 
@@ -486,7 +484,7 @@ test("activation during startup cancels the hidden decision before final reveal"
   const window = { show:()=>calls.push("show"), focus:()=>{}, isMinimized:()=>false, isDestroyed:()=>false, once(){} };
   const context = { process:{platform:"linux",argv:["ChatGPT"],env:{}},m:{O:async()=>({globalState:{getStored:key=>key===SETTINGS_KEY}})},
     U:{windowManager:{},ensureWindow:async()=>window,getPrimaryWindow:()=>null,hotkeyWindowLifecycleManager:{hide(){}}},
-    Z9:()=>true,L:false,xe:false,setup,Ce:async()=>null,noop(){},__dirname:"/",_e:{handleInitialWindowVisible(){}},
+    eR5:true,eR2:{isReady:()=>true},We:{deepLinks:{isWakeOnlyLaunch:()=>false,queueProcessArgs:()=>true}},eX:false,L:false,xe:false,setup,Ce:async()=>null,noop(){},__dirname:"/",_e:{handleInitialWindowVisible(){}},
     setTimeout,clearTimeout,beforeFinish:null,w(){},set activate(value){activate=value;} };
   const running = vm.runInNewContext(`${patched};startup()`,context);
   await new Promise(resolve=>setImmediate(resolve));
@@ -523,11 +521,11 @@ test("main patch is idempotent, preserves aliases, and fails closed on absent/am
     patched.replace("e.onInteractiveLaunch=()=>{", "e.onInteractiveLaunch=()=>{};changed=()=>{"),
     source + "e.isBackgroundLaunch;",
     source.replace("CODEX_ELECTRON_START_IN_BACKGROUND", "CHANGED"),
-    source.replace("canHideLastWindowToTray", "changed"), source.replace("gt!==st", "gt===st"),
+    source.replace("canHideLastWindowToTray", "changed"), source.replace("gt===st||", "gt!==st||"),
     source.replace("moduleDir:__dirname", "moduleDir:changed"), source.replace("Ye=async", "Ye=changed"),
     source.replace("setPrimaryWindowMode(e,t){", "setPrimaryWindowMode(e,other){"),
     source.replace("this.windowManager.syncPrimaryMinimumSize()", "this.windowManager.changed()"),
-    source.replace("window.isVisible()?apply()", "window.isVisible()?changed()"),
+    source.replace("F.isVisible()?e()", "F.isVisible()?changed()"),
     source.replace("shouldShow:()=>!e.isBackgroundLaunch", "shouldShow:()=>false"),
     source.replace("if(!this.shouldShowPrimaryWindow()", "if(this.shouldShowPrimaryWindow()")]) {
     const result = captureWarnings(() => applyMainPatch(drift));
@@ -543,8 +541,8 @@ test("partial startup declarations are rejected before inserting another feature
     "codexLinuxStartMinimizedPreferences={},codexLinuxStartMinimized=!0,",
     "codexLinuxStartMinimizedRequested=!0,",
   ]) {
-    const partial = source.replace("let V=await m.O({moduleDir:__dirname}),",
-      `let V=await m.O({moduleDir:__dirname}),${declaration}`);
+    const partial = source.replace("let V=await (0,m.O)({moduleDir:__dirname}),",
+      `let V=await (0,m.O)({moduleDir:__dirname}),${declaration}`);
     const result = captureWarnings(() => applyMainPatch(partial));
     assert.equal(result.value, partial);
     assert.deepEqual(result.warnings, ["WARN: Start minimized to tray patched startup contract missing or ambiguous"]);
@@ -558,7 +556,7 @@ test("complete patched startup validates renderer replay, readiness and each act
     ["pending.mode=t;return", "return"],
     ["webContents:e,mode:t", "webContents:other,mode:t"],
     ["this.setPrimaryWindowMode(pending.webContents,pending.mode)", "this.setPrimaryWindowMode(pending.webContents,other)"],
-    ["if(this.codexLinuxStartMinimizedWindowMode?.window===n)this.codexLinuxStartMinimizedWindowMode=null", "this.codexLinuxStartMinimizedWindowMode=null"],
+    ["if(this.codexLinuxStartMinimizedWindowMode?.window===r)this.codexLinuxStartMinimizedWindowMode=null", "this.codexLinuxStartMinimizedWindowMode=null"],
     ["U.windowManager.codexLinuxStartMinimized=codexLinuxStartMinimized;", ""],
     ["codexLinuxStartMinimized=codexLinuxStartMinimized&&ready", "codexLinuxStartMinimized=ready"],
     ["if(!xe&&(!codexLinuxStartMinimizedRequested||U.getPrimaryWindow()==null))", "if(!xe)"],
@@ -795,3 +793,29 @@ test("manifest is disabled by default and both descriptors are enforced only whe
   assert.equal(loadLinuxFeaturePatchDescriptors(options).length, 2);
   assert.equal(JSON.parse(fs.readFileSync(path.join(__dirname, "feature.json"))).defaultEnabled, false);
 });
+
+test(
+  "startup patch changes exactly one current signed main-process chunk and stays idempotent",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
+    const chunks = fs.readdirSync(buildDir).filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name));
+    const changed = [];
+    for (const name of chunks) {
+      const source = fs.readFileSync(path.join(buildDir, name), "utf8");
+      const result = captureWarnings(() => applyMainPatch(source));
+      if (result.value === source) {
+        assert.equal(result.warnings.length, 1, name);
+        continue;
+      }
+      assert.deepEqual(result.warnings, [], name);
+      new vm.Script(result.value, { filename: name });
+      assert.equal(result.value.split("codexLinuxStartMinimizedRequested=codexLinuxStartMinimized,").length, 2);
+      const reapplied = captureWarnings(() => applyMainPatch(result.value));
+      assert.equal(reapplied.value, result.value);
+      assert.deepEqual(reapplied.warnings, []);
+      changed.push(name);
+    }
+    assert.equal(changed.length, 1);
+  },
+);

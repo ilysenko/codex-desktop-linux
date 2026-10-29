@@ -2,9 +2,10 @@
 
 const VALID_GRAVITIES = new Set(["bottom-right", "bottom-left", "top-right", "top-left"]);
 const DESCRIPTOR_ID = "pet-overlay-main";
-const AVATAR_SELECTION_REFRESH_MARKER = "codexPetOverlayRefreshAvatarWindows";
+const AVATAR_OVERLAY_APPEARANCE = 'appearance:"avatarOverlay"';
 const WAYLAND_WINDOW = "process.platform===`linux`&&require(`electron`).app.commandLine.getSwitchValue(`ozone-platform`)===`wayland`";
-const NATIVE_DRAW_CONSTRAINT = `constrainNativeDrawWindowToDisplay:process.platform===\`win32\`||${WAYLAND_WINDOW}&&!this.codexPetOverlayIsNativeKWin()`;
+const UPSTREAM_NATIVE_DRAW_CONSTRAINT = 'constrainNativeDrawWindowToDisplay:"win32"===process.platform';
+const NATIVE_DRAW_CONSTRAINT = `${UPSTREAM_NATIVE_DRAW_CONSTRAINT}||${WAYLAND_WINDOW}&&!this.codexPetOverlayIsNativeKWin()`;
 const KWIN_COORDINATE_CONSUMERS = [
   "updateCssPetControlsProximityTracking", "sendCursorPointToAvatarOverlay",
   "sendComputerUseCursorLocationToRenderer", "isOverlayWindowPointerDragActive",
@@ -84,30 +85,25 @@ function boolLiteral(value) {
   return value ? "!0" : "!1";
 }
 
-function avatarOverlayRegionStart(source) {
-  const routeIndex = source.indexOf("`/avatar-overlay`");
-  if (routeIndex !== -1) {
-    return routeIndex;
-  }
-  const stateIndex = source.indexOf("avatar-overlay-open-state-changed");
-  return stateIndex === -1 ? 0 : stateIndex;
-}
-
+// The avatar overlay manager is the outermost class that creates the
+// avatarOverlay window. Classes before it are skipped as whole blocks.
 function findAvatarOverlayClass(source) {
+  const marker = source.indexOf(AVATAR_OVERLAY_APPEARANCE);
+  if (marker === -1 || source.indexOf(AVATAR_OVERLAY_APPEARANCE, marker + 1) !== -1) {
+    return null;
+  }
   const classRegex = /class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[A-Za-z_$][\w$.]*)?\{/g;
-  classRegex.lastIndex = avatarOverlayRegionStart(source);
 
   let match;
-  while ((match = classRegex.exec(source)) != null) {
+  while ((match = classRegex.exec(source)) != null && match.index < marker) {
     const openIndex = match.index + match[0].length - 1;
     const closeIndex = findMatchingBrace(source, openIndex);
     if (closeIndex === -1) {
       classRegex.lastIndex = openIndex + 1;
       continue;
     }
-    const text = source.slice(match.index, closeIndex + 1);
-    if (text.includes("appearance:`avatarOverlay`") || text.includes("avatar-overlay-open-state-changed")) {
-      return { start: match.index, end: closeIndex + 1, text };
+    if (closeIndex > marker) {
+      return { start: match.index, end: closeIndex + 1, text: source.slice(match.index, closeIndex + 1) };
     }
     classRegex.lastIndex = closeIndex + 1;
   }
@@ -679,8 +675,8 @@ function patchCreateWindowFrame(source) {
     return source;
   }
   const replacement = method.text.replace(
-    "appearance:`avatarOverlay`,",
-    "appearance:`avatarOverlay`,frame:process.platform===`linux`?!1:!0,",
+    `${AVATAR_OVERLAY_APPEARANCE},`,
+    `${AVATAR_OVERLAY_APPEARANCE},frame:process.platform===\`linux\`?!1:!0,`,
   );
   if (replacement === method.text) {
     console.warn("WARN: Could not identify avatar overlay appearance option - skipping pet overlay frame patch");
@@ -833,9 +829,9 @@ function patchKWinGeometry(source) {
       `if(this.codexPetOverlayIsNativeKWin()){if(this.codexPetOverlayKWinDragState!=null||this.codexPetOverlayKWinHintInFlight||this.codexPetOverlayKWinPendingBounds!=null)return;${boundsArg}??=this.codexPetOverlayKWinGeometry(${windowArg});if(${boundsArg}==null)return;}` +
       method.text.slice(method.match[0].length);
     if (name === "rememberMovedWindow") {
-      const boundary = "return}this.hasDeferredLayout&&";
+      const boundary = `?this.rememberMovedWindow(${windowArg}):(this.hasDeferredLayout&&`;
       if (text.split(boundary).length !== 2) return source;
-      text = text.replace(boundary, `return}if(!this.codexPetOverlayKWinRefresh(${windowArg}))return;this.hasDeferredLayout&&`);
+      text = text.replace(boundary, `?this.rememberMovedWindow(${windowArg}):this.codexPetOverlayKWinRefresh(${windowArg})&&(this.hasDeferredLayout&&`);
     }
     patched = replaceMethodText(patched, method, text);
   }
@@ -849,19 +845,19 @@ function patchKWinCoordinateConsumers(source) {
     if (method?.text.includes("this.codexPetOverlayKWinGeometry(")) continue;
     if (name === "updateCssPetControlsProximityTracking" &&
         method?.text.includes("this.codexPetOverlayKWinProximity()") &&
-        /this\.stopPetControlsProximity\?\?=/.test(method.text)) continue;
+        /null==this\.stopPetControlsProximity&&\([^;]*?this\.stopPetControlsProximity=function\(/.test(method.text)) continue;
     const reads = method && [...method.text.matchAll(/([A-Za-z_$][\w$]*)\.getContentBounds\(\)/g)];
     const currentProximityHelper = name === "updateCssPetControlsProximityTracking" &&
       reads?.length === 0 &&
-      /this\.stopPetControlsProximity\?\?=/.test(method.text) &&
-      /process\.platform===`darwin`&&!this\.isNotchEnabled\?this\.nativeAppearanceBridge:null,[A-Za-z_$][\w$]*,\(\)=>\{this\.updatePetPointerProximity\(\)\},this\.isNotchEnabled\?100:[A-Za-z_$][\w$]*/.test(method.text);
+      /null==this\.stopPetControlsProximity&&\([^;]*?this\.stopPetControlsProximity=function\(/.test(method.text) &&
+      /"darwin"!==process\.platform\|\|this\.isNotchEnabled\?null:this\.nativeAppearanceBridge,[A-Za-z_$][\w$]*,\(\)=>\{this\.updatePetPointerProximity\(\)\},this\.isNotchEnabled\?100:[\w$]+\)/.test(method.text);
     if (reads?.length !== 1 && !currentProximityHelper) return source;
     const [read] = reads ?? [];
     let text = read == null
       ? method.text
       : method.text.replace(read[0], `(this.codexPetOverlayKWinGeometry(${read[1]})??${read[0]})`);
     if (name === "updateCssPetControlsProximityTracking") {
-      text = method.match[0] + "if(this.codexPetOverlayIsNativeKWin()&&this.codexPetOverlayKWinProximity()){if(this.petControlsProximityTimer!=null){clearInterval(this.petControlsProximityTimer);this.petControlsProximityTimer=null}return;}" + text.slice(method.match[0].length);
+      text = method.match[0] + "if(this.codexPetOverlayIsNativeKWin()&&this.codexPetOverlayKWinProximity()){if(this.stopPetControlsProximity!=null){this.stopPetControlsProximity();this.stopPetControlsProximity=null}return;}" + text.slice(method.match[0].length);
     }
     if (name === "isOverlayWindowPointerDragActive") {
       text = method.match[0] + "if(this.codexPetOverlayIsNativeKWin()&&this.codexPetOverlayKWinDragCurrent(this.codexPetOverlayKWinDragState))return!0;" +
@@ -899,30 +895,50 @@ function patchKWinDragCleanup(source) {
     `${needle}this.codexPetOverlayKWinKeyboardRequest=null;this.codexPetOverlayKWinPresentation?.cancel();this.codexPetOverlayKWinPointer?.cancel();this.codexPetOverlayKWinActivation?.cancel();this.codexPetOverlayKWinEpoch=(this.codexPetOverlayKWinEpoch??0)+1;this.codexPetOverlayEndKWinDrag(this.window);this.codexPetOverlayKWinPosition=null;this.codexPetOverlayKWinPendingBounds=null;`));
 }
 
+// getLayoutForDisplay passes its options to an inlined pure layout function:
+// `function({anchor:...}){...}({anchor:...})`. KWin layout fitting needs to
+// call that same pure function repeatedly, so bind it once and hand it to the
+// options helper before the real layout call.
+function inlineLayoutCall(text) {
+  const signatures = [...text.matchAll(/function\(\{anchor:[A-Za-z_$][\w$]*,constrainNativeDrawWindowToDisplay:/g)];
+  if (signatures.length !== 1) return null;
+  const start = signatures[0].index;
+  const paramsOpen = start + "function(".length;
+  const paramsClose = findMatchingBrace(text, paramsOpen);
+  if (paramsClose < 0 || text.slice(paramsClose + 1, paramsClose + 3) !== "){") return null;
+  const bodyClose = findMatchingBrace(text, paramsClose + 2);
+  if (bodyClose < 0 || text.slice(bodyClose + 1, bodyClose + 9) !== "({anchor") return null;
+  const optionsOpen = bodyClose + 2;
+  const optionsClose = findMatchingBrace(text, optionsOpen);
+  if (optionsClose < 0 || text[optionsClose + 1] !== ")") return null;
+  return {
+    start,
+    end: optionsClose + 2,
+    fn: text.slice(start, bodyClose + 1),
+    options: text.slice(optionsOpen, optionsClose + 1),
+  };
+}
+
 function patchNativeDrawBounds(source) {
   const method = findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/);
   if (method?.text.includes(NATIVE_DRAW_CONSTRAINT)) {
     return source;
   }
-  const needle = "constrainNativeDrawWindowToDisplay:process.platform===`win32`";
-  if (method == null || method.text.split(needle).length !== 2) {
+  const call = method == null ? null : inlineLayoutCall(method.text);
+  if (call == null || call.options.split(UPSTREAM_NATIVE_DRAW_CONSTRAINT).length !== 2) {
     console.warn("WARN: Could not identify avatar overlay native drawing constraint - skipping pet overlay bounds patch");
     return source;
   }
   const display = firstMethodArgument(method.match[0], "getLayoutForDisplay", 0);
-  const anchor = method.text.match(/\{anchor:([A-Za-z_$][\w$]*),constrainNativeDrawWindowToDisplay:/)?.[1];
-  const draw = method.text.match(/nativeDrawWindowBounds:([^,]+),displayBounds:/);
+  const anchor = call.options.match(/^\{anchor:([A-Za-z_$][\w$]*),constrainNativeDrawWindowToDisplay:/)?.[1];
+  const draw = call.options.match(/nativeDrawWindowBounds:([^,]+),displayBounds:/);
   const result = method.text.match(/return ([A-Za-z_$][\w$]*)\}$/)?.[1];
   if (!display || !anchor || !draw || !result) return source;
-  let text = method.text.replace(needle, NATIVE_DRAW_CONSTRAINT)
-    .replace(draw[0], `nativeDrawWindowBounds:this.codexPetOverlayIsNativeKWin()?this.codexPetOverlayKWinDrawBounds(${display},${anchor}):${draw[1]},displayBounds:`)
-    .replace(`return ${result}}`, `return this.codexPetOverlayKWinLayout(${display},${result})}`);
-  const calls = [...text.matchAll(/([A-Za-z_$][\w$]*)\(\{anchor:/g)];
-  if (calls.length !== 1) return source;
-  const call = calls[0], open = call.index + call[1].length + 1, close = findMatchingBrace(text, open);
-  if (close < 0 || text[close + 1] !== ")") return source;
-  text = text.slice(0, open) + "this.codexPetOverlayKWinLayoutOptions(" + text.slice(open, close + 1) +
-    `,${call[1]})` + text.slice(close + 1);
+  const options = call.options.replace(UPSTREAM_NATIVE_DRAW_CONSTRAINT, NATIVE_DRAW_CONSTRAINT)
+    .replace(draw[0], `nativeDrawWindowBounds:this.codexPetOverlayIsNativeKWin()?this.codexPetOverlayKWinDrawBounds(${display},${anchor}):${draw[1]},displayBounds:`);
+  const text = method.text.slice(0, call.start) +
+    `(codexPetOverlayLayout=>codexPetOverlayLayout(this.codexPetOverlayKWinLayoutOptions(${options},codexPetOverlayLayout)))(${call.fn})` +
+    method.text.slice(call.end).replace(new RegExp(`return ${result}\\}$`), `return this.codexPetOverlayKWinLayout(${display},${result})}`);
   return replaceMethodText(source, method, text);
 }
 
@@ -956,17 +972,23 @@ function patchKWinKeyboardFocus(source) {
   const window = method?.text.match(/\{let ([A-Za-z_$][\w$]*)=this\.window;/)?.[1];
   const enabled = method && firstMethodArgument(method.match[0], "setKeyboardInteraction", 1);
   const focus = window && `${window}.focus(),${window}.webContents.focus()`;
-  const disabled = enabled && `if(!${enabled}){`;
-  const onDemand = window && `this.nativeAppearanceBridge==null&&${window}.isVisible()`;
+  // The disabled path is the false branch of `enabled?(...):...` and runs to
+  // the end of the method.
+  const disabled = window && `):"on-demand"===this.visibilityMode&&!this.hiddenOnDemand&&`;
+  const onDemand = window && `null==this.nativeAppearanceBridge&&${window}.isVisible()`;
   if (!window || !enabled || method.text.split(focus).length !== 2 || method.text.split(disabled).length !== 2 ||
       method.text.split(onDemand).length !== 2) return source;
   const prefix = method.text.indexOf("this.applyPointerInteractivityPolicy();");
-  const restore = /this\.handleQuickChatKeyboardInteraction\(!1,([^;]+)\);return\}/;
-  if (prefix < 0 || !restore.test(method.text)) return source;
-  const text = method.text
+  const branch = method.text.indexOf(`;${enabled}?(`);
+  const restore = /this\.handleQuickChatKeyboardInteraction\(!1,([^;()]+)\)\)\}$/;
+  if (prefix < 0 || branch < prefix || !restore.test(method.text)) return source;
+  const disabledStart = method.text.indexOf(disabled) + 2;
+  let text = method.text.slice(0, disabledStart) + "(this.codexPetOverlayKWinActivation?.cancel()," +
+    method.text.slice(disabledStart, -1) + ")}";
+  text = text
     .replace(onDemand, `${onDemand}&&!this.codexPetOverlayIsNativeKWin()`)
-    .replace(disabled, `${disabled}this.codexPetOverlayKWinActivation?.cancel();`)
-    .replace(restore, "this.handleQuickChatKeyboardInteraction(!1,$1&&!this.codexPetOverlayIsNativeKWin());return}")
+    .replace(/this\.handleQuickChatKeyboardInteraction\(!1,([^;()]+)\)\)\)\}$/,
+      "this.handleQuickChatKeyboardInteraction(!1,$1&&!this.codexPetOverlayIsNativeKWin())))}")
     .replace(focus, `${focus},this.codexPetOverlayActivateKWin(${window}).catch(error=>{this.logger().warning?.(\`Could not activate Mini through KWin\`,{safe:{},sensitive:{error}})})`);
   return replaceMethodText(source, method, text.slice(0, prefix) +
     `return this.codexPetOverlayKWinKeyboard(${window},${enabled},()=>{` + text.slice(prefix, -1) + "})}");
@@ -976,7 +998,7 @@ function patchKWinGestureService(source) {
   if (source.includes("codexPetOverlayCompleteDrag(e,t,n=null){")) return source;
   const ident = "[A-Za-z_$][\\w$]*";
   const api = new RegExp(`completeQuickChatFocus\\((?<a>${ident}),(?<b>${ident})\\)\\{return this\\.(?<manager>${ident})\\.completeQuickChatFocus\\(this\\.(?<origin>${ident})\\.id,\\k<a>,\\k<b>\\)\\}`, "gu");
-  const apis = [...source.matchAll(api)], routes = [...source.matchAll(/case`avatar-overlay-drag-start`:\{/gu)];
+  const apis = [...source.matchAll(api)], routes = [...source.matchAll(/case"avatar-overlay-drag-start":\{/gu)];
   const method = findAvatarOverlayMethod(source, /(?<![\w$.])sendLayoutToRenderer\([^{}]*\)\{/);
   const serialize = new RegExp(`let (${ident})=(${ident})\\(this\\.layout\\),`, "gu");
   if (apis.length !== 1 || routes.length !== 1 || !method || [...method.text.matchAll(serialize)].length !== 1) return source;
@@ -1044,8 +1066,13 @@ function patchShowWindow(source) {
   }
   const replacement = `process.platform===\`linux\`?this.codexPetOverlaySyncWindow(${windowArg},!0):${windowArg}.moveTop(),${windowArg}.showInactive(),`;
   let text = method.text.replace(needle, replacement);
-  text = text.replace("this.nativeAppearanceBridge==null&&(",
-    "this.nativeAppearanceBridge==null&&!this.codexPetOverlayIsNativeKWin()&&(");
+  const onDemand = '"on-demand"!==this.visibilityMode||null!=this.nativeAppearanceBridge||(';
+  if (text.split(onDemand).length !== 2) {
+    console.warn("WARN: Could not identify avatar overlay showWindow on-demand focus - skipping pet overlay window sync");
+    return source;
+  }
+  text = text.replace(onDemand,
+    '"on-demand"!==this.visibilityMode||null!=this.nativeAppearanceBridge||this.codexPetOverlayIsNativeKWin()||(');
   const prefix = text.match(/^showWindow\([^)]*\)\{if\([^;]+\)return;let [A-Za-z_$][\w$]*=this\.isOpen\(\);/);
   if (!prefix) return source;
   text = prefix[0] +
@@ -1128,34 +1155,7 @@ function patchLocalMascotDragLifecycle(source) {
   );
 }
 
-function patchPassiveCreateWindow(source, settings) {
-  if (settings.mode !== "passive") {
-    return source;
-  }
-  return source
-    .split("appearance:`avatarOverlay`,frame:process.platform===`linux`?!1:!0,alwaysOnTop:process.platform===`linux`,skipTaskbar:process.platform===`linux`,focusable:process.platform===`linux`?!0:!1")
-    .join("appearance:`avatarOverlay`,frame:process.platform===`linux`?!1:!0,alwaysOnTop:process.platform===`linux`,skipTaskbar:process.platform===`linux`,focusable:!1");
-}
-
-function patchAvatarSelectionRefresh(source) {
-  if (source.includes(`function ${AVATAR_SELECTION_REFRESH_MARKER}(`)) {
-    return source;
-  }
-
-  const handlerRegex = /"set-setting":async\(\{key:([A-Za-z_$][\w$]*),value:([A-Za-z_$][\w$]*)\}\)=>\(await this\.setSettingValue\(\1,\2\),\{success:!0\}\)/;
-  const match = source.match(handlerRegex);
-  if (match == null) {
-    console.warn("WARN: Could not find desktop set-setting handler - skipping pet selection refresh");
-    return source;
-  }
-
-  const [handler, keyVar, valueVar] = match;
-  const helper = `function ${AVATAR_SELECTION_REFRESH_MARKER}(){try{setTimeout(()=>{for(let e of require(\`electron\`).BrowserWindow.getAllWindows()){if(e?.isDestroyed?.()||String(e?.getTitle?.()??\`\`)!==\`Codex Pet Overlay\`)continue;let t=e.webContents;t==null||t.isDestroyed?.()||t.reload?.()}},0)}catch{}}`;
-  const replacement = `"set-setting":async({key:${keyVar},value:${valueVar}})=>(await this.setSettingValue(${keyVar},${valueVar}),${keyVar}===\`selected-avatar-id\`&&${AVATAR_SELECTION_REFRESH_MARKER}(),{success:!0})`;
-  return helper + source.replace(handler, replacement);
-}
-
-function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpected, localMascotDragExpected) {
+function hasCompletePetOverlayPatch(source, localMascotDragExpected) {
   const show = findAvatarOverlayMethod(source, /(?<![\w$.])showWindow\([^{}]*\)\{/);
   const requiredMarkers = [
     source.includes("codexPetOverlayCompleteDrag(e,t,n=null){"),
@@ -1171,8 +1171,8 @@ function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpe
       return method?.text.includes("this.codexPetOverlayKWinGeometry(") ||
         name === "updateCssPetControlsProximityTracking" &&
           method?.text.includes("this.codexPetOverlayKWinProximity()") &&
-          /this\.stopPetControlsProximity\?\?=/.test(method.text) &&
-          /\(\)=>\{this\.updatePetPointerProximity\(\)\},this\.isNotchEnabled\?100:[A-Za-z_$][\w$]*/.test(method.text);
+          /null==this\.stopPetControlsProximity&&\([^;]*?this\.stopPetControlsProximity=function\(/.test(method.text) &&
+          /\(\)=>\{this\.updatePetPointerProximity\(\)\},this\.isNotchEnabled\?100:[\w$]+\)/.test(method.text);
     }),
     source.includes("codexPetOverlaySettings(){"),
     findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes(NATIVE_DRAW_CONSTRAINT),
@@ -1183,8 +1183,7 @@ function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpe
     findAvatarOverlayMethod(source, /(?<![\w$.])setKeyboardInteraction\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayActivateKWin("),
     findAvatarOverlayMethod(source, /(?<![\w$.])setKeyboardInteraction\([^{}]*\)\{/)?.text.includes(".isVisible()&&!this.codexPetOverlayIsNativeKWin()"),
     show?.text.includes("this.codexPetOverlayPresentKWinWindow("),
-    !show?.text.includes("this.visibilityMode===`on-demand`") ||
-      show.text.includes("this.nativeAppearanceBridge==null&&!this.codexPetOverlayIsNativeKWin()&&("),
+    show?.text.includes('null!=this.nativeAppearanceBridge||this.codexPetOverlayIsNativeKWin()||('),
     /let [A-Za-z_$][\w$]*=this\.codexPetOverlayLayoutForDisplay\([A-Za-z_$][\w$]*,this\.getLayoutForDisplay\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\);/.test(source),
     /process\.platform===`linux`\?this\.codexPetOverlaySyncWindow\([A-Za-z_$][\w$]*,!0\):[A-Za-z_$][\w$]*\.moveTop\(\),[A-Za-z_$][\w$]*\.showInactive\(\),/.test(source),
     source.includes("if(this.codexPetOverlayShouldLockPosition())return;"),
@@ -1206,17 +1205,6 @@ function hasCompletePetOverlayPatch(source, settings, avatarSelectionRefreshExpe
       source.includes("if(this.codexPetOverlayMoveLocalMascotDrag("),
       source.includes("if(this.codexPetOverlayEndLocalMascotDrag("),
       source.includes("this.dragState=null,this.codexPetOverlayMascotDragState=null,"),
-    );
-  }
-  if (avatarSelectionRefreshExpected) {
-    requiredMarkers.push(
-      source.includes(`function ${AVATAR_SELECTION_REFRESH_MARKER}(`),
-      source.includes("===`selected-avatar-id`&&codexPetOverlayRefreshAvatarWindows()"),
-    );
-  }
-  if (settings.mode === "passive") {
-    requiredMarkers.push(
-      source.includes("appearance:`avatarOverlay`,frame:process.platform===`linux`?!1:!0,alwaysOnTop:process.platform===`linux`,skipTaskbar:process.platform===`linux`,focusable:!1"),
     );
   }
   return requiredMarkers.every(Boolean);
@@ -1242,12 +1230,11 @@ function patchAvatarTransparentBackground(source) {
 }
 
 function applyPetOverlayPatch(source, context) {
-  if (!source.includes("avatar-overlay") && !source.includes("avatarOverlay")) {
+  if (!source.includes(AVATAR_OVERLAY_APPEARANCE)) {
     console.warn("WARN: Avatar overlay markers not found - skipping pet overlay patch");
     return source;
   }
   const settings = mergedPetOverlaySettings(context);
-  const avatarSelectionRefreshExpected = source.includes('"set-setting":async');
   const localMascotDragExpected = /moveDrag\([^)]*\)\{/.test(source);
   let patched = patchAvatarTransparentBackground(source);
   patched = patchCreateWindowTitle(patched);
@@ -1270,11 +1257,7 @@ function applyPetOverlayPatch(source, context) {
   if (localMascotDragExpected) {
     patched = patchLocalMascotDragLifecycle(patched);
   }
-  patched = patchPassiveCreateWindow(patched, settings);
-  if (avatarSelectionRefreshExpected) {
-    patched = patchAvatarSelectionRefresh(patched);
-  }
-  if (!hasCompletePetOverlayPatch(patched, settings, avatarSelectionRefreshExpected, localMascotDragExpected)) {
+  if (!hasCompletePetOverlayPatch(patched, localMascotDragExpected)) {
     console.warn("WARN: Pet overlay patch is incomplete - discarding all pet overlay changes");
     return source;
   }

@@ -58,23 +58,22 @@ function captureWarnings(callback) {
 function currentAvatarOverlayBundleFixture() {
   return [
     "let a=require(`electron`),f=require(`node:child_process`),hm=50;function sl(){return!1}function cl(){return!0}function ll(e){return e.getBounds?.()??e.getContentBounds?.()??null}function Cp(e){return e.workArea??e.bounds}function Dm(e,t){return{x:Number(e?.x??0)+Number(t?.x??0),y:Number(e?.y??0)+Number(t?.y??0)}}function sp(){return{shouldDock:!0}}function Vp(e){return e}var D=a,u={v:`avatar-overlay-position`},Fe={default:(e,t)=>JSON.stringify(e)===JSON.stringify(t)},jle=200;function yu(){return null}function Pp(e){return{x:e.x+e.width/2,y:e.y+e.height/2}}function Np(e){return JSON.stringify(e)}function Kp(){return`top-end`}function Gp(e){return e}function Wp(e){return e.workArea??e.bounds}function nm(e,t){return{x:Math.max(t.x,Math.min(t.x+t.width,e.x)),y:Math.max(t.y,Math.min(t.y+t.height,e.y))}}var tle=Dm,Sp=sp;function Op(id){return a.screen.getAllDisplays().find(display=>display.id===id)}",
-    "var settingsHandlers={\"set-setting\":async({key:e,value:t})=>(await this.setSettingValue(e,t),{success:!0})};",
     "var rV=`/avatar-overlay`,zB={width:356,height:320},oV={width:112,height:121},k2={width:0,height:0},O2={width:276,height:131};",
     "var h2=class{constructor(e,t,n,r){this.cursorSource=e;this.pointerAnchorX=t;this.pointerAnchorY=n;this.displayBounds=r;this.hasMovementIntent=!1;this.hasMoved=!1}getCursorPointForSource({native:e,renderer:t}){return this.cursorSource===`native`?e:t}recordMove(e){this.hasMovementIntent=!0,this.hasMoved=!0,this.displayBounds=e}recordMovementIntent(){this.hasMovementIntent=!0}shouldSuppressRendererThrow(){return!1}};",
     "var fV=class{window=null;rendererReady=!1;layout=null;mascotSize=oV;traySize=null;pointerInteractive=!1;mousePassthroughEnabled=!1;windowStagedForNativePresentation=!1;layoutMode=`native`;nativeWindowDragStart=null;nativeWindowDragActive=!1;nativeWindowDragCompletionTimer=null;nativeWindowDragTargetRegistered=!1;hasDeferredLayout=!1;isQuickChatPresentation=!1;presentationOffset={x:0,y:0};anchor={x:0,y:0,width:112,height:121};compositionHost={setOverlayWindow(){},isNativeMaterialAttached(){return!1},updateMascotRect(){}};nativePositionController={clear(){}};",
     "constructor(e,t){this.windowManager=e,this.globalState=t}",
     "isOpen(){let e=this.window;return e!=null&&!e.isDestroyed()&&e.isVisible()&&!this.windowStagedForNativePresentation}",
     "focusQuickChat(e){let t=this.window;this.windowManager.sendMessageToWebContents(t.webContents,{type:`avatar-overlay-action`,action:e==null?{type:`focus-quick-chat`}:{type:`focus-quick-chat`,requestId:e,wasHidden:!0}})}",
-    "setKeyboardInteraction(e,t,n=!1){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e||t&&(!this.shouldPresentWindow()||this.pendingQuickChatFocus!=null))return;this.applyPointerInteractivityPolicy();let i=this.nonactivatingPanelBridge?.fromPointer(r.getNativeWindowHandle()).window()??null;if(!t){if(this.visibilityMode===`on-demand`&&!this.hiddenOnDemand&&this.nativeAppearanceBridge==null&&r.isVisible()){this.handleQuickChatKeyboardInteraction(!1);return}i?.isKeyWindow()&&i.resignKeyWindow(),r.setFocusable(!1),this.refreshNativeActiveAppearance(r),this.handleQuickChatKeyboardInteraction(!1,n&&i==null);return}this.handleQuickChatKeyboardInteraction(!0),r.setFocusable(!0),this.refreshNativeActiveAppearance(r),i==null?(this.windowManager.setPendingAuxiliaryActivationTarget(r),r.show(),process.platform===`darwin`&&D.app.focus({steal:!0}),r.focus(),r.webContents.focus()):(r.showInactive(),i.makeKeyAndOrderFront$(null)),this.applyPointerInteractivityPolicy(),this.logger().debug(`Pet keyboard focus requested`,{safe:{nonactivating:i!=null,isKeyWindow:i?.isKeyWindow()}}),this.windowManager.sendMessageToWebContents(r.webContents,{type:this.isNotchEnabled?`notch-overlay-keyboard-interaction-ready`:`avatar-overlay-keyboard-interaction-ready`})}",
+    'setKeyboardInteraction(e,t,n=!1){let r=this.window;if(null==r||r.isDestroyed()||r.webContents.id!==e||t&&(!this.shouldPresentWindow()||null!=this.pendingQuickChatFocus))return;this.applyPointerInteractivityPolicy();let i=this.nonactivatingPanelBridge?.fromPointer(r.getNativeWindowHandle()).window()??null;t?(this.handleQuickChatKeyboardInteraction(!0),r.setFocusable(!0),this.refreshNativeActiveAppearance(r),null!=i?(r.showInactive(),i.makeKeyAndOrderFront$(null)):(this.windowManager.setPendingAuxiliaryActivationTarget(r),r.show(),"darwin"===process.platform&&D.app.focus({steal:!0}),r.focus(),r.webContents.focus()),this.applyPointerInteractivityPolicy(),this.logger().debug("Pet keyboard focus requested",{safe:{nonactivating:null!=i,isKeyWindow:i?.isKeyWindow()}}),this.windowManager.sendMessageToWebContents(r.webContents,{type:this.isNotchEnabled?"notch-overlay-keyboard-interaction-ready":"avatar-overlay-keyboard-interaction-ready"})):"on-demand"===this.visibilityMode&&!this.hiddenOnDemand&&null==this.nativeAppearanceBridge&&r.isVisible()?this.handleQuickChatKeyboardInteraction(!1):(i?.isKeyWindow()&&i.resignKeyWindow(),r.setFocusable(!1),this.refreshNativeActiveAppearance(r),this.handleQuickChatKeyboardInteraction(!1,n&&null==i))}',
     "unregisterNativeWindowDragTarget(e){try{this.nativeWindowDragActive&&this.window!=null&&(this.suppressNextRendererThrow=!0)}finally{this.clearNativeWindowDragCompletionTimer(),this.dragState=null,this.hasDeferredLayout=!1,this.nativeWindowDragTargetRegistered=!1,this.nativeWindowDragStart=null,this.nativeWindowDragActive=!1}}",
     "startDrag(e,t,n=!1){let r=this.window;if(r==null||r.isDestroyed()||r.webContents.id!==e)return;this.nativeWindowDragActive&&this.endDrag(e,void 0,!1,`button-released`),this.cancelMomentum(),this.clearMovedWindowPersist(),this.clearNativeWindowDragCompletionTimer(),this.dockRestoreAnchor=null,this.nativeWindowDragActive=!1,this.suppressNextRendererThrow=!1,this.clearDetachedDisplayRestore();let i=this.getLayout(r),o=t.pointerScreenX!=null&&t.pointerScreenY!=null?{x:t.pointerScreenX,y:t.pointerScreenY}:a.screen.getCursorScreenPoint(),s=t.pointerWindowX-i.mascot.left,c=t.pointerWindowY-i.mascot.top;this.dragState=new h2(`renderer`,s,c,a.screen.getDisplayNearestPoint(o).bounds),this.nativeWindowDragStart=this.layoutMode===`native`&&this.nativeWindowDragTargetRegistered&&!n?{pointerScreenX:o.x,pointerScreenY:o.y}:null}",
     "moveDrag(e,t){let n=this.window;if(n==null||n.isDestroyed()||n.webContents.id!==e||this.dragState==null)return;this.cancelMomentum();let r=this.dragState;if(r.recordMovementIntent(),this.nativeWindowDragActive)return;let i=this.nativeWindowDragStart;if(this.nativeWindowDragStart=null,i!=null){this.nativeWindowDragActive=!0;let e=this.getLayout(n).mascot,t=sl(n,i,a.screen.getAllDisplays().map(t=>{let n=Cp(t,this.layoutMode),r=this.getLayoutForDisplay(t,{...this.anchor,x:this.isQuickChatPresentation?n.x-this.mascotSize.width+26:n.x,y:n.y}).anchor,i=this.getLayoutForDisplay(t,{...this.anchor,x:n.x+n.width-(this.isQuickChatPresentation?26:0),y:n.y+n.height}).anchor;return{displayBounds:t.bounds,windowOriginBounds:{x:r.x-e.left,y:r.y-e.top,width:Math.max(0,i.x-r.x),height:Math.max(0,i.y-r.y)}}}));if(this.nativeWindowDragActive=t,this.logger().info(`Native pet window drag handoff`,{safe:{driver:`appkit-events`,started:t}}),t){this.nativeWindowDragCompletionTimer=setInterval(()=>{cl(n)||this.endDrag(n.webContents.id,void 0,!1,`button-released`)},hm);return}}let o=a.screen.getCursorScreenPoint(),s=r.getCursorPointForSource({native:null,renderer:{x:t?.pointerScreenX??o.x,y:t?.pointerScreenY??o.y}});s!=null&&this.moveDragToPointer(n,s)}endDrag(e,t,n=!1,r=`released`){let i=this.window;if(i==null||i.isDestroyed()||i.webContents.id!==e||this.dragState==null)return;let a=this.dragState,o=this.nativeWindowDragActive,s=o?yu(i):null,c=s?.bounds,l=o?s?.altKey===!0:n;if(o)this.handleNativeWindowDragMove(i,c),this.logger().info(`Native pet window drag finished`,{safe:{reason:r}});else if(a.hasMovementIntent){let e=D.screen.getCursorScreenPoint(),n=a.getCursorPointForSource({native:null,renderer:{x:t?.pointerScreenX??e.x,y:t?.pointerScreenY??e.y}});n!=null&&this.moveDragToPointer(i,n)}if(this.suppressNextRendererThrow=o||a.shouldSuppressRendererThrow(),this.dragState=null,this.clearNativeWindowDragCompletionTimer(),this.nativeWindowDragActive=!1,this.nativeWindowDragStart=null,a.hasMovementIntent&&(this.isFreelyPositioned=!l,this.snapPosition=null),l&&a.hasMovementIntent){let e=D.screen.getCursorScreenPoint();o?e={x:this.anchor.x+a.pointerAnchorX,y:this.anchor.y+a.pointerAnchorY}:t!=null&&(e={x:t.pointerScreenX,y:t.pointerScreenY});let n=D.screen.getDisplayNearestPoint(e),r=nm(e,n.workArea);this.clearMovedWindowPersist(),this.hasDeferredLayout=!1,this.suppressNextRendererThrow=!0,this.isQuickChatPresentation?this.snapQuickChatToPosition(n,r,!0):(this.snapPosition=r,this.animatePresentationTo(this.getPetSnapAnchor(n,r),{x:0,y:0},()=>this.persistWindowBounds(i,n),null,!0));return}o?(this.rememberMovedWindow(i,c??this.layout?.windowBounds),this.persistWindowBounds(i)):(this.hasDeferredLayout=!1,this.reclampWindowToVisibleDisplay({shouldPersist:!0}));let u=this.dockTarget,d=tle(this.anchor,this.presentationOffset);u!=null&&Sp({current:d,next:d,target:{x:u.anchor.centerX,y:u.anchor.centerY}}).shouldDock&&this.dockPresentation(u.anchor,u.onDock)}",
     "setElementSize(e,{elementSizeRevision:t,isTrayVisible:n,mascot:r,nativeCompositionEnabled:a,tray:o}){let i=this.window;i==null||i.isDestroyed()||i.webContents.id!==e||(this.cancelMomentum(),this.layoutMode=n==null?`native`:`legacy`,this.mascotSize=r,this.traySize=o,this.applyLatestElementSizes(i),this.stageWindowForNativePresentation(i),this.showWindowIfReady(i))}",
     "applyLatestElementSizes(e){this.anchor={...this.anchor,width:this.mascotSize.width,height:this.mascotSize.height},this.applyLayout(e)}",
-    "async createWindow(e){let t=await this.windowManager.createWindow({title:a.app.getName(),width:zB.width,height:zB.height,appearance:`avatarOverlay`,alwaysOnTop:process.platform===`linux`,skipTaskbar:process.platform===`linux`,focusable:process.platform===`linux`?!0:!1,show:!1,initialRoute:rV});return this.window=t,this.compositionHost.setOverlayWindow(t),this.rendererReady=this.windowManager.isWebContentsReady(t.webContents.id),this.displayBounds=null,this.displayId=null,this.dragState=null,this.layout=null,this.mascotSize=oV,this.mousePassthroughEnabled=!1,this.traySize=null,t.on(`closed`,()=>{this.window===t&&(this.cancelMomentum(),this.window=null,this.dragState=null,this.layout=null,this.rendererReady=!1,this.pointerInteractive=!1,this.mousePassthroughEnabled=!1,this.compositionHost.setOverlayWindow(null),this.broadcastOpenState())}),t}",
-    "applyLayout(e,t=this.getCurrentDisplay(),n=!1){if(e.isDestroyed())return;if(this.nativeWindowDragActive||this.movedWindowPersistTimer!=null){this.hasDeferredLayout=!0,this.handleNativeWindowDragMove(e);return}let r=this.getLayoutForDisplay(t);this.quickChatResizeDrawAnchor!=null&&(this.quickChatDrawOffset={x:this.quickChatResizeDrawAnchor.x-r.anchor.x,y:this.quickChatResizeDrawAnchor.y-r.anchor.y}),this.displayId=t.id,this.resolutionKey=Np(t.bounds),this.displayBounds=t.bounds,this.anchor={...r.anchor,y:this.realtimeCaptionAboveMascotPx>0?this.anchor.y:r.anchor.y},this.layout=r,this.placement=r.placement,this.setWindowBounds(e,r.windowBounds,n),this.publishRemoteHostedPIPContentHost(),this.sendLayoutToRenderer(e),this.computerUseCursorLocation!=null&&this.dragState==null&&this.sendComputerUseCursorLocationToRenderer(e)}getLayoutForDisplay(e,t=this.anchor){let l=a.screen.getAllDisplays(),n=UB({anchor:t,constrainNativeDrawWindowToDisplay:process.platform===`win32`,nativeDrawWindowBounds:process.platform===`darwin`&&l.length>1?e.bounds:void 0,displayBounds:this.layoutMode===`native`?e.workArea:e.bounds,mode:this.layoutMode,mascotSize:this.mascotSize,nativeMaterialAttached:this.compositionHost.isNativeMaterialAttached(),previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?k2:O2)});return n}getLayout(e){if(this.layout??this.applyLayout(e),this.layout==null)throw Error(`Expected avatar overlay layout`);return this.layout}",
-    "showWindow(e){if(e.isDestroyed())return;let t=this.isOpen();this.windowStagedForNativePresentation&&=(e.setOpacity(1),!1),e.moveTop(),e.showInactive(),!t&&this.isOpen()&&(this.finishPendingPresentation(),this.broadcastOpenState())}showWindowIfReady(e){!this.rendererReady||this.initialPresentationState!==`ready`||(this.showWindow(e),this.applyPointerInteractivityPolicy())}stageWindowForNativePresentation(e){e.isDestroyed()||this.applyPointerInteractivityPolicy()}broadcastOpenState(){this.windowManager.sendMessageToAllRegisteredWindows({type:`avatar-overlay-open-state-changed`,isOpen:this.isOpen()})}",
-    "publishRemoteHostedPIPContentHost(){}isOverlayWindowPointerDragActive(){return!1}applyPointerInteractivityPolicy(){return null}cancelMomentum(){}clearMovedWindowPersist(){this.movedWindowPersistTimer!=null&&(clearTimeout(this.movedWindowPersistTimer),this.movedWindowPersistTimer=null)}clearDetachedDisplayRestore(){}clearNativeWindowDragCompletionTimer(){}finishPendingPresentation(){}handleNativeWindowDragMove(e,t){let n=this.layout;if(e.isDestroyed()||n==null)return;let r=t??e.getContentBounds();this.anchor={...this.anchor,x:r.x+n.mascot.left,y:r.y+n.mascot.top};let i=D.screen.getDisplayNearestPoint(Pp(this.anchor));this.dragState?.recordMove(i.bounds),this.displayBounds=i.bounds,this.displayId=i.id,this.resolutionKey=Np(i.bounds),this.placement=Kp(this.anchor,i.workArea);let a=this.getLayoutForDisplay(i);this.layout={...a,anchor:this.anchor,mascot:n.mascot,quickChat:a.quickChat==null?void 0:{...a.quickChat,workArea:Gp(r,i.workArea)},tray:a.tray==null?null:{...a.tray,left:a.windowBounds.x+a.tray.left-r.x,top:a.windowBounds.y+a.tray.top-r.y},viewport:{width:r.width,height:r.height},visibleBounds:Gp(r,Wp(i,this.layoutMode)),windowBounds:r},this.placement=a.placement,this.publishRemoteHostedPIPContentHost(),this.sendLayoutToRenderer(e)}logger(){return{info(){}}}moveDragToPointer(){}persistWindowBounds(e,t=this.getCurrentDisplay()){if(this.isNotchEnabled||e.isDestroyed())return;let n=t.bounds,r={x:this.anchor.x+this.presentationOffset.x,y:this.anchor.y+this.presentationOffset.y,displayBounds:n,displayId:t.id,placement:this.placement,isFreelyPositioned:this.isFreelyPositioned,snapPosition:this.snapPosition},i=this.globalState.get(u.v),a=Np(n);this.displayId=t.id,this.resolutionKey=a;let o={...r,byDisplayId:{...i?.byDisplayId,[String(t.id)]:r},byResolution:{...i?.byResolution,[a]:r}};(0,Fe.default)(i,o)||this.isNotchManager||this.globalState.set(u.v,o)}reclampWindowToVisibleDisplay({shouldPersist:e}){let t=this.window;if(t==null||t.isDestroyed())return;let n=this.getCurrentDisplay();this.applyLayout(t,n),e&&this.persistWindowBounds(t,n)}rememberMovedWindow(e,t){if(e.isDestroyed()||this.layout==null)return;let n=t??e.getContentBounds();this.anchor={...this.anchor,x:n.x+this.layout.mascot.left,y:n.y+this.layout.mascot.top};let r=D.screen.getDisplayNearestPoint(Pp(this.anchor));this.displayBounds=r.bounds,this.displayId=r.id,this.resolutionKey=Np(r.bounds),this.isOverlayWindowPointerDragActive()&&this.clearDetachedDisplayRestore(),this.clearMovedWindowPersist(),this.movedWindowPersistTimer=setTimeout(()=>{if(this.movedWindowPersistTimer=null,this.isOverlayWindowPointerDragActive()){this.rememberMovedWindow(e);return}this.hasDeferredLayout&&(this.hasDeferredLayout=!1,this.applyLatestElementSizes(e)),this.applyPointerInteractivityPolicy(),this.reclampWindowToVisibleDisplay({shouldPersist:!0})},jle)}sendLayoutToRenderer(){}setQuickChatStashed(){}setWindowBounds(e,t,n){if(!(e.isDestroyed()||Fe.default(e.getContentBounds(),t))){this.isSettingWindowBounds=!0;try{e.setContentBounds(t,n)}finally{this.isSettingWindowBounds=!1}}}snapQuickChatToPosition(){}getCurrentDisplay(){if(this.windowPresentation!=null)return this.windowPresentation.getDisplay();if(this.displayId!=null){let e=Op(this.displayId);if(e!=null)return e}return D.screen.getDisplayNearestPoint(Pp(this.anchor))}};",
+    "async createWindow(e){let t=await this.windowManager.createWindow({title:a.app.getName(),width:zB.width,height:zB.height,appearance:\"avatarOverlay\",supportsWindowTiling:!1,focusable:!1,show:!1,initialRoute:rV});return this.window=t,this.compositionHost.setOverlayWindow(t),this.rendererReady=this.windowManager.isWebContentsReady(t.webContents.id),this.displayBounds=null,this.displayId=null,this.dragState=null,this.layout=null,this.mascotSize=oV,this.mousePassthroughEnabled=!1,this.traySize=null,t.on(`closed`,()=>{this.window===t&&(this.cancelMomentum(),this.window=null,this.dragState=null,this.layout=null,this.rendererReady=!1,this.pointerInteractive=!1,this.mousePassthroughEnabled=!1,this.compositionHost.setOverlayWindow(null),this.broadcastOpenState())}),t}",
+    "applyLayout(e,t=this.getCurrentDisplay(),n=!1){if(e.isDestroyed())return;if(this.nativeWindowDragActive||this.movedWindowPersistTimer!=null){this.hasDeferredLayout=!0,this.handleNativeWindowDragMove(e);return}let r=this.getLayoutForDisplay(t);this.quickChatResizeDrawAnchor!=null&&(this.quickChatDrawOffset={x:this.quickChatResizeDrawAnchor.x-r.anchor.x,y:this.quickChatResizeDrawAnchor.y-r.anchor.y}),this.displayId=t.id,this.resolutionKey=Np(t.bounds),this.displayBounds=t.bounds,this.anchor={...r.anchor,y:this.realtimeCaptionAboveMascotPx>0?this.anchor.y:r.anchor.y},this.layout=r,this.placement=r.placement,this.setWindowBounds(e,r.windowBounds,n),this.publishRemoteHostedPIPContentHost(),this.sendLayoutToRenderer(e),this.computerUseCursorLocation!=null&&this.dragState==null&&this.sendComputerUseCursorLocationToRenderer(e)}getLayoutForDisplay(e,t=this.anchor){let l=a.screen.getAllDisplays(),n=function({anchor:e,constrainNativeDrawWindowToDisplay:t=!1,...r}){return UB({anchor:e,constrainNativeDrawWindowToDisplay:t,...r})}({anchor:t,constrainNativeDrawWindowToDisplay:\"win32\"===process.platform,nativeDrawWindowBounds:process.platform===`darwin`&&l.length>1?e.bounds:void 0,displayBounds:this.layoutMode===`native`?e.workArea:e.bounds,mode:this.layoutMode,mascotSize:this.mascotSize,nativeMaterialAttached:this.compositionHost.isNativeMaterialAttached(),previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?k2:O2)});return n}getLayout(e){if(this.layout??this.applyLayout(e),this.layout==null)throw Error(`Expected avatar overlay layout`);return this.layout}",
+    "showWindow(e){if(e.isDestroyed())return;let t=this.isOpen();this.windowStagedForNativePresentation&&=(e.setOpacity(1),!1),e.moveTop(),e.showInactive(),t||\"on-demand\"!==this.visibilityMode||null!=this.nativeAppearanceBridge||(this.handleQuickChatKeyboardInteraction(!0),e.setFocusable(!0),this.windowManager.setPendingAuxiliaryActivationTarget(e),e.focus()),!t&&this.isOpen()&&(this.finishPendingPresentation(),this.broadcastOpenState())}showWindowIfReady(e){!this.rendererReady||this.initialPresentationState!==`ready`||(this.showWindow(e),this.applyPointerInteractivityPolicy())}stageWindowForNativePresentation(e){e.isDestroyed()||this.applyPointerInteractivityPolicy()}broadcastOpenState(){this.windowManager.sendMessageToAllRegisteredWindows({type:`avatar-overlay-open-state-changed`,isOpen:this.isOpen()})}",
+    "publishRemoteHostedPIPContentHost(){}isOverlayWindowPointerDragActive(){return!1}applyPointerInteractivityPolicy(){return null}cancelMomentum(){}clearMovedWindowPersist(){this.movedWindowPersistTimer!=null&&(clearTimeout(this.movedWindowPersistTimer),this.movedWindowPersistTimer=null)}clearDetachedDisplayRestore(){}clearNativeWindowDragCompletionTimer(){}finishPendingPresentation(){}handleNativeWindowDragMove(e,t){let n=this.layout;if(e.isDestroyed()||n==null)return;let r=t??e.getContentBounds();this.anchor={...this.anchor,x:r.x+n.mascot.left,y:r.y+n.mascot.top};let i=D.screen.getDisplayNearestPoint(Pp(this.anchor));this.dragState?.recordMove(i.bounds),this.displayBounds=i.bounds,this.displayId=i.id,this.resolutionKey=Np(i.bounds),this.placement=Kp(this.anchor,i.workArea);let a=this.getLayoutForDisplay(i);this.layout={...a,anchor:this.anchor,mascot:n.mascot,quickChat:a.quickChat==null?void 0:{...a.quickChat,workArea:Gp(r,i.workArea)},tray:a.tray==null?null:{...a.tray,left:a.windowBounds.x+a.tray.left-r.x,top:a.windowBounds.y+a.tray.top-r.y},viewport:{width:r.width,height:r.height},visibleBounds:Gp(r,Wp(i,this.layoutMode)),windowBounds:r},this.placement=a.placement,this.publishRemoteHostedPIPContentHost(),this.sendLayoutToRenderer(e)}logger(){return{info(){}}}moveDragToPointer(){}persistWindowBounds(e,t=this.getCurrentDisplay()){if(this.isNotchEnabled||e.isDestroyed())return;let n=t.bounds,r={x:this.anchor.x+this.presentationOffset.x,y:this.anchor.y+this.presentationOffset.y,displayBounds:n,displayId:t.id,placement:this.placement,isFreelyPositioned:this.isFreelyPositioned,snapPosition:this.snapPosition},i=this.globalState.get(u.v),a=Np(n);this.displayId=t.id,this.resolutionKey=a;let o={...r,byDisplayId:{...i?.byDisplayId,[String(t.id)]:r},byResolution:{...i?.byResolution,[a]:r}};(0,Fe.default)(i,o)||this.isNotchManager||this.globalState.set(u.v,o)}reclampWindowToVisibleDisplay({shouldPersist:e}){let t=this.window;if(t==null||t.isDestroyed())return;let n=this.getCurrentDisplay();this.applyLayout(t,n),e&&this.persistWindowBounds(t,n)}rememberMovedWindow(e,t){if(e.isDestroyed()||this.layout==null)return;let n=t??e.getContentBounds();this.anchor={...this.anchor,x:n.x+this.layout.mascot.left,y:n.y+this.layout.mascot.top};let r=D.screen.getDisplayNearestPoint(Pp(this.anchor));this.displayBounds=r.bounds,this.displayId=r.id,this.resolutionKey=Np(r.bounds),this.isOverlayWindowPointerDragActive()&&this.clearDetachedDisplayRestore(),this.clearMovedWindowPersist(),this.movedWindowPersistTimer=setTimeout(()=>{(this.movedWindowPersistTimer=null,this.isOverlayWindowPointerDragActive())?this.rememberMovedWindow(e):(this.hasDeferredLayout&&(this.hasDeferredLayout=!1,this.applyLatestElementSizes(e)),this.applyPointerInteractivityPolicy(),this.reclampWindowToVisibleDisplay({shouldPersist:!0}))},jle)}sendLayoutToRenderer(){}setQuickChatStashed(){}setWindowBounds(e,t,n){if(!(e.isDestroyed()||Fe.default(e.getContentBounds(),t))){this.isSettingWindowBounds=!0;try{e.setContentBounds(t,n)}finally{this.isSettingWindowBounds=!1}}}snapQuickChatToPosition(){}getCurrentDisplay(){if(this.windowPresentation!=null)return this.windowPresentation.getDisplay();if(this.displayId!=null){let e=Op(this.displayId);if(e!=null)return e}return D.screen.getDisplayNearestPoint(Pp(this.anchor))}};",
     "function L9({platform:e,appearance:t,opaqueWindowSurfaceEnabled:n,prefersDarkColors:r}){return n?{backgroundColor:r?_ne:vne,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`?{backgroundColor:k9,backgroundMaterial:`mica`}:{backgroundColor:k9,backgroundMaterial:null}}",
   ].join("").replace(
     "if(r.recordMovementIntent(),this.nativeWindowDragActive)return;",
@@ -86,7 +85,7 @@ function currentAvatarOverlayBundleFixture() {
     .replace("sendLayoutToRenderer(){}", "sendLayoutToRenderer(){let e=tm(this.layout),t=e;}") +
     "function tm(e){return{...e}}var qde=class{completeQuickChatFocus(e,t){return this.manager.completeQuickChatFocus(this.origin.id,e,t)}};" +
     "function fL(n){return n.pointerScreenX==null?null:{pointerScreenX:n.pointerScreenX,pointerScreenY:n.pointerScreenY}}" +
-    "function dragMessage(e,t,n){switch(n.type){case`avatar-overlay-drag-start`:{let r=fL(n),i=r==null?{pointerWindowX:n.pointerWindowX,pointerWindowY:n.pointerWindowY}:{...r,pointerWindowX:n.pointerWindowX,pointerWindowY:n.pointerWindowY};e.startDrag(t.id,i,n.usesOrbPhysics);return}}}";
+    "function dragMessage(e,t,n){switch(n.type){case\"avatar-overlay-drag-start\":{let r=fL(n),i=r==null?{pointerWindowX:n.pointerWindowX,pointerWindowY:n.pointerWindowY}:{...r,pointerWindowX:n.pointerWindowX,pointerWindowY:n.pointerWindowY};e.startDrag(t.id,i,n.usesOrbPhysics);return}}}";
 }
 
 function retiredCompactDragCompletionBundleFixture() {
@@ -109,7 +108,7 @@ function nativePresentationBundleFixture() {
 
 test("native gesture service fails closed when RPC, dispatch or layout anchors drift", () => {
   const original = currentAvatarOverlayBundleFixture();
-  for (const anchor of ["this.manager.completeQuickChatFocus", "case`avatar-overlay-drag-start`", "=tm(this.layout),"])
+  for (const anchor of ["this.manager.completeQuickChatFocus", 'case"avatar-overlay-drag-start"', "=tm(this.layout),"])
     assert.equal(captureWarnings(() => applyPetOverlayPatch(original.replace(anchor, "drifted"))).result,
       original.replace(anchor, "drifted"));
   const duplicate = original + "var other=class{completeQuickChatFocus(e,t){return this.manager.completeQuickChatFocus(this.origin.id,e,t)}}";
@@ -142,7 +141,7 @@ function legacyAvatarOverlayBundleFixture() {
     "var rV=`/avatar-overlay`,zB={width:356,height:320},oV={width:112,height:121},sV={width:276,height:131};",
     "var fV=class{window=null;anchor={x:0,y:0,width:112,height:121};dragState=null;layout=null;mascotSize=oV;placement=`top-end`;traySize=null;",
     "constructor(e,t){this.windowManager=e,this.globalState=t}",
-    "async createWindow(e){let t=await this.windowManager.createWindow({appearance:`avatarOverlay`,focusable:process.platform===`linux`?!0:!1,show:!1,initialRoute:rV});return this.window=t,t}",
+    "async createWindow(e){let t=await this.windowManager.createWindow({appearance:\"avatarOverlay\",focusable:!1,show:!1,initialRoute:rV});return this.window=t,t}",
     "applyLayout(e,t=n.screen.getDisplayNearestPoint(this.anchor).bounds){if(e.isDestroyed())return;let r=UB({anchor:this.anchor,displayBounds:t,mascotSize:this.mascotSize,previousPlacement:this.placement,traySize:this.traySize??sV});this.anchor=r.anchor,this.layout=r,this.placement=r.placement,this.setWindowBounds(e,r.windowBounds),this.sendLayoutToRenderer(e)}getLayout(e){return this.layout}",
     "showWindow(e){if(e.isDestroyed())return;e.moveTop(),e.showInactive(),this.broadcastOpenState()}startDrag(e,t){this.dragState={}}broadcastOpenState(){}sendLayoutToRenderer(){}setWindowBounds(){}};",
   ].join("");
@@ -475,7 +474,7 @@ for (const lockPosition of [false, true]) test(`native geometry keeps the pet in
 });
 
 for (const variant of ["missing", "duplicate", "foreign-owner"]) test(`native draw-constraint anchor fails closed: ${variant}`, () => {
-  const anchor = "constrainNativeDrawWindowToDisplay:process.platform===`win32`";
+  const anchor = 'constrainNativeDrawWindowToDisplay:"win32"===process.platform';
   let source = currentAvatarOverlayBundleFixture().replace(
     anchor,
     variant === "duplicate" ? `${anchor},${anchor}` : "otherConstraint:!1",
@@ -550,78 +549,6 @@ test("expanded endDrag completes KWin, Niri, and fallback once while preserving 
   assert.deepEqual(run("fallback", { rendererId: 2 }), []);
 });
 
-test("refreshes only the avatar overlay after the selected pet changes", async () => {
-  const patched = applyPatchTwice(currentAvatarOverlayBundleFixture());
-  const reloads = [];
-  const savedSettings = [];
-  const timers = [];
-  const context = {
-    require(moduleName) {
-      if (moduleName === "electron") {
-        return {
-          BrowserWindow: {
-            getAllWindows: () => [
-              {
-                getTitle: () => "Codex Pet Overlay",
-                isDestroyed: () => false,
-                webContents: {
-                  isDestroyed: () => false,
-                  reload: () => reloads.push("overlay"),
-                },
-              },
-              {
-                getTitle: () => "Codex",
-                isDestroyed: () => false,
-                webContents: {
-                  isDestroyed: () => false,
-                  reload: () => reloads.push("main"),
-                },
-              },
-            ],
-          },
-        };
-      }
-      if (moduleName === "node:child_process") {
-        return {};
-      }
-      throw new Error(`Unexpected module: ${moduleName}`);
-    },
-    setTimeout(callback) {
-      timers.push(callback);
-    },
-    setSettingValue(key, value) {
-      savedSettings.push([key, value]);
-    },
-  };
-  vm.runInNewContext(`${patched};globalThis.settingsHandlers=settingsHandlers;`, context);
-
-  await context.settingsHandlers["set-setting"]({ key: "theme", value: "dark" });
-  assert.deepEqual(reloads, []);
-  assert.deepEqual(timers, []);
-
-  await context.settingsHandlers["set-setting"]({ key: "selected-avatar-id", value: "cat" });
-  assert.deepEqual(savedSettings, [
-    ["theme", "dark"],
-    ["selected-avatar-id", "cat"],
-  ]);
-  assert.equal(timers.length, 1);
-  timers[0]();
-  assert.deepEqual(reloads, ["overlay"]);
-  assert.match(patched, /===`selected-avatar-id`&&codexPetOverlayRefreshAvatarWindows\(\)/);
-});
-
-test("discards the feature patch when the current settings handler drifts", () => {
-  const source = currentAvatarOverlayBundleFixture().replace(
-    '"set-setting":async({key:e,value:t})=>(await this.setSettingValue(e,t),{success:!0})',
-    '"set-setting":async({key:e,value:t})=>this.setSettingValue(e,t)',
-  );
-  const { result, warnings } = captureWarnings(() => applyPetOverlayPatch(source));
-
-  assert.equal(result, source);
-  assert.match(warnings.join("\n"), /Could not find desktop set-setting handler/);
-  assert.match(warnings.join("\n"), /Pet overlay patch is incomplete/);
-});
-
 test("does not retain an obsolete avatar overlay layout fallback", () => {
   const source = legacyAvatarOverlayBundleFixture();
   const { result, warnings } = captureWarnings(() => applyPetOverlayPatch(source));
@@ -640,20 +567,6 @@ test("discards every change when a required current hook drifts", () => {
 
   assert.equal(result, source);
   assert.match(warnings.join("\n"), /Could not identify avatar overlay showWindow display point/);
-  assert.match(warnings.join("\n"), /Pet overlay patch is incomplete/);
-});
-
-test("passive mode fails closed when the current create-window shape drifts", () => {
-  const source = currentAvatarOverlayBundleFixture().replace(
-    "appearance:`avatarOverlay`,alwaysOnTop:process.platform===`linux`,skipTaskbar:process.platform===`linux`,focusable:process.platform===`linux`?!0:!1",
-    "appearance:`avatarOverlay`,alwaysOnTop:process.platform===`linux`,skipTaskbar:process.platform===`linux`,focusable:canFocus",
-  );
-  const context = {
-    feature: { manifest: { petOverlay: { mode: "passive" } }, settings: {} },
-  };
-  const { result, warnings } = captureWarnings(() => applyPetOverlayPatch(source, context));
-
-  assert.equal(result, source);
   assert.match(warnings.join("\n"), /Pet overlay patch is incomplete/);
 });
 
@@ -2153,10 +2066,13 @@ test("passive mode makes the overlay non-focusable", () => {
     feature: { manifest: { petOverlay: { mode: "passive" } }, settings: {} },
   });
 
+  // Upstream now creates the overlay non-focusable on every platform; passive
+  // mode keeps it that way instead of restoring focusability after show.
   assert.match(
     patched,
-    /appearance:`avatarOverlay`,frame:process\.platform===`linux`\?!1:!0,alwaysOnTop:process\.platform===`linux`,skipTaskbar:process\.platform===`linux`,focusable:!1/,
+    /appearance:"avatarOverlay",frame:process\.platform===`linux`\?!1:!0,supportsWindowTiling:!1,focusable:!1/,
   );
+  assert.match(patched, /codexPetOverlaySettings\(\)\{let e=\{[^}]*mode:`passive`/);
 });
 
 test("interactive Niri show releases initial focus before restoring inline reply focusability", () => {
@@ -3594,3 +3510,29 @@ test("KWin drag falls back without repeatedly probing missing qdbus commands", (
   controller.codexPetOverlayBeginKWinDrag(window);
   assert.equal(calls, 2);
 });
+
+test(
+  "main-process patch changes exactly one current signed chunk and stays idempotent",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
+    const chunks = fs.readdirSync(buildDir).filter(name => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name));
+    const context = { feature: { manifest: JSON.parse(fs.readFileSync(path.join(__dirname, "feature.json"), "utf8")), settings: {} } };
+    const changed = [];
+    for (const name of chunks) {
+      const source = fs.readFileSync(path.join(buildDir, name), "utf8");
+      const { result, warnings } = captureWarnings(() => applyPetOverlayPatch(source, context));
+      if (result === source) {
+        assert.ok(warnings.length > 0, name);
+        continue;
+      }
+      assert.deepEqual(warnings, [], name);
+      new vm.Script(result, { filename: name });
+      const again = captureWarnings(() => applyPetOverlayPatch(result, context));
+      assert.equal(again.result, result);
+      assert.deepEqual(again.warnings, []);
+      changed.push(name);
+    }
+    assert.equal(changed.length, 1);
+  },
+);
