@@ -362,17 +362,27 @@ function applyMainProcessChunkPatchDescriptors(chunks, descriptors, context, rep
       continue;
     }
 
+    // Collect each chunk's warnings silently; only the outcome's warnings are
+    // printed below, so a miss on unrelated chunks does not flood build logs.
     const attempts = sources.map((chunk) => {
-      const result = runDescriptorApply(
-        descriptor,
-        () => descriptor.apply(chunk.source, context),
-        chunk.source,
-      );
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      let result;
+      try {
+        result = runDescriptorApply(
+          descriptor,
+          () => descriptor.apply(chunk.source, context),
+          chunk.source,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
       return { chunk, result, changed: result.error == null && result.value !== chunk.source };
     });
     const changed = attempts.filter((attempt) => attempt.changed);
     if (changed.length > 0) {
       const warnings = changed.flatMap((attempt) => attempt.result.warnings);
+      for (const warning of warnings) console.warn(warning);
       for (const attempt of changed) {
         attempt.chunk.source = attempt.result.value;
       }
@@ -408,6 +418,7 @@ function applyMainProcessChunkPatchDescriptors(chunks, descriptors, context, rep
     const failed = integrity ?? attempts.find((attempt) => attempt.result.error != null);
     const warnings = attempts.flatMap((attempt) => attempt.result.warnings);
     if (failed != null && warnings.length === 0) {
+      console.warn(`WARN: ${describePatchError(descriptor, failed.result.error)}`);
       context.reportWarnings = [`WARN: ${describePatchError(descriptor, failed.result.error)}`];
       recordDescriptorError(report, descriptor, failed.result.error, context, failed.result.strategies);
       delete context.reportWarnings;
@@ -416,6 +427,7 @@ function applyMainProcessChunkPatchDescriptors(chunks, descriptors, context, rep
     }
     const reason = `${descriptor.id} matched no main-process chunk` +
       (warnings[0] == null ? "" : `: ${warnings[0].replace(/^WARN:\s*/, "")}`);
+    console.warn(`WARN: ${reason}`);
     context.reportWarnings = [`WARN: ${reason}`];
     recordDescriptorPatch(report, descriptor, descriptorFailureStatus(descriptor), reason, context);
     delete context.reportWarnings;

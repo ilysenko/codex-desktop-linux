@@ -211,3 +211,33 @@ test("a main-process descriptor that throws on every chunk keeps its error", () 
   assert.equal(report.patches[0].status, "skipped-optional");
   assert.match(report.patches[0].reason, /expected one current contract/);
 });
+
+test("main-process chunk misses are not printed once the descriptor applies", () => {
+  const { applyMainProcessChunkPatchDescriptors } = require("./engine.js");
+  const printed = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => printed.push(args.join(" "));
+  try {
+    applyMainProcessChunkPatchDescriptors(
+      [
+        { name: "early-bootstrap.js", source: "entry" },
+        { name: "early-bootstrap-1-0123456789abcdef.js", source: "ANCHOR" },
+      ],
+      normalizePatchDescriptors([mainBundlePatch({
+        id: "quiet",
+        apply(source) {
+          if (!source.includes("ANCHOR")) {
+            console.warn("WARN: anchor missing - skipping quiet patch");
+            return source;
+          }
+          return "PATCHED";
+        },
+      })]),
+      {},
+      createPatchReport(),
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.deepEqual(printed, []);
+});
