@@ -8,25 +8,32 @@ function applyLinuxComputerUsePluginGatePatch(currentSource) {
   };
   const identifier = String.raw`[A-Za-z_$][\w$]*`;
   const reference = String.raw`${identifier}(?:\.${identifier})+`;
+  const spreadPattern = new RegExp(String.raw`\{\.\.\.${reference}\.computerUse,`, "g");
+  const spreadCount = [...currentSource.matchAll(spreadPattern)].length;
+  if (spreadCount === 0) {
+    // The rspack main process spans several chunks; only the chunk owning the
+    // bundled plugin registry carries this registration.
+    console.warn(
+      "WARN: Could not find the bundled Computer Use plugin registration - skipping Linux Computer Use plugin gate patch",
+    );
+    return currentSource;
+  }
   const descriptorPattern = new RegExp(
-    String.raw`\{\.\.\.(${reference}\.computerUse),autoInstallOptOutKey:(${reference})\(\1\.name\),` +
+    String.raw`\{\.\.\.(${reference}\.computerUse),autoInstallOptOutKey:\(0,(${reference})\)\(\1\.name\),` +
       String.raw`isAvailable:\(\{features:(${identifier}),platform:(${identifier})\}\)=>` +
-      String.raw`\(\4===\`darwin\`\|\|\4===\`win32\`(?<linux>\|\|\4===\`linux\`)?\)&&\3\.computerUse\}`,
+      String.raw`\("darwin"===\4\|\|"win32"===\4(?<linux>\|\|"linux"===\4)?\)&&\3\.computerUse\}`,
     "g",
   );
   const descriptors = [...currentSource.matchAll(descriptorPattern)];
-  const spreadCount = [
-    ...currentSource.matchAll(new RegExp(String.raw`\{\.\.\.${reference}\.computerUse,`, "g")),
-  ].length;
   if (descriptors.length !== 1 || spreadCount !== 1) fail();
 
   const descriptor = descriptors[0];
   if (descriptor.groups.linux != null) return currentSource;
   const [match, metadata, optOut, features, platform] = descriptor;
   const replacement =
-    `{...${metadata},autoInstallOptOutKey:${optOut}(${metadata}.name),` +
+    `{...${metadata},autoInstallOptOutKey:(0,${optOut})(${metadata}.name),` +
     `isAvailable:({features:${features},platform:${platform}})=>` +
-    `(${platform}===\`darwin\`||${platform}===\`win32\`||${platform}===\`linux\`)&&` +
+    `("darwin"===${platform}||"win32"===${platform}||"linux"===${platform})&&` +
     `${features}.computerUse}`;
   return currentSource.slice(0, descriptor.index) + replacement +
     currentSource.slice(descriptor.index + match.length);

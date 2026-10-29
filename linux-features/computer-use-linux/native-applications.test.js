@@ -38,12 +38,17 @@ function metadataService(platform, { windows = [{ app_id: "org.editor", wm_class
       return backendFailure ? { status: 1, stdout: "" } : { status: 0, stdout: JSON.stringify({ windows }) };
     } },
   };
-  const factory = vm.runInNewContext(`${patch(fixture)};makeNativeApplications`, {
+  const context = {
     require: name => modules[name], Buffer,
     process: { platform, env: { HOME: "/home/test", XDG_DATA_HOME: "/xdg", XDG_DATA_DIRS: "/empty", CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE: "/backend" } },
     catalog: native, cachedApp: async () => null, mediumIcon: async () => "official-medium", smallIcon: async () => "official-small",
-  });
-  return { service: factory(), native, calls };
+    exports: {},
+  };
+  context.globalThis = context;
+  vm.runInNewContext(patch(fixture), context);
+  // Evaluate the module factory the way the rspack runtime does.
+  Object.values(context.exports.modules)[0]({}, {}, () => { throw Error("unexpected module require"); });
+  return { service: context.makeNativeApplications(), native, calls };
 }
 
 test("Linux native metadata uses direct arrays, nullable lookup, and both icon sizes", async () => {
@@ -100,10 +105,18 @@ test("native metadata rejects duplicate owners and partial or damaged contracts"
   const patched = patch(fixture);
   for (const changed of [
     fixture + fixture, patched + fixture, patched + patched,
-    fixture.replace("nativeApplications=makeNativeApplications()", "nativeApplications=other()"),
+    fixture.replace("nativeApplications=(function(){", "nativeApplications=(function(){return other();"),
     fixture.replace("nativeApplications:this.fetchHandler.nativeApplications", "nativeApplications:this.other.nativeApplications"),
     fixture.replace("iconSmall:null,iconMedium:", "iconSmall:undefined,iconMedium:"),
     patched.replace("list:async(e={})", "list:async(e=changed)"),
-    patched.replace("if(process.platform===`linux`)return codexLinuxNativeApplications();", ""),
+    patched.replace('if("linux"===process.platform)return codexLinuxNativeApplications();', ""),
   ]) assert.throws(() => patch(changed), /native Applications contract drift/);
+});
+
+test("chunks without the metadata owner are left unchanged with a diagnostic", (t) => {
+  const warnings = [];
+  t.mock.method(console, "warn", message => warnings.push(message));
+  const chunk = 'exports.ids=[87],exports.modules={1(e,t,r){"use strict";e.exports=1}};';
+  assert.equal(patch(chunk), chunk);
+  assert.match(warnings.join("\n"), /native Applications metadata owner/);
 });

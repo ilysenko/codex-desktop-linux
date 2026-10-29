@@ -1,5 +1,2 @@
-// Hand-authored native metadata factory and its assignment/exposure contract.
-const cp=require("node:child_process"),fs=require("node:fs"),os=require("node:os"),path=require("node:path");
-function makeNativeApplications(){if(process.platform===`darwin`||process.platform===`win32`)return{getByBundleId:async id=>await cachedApp(id)??await catalog.findById(id),list:catalog.list,getIcon:async({appPath:file,size:size})=>size===`medium`?{iconSmall:null,iconMedium:await mediumIcon(file)}:{iconSmall:await smallIcon(file)}}}
-class TestHandler{nativeApplications=makeNativeApplications()}
-function expose(){return{nativeApplications:this.fetchHandler.nativeApplications}}
+// Hand-authored rspack chunk: native metadata class-field factory and its exposure contract.
+exports.ids=[916],exports.modules={61071(e,t,r){"use strict";class TestHandler{globalStateService;nativeApplications=(function(){if("darwin"===process.platform||"win32"===process.platform)return{getByBundleId:async e=>await cachedApp(e)??await (0,catalog.findById)(e),list:catalog.list,getIcon:async({appPath:e,size:t})=>"medium"===t?{iconSmall:null,iconMedium:await mediumIcon(e)}:{iconSmall:await smallIcon(e)}}})();workspaceRoots}function expose(){return{nativeApplications:this.fetchHandler.nativeApplications}}globalThis.makeNativeApplications=()=>new TestHandler().nativeApplications}};

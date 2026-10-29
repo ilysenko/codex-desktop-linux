@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const manifest = require("./feature.json");
 const descriptors = require("./patch.js");
@@ -19,6 +20,7 @@ const {
   applyMainBundlePatchDescriptors,
 } = require("../../scripts/patches/engine.js");
 const {
+  applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseHostPlatformPatch,
   matchesLinuxComputerUseHostPlatformContract,
@@ -180,7 +182,7 @@ test("malformed patched host-platform variable relationship is rejected byte-ide
   assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
 });
 
-const nativeRegistration = "{...n.nc.computerUse,autoInstallOptOutKey:n.sc(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>(t===`darwin`||t===`win32`)&&e.computerUse}";
+const nativeRegistration = '{...n.nc.computerUse,autoInstallOptOutKey:(0,n.sc)(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>("darwin"===t||"win32"===t)&&e.computerUse}';
 const registrationFixture = `var kd=[${nativeRegistration}];`;
 
 function evaluateNativeRegistration(source) {
@@ -212,40 +214,50 @@ test("current native registration enables Linux while preserving shared consent 
 
 test("native registration matching follows renamed aliases and preserves unrelated browser descriptors", () => {
   const browser = "{...n.nc.browser,isAvailable:({features:e})=>e.computerUse||e.externalBrowserUse}";
-  const fixture = registrationFixture.replace("var kd=[", `var kd=[${browser},`).replaceAll("n.nc", "q.registry").replaceAll("n.sc", "q.optOut").replaceAll("features:e,platform:t", "features:flags,platform:os").replaceAll("t===", "os===").replaceAll("e.computerUse", "flags.computerUse");
+  const fixture = registrationFixture.replace("var kd=[", `var kd=[${browser},`).replaceAll("n.nc", "q.registry").replaceAll("n.sc", "q.optOut").replaceAll("features:e,platform:t", "features:flags,platform:os").replaceAll("===t", "===os").replaceAll("e.computerUse", "flags.computerUse");
   const result = applyLinuxComputerUsePluginGatePatch(fixture);
-  assert.ok(result.includes("os===`linux`)&&flags.computerUse"));
+  assert.ok(result.includes('"linux"===os)&&flags.computerUse'));
   assert.ok(result.includes(browser.replaceAll("n.nc", "q.registry").replaceAll("e.computerUse", "flags.computerUse")));
 });
 
 for (const [name, fixture] of [
-  ["missing registration", "var kd=[];"],
   ["duplicate native registration", registrationFixture.replace(nativeRegistration, `${nativeRegistration},${nativeRegistration}`)],
   ["mixed patched and original registration", registrationFixture + applyLinuxComputerUsePluginGatePatch(registrationFixture)],
-  ["wrong opt-out reference", registrationFixture.replace("n.sc(n.nc.computerUse.name)", "n.sc(n.nc.browser.name)")],
-  ["unsupported gate", registrationFixture.replace("(t===`darwin`||t===`win32`)&&e.computerUse", "t===`darwin`||e.computerUse")],
+  ["wrong opt-out reference", registrationFixture.replace("(0,n.sc)(n.nc.computerUse.name)", "(0,n.sc)(n.nc.browser.name)")],
+  ["unsupported gate", registrationFixture.replace('("darwin"===t||"win32"===t)&&e.computerUse', '"darwin"===t||e.computerUse')],
+  ["retired direct opt-out call", registrationFixture.replace("(0,n.sc)(", "n.sc(")],
 ]) {
   test(`native plugin patch rejects ${name}`, () => {
+    assert.notEqual(fixture, registrationFixture);
     assert.throws(() => applyLinuxComputerUsePluginGatePatch(fixture), /Required Linux Computer Use plugin gate patch failed/);
   });
 }
 
 
+test("chunks without the native plugin registration are left unchanged with a diagnostic", (t) => {
+  const warnings = [];
+  t.mock.method(console, "warn", message => warnings.push(message));
+  const chunk = "var kd=[];";
+  assert.equal(applyLinuxComputerUsePluginGatePatch(chunk), chunk);
+  assert.match(warnings.join("\n"), /Computer Use plugin registration/);
+});
+
 test("native plugin patch rejects partial Linux registrations", () => {
   const patched = applyLinuxComputerUsePluginGatePatch(registrationFixture);
   for (const bad of [
-    patched.replace("||t===`linux`", "||t===`freebsd`"),
+    patched.replace('||"linux"===t', '||"freebsd"===t'),
     patched.replace(")&&e.computerUse", ")||e.computerUse"),
     patched.replace(".name),isAvailable", ".name),installWhenMissing:!0,isAvailable"),
   ]) {
+    assert.notEqual(bad, patched);
     assert.throws(() => applyLinuxComputerUsePluginGatePatch(bad), /Required Linux Computer Use plugin gate patch failed/);
   }
 });
 
 test("desktop feature gate enables Linux in the unique current Windows override", () => {
-  const current = "function features(e,n,r){let i=r===`win32`&&n.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{...e,computerUse:!0}:e,o=i;return o}";
+  const current = 'function features(e,n,r){let i="win32"===r&&"1"===n.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE?{...e,computerUse:!0}:e,o=i;return o}';
   const patched = applyLinuxComputerUseFeaturePatch(current);
-  assert.match(patched, /r===`linux`\?\{\.\.\.e,computerUse:!0\}:r===`win32`/);
+  assert.match(patched, /"linux"===r\?\{\.\.\.e,computerUse:!0\}:"win32"===r/);
   assert.equal(applyLinuxComputerUseFeaturePatch(patched), patched);
   assert.equal(new Function("e", "n", "r", `${patched};return features(e,n,r).computerUse`)(
     { computerUse: false }, {}, "linux",
@@ -253,13 +265,17 @@ test("desktop feature gate enables Linux in the unique current Windows override"
 });
 
 test("desktop feature gate rejects missing, duplicate, and partial current contracts byte-identically", () => {
-  const current = "function features(e,n,r){let i=r===`win32`&&n.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{...e,computerUse:!0}:e;return i}";
+  const current = 'function features(e,n,r){let i="win32"===r&&"1"===n.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE?{...e,computerUse:!0}:e,o=i;return o}';
   const patched = applyLinuxComputerUseFeaturePatch(current);
+  assert.notEqual(patched, current);
   for (const source of [
     current + current,
     patched + current,
     current.replace("computerUse:!0", "computerUse:!1"),
+    current.replace("computerUse:!0}:e,", "computerUse:!0}:other,"),
+    patched.replace(/computerUse:!0\}:e,/, "computerUse:!0}:other,"),
   ]) {
+    assert.notEqual(source, current);
     assert.equal(applyLinuxComputerUseFeaturePatch(source), source);
   }
 });
@@ -282,4 +298,63 @@ test("anchor-free desktop feature gate reports enabled-feature drift", () => {
   assert.equal(report.patches[0].status, "skipped-optional");
   assert.notEqual(report.patches[0].status, "already-applied");
   assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
+});
+
+const cursorRegistration = 'class Overlay{constructor(e,t,r,n=!1){n||(!function(e,{addon:t,electronAppPath:r,platform:n=process.platform,resourcesPath:i=process.resourcesPath}={}){if("darwin"===n)try{(t??load({electronAppPath:r??app.getAppPath(),resourcesPath:i})).setRemoteHostedPIPContentComputerUseCursorLocationHandler(e)}catch{return!1}}(e=>{this.cursor=e}),!function(e,{addon:t,platform:n=process.platform}={}){if("darwin"===n)try{(t??load({})).setRemoteHostedPIPContentLayoutStateChangedHandler(e)}catch{return!1}}(e=>{this.layout=e}))}}globalThis.Overlay=Overlay;';
+const cursorChunk = `exports.ids=[916],exports.modules={61071(e,t,r){"use strict";${cursorRegistration}}};`;
+
+test("avatar cursor bridge adds a Linux branch to the inline registration", () => {
+  const patched = applyLinuxComputerUseAvatarCursorBridgePatch(cursorChunk);
+  assert.notEqual(patched, cursorChunk);
+  assert.ok(patched.startsWith("function codexLinuxComputerUseCursorComponent("));
+  assert.ok(patched.includes('{if("linux"===n)return codexLinuxRegisterComputerUseCursorHandler(e);if("darwin"===n)try{'));
+  assert.equal((patched.match(/"linux"===n/g) ?? []).length, 1, "only the cursor handler gains a Linux branch");
+  assert.doesNotThrow(() => new vm.Script(patched));
+  assert.equal(applyLinuxComputerUseAvatarCursorBridgePatch(patched), patched);
+  for (const platform of ["linux", "darwin"]) {
+    const loads = [];
+    const context = {
+      exports: {}, Buffer, process: { platform, env: {}, resourcesPath: "/resources" },
+      app: { getAppPath: () => "/app" },
+      load: options => {
+        loads.push(options);
+        return { setRemoteHostedPIPContentComputerUseCursorLocationHandler() {}, setRemoteHostedPIPContentLayoutStateChangedHandler() {} };
+      },
+      require: name => { throw Error(`unexpected ${name}`); },
+    };
+    context.globalThis = context;
+    vm.runInNewContext(patched, context);
+    // Evaluate the module factory the way the rspack runtime does.
+    Object.values(context.exports.modules)[0]({}, {}, () => {});
+    const overlay = vm.runInNewContext("new globalThis.Overlay()", context);
+    const bridge = vm.runInNewContext("codexLinuxRegisterComputerUseCursorHandler", context);
+    if (platform === "linux") {
+      // Without a private runtime directory the bridge keeps the handler but opens no socket.
+      assert.equal(typeof bridge.handler, "function");
+      bridge.handler({ isActive: true, x: 1, y: 2 });
+      assert.deepEqual({ ...overlay.cursor }, { isActive: true, x: 1, y: 2 });
+      assert.equal(bridge.server, undefined);
+      assert.equal(loads.length, 0, "Linux never loads the macOS addon");
+    } else {
+      assert.equal(bridge.handler, undefined);
+      assert.equal(loads.length, 2);
+    }
+  }
+});
+
+test("avatar cursor bridge skips anchor-free, changed, and partial chunks", (t) => {
+  const warnings = [];
+  t.mock.method(console, "warn", message => warnings.push(message));
+  const patched = applyLinuxComputerUseAvatarCursorBridgePatch(cursorChunk);
+  for (const source of [
+    'exports.ids=[87],exports.modules={1(e){e.exports=1}};',
+    cursorChunk.replace('if("darwin"===n)try{(t??load({electronAppPath', 'if("darwin"===n||"win32"===n)try{(t??load({electronAppPath'),
+    cursorChunk + cursorChunk,
+    patched.slice(patched.indexOf("exports.ids=")),
+    cursorChunk.replace("exports.ids=", "function codexLinuxRegisterComputerUseCursorHandler(){}exports.ids="),
+  ]) {
+    assert.equal(applyLinuxComputerUseAvatarCursorBridgePatch(source), source);
+  }
+  assert.equal(warnings.length, 5);
+  assert.match(warnings[0], /Could not find the Computer Use cursor handler marker/);
 });

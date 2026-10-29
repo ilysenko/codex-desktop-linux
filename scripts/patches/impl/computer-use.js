@@ -3,12 +3,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const {
-  findLastRegexMatch,
-  findMatchingBrace,
-  requireName,
-} = require("../lib/minified-js.js");
-
 const COMPUTER_USE_UI_ENV_VAR = "CODEX_LINUX_ENABLE_COMPUTER_USE_UI";
 const COMPUTER_USE_UI_SETTINGS_KEY = "codex-linux-computer-use-ui-enabled";
 const COMPUTER_USE_CURSOR_HANDLER_MARKER =
@@ -23,64 +17,59 @@ function linuxComputerUseCursorBridgeRuntimeSource() {
   ].join("");
 }
 
-function findComputerUseCursorRegistrationFunction(source) {
-  const markerIndex = source.indexOf(COMPUTER_USE_CURSOR_HANDLER_MARKER);
-  if (markerIndex === -1) {
-    return null;
-  }
+// The rspack main process inlines the macOS cursor-location registration as an
+// anonymous function inside the avatar overlay constructor. Function
+// declarations cannot be inserted there, so the bridge runtime is prepended to
+// the CommonJS chunk and the registration gains a Linux branch.
+const COMPUTER_USE_CURSOR_REGISTRATION_PATTERN = new RegExp(
+  String.raw`function(?: [\w$]+)?\((?<handler>[\w$]+),\{(?:[^{}]*,)?platform:(?<platform>[\w$]+)=process\.platform(?:,[^{}]*)?\}=\{\}\)\{` +
+    String.raw`(?<linux>if\("linux"===\k<platform>\)return ${LINUX_COMPUTER_USE_CURSOR_BRIDGE_MARKER}\(\k<handler>\);)?` +
+    String.raw`if\("darwin"===\k<platform>\)try\{\((?:(?!function)[^;])*?\)\.${COMPUTER_USE_CURSOR_HANDLER_MARKER}\(\k<handler>\)\}`,
+  "g",
+);
 
-  const functionRegex = /function ([A-Za-z_$][\w$]*)\(([^)]*)\)\{/g;
-  let candidate = null;
-  let match;
-  while ((match = functionRegex.exec(source)) != null && match.index < markerIndex) {
-    const openIndex = match.index + match[0].length - 1;
-    const closeIndex = findMatchingBrace(source, openIndex);
-    if (closeIndex >= markerIndex) {
-      candidate = {
-        match,
-        start: match.index,
-        end: closeIndex + 1,
-        text: source.slice(match.index, closeIndex + 1),
-      };
-    }
-  }
-  return candidate;
+function countOccurrences(source, needle) {
+  return source.split(needle).length - 1;
 }
 
 function applyLinuxComputerUseAvatarCursorBridgePatch(currentSource) {
-  if (currentSource.includes(LINUX_COMPUTER_USE_CURSOR_BRIDGE_MARKER)) {
-    return currentSource;
-  }
-
-  const registration = findComputerUseCursorRegistrationFunction(currentSource);
-  const handlerVar = registration?.match[2].match(/^\s*([A-Za-z_$][\w$]*)\s*,/)?.[1] ?? null;
-  const platformVar = registration?.match[2].match(
-    /platform:([A-Za-z_$][\w$]*)=process\.platform/,
-  )?.[1] ?? null;
-  if (registration == null || handlerVar == null || platformVar == null) {
-    const reason = currentSource.includes(COMPUTER_USE_CURSOR_HANDLER_MARKER)
-      ? "Could not identify the Computer Use cursor registration function"
-      : "Could not find the Computer Use cursor handler marker";
+  const skip = (reason) => {
     console.warn(`WARN: ${reason} - skipping Linux avatar cursor bridge patch`);
     return currentSource;
+  };
+  const markerCount = countOccurrences(currentSource, COMPUTER_USE_CURSOR_HANDLER_MARKER);
+  if (markerCount === 0) {
+    return skip("Could not find the Computer Use cursor handler marker");
+  }
+  const registrations = [...currentSource.matchAll(COMPUTER_USE_CURSOR_REGISTRATION_PATTERN)];
+  if (markerCount !== 1 || registrations.length !== 1) {
+    return skip("Could not identify the Computer Use cursor registration function");
   }
 
-  const darwinGuard = `if(${platformVar}!==\`darwin\`)return!1;`;
-  if (!registration.text.includes(darwinGuard)) {
-    console.warn(
-      "WARN: Computer Use cursor registration no longer has the expected Darwin guard - skipping Linux avatar cursor bridge patch",
-    );
-    return currentSource;
+  const runtime = linuxComputerUseCursorBridgeRuntimeSource();
+  const runtimeCount = countOccurrences(currentSource, runtime);
+  const bridgeCount = countOccurrences(currentSource, LINUX_COMPUTER_USE_CURSOR_BRIDGE_MARKER);
+  const [registration] = registrations;
+  if (registration.groups.linux != null) {
+    // Runtime: two declarations plus three self references; guard: one call.
+    if (runtimeCount === 1 && bridgeCount === countOccurrences(runtime, LINUX_COMPUTER_USE_CURSOR_BRIDGE_MARKER) + 1) {
+      return currentSource;
+    }
+    return skip("Computer Use cursor bridge is partially applied");
+  }
+  if (runtimeCount !== 0 || bridgeCount !== 0) {
+    return skip("Computer Use cursor bridge is partially applied");
   }
 
-  const patchedRegistration = registration.text.replace(
-    darwinGuard,
-    `if(${platformVar}===\`linux\`)return codexLinuxRegisterComputerUseCursorHandler(${handlerVar});${darwinGuard}`,
-  );
-  return currentSource.slice(0, registration.start) +
-    linuxComputerUseCursorBridgeRuntimeSource() +
-    patchedRegistration +
-    currentSource.slice(registration.end);
+  const { handler, platform } = registration.groups;
+  const darwinGuard = `if("darwin"===${platform})try{`;
+  const guardIndex = registration.index + registration[0].indexOf(darwinGuard);
+  const patched = currentSource.slice(0, guardIndex) +
+    `if("linux"===${platform})return ${LINUX_COMPUTER_USE_CURSOR_BRIDGE_MARKER}(${handler});` +
+    currentSource.slice(guardIndex);
+  // Chunk files are CommonJS modules; top-level declarations are visible to
+  // every module factory in the chunk and may use Node's require directly.
+  return runtime + patched;
 }
 
 // Computer Use has two postures: the bundled plugin gate is default-on Linux
@@ -154,16 +143,17 @@ const linuxSettingsKeys = {
 
 function applyLinuxComputerUseFeaturePatch(currentSource) {
   const identifier = "[A-Za-z_$][\\w$]*";
+  const windowsOverride = (platformVar, envVar, featuresVar, featuresRef) =>
+    `"win32"===${platformVar}&&"1"===${envVar}\\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE\\?` +
+    `\\{\\.\\.\\.${featuresVar},computerUse:!0\\}:${featuresRef},`;
   const currentPattern = new RegExp(
-    `let (${identifier})=(${identifier})===\`win32\`&&(${identifier})\\.` +
-      `CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`\\?\\{\\.\\.\\.(${identifier}),` +
-      `computerUse:!0\\}:\\4,`,
+    `let (${identifier})=` +
+      windowsOverride(`(${identifier})`, `(${identifier})`, `(${identifier})`, "\\4"),
     "g",
   );
   const patchedPattern = new RegExp(
-    `let (${identifier})=(${identifier})===\`linux\`\\?\\{\\.\\.\\.(${identifier}),computerUse:!0\\}:` +
-      `\\2===\`win32\`&&(${identifier})\\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`\\?` +
-      `\\{\\.\\.\\.\\3,computerUse:!0\\}:\\3,`,
+    `let (${identifier})="linux"===(${identifier})\\?\\{\\.\\.\\.(${identifier}),computerUse:!0\\}:` +
+      windowsOverride("\\2", `(${identifier})`, "\\3", "\\3"),
     "g",
   );
   const current = [...currentSource.matchAll(currentPattern)];
@@ -173,8 +163,8 @@ function applyLinuxComputerUseFeaturePatch(currentSource) {
     const match = current[0];
     const [, gateVar, platformVar, envVar, featuresVar] = match;
     const replacement =
-      `let ${gateVar}=${platformVar}===\`linux\`?{...${featuresVar},computerUse:!0}:` +
-      `${platformVar}===\`win32\`&&${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===\`1\`?` +
+      `let ${gateVar}="linux"===${platformVar}?{...${featuresVar},computerUse:!0}:` +
+      `"win32"===${platformVar}&&"1"===${envVar}.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE?` +
       `{...${featuresVar},computerUse:!0}:${featuresVar},`;
     return currentSource.slice(0, match.index) + replacement +
       currentSource.slice(match.index + match[0].length);
