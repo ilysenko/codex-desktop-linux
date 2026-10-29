@@ -11,10 +11,23 @@ const EXPECTED_BUILD_FONT_SIZE_BUNDLE_COUNT = 2;
 const EXPECTED_WEBVIEW_FONT_SIZE_BUNDLE_COUNT = 2;
 const EXPECTED_FONT_SIZE_BUNDLE_COUNT =
   EXPECTED_BUILD_FONT_SIZE_BUNDLE_COUNT + EXPECTED_WEBVIEW_FONT_SIZE_BUNDLE_COUNT;
+// Renderer bundles keep the shared limits object.
 const UPSTREAM_FONT_SIZE_LIMITS_PATTERN =
   /([A-Za-z_$][\w$]*)=\{sans:\{min:(11),max:(16)\},code:\{min:(8),max:(24)\}\}/g;
 const APPLIED_FONT_SIZE_LIMITS_PATTERN =
   /[A-Za-z_$][\w$]*=\{sans:\{min:11,max:(1[7-9]|[2-5]\d|6[0-4])\/\*codex-linux-ui-font-size-max\*\/\},code:\{min:8,max:24\}\}/g;
+// The rspack main-process entry and worker inline the same limits as four
+// module-local constants consumed by the sansFontSize/codeFontSize schemas.
+const IDENT = "[A-Za-z_$][\\w$]*";
+const UPSTREAM_FONT_SIZE_CONSTANTS_PATTERN = new RegExp(
+  `(?<![\\w$.#])(${IDENT})=11,(${IDENT})=(16),(${IDENT})=8,(${IDENT})=24(?=[,;])`,
+  "g",
+);
+const APPLIED_FONT_SIZE_CONSTANTS_PATTERN = new RegExp(
+  `(?<![\\w$.#])(${IDENT})=11,(${IDENT})=(1[7-9]|[2-5]\\d|6[0-4])\\/\\*${RUNTIME_MARKER}\\*\\/,` +
+    `(${IDENT})=8,(${IDENT})=24(?=[,;])`,
+  "g",
+);
 
 function warn(message) {
   console.warn(`WARN: ${message} - skipping ui-tweaks UI font size patch`);
@@ -58,10 +71,40 @@ function countMatches(source, pattern) {
   return [...source.matchAll(pattern)].length;
 }
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function schemaBindingCount(source, key, min, max) {
+  return countMatches(
+    source,
+    new RegExp(
+      `key:(["'\x60])${key}\\1,schema:[\\w$.()]*?\\.min\\(${escapeRegExp(min)}\\)` +
+        `\\.max\\(${escapeRegExp(max)}\\)\\}`,
+      "g",
+    ),
+  );
+}
+
+// Constant tuples count only when both settings schemas consume them, so an
+// unrelated `a=11,b=16,c=8,d=24` sequence cannot be mistaken for the registry.
+function boundConstantMatches(source, pattern) {
+  pattern.lastIndex = 0;
+  return [...source.matchAll(pattern)].filter(
+    ([, sansMin, sansMax, , codeMin, codeMax]) =>
+      schemaBindingCount(source, "sansFontSize", sansMin, sansMax) === 1 &&
+      schemaBindingCount(source, "codeFontSize", codeMin, codeMax) === 1,
+  );
+}
+
 function fontSizeLimitContract(source) {
   const markerCount = source.split(RUNTIME_MARKER).length - 1;
-  const upstreamCount = countMatches(source, UPSTREAM_FONT_SIZE_LIMITS_PATTERN);
-  const appliedCount = countMatches(source, APPLIED_FONT_SIZE_LIMITS_PATTERN);
+  const upstreamCount =
+    countMatches(source, UPSTREAM_FONT_SIZE_LIMITS_PATTERN) +
+    boundConstantMatches(source, UPSTREAM_FONT_SIZE_CONSTANTS_PATTERN).length;
+  const appliedCount =
+    countMatches(source, APPLIED_FONT_SIZE_LIMITS_PATTERN) +
+    boundConstantMatches(source, APPLIED_FONT_SIZE_CONSTANTS_PATTERN).length;
   if (markerCount === 0 && upstreamCount === 0 && appliedCount === 0) {
     return "absent";
   }
@@ -76,8 +119,11 @@ function fontSizeLimitContract(source) {
 
 function appliedUiFontSizeMax(source) {
   APPLIED_FONT_SIZE_LIMITS_PATTERN.lastIndex = 0;
-  const matches = [...source.matchAll(APPLIED_FONT_SIZE_LIMITS_PATTERN)];
-  return matches.length === 1 ? Number(matches[0][1]) : null;
+  const matches = [
+    ...[...source.matchAll(APPLIED_FONT_SIZE_LIMITS_PATTERN)].map((match) => match[1]),
+    ...boundConstantMatches(source, APPLIED_FONT_SIZE_CONSTANTS_PATTERN).map((match) => match[3]),
+  ];
+  return matches.length === 1 ? Number(matches[0]) : null;
 }
 
 function applyUiFontSizePatch(source, context = {}) {
@@ -91,8 +137,9 @@ function applyUiFontSizePatch(source, context = {}) {
     }
 
     UPSTREAM_FONT_SIZE_LIMITS_PATTERN.lastIndex = 0;
-    const matches = [...source.matchAll(UPSTREAM_FONT_SIZE_LIMITS_PATTERN)];
-    if (matches.length !== 1) {
+    const objects = [...source.matchAll(UPSTREAM_FONT_SIZE_LIMITS_PATTERN)];
+    const constants = boundConstantMatches(source, UPSTREAM_FONT_SIZE_CONSTANTS_PATTERN);
+    if (objects.length + constants.length !== 1) {
       if (context.warnOnMissingMarkers === true) {
         warn("Could not find the unique current UI and code font size limits");
       }
@@ -100,11 +147,19 @@ function applyUiFontSizePatch(source, context = {}) {
     }
 
     const max = normalizedMaxUiFontSize(context);
-    const [original, registry, sansMin, _sansMax, codeMin, codeMax] = matches[0];
+    if (constants.length === 1) {
+      const [original, sansMin, sansMax, , codeMin, codeMax] = constants[0];
+      const replacement =
+        `${sansMin}=11,${sansMax}=${max}/*${RUNTIME_MARKER}*/,${codeMin}=8,${codeMax}=24`;
+      return source.slice(0, constants[0].index) + replacement +
+        source.slice(constants[0].index + original.length);
+    }
+    const [original, registry, sansMin, _sansMax, codeMin, codeMax] = objects[0];
     const replacement =
       `${registry}={sans:{min:${sansMin},max:${max}/*${RUNTIME_MARKER}*/},` +
       `code:{min:${codeMin},max:${codeMax}}}`;
-    return source.replace(original, replacement);
+    return source.slice(0, objects[0].index) + replacement +
+      source.slice(objects[0].index + original.length);
   } catch (error) {
     warn(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
     return source;
@@ -241,6 +296,7 @@ module.exports = {
   MAX_CONFIGURABLE_UI_FONT_SIZE,
   MIN_EXTENDED_UI_FONT_SIZE,
   RUNTIME_MARKER,
+  UPSTREAM_FONT_SIZE_CONSTANTS_PATTERN,
   UPSTREAM_FONT_SIZE_LIMITS_PATTERN,
   appliedUiFontSizeMax,
   applyUiFontSizeAppPatch,

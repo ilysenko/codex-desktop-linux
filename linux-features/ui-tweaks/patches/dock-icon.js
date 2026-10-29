@@ -19,93 +19,143 @@ function sameAliases(...aliases) {
   return aliases.every((alias) => alias === aliases[0]);
 }
 
+// The official 26.1027.30824 main process is an rspack/SWC build: the whole
+// Dock icon contract lives in one main-app module of an `early-bootstrap-*`
+// chunk, strings are double-quoted, comparisons are written literal-first
+// (`"darwin"!==process.platform`, `null==x`), and one-shot helpers (Dock
+// previews, packaged resource lookup, macOS icon refresh, Windows tray GUID)
+// are inlined as function expressions. Injected code uses only names that are
+// declared in that module or created by this patch.
+const id = identifier;
+const linuxOnly = '"linux"===process\\.platform';
+const notLinux = '"linux"!==process\\.platform';
+
 function mainPatterns(state) {
-  const linux = state === "patched" ? "&&process\\.platform!==`linux`" : "";
-  const spaceDark = state === "patched"
-    ? "process\\.platform===`linux`\\?\\k<codexDark>:\\k<resource>\\(\\k<theme>\\.spaceDark\\)"
+  const patched = state === "patched";
+  const previewGate = patched
+    ? `"darwin"!==process\\.platform&&${notLinux}`
+    : '"darwin"!==process\\.platform';
+  const spaceDark = patched
+    ? `${linuxOnly}\\?\\k<codexDark>:\\k<resource>\\(\\k<theme>\\.spaceDark\\)`
     : "\\k<resource>\\(\\k<theme>\\.spaceDark\\)";
-  const spaceLight = state === "patched"
-    ? "process\\.platform===`linux`\\?\\k<codexLight>:\\k<resource>\\(\\k<theme>\\.spaceLight\\)"
+  const spaceLight = patched
+    ? `${linuxOnly}\\?\\k<codexLight>:\\k<resource>\\(\\k<theme>\\.spaceLight\\)`
     : "\\k<resource>\\(\\k<theme>\\.spaceLight\\)";
-  const packaged = state === "patched"
-    ? "(?<electron>[A-Za-z_$][\\w$]*)\\.app\\.isPackaged\\|\\|process\\.platform===`linux`\\?\\k<helper>\\(\\k<arg>\\):null"
-    : "(?<electron>[A-Za-z_$][\\w$]*)\\.app\\.isPackaged\\?\\(0,(?<path>[A-Za-z_$][\\w$]*)\\.join\\)\\(process\\.resourcesPath,\\k<arg>\\):null";
-  const windowPackaged = state === "patched"
-    ? "!(?<electron>[A-Za-z_$][\\w$]*)\\.app\\.isPackaged&&process\\.platform!==`linux`"
-    : "!(?<electron>[A-Za-z_$][\\w$]*)\\.app\\.isPackaged";
-  const applyPrefix = state === "patched"
-    ? `(?<apply>${identifier})=function ${dockIconApplyHelper}\\((?<arg>${identifier})\\)\\{if\\((?<devIcons>${identifier})&&process\\.platform!==\`linux\`\\)\\{(?=[\\s\\S]{0,1024}\\.app\\.dock)(?=[\\s\\S]{0,1024}if\\(\\k<arg>===\`app-default\`)`
-    : `(?<apply>${identifier})=(?<arg>${identifier})=>\\{if\\((?<devIcons>${identifier})\\)\\{(?=[\\s\\S]{0,1024}\\.app\\.dock)(?=[\\s\\S]{0,1024}if\\(\\k<arg>===\`app-default\`)`;
-  const applyDefaultGate = state === "patched"
-    ? `if\\((?<arg>${identifier})===\`app-default\`&&process\\.platform!==\`linux\`&&(?<build>${identifier})!==(?:${identifier})\\.(?:${identifier})\\.Dev\\)`
-    : `if\\((?<arg>${identifier})===\`app-default\`&&(?<build>${identifier})!==(?:${identifier})\\.(?:${identifier})\\.Dev\\)`;
-  const applyTail = state === "patched"
-    ? `if\\((?<image>${identifier})\\.isEmpty\\(\\)\\)return;if\\(process\\.platform!==\`linux\`&&\\((?<arg>${identifier})===\`codex-system\`\\|\\|\\k<arg>===\`space-system\`\\)\\)\\{let\\{width:(?<width>${identifier}),height:(?<height>${identifier})\\}=\\k<image>\\.getSize\\(\\),(?<inset>${identifier})=Math\\.round\\(\\k<width>/128\\);\\k<image>=\\k<image>\\.crop\\(\\{x:\\k<inset>,y:\\k<inset>,width:\\k<width>-\\k<inset>\\*2,height:\\k<height>-\\k<inset>\\*2\\}\\)\\}if\\(process\\.platform===\`linux\`\\)\\{let codexLinuxIconSelection=\\k<arg>===\`codex-system\`\\|\\|\\k<arg>===\`space-system\`\\?\\((?<electron>${identifier})\\.nativeTheme\\.shouldUseDarkColorsForSystemIntegratedUI\\?\`codex-dark\`:\`codex-light\`\\):\`chatgpt\`;globalThis\\.codexLinuxDockIconImage=\\k<image>;for\\(let (?<window>${identifier}) of \\k<electron>\\.BrowserWindow\\.getAllWindows\\(\\)\\)\\k<window>\\.isDestroyed\\(\\)\\|\\|\\k<window>\\.setIcon\\(\\k<image>\\);(?<trayState>${identifier})!=null&&!\\k<trayState>\\.tray\\.isDestroyed\\(\\)&&\\k<trayState>\\.tray\\.setImage\\(\\k<image>\\);let codexLinuxSyncScript=${dockIconResourceHelper}\\(\`sync-desktop-icon\\.sh\`\\);if\\((?<exists>${identifier})\\.existsSync\\(codexLinuxSyncScript\\)\\)try\\{let (?<child>${identifier})=require\\(\`node:child_process\`\\)\\.spawn\\(codexLinuxSyncScript,\\[codexLinuxIconSelection\\],\\{detached:!0,stdio:\\[\`pipe\`,\`ignore\`,\`ignore\`\\]\\}\\);\\k<child>\\.on\\(\`error\`,\\(\\)=>\\{\\}\\),\\k<child>\\.stdin\\.on\\(\`error\`,\\(\\)=>\\{\\}\\),\\k<child>\\.stdin\\.end\\(\\k<image>\\.toPNG\\(\\)\\),\\k<child>\\.unref\\(\\)\\}catch\\((?:${identifier})\\)\\{\\}return\\}\\k<electron>\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}`
-    : `if\\(!(?<image>${identifier})\\.isEmpty\\(\\)\\)\\{if\\((?<arg>${identifier})===\`codex-system\`\\|\\|\\k<arg>===\`space-system\`\\)\\{let\\{width:(?<width>${identifier}),height:(?<height>${identifier})\\}=\\k<image>\\.getSize\\(\\),(?<inset>${identifier})=Math\\.round\\(\\k<width>/128\\);\\k<image>=\\k<image>\\.crop\\(\\{x:\\k<inset>,y:\\k<inset>,width:\\k<width>-\\k<inset>\\*2,height:\\k<height>-\\k<inset>\\*2\\}\\)\\}(?<electron>${identifier})\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}\\}`;
+  const packaged = patched
+    ? `(?<electron>${id})\\.app\\.isPackaged\\|\\|${linuxOnly}\\?\\k<helper>\\(\\k<arg>\\):null`
+    : `(?<electron>${id})\\.app\\.isPackaged\\?\\(0,(?<path>${id})\\.join\\)\\(process\\.resourcesPath,\\k<arg>\\):null`;
+  const appInfoTail =
+    `return (?<normalize>${id})\\(null!=\\k<candidate>&&\\(0,(?<exists>${id})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:` +
+    `\\(0,\\k<path>\\.join\\)\\(\\k<electron>\\.app\\.getAppPath\\(\\),"src","icons",\\k<arg>\\)\\)\\}`;
+  const appInfoOwner =
+    `function (?<owner>${id})\\((?<arg>${id})\\)\\{if\\(null==\\k<arg>\\)return null;let (?<candidate>${id})=${packaged};${appInfoTail}`;
+  const windowResource = patched
+    ? `\\((?<arg>${id})=>\\{if\\(!(?<electron>${id})\\.app\\.isPackaged&&${notLinux}\\)return null;let (?<candidate>${id})=${dockIconResourceHelper}\\(\\k<arg>\\);` +
+      `return\\(0,(?<exists>${id})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:null\\}\\)`
+    : `\\((?<arg>${id})=>\\{if\\(!(?<electron>${id})\\.app\\.isPackaged\\)return null;let (?<candidate>${id})=\\(0,(?<path>${id})\\.join\\)\\(process\\.resourcesPath,\\k<arg>\\);` +
+      `return\\(0,(?<exists>${id})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:null\\}\\)`;
+  const spaceSystem = patched
+    ? `${linuxOnly}\\?\\k<dark>\\?\\k<theme>\\.dark:\\k<theme>\\.light:\\k<dark>\\?\\k<theme>\\.spaceDark:\\k<theme>\\.spaceLight`
+    : "\\k<dark>\\?\\k<theme>\\.spaceDark:\\k<theme>\\.spaceLight";
+  // The apply callback is the one whose dev-icon branch sets the Dock icon and
+  // is followed by the app-default reset of the same argument.
+  const applyBody = '(?=[\\s\\S]{0,1024}\\.app\\.dock)(?=[\\s\\S]{0,1024}if\\("app-default"===\\k<arg>&&)';
+  const applyPrefix = patched
+    ? `(?<apply>${id})=function ${dockIconApplyHelper}\\((?<arg>${id})\\)\\{if\\((?<devIcons>${id})&&${notLinux}\\)\\{${applyBody}`
+    : `(?<apply>${id})=(?<arg>${id})=>\\{if\\((?<devIcons>${id})\\)\\{${applyBody}`;
+  const applyDefaultGate = patched
+    ? `if\\("app-default"===(?<arg>${id})&&${notLinux}&&(?<build>${id})!==(?:${id})\\.(?:${id})\\.Dev\\)\\{`
+    : `if\\("app-default"===(?<arg>${id})&&(?<build>${id})!==(?:${id})\\.(?:${id})\\.Dev\\)\\{`;
+  const crop =
+    `let\\{width:(?<width>${id}),height:(?<height>${id})\\}=\\k<image>\\.getSize\\(\\),(?<inset>${id})=Math\\.round\\(\\k<width>/128\\);` +
+    `\\k<image>=\\k<image>\\.crop\\(\\{x:\\k<inset>,y:\\k<inset>,width:\\k<width>-2\\*\\k<inset>,height:\\k<height>-2\\*\\k<inset>\\}\\)\\}`;
+  const applyTail = patched
+    ? `if\\((?<image>${id})\\.isEmpty\\(\\)\\)return;if\\(${notLinux}&&\\("codex-system"===(?<arg>${id})\\|\\|"space-system"===\\k<arg>\\)\\)\\{${crop}` +
+      `if\\(${linuxOnly}\\)\\{let codexLinuxIconSelection="codex-system"===\\k<arg>\\|\\|"space-system"===\\k<arg>\\?` +
+      `(?<electron>${id})\\.nativeTheme\\.shouldUseDarkColorsForSystemIntegratedUI\\?"codex-dark":"codex-light":"chatgpt";` +
+      "globalThis\\.codexLinuxDockIconImage=\\k<image>;" +
+      "for\\(let codexLinuxWindow of \\k<electron>\\.BrowserWindow\\.getAllWindows\\(\\)\\)codexLinuxWindow\\.isDestroyed\\(\\)\\|\\|codexLinuxWindow\\.setIcon\\(\\k<image>\\);" +
+      `null!=(?<trayState>${id})\\?\\.tray&&!\\k<trayState>\\.tray\\.isDestroyed\\(\\)&&\\k<trayState>\\.tray\\.setImage\\(\\k<image>\\);` +
+      `let codexLinuxSyncScript=${dockIconResourceHelper}\\("sync-desktop-icon\\.sh"\\);` +
+      'if\\(require\\("node:fs"\\)\\.existsSync\\(codexLinuxSyncScript\\)\\)try\\{' +
+      'let codexLinuxChild=require\\("node:child_process"\\)\\.spawn\\(codexLinuxSyncScript,\\[codexLinuxIconSelection\\],\\{detached:!0,stdio:\\["pipe","ignore","ignore"\\]\\}\\);' +
+      'codexLinuxChild\\.on\\("error",\\(\\)=>\\{\\}\\),codexLinuxChild\\.stdin\\.on\\("error",\\(\\)=>\\{\\}\\),' +
+      "codexLinuxChild\\.stdin\\.end\\(\\k<image>\\.toPNG\\(\\)\\),codexLinuxChild\\.unref\\(\\)\\}catch\\{\\}return\\}" +
+      "\\k<electron>\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}"
+    : `if\\(!(?<image>${id})\\.isEmpty\\(\\)\\)\\{if\\("codex-system"===(?<arg>${id})\\|\\|"space-system"===\\k<arg>\\)\\{${crop}` +
+      `(?<electron>${id})\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}\\}`;
+  const updateGate = patched ? `!(?<isMac>${id})&&${notLinux}` : `!(?<isMac>${id})`;
 
   return {
     preview: new RegExp(
-      `function (?<owner>${identifier})\\((?<arg>${identifier})\\)\\{if\\(process\\.platform!==\`darwin\`${linux}\\)return null;let (?<theme>${identifier})=(?<themeHelper>${identifier})\\(\\k<arg>\\),(?<defaultIcon>${identifier})=(?<resource>${identifier})\\(\`\\$\\{(?<iconName>${identifier})\\(\\k<arg>\\)\\}\\.png\`\\),(?<codexDark>${identifier})=\\k<resource>\\(\\k<theme>\\.dark\\),(?<codexLight>${identifier})=\\k<resource>\\(\\k<theme>\\.light\\),(?<spaceDark>${identifier})=${spaceDark},(?<spaceLight>${identifier})=${spaceLight};return \\k<defaultIcon>==null\\|\\|\\k<codexDark>==null\\|\\|\\k<codexLight>==null\\|\\|\\k<spaceDark>==null\\|\\|\\k<spaceLight>==null\\?null:\\{appDefault:\\k<defaultIcon>,codexDark:\\k<codexDark>,codexLight:\\k<codexLight>,spaceDark:\\k<spaceDark>,spaceLight:\\k<spaceLight>\\}\\}`,
+      `dockIconPreviews:function\\((?<arg>${id})\\)\\{if\\(${previewGate}\\)return null;let (?<theme>${id})=(?<themeHelper>${id})\\(\\k<arg>\\),` +
+        `(?<defaultIcon>${id})=(?<resource>${id})\\(\`\\$\\{(?<iconName>${id})\\(\\k<arg>\\)\\}\\.png\`\\),` +
+        `(?<codexDark>${id})=\\k<resource>\\(\\k<theme>\\.dark\\),(?<codexLight>${id})=\\k<resource>\\(\\k<theme>\\.light\\),` +
+        `(?<spaceDark>${id})=${spaceDark},(?<spaceLight>${id})=${spaceLight};` +
+        "return null==\\k<defaultIcon>\\|\\|null==\\k<codexDark>\\|\\|null==\\k<codexLight>\\|\\|null==\\k<spaceDark>\\|\\|null==\\k<spaceLight>\\?null:" +
+        "\\{appDefault:\\k<defaultIcon>,codexDark:\\k<codexDark>,codexLight:\\k<codexLight>,spaceDark:\\k<spaceDark>,spaceLight:\\k<spaceLight>\\}\\}\\(\\k<arg>\\)",
       "g",
     ),
     resourceName: new RegExp(
-      state === "patched"
-        ? `(?<resourceName>${identifier})=\\((?<preference>${identifier}),(?<dark>${identifier})\\)=>\\{switch\\(\\k<preference>\\)\\{case\`app-default\`:return null;case\`codex-system\`:return \\k<dark>\\?(?<theme>${identifier})\\.dark:\\k<theme>\\.light;case\`space-system\`:return process\\.platform===\`linux\`\\?\\k<dark>\\?\\k<theme>\\.dark:\\k<theme>\\.light:\\k<dark>\\?\\k<theme>\\.spaceDark:\\k<theme>\\.spaceLight\\}\\}`
-        : `(?<resourceName>${identifier})=\\((?<preference>${identifier}),(?<dark>${identifier})\\)=>\\{switch\\(\\k<preference>\\)\\{case\`app-default\`:return null;case\`codex-system\`:return \\k<dark>\\?(?<theme>${identifier})\\.dark:\\k<theme>\\.light;case\`space-system\`:return \\k<dark>\\?\\k<theme>\\.spaceDark:\\k<theme>\\.spaceLight\\}\\}`,
+      `(?<resourceName>${id})=\\((?<preference>${id}),(?<dark>${id})\\)=>\\{switch\\(\\k<preference>\\)\\{case"app-default":return null;` +
+        `case"codex-system":return \\k<dark>\\?(?<theme>${id})\\.dark:\\k<theme>\\.light;case"space-system":return ${spaceSystem}\\}\\}`,
       "g",
     ),
-    appInfo: state === "patched"
-      ? new RegExp(
-        `function (?<helper>${dockIconResourceHelper})\\((?<helperArg>${identifier})\\)\\{return process\\.platform===\`linux\`\\?\\(0,(?<path>${identifier})\\.join\\)\\(process\\.resourcesPath,\`dock-icon\`,\\k<helperArg>\\):\\(0,\\k<path>\\.join\\)\\(process\\.resourcesPath,\\k<helperArg>\\)\\}function (?<owner>${identifier})\\((?<arg>${identifier})\\)\\{if\\(\\k<arg>==null\\)return null;let (?<candidate>${identifier})=${packaged};return (?<normalize>${identifier})\\(\\k<candidate>!=null&&\\(0,(?<exists>${identifier})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:\\(0,\\k<path>\\.join\\)\\(\\k<electron>\\.app\\.getAppPath\\(\\),\`src\`,\`icons\`,\\k<arg>\\)\\)\\}`,
-        "g",
-      )
-      : new RegExp(
-        `function (?<owner>${identifier})\\((?<arg>${identifier})\\)\\{if\\(\\k<arg>==null\\)return null;let (?<candidate>${identifier})=${packaged};return (?<normalize>${identifier})\\(\\k<candidate>!=null&&\\(0,(?<exists>${identifier})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:\\(0,\\k<path>\\.join\\)\\(\\k<electron>\\.app\\.getAppPath\\(\\),\`src\`,\`icons\`,\\k<arg>\\)\\)\\}`,
-        "g",
-      ),
-    windowResource: state === "patched"
-      ? new RegExp(
-        `(?<owner>${identifier})=(?<arg>${identifier})=>\\{if\\(${windowPackaged}\\)return null;let (?<candidate>${identifier})=${dockIconResourceHelper}\\(\\k<arg>\\);return\\(0,(?<exists>${identifier})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:null\\}`,
-        "g",
-      )
-      : new RegExp(
-        `(?<owner>${identifier})=(?<arg>${identifier})=>\\{if\\(${windowPackaged}\\)return null;let (?<candidate>${identifier})=\\(0,(?<path>${identifier})\\.join\\)\\(process\\.resourcesPath,\\k<arg>\\);return\\(0,(?<exists>${identifier})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:null\\}`,
-        "g",
-      ),
+    appInfo: new RegExp(
+      patched
+        ? `function (?<helper>${dockIconResourceHelper})\\((?<helperArg>${id})\\)\\{return ${linuxOnly}\\?\\(0,(?<path>${id})\\.join\\)\\(process\\.resourcesPath,"dock-icon",\\k<helperArg>\\):` +
+          `\\(0,\\k<path>\\.join\\)\\(process\\.resourcesPath,\\k<helperArg>\\)\\}${appInfoOwner}`
+        : appInfoOwner,
+      "g",
+    ),
+    windowResource: new RegExp(windowResource, "g"),
     applyPrefix: new RegExp(applyPrefix, "g"),
     applyDefaultGate: new RegExp(applyDefaultGate, "g"),
     applyTail: new RegExp(applyTail, "g"),
-    update: state === "patched"
-      ? new RegExp(
-        `(?<update>${identifier})=\\(\\)=>\\{if\\(!(?<isMac>${identifier})&&process\\.platform!==\`linux\`\\)return;let (?<preference>${identifier})=(?<read>${identifier})\\(\\);(?<apply>${identifier})\\(\\k<preference>\\),(?<refresh>${identifier})\\(\\{preference:\\k<preference>,resourceName:(?<resourceName>${identifier})\\(\\k<preference>,!1\\)\\}\\)\\.then\\((?<changed>${identifier})=>\\{\\k<changed>&&\\k<apply>\\(\\k<read>\\(\\)\\)\\}\\)\\}`,
-        "g",
-      )
-      : new RegExp(
-        `(?<update>${identifier})=\\(\\)=>\\{if\\(!(?<isMac>${identifier})\\)return;let (?<preference>${identifier})=(?<read>${identifier})\\(\\);(?<apply>${identifier})\\(\\k<preference>\\),(?<refresh>${identifier})\\(\\{preference:\\k<preference>,resourceName:(?<resourceName>${identifier})\\(\\k<preference>,!1\\)\\}\\)\\.then\\((?<changed>${identifier})=>\\{\\k<changed>&&\\k<apply>\\(\\k<read>\\(\\)\\)\\}\\)\\}`,
-        "g",
-      ),
+    updateHead: new RegExp(
+      `(?<update>${id})=\\(\\)=>\\{if\\(${updateGate}\\)return;let (?<preference>${id})=(?<read>${id})\\(\\);(?<apply>${id})\\(\\k<preference>\\),` +
+        `\\(function\\(\\{preference:${id},resourceName:${id}\\}\\)\\{`,
+      "g",
+    ),
+    updateTail: new RegExp(
+      `\\}\\)\\(\\{preference:(?<preference>${id}),resourceName:(?<resourceName>${id})\\(\\k<preference>,!1\\)\\}\\)` +
+        `\\.then\\((?<changed>${id})=>\\{\\k<changed>&&(?<apply>${id})\\((?<read>${id})\\(\\)\\)\\}\\)\\}`,
+      "g",
+    ),
     theme: new RegExp(
-      `if\\((?<isMac>${identifier})${state === "patched" ? "\\|\\|process\\.platform===`linux`" : ""}\\)\\{(?<update>${identifier})\\(\\);let (?<listener>${identifier})=\\(\\)=>\\{let (?<preference>${identifier})=(?<read>${identifier})\\(\\);\\k<preference>!==\`app-default\`&&(?<apply>${identifier})\\(\\k<preference>\\)\\};(?<electron>${identifier})\\.nativeTheme\\.on\\(\`updated\`,\\k<listener>\\),(?<disposables>${identifier})\\.add\\(\\(\\)=>\\{\\k<electron>\\.nativeTheme\\.off\\(\`updated\`,\\k<listener>\\)\\}\\)\\}`,
+      `if\\((?<isMac>${id})${patched ? `\\|\\|${linuxOnly}` : ""}\\)\\{(?<update>${id})\\(\\);let (?<listener>${id})=\\(\\)=>\\{` +
+        `let (?<preference>${id})=(?<read>${id})\\(\\);"app-default"!==\\k<preference>&&(?<apply>${id})\\(\\k<preference>\\)\\};` +
+        `(?<electron>${id})\\.nativeTheme\\.on\\("updated",\\k<listener>\\),(?<disposables>${id})\\.add\\(\\(\\)=>\\{\\k<electron>\\.nativeTheme\\.off\\("updated",\\k<listener>\\)\\}\\)\\}`,
       "g",
     ),
     windowRegistration: new RegExp(
-      `onWindowRegistered:(?<window>${identifier})=>\\{(?<registrar>${identifier})\\?\\.registerWindow\\(\\k<window>\\),(?<callback>${identifier})\\?\\.\\(\\k<window>\\)${state === "patched" ? `,process\\.platform===\`linux\`&&setImmediate\\((?<update>${identifier})\\)` : ""}\\}`,
+      `onWindowRegistered:(?<window>${id})=>\\{(?<registrar>${id})\\?\\.registerWindow\\(\\k<window>\\),(?<callback>${id})\\?\\.\\(\\k<window>\\)` +
+        `${patched ? `,${linuxOnly}&&setImmediate\\((?<update>${id})\\)` : ""}\\}`,
       "g",
     ),
-    tray: state === "patched"
-      ? new RegExp(
-        `(?<tray>${identifier})=new (?<electron>${identifier})\\.Tray\\(process\\.platform===\`linux\`&&globalThis\\.codexLinuxDockIconImage&&!globalThis\\.codexLinuxDockIconImage\\.isEmpty\\(\\)\\?globalThis\\.codexLinuxDockIconImage:(?<iconInfo>${identifier})\\.defaultIcon,process\\.platform===\`win32\`&&\\k<electron>\\.app\\.isPackaged\\?(?<windowsHelper>${identifier})\\((?<flavor>${identifier})\\):void 0\\);if\\(!(?<ready>${identifier})\\)return`,
-        "g",
-      )
-      : new RegExp(
-        `(?<tray>${identifier})=new (?<electron>${identifier})\\.Tray\\((?<iconInfo>${identifier})\\.defaultIcon,process\\.platform===\`win32\`&&\\k<electron>\\.app\\.isPackaged\\?(?<windowsHelper>${identifier})\\((?<flavor>${identifier})\\):void 0\\);if\\(!(?<ready>${identifier})\\)return`,
-        "g",
-      ),
+    tray: new RegExp(
+      `(?<tray>${id})=new (?<electron>${id})\\.Tray\\(` +
+        (patched
+          ? `${linuxOnly}&&globalThis\\.codexLinuxDockIconImage&&!globalThis\\.codexLinuxDockIconImage\\.isEmpty\\(\\)\\?globalThis\\.codexLinuxDockIconImage:`
+          : "") +
+        `(?<iconInfo>${id})\\.defaultIcon,"win32"===process\\.platform&&\\k<electron>\\.app\\.isPackaged\\?`,
+      "g",
+    ),
     trayState: new RegExp(
-      `let (?<controller>${identifier})=new (?:${identifier})\\((?<tray>${identifier})(?:,|\\))[^;]*;return (?<trayState>${identifier})=\\k<controller>,!await \\k<controller>\\.waitForReady\\(\\)\\|\\|\\k<trayState>!==\\k<controller>\\?`,
+      `let (?<controller>${id})=new (?:${id})\\((?<tray>${id})(?:,|\\))[^;]*;return\\((?<trayState>${id})=\\k<controller>,` +
+        "await \\k<controller>\\.waitForReady\\(\\)&&\\k<trayState>===\\k<controller>\\)\\?",
       "g",
     ),
   };
+}
+
+// The Dock apply callback and macOS refresh closure are each compiled as one
+// contiguous expression; keep their parts in order and close together.
+function inOrder(...entries) {
+  return entries.every(([match, next, maxGap]) => {
+    const gap = next.index - (match.index + match[0].length);
+    return gap >= 0 && gap <= maxGap;
+  });
 }
 
 function mainContract(source, state) {
@@ -121,15 +171,25 @@ function mainContract(source, state) {
     groups.preview.resource === groups.appInfo.owner &&
     sameAliases(groups.appInfo.electron, groups.windowResource.electron, groups.applyTail.electron, groups.theme.electron, groups.tray.electron) &&
     sameAliases(groups.appInfo.path, groups.windowResource.path ?? groups.appInfo.path) &&
-    sameAliases(groups.appInfo.exists, groups.windowResource.exists, groups.applyTail.exists ?? groups.appInfo.exists) &&
-    sameAliases(groups.applyPrefix.apply, groups.update.apply, groups.theme.apply) &&
-    sameAliases(groups.resourceName.resourceName, groups.update.resourceName) &&
+    sameAliases(groups.appInfo.exists, groups.windowResource.exists) &&
+    sameAliases(groups.applyPrefix.apply, groups.updateHead.apply, groups.updateTail.apply, groups.theme.apply) &&
+    sameAliases(groups.resourceName.resourceName, groups.updateTail.resourceName) &&
     sameAliases(groups.applyPrefix.arg, groups.applyDefaultGate.arg, groups.applyTail.arg) &&
-    sameAliases(groups.update.update, groups.theme.update, groups.windowRegistration.update ?? groups.update.update) &&
-    sameAliases(groups.update.isMac, groups.theme.isMac) &&
-    sameAliases(groups.update.read, groups.theme.read) &&
+    sameAliases(groups.updateHead.update, groups.theme.update, groups.windowRegistration.update ?? groups.updateHead.update) &&
+    sameAliases(groups.updateHead.isMac, groups.theme.isMac) &&
+    sameAliases(groups.updateHead.read, groups.updateTail.read, groups.theme.read) &&
+    sameAliases(groups.updateHead.preference, groups.updateTail.preference) &&
     sameAliases(groups.tray.tray, groups.trayState.tray) &&
-    sameAliases(groups.applyTail.trayState ?? groups.trayState.trayState, groups.trayState.trayState);
+    sameAliases(groups.applyTail.trayState ?? groups.trayState.trayState, groups.trayState.trayState) &&
+    inOrder(
+      [contract.resourceName, contract.applyPrefix, 16],
+      [contract.applyPrefix, contract.applyDefaultGate, 1024],
+      [contract.applyDefaultGate, contract.applyTail, 1200],
+      [contract.applyTail, contract.updateHead, 16],
+      [contract.updateHead, contract.updateTail, 1200],
+      [contract.updateTail, contract.theme, 16],
+      [contract.theme, contract.windowRegistration, 4000],
+    );
   return aliasesAgree ? { contract, groups } : null;
 }
 
@@ -146,6 +206,10 @@ function dockIconEnabled(context) {
   return dockIconConfig(context).enabled === true;
 }
 
+function replaceMatch(source, match, replacement) {
+  return source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
+}
+
 function applyDockIconMainPatch(source) {
   const current = mainContract(source, "current");
   const patched = mainContract(source, "patched");
@@ -157,60 +221,38 @@ function applyDockIconMainPatch(source) {
     return source;
   }
 
-  const { groups } = current;
-  let patchedSource = source;
-  patchedSource = patchedSource.replace(
-    current.contract.preview[0],
-    `function ${groups.preview.owner}(${groups.preview.arg}){if(process.platform!==\`darwin\`&&process.platform!==\`linux\`)return null;let ${groups.preview.theme}=${groups.preview.themeHelper}(${groups.preview.arg}),${groups.preview.defaultIcon}=${groups.preview.resource}(\`\${${groups.preview.iconName}(${groups.preview.arg})}.png\`),${groups.preview.codexDark}=${groups.preview.resource}(${groups.preview.theme}.dark),${groups.preview.codexLight}=${groups.preview.resource}(${groups.preview.theme}.light),${groups.preview.spaceDark}=process.platform===\`linux\`?${groups.preview.codexDark}:${groups.preview.resource}(${groups.preview.theme}.spaceDark),${groups.preview.spaceLight}=process.platform===\`linux\`?${groups.preview.codexLight}:${groups.preview.resource}(${groups.preview.theme}.spaceLight);return ${groups.preview.defaultIcon}==null||${groups.preview.codexDark}==null||${groups.preview.codexLight}==null||${groups.preview.spaceDark}==null||${groups.preview.spaceLight}==null?null:{appDefault:${groups.preview.defaultIcon},codexDark:${groups.preview.codexDark},codexLight:${groups.preview.codexLight},spaceDark:${groups.preview.spaceDark},spaceLight:${groups.preview.spaceLight}}}`,
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.resourceName[0],
-    `${groups.resourceName.resourceName}=(${groups.resourceName.preference},${groups.resourceName.dark})=>{switch(${groups.resourceName.preference}){case\`app-default\`:return null;case\`codex-system\`:return ${groups.resourceName.dark}?${groups.resourceName.theme}.dark:${groups.resourceName.theme}.light;case\`space-system\`:return process.platform===\`linux\`?${groups.resourceName.dark}?${groups.resourceName.theme}.dark:${groups.resourceName.theme}.light:${groups.resourceName.dark}?${groups.resourceName.theme}.spaceDark:${groups.resourceName.theme}.spaceLight}}`,
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.appInfo[0],
-    `function ${dockIconResourceHelper}(${groups.appInfo.arg}){return process.platform===\`linux\`?(0,${groups.appInfo.path}.join)(process.resourcesPath,\`dock-icon\`,${groups.appInfo.arg}):(0,${groups.appInfo.path}.join)(process.resourcesPath,${groups.appInfo.arg})}function ${groups.appInfo.owner}(${groups.appInfo.arg}){if(${groups.appInfo.arg}==null)return null;let ${groups.appInfo.candidate}=${groups.appInfo.electron}.app.isPackaged||process.platform===\`linux\`?${dockIconResourceHelper}(${groups.appInfo.arg}):null;return ${groups.appInfo.normalize}(${groups.appInfo.candidate}!=null&&(0,${groups.appInfo.exists}.existsSync)(${groups.appInfo.candidate})?${groups.appInfo.candidate}:(0,${groups.appInfo.path}.join)(${groups.appInfo.electron}.app.getAppPath(),\`src\`,\`icons\`,${groups.appInfo.arg}))}`,
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.windowResource[0],
-    `${groups.windowResource.owner}=${groups.windowResource.arg}=>{if(!${groups.windowResource.electron}.app.isPackaged&&process.platform!==\`linux\`)return null;let ${groups.windowResource.candidate}=${dockIconResourceHelper}(${groups.windowResource.arg});return(0,${groups.windowResource.exists}.existsSync)(${groups.windowResource.candidate})?${groups.windowResource.candidate}:null}`,
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.applyPrefix[0],
-    `${groups.applyPrefix.apply}=function ${dockIconApplyHelper}(${groups.applyPrefix.arg}){if(${groups.applyPrefix.devIcons}&&process.platform!==\`linux\`){`,
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.applyDefaultGate[0],
-    current.contract.applyDefaultGate[0].replace("&&", "&&process.platform!==`linux`&&"),
-  );
+  const { contract, groups } = current;
+  const preview = groups.preview;
+  const info = groups.appInfo;
+  const win = groups.windowResource;
+  const names = groups.resourceName;
   const tail = groups.applyTail;
   const trayState = groups.trayState.trayState;
-  patchedSource = patchedSource.replace(
-    current.contract.applyTail[0],
-    `if(${tail.image}.isEmpty())return;if(process.platform!==\`linux\`&&(${tail.arg}===\`codex-system\`||${tail.arg}===\`space-system\`)){let{width:${tail.width},height:${tail.height}}=${tail.image}.getSize(),${tail.inset}=Math.round(${tail.width}/128);${tail.image}=${tail.image}.crop({x:${tail.inset},y:${tail.inset},width:${tail.width}-${tail.inset}*2,height:${tail.height}-${tail.inset}*2})}if(process.platform===\`linux\`){let codexLinuxIconSelection=${tail.arg}===\`codex-system\`||${tail.arg}===\`space-system\`?(${tail.electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?\`codex-dark\`:\`codex-light\`):\`chatgpt\`;globalThis.codexLinuxDockIconImage=${tail.image};for(let ${tail.width} of ${tail.electron}.BrowserWindow.getAllWindows())${tail.width}.isDestroyed()||${tail.width}.setIcon(${tail.image});${trayState}!=null&&!${trayState}.tray.isDestroyed()&&${trayState}.tray.setImage(${tail.image});let codexLinuxSyncScript=${dockIconResourceHelper}(\`sync-desktop-icon.sh\`);if(${groups.appInfo.exists}.existsSync(codexLinuxSyncScript))try{let ${tail.height}=require(\`node:child_process\`).spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:[\`pipe\`,\`ignore\`,\`ignore\`]});${tail.height}.on(\`error\`,()=>{}),${tail.height}.stdin.on(\`error\`,()=>{}),${tail.height}.stdin.end(${tail.image}.toPNG()),${tail.height}.unref()}catch(${tail.arg}){}return}${tail.electron}.app.dock?.setIcon(${tail.image})}`,
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.update[0],
-    current.contract.update[0].replace(`if(!${groups.update.isMac})`, `if(!${groups.update.isMac}&&process.platform!==\`linux\`)`),
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.theme[0],
-    current.contract.theme[0].replace(`if(${groups.theme.isMac})`, `if(${groups.theme.isMac}||process.platform===\`linux\`)`),
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.windowRegistration[0],
-    current.contract.windowRegistration[0].replace(
+  const linux = '"linux"===process.platform';
+  const replacements = [
+    [contract.preview, `dockIconPreviews:function(${preview.arg}){if("darwin"!==process.platform&&"linux"!==process.platform)return null;let ${preview.theme}=${preview.themeHelper}(${preview.arg}),${preview.defaultIcon}=${preview.resource}(\`\${${preview.iconName}(${preview.arg})}.png\`),${preview.codexDark}=${preview.resource}(${preview.theme}.dark),${preview.codexLight}=${preview.resource}(${preview.theme}.light),${preview.spaceDark}=${linux}?${preview.codexDark}:${preview.resource}(${preview.theme}.spaceDark),${preview.spaceLight}=${linux}?${preview.codexLight}:${preview.resource}(${preview.theme}.spaceLight);return null==${preview.defaultIcon}||null==${preview.codexDark}||null==${preview.codexLight}||null==${preview.spaceDark}||null==${preview.spaceLight}?null:{appDefault:${preview.defaultIcon},codexDark:${preview.codexDark},codexLight:${preview.codexLight},spaceDark:${preview.spaceDark},spaceLight:${preview.spaceLight}}}(${preview.arg})`],
+    [contract.appInfo, `function ${dockIconResourceHelper}(${info.arg}){return ${linux}?(0,${info.path}.join)(process.resourcesPath,"dock-icon",${info.arg}):(0,${info.path}.join)(process.resourcesPath,${info.arg})}function ${info.owner}(${info.arg}){if(null==${info.arg})return null;let ${info.candidate}=${info.electron}.app.isPackaged||${linux}?${dockIconResourceHelper}(${info.arg}):null;return ${info.normalize}(null!=${info.candidate}&&(0,${info.exists}.existsSync)(${info.candidate})?${info.candidate}:(0,${info.path}.join)(${info.electron}.app.getAppPath(),"src","icons",${info.arg}))}`],
+    [contract.windowResource, `(${win.arg}=>{if(!${win.electron}.app.isPackaged&&"linux"!==process.platform)return null;let ${win.candidate}=${dockIconResourceHelper}(${win.arg});return(0,${win.exists}.existsSync)(${win.candidate})?${win.candidate}:null})`],
+    [contract.resourceName, `${names.resourceName}=(${names.preference},${names.dark})=>{switch(${names.preference}){case"app-default":return null;case"codex-system":return ${names.dark}?${names.theme}.dark:${names.theme}.light;case"space-system":return ${linux}?${names.dark}?${names.theme}.dark:${names.theme}.light:${names.dark}?${names.theme}.spaceDark:${names.theme}.spaceLight}}`],
+    [contract.applyPrefix, `${groups.applyPrefix.apply}=function ${dockIconApplyHelper}(${groups.applyPrefix.arg}){if(${groups.applyPrefix.devIcons}&&"linux"!==process.platform){`],
+    [contract.applyDefaultGate, contract.applyDefaultGate[0].replace("&&", '&&"linux"!==process.platform&&')],
+    [contract.applyTail, `if(${tail.image}.isEmpty())return;if("linux"!==process.platform&&("codex-system"===${tail.arg}||"space-system"===${tail.arg})){let{width:${tail.width},height:${tail.height}}=${tail.image}.getSize(),${tail.inset}=Math.round(${tail.width}/128);${tail.image}=${tail.image}.crop({x:${tail.inset},y:${tail.inset},width:${tail.width}-2*${tail.inset},height:${tail.height}-2*${tail.inset}})}if(${linux}){let codexLinuxIconSelection="codex-system"===${tail.arg}||"space-system"===${tail.arg}?${tail.electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?"codex-dark":"codex-light":"chatgpt";globalThis.codexLinuxDockIconImage=${tail.image};for(let codexLinuxWindow of ${tail.electron}.BrowserWindow.getAllWindows())codexLinuxWindow.isDestroyed()||codexLinuxWindow.setIcon(${tail.image});null!=${trayState}?.tray&&!${trayState}.tray.isDestroyed()&&${trayState}.tray.setImage(${tail.image});let codexLinuxSyncScript=${dockIconResourceHelper}("sync-desktop-icon.sh");if(require("node:fs").existsSync(codexLinuxSyncScript))try{let codexLinuxChild=require("node:child_process").spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:["pipe","ignore","ignore"]});codexLinuxChild.on("error",()=>{}),codexLinuxChild.stdin.on("error",()=>{}),codexLinuxChild.stdin.end(${tail.image}.toPNG()),codexLinuxChild.unref()}catch{}return}${tail.electron}.app.dock?.setIcon(${tail.image})}`],
+    [contract.updateHead, contract.updateHead[0].replace(`if(!${groups.updateHead.isMac})`, `if(!${groups.updateHead.isMac}&&"linux"!==process.platform)`)],
+    [contract.theme, contract.theme[0].replace(`if(${groups.theme.isMac})`, `if(${groups.theme.isMac}||"linux"===process.platform)`)],
+    [contract.windowRegistration, contract.windowRegistration[0].replace(
       `?.(${groups.windowRegistration.window})}`,
-      `?.(${groups.windowRegistration.window}),process.platform===\`linux\`&&setImmediate(${groups.update.update})}`,
-    ),
-  );
-  patchedSource = patchedSource.replace(
-    current.contract.tray[0],
-    current.contract.tray[0].replace(
+      `?.(${groups.windowRegistration.window}),"linux"===process.platform&&setImmediate(${groups.updateHead.update})}`,
+    )],
+    [contract.tray, contract.tray[0].replace(
       `${groups.tray.iconInfo}.defaultIcon`,
-      `process.platform===\`linux\`&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:${groups.tray.iconInfo}.defaultIcon`,
-    ),
-  );
+      `"linux"===process.platform&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:${groups.tray.iconInfo}.defaultIcon`,
+    )],
+  ];
+  // Apply from the end so earlier match offsets stay valid.
+  let patchedSource = source;
+  for (const [match, replacement] of replacements.sort(([left], [right]) => right.index - left.index)) {
+    patchedSource = replaceMatch(patchedSource, match, replacement);
+  }
   return mainContract(patchedSource, "patched") != null ? patchedSource : source;
 }
 

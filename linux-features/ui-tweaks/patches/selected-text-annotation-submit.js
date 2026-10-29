@@ -66,7 +66,7 @@ function shortcutContract(source) {
     `(?<handler>${IDENT})=(?<event>${IDENT})=>\\{` +
       `(?<guard>/\\*${escapeRegExp(HANDLER_MARKER)}\\*/` +
         `if\\(${GUARD_NAME}\\(${escapeRegExp(command)},\\k<event>\\)\\)return;)?` +
-      `if\\(\\k<event>\\.target instanceof Element&&\\k<event>\\.target,!\\k<event>\\.defaultPrevented\\)`,
+      `if\\(\\k<event>\\.target instanceof Element&&\\k<event>\\.target,\\k<event>\\.defaultPrevented\\)return;`,
     "app shortcut keydown handler");
   const event = handler.groups.event;
   uniqueMatch(body, `${IDENT}\\(${escapeRegExp(command)},${escapeRegExp(event)}\\)\\)*&&\\(?` +

@@ -11,10 +11,11 @@ const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-fe
 const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
-// File-reference dispatch contract; upstream minified names are deliberately
-// replaced by descriptive aliases. The callback before it handles directories
-// and artifact-template skills; the callback after it handles modified clicks.
-const fixture = "function click(file,modified,browser=false){if(directory){explicit();return}if(artifactHandled){artifactOpen();return}if(panel&&!browser&&!modified){open({scope:scope,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,endLine:endLine,isPreview:preview,openInSidePanel:sidePanel,onOpenTargetResolved:resolved});return}fallback()}/*data-file-reference*/";
+// File-reference dispatch contract as compiled by official Linux 26.1027.30824
+// (one ternary chain); upstream minified names are deliberately replaced by
+// descriptive aliases. The branches before it handle directories and
+// artifact-template skills; the branch after it handles modified clicks.
+const fixture = "function click(file,modified,browser=false){directory?explicit():artifactHandled?artifactOpen():panel&&!browser&&!modified?open({scope:scope,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,endLine:endLine,isPreview:preview,openInSidePanel:sidePanel,onOpenTargetResolved:resolved}):fallback()}/*data-file-reference*/";
 
 function harness(source = apply(fixture)) {
   const calls = [];

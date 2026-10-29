@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
-  APP_INITIAL_ASSET_PATTERN,
+  APP_RUNTIME_ASSET_PATTERN,
   APP_PAGE_ASSET_PATTERN,
   APP_PAGE_ELIGIBILITY_MARKER,
   FEATURE_SYNC_MARKER,
@@ -76,8 +76,8 @@ function mainFixture() {
     "function Or(e){return br().ambientSuggestions&&e.getEffective(n.Wi.enabled.key)===!0}",
     "async function kr({appServerConnection:e,settingsStore:t}){",
     "let{ambientSuggestionsFeatureDiscovery:n,ambientSuggestionsStaleTimeMs:r,computerUse:i}=br();",
-    "if(!Or(t)||r==null)return{enabled:!1};let{account:a}=await e.getAccount();",
-    "return ie(a)?{enabled:!0,computerUseAvailable:i,featureDiscoveryEnabled:n,staleTimeMs:r}:{enabled:!1}}",
+    "if(!Or(t)||null==r)return{enabled:!1};let{account:a}=await e.getAccount();",
+    "return(0,n.ie)(a)?{enabled:!0,computerUseAvailable:i,featureDiscoveryEnabled:n,staleTimeMs:r}:{enabled:!1}}",
   ].join("");
 }
 
@@ -193,7 +193,7 @@ test("main patch enables refresh while preserving the upstream account call", ()
 
   assert.notEqual(patched, source);
   assert.equal((patched.match(new RegExp(MAIN_ELIGIBILITY_MARKER, "g")) || []).length, 1);
-  assert.match(patched, /ie\(a\)/);
+  assert.match(patched, /return\(\(0,n\.ie\)\(a\),function /);
   assert.match(patched, /computerUseAvailable:i/);
   assert.match(patched, /featureDiscoveryEnabled:n/);
   assert.match(patched, /staleTimeMs:r/);
@@ -206,9 +206,9 @@ test("main patch preserves current minified aliases", () => {
     "async function refresh({appServerConnection:connection,settingsStore:store}){",
     "let{ambientSuggestionsFeatureDiscovery:discovery,ambientSuggestionsStaleTimeMs:stale,",
     "computerUse:computerUse}=featureState();",
-    "if(!settingsEligible(store)||stale==null)return{enabled:!1};",
+    "if(!settingsEligible(store)||null==stale)return{enabled:!1};",
     "let{account:account}=await connection.getAccount();",
-    "return accountEligible(account)?{enabled:!0,computerUseAvailable:computerUse,",
+    "return(0,accounts.accountEligible)(account)?{enabled:!0,computerUseAvailable:computerUse,",
     "featureDiscoveryEnabled:discovery,staleTimeMs:stale}:{enabled:!1}}",
   ].join("");
   const patched = applySuggestedPromptsMainPatch(source);
@@ -217,7 +217,7 @@ test("main patch preserves current minified aliases", () => {
   assert.match(patched, /featureState\(\)/);
   assert.match(patched, /settingsEligible\(store\)/);
   assert.match(patched, /await connection\.getAccount\(\)/);
-  assert.match(patched, /accountEligible\(account\)/);
+  assert.match(patched, /\(0,accounts\.accountEligible\)\(account\)/);
   assert.match(patched, /computerUseAvailable:computerUse/);
   assert.match(patched, /featureDiscoveryEnabled:discovery/);
   assert.match(patched, /staleTimeMs:stale/);
@@ -233,7 +233,9 @@ test("main patch rejects incomplete, duplicate, and mixed contracts byte-identic
     current.replace("computerUseAvailable:i", "computerUseAvailable:n"),
     current.replace("featureDiscoveryEnabled:n", "featureDiscoveryEnabled:i"),
     current.replace("await e.getAccount()", "await e.account()"),
-    patched.replace("(ie(a),function", "(ie(a)&&function"),
+    patched.replace("((0,n.ie)(a),function", "((0,n.ie)(a)&&function"),
+    current.replace("return(0,n.ie)(a)?", "return ie(a)?"),
+    current.replace("null==r)return", "r==null)return"),
     patched.replace("staleTimeMs:r", "staleTimeMs:refreshMs"),
     patched.replace(
       `function ${MAIN_ELIGIBILITY_MARKER}(){return!0}`,
@@ -388,8 +390,8 @@ test("unrecognized contracts warn instead of reporting false already-applied", (
 
 test("Suggested Prompts descriptors select current contracts across renderer hash changes", () => {
   const featureSyncDescriptor = descriptorById("home-suggested-prompts-feature-sync");
-  assert.match("app-initial-HashNext1.js", APP_INITIAL_ASSET_PATTERN);
-  assert.doesNotMatch("app-primary-HashNext1.js", APP_INITIAL_ASSET_PATTERN);
+  assert.match("app-runtime-HashNext1.js", APP_RUNTIME_ASSET_PATTERN);
+  assert.doesNotMatch("app-initial-HashNext1.js", APP_RUNTIME_ASSET_PATTERN);
   assert.equal(featureSyncDescriptor.assetMatch(featureSyncFixture()), true);
   assert.equal(
     featureSyncDescriptor.assetMatch(applySuggestedPromptsFeatureSyncPatch(featureSyncFixture())),

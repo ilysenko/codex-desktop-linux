@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_INITIAL_ASSET_PATTERN = /^app-initial-[A-Za-z0-9_-]+\.js$/;
+const APP_RUNTIME_ASSET_PATTERN = /^app-runtime-[A-Za-z0-9_-]+\.js$/;
 const APP_PAGE_ASSET_PATTERN = /^app-primary-[A-Za-z0-9_-]+\.js$/;
 const WORK_PAGE_ASSET_PATTERN = /^page-[A-Za-z0-9_-]+\.js$/;
 const GENERAL_SETTINGS_ASSET_PATTERN = /^general-settings-[A-Za-z0-9_-]+\.js$/;
@@ -51,12 +51,14 @@ function patchedWorkPageEligibilityPattern() {
   return /generatedSuggestionsEnabled:([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsWorkPageEligible\(\)\{return!0\}\(\)\)/gu;
 }
 
+// rspack/SWC main process: literal-first null checks and a module-member
+// account-eligibility call such as `(0,el.T9S)(account)`.
 function mainEligibilityPattern() {
-  return /let\{ambientSuggestionsFeatureDiscovery:([A-Za-z_$][\w$]*),ambientSuggestionsStaleTimeMs:([A-Za-z_$][\w$]*),computerUse:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\);if\(!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\|\|\2==null\)return\{enabled:!1\};let\{account:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\.getAccount\(\);return ([A-Za-z_$][\w$]*)\(\7\)\?\{enabled:!0,computerUseAvailable:\3,featureDiscoveryEnabled:\1,staleTimeMs:\2\}:\{enabled:!1\}/gu;
+  return /let\{ambientSuggestionsFeatureDiscovery:([A-Za-z_$][\w$]*),ambientSuggestionsStaleTimeMs:([A-Za-z_$][\w$]*),computerUse:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\);if\(!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\|\|null==\2\)return\{enabled:!1\};let\{account:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\.getAccount\(\);return(\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(\7\)\?\{enabled:!0,computerUseAvailable:\3,featureDiscoveryEnabled:\1,staleTimeMs:\2\}:\{enabled:!1\}/gu;
 }
 
 function patchedMainEligibilityPattern() {
-  return /let\{ambientSuggestionsFeatureDiscovery:([A-Za-z_$][\w$]*),ambientSuggestionsStaleTimeMs:([A-Za-z_$][\w$]*),computerUse:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\);if\(!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\|\|\2==null\)return\{enabled:!1\};let\{account:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\.getAccount\(\);return\(([A-Za-z_$][\w$]*)\(\7\),function codexLinuxUiTweaksSuggestedPromptsMainEnabled\(\)\{return!0\}\(\)\)\?\{enabled:!0,computerUseAvailable:\3,featureDiscoveryEnabled:\1,staleTimeMs:\2\}:\{enabled:!1\}/gu;
+  return /let\{ambientSuggestionsFeatureDiscovery:([A-Za-z_$][\w$]*),ambientSuggestionsStaleTimeMs:([A-Za-z_$][\w$]*),computerUse:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\);if\(!([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\|\|null==\2\)return\{enabled:!1\};let\{account:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\.getAccount\(\);return\((\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(\7\),function codexLinuxUiTweaksSuggestedPromptsMainEnabled\(\)\{return!0\}\(\)\)\?\{enabled:!0,computerUseAvailable:\3,featureDiscoveryEnabled:\1,staleTimeMs:\2\}:\{enabled:!1\}/gu;
 }
 
 function settingsEligibilityPattern() {
@@ -383,7 +385,7 @@ function applySuggestedPromptsMainPatch(source) {
         appServerConnectionName,
         accountEligibilityName,
       ) =>
-        `let{ambientSuggestionsFeatureDiscovery:${featureDiscoveryName},ambientSuggestionsStaleTimeMs:${staleTimeName},computerUse:${computerUseName}}=${featureStateName}();if(!${settingsEligibilityName}(${settingsStoreName})||${staleTimeName}==null)return{enabled:!1};let{account:${accountName}}=await ${appServerConnectionName}.getAccount();return(${accountEligibilityName}(${accountName}),function ${MAIN_ELIGIBILITY_MARKER}(){return!0}())?{enabled:!0,computerUseAvailable:${computerUseName},featureDiscoveryEnabled:${featureDiscoveryName},staleTimeMs:${staleTimeName}}:{enabled:!1}`,
+        `let{ambientSuggestionsFeatureDiscovery:${featureDiscoveryName},ambientSuggestionsStaleTimeMs:${staleTimeName},computerUse:${computerUseName}}=${featureStateName}();if(!${settingsEligibilityName}(${settingsStoreName})||null==${staleTimeName})return{enabled:!1};let{account:${accountName}}=await ${appServerConnectionName}.getAccount();return(${accountEligibilityName}(${accountName}),function ${MAIN_ELIGIBILITY_MARKER}(){return!0}())?{enabled:!0,computerUseAvailable:${computerUseName},featureDiscoveryEnabled:${featureDiscoveryName},staleTimeMs:${staleTimeName}}:{enabled:!1}`,
     );
   } catch (error) {
     console.warn(
@@ -456,7 +458,7 @@ const descriptors = [
     order: 20_975,
     ciPolicy: "optional",
     enabled: suggestedPromptsEnabled,
-    pattern: APP_INITIAL_ASSET_PATTERN,
+    pattern: APP_RUNTIME_ASSET_PATTERN,
     assetMatch: (source) => suggestedPromptsFeatureSyncContract(source) !== "drifted",
     missingDescription: "current Suggested Prompts feature-sync bundle",
     skipDescription: "ui-tweaks Suggested Prompts feature-sync patch",
@@ -513,7 +515,7 @@ const descriptors = [
 ];
 
 module.exports = {
-  APP_INITIAL_ASSET_PATTERN,
+  APP_RUNTIME_ASSET_PATTERN,
   APP_PAGE_ASSET_PATTERN,
   APP_PAGE_ELIGIBILITY_MARKER,
   FEATURE_SYNC_MARKER,

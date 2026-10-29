@@ -80,7 +80,7 @@ function powerSelectionResolverFixture(name = "Picker") {
 
 function upstreamResetEffectFixture(name = "ResetPowerPicker", memoized = false) {
   const effect =
-    "E=()=>{if(!i){if(!C){b.current=null;return}x!=null&&S!=null&&b.current!==S&&(b.current=S,T(x))}}";
+    "E=()=>{i||(C?x!=null&&S!=null&&b.current!==S&&(b.current=S,T(x)):b.current=null)}";
   return [
     `function ${name}(e){`,
     "let{canRenderPowerPickerSurface:n,fallbackPowerSelection:r,isModelSettingsLoading:i,menuView:a,onReset:o,powerSelectionsWithXHigh:s,resetContextKey:c,selectedPowerSelectionWithXHigh:l,showXHighInSimplePicker:u}=e,",

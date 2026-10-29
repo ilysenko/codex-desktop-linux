@@ -51,10 +51,11 @@ const persistent = recipe(
   (source) => source.includes("collapsibleUnits:") && source.includes("persistentUnits:"),
 );
 
-// The transcript projection has its own explicit reasoning grouping exception.
+// The transcript projection has its own explicit reasoning grouping exception,
+// compiled as `…;classified?.grouping===`standalone`||persistent?.has(item)===!0?(flush(),output.push(…)):…`.
 const transcript = recipe(
   "transcript",
-  String.raw`(?<prefix>if\()(?:${enabledPattern}&&(?<item>${ident})\.type===\`reasoning\`\|\|${escape(marker("transcript"))})?(?<rest>(?<classified>${ident})\?\.grouping===\`standalone\`\|\|(?<persistent>${ident})\?\.has\((?<current>${ident})\)===!0\)\{(?<flush>${ident})\(\),(?<output>${ident})\.push\(\{type:\`activity-item\`,key:\`transcript-activity-item-)(?=\$\{)`,
+  String.raw`(?<prefix>;)(?:${enabledPattern}&&(?<item>${ident})\.type===\`reasoning\`\|\|${escape(marker("transcript"))})?(?<rest>(?<classified>${ident})\?\.grouping===\`standalone\`\|\|(?<persistent>${ident})\?\.has\((?<current>${ident})\)===!0\?\((?<flush>${ident})\(\),(?<output>${ident})\.push\(\{type:\`activity-item\`,key:\`transcript-activity-item-)(?=\$\{)`,
   ({ prefix, rest, current }) => `${prefix}${enabled}&&${current}.type===\`reasoning\`||${marker("transcript")}${rest}`,
   (source) => source.includes("transcript-activity-item-") && source.includes("collapseWhenPossible:"),
   ({ item, current }) => item == null || item === current,

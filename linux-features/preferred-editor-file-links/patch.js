@@ -1,8 +1,10 @@
 "use strict";
 
 const marker = "/*preferred-editor-file-links*/";
-// Match the unique compiled file-reference dispatch, not minified aliases or filenames.
-const anchor = /if\(([$\w]+)&&!([$\w]+)&&!([$\w]+)\)\{([$\w]+)\(\{(scope:[$\w]+,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:[$\w]+,path:([$\w]+),line:[$\w]+,column:[$\w]+,cwd:[$\w]+,hostConfig:[$\w]+,hostId:[$\w]+,endLine:[$\w]+,isPreview:[$\w]+,openInSidePanel:[$\w]+,onOpenTargetResolved:[$\w]+)\}\);return\}/g;
+// Match the unique compiled file-reference dispatch, not minified aliases or
+// filenames. Upstream compiles the click branches into one ternary chain:
+// `…:panel&&!browser&&!modified?open({…}):…`.
+const anchor = /:([$\w]+)&&!([$\w]+)&&!([$\w]+)\?([$\w]+)\(\{(scope:[$\w]+,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:[$\w]+,path:([$\w]+),line:[$\w]+,column:[$\w]+,cwd:[$\w]+,hostConfig:[$\w]+,hostId:[$\w]+,endLine:[$\w]+,isPreview:[$\w]+,openInSidePanel:[$\w]+,onOpenTargetResolved:[$\w]+)\}\):/g;
 const sourcePath = /(?:\.(?:rs|py|pyi|js|jsx|ts|tsx|mjs|cjs|c|h|cc|cpp|hpp|go|java|kt|swift|rb|php|lua|sh|bash|fish|zsh|nix|toml|json|jsonc|ya?ml|xml|ini|conf|cfg|md|mdx|txt|log|lock|sql|css|scss|sass|less|vue|svelte|cmake|proto|graphql|gql)|(?:^|\/)(?:Dockerfile|Containerfile|Makefile|Justfile|README|LICENSE|\.gitignore|\.env))$/i;
 
 function applyPreferredEditorFileLinks(source) {
@@ -10,18 +12,20 @@ function applyPreferredEditorFileLinks(source) {
   if (matches.length !== 1) return drift(source);
   const [match] = matches;
   const [, , browserClick, modifiedClick, dispatch, originalArgs, path] = match;
+  // Insert a new ternary branch directly before the side-panel branch.
+  const index = match.index + 1;
   // With no explicit target, upstream resolves the current per-project/global
   // preference, available applications, remote host and editor launch command.
   const args = originalArgs
     .replace("activatePresentationAnnotationOnboarding:!0,", "")
     .replace(/openInSidePanel:[$\w]+,/, "openInSidePanel:!1,");
-  const insertion = `${marker}if(!${browserClick}&&!${modifiedClick}&&${sourcePath}.test(${path})){${dispatch}({${args}});return}`;
+  const insertion = `${marker}!${browserClick}&&!${modifiedClick}&&${sourcePath}.test(${path})?${dispatch}({${args}}):`;
   const markerCount = source.split(marker).length - 1;
   if (markerCount !== 0) {
-    if (markerCount === 1 && source.slice(match.index - insertion.length, match.index) === insertion) return source;
+    if (markerCount === 1 && source.slice(index - insertion.length, index) === insertion) return source;
     return drift(source);
   }
-  return source.slice(0, match.index) + insertion + source.slice(match.index);
+  return source.slice(0, index) + insertion + source.slice(index);
 }
 
 function drift(source) {

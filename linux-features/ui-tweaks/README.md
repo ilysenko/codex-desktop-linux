@@ -125,9 +125,11 @@ cleanup, by design.
 
 Raises the official app's hard-coded UI font-size maximum from 16 px. The same
 upstream limit feeds both the numeric input and the persisted-setting schema.
-That registry is compiled into the renderer, main-process support bundle, and
-worker, so the patch requires and updates all three copies atomically instead of
-bypassing only the visible control. Code font sizing is unchanged.
+That registry is compiled into two renderer assets (as a limits object) and into
+the main-process `early-bootstrap.js` entry and `worker.js` (as module-local
+constants bound to the `sansFontSize`/`codeFontSize` schemas), so the patch
+requires and updates all four copies atomically instead of bypassing only the
+visible control. Code font sizing is unchanged.
 
 This tweak is independently disabled by default. Its default extended maximum
 is 24 px and can be configured from 17 through 64 px:
@@ -226,7 +228,9 @@ the upstream setting as the user's runtime on/off control after the feature is
 built into the app.
 
 The current official package keeps the renderer feature-sync bridge in
-`app-initial`, normal Home in `app-primary`, and Work Home in its `page` bundle.
+`app-runtime`, normal Home in `app-primary`, and Work Home in its `page` bundle.
+The main-process eligibility check lives in an rspack `early-bootstrap-*`
+chunk.
 Each bundle has its own semantic contract so a future filename hash change does
 not silently select an unrelated asset.
 
@@ -439,7 +443,7 @@ remove only the incomplete Dock icon payload, and reject candidate promotion.
 Suggested Prompts validates every current insertion point
 before changing an asset and leaves mixed or drifted input byte-identical.
 Invalid style values warn and fall back to the default bold style.
-The UI font-size tweak requires the three current settings-registry contracts
+The UI font-size tweak requires the four current settings-registry contracts
 and leaves every target unchanged when any copy is missing, mixed, drifted, or
 ambiguous.
 The selected-text More details tweak validates the renderer and ChatGPT runtime

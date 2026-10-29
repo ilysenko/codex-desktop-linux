@@ -609,10 +609,10 @@ function upstreamResetEffectContract(source) {
   const effect = uniqueMatch(
     section.source,
     new RegExp(
-      `(${IDENT})=\\(\\)=>\\{if\\(!${loading}\\)\\{if\\(!(${IDENT})\\)\\{` +
-        `${resetRef}\\.current=null;return\\}${selectedId}!=null&&${resetScope}!=null&&` +
+      `(${IDENT})=\\(\\)=>\\{${loading}\\|\\|\\((${IDENT})\\?` +
+        `${selectedId}!=null&&${resetScope}!=null&&` +
         `${resetRef}\\.current!==${resetScope}&&\\(${resetRef}\\.current=${resetScope},` +
-        `${resetEvent}\\(${selectedId}\\)\\)\\}\\}`,
+        `${resetEvent}\\(${selectedId}\\)\\):${resetRef}\\.current=null\\)\\}`,
       "gu",
     ),
   );
@@ -654,7 +654,7 @@ function upstreamResetEffectContract(source) {
     ),
   ].map((match) => match.index);
   const effectPredicateIndex =
-    effect.index + effect[0].indexOf(`if(!${active})`) + "if(!".length;
+    effect.index + effect[0].indexOf(`||(${active}?`) + "||(".length;
   const dependencyIndex =
     dependencies.index + dependencies[0].indexOf(`,${active},`) + 1;
   const allowedActiveOccurrences = new Set([

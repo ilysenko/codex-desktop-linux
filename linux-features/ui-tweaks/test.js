@@ -55,6 +55,7 @@ const {
   applyUiFontSizeAppPatch,
   applyUiFontSizePatch,
   findUiFontSizeBundles,
+  fontSizeLimitContract,
   normalizedMaxUiFontSize,
 } = require("./patches/ui-font-size.js");
 
@@ -159,6 +160,32 @@ function uiFontSizeBundleFixture() {
   ].join("");
 }
 
+// Official 26.1027.30824 rspack main-process entry and worker shape: the
+// registry is inlined as module-local constants consumed by both schemas.
+function uiFontSizeMainProcessFixture() {
+  return [
+    "function settingsRegistry(o,setting){",
+    "let rF=11,rZ=16,rW=8,rq=24,rB={",
+    'sansFontSize:setting({agentAccess:"read-write",default:14,description:"Base UI font size",key:"sansFontSize",schema:o.number().min(rF).max(rZ)}),',
+    'codeFontSize:setting({agentAccess:"read-write",default:12,description:"Code font size",key:"codeFontSize",schema:o.number().min(rW).max(rq)})',
+    "};return rB}",
+  ].join("");
+}
+
+function evaluateMainProcessFontSizeRegistry(source) {
+  const schema = () => ({
+    min(value) {
+      this.minValue = value;
+      return this;
+    },
+    max(value) {
+      this.maxValue = value;
+      return this;
+    },
+  });
+  return Function(`${source};return settingsRegistry;`)()({ number: schema }, (value) => value);
+}
+
 function uiFontSizeContext(overrides = {}) {
   return {
     feature: {
@@ -193,14 +220,18 @@ function createUiFontSizeExtractedApp() {
   fs.mkdirSync(buildDir, { recursive: true });
   fs.mkdirSync(webviewDir, { recursive: true });
   const targets = [
-    path.join(buildDir, "src-fixture.js"),
+    path.join(buildDir, "early-bootstrap.js"),
     path.join(buildDir, "worker.js"),
     path.join(webviewDir, "app-shared-fixture.js"),
     path.join(webviewDir, "display-worker-fixture.js"),
   ];
-  for (const target of targets) {
-    fs.writeFileSync(target, uiFontSizeBundleFixture());
+  for (const [index, target] of targets.entries()) {
+    fs.writeFileSync(
+      target,
+      index < 2 ? uiFontSizeMainProcessFixture() : uiFontSizeBundleFixture(),
+    );
   }
+  fs.writeFileSync(path.join(buildDir, "early-bootstrap-916-0123456789abcdef.js"), "console.log('chunk');");
   fs.writeFileSync(path.join(buildDir, "unrelated.js"), "console.log('unrelated');");
   fs.writeFileSync(path.join(webviewDir, "src-unrelated.js"), "console.log('unrelated');");
   return { extractedDir, targets };
@@ -341,11 +372,14 @@ test("UI font size tweak atomically patches all four current runtime registries"
     const result = applyUiFontSizeAppPatch(extractedDir, uiFontSizeContext({ max: 32 }));
     assert.equal(result.matched, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
     assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
-    for (const target of targets) {
+    for (const [index, target] of targets.entries()) {
       const source = fs.readFileSync(target, "utf8");
-      assert.match(source, /sans:\{min:11,max:32\/\*/);
+      assert.match(source, index < 2 ? /rZ=32\/\*/ : /sans:\{min:11,max:32\/\*/);
       assert.match(source, new RegExp(UI_FONT_SIZE_RUNTIME_MARKER));
     }
+    const registry = evaluateMainProcessFontSizeRegistry(fs.readFileSync(targets[0], "utf8"));
+    assert.equal(registry.sansFontSize.schema.maxValue, 32);
+    assert.equal(registry.codeFontSize.schema.maxValue, 24);
 
     const repeated = applyUiFontSizeAppPatch(extractedDir, uiFontSizeContext({ max: 32 }));
     assert.equal(repeated.matched, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
@@ -438,6 +472,36 @@ test("invalid UI font size maxima warn and fall back to the safe default", () =>
           `to ${MAX_CONFIGURABLE_UI_FONT_SIZE}`,
       ),
     );
+  }
+});
+
+test("UI font size tweak raises only the main-process sans schema constant", () => {
+  const source = uiFontSizeMainProcessFixture();
+  assert.equal(fontSizeLimitContract(source), "current");
+  const before = evaluateMainProcessFontSizeRegistry(source);
+  assert.equal(before.sansFontSize.schema.maxValue, 16);
+  const patched = applyUiFontSizePatch(source, uiFontSizeContext({ max: 40 }));
+  assert.equal(fontSizeLimitContract(patched), "applied");
+  const after = evaluateMainProcessFontSizeRegistry(patched);
+  assert.equal(after.sansFontSize.schema.minValue, 11);
+  assert.equal(after.sansFontSize.schema.maxValue, 40);
+  assert.equal(after.codeFontSize.schema.minValue, 8);
+  assert.equal(after.codeFontSize.schema.maxValue, 24);
+  assert.equal(applyUiFontSizePatch(patched, uiFontSizeContext({ max: 40 })), patched);
+});
+
+test("main-process UI font size constants require both schema bindings", () => {
+  const source = uiFontSizeMainProcessFixture();
+  for (const [mutated, state] of [
+    [source.replace(".min(rF).max(rZ)", ".min(rF).max(rq)"), "absent"],
+    [source.replace(".min(rW).max(rq)", ".min(rW).max(rZ)"), "absent"],
+    [source.replace('key:"sansFontSize"', 'key:"otherFontSize"'), "absent"],
+    [source.replace("rZ=16", "rZ=18"), "absent"],
+    [source.replace("rq=24,", "rq=24,a1=11,a2=16,a3=8,a4=24,"), "current"],
+    [source + source, "absent"],
+    [source + `/*${UI_FONT_SIZE_RUNTIME_MARKER}*/`, "drifted"],
+  ]) {
+    assert.equal(fontSizeLimitContract(mutated), state);
   }
 });
 
@@ -909,7 +973,7 @@ test("feature settings override the tracked defaults through features.json", () 
       const result = uiFontSizeDescriptor.apply(fontSizeFixture.extractedDir, {});
       assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
       for (const target of fontSizeFixture.targets) {
-        assert.match(fs.readFileSync(target, "utf8"), /max:32\/\*/);
+        assert.match(fs.readFileSync(target, "utf8"), /(?:max:|=)32\/\*/);
       }
     } finally {
       fs.rmSync(fontSizeFixture.extractedDir, { recursive: true, force: true });

@@ -42,7 +42,7 @@ function eventFixture(overrides = {}) {
   for (const node of [editor, form, input]) node.ownerDocument = document;
   const event = { key: "Enter", ctrlKey: true, metaKey: false, shiftKey: false, altKey: false,
     target: input, currentTarget: form, defaultPrevented: false, repeat: false,
-    composedPath: () => [input, form, editor],
+    composedPath: () => [input, form, editor], getModifierState: () => false,
     preventDefault() { this.defaultPrevented = true; }, stopPropagation() {},
     ...overrides };
   event.nativeEvent = { isComposing: false, composedPath: () => event.composedPath(), ...overrides.nativeEvent };
@@ -61,6 +61,7 @@ function nativeHandlers(source, eventState, { mode = "create", storedBody, draft
   let registered;
   const context = vm.createContext({ Element, Symbol, ...eventState,
     YQs: { c: memo }, znt: { c: memo }, jji: () => false,
+    Zg: (target) => target instanceof Element, Om: () => false,
     Nji: (options) => { registered = options; },
     Kqt: () => {
       generalCalls += 1;
@@ -84,7 +85,7 @@ function nativeHandlers(source, eventState, { mode = "create", storedBody, draft
   context.C = ({ body }) => callbacks.onDirectSubmit("annotation", body);
   context.S = ({ body }) => callbacks.onUpdateAnnotation("annotation", body);
   vm.runInContext(`var _i=${official._i};var yi=_i;var Si=${official.Si};`, context);
-  context.KQs({ id: command, accelerator: "Ctrl+Enter", capture: true, enabled: true, isMacOS: false });
+  context.KQs({ id: command, accelerator: "Ctrl+Enter", capture: true, runInRenderer: true, isMacOS: false });
   assert.equal(registered.capture, true);
   return { context, sent, jobs, dispatch() { registered.onKeyDown(eventState.event); context.Si(eventState.event); },
     get generalCalls() { return generalCalls; }, get editing() { return editing; } };
@@ -107,7 +108,7 @@ function appFixture(t, source = official.KQs) {
 }
 
 const currentShortcutSource = official.KQs
-  .replace("Kqt(n,e)&&e.preventDefault()", "(Kqt(n,e))&&(e.preventDefault())");
+  .replace("Kqt(n,e)&&(e.preventDefault(),", "(Kqt(n,e))&&(e.preventDefault(),");
 
 function withWarnings(callback) {
   const messages = [];
@@ -137,6 +138,7 @@ test("patch discovers renamed native symbols, preserves registration and memo sl
 });
 
 test("patch accepts the current shortcut target normalization and grouped dispatch", () => {
+  assert.notEqual(currentShortcutSource, official.KQs);
   const patched = patchSource(currentShortcutSource);
   assert.equal(shortcutContract(patched).state, "applied");
   assert.equal(patchSource(patched), patched);
@@ -227,18 +229,23 @@ test("missing, ambiguous, changed, and partially patched contracts leave assets 
   for (const source of [
     official.KQs.replace("clearAllUnreads", "renamedCommand"),
     official.KQs + official.KQs,
-    official.KQs.replace("Kqt(n,e)&&e.preventDefault()", "Kqt(n,e)"),
-    official.KQs.replace("onKeyDown:p", "onKeyDown:otherHandler"),
-    // The retired target-local normalization is no longer accepted.
+    official.KQs.replace("Kqt(n,e)&&(e.preventDefault(),", "Kqt(n,e)&&(e.stopPropagation(),"),
+    official.KQs.replace("onKeyDown:h", "onKeyDown:otherHandler"),
+    // Retired handler preambles are no longer accepted.
     official.KQs.replace(
-      "p=e=>{if(e.target instanceof Element&&e.target,!e.defaultPrevented){",
-      "p=e=>{let target=e.target instanceof Element?e.target:null;if(!e.defaultPrevented){",
+      "h=e=>{if(e.target instanceof Element&&e.target,e.defaultPrevented)return;",
+      "h=e=>{let target=e.target instanceof Element?e.target:null;if(e.defaultPrevented)return;",
+    ),
+    official.KQs.replace(
+      "h=e=>{if(e.target instanceof Element&&e.target,e.defaultPrevented)return;",
+      "h=e=>{if(e.target instanceof Element&&e.target,!e.defaultPrevented)return;",
     ),
     official.KQs.replace("id:n,accelerator:", "id:otherCommand,accelerator:"),
     official.KQs + `/*${RUNTIME_MARKER}*/`,
     patched.replace("return withinEditor(event.target)", "return false&&withinEditor(event.target)"),
     patched.replace(`if(${GUARD_NAME}(n,e))return;`, ""),
   ]) {
+    assert.notEqual(source, official.KQs);
     const app = appFixture(t, source);
     const result = withWarnings(() => applyAnnotationSubmit(app.root, enabledContext));
     assert.equal(result.result.changed, 0);
