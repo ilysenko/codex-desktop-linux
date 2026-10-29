@@ -6,14 +6,13 @@ const path = require("node:path");
 const {
   extractedAppPatch,
 } = require("../../scripts/patches/descriptor.js");
+const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
 
 const CODEX_MICRO_GATE_ID = "3207467860";
 const CODEX_MICRO_ROUTE = "/settings/codex-micro";
 const CODEX_MICRO_GATE_MARKER = "codexLinuxCodexMicroGateOverride";
 const CODEX_MICRO_HOTPLUG_MARKER = "codexLinuxCodexMicroHotplug";
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
-const CODEX_MICRO_SERVICE_PATTERN =
-  /^service-[A-Za-z0-9_-]+\.js$/;
 const CODEX_MICRO_GATE_CONTRACTS = [
   {
     description: "Codex Micro app-shell and settings gates",
@@ -323,21 +322,19 @@ function applyCodexMicroHotplugPatch(source) {
 }
 
 function findCodexMicroServiceBundle(extractedDir) {
-  const buildDir = path.join(extractedDir, ".vite", "build");
-  if (!fs.existsSync(buildDir)) {
+  // The rspack main process lazily loads the CodexMicroService module from one
+  // of the numbered early-bootstrap chunks; search every chunk semantically.
+  const mainProcess = findMainProcessChunks(extractedDir);
+  if (mainProcess == null) {
     return {
       target: null,
       result: null,
-      reason: ".vite/build directory not found",
+      reason: "main-process early-bootstrap chunks not found",
     };
   }
 
-  const candidates = fs.readdirSync(buildDir, { withFileTypes: true })
-    .filter((entry) =>
-      entry.isFile() && CODEX_MICRO_SERVICE_PATTERN.test(entry.name),
-    )
-    .map((entry) => path.join(buildDir, entry.name))
-    .sort()
+  const candidates = mainProcess.chunks
+    .map((name) => path.join(mainProcess.buildDir, name))
     .map((bundlePath) => {
       const source = fs.readFileSync(bundlePath, "utf8");
       return {
@@ -403,7 +400,7 @@ module.exports = {
       phase: "extracted-app:pre-webview",
       order: 28_980,
       ciPolicy: "opt-in",
-      targetSummary: "current Codex Micro main-process service bundle",
+      targetSummary: "current Codex Micro main-process service chunk",
       apply: patchCodexMicroService,
       status: (result, warnings) => {
         if (result?.matched !== 1) {

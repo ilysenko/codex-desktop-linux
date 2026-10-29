@@ -8,10 +8,13 @@ const PARCEL_WATCH_MARKER = "codexLinuxShallowParcelWorkingTreeWatch";
 const PARCEL_METADATA_WATCH_MARKER = "codexLinuxShallowParcelMetadataWatch";
 const LOCAL_FILE_WATCH_METHOD =
   /async startFileWatch\((?<options>[A-Za-z_$][\w$]*)\)\{(?=let [^{}]{0,180}?await this\.platformPath\(\),[^{}]{0,180}?\(0,[A-Za-z_$][\w$]*\.watch\)\(this\.getFileSystemPath\(\k<options>\.path\),\{recursive:\k<options>\.recursive\})/gu;
+// Current rspack worker build (worker.js) shapes. String literals are
+// double-quoted, comparisons are yoda-style, and the path module is reached
+// through an rspack interop getter such as `c1().join(...)`.
 const PARCEL_WORKING_TREE_WATCH =
-  /startWorkingTreeWatch:\((?<remote>[A-Za-z_$][\w$]*),(?<options>[A-Za-z_$][\w$]*),(?<ignored>[A-Za-z_$][\w$]*)\)=>\{if\(!\k<remote>\.isLocal\)return \k<remote>\.startFileWatch\(\k<options>\);if\(process\.platform===`linux`\)return (?<helper>[A-Za-z_$][\w$]*)\(\k<options>,\{ignoredPaths:\[[A-Za-z_$][\w$]*\.default\.join\(\k<options>\.path,`\.git`\),\.\.\.\k<ignored>\]\}\);if\(\k<ignored>\.length===0\)return (?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
+  /startWorkingTreeWatch:\((?<remote>[A-Za-z_$][\w$]*),(?<options>[A-Za-z_$][\w$]*),(?<ignored>[A-Za-z_$][\w$]*)\)=>\{if\(!\k<remote>\.isLocal\)return \k<remote>\.startFileWatch\(\k<options>\);if\("linux"===process\.platform\)return (?<helper>[A-Za-z_$][\w$]*)\(\k<options>,\{ignoredPaths:\[[A-Za-z_$][\w$]*\(\)\.join\(\k<options>\.path,"\.git"\),\.\.\.\k<ignored>\]\}\);if\(0===\k<ignored>\.length\)return (?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
 const PARCEL_METADATA_WATCH =
-  /process\.platform===`linux`&&(?<options>[A-Za-z_$][\w$]*)\.recursive!==!1\?(?<helper>[A-Za-z_$][\w$]*)\(\k<options>,\{ignoredPaths:\[\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
+  /"linux"===process\.platform&&!1!==(?<options>[A-Za-z_$][\w$]*)\.recursive\?(?<helper>[A-Za-z_$][\w$]*)\(\k<options>,\{ignoredPaths:\[\]\}\):(?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
 
 function patchWorkerSource(source) {
   const markerCount = source.split(PATCH_MARKER).length - 1;
@@ -85,7 +88,7 @@ function patchWorkerSource(source) {
   if (parcelMatches.length === 1) {
     finalSource = finalSource.replace(
       PARCEL_WORKING_TREE_WATCH,
-      `startWorkingTreeWatch:($<remote>,$<options>,$<ignored>)=>{if(!$<remote>.isLocal)return $<remote>.startFileWatch($<options>);if(process.platform===\`linux\`)return /*${PARCEL_WATCH_MARKER}*/$<host>.startFileWatch($<options>);if($<ignored>.length===0)return $<host>.startFileWatch($<options>)`,
+      `startWorkingTreeWatch:($<remote>,$<options>,$<ignored>)=>{if(!$<remote>.isLocal)return $<remote>.startFileWatch($<options>);if("linux"===process.platform)return /*${PARCEL_WATCH_MARKER}*/$<host>.startFileWatch($<options>);if(0===$<ignored>.length)return $<host>.startFileWatch($<options>)`,
     );
     changed += 1;
   }
@@ -104,6 +107,11 @@ function patchWorkerSource(source) {
   };
 }
 
+// The rspack main process (`early-bootstrap.js` plus numbered chunks) owns one
+// local host; the rspack worker build (`worker.js` plus numbered chunks) owns
+// the other local host and the Parcel working-tree/metadata routes.
+const FILE_WATCH_BUNDLE_PATTERN = /^(?:early-bootstrap|worker)(?:-\d+-[0-9a-f]+)?\.js$/u;
+
 function findLocalFileWatchBundles(extractedDir) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   if (!fs.existsSync(buildDir)) {
@@ -111,7 +119,7 @@ function findLocalFileWatchBundles(extractedDir) {
   }
 
   const bundlePaths = fs.readdirSync(buildDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .filter((entry) => entry.isFile() && FILE_WATCH_BUNDLE_PATTERN.test(entry.name))
     .map((entry) => path.join(buildDir, entry.name))
     .sort();
   const candidates = [];
@@ -210,6 +218,7 @@ const descriptors = [
 ];
 
 module.exports = {
+  FILE_WATCH_BUNDLE_PATTERN,
   LOCAL_FILE_WATCH_METHOD,
   PARCEL_METADATA_WATCH_MARKER,
   PARCEL_WATCH_MARKER,

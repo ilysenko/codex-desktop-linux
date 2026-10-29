@@ -20,10 +20,12 @@ const {
   patchWorkerSource,
 } = require("./patch.js");
 
+// Mirrors the current rspack local host in early-bootstrap-<n>-<hash>.js and
+// worker.js.
 function localWorkerSource() {
   return [
     "var LocalHost=class{",
-    "async platformPath(){return E.default.posix}",
+    'async platformPath(){return this.runsInsideWsl||"win32"!==process.platform?E().posix:E().win32}',
     "async startFileWatch(e){let t=jH(),n=!1,r=await this.platformPath(),",
     "i=(0,w.watch)(this.getFileSystemPath(e.path),{recursive:e.recursive},()=>{});",
     "return{coverage:{recursive:e.recursive},path:e.path,closed:t.promise}}",
@@ -31,16 +33,19 @@ function localWorkerSource() {
   ].join("");
 }
 
+// Mirrors the current rspack worker.js Parcel metadata and working-tree routes.
 function parcelWorkingTreeSource() {
   return [
-    "function create(t,n,r){return{",
-    "metadata:t.isLocal?process.platform===`linux`&&n.recursive!==!1?",
-    "Jve(n,{ignoredPaths:[]}):e.startFileWatch(n):t.startFileWatch(n),",
-    "startWorkingTreeWatch:(t,n,r)=>{if(!t.isLocal)return t.startFileWatch(n);",
-    "if(process.platform===`linux`)return Jve(n,{ignoredPaths:[E.default.join(n.path,`.git`),...r]});",
-    "if(r.length===0)return e.startFileWatch(n);return e.startFileWatch(n)}}}",
+    "function create(t){return{",
+    'startMetadataWatch:(e,r)=>e.isLocal?"linux"===process.platform&&!1!==r.recursive?',
+    "Pt(r,{ignoredPaths:[]}):t.startFileWatch(r):e.startFileWatch(r),",
+    "startWorkingTreeWatch:(e,r,n)=>{if(!e.isLocal)return e.startFileWatch(r);",
+    'if("linux"===process.platform)return Pt(r,{ignoredPaths:[c1().join(r.path,".git"),...n]});',
+    "if(0===n.length)return t.startFileWatch(r);return t.startFileWatch(r)}}}",
   ].join("");
 }
+
+const MAIN_CHUNK = "early-bootstrap-339-0123456789abcdef.js";
 
 function withFeatureConfig(enabled, callback) {
   const original = process.env.CODEX_LINUX_FEATURES_CONFIG;
@@ -65,7 +70,7 @@ function instantiate(source, platform, watchCalls) {
     `${source};return LocalHost;`,
   )(
     { platform },
-    { default: { posix: path.posix } },
+    () => ({ posix: path.posix, win32: path.win32 }),
     () => ({ promise: Promise.resolve() }),
     {
       watch: (watchedPath, options) => {
@@ -150,12 +155,13 @@ test("routes the current Linux Parcel working-tree branch through the shallow ho
   assert.equal(first.changed, 3);
   assert.equal(first.source.split(PARCEL_WATCH_MARKER).length - 1, 1);
   assert.equal(first.source.split(PARCEL_METADATA_WATCH_MARKER).length - 1, 1);
-  assert.doesNotMatch(first.source, /process\.platform===`linux`\?Jve/);
+  assert.doesNotMatch(first.source, /Pt\(/);
   assert.match(
     first.source,
-    /codexLinuxShallowParcelWorkingTreeWatch\*\/e\.startFileWatch\(n\)/,
+    /codexLinuxShallowParcelWorkingTreeWatch\*\/t\.startFileWatch\(r\)/,
   );
-  assert.match(first.source, /codexLinuxShallowParcelMetadataWatch\*\/e\.startFileWatch\(n\)/);
+  assert.match(first.source, /codexLinuxShallowParcelMetadataWatch\*\/t\.startFileWatch\(r\)/);
+  assert.doesNotThrow(() => new Function(first.source));
   assert.deepEqual(
     patchWorkerSource(first.source),
     { source: first.source, matched: 1, changed: 0, reason: null },
@@ -167,8 +173,10 @@ test("feature atomically patches both current build bundles", () => {
   try {
     const buildDir = path.join(root, ".vite", "build");
     fs.mkdirSync(buildDir, { recursive: true });
-    fs.writeFileSync(path.join(buildDir, "unrelated.js"), "var worker={startFileWatch(){}};");
-    fs.writeFileSync(path.join(buildDir, "src-current.js"), localWorkerSource());
+    fs.writeFileSync(path.join(buildDir, "early-bootstrap.js"), "var worker={startFileWatch(){}};");
+    // Non-main, non-worker bundles are outside the contract even if they match.
+    fs.writeFileSync(path.join(buildDir, "mcp-annotation-runtime.js"), localWorkerSource());
+    fs.writeFileSync(path.join(buildDir, MAIN_CHUNK), localWorkerSource());
     fs.writeFileSync(
       path.join(buildDir, "worker.js"),
       `${localWorkerSource()}${parcelWorkingTreeSource()}`,
@@ -177,7 +185,7 @@ test("feature atomically patches both current build bundles", () => {
     const discovery = findLocalFileWatchBundles(root);
     assert.deepEqual(
       discovery.candidates.map(({ bundlePath }) => path.basename(bundlePath)),
-      ["src-current.js", "worker.js"],
+      [MAIN_CHUNK, "worker.js"],
     );
     const first = patchWorker(root);
     assert.deepEqual(first, {
@@ -185,7 +193,7 @@ test("feature atomically patches both current build bundles", () => {
       changed: 4,
       reason: null,
       targets: [
-        path.join(".vite", "build", "src-current.js"),
+        path.join(".vite", "build", MAIN_CHUNK),
         path.join(".vite", "build", "worker.js"),
       ],
     });
@@ -225,9 +233,9 @@ test("an extra Parcel working-tree branch leaves current bundles byte-identical"
     const buildDir = path.join(root, ".vite", "build");
     fs.mkdirSync(buildDir, { recursive: true });
     const sources = new Map([
-      ["src-current.js", localWorkerSource()],
+      [MAIN_CHUNK, localWorkerSource()],
       ["worker.js", `${localWorkerSource()}${parcelWorkingTreeSource()}`],
-      ["worker-extra.js", parcelWorkingTreeSource()],
+      ["worker-307-0123456789abcdef.js", parcelWorkingTreeSource()],
     ]);
     for (const [name, source] of sources) fs.writeFileSync(path.join(buildDir, name), source);
 
@@ -252,3 +260,27 @@ test("ambiguous or drifted local hosts remain byte-identical", () => {
   assert.match(result.reason, /Found 2 local startFileWatch implementations/);
   assert.equal(descriptors[0].status(result, []).status, "skipped-optional");
 });
+
+test(
+  "signed upstream bundles expose both local hosts and both Parcel routes",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+    const discovery = findLocalFileWatchBundles(root);
+    assert.equal(discovery.reason, null);
+    const names = discovery.candidates.map(({ bundlePath }) => path.basename(bundlePath));
+    assert.equal(names.length, 2);
+    assert.match(names[0], /^early-bootstrap-\d+-[0-9a-f]+\.js$/);
+    assert.equal(names[1], "worker.js");
+    for (const candidate of discovery.candidates) {
+      const result = patchWorkerSource(candidate.source);
+      assert.equal(result.matched, 1);
+      assert.equal(result.source.split(PATCH_MARKER).length - 1, 1);
+      assert.deepEqual(patchWorkerSource(result.source).changed, 0);
+    }
+    const worker = patchWorkerSource(discovery.candidates[1].source);
+    assert.equal(worker.changed, 3);
+    assert.equal(worker.source.split(PARCEL_WATCH_MARKER).length - 1, 1);
+    assert.equal(worker.source.split(PARCEL_METADATA_WATCH_MARKER).length - 1, 1);
+  },
+);

@@ -14,9 +14,11 @@ const {
   applyCodexMicroFeatureGatePatch,
   descriptors,
   findCodexMicroFeatureGateAssets,
+  findCodexMicroServiceBundle,
   matchesCodexMicroFeatureGateContract,
   patchCodexMicroFeatureGateAssets,
   patchCodexMicroHotplugSource,
+  patchCodexMicroService,
 } = require("./patch.js");
 
 const [appShellContract, dictationContract, composerContract, settingsContract] =
@@ -201,3 +203,109 @@ test("Linux hot-plug watcher is narrow and idempotent", () => {
   assert.match(result.source, /\/dev/);
   assert.equal(patchCodexMicroHotplugSource(result.source).changed, 0);
 });
+
+function codexMicroServiceChunk() {
+  return [
+    '"use strict";exports.ids=[683],exports.modules={55006(t,e,i){',
+    "i.d(e,{CodexMicroService:()=>U});var a=i(4482);",
+    "function u(t){return g().watch(t)}",
+    "function g(){let p=[`hid-topology-watcher.node`,`hid_topology_watcher.node`];return p}",
+    "async function f(){return await g().findCodexMicroInterfaces()}",
+    "class U{scan(){this.scheduleTopologyFallbackScan()}}",
+    "}};",
+  ].join("");
+}
+
+function createMainProcessChunks(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-micro-chunks-"));
+  const buildDir = path.join(root, ".vite", "build");
+  fs.mkdirSync(buildDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(buildDir, "early-bootstrap.js"),
+    '"use strict";var m={4482(e){e.exports=require("electron")}};',
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(buildDir, "early-bootstrap-916-0123456789abcdef.js"),
+    '"use strict";exports.ids=[916],exports.modules={1(e,t,n){n.e(683).then(n.bind(n,55006))}};',
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(buildDir, "early-bootstrap-683-fedcba9876543210.js"),
+    codexMicroServiceChunk(),
+    "utf8",
+  );
+  // The worker build is not a main-process chunk and must be ignored.
+  fs.writeFileSync(
+    path.join(buildDir, "worker.js"),
+    codexMicroServiceChunk(),
+    "utf8",
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return { buildDir, root };
+}
+
+test("Linux hot-plug watcher patches only the owning rspack chunk", (t) => {
+  const { buildDir, root } = createMainProcessChunks(t);
+  const discovery = findCodexMicroServiceBundle(root);
+  assert.equal(discovery.reason, null);
+  assert.equal(
+    path.basename(discovery.target),
+    "early-bootstrap-683-fedcba9876543210.js",
+  );
+
+  const result = patchCodexMicroService(root);
+  assert.equal(result.matched, 1);
+  assert.equal(result.changed, 1);
+  assert.equal(
+    result.target,
+    path.join(".vite", "build", "early-bootstrap-683-fedcba9876543210.js"),
+  );
+  const patched = fs.readFileSync(
+    path.join(buildDir, "early-bootstrap-683-fedcba9876543210.js"),
+    "utf8",
+  );
+  assert.equal(patched.split(CODEX_MICRO_HOTPLUG_MARKER).length - 1, 1);
+  assert.match(patched, /require\(`node:fs`\)\.watch\(`\/dev`/);
+  assert.equal(
+    fs.readFileSync(path.join(buildDir, "worker.js"), "utf8"),
+    codexMicroServiceChunk(),
+  );
+
+  const again = patchCodexMicroService(root);
+  assert.equal(again.matched, 1);
+  assert.equal(again.changed, 0);
+});
+
+test("Linux hot-plug watcher fails closed on duplicate service chunks", (t) => {
+  const { buildDir, root } = createMainProcessChunks(t);
+  fs.writeFileSync(
+    path.join(buildDir, "early-bootstrap-87-00112233445566aa.js"),
+    codexMicroServiceChunk(),
+    "utf8",
+  );
+  const result = patchCodexMicroService(root);
+  assert.equal(result.matched, 0);
+  assert.match(result.reason, /Found 2 current Codex Micro service bundles/);
+});
+
+test(
+  "signed upstream main process exposes exactly one Codex Micro watcher chunk",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+    const discovery = findCodexMicroServiceBundle(root);
+    assert.equal(discovery.reason, null);
+    assert.match(
+      path.basename(discovery.target),
+      /^early-bootstrap-\d+-[0-9a-f]+\.js$/,
+    );
+    assert.equal(discovery.result.changed, 1);
+    assert.doesNotThrow(() => new Function(
+      "exports",
+      "require",
+      "__filename",
+      discovery.result.source,
+    ));
+  },
+);

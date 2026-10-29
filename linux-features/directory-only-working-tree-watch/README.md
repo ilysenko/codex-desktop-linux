@@ -26,10 +26,10 @@ working-tree request through `startFileWatch()`, where the exact recursive
 working-tree contract enters Watchbound. Remote watches and non-working-tree
 file watches retain their existing routes.
 
-Both Parcel references originate in the upstream app: `.vite/build/worker.js`
-contains the sole dynamic ``await import(`@parcel/watcher`)``, and the extracted
-app's `package.json` declares `"@parcel/watcher": "2.5.6"`. This feature adds
-neither reference. Qualified roots do not run Parcel; the preserved helper is
+Both Parcel references originate in the upstream app: the rspack worker build
+`.vite/build/worker.js` lazily loads its sole `require("@parcel/watcher")`
+external module, and the extracted app's `package.json` declares
+`"@parcel/watcher": "2.5.6"`. This feature adds neither reference. Qualified roots do not run Parcel; the preserved helper is
 invoked only when Watchbound cannot safely qualify the root.
 
 The Parcel route and the Watchbound adapter are alternative owners of the same
@@ -38,7 +38,8 @@ Watchbound. A permanently unqualified root uses the preserved upstream Parcel
 helper, while unknown qualification evidence is retried with bounded
 exponential backoff before taking that fallback. This feature requires exactly
 one raw Parcel route or one completed Watchbound route marker in the current
-`worker.js`. Missing, duplicate, or misplaced routes report enabled feature
+`worker.js`, plus exactly one local host in a numbered rspack main-process
+chunk (`early-bootstrap-<n>-<hash>.js`). Missing, duplicate, or misplaced routes report enabled feature
 drift and leave both current app bundles byte-identical rather than accepting
 an injected helper that the active call path bypasses.
 

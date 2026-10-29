@@ -119,43 +119,57 @@ const LOCAL_FILE_WATCH_CURRENT_BODY =
   "\\{recursive:\\k<options>\\.recursive\\})";
 const LOCAL_FILE_WATCH_METHOD =
   new RegExp(`${LOCAL_FILE_WATCH_METHOD_PREFIX}${LOCAL_FILE_WATCH_CURRENT_BODY}`, "gu");
+// The current signed package builds both the main process (numbered
+// `early-bootstrap-<n>-<hash>.js` chunks) and the Git worker (`worker.js`) with
+// rspack. Its minifier emits class declarations, double-quoted strings,
+// literal-first comparisons, and rspack interop getters such as `c1().join`.
 const CURRENT_LOCAL_HOST_CLASS = new RegExp(
-  `var (?<localHostClass>${IDENTIFIER_PATTERN})=class\\{` +
+  `class (?<localHostClass>${IDENTIFIER_PATTERN})\\{` +
     `runsInsideWsl;processOwner;workspaceRoot=new ${IDENTIFIER_PATTERN}\\(this\\);` +
-    "hostConfig=\\{id:`local`,display_name:`Local`,kind:`local`\\};" +
-    "id=`local`;isLocal=!0;",
+    'hostConfig=\\{id:"local",display_name:"Local",kind:"local"\\};' +
+    'id="local";isLocal=!0;',
   "gu",
 );
 const PARCEL_WORKING_TREE_WATCH =
-  /startWorkingTreeWatch:\((?<remote>[A-Za-z_$][\w$]*),(?<options>[A-Za-z_$][\w$]*),(?<ignored>[A-Za-z_$][\w$]*)\)=>\{if\(!\k<remote>\.isLocal\)return \k<remote>\.startFileWatch\(\k<options>\);if\(process\.platform===`linux`\)return [A-Za-z_$][\w$]*\(\k<options>,\{ignoredPaths:\[[A-Za-z_$][\w$]*\.default\.join\(\k<options>\.path,`\.git`\),\.\.\.\k<ignored>\]\}\);if\(\k<ignored>\.length===0\)return (?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
+  /startWorkingTreeWatch:\((?<remote>[A-Za-z_$][\w$]*),(?<options>[A-Za-z_$][\w$]*),(?<ignored>[A-Za-z_$][\w$]*)\)=>\{if\(!\k<remote>\.isLocal\)return \k<remote>\.startFileWatch\(\k<options>\);if\("linux"===process\.platform\)return [A-Za-z_$][\w$]*\(\k<options>,\{ignoredPaths:\[[A-Za-z_$][\w$]*\(\)\.join\(\k<options>\.path,"\.git"\),\.\.\.\k<ignored>\]\}\);if\(0===\k<ignored>\.length\)return (?<host>[A-Za-z_$][\w$]*)\.startFileWatch\(\k<options>\)/gu;
+// rspack loads the `@parcel/watcher` external lazily through the module's
+// require function, e.g. `r.t.bind(r,93861,23)`; the numeric id is correlated
+// with the external module that requires `@parcel/watcher` in the same bundle.
 const CURRENT_PARCEL_HELPER = new RegExp(
   "async function " +
     `(?<helperName>${IDENTIFIER_PATTERN})\\(` +
     `(?<helperOptions>${IDENTIFIER_PATTERN}),` +
     `(?<helperSettings>${IDENTIFIER_PATTERN})\\)\\{return new ` +
-    `(?<parcelWatcher>${IDENTIFIER_PATTERN})\\(await import\\(` +
-    "`@parcel/watcher`" +
-    `\\),\\k<helperOptions>,\\k<helperSettings>\\)\\.start\\(\\)\\}`,
+    `(?<parcelWatcher>${IDENTIFIER_PATTERN})\\(await Promise\\.resolve\\(\\)\\.then\\(` +
+    `(?<moduleRequire>${IDENTIFIER_PATTERN})\\.t\\.bind\\(\\k<moduleRequire>,` +
+    "(?<parcelModuleId>\\d+),\\d+\\)\\)," +
+    `\\k<helperOptions>,\\k<helperSettings>\\)\\.start\\(\\)\\}`,
+  "gu",
+);
+const CURRENT_PARCEL_EXTERNAL = new RegExp(
+  `(?<![\\w$])(?<parcelModuleId>\\d+)\\((?<moduleObject>${IDENTIFIER_PATTERN})\\)\\{` +
+    '"use strict";\\k<moduleObject>\\.exports=require\\("@parcel/watcher"\\)\\}',
   "gu",
 );
 const CURRENT_GIT_ROUTE_PREFIX_PATTERN =
-  "case`git`:\\{let " +
+  'case"git":\\{let ' +
   `(?<ignoreSource>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\\(\\),` +
   `(?<localHost>${IDENTIFIER_PATTERN})=new ` +
   `(?<localHostClass>${IDENTIFIER_PATTERN})\\(\\k<ignoreSource>,[\\s\\S]{0,600}?\\);` +
   "return\\{git:\\{watchIgnoreSources:\\k<ignoreSource>\\?void 0:\\{" +
-  `getEnvironment:async\\(\\)=>${IDENTIFIER_PATTERN}\\(\\),getWatchTargets:${IDENTIFIER_PATTERN}\\},` +
+  // The Git ignore environment reader is inlined by the current minifier.
+  `getEnvironment:async\\(\\)=>[\\s\\S]{1,2000}?,getWatchTargets:${IDENTIFIER_PATTERN}\\},` +
   `createExecutionHost:(?<executionConfig>${IDENTIFIER_PATTERN})=>\\{` +
   `if\\(\\k<executionConfig>\\.id===\\k<localHost>\\.id&&!${IDENTIFIER_PATTERN}\\(\\k<executionConfig>\\)\\)` +
-  "return \\k<localHost>;if\\(" +
-  `(?<mainConnection>${IDENTIFIER_PATTERN})==null\\)throw Error\\(` +
-  "`Git hosts require a main RPC connection`" +
+  "return \\k<localHost>;if\\(null==" +
+  `(?<mainConnection>${IDENTIFIER_PATTERN})\\)throw Error\\(` +
+  '"Git hosts require a main RPC connection"' +
   "\\);return new " +
   `${IDENTIFIER_PATTERN}\\(\\k<mainConnection>,\\k<executionConfig>\\)\\},` +
   "startMetadataWatch:\\(" +
   `(?<metadataHost>${IDENTIFIER_PATTERN}),(?<metadataOptions>${IDENTIFIER_PATTERN})\\)=>` +
-  "\\k<metadataHost>\\.isLocal\\?process\\.platform===`linux`&&" +
-  "\\k<metadataOptions>\\.recursive!==!1\\?" +
+  '\\k<metadataHost>\\.isLocal\\?"linux"===process\\.platform&&' +
+  "!1!==\\k<metadataOptions>\\.recursive\\?" +
   `(?<metadataHelper>${IDENTIFIER_PATTERN})\\(\\k<metadataOptions>,\\{ignoredPaths:\\[\\]\\}\\):` +
   "\\k<localHost>\\.startFileWatch\\(\\k<metadataOptions>\\):" +
   "\\k<metadataHost>\\.startFileWatch\\(\\k<metadataOptions>\\),";
@@ -165,25 +179,25 @@ const CURRENT_PARCEL_ROUTE_PATTERN =
   `(?<routeOptions>${IDENTIFIER_PATTERN}),` +
   `(?<ignoredPaths>${IDENTIFIER_PATTERN})\\)=>\\{` +
   "if\\(!\\k<routeHost>\\.isLocal\\)return \\k<routeHost>\\.startFileWatch\\(\\k<routeOptions>\\);" +
-  "if\\(process\\.platform===`linux`\\)return " +
+  'if\\("linux"===process\\.platform\\)return ' +
   `(?<routeHelper>${IDENTIFIER_PATTERN})\\(\\k<routeOptions>,\\{ignoredPaths:\\[` +
-  `(?<pathApi>${IDENTIFIER_PATTERN})\\.default\\.join\\(` +
-  "\\k<routeOptions>\\.path,`\\.git`\\),\\.\\.\\.\\k<ignoredPaths>\\]\\}\\);" +
-  "if\\(\\k<ignoredPaths>\\.length===0\\)return \\k<localHost>\\.startFileWatch\\(\\k<routeOptions>\\)";
+  `(?<pathApi>${IDENTIFIER_PATTERN})\\(\\)\\.join\\(` +
+  '\\k<routeOptions>\\.path,"\\.git"\\),\\.\\.\\.\\k<ignoredPaths>\\]\\}\\);' +
+  "if\\(0===\\k<ignoredPaths>\\.length\\)return \\k<localHost>\\.startFileWatch\\(\\k<routeOptions>\\)";
 const CURRENT_WATCHBOUND_ROUTE_PATTERN =
   "startWorkingTreeWatch:\\(" +
   `(?<routeHost>${IDENTIFIER_PATTERN}),` +
   `(?<routeOptions>${IDENTIFIER_PATTERN}),` +
   `(?<ignoredPaths>${IDENTIFIER_PATTERN})\\)=>\\{` +
   "if\\(!\\k<routeHost>\\.isLocal\\)return \\k<routeHost>\\.startFileWatch\\(\\k<routeOptions>\\);" +
-  "if\\(process\\.platform===`linux`\\)return " +
+  'if\\("linux"===process\\.platform\\)return ' +
   `/\\*${PARCEL_WATCH_MARKER}\\*/` +
   "\\k<localHost>\\.startFileWatch\\(\\{\\.\\.\\.\\k<routeOptions>," +
   "\\[Symbol\\.for\\(`codex-linux\\.directory-only-working-tree-watch\\.parcel-fallback`\\)\\]:" +
   `\\(\\)=>(?<routeHelper>${IDENTIFIER_PATTERN})\\(\\k<routeOptions>,\\{ignoredPaths:\\[` +
-  `(?<pathApi>${IDENTIFIER_PATTERN})\\.default\\.join\\(` +
-  "\\k<routeOptions>\\.path,`\\.git`\\),\\.\\.\\.\\k<ignoredPaths>\\]\\}\\)\\}\\);" +
-  "if\\(\\k<ignoredPaths>\\.length===0\\)return \\k<localHost>\\.startFileWatch\\(\\k<routeOptions>\\)";
+  `(?<pathApi>${IDENTIFIER_PATTERN})\\(\\)\\.join\\(` +
+  '\\k<routeOptions>\\.path,"\\.git"\\),\\.\\.\\.\\k<ignoredPaths>\\]\\}\\)\\}\\);' +
+  "if\\(0===\\k<ignoredPaths>\\.length\\)return \\k<localHost>\\.startFileWatch\\(\\k<routeOptions>\\)";
 const CURRENT_PARCEL_ROUTE_CONTRACT = new RegExp(
   `(?<routePrefix>${CURRENT_GIT_ROUTE_PREFIX_PATTERN})${CURRENT_PARCEL_ROUTE_PATTERN}`,
   "gu",
@@ -1554,9 +1568,9 @@ function currentLocalHostClassForMethod(source, classMatches, methodMatches) {
   if (classMatches.length !== 1 || methodMatches.length !== 1) return null;
   const [classMatch] = classMatches;
   const [methodMatch] = methodMatches;
-  const classTokenStart = source.indexOf("=class{", classMatch.index);
-  if (classTokenStart < 0) return null;
-  const classOpen = classTokenStart + "=class".length;
+  const classOpen =
+    classMatch.index + `class ${classMatch.groups?.localHostClass ?? ""}`.length;
+  if (source[classOpen] !== "{") return null;
   const classClose = findMatchingBrace(source, classOpen);
   return classClose >= 0 &&
     methodMatch.index > classOpen &&
@@ -1584,7 +1598,12 @@ function classifyCurrentBundle(bundlePath, source, settings = normalizedSettings
   const rawRouteLookalikeCount = patternMatches(source, PARCEL_WORKING_TREE_WATCH).length;
   const pristineRouteMatches = patternMatches(source, CURRENT_PARCEL_ROUTE_CONTRACT);
   const completedRouteMatches = patternMatches(source, CURRENT_WATCHBOUND_ROUTE_CONTRACT);
-  const parcelHelperMatches = patternMatches(source, CURRENT_PARCEL_HELPER);
+  const parcelExternalIds = new Set(
+    patternMatches(source, CURRENT_PARCEL_EXTERNAL)
+      .map((external) => external.groups?.parcelModuleId),
+  );
+  const parcelHelperMatches = patternMatches(source, CURRENT_PARCEL_HELPER)
+    .filter((helper) => parcelExternalIds.has(helper.groups?.parcelModuleId));
   const correlatedPristineRouteCount = pristineRouteMatches.filter((route) =>
     parcelHelperMatches.some((helper) =>
       helper.groups?.helperName === route.groups?.routeHelper &&
@@ -1727,12 +1746,12 @@ function watchboundWorkingTreeRoute(groups) {
   return (
     `startWorkingTreeWatch:(${groups.routeHost},${groups.routeOptions},${groups.ignoredPaths})=>{` +
     `if(!${groups.routeHost}.isLocal)return ${groups.routeHost}.startFileWatch(${groups.routeOptions});` +
-    `if(process.platform===\`linux\`)return ` +
+    'if("linux"===process.platform)return ' +
     `/*${PARCEL_WATCH_MARKER}*/${groups.localHost}.startFileWatch({` +
     `...${groups.routeOptions},[Symbol.for(\`${PARCEL_FALLBACK_SYMBOL_KEY}\`)]:()=>` +
     `${groups.routeHelper}(${groups.routeOptions},{ignoredPaths:[` +
-    `${groups.pathApi}.default.join(${groups.routeOptions}.path,\`.git\`),...${groups.ignoredPaths}]})});` +
-    `if(${groups.ignoredPaths}.length===0)return ${groups.localHost}.startFileWatch(${groups.routeOptions})`
+    `${groups.pathApi}().join(${groups.routeOptions}.path,".git"),...${groups.ignoredPaths}]})});` +
+    `if(0===${groups.ignoredPaths}.length)return ${groups.localHost}.startFileWatch(${groups.routeOptions})`
   );
 }
 
@@ -1765,7 +1784,7 @@ function patchWorkerSource(source, settings) {
     countPattern(source, CURRENT_PARCEL_HELPER) > 0 ||
     source.includes(PARCEL_WATCH_MARKER) ||
     countPattern(source, PARCEL_WORKING_TREE_WATCH) > 0;
-  const bundlePath = hasWorkerSignals ? "worker.js" : "src-current.js";
+  const bundlePath = hasWorkerSignals ? "worker.js" : "early-bootstrap-chunk.js";
   const record = classifyCurrentBundle(bundlePath, source, currentSettings);
   const routePristine = bundlePath === "worker.js"
     ? hasPristineWorkerRouteContract(record)
