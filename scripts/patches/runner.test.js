@@ -20,10 +20,12 @@ const {
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
 const officialQuitBundle =
-  "function qrt({isWindows:e,quitState:r,windows:i}){" +
-  "let S=!1;l.app.on(`before-quit`,o=>{if(e||r.canQuitWithoutPrompt()){S=!0,i.markAppQuitting();return}" +
-  "if(l.dialog.showMessageBoxSync({message:`Quit?`,buttons:[{messageId:`desktop.quitConfirmation.quit`},`Cancel`]})!==0){o.preventDefault();return}" +
-  "r.markQuitApproved(),S=!0,i.markAppQuitting()})}function next(){}";
+  "let qrt=function({isWindows:e,disableQuitConfirmationPrompt:d,quitState:r,windows:i,settingsStore:x}){" +
+  "let S=!1;l.app.on(\"before-quit\",o=>{if(e||r.canQuitWithoutPrompt()||d){S=!0,i.markAppQuitting();return}" +
+  "let c={formatMessage:e=>e.defaultMessage};0!==l.dialog.showMessageBoxSync({type:\"warning\",message:\"Quit?\"," +
+  "buttons:[c.formatMessage({messageId:\"desktop.quitConfirmation.quit\",defaultMessage:\"Quit\"}),\"Cancel\"]," +
+  "detail:function({answer:e}){return e}({answer:\"Stop chats?\"})})?o.preventDefault():" +
+  "(r.markQuitApproved(),S=!0,i.markAppQuitting())})};function next(){}";
 
 function linuxTarget(id, versionId, desktop) {
   return detectLinuxTargetContext({
@@ -99,7 +101,7 @@ test("the default core registry repairs Quit and shell startup without changing 
     fs.writeFileSync(main, officialQuitBundle);
     const shell = path.join(mainDir, "shell-env-fixture.js");
     fs.writeFileSync(shell, "async function load(a,b){let start=Date.now();e.app.isPackaged||clean();" +
-      "let abort=new AbortController;log(`Failed to load shell env`,{resultSource:`load`})}");
+      "let abort=new AbortController;log(\"Failed to load shell env\",{resultSource:\"load\"})}");
     fs.writeFileSync(webview, "official-webview\n");
     const report = createPatchReport();
     patchExtractedApp(root, {
@@ -128,7 +130,7 @@ test("portable artifacts include the shell repair when built on Ubuntu GNOME", (
     const main = path.join(mainDir, "main.js");
     const shell = path.join(mainDir, "shell-env-fixture.js");
     const shellSource = "async function load(a,b){let start=Date.now();e.app.isPackaged||clean();" +
-      "let abort=new AbortController;log(`Failed to load shell env`,{resultSource:`load`})}";
+      "let abort=new AbortController;log(\"Failed to load shell env\",{resultSource:\"load\"})}";
     fs.writeFileSync(main, officialQuitBundle);
     fs.writeFileSync(shell, shellSource);
     const report = createPatchReport();

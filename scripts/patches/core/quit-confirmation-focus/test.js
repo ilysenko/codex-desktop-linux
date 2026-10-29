@@ -11,17 +11,23 @@ const vm = require("node:vm");
 const {
   applyQuitConfirmationFocus,
   descriptors,
+  matchesQuitConfirmationModule,
   patchRequiredCoreBlockers,
 } = require("./patch.js");
+const {
+  matchesShellEnvironment,
+} = require("../shell-env-startup/shell-env.js");
 
 // This shape comes from the signed official Linux main bundle. Keep the
 // fixture independent of patch.js so upstream confirmation drift is visible.
 const OFFICIAL_BUNDLE =
-  "function qrt({isWindows:e,quitState:r,windows:i}){" +
-  "let S=!1;l.app.on(`before-quit`,o=>{if(e||r.canQuitWithoutPrompt()){S=!0,i.markAppQuitting();return}" +
-  "if(l.dialog.showMessageBoxSync({message:`Quit?`,buttons:[{messageId:`desktop.quitConfirmation.quit`},`Cancel`]})!==0){o.preventDefault();return}" +
-  "r.markQuitApproved(),S=!0,i.markAppQuitting()})," +
-  "l.app.on(`will-quit`,t=>{Promise.allSettled([flush(),save()]).then(()=>l.app.quit())})}" +
+  "let qrt=function({isWindows:e,disableQuitConfirmationPrompt:d,quitState:r,windows:i,settingsStore:x}){" +
+  "let S=!1;l.app.on(\"before-quit\",o=>{if(e||r.canQuitWithoutPrompt()||d){S=!0,i.markAppQuitting();return}" +
+  "let c={formatMessage:e=>e.defaultMessage};0!==l.dialog.showMessageBoxSync({type:\"warning\",message:\"Quit?\"," +
+  "buttons:[c.formatMessage({messageId:\"desktop.quitConfirmation.quit\",defaultMessage:\"Quit\"}),\"Cancel\"]," +
+  "detail:function({answer:e}){return e}({answer:\"Stop chats?\"})})?o.preventDefault():" +
+  "(r.markQuitApproved(),S=!0,i.markAppQuitting())})," +
+  "l.app.on(\"will-quit\",t=>{Promise.allSettled([flush(),save()]).then(()=>l.app.quit())})};" +
   "function next(){}";
 const OFFICIAL_SHELL =
   "async function load(a,b){let started=Date.now();electron.app.isPackaged||clean();" +
@@ -135,6 +141,7 @@ function harness({ focused = window(7), primary = window(3), others = [] } = {})
   );
   register({
     isWindows: false,
+    disableQuitConfirmationPrompt: false,
     quitState: {
       canQuitWithoutPrompt: () => approved,
       markQuitApproved: () => { approved = true; },
@@ -174,7 +181,7 @@ test("fails closed when the official Quit confirmation changes or is ambiguous",
   );
   assert.throws(
     () => applyQuitConfirmationFocus(OFFICIAL_BUNDLE.replace("quitState:r", "quitStateChanged:r")),
-    /Official Quit binding changed: quitState/,
+    /exactly one official Quit coordinator/,
   );
   assert.throws(
     () => applyQuitConfirmationFocus(OFFICIAL_BUNDLE.replace("markQuitApproved", "approveQuit")),
@@ -250,12 +257,8 @@ test("applies both required repairs to uniquely anchored signed campaign modules
       name,
       source: fs.readFileSync(path.join(buildDir, name), "utf8"),
     }));
-  const candidates = modules.filter(({ source }) =>
-    source.includes("messageId:`desktop.quitConfirmation.quit`"));
-  const shellCandidates = modules.filter(({ source }) =>
-    source.includes("`Failed to load shell env`") &&
-      source.includes("resultSource:`load`") &&
-      source.includes("new AbortController"));
+  const candidates = modules.filter(({ source }) => matchesQuitConfirmationModule(source));
+  const shellCandidates = modules.filter(({ source }) => matchesShellEnvironment(source));
   assert.equal(
     candidates.length,
     1,
@@ -273,11 +276,8 @@ test("applies both required repairs to uniquely anchored signed campaign modules
   assert.match(patched, /function codexLinuxQuitDialogParent\(/);
   assert.match(patched, /codexLinuxQuitPromptPending=!0/);
   assert.doesNotMatch(
-    patched.slice(
-      patched.lastIndexOf("function ", patched.indexOf("desktop.quitConfirmation.quit")),
-      patched.indexOf("}function ", patched.indexOf("desktop.quitConfirmation.quit")) + 1,
-    ),
-    /showMessageBoxSync\(/,
+    patched,
+    /showMessageBoxSync\(\{[\s\S]{0,2000}messageId:(["'`])desktop\.quitConfirmation\.quit\1/,
   );
   assert.equal(applyQuitConfirmationFocus(patched), patched);
 

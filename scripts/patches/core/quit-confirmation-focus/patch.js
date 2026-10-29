@@ -19,71 +19,84 @@ const HELPER_SOURCE =
   "return t.getAllWindows().find(e=>!e.isDestroyed()&&e.isVisible())??null}";
 
 const IDENT = "[A-Za-z_$][\\w$]*";
+const QUIT_ANCHOR = /messageId:(["'`])desktop\.quitConfirmation\.quit\1/g;
+const QUIT_COORDINATOR = new RegExp(
+  `function\\(\\{isWindows:(${IDENT}),disableQuitConfirmationPrompt:(${IDENT}),` +
+    `quitState:(${IDENT}),windows:(${IDENT}),`,
+  "g",
+);
 
-function quitFunctionRange(source) {
-  const markers = [...source.matchAll(/messageId:`desktop\.quitConfirmation\.quit`/g)];
+function quitConfirmationMarkers(source) {
+  QUIT_ANCHOR.lastIndex = 0;
+  return [...source.matchAll(QUIT_ANCHOR)];
+}
+
+function matchesQuitConfirmationModule(source) {
+  return quitConfirmationMarkers(source).length === 1;
+}
+
+function quitCoordinator(source) {
+  const markers = quitConfirmationMarkers(source);
   if (markers.length !== 1) {
     throw new Error("Expected exactly one official Quit confirmation anchor");
   }
 
-  const start = source.lastIndexOf("function ", markers[0].index);
-  const endMarker = source.indexOf("}function ", markers[0].index);
-  if (start < 0 || endMarker < 0) {
-    throw new Error("Could not isolate official Quit handler");
+  QUIT_COORDINATOR.lastIndex = 0;
+  const coordinators = [...source.matchAll(QUIT_COORDINATOR)]
+    .filter((match) => match.index < markers[0].index);
+  if (coordinators.length !== 1) {
+    throw new Error("Expected exactly one official Quit coordinator");
   }
-  const end = endMarker + 1;
-  const body = source.slice(start, end);
-  if (!body.includes(".app.on(`before-quit`,") ||
-      !body.includes(".markAppQuitting()")) {
-    throw new Error("Official Quit handler contract changed");
-  }
-  return { start, end, body };
+  const [coordinator] = coordinators;
+  return {
+    anchorIndex: markers[0].index,
+    bodyStart: coordinator.index + coordinator[0].length,
+    quitState: coordinator[3],
+    windows: coordinator[4],
+  };
 }
 
 function applyQuitConfirmationFocus(source) {
-  const { start, end, body } = quitFunctionRange(source);
+  const { anchorIndex, bodyStart, quitState, windows } = quitCoordinator(source);
   const helperPresent = source.includes(`function ${HELPER_NAME}(`);
   if (helperPresent) {
-    if (body.includes("codexLinuxQuitPromptPending") &&
-        !body.includes("showMessageBoxSync(")) {
+    const guard = source.indexOf("if(codexLinuxQuitPromptPending){", bodyStart);
+    const asyncDialog = source.indexOf(
+      `dialog.showMessageBox(codexLinuxParent,codexLinuxOptions)`,
+      bodyStart,
+    );
+    if (guard >= 0 && guard < anchorIndex && asyncDialog >= 0) {
       return source;
     }
     throw new Error("Incomplete Quit confirmation focus patch");
   }
 
-  const headerEnd = body.indexOf("}){");
-  if (headerEnd < 0) {
-    throw new Error("Official Quit handler signature changed");
-  }
-  const header = body.slice(0, headerEnd + 3);
-  const binding = (name) => {
-    const matches = [...header.matchAll(new RegExp(`${name}:(${IDENT})(?=,|\\})`, "g"))];
-    if (matches.length !== 1) {
-      throw new Error(`Official Quit binding changed: ${name}`);
-    }
-    return matches[0][1];
-  };
-  const windows = binding("windows");
-  const quitState = binding("quitState");
-
-  const beforeQuit = [...body.matchAll(
-    /([A-Za-z_$][\w$]*)\.app\.on\(`before-quit`,([A-Za-z_$][\w$]*)=>\{/g,
-  )];
+  const beforeQuitPattern = new RegExp(
+    `(${IDENT})\\.app\\.on\\((["'\\\`])before-quit\\2,(${IDENT})=>\\{`,
+    "g",
+  );
+  const beforeQuit = [...source.slice(bodyStart, anchorIndex).matchAll(beforeQuitPattern)];
   if (beforeQuit.length !== 1) {
     throw new Error("Expected one official before-quit handler");
   }
-  const [, appAlias, eventName] = beforeQuit[0];
+  const beforeQuitIndex = bodyStart + beforeQuit[0].index;
+  const [, appAlias, , eventName] = beforeQuit[0];
   const confirmation = new RegExp(
-    `if\\(${appAlias}\\.dialog\\.showMessageBoxSync\\((\\{[\\s\\S]*?\\})\\)!==0\\)` +
-      `\\{${eventName}\\.preventDefault\\(\\);return\\}` +
-      `${quitState}\\.markQuitApproved\\(\\),${IDENT}=!0,${windows}\\.markAppQuitting\\(\\)`,
+    `${appAlias}\\.dialog\\.showMessageBoxSync\\((\\{[\\s\\S]*?\\})\\)` +
+      `\\?${eventName}\\.preventDefault\\(\\):\\(` +
+      `${quitState}\\.markQuitApproved\\(\\),${IDENT}=!0,` +
+      `${windows}\\.markAppQuitting\\(\\)\\)`,
     "g",
   );
-  if ([...body.matchAll(confirmation)].length !== 1) {
+  const confirmations = [...source.slice(beforeQuitIndex).matchAll(confirmation)]
+    .filter((match) => beforeQuitIndex + match.index < anchorIndex &&
+      beforeQuitIndex + match.index + match[0].length > anchorIndex);
+  if (confirmations.length !== 1) {
     throw new Error("Expected one official synchronous Quit confirmation");
   }
+  const confirmationIndex = beforeQuitIndex + confirmations[0].index;
 
-  let patchedBody = body.replace(confirmation, (_match, options) =>
+  const patchedConfirmation = confirmations[0][0].replace(confirmation, (_match, options) =>
     `${eventName}.preventDefault();codexLinuxQuitPromptPending=!0;` +
     `let codexLinuxParent=${HELPER_NAME}(${windows});` +
     `let codexLinuxOptions=${options};` +
@@ -94,13 +107,14 @@ function applyQuitConfirmationFocus(source) {
     `${quitState}.markQuitApproved();${appAlias}.app.quit()}}).catch(e=>{` +
     "codexLinuxQuitPromptPending=!1;" +
     "console.error(`[codex-desktop] Quit confirmation failed`,e)});return");
-  patchedBody = patchedBody.replace(
-    beforeQuit[0][0],
+  let patched = source.slice(0, confirmationIndex) + patchedConfirmation +
+    source.slice(confirmationIndex + confirmations[0][0].length);
+  patched = patched.slice(0, beforeQuitIndex) +
     `${beforeQuit[0][0]}if(codexLinuxQuitPromptPending){` +
-      `${eventName}.preventDefault();return}`,
-  );
+      `${eventName}.preventDefault();return}` +
+    patched.slice(beforeQuitIndex + beforeQuit[0][0].length);
 
-  return source.slice(0, start) + HELPER_SOURCE + patchedBody + source.slice(end);
+  return HELPER_SOURCE + patched;
 }
 
 function patchRequiredCoreBlockers(extractedDir) {
@@ -112,8 +126,7 @@ function patchRequiredCoreBlockers(extractedDir) {
       file: path.join(buildDir, name),
       source: fs.readFileSync(path.join(buildDir, name), "utf8"),
     }));
-  const mainCandidates = modules.filter(({ source }) =>
-    source.includes("messageId:`desktop.quitConfirmation.quit`"));
+  const mainCandidates = modules.filter(({ source }) => matchesQuitConfirmationModule(source));
   if (mainCandidates.length !== 1) {
     throw new Error("Expected exactly one official main-process Quit module");
   }
@@ -154,6 +167,7 @@ const descriptors = [{
 module.exports = {
   HELPER_SOURCE,
   applyQuitConfirmationFocus,
+  matchesQuitConfirmationModule,
   patchRequiredCoreBlockers,
   descriptors,
 };

@@ -8,12 +8,13 @@ const vm = require("node:vm");
 const {
   DEFER,
   applyShellEnvironmentStartup,
+  matchesShellEnvironment,
 } = require("./shell-env.js");
 
 // Independent reduced fixture of the signed shell loader contract.
 const FIXTURE = "async function load(caller,timeout){let started=Date.now();electron.app.isPackaged||clean();" +
   "let abort=new AbortController;let result=await spawnShell(abort.signal);" +
-  "logger(`Failed to load shell env`,{resultSource:`load`});return result}";
+  "logger(\"Failed to load shell env\",{resultSource:\"load\"});return result}";
 
 test("deferral prevents browser initialization from losing child completion", async () => {
   async function startup(source) {
@@ -105,7 +106,7 @@ test("applies to the signed official shell environment module", {
   const dir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
   const sources = fs.readdirSync(dir).filter((name) => name.endsWith(".js"))
     .map((name) => fs.readFileSync(path.join(dir, name), "utf8"))
-    .filter((source) => source.includes("`Failed to load shell env`"));
+    .filter((source) => matchesShellEnvironment(source));
   assert.equal(sources.length, 1);
   const patched = applyShellEnvironmentStartup(sources[0]);
   assert.notEqual(patched, sources[0]);

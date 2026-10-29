@@ -9,10 +9,12 @@ const START = new RegExp(
   `async function ${IDENT}\\(${IDENT},${IDENT}\\)\\{(?=let ${IDENT}=Date\\.now\\(\\);${IDENT}\\.app\\.isPackaged)`,
   "g",
 );
+const FAILURE_ANCHOR = /(["'`])Failed to load shell env\1/;
+const LOAD_RESULT_ANCHOR = /resultSource:(["'`])load\1/;
 
 function matchesShellEnvironment(source) {
-  return source.includes("`Failed to load shell env`") &&
-    source.includes("resultSource:`load`") &&
+  return FAILURE_ANCHOR.test(source) &&
+    LOAD_RESULT_ANCHOR.test(source) &&
     source.includes("new AbortController");
 }
 
