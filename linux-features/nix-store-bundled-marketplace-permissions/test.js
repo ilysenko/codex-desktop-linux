@@ -28,9 +28,9 @@ const {
 const FEATURE_ID = "nix-store-bundled-marketplace-permissions";
 const STAGING_DESCRIPTOR_ID = `feature:${FEATURE_ID}:bundled-marketplace-staging-copy-permissions`;
 const EXECUTOR_DESCRIPTOR_ID = `feature:${FEATURE_ID}:executor-plugin-copy-permissions`;
-const STAGING_FIXTURE = `async function Mne(source,destination){if(S.default.platform===\`darwin\`){await ditto(\`ditto\`,[source,destination]);return}if(S.default.platform!==\`win32\`){await y.default.cp(source,destination,{recursive:!0,verbatimSymlinks:!0});return}let{copyDirectoryAllowDecryptedDestinationOnEncryptionFailure:copy}=await Promise.resolve().then(()=>require("./windows-file-copy-Bw9CB6bJ.js"));await copy({copy:()=>y.default.cp(source,destination,{recursive:!0,verbatimSymlinks:!0}),destination,source})}
-async function copyPlugins(source,destination){const staging=\`openai-bundled.staging-\${randomUUID()}\`;const target=\`\${staging}/plugin\`;await Mne(source,target);return destination}`;
-const EXECUTOR_FIXTURE = `async function executor({executorPluginRoot:destination,resourcesPath:resources}){let config=await lookup(resources);return config==null?null:(await y.default.cp(config.cwd,destination,{recursive:!0}),config.env={CODEX_APP_TOOLS_CALLER_HOST_ID:hostId},await y.default.writeFile(join(destination,\`.mcp.json\`),\`{}\`,\`utf8\`),destination)}`;
+const STAGING_FIXTURE = `async function Mne(source,destination){if("darwin"===eq().platform)return void await nG("/usr/bin/ditto",["--noqtn",source,destination]);if("win32"!==eq().platform)return void await ek().cp(source,destination,{recursive:!0,verbatimSymlinks:!0});let{copyDirectoryAllowDecryptedDestinationOnEncryptionFailure:copy}=await r.e(904).then(r.bind(r,87115));await copy({copy:()=>ek().cp(source,destination,{recursive:!0,verbatimSymlinks:!0}),destination,source})}
+async function copyPlugins(source,destination){const staging=\`openai-bundled.staging-\${(0,tb.randomUUID)()}\`;const target=\`\${staging}/plugin\`;await Mne(source,target);return destination}`;
+const EXECUTOR_FIXTURE = `async function executor({executorPluginRoot:destination,resourcesPath:resources}){let config=await lookup(resources);return null==config?null:(await ek().cp(config.cwd,destination,{recursive:!0}),config.env={CODEX_APP_TOOLS_CALLER_HOST_ID:hostId},await ek().writeFile(join(destination,".mcp.json"),"{}","utf8"),destination)}`;
 const FIXTURE = `${STAGING_FIXTURE}\n${EXECUTOR_FIXTURE}`;
 
 function fakeFs({ cpError = null, chmodError = null, missing = false } = {}) {
@@ -68,9 +68,9 @@ function fakeFs({ cpError = null, chmodError = null, missing = false } = {}) {
 
 function materialize(source, fsPromises) {
   const context = {
-    S: { default: { platform: "linux" } },
-    y: { default: fsPromises },
-    randomUUID: () => "uuid",
+    eq: () => ({ platform: "linux" }),
+    ek: () => fsPromises,
+    tb: { randomUUID: () => "uuid" },
   };
   vm.runInNewContext(`${source};globalThis.materialize=Mne;`, context);
   return context.materialize;
@@ -187,7 +187,10 @@ for (const [staging, stagingSource] of Object.entries(stagingContracts)) {
         assert.equal(entry.enforceWhenEnabled, false);
         assert.equal(patched.includes(marker), state === "valid");
         if (state !== "valid") {
-          assert.match(entry.reason, new RegExp(`contract matched ${state === "missing" ? 0 : 2} times`));
+          assert.match(
+            entry.reason,
+            state === "missing" ? /contract not found/ : /contract matched 2 times/,
+          );
         }
       }
       const applied = contracts.filter(([, , state]) => state === "valid").length;
@@ -274,7 +277,7 @@ test("executor refresh repairs read-only cache without changing source or symlin
   fs.symlinkSync(outside, path.join(destination, "link"));
   fs.chmodSync(destination, 0o555);
   const context = {
-    y: { default: fs.promises }, lookup: async () => ({ cwd: source }),
+    ek: () => fs.promises, lookup: async () => ({ cwd: source }),
     hostId: "local", join: path.join,
   };
   vm.runInNewContext(`${applyExecutorPluginCopyPermissions(EXECUTOR_FIXTURE)};globalThis.copyExecutor=executor`, context);
@@ -293,4 +296,29 @@ test("executor refresh repairs read-only cache without changing source or symlin
   assert.equal(fs.readFileSync(path.join(source, ".mcp.json"), "utf8"), "source");
   assert.equal(fs.statSync(outside).mode & 0o222, 0);
   assert.equal(fs.statSync(path.join(outside, "untouched")).mode & 0o222, 0);
+});
+
+test("signed bundle has exactly one rspack chunk for each Nix permission contract", { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, () => {
+  const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
+  const main = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
+  assert.ok(main);
+  for (const apply of [applyBundledMarketplaceStagingCopyPermissions, applyExecutorPluginCopyPermissions]) {
+    const changed = [];
+    for (const name of main.chunks) {
+      const source = fs.readFileSync(path.join(main.buildDir, name), "utf8");
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      let patched;
+      try {
+        patched = apply(source);
+      } finally {
+        console.warn = originalWarn;
+      }
+      if (patched === source) continue;
+      changed.push(name);
+      assert.equal(apply(patched), patched);
+      assert.doesNotThrow(() => new vm.Script(patched));
+    }
+    assert.equal(changed.length, 1, `${apply.name} changed ${changed.join(", ")}`);
+  }
 });

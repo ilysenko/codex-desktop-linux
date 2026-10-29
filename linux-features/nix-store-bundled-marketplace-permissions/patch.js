@@ -39,16 +39,23 @@ function functionContaining(source, index) {
   } : null;
 }
 
+// rspack reaches node:fs/promises through a compat getter call such as `ek()`.
+const FS_ACCESSOR = `${IDENT}\\(\\)`;
+
 function stagingCopyContracts(source) {
   const cpPattern = new RegExp(
-    `await (${IDENT})\\.default\\.cp\\((${IDENT}),(${IDENT}),\\{recursive:!0,verbatimSymlinks:!0\\}\\)`,
+    `return void (await (${FS_ACCESSOR})\\.cp\\((${IDENT}),(${IDENT}),\\{recursive:!0,verbatimSymlinks:!0\\}\\))`,
     "g",
   );
   const contracts = [];
   for (const match of source.matchAll(cpPattern)) {
     const fn = functionContaining(source, match.index);
-    if (fn == null || !fn.source.includes("ditto") || !fn.source.includes("windows-file-copy")) continue;
-    const callPattern = new RegExp(`await ${fn.name}\\(${IDENT},${IDENT}\\)`, "g");
+    if (
+      fn == null ||
+      !fn.source.includes('"/usr/bin/ditto"') ||
+      !fn.source.includes("copyDirectoryAllowDecryptedDestinationOnEncryptionFailure")
+    ) continue;
+    const callPattern = new RegExp(`await ${escapeRegExp(fn.name)}\\(${IDENT},${IDENT}\\)`, "g");
     const calls = [...source.matchAll(callPattern)];
     if (calls.length !== 1 || !/staging-\$\{[^}]*randomUUID/.test(source)) continue;
     contracts.push({ match, fn });
@@ -56,33 +63,47 @@ function stagingCopyContracts(source) {
   return contracts;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Main-process descriptors run once per rspack chunk: a chunk without the
+// contract is left unchanged with a warning, and a chunk with more than one
+// candidate fails closed.
 function applyBundledMarketplaceStagingCopyPermissions(source) {
   if (source.includes(STAGING_PATCH_MARKER)) return source;
   const contracts = stagingCopyContracts(source);
+  if (contracts.length === 0) {
+    console.warn("WARN: bundled marketplace staging copy contract not found - skipping Nix staging permissions patch");
+    return source;
+  }
   if (contracts.length !== 1) {
     throw new Error(`bundled marketplace staging copy contract matched ${contracts.length} times`);
   }
   const { match } = contracts[0];
-  const [, fsName, , destinationName] = match;
-  const replacement = `/* ${STAGING_PATCH_MARKER} */try{${match[0]}}finally{await codexLinuxMakeBundledPluginStageNodesWritable(${fsName}.default,${destinationName})}`;
+  const [, copy, fsAccessor, , destinationName] = match;
+  const replacement = `return void /* ${STAGING_PATCH_MARKER} */await (async()=>{try{${copy}}finally{await codexLinuxMakeBundledPluginStageNodesWritable(${fsAccessor},${destinationName})}})()`;
   return replaceCopyWithWritableRepair(source, match, replacement);
 }
 
 function applyExecutorPluginCopyPermissions(source) {
   if (source.includes(EXECUTOR_PATCH_MARKER)) return source;
   const executorCopies = [...source.matchAll(new RegExp(
-    `await (${IDENT})\\.default\\.cp\\((${IDENT})\\.cwd,(${IDENT}),\\{recursive:!0\\}\\)`, "g",
+    `await (${FS_ACCESSOR})\\.cp\\((${IDENT})\\.cwd,(${IDENT}),\\{recursive:!0\\}\\)`, "g",
   ))].filter(match => {
     const fn = functionContaining(source, match.index);
     return fn?.source.includes("executorPluginRoot:") &&
-      fn.source.includes("CODEX_APP_TOOLS_CALLER_HOST_ID") &&
-      fn.source.includes("`.mcp.json`");
+      fn.source.includes("CODEX_APP_TOOLS_CALLER_HOST_ID");
   });
+  if (executorCopies.length === 0) {
+    console.warn("WARN: executor plugin copy contract not found - skipping Nix executor permissions patch");
+    return source;
+  }
   if (executorCopies.length !== 1) {
     throw new Error(`executor plugin copy contract matched ${executorCopies.length} times`);
   }
   const executor = executorCopies[0];
-  const writable = `codexLinuxMakeBundledPluginStageNodesWritable(${executor[1]}.default,${executor[3]})`;
+  const writable = `codexLinuxMakeBundledPluginStageNodesWritable(${executor[1]},${executor[3]})`;
   // Repair an old read-only cache before cp tries to unlink its files, and
   // repair newly copied Nix modes before upstream writes .mcp.json.
   const replacement = `/* ${EXECUTOR_PATCH_MARKER} */await (async()=>{await ${writable};try{${executor[0]}}finally{await ${writable}}})()`;
