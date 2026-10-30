@@ -3,15 +3,21 @@
 The optional `community-features-in-gui-settings` feature adds a separate
 **Community features** section at the top of **Settings → General**, above the
 existing General section. Expand its catalog to browse an explorer-style tree.
+All root features appear together in alphabetical ID order, without separate
+dependency/independent folders. Feature branches start collapsed.
 A prerequisite is the parent of its dependents; internal subfeatures appear
-under their owning feature and are marked **Subfeature**. Leaf items
-have their own **Installed** / **Not installed** build status. A feature with
+under their owning feature and are marked **Subfeature**.
+When a feature has both kinds of children, they appear in separate labeled
+groups, **Subfeatures** and **Features requiring this**, with their own row
+counts. For example, Chronicle has two subfeatures and Record & Replay is a
+separate feature requiring Chronicle; its parent status therefore remains
+**0/2 installed** or **2/2 installed**, rather than counting all three rows.
+Leaf items have their own **Installed** / **Not installed** build status. A feature with
 subfeatures instead shows its installed/total count, such as **1/9 installed**,
 in both the collapsed tree row and selected detail row. This counts only its own
 subfeatures, not dependent features; **0/9**, **1/9** and **9/9** distinguish none,
 some and all installed. Zero-installed parents are not marked green. Installed is green
-in both light and dark themes. Independent features
-start in a collapsed folder. Select a feature to see its manifest description,
+in both light and dark themes. Select a feature to see its manifest description,
 ID, requirements and conflicts below the tree. All public repository
 features are included, even when disabled. Local features appear only when
 explicitly enabled; internal build plumbing is hidden.
@@ -143,8 +149,7 @@ Declared `requires` relationships define dependency branches; declarative
 not invent parentage. Each internal subfeature counts as one supported item;
 its grouping parent does not add another item. A feature without internal
 subfeatures counts as one, including when other features depend on it.
-Shared dependency nodes are counted once. Folder counts and the summary use
-the same rule. Missing catalog entries have an
+Shared dependency nodes are counted once in the summary. Missing catalog entries have an
 unknown status. Cycle references remain visible but do not expand recursively.
 
 Native deb/RPM/pacman package hooks write a generated `catalog.json` into this

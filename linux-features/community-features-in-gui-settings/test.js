@@ -268,11 +268,10 @@ test("bundled capabilities inherit the parent selection without inventing settin
   assert.equal(buildFeatureTree(enabled).total, buildFeatureTree(disabled).total);
   const render = uiHarness(enabled);
   summaryRow(render()).props.control.props.onClick();
-  item(render(), "independent").children[0].props.onClick(clickEvent());
-  const row = item(render(), "independent/automation-extensions");
+  const row = item(render(), "automation-extensions");
   assert.equal(row.children[0].children.at(-1).children[0], "2/2 已安装");
   row.children[0].children[0].props.onClick(clickEvent());
-  const child = item(render(), "independent/automation-extensions/automation-extensions/multi-time-schedules");
+  const child = item(render(), "automation-extensions/automation-extensions/multi-time-schedules");
   assert.equal(child.props["aria-label"], "多个执行时间，已安装");
 });
 
@@ -338,16 +337,14 @@ test("UI Tweaks exposes nine independently counted modules with parent-gated def
   const configured = buildCatalog({ ...enabledContext, featurePatchOptions: { ...f.context.featurePatchOptions, featuresConfigPath: config } });
   assert.deepEqual(parent(configured).subfeatures.filter((item) => item.enabled).map((item) => item.id), ["dock-icon", "custom-font-input"]);
   assert.equal(buildFeatureTree(configured).enabled, 4);
-  assert.equal(buildFeatureTree(configured).independentCount, 11);
   const render = uiHarness(configured);
   assert.equal(summaryRow(render()).props.description, "本次构建安装 4 项 · 支持 13 项");
   summaryRow(render()).props.control.props.onClick();
-  item(render(), "independent").children[0].props.onClick(clickEvent());
-  const folder = item(render(), "independent/ui-tweaks");
+  const folder = item(render(), "ui-tweaks");
   assert.equal(folder.props["aria-expanded"], false);
   folder.children[0].children[0].props.onClick(clickEvent());
-  const module = item(render(), "independent/ui-tweaks/ui-tweaks/dock-icon");
-  assert.equal(module.props["aria-level"], 3);
+  const module = item(render(), "ui-tweaks/ui-tweaks/dock-icon");
+  assert.equal(module.props["aria-level"], 2);
   assert.equal(module.props["aria-label"], "Dock 图标，已安装");
   module.children[0].props.onClick(clickEvent());
   const detail = collect(render(), (node) => node.type === "native-row").at(-1);
@@ -372,8 +369,7 @@ test("subfeature parents show zero, partial and complete installation counts whi
     const before = JSON.stringify(catalog), expected = `${count}/9 ${suffix}`;
     const render = uiHarness(catalog, locale);
     summaryRow(render()).props.control.props.onClick();
-    item(render(), "independent").children[0].props.onClick(clickEvent());
-    const row = item(render(), "independent/ui-tweaks"), status = row.children[0].children.at(-1);
+    const row = item(render(), "ui-tweaks"), status = row.children[0].children.at(-1);
     assert.equal(row.props["aria-expanded"], false);
     assert.equal(status.children[0], expected, `${locale}: ${enabled}/${count}`);
     assert.equal(row.props["aria-label"], `UI Tweaks${punctuation}${expected}`);
@@ -382,7 +378,7 @@ test("subfeature parents show zero, partial and complete installation counts whi
     row.children[0].props.onClick(clickEvent());
     assert.equal(collect(render(), node => node.type === "native-row").at(-1).props.control.children[0], expected);
     row.children[0].children[0].props.onClick(clickEvent());
-    const font = item(render(), "independent/ui-tweaks/ui-tweaks/custom-font-input");
+    const font = item(render(), "ui-tweaks/ui-tweaks/custom-font-input");
     assert.equal(font.children[0].children.at(-1).children[0], count > 0 ? installedWord : absentWord);
     assert.equal(buildFeatureTree(catalog).enabled, count + 2);
     assert.equal(buildFeatureTree(catalog).total, 13);
@@ -399,8 +395,52 @@ test("a parent's subfeature status excludes dependent features and leaves their 
   for (const subfeature of parent.subfeatures) subfeature.enabled = subfeature.id === "custom-font-input";
   const render = uiHarness(catalog);
   summaryRow(render()).props.control.props.onClick();
-  assert.equal(item(render(), "dependencies/ui-tweaks").children[0].children.at(-1).children[0], "1/9 已安装");
-  assert.equal(item(render(), "dependencies/ui-tweaks/dependent").children[0].children.at(-1).children[0], "已安装");
+  assert.equal(item(render(), "ui-tweaks").children[0].children.at(-1).children[0], "1/9 已安装");
+  item(render(), "ui-tweaks").children[0].children[0].props.onClick(clickEvent());
+  assert.equal(item(render(), "ui-tweaks/dependent").children[0].children.at(-1).children[0], "已安装");
+});
+
+test("Chronicle separates its two subfeatures from Record & Replay without changing installation counts", (t) => {
+  const f = fixture(t);
+  for (const id of ["chronicle-skysight", "record-and-replay"]) {
+    manifest(f.root, id, JSON.parse(fs.readFileSync(path.join(__dirname, "..", id, "feature.json"), "utf8")));
+  }
+  for (const [locale, subfeatureLabel, dependentLabel, suffix] of [
+    ["zh-CN", "子功能（2）", "依赖此功能（1）", "已安装"],
+    ["en-US", "Subfeatures (2)", "Features requiring this (1)", "installed"],
+    ["de-DE", "Subfeatures (2)", "Features requiring this (1)", "installed"],
+  ]) for (const enabled of [[], ["chronicle-skysight"], ["chronicle-skysight", "record-and-replay"]]) {
+    const catalog = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, ...enabled] });
+    const before = JSON.stringify(catalog), render = uiHarness(catalog, locale);
+    summaryRow(render()).props.control.props.onClick();
+    const parentPath = "chronicle-skysight";
+    item(render(), parentPath).children[0].children[0].props.onClick(clickEvent());
+    const parent = item(render(), parentPath);
+    const expected = `${enabled.length ? 2 : 0}/2 ${suffix}`;
+    assert.equal(parent.children[0].children.at(-1).children[0], expected);
+    assert.ok(parent.props["aria-label"].endsWith(expected));
+    const groups = collect(parent, node => node.props.role === "group");
+    assert.deepEqual(groups.map(group => group.props["aria-label"]), [subfeatureLabel, dependentLabel]);
+    assert.deepEqual(groups.map(group => items(group).map(node => node.props["data-feature"])), [
+      ["chronicle-skysight/chronicle-controls", "chronicle-skysight/skysight-mcp"], ["record-and-replay"],
+    ]);
+    for (const group of groups) for (const child of items(group)) {
+      assert.equal(child.props["aria-level"], parent.props["aria-level"] + 1);
+      assert.equal(child.props["data-parent"], parentPath);
+    }
+    parent.children[0].props.onClick(clickEvent());
+    assert.equal(collect(render(), node => node.type === "native-row").at(-1).props.control.children[0], expected);
+    const replay = item(render(), `${parentPath}/record-and-replay`);
+    const language = createTranslator(locale, loadLocaleResources());
+    assert.equal(replay.children[0].children.at(-1).children[0], enabled.includes("record-and-replay") ? language.messages.enabled : language.messages.available);
+    assert.equal(pressTreeKey(render, "ArrowRight", parentPath), `${parentPath}/chronicle-skysight/chronicle-controls`);
+    assert.equal(pressTreeKey(render, "ArrowLeft", `${parentPath}/record-and-replay`), parentPath);
+    parent.children[0].children[0].props.onClick(clickEvent());
+    assert.equal(item(render(), parentPath).props["aria-expanded"], false);
+    assert.equal(item(render(), `${parentPath}/record-and-replay`), undefined);
+    assert.equal(item(render(), parentPath).children[0].children.at(-1).children[0], expected);
+    assert.equal(JSON.stringify(catalog), before);
+  }
 });
 
 test("public subfeature metadata survives enabled-only update builders and never reports a child of a disabled parent installed", (t) => {
@@ -570,8 +610,9 @@ test("a new resource file adds a locale and feature translations with per-messag
   const render = uiHarness(catalog, "fr-CA", "linux", resources);
   assert.equal(collect(render(), (node) => node.type === "native-header")[0].props.title, "Fonctionnalités communautaires");
   summaryRow(render()).props.control.props.onClick();
-  assert.equal(item(render(), "dependencies/beta/alpha").props["aria-label"], "Alpha traduit, Installed");
-  item(render(), "dependencies/beta/alpha").children[0].props.onClick(clickEvent());
+  item(render(), "beta").children[0].children[0].props.onClick(clickEvent());
+  assert.equal(item(render(), "beta/alpha").props["aria-label"], "Alpha traduit, Installed");
+  item(render(), "beta/alpha").children[0].props.onClick(clickEvent());
   const detail = collect(render(), (node) => node.type === "native-row").at(-1);
   assert.equal(detail.props.label, "Alpha traduit");
   assert.ok(JSON.stringify(detail.props.description).includes("Description traduite"));
@@ -597,12 +638,11 @@ test("invalid locale aliases, messages, placeholders and feature overrides fail 
   assert.throws(() => loadLocaleResources(directory), /English fallback/);
 });
 
-test("dependency graph nests dependents under prerequisites and keeps independent features separate", (t) => {
+test("one tree lists all roots directly and nests dependents under prerequisites", (t) => {
   const model = buildFeatureTree(buildCatalog(fixture(t).context));
-  assert.deepEqual(model.roots, ["beta"]);
+  assert.deepEqual(model.roots, ["beta", "community-features-in-gui-settings", "plain"]);
   assert.deepEqual(model.children.get("beta"), ["alpha"]);
-  assert.deepEqual(model.independent, ["community-features-in-gui-settings", "plain"]);
-  assert.equal(model.familyCount, 2);
+  assert.equal(Object.hasOwn(model, "independent"), false);
 });
 
 test("the embedded renderer carries its graph helper without depending on another renderer global", (t) => {
@@ -629,13 +669,12 @@ test("shared prerequisites retain every edge, count features once and include mi
   assert.deepEqual(model.roots, ["a", "b", "external"]);
   assert.deepEqual(model.children.get("a"), ["child"]);
   assert.deepEqual(model.children.get("b"), ["child"]);
-  assert.equal(model.familyCount, 4);
+  assert.equal(model.total, 4);
   assert.equal(model.nodes.get("external").enabled, null);
   const catalog = graphCatalog({ a: [], b: [], child: ["a", "b"] });
   catalog.features[2].subfeatures = [{ id: "one", enabled: true }, { id: "two", enabled: false }];
   const subfeatures = buildFeatureTree(catalog);
   assert.equal(subfeatures.total, 4);
-  assert.equal(subfeatures.familyCount, 4);
   assert.equal(subfeatures.enabled, 1);
   assert.deepEqual(subfeatures.children.get("child"), ["child/one", "child/two"]);
 });
@@ -648,7 +687,8 @@ test("native section wraps the catalog and installed statuses use the theme's gr
   assert.equal(section.children[1].type, "native-content");
   assert.equal(section.children[1].children[0].type, "native-stack");
   summaryRow(section).props.control.props.onClick();
-  const installed = item(render(), "dependencies/beta/alpha"), absent = item(render(), "dependencies/beta");
+  item(render(), "beta").children[0].children[0].props.onClick(clickEvent());
+  const installed = item(render(), "beta/alpha"), absent = item(render(), "beta");
   assert.equal(installed.children[0].children.at(-1).props.style.color, "var(--color-text-success)");
   assert.equal(absent.children[0].children.at(-1).props.style.color, undefined);
   installed.children[0].props.onClick(clickEvent());
@@ -660,8 +700,9 @@ test("cycles remain discoverable without infinite rendering or hiding unrelated 
   assert.deepEqual(buildFeatureTree(catalog).roots, ["a", "c"]);
   const render = uiHarness(catalog);
   summaryRow(render()).props.control.props.onClick();
-  item(render(), "dependencies/a/b").children[0].children[0].props.onClick(clickEvent());
-  const reference = item(render(), "dependencies/a/b/a");
+  item(render(), "a").children[0].children[0].props.onClick(clickEvent());
+  item(render(), "a/b").children[0].children[0].props.onClick(clickEvent());
+  const reference = item(render(), "a/b/a");
   assert.equal(reference.props["aria-expanded"], undefined);
   assert.ok(JSON.stringify(reference).includes("循环引用"));
   assert.ok(items(render()).length < 10);
@@ -685,20 +726,23 @@ function pressTreeKey(render, key, path) {
   return focused;
 }
 
-test("keyboard navigation expands folders, selects details and collapses without stranding focus", (t) => {
+test("keyboard navigation expands feature roots, selects details and collapses without stranding focus", (t) => {
   const render = uiHarness(buildCatalog(fixture(t).context));
   summaryRow(render()).props.control.props.onClick();
-  assert.equal(item(render(), "independent").props["aria-expanded"], false);
-  pressTreeKey(render, "ArrowRight", "independent");
-  assert.equal(item(render(), "independent").props["aria-expanded"], true);
-  assert.equal(pressTreeKey(render, "ArrowDown", "independent"), "independent/community-features-in-gui-settings");
-  assert.equal(collect(render(), (node) => node.type === "native-row").at(-1).props.label, "community-features-in-gui-settings title");
-  assert.equal(pressTreeKey(render, "End", "independent/community-features-in-gui-settings"), "independent/plain");
-  assert.equal(pressTreeKey(render, "ArrowLeft", "independent/plain"), "independent");
-  pressTreeKey(render, "ArrowLeft", "independent");
-  assert.equal(item(render(), "independent").props.tabIndex, 0);
-  assert.equal(item(render(), "independent/plain"), undefined);
-  assert.equal(pressTreeKey(render, "Home", "independent"), "dependencies");
+  assert.equal(item(render(), "beta").props["aria-expanded"], false);
+  assert.equal(item(render(), "beta").props.tabIndex, 0);
+  assert.equal(item(render(), "beta/alpha"), undefined);
+  pressTreeKey(render, "ArrowRight", "beta");
+  assert.equal(item(render(), "beta").props["aria-expanded"], true);
+  assert.equal(pressTreeKey(render, "ArrowDown", "beta"), "beta/alpha");
+  assert.equal(collect(render(), (node) => node.type === "native-row").at(-1).props.label, "alpha title");
+  assert.equal(pressTreeKey(render, "ArrowLeft", "beta/alpha"), "beta");
+  pressTreeKey(render, "ArrowLeft", "beta");
+  assert.equal(item(render(), "beta").props.tabIndex, 0);
+  assert.equal(item(render(), "beta/alpha"), undefined);
+  assert.equal(pressTreeKey(render, "ArrowDown", "beta"), "community-features-in-gui-settings");
+  assert.equal(pressTreeKey(render, "End", "community-features-in-gui-settings"), "plain");
+  assert.equal(pressTreeKey(render, "Home", "plain"), "beta");
 });
 
 test("read-only tree uses the active locale, per-node status and selectable native detail rows", (t) => {
@@ -714,11 +758,17 @@ test("read-only tree uses the active locale, per-node status and selectable nati
     button.props.onClick();
     tree = render();
     assert.equal(collect(tree, (node) => node.props.role === "tree").length, 1);
+    assert.deepEqual(items(tree).map(node => node.props["data-feature"]), ["beta", "community-features-in-gui-settings", "plain"]);
+    assert.ok(items(tree).every(node => node.props["aria-level"] === 1));
+    assert.equal(item(tree, "dependencies"), undefined);
+    assert.equal(item(tree, "independent"), undefined);
+    item(tree, "beta").children[0].children[0].props.onClick(clickEvent());
+    tree = render();
     assert.equal(items(tree).length, 4);
-    assert.equal(item(tree, "dependencies/beta/alpha").props["aria-level"], 3);
-    assert.equal(item(tree, "dependencies/beta/alpha").props["aria-label"], `alpha title${punctuation}${title === "社区功能" ? "已安装" : "Installed"}`);
-    assert.equal(item(tree, "dependencies/beta").props["aria-label"], `beta title${punctuation}${title === "社区功能" ? "未安装" : "Not installed"}`);
-    item(tree, "dependencies/beta/alpha").children[0].props.onClick(clickEvent());
+    assert.equal(item(tree, "beta/alpha").props["aria-level"], 2);
+    assert.equal(item(tree, "beta/alpha").props["aria-label"], `alpha title${punctuation}${title === "社区功能" ? "已安装" : "Installed"}`);
+    assert.equal(item(tree, "beta").props["aria-label"], `beta title${punctuation}${title === "社区功能" ? "未安装" : "Not installed"}`);
+    item(tree, "beta/alpha").children[0].props.onClick(clickEvent());
     const detailRows = collect(render(), (node) => node.type === "native-row");
     assert.equal(detailRows.at(-1).props.label, "alpha title");
     assert.ok(JSON.stringify(detailRows.at(-1).props.description).includes("beta title"));
@@ -735,8 +785,7 @@ test("empty groups render clearly and no metadata is interpreted as markup", () 
   const catalog = validateCatalog({ schemaVersion: 1, sourceCommit: null, features: [feature] });
   const render = uiHarness(catalog), collapsed = render();
   summaryRow(collapsed).props.control.props.onClick();
-  item(render(), "independent").children[0].props.onClick(clickEvent());
-  item(render(), "independent/test").children[0].props.onClick(clickEvent());
+  item(render(), "test").children[0].props.onClick(clickEvent());
   const rows = collect(render(), (node) => node.type === "native-row");
   assert.equal(rows[1].props.label, feature.title);
   assert.equal(rows[1].props.description.children[0].children[0], feature.description);

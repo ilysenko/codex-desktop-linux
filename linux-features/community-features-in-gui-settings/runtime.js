@@ -12,9 +12,8 @@ function buildFeatureTree(catalog) {
   const children = new Map([...nodes.keys()].map((id) => [id, []]));
   for (const feature of catalog.features) for (const id of new Set(feature.requires)) children.get(id).push(feature.id);
   for (const ids of children.values()) ids.sort();
-  const independent = [...nodes.keys()].filter((id) => !nodes.get(id).requires.length && !children.get(id).length).sort();
-  const families = [...nodes.keys()].filter((id) => nodes.get(id).requires.length || children.get(id).length).sort();
-  const roots = families.filter((id) => !nodes.get(id).requires.length), covered = new Set();
+  const ids = [...nodes.keys()].sort();
+  const roots = ids.filter((id) => !nodes.get(id).requires.length), covered = new Set();
   const visit = (id) => {
     const pending = [id];
     while (pending.length) {
@@ -26,12 +25,11 @@ function buildFeatureTree(catalog) {
   roots.forEach(visit);
   // A disabled/local cycle has no natural root. Expose its component once;
   // rendering stops when a path reaches an ancestor again.
-  for (const id of families) if (!covered.has(id)) { roots.push(id); visit(id); }
+  for (const id of ids) if (!covered.has(id)) { roots.push(id); visit(id); }
+  roots.sort();
   // Subfeatures belong to their feature, rather than representing another
   // package dependency. Count each subfeature, replacing its grouping parent.
   const units = (feature) => feature.subfeatures?.length ? feature.subfeatures : [feature];
-  const count = (ids) => catalog.features.filter((feature) => ids.includes(feature.id))
-    .reduce((total, feature) => total + units(feature).length, 0);
   for (const feature of catalog.features) for (const item of feature.subfeatures ?? []) {
     const id = `${feature.id}/${item.id}`;
     nodes.set(id, { ...item, id, owner: feature.id, kind: "subfeature", origin: feature.origin, requires: [], conflicts: [] });
@@ -39,8 +37,7 @@ function buildFeatureTree(catalog) {
     children.get(feature.id).push(id);
   }
   const counted = catalog.features.flatMap(units);
-  return { nodes, children, roots, independent,
-    familyCount: count(families), independentCount: count(independent),
+  return { nodes, children, roots,
     total: counted.length, enabled: counted.filter((item) => item.enabled).length };
 }
 
@@ -50,9 +47,9 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
   const words = language.messages, format = language.format;
   const tree = buildTree({ ...catalog, features: catalog.features.map(language.feature) });
   const [expanded, setExpanded] = React.useState(false);
-  const [opened, setOpened] = React.useState(() => new Set(["dependencies", ...tree.roots.map((id) => `dependencies/${id}`)]));
+  const [opened, setOpened] = React.useState(() => new Set());
   const [selected, setSelected] = React.useState(null);
-  const [focused, setFocused] = React.useState(tree.roots.length ? "dependencies" : "independent");
+  const [focused, setFocused] = React.useState(tree.roots[0]);
   const panelId = React.useId();
   if (platform !== "linux") return null;
 
@@ -79,14 +76,24 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
         color: installed ? "var(--color-text-success)" : undefined },
     }, status(feature));
   };
-  const renderNode = ({ id, key, parent, level, ancestors = [], collection, ids, count }) => {
-    const feature = id ? tree.nodes.get(id) : null, cycle = id != null && ancestors.includes(id);
-    const children = ids ?? (cycle ? [] : tree.children.get(id));
+  const renderNode = ({ id, key, parent, level, ancestors = [] }) => {
+    const feature = tree.nodes.get(id), cycle = ancestors.includes(id);
+    const children = cycle ? [] : tree.children.get(id);
+    const subfeatures = children.filter((child) => tree.nodes.get(child)?.kind === "subfeature");
+    const dependents = children.filter((child) => tree.nodes.get(child)?.kind !== "subfeature");
+    const mixed = subfeatures.length > 0 && dependents.length > 0;
     const hasChildren = children.length > 0, open = hasChildren && opened.has(key);
-    const label = feature?.title ?? collection, active = selected?.key === key;
+    const label = feature.title, active = selected?.key === key;
+    const renderChildren = (ids) => ids.map((child) => renderNode({ id: child, key: `${key}/${child}`, parent: key, level: level + 1, ancestors: id ? [...ancestors, id] : ancestors }));
+    const childGroup = (ids, message) => {
+      const label = format(message, { count: ids.length });
+      return h("div", { key: message, role: "group", "aria-label": label },
+        h("div", { className: "text-xs text-secondary", "aria-hidden": true, style: { padding: "6px 8px 2px" } }, label),
+        renderChildren(ids));
+    };
     return h("div", {
       key, role: "treeitem", "aria-level": level, "aria-expanded": hasChildren ? open : undefined,
-      "aria-selected": active, "aria-label": feature ? format("featureLabel", { name: label, status: status(feature) }) : label,
+      "aria-selected": active, "aria-label": format("featureLabel", { name: label, status: status(feature) }),
       "data-path": key, "data-parent": parent, "data-feature": id,
       tabIndex: focused === key ? 0 : -1, className: "focus-visible:outline-auto",
       onFocus: (event) => { if (event.target === event.currentTarget) select(id, key); },
@@ -94,8 +101,8 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
     h("div", {
       className: "text-sm text-default",
       style: { display: "flex", alignItems: "center", gap: "8px", minHeight: "34px", padding: "5px 8px", borderRadius: "6px", background: active ? "var(--color-background-secondary-soft-hover)" : undefined },
-      onClick: (event) => { event.currentTarget.closest('[role="treeitem"]').focus(); select(id, key); if (!feature && hasChildren) toggle(key); },
-      onDoubleClick: () => { if (feature && hasChildren) toggle(key); },
+      onClick: (event) => { event.currentTarget.closest('[role="treeitem"]').focus(); select(id, key); },
+      onDoubleClick: () => { if (hasChildren) toggle(key); },
     },
     h("span", {
       "aria-hidden": true, title: hasChildren ? format(open ? "collapse" : "expand", { name: label }) : undefined,
@@ -104,15 +111,14 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
         event.stopPropagation(); event.currentTarget.closest('[role="treeitem"]').focus(); select(id, key); toggle(key);
       } : undefined,
     }, hasChildren ? open ? "▾" : "▸" : ""),
-    icon(hasChildren || !feature),
-    h("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere", fontWeight: feature ? 400 : 600 }, title: feature?.description }, label),
-    !feature && h("span", { className: "text-xs text-secondary" }, String(count ?? ids.length)),
+    icon(hasChildren),
+    h("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere", fontWeight: 400 }, title: feature.description }, label),
     feature?.kind === "subfeature" && h("span", { className: "text-xs text-secondary" }, words.subfeature),
     feature?.requires.length > 1 && h("span", { className: "text-xs text-secondary" }, words.multiple),
     cycle && h("span", { className: "text-xs text-secondary" }, words.cycle),
     feature && statusLabel(feature)),
-    open && h("div", { role: "group", style: { marginInlineStart: "15px", paddingInlineStart: "12px", borderInlineStart: "1px solid var(--color-border)" } },
-      children.map((child) => renderNode({ id: child, key: `${key}/${child}`, parent: key, level: level + 1, ancestors: id ? [...ancestors, id] : ancestors }))),
+    open && h("div", { role: mixed ? undefined : "group", style: { marginInlineStart: "15px", paddingInlineStart: "12px", borderInlineStart: "1px solid var(--color-border)" } },
+      mixed ? [childGroup(subfeatures, "subfeatureGroup"), childGroup(dependents, "dependentGroup")] : renderChildren(children)),
     );
   };
   const onKeyDown = (event) => {
@@ -158,8 +164,7 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
           role: "tree", "aria-label": words.tree, "aria-describedby": `${panelId}-hint`, onKeyDown,
           style: { maxHeight: "24rem", overflowY: "auto", padding: "0 12px 8px" },
         },
-        tree.roots.length > 0 && renderNode({ key: "dependencies", collection: words.families, ids: tree.roots, count: tree.familyCount, level: 1 }),
-        tree.independent.length > 0 && renderNode({ key: "independent", collection: words.independent, ids: tree.independent, count: tree.independentCount, level: 1 }),
+        tree.roots.map((id) => renderNode({ id, key: id, level: 1 })),
         catalog.features.length === 0 && h("p", { className: "text-sm text-secondary" }, words.empty)),
         h("div", { role: "region", "aria-label": words.select, style: { borderTop: "1px solid var(--color-border)", minHeight: "60px" } },
           feature ? h(Row, { label: feature.title, description: detail, control: statusLabel(feature), size: "compact", verticalAlignment: "start" })

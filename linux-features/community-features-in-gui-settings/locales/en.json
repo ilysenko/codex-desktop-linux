@@ -9,8 +9,6 @@
     "subfeatureStatus": "{enabled}/{total} installed",
     "summary": "{enabled} installed in this build · {total} supported",
     "note": "Dependency children require their parent; subfeatures belong to their parent. Each subfeature counts once; its grouping parent is not counted again. Installed means included in this build, not runtime health.",
-    "families": "Dependency groups",
-    "independent": "Independent features",
     "tree": "Community feature tree",
     "select": "Select a feature to see its description",
     "requires": "Requires: {names}",
@@ -28,6 +26,8 @@
     "separator": ", ",
     "list": "Feature catalog",
     "subfeature": "Subfeature",
+    "subfeatureGroup": "Subfeatures ({count})",
+    "dependentGroup": "Features requiring this ({count})",
     "owner": "Part of: {name}"
   },
   "features": {}
