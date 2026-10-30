@@ -2,8 +2,13 @@
 
 // A parent is a prerequisite, its children are features requiring it. Retain
 // shared edges; render only expanded paths so diamonds do not grow eagerly.
-function buildFeatureTree(catalog) {
+function buildFeatureTree(catalog, locale = "en") {
   const nodes = new Map(catalog.features.map((feature) => [feature.id, feature]));
+  const collator = new Intl.Collator(locale.replaceAll("_", "-"), {
+    numeric: true, sensitivity: "base", ...(locale.startsWith("zh") ? { collation: "pinyin" } : {}),
+  });
+  const compare = (a, b) => collator.compare(nodes.get(a).title ?? a, nodes.get(b).title ?? b)
+    || (a < b ? -1 : a > b ? 1 : 0);
   for (const feature of catalog.features) for (const id of feature.requires) {
     if (!nodes.has(id)) nodes.set(id, {
       id, title: id, description: "", requires: [], conflicts: [], enabled: null, missing: true,
@@ -11,7 +16,6 @@ function buildFeatureTree(catalog) {
   }
   const children = new Map([...nodes.keys()].map((id) => [id, []]));
   for (const feature of catalog.features) for (const id of new Set(feature.requires)) children.get(id).push(feature.id);
-  for (const ids of children.values()) ids.sort();
   const ids = [...nodes.keys()].sort();
   const roots = ids.filter((id) => !nodes.get(id).requires.length), covered = new Set();
   const visit = (id) => {
@@ -26,7 +30,6 @@ function buildFeatureTree(catalog) {
   // A disabled/local cycle has no natural root. Expose its component once;
   // rendering stops when a path reaches an ancestor again.
   for (const id of ids) if (!covered.has(id)) { roots.push(id); visit(id); }
-  roots.sort();
   // Subfeatures belong to their feature, rather than representing another
   // package dependency. Count each subfeature, replacing its grouping parent.
   const units = (feature) => feature.subfeatures?.length ? feature.subfeatures : [feature];
@@ -36,6 +39,8 @@ function buildFeatureTree(catalog) {
     children.set(id, []);
     children.get(feature.id).push(id);
   }
+  roots.sort(compare);
+  for (const ids of children.values()) ids.sort(compare);
   const counted = catalog.features.flatMap(units);
   return { nodes, children, roots,
     total: counted.length, enabled: counted.filter((item) => item.enabled).length };
@@ -45,7 +50,7 @@ function buildFeatureTree(catalog) {
 function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Stack, locale, platform, catalog, buildTree = buildFeatureTree, resources, translate }) {
   const h = React.createElement, language = translate(locale, resources);
   const words = language.messages, format = language.format;
-  const tree = buildTree({ ...catalog, features: catalog.features.map(language.feature) });
+  const tree = buildTree({ ...catalog, features: catalog.features.map(language.feature) }, language.locale);
   const [expanded, setExpanded] = React.useState(false);
   const [opened, setOpened] = React.useState(() => new Set());
   const [selected, setSelected] = React.useState(null);

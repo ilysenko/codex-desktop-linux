@@ -645,6 +645,58 @@ test("one tree lists all roots directly and nests dependents under prerequisites
   assert.equal(Object.hasOwn(model, "independent"), false);
 });
 
+test("every displayed sibling group follows translated names, pinyin and natural numeric order", () => {
+  const catalog = graphCatalog({ group: [], a: [], z: [], "dep-a": ["group"], "dep-z": ["group"] });
+  const titles = { group: "Tools", a: "Item 10", z: "Item 2", "dep-a": "Task 10", "dep-z": "Task 2" };
+  for (const feature of catalog.features) feature.title = titles[feature.id];
+  catalog.features[0].subfeatures = [
+    { id: "a", title: "Module 10", description: "", enabled: false },
+    { id: "z", title: "Module 2", description: "", enabled: false },
+  ];
+  const resources = loadLocaleResources();
+  resources.zh_Hans_CN.features = Object.fromEntries(Object.entries({
+    group: "工具", a: "安装", z: "中心", "dep-a": "安项 10", "dep-z": "中项 2",
+    "group/a": "安项 10", "group/z": "中项 2",
+  }).map(([id, title]) => [id, { title }]));
+  const before = JSON.stringify(catalog);
+  for (const [locale, roots, modules, dependents] of [
+    ["en-US", ["z", "a", "group"], ["group/z", "group/a"], ["dep-z", "dep-a"]],
+    ["de-DE", ["z", "a", "group"], ["group/z", "group/a"], ["dep-z", "dep-a"]],
+    ["zh-CN", ["a", "group", "z"], ["group/a", "group/z"], ["dep-a", "dep-z"]],
+    ["zh_Hans_CN", ["a", "group", "z"], ["group/a", "group/z"], ["dep-a", "dep-z"]],
+  ]) {
+    const render = uiHarness(catalog, locale, "linux", resources);
+    summaryRow(render()).props.control.props.onClick();
+    assert.deepEqual(items(render()).map(node => node.props["data-feature"]), roots, locale);
+    item(render(), "group").children[0].children[0].props.onClick(clickEvent());
+    const groups = collect(item(render(), "group"), node => node.props.role === "group");
+    assert.deepEqual(groups.map(group => items(group).map(node => node.props["data-feature"])), [modules, dependents], locale);
+    assert.equal(pressTreeKey(render, "ArrowRight", "group"), `group/${modules[0]}`);
+    assert.equal(pressTreeKey(render, "ArrowDown", `group/${modules[0]}`), `group/${modules[1]}`);
+    assert.equal(pressTreeKey(render, "ArrowDown", `group/${modules[1]}`), `group/${dependents[0]}`);
+    assert.equal(buildFeatureTree(catalog).total, 6);
+    assert.equal(buildFeatureTree(catalog).enabled, 0);
+    assert.equal(JSON.stringify(catalog), before);
+  }
+});
+
+test("equivalent display names use stable ID tie-breakers at every level without reordering catalog metadata", () => {
+  const catalog = graphCatalog({ z: [], a: [], parent: [], "dep-z": ["parent"], "dep-a": ["parent"] });
+  for (const feature of catalog.features) feature.title = feature.id === "parent" ? "Group" : "Same";
+  catalog.features.find(feature => feature.id === "parent").subfeatures = [
+    { id: "z", title: "same", enabled: false }, { id: "a", title: "SAME", enabled: false },
+  ];
+  const before = JSON.stringify(catalog), model = buildFeatureTree(catalog);
+  assert.deepEqual(model.roots, ["parent", "a", "z"]);
+  assert.deepEqual(model.children.get("parent"), ["dep-a", "dep-z", "parent/a", "parent/z"]);
+  const reversed = structuredClone(catalog);
+  reversed.features.reverse();
+  reversed.features.find(feature => feature.id === "parent").subfeatures.reverse();
+  assert.deepEqual(buildFeatureTree(reversed).roots, model.roots);
+  assert.deepEqual(buildFeatureTree(reversed).children.get("parent"), model.children.get("parent"));
+  assert.equal(JSON.stringify(catalog), before);
+});
+
 test("the embedded renderer carries its graph helper without depending on another renderer global", (t) => {
   const catalog = buildCatalog(fixture(t).context);
   const component = settingComponent(settingsContract(settingsFixture()), catalog);

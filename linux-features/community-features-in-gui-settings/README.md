@@ -3,8 +3,13 @@
 The optional `community-features-in-gui-settings` feature adds a separate
 **Community features** section at the top of **Settings → General**, above the
 existing General section. Expand its catalog to browse an explorer-style tree.
-All root features appear together in alphabetical ID order, without separate
-dependency/independent folders. Feature branches start collapsed.
+All root features appear together, without separate dependency/independent
+folders. Every sibling list, including each subfeature/dependent group, sorts by
+the displayed name in the active catalog language: Chinese uses pinyin order,
+and English uses natural alphabetical order (for example, Item 2 before Item 10).
+Sorting ignores case and uses the feature ID as a deterministic tie-breaker for
+equivalent names. Subfeature declaration order does not control display order.
+Feature branches start collapsed.
 A prerequisite is the parent of its dependents; internal subfeatures appear
 under their owning feature and are marked **Subfeature**.
 When a feature has both kinds of children, they appear in separate labeled
