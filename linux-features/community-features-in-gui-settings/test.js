@@ -269,8 +269,9 @@ test("bundled capabilities inherit the parent selection without inventing settin
   const render = uiHarness(enabled);
   summaryRow(render()).props.control.props.onClick();
   const row = item(render(), "automation-extensions");
-  assert.equal(row.children[0].children.at(-1).children[0], "2/2 已安装");
+  assert.equal(row.children[0].children.at(-1).children[0], "已安装");
   row.children[0].children[0].props.onClick(clickEvent());
+  assert.equal(collect(item(render(), "automation-extensions"), node => node.props.role === "group")[0].children[0].children.at(-1).children[0], "2/2 已安装");
   const child = item(render(), "automation-extensions/automation-extensions/multi-time-schedules");
   assert.equal(child.props["aria-label"], "多个执行时间，已安装");
 });
@@ -353,7 +354,7 @@ test("UI Tweaks exposes nine independently counted modules with parent-gated def
   assert.ok(JSON.stringify(detail.props.description).includes("ui-tweaks/dock-icon"));
 });
 
-test("subfeature parents show zero, partial and complete installation counts while collapsed and selected", (t) => {
+test("all subfeatures have a section whose header owns zero, partial and complete counts", (t) => {
   const f = uiTweaksFixture(t);
   const original = buildCatalog({ ...f.context, enabledFeatureIds: [...f.context.enabledFeatureIds, "ui-tweaks"] });
   for (const [locale, suffix, installedWord, absentWord, punctuation] of [
@@ -366,18 +367,27 @@ test("subfeature parents show zero, partial and complete installation counts whi
     for (const subfeature of parent.subfeatures) {
       subfeature.enabled = count === 9 || count === 1 && subfeature.id === "custom-font-input";
     }
-    const before = JSON.stringify(catalog), expected = `${count}/9 ${suffix}`;
+    const before = JSON.stringify(catalog), expected = `${count}/9 ${suffix}`, parentStatus = enabled ? installedWord : absentWord;
     const render = uiHarness(catalog, locale);
     summaryRow(render()).props.control.props.onClick();
     const row = item(render(), "ui-tweaks"), status = row.children[0].children.at(-1);
     assert.equal(row.props["aria-expanded"], false);
-    assert.equal(status.children[0], expected, `${locale}: ${enabled}/${count}`);
-    assert.equal(row.props["aria-label"], `UI Tweaks${punctuation}${expected}`);
-    assert.equal(status.props.style.color, count > 0 ? "var(--color-text-success)" : undefined);
+    assert.equal(status.children[0], parentStatus, `${locale}: ${enabled}/${count}`);
+    assert.equal(row.props["aria-label"], `UI Tweaks${punctuation}${parentStatus}`);
+    assert.equal(status.props.style.color, enabled ? "var(--color-text-success)" : undefined);
     assert.equal(row.children[0].children.some(node => node?.type === "span" && node.children[0] === "9"), false);
     row.children[0].props.onClick(clickEvent());
-    assert.equal(collect(render(), node => node.type === "native-row").at(-1).props.control.children[0], expected);
+    assert.equal(collect(render(), node => node.type === "native-row").at(-1).props.control.children[0], parentStatus);
     row.children[0].children[0].props.onClick(clickEvent());
+    const sections = collect(item(render(), "ui-tweaks"), node => node.props.role === "group");
+    assert.equal(sections.length, 1);
+    const sectionLabel = createTranslator(locale, loadLocaleResources()).format("subfeatureGroup", { count: 9 });
+    assert.equal(sections[0].props["aria-label"], `${sectionLabel}${punctuation}${expected}`);
+    assert.equal(sections[0].children[0].children[0].children[0], sectionLabel);
+    const sectionStatus = sections[0].children[0].children.at(-1);
+    assert.equal(sectionStatus.children[0], expected);
+    assert.equal(sectionStatus.props.style.color, count > 0 ? "var(--color-text-success)" : undefined);
+    assert.equal(items(sections[0]).length, 9);
     const font = item(render(), "ui-tweaks/ui-tweaks/custom-font-input");
     assert.equal(font.children[0].children.at(-1).children[0], count > 0 ? installedWord : absentWord);
     assert.equal(buildFeatureTree(catalog).enabled, count + 2);
@@ -395,9 +405,31 @@ test("a parent's subfeature status excludes dependent features and leaves their 
   for (const subfeature of parent.subfeatures) subfeature.enabled = subfeature.id === "custom-font-input";
   const render = uiHarness(catalog);
   summaryRow(render()).props.control.props.onClick();
-  assert.equal(item(render(), "ui-tweaks").children[0].children.at(-1).children[0], "1/9 已安装");
+  assert.equal(item(render(), "ui-tweaks").children[0].children.at(-1).children[0], "已安装");
   item(render(), "ui-tweaks").children[0].children[0].props.onClick(clickEvent());
+  assert.equal(collect(item(render(), "ui-tweaks"), node => node.props.role === "group")[0].children[0].children.at(-1).children[0], "1/9 已安装");
   assert.equal(item(render(), "ui-tweaks/dependent").children[0].children.at(-1).children[0], "已安装");
+});
+
+test("every declared subfeature owner has its own section even without dependent features", () => {
+  const context = { feature: { dir: __dirname }, featurePatchOptions: { featuresRoot: path.dirname(__dirname) }, enabledFeatureIds: [] };
+  const owners = buildCatalog(context).features.filter(feature => feature.subfeatures.length);
+  assert.ok(owners.length > 1);
+  for (const owner of owners) for (const enabled of [false, true]) {
+    const catalog = buildCatalog({ ...context, enabledFeatureIds: enabled ? [owner.id] : [] });
+    const feature = catalog.features.find(feature => feature.id === owner.id);
+    const render = uiHarness({ ...catalog, features: [{ ...feature, requires: [] }] });
+    summaryRow(render()).props.control.props.onClick();
+    let row = item(render(), owner.id);
+    assert.equal(row.children[0].children.at(-1).children[0], enabled ? "已安装" : "未安装");
+    row.children[0].children[0].props.onClick(clickEvent());
+    row = item(render(), owner.id);
+    const groups = collect(row, node => node.props.role === "group");
+    assert.equal(groups.length, 1, owner.id);
+    const count = feature.subfeatures.filter(item => item.enabled).length;
+    assert.equal(groups[0].props["aria-label"], `子功能（${feature.subfeatures.length}），${count}/${feature.subfeatures.length} 已安装`, owner.id);
+    assert.equal(items(groups[0]).length, feature.subfeatures.length, owner.id);
+  }
 });
 
 test("Chronicle separates its two subfeatures from Record & Replay without changing installation counts", (t) => {
@@ -417,10 +449,14 @@ test("Chronicle separates its two subfeatures from Record & Replay without chang
     item(render(), parentPath).children[0].children[0].props.onClick(clickEvent());
     const parent = item(render(), parentPath);
     const expected = `${enabled.length ? 2 : 0}/2 ${suffix}`;
-    assert.equal(parent.children[0].children.at(-1).children[0], expected);
-    assert.ok(parent.props["aria-label"].endsWith(expected));
+    const language = createTranslator(locale, loadLocaleResources());
+    const parentStatus = enabled.length ? language.messages.enabled : language.messages.available;
+    assert.equal(parent.children[0].children.at(-1).children[0], parentStatus);
+    assert.ok(parent.props["aria-label"].endsWith(parentStatus));
     const groups = collect(parent, node => node.props.role === "group");
-    assert.deepEqual(groups.map(group => group.props["aria-label"]), [subfeatureLabel, dependentLabel]);
+    assert.deepEqual(groups.map(group => group.props["aria-label"]), [language.format("featureLabel", { name: subfeatureLabel, status: expected }), dependentLabel]);
+    assert.equal(groups[0].children[0].children.at(-1).children[0], expected);
+    assert.equal(groups[1].children[0].children.length, 1);
     assert.deepEqual(groups.map(group => items(group).map(node => node.props["data-feature"])), [
       ["chronicle-skysight/chronicle-controls", "chronicle-skysight/skysight-mcp"], ["record-and-replay"],
     ]);
@@ -429,16 +465,15 @@ test("Chronicle separates its two subfeatures from Record & Replay without chang
       assert.equal(child.props["data-parent"], parentPath);
     }
     parent.children[0].props.onClick(clickEvent());
-    assert.equal(collect(render(), node => node.type === "native-row").at(-1).props.control.children[0], expected);
+    assert.equal(collect(render(), node => node.type === "native-row").at(-1).props.control.children[0], parentStatus);
     const replay = item(render(), `${parentPath}/record-and-replay`);
-    const language = createTranslator(locale, loadLocaleResources());
     assert.equal(replay.children[0].children.at(-1).children[0], enabled.includes("record-and-replay") ? language.messages.enabled : language.messages.available);
     assert.equal(pressTreeKey(render, "ArrowRight", parentPath), `${parentPath}/chronicle-skysight/chronicle-controls`);
     assert.equal(pressTreeKey(render, "ArrowLeft", `${parentPath}/record-and-replay`), parentPath);
     parent.children[0].children[0].props.onClick(clickEvent());
     assert.equal(item(render(), parentPath).props["aria-expanded"], false);
     assert.equal(item(render(), `${parentPath}/record-and-replay`), undefined);
-    assert.equal(item(render(), parentPath).children[0].children.at(-1).children[0], expected);
+    assert.equal(item(render(), parentPath).children[0].children.at(-1).children[0], parentStatus);
     assert.equal(JSON.stringify(catalog), before);
   }
 });

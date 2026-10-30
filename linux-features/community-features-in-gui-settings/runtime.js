@@ -68,32 +68,28 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
     width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor",
     strokeWidth: 1.2, "aria-hidden": true, style: { flexShrink: 0 },
   }, h("path", { d: folder ? "M1.5 4V3A1 1 0 0 1 2.5 2h4l1.5 2h5.5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z" : "M3 1.5h6l4 4v9H3Zm6 0v4h4" }));
-  const installedCount = (feature) => !feature.enabled ? 0 : feature.subfeatures?.length
-    ? feature.subfeatures.filter(item => item.enabled).length : 1;
-  const status = (feature) => feature.enabled === null ? words.missing : feature.subfeatures?.length
-    ? format("subfeatureStatus", { enabled: installedCount(feature), total: feature.subfeatures.length })
-    : feature.enabled ? words.enabled : words.available;
-  const statusLabel = (feature) => {
-    const installed = installedCount(feature) > 0;
-    return h("span", {
-      className: "text-xs text-secondary",
-      style: { flexShrink: 0, fontWeight: installed ? 600 : 400,
-        color: installed ? "var(--color-text-success)" : undefined },
-    }, status(feature));
-  };
+  const installedCount = (feature) => feature.enabled ? feature.subfeatures.filter(item => item.enabled).length : 0;
+  const status = (feature) => feature.enabled === null ? words.missing : feature.enabled ? words.enabled : words.available;
+  const statusLabel = (text, installed) => h("span", {
+    className: "text-xs text-secondary",
+    style: { flexShrink: 0, fontWeight: installed ? 600 : 400,
+      color: installed ? "var(--color-text-success)" : undefined },
+  }, text);
   const renderNode = ({ id, key, parent, level, ancestors = [] }) => {
     const feature = tree.nodes.get(id), cycle = ancestors.includes(id);
     const children = cycle ? [] : tree.children.get(id);
     const subfeatures = children.filter((child) => tree.nodes.get(child)?.kind === "subfeature");
     const dependents = children.filter((child) => tree.nodes.get(child)?.kind !== "subfeature");
-    const mixed = subfeatures.length > 0 && dependents.length > 0;
+    const sectioned = subfeatures.length > 0;
     const hasChildren = children.length > 0, open = hasChildren && opened.has(key);
     const label = feature.title, active = selected?.key === key;
     const renderChildren = (ids) => ids.map((child) => renderNode({ id: child, key: `${key}/${child}`, parent: key, level: level + 1, ancestors: id ? [...ancestors, id] : ancestors }));
-    const childGroup = (ids, message) => {
+    const childGroup = (ids, message, summary) => {
       const label = format(message, { count: ids.length });
-      return h("div", { key: message, role: "group", "aria-label": label },
-        h("div", { className: "text-xs text-secondary", "aria-hidden": true, style: { padding: "6px 8px 2px" } }, label),
+      return h("div", { key: message, role: "group", "aria-label": summary ? format("featureLabel", { name: label, status: summary.text }) : label },
+        h("div", { className: "text-xs text-secondary", "aria-hidden": true,
+          style: { display: "flex", alignItems: "center", gap: "8px", padding: "6px 8px 2px" } },
+          h("span", { style: { flex: 1 } }, label), summary && statusLabel(summary.text, summary.installed)),
         renderChildren(ids));
     };
     return h("div", {
@@ -121,9 +117,12 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
     feature?.kind === "subfeature" && h("span", { className: "text-xs text-secondary" }, words.subfeature),
     feature?.requires.length > 1 && h("span", { className: "text-xs text-secondary" }, words.multiple),
     cycle && h("span", { className: "text-xs text-secondary" }, words.cycle),
-    feature && statusLabel(feature)),
-    open && h("div", { role: mixed ? undefined : "group", style: { marginInlineStart: "15px", paddingInlineStart: "12px", borderInlineStart: "1px solid var(--color-border)" } },
-      mixed ? [childGroup(subfeatures, "subfeatureGroup"), childGroup(dependents, "dependentGroup")] : renderChildren(children)),
+    statusLabel(status(feature), feature.enabled === true)),
+    open && h("div", { role: sectioned ? undefined : "group", style: { marginInlineStart: "15px", paddingInlineStart: "12px", borderInlineStart: "1px solid var(--color-border)" } },
+      sectioned ? [childGroup(subfeatures, "subfeatureGroup", {
+        text: format("subfeatureStatus", { enabled: installedCount(feature), total: subfeatures.length }),
+        installed: installedCount(feature) > 0,
+      }), dependents.length > 0 && childGroup(dependents, "dependentGroup")] : renderChildren(children)),
     );
   };
   const onKeyDown = (event) => {
@@ -172,7 +171,7 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
         tree.roots.map((id) => renderNode({ id, key: id, level: 1 })),
         catalog.features.length === 0 && h("p", { className: "text-sm text-secondary" }, words.empty)),
         h("div", { role: "region", "aria-label": words.select, style: { borderTop: "1px solid var(--color-border)", minHeight: "60px" } },
-          feature ? h(Row, { label: feature.title, description: detail, control: statusLabel(feature), size: "compact", verticalAlignment: "start" })
+          feature ? h(Row, { label: feature.title, description: detail, control: statusLabel(status(feature), feature.enabled === true), size: "compact", verticalAlignment: "start" })
             : h("p", { className: "text-xs text-secondary", style: { padding: "14px 16px" } }, words.select)),
         catalog.sourceCommit && h("p", { className: "text-xs text-secondary", style: { padding: "4px 16px 8px" } },
           format("snapshot", { revision: catalog.sourceCommit.slice(0, 12) })),

@@ -12,16 +12,17 @@ equivalent names. Subfeature declaration order does not control display order.
 Feature branches start collapsed.
 A prerequisite is the parent of its dependents; internal subfeatures appear
 under their owning feature and are marked **Subfeature**.
-When a feature has both kinds of children, they appear in separate labeled
-groups, **Subfeatures** and **Features requiring this**, with their own row
-counts. For example, Chronicle has two subfeatures and Record & Replay is a
-separate feature requiring Chronicle; its parent status therefore remains
-**0/2 installed** or **2/2 installed**, rather than counting all three rows.
-Leaf items have their own **Installed** / **Not installed** build status. A feature with
-subfeatures instead shows its installed/total count, such as **1/9 installed**,
-in both the collapsed tree row and selected detail row. This counts only its own
-subfeatures, not dependent features; **0/9**, **1/9** and **9/9** distinguish none,
-some and all installed. Zero-installed parents are not marked green. Installed is green
+Every feature with subfeatures has a separate **Subfeatures (y)** section when
+expanded, even when it has no dependent features. The section header shows its
+installed/total count on the right, such as **1/9 installed**, and its accessible
+label includes the count. Dependent features appear in a separate **Features
+requiring this** section when both kinds of children exist. For example,
+Chronicle's **Subfeatures (2)** header shows **0/2 installed** or **2/2 installed**;
+Record & Replay belongs to the separate dependency section and is excluded.
+Feature rows, subfeature rows and selected detail rows show their own
+**Installed** / **Not installed** build status. Ratios appear only on the
+subfeature section header; **0/9**, **1/9** and **9/9** distinguish none,
+some and all installed. Zero-installed section counts are not marked green. Installed is green
 in both light and dark themes. Select a feature to see its manifest description,
 ID, requirements and conflicts below the tree. All public repository
 features are included, even when disabled. Local features appear only when
