@@ -30,7 +30,6 @@
     "featureLabel": "{name}，{status}",
     "separator": "、",
     "list": "功能目录",
-    "subfeature": "子功能",
     "subfeatureGroup": "子功能（{count}）",
     "dependentGroup": "依赖此功能（{count}）",
     "owner": "所属功能：{name}"

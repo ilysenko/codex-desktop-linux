@@ -11,7 +11,8 @@ Sorting ignores case and uses the feature ID as a deterministic tie-breaker for
 equivalent names. Subfeature declaration order does not control display order.
 Feature branches start collapsed.
 A prerequisite is the parent of its dependents; internal subfeatures appear
-under their owning feature and are marked **Subfeature**.
+under their owning feature's **Subfeatures** section. Individual rows show their
+name and installation status without a repeated **Subfeature** badge.
 Every feature with subfeatures has a separate **Subfeatures (y)** section when
 expanded, even when it has no dependent features. The section header shows its
 installed/total count on the right, such as **1/9 installed**, and its accessible

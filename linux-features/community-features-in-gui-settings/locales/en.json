@@ -25,7 +25,6 @@
     "featureLabel": "{name}, {status}",
     "separator": ", ",
     "list": "Feature catalog",
-    "subfeature": "Subfeature",
     "subfeatureGroup": "Subfeatures ({count})",
     "dependentGroup": "Features requiring this ({count})",
     "owner": "Part of: {name}"

@@ -114,7 +114,6 @@ function renderCommunityFeaturesInGuiSettings({ React, Row, Button, Section, Sta
     }, hasChildren ? open ? "▾" : "▸" : ""),
     icon(hasChildren),
     h("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere", fontWeight: 400 }, title: feature.description }, label),
-    feature?.kind === "subfeature" && h("span", { className: "text-xs text-secondary" }, words.subfeature),
     feature?.requires.length > 1 && h("span", { className: "text-xs text-secondary" }, words.multiple),
     cycle && h("span", { className: "text-xs text-secondary" }, words.cycle),
     statusLabel(status(feature), feature.enabled === true)),
