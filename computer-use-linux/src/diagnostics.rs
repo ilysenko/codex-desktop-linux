@@ -181,6 +181,8 @@ pub struct InputReport {
     pub xdotool: Check,
     /// Wayland virtual-keyboard backend for layout-safe Unicode literal text.
     pub wtype: Check,
+    /// Selkies pixelflux computer-use server. Detail is the port only.
+    pub pixelflux: Check,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -299,7 +301,7 @@ pub fn doctor_report() -> DoctorReport {
         &accessibility,
         &windowing,
         &input,
-        !screenshot_backends(&platform, &portals, &windowing).is_empty(),
+        !screenshot_backends(&platform, &portals, &windowing, &input).is_empty(),
     );
 
     let capabilities = capability_map_with_portal_keyboard(
@@ -351,6 +353,9 @@ fn capability_map_with_portal_keyboard(
     input: &InputReport,
 ) -> CapabilityMap {
     let mut input_backends = Vec::new();
+    if input.pixelflux.ok {
+        input_backends.push("pixelflux".to_string());
+    }
     // Absolute uinput pointer: accurate, non-blocking of coordinates; preferred.
     if input.uinput.ok && platform_is_wayland(platform) && !is_cosmic_wayland_platform(platform) {
         input_backends.push("abs_pointer".to_string());
@@ -396,7 +401,7 @@ fn capability_map_with_portal_keyboard(
         input_backends.push("portal".to_string());
     }
 
-    let screenshot_backends = screenshot_backends(platform, portals, windowing);
+    let screenshot_backends = screenshot_backends(platform, portals, windowing, input);
 
     let mut window_backends = Vec::new();
     let x11_available = windowing
@@ -976,6 +981,25 @@ fn check_from_backend_probe(probe: &registry::BackendProbe) -> Check {
     }
 }
 
+fn pixelflux_check() -> Check {
+    let Some(config) = crate::pixelflux::PixelfluxConfig::from_env() else {
+        return Check::fail("PIXELFLUX_CU is not set");
+    };
+    let port = config.port;
+    let probed = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+        runtime.block_on(crate::pixelflux::probe(&config)).ok()
+    })
+    .join();
+    match probed {
+        Ok(Some(())) => Check::ok(port.to_string()),
+        _ => Check::fail(format!("{port} unreachable")),
+    }
+}
+
 fn input_report() -> InputReport {
     InputReport {
         ydotool: match ydotool::ensure_supported() {
@@ -987,6 +1011,7 @@ fn input_report() -> InputReport {
         uinput: read_write_path_check(Path::new("/dev/uinput")),
         xdotool: command_path_check("xdotool"),
         wtype: command_path_check("wtype"),
+        pixelflux: pixelflux_check(),
     }
 }
 
@@ -1004,7 +1029,7 @@ fn readiness_report(
         accessibility,
         windowing,
         input,
-        !screenshot_backends(platform, portals, windowing).is_empty(),
+        !screenshot_backends(platform, portals, windowing, input).is_empty(),
     )
 }
 
@@ -1014,8 +1039,12 @@ fn screenshot_backends(
     platform: &PlatformReport,
     portals: &PortalReport,
     windowing: &WindowingReport,
+    input: &InputReport,
 ) -> Vec<String> {
     let mut backends = Vec::new();
+    if input.pixelflux.ok {
+        backends.push("pixelflux".to_string());
+    }
     if platform.gnome_shell_version.ok {
         backends.push("gnome_shell".to_string());
     }
@@ -1141,7 +1170,8 @@ fn can_send_development_input(
 ) -> bool {
     let force_ydotool = env_flag_enabled_any(FORCE_YDOTOOL_KEYBOARD_ENV_KEYS);
     let force_xdotool = env_flag_enabled_any(FORCE_XDOTOOL_KEYBOARD_ENV_KEYS);
-    portal_keyboard_input_available(platform, remote_desktop_keyboard)
+    input.pixelflux.ok
+        || portal_keyboard_input_available(platform, remote_desktop_keyboard)
         || platform_is_wayland(platform)
             && wtype_compatible_wayland_desktop(platform.xdg_current_desktop.as_deref())
             && input.wtype.ok
@@ -2073,6 +2103,7 @@ pub(crate) mod tests {
             uinput,
             xdotool: Check::fail("missing xdotool"),
             wtype: Check::fail("missing wtype"),
+            pixelflux: Check::fail("PIXELFLUX_CU is not set"),
         }
     }
 
@@ -2199,6 +2230,7 @@ pub(crate) mod tests {
             uinput: Check::fail("missing"),
             xdotool: Check::ok("xdotool"),
             wtype: Check::fail("missing wtype"),
+            pixelflux: Check::fail("PIXELFLUX_CU is not set"),
         };
 
         let capabilities = capability_map(
@@ -2211,6 +2243,18 @@ pub(crate) mod tests {
 
         assert_eq!(capabilities.input, ["xdotool", "ydotool"]);
         assert_eq!(capabilities.preferred.input.as_deref(), Some("xdotool"));
+    }
+
+    #[test]
+    fn pixelflux_only_desktop_is_input_ready() {
+        let platform = platform_report();
+        let mut input = input_report(false);
+        input.pixelflux = Check::ok("loopback port 8080");
+        assert!(can_send_development_input(
+            &platform,
+            &Check::fail("missing portal"),
+            &input,
+        ));
     }
 
     #[test]
@@ -2280,6 +2324,24 @@ pub(crate) mod tests {
 
         assert_eq!(capabilities.input, ["ydotool", "portal"]);
         assert_eq!(capabilities.preferred.input.as_deref(), Some("ydotool"));
+    }
+
+    #[test]
+    fn writable_uinput_advertises_abs_pointer_first() {
+        let platform = platform_report();
+        let portals = portal_report(Check::fail("missing"));
+        let accessibility = accessibility_report(Check::ok("bus"), Check::ok("true"));
+        let windowing = windowing_report(true, true);
+        let input = input_report_parts(
+            Check::ok("ydotool"),
+            Check::ok("ydotoold"),
+            Check::ok("connectable"),
+            Check::ok("read/write: /dev/uinput"),
+        );
+
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+
+        assert_eq!(capabilities.input, ["abs_pointer", "ydotool"]);
     }
 
     #[test]
@@ -2543,6 +2605,7 @@ pub(crate) mod tests {
             uinput: Check::fail("missing"),
             xdotool: Check::ok("xdotool"),
             wtype: Check::fail("missing wtype"),
+            pixelflux: Check::fail("PIXELFLUX_CU is not set"),
         };
 
         let capabilities = capability_map(

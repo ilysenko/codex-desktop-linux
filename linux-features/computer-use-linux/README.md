@@ -21,6 +21,12 @@ desktops, dependencies, permissions, and troubleshooting.
 
 ## Supported operations
 
+The embedded backend tracks standalone computer-use-linux v0.7.33. GNOME
+scaled pointer sessions use portal EIS regions when available and retain the
+legacy route when negotiation fails. Selkies containers can set `PIXELFLUX_CU`
+and `PIXELFLUX_CU_TOKEN` to use their loopback computer-use API for capture and
+input. Input with an uncertain outcome is reported without automatic replay.
+
 The in-app API supports window listing, accessibility inspection, screenshots,
 coordinate clicks, keyboard input, text entry, and scrolling. Use the IDs returned
 by `cua.listApps()` with `cua.getApp()`.

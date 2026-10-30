@@ -294,7 +294,7 @@ impl ScreenshotPayloadOptions {
 
 /// Environment variable forcing a single capture backend, skipping the
 /// fallback chain. Accepts `gnome-shell`, `gnome-extension`, `portal`, `x11`,
-/// or `gnome-screenshot`.
+/// `gnome-screenshot`, or `pixelflux`.
 const SCREENSHOT_BACKEND_ENV: &str = "CODEX_COMPUTER_USE_SCREENSHOT_BACKEND";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,6 +304,7 @@ enum ScreenshotBackend {
     Portal,
     X11,
     GnomeScreenshot,
+    Pixelflux,
 }
 
 impl ScreenshotBackend {
@@ -314,6 +315,7 @@ impl ScreenshotBackend {
             "portal" | "xdg-portal" | "xdg_portal" => Some(Self::Portal),
             "x11" | "x11-native" | "x11_native" | "xgetimage" => Some(Self::X11),
             "gnome-screenshot" | "gnome_screenshot" => Some(Self::GnomeScreenshot),
+            "pixelflux" => Some(Self::Pixelflux),
             _ => None,
         }
     }
@@ -325,6 +327,11 @@ impl ScreenshotBackend {
             Self::Portal => capture_with_portal().await,
             Self::X11 => capture_with_x11().await,
             Self::GnomeScreenshot => capture_with_gnome_screenshot().await,
+            Self::Pixelflux => {
+                let config = crate::pixelflux::PixelfluxConfig::from_env()
+                    .context("PIXELFLUX_CU and PIXELFLUX_CU_TOKEN are required")?;
+                capture_with_pixelflux(&config).await
+            }
         }
     }
 }
@@ -337,6 +344,14 @@ pub async fn capture_screenshot_raw() -> Result<RawScreenshotCapture> {
     // blocked, and aids debugging.
     if let Some(forced) = forced_backend()? {
         return forced.capture().await;
+    }
+
+    if let Some(config) = crate::pixelflux::PixelfluxConfig::from_env() {
+        match capture_with_pixelflux(&config).await {
+            Ok(capture) => return Ok(capture),
+            Err(error) if crate::pixelflux::is_unreachable(&error) => {}
+            Err(error) => return Err(error),
+        }
     }
 
     // The Shell and portal DBus paths can fail for background processes (systemd
@@ -409,13 +424,29 @@ fn encode_rgb_png(width: u32, height: u32, rgb: Vec<u8>) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+async fn capture_with_pixelflux(
+    config: &crate::pixelflux::PixelfluxConfig,
+) -> Result<RawScreenshotCapture> {
+    let reply =
+        crate::pixelflux::send(config, &crate::pixelflux::PixelfluxAction::Screenshot).await?;
+    let bytes = reply.data.context("pixelflux screenshot had no image")?;
+    let image = image::load_from_memory(&bytes).context("pixelflux screenshot was not an image")?;
+    Ok(RawScreenshotCapture {
+        mime_type: "image/png".to_string(),
+        bytes,
+        source: "pixelflux".to_string(),
+        width: image.width(),
+        height: image.height(),
+    })
+}
+
 fn forced_backend() -> Result<Option<ScreenshotBackend>> {
     match std::env::var(SCREENSHOT_BACKEND_ENV) {
         Ok(value) if !value.trim().is_empty() => {
             ScreenshotBackend::parse(&value).map(Some).ok_or_else(|| {
                 anyhow!(
                     "{SCREENSHOT_BACKEND_ENV}={value:?} is not a recognized backend \
-                     (expected gnome-shell, gnome-extension, portal, x11, or gnome-screenshot)"
+                     (expected gnome-shell, gnome-extension, portal, x11, gnome-screenshot, or pixelflux)"
                 )
             })
         }
@@ -1179,11 +1210,19 @@ mod tests {
 
     #[test]
     fn forced_backend_reads_env_override() {
-        // Only this test touches SCREENSHOT_BACKEND_ENV, so no cross-test race.
+        let _guard = crate::pixelflux::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var(SCREENSHOT_BACKEND_ENV, "gnome-screenshot");
         assert_eq!(
             forced_backend().unwrap(),
             Some(ScreenshotBackend::GnomeScreenshot)
+        );
+
+        std::env::set_var(SCREENSHOT_BACKEND_ENV, "pixelflux");
+        assert_eq!(
+            forced_backend().unwrap(),
+            Some(ScreenshotBackend::Pixelflux)
         );
 
         std::env::set_var(SCREENSHOT_BACKEND_ENV, "   ");
@@ -1195,6 +1234,40 @@ mod tests {
 
         std::env::remove_var(SCREENSHOT_BACKEND_ENV);
         assert_eq!(forced_backend().unwrap(), None);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // current-thread test: other env tests wait on the lock.
+    async fn screenshot_prefers_pixelflux_when_configured() {
+        let _guard = crate::pixelflux::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let png = solid_png(4, 5);
+        let payload = serde_json::json!({"data": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &png,
+        )})
+        .to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n{payload}",
+            len = payload.len(),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+            let _ = tokio::io::AsyncWriteExt::write_all(&mut sock, response.as_bytes()).await;
+        });
+        std::env::set_var("PIXELFLUX_CU", port.to_string());
+        std::env::set_var("PIXELFLUX_CU_TOKEN", "secret");
+        std::env::remove_var(SCREENSHOT_BACKEND_ENV);
+        let capture = capture_screenshot_raw().await.unwrap();
+        std::env::remove_var("PIXELFLUX_CU");
+        std::env::remove_var("PIXELFLUX_CU_TOKEN");
+        assert_eq!(capture.source, "pixelflux");
+        assert_eq!((capture.width, capture.height), (4, 5));
     }
 
     #[test]
