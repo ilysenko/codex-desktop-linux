@@ -1004,7 +1004,7 @@ impl ComputerUseLinux {
 
     async fn dispatch_click(&self, mut params: ClickParams) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params.clone()));
-        let mut input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
+        let input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let mut portal_target_point = None;
         let mut input_focus = None;
         let mut target_pid = params.pid;
@@ -1234,6 +1234,7 @@ impl ComputerUseLinux {
             .await;
         let button = mouse_button_code(params.button.as_deref());
         let click_count = params.click_count.unwrap_or(1).clamp(1, 10).to_string();
+        let input_guard = Arc::new(input_guard);
         if let Some(output) = self
             .try_pixelflux_click(
                 x,
@@ -1244,11 +1245,14 @@ impl ComputerUseLinux {
                 params.button.as_deref(),
                 params.click_count.unwrap_or(1),
                 received.clone(),
+                Arc::clone(&input_guard),
             )
             .await
         {
             return Json(output);
         }
+        let mut input_guard = Arc::try_unwrap(input_guard)
+            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
         if self.should_prefer_xdotool_pointer() {
             let off_screen_note = self.off_screen_note_for_point(x, y).await;
             if let Some(xdotool_args) = xdotool_pointer_click_args(
@@ -1849,6 +1853,7 @@ impl ComputerUseLinux {
             }
             _ => target_point,
         };
+        let input_guard = Arc::new(input_guard);
         if let Some(output) = self
             .pixelflux_send(
                 "scroll",
@@ -1858,11 +1863,14 @@ impl ComputerUseLinux {
                     amount: u32::try_from(units.max(1)).unwrap_or(1),
                 },
                 received.clone(),
+                Arc::clone(&input_guard),
             )
             .await
         {
             return Json(output);
         }
+        let input_guard = Arc::try_unwrap(input_guard)
+            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
 
         let off_screen_note = match target_point {
             Some((x, y)) => self.off_screen_note_for_point(x, y).await,
@@ -2082,7 +2090,7 @@ impl ComputerUseLinux {
 
     async fn dispatch_drag(&self, params: DragParams) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params));
-        let mut input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
+        let input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let space = self.indicator_space();
         self.indicator
             .pointer("drag", (params.start_x, params.start_y), space)
@@ -2091,6 +2099,7 @@ impl ComputerUseLinux {
         self.indicator
             .follow("drag", (params.end_x, params.end_y), space)
             .await;
+        let input_guard = Arc::new(input_guard);
         if let Some(output) = self
             .pixelflux_send(
                 "drag",
@@ -2099,11 +2108,14 @@ impl ComputerUseLinux {
                     to: (params.end_x, params.end_y),
                 },
                 received.clone(),
+                Arc::clone(&input_guard),
             )
             .await
         {
             return Json(output);
         }
+        let mut input_guard = Arc::try_unwrap(input_guard)
+            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
 
         if self.should_prefer_xdotool_pointer() {
             let (input_guard, result) = run_cancellation_safe_input(input_guard, async move {
@@ -2347,18 +2359,22 @@ impl ComputerUseLinux {
         };
         let secret = self.typing_into_secret(focus.as_ref()).await;
         self.indicator.keys(&params.key, secret).await;
+        let input_guard = Arc::new(input_guard);
         if let Some(chord) = xdotool_key_spec(&params.key) {
             if let Some(output) = self
                 .pixelflux_send(
                     "press_key",
                     crate::pixelflux::PixelfluxAction::Key { chord },
                     received.clone(),
+                    Arc::clone(&input_guard),
                 )
                 .await
             {
                 return Json(output);
             }
         }
+        let input_guard = Arc::try_unwrap(input_guard)
+            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
 
         if self.should_prefer_portal_keyboard_for_chords().await {
             let portal_target = match self
@@ -2542,7 +2558,7 @@ impl ComputerUseLinux {
         if let Err(message) = preflight_type_text(&params.text, wtype_mode) {
             return Json(action_result("type_text", Err(message), received));
         }
-        let mut input_guard =
+        let input_guard =
             InputOperationGuard::new(Arc::clone(&self.input_operation_lock).lock_owned().await);
         let window_target = params.window_target();
         let focus = match self.focus_target_for_input(&window_target).await {
@@ -2586,6 +2602,7 @@ impl ComputerUseLinux {
             }
         }
         self.indicator.text("type_text", &params.text, secret).await;
+        let input_guard = Arc::new(input_guard);
         if let Some(output) = self
             .pixelflux_send(
                 "type_text",
@@ -2593,11 +2610,14 @@ impl ComputerUseLinux {
                     text: params.text.clone(),
                 },
                 received.clone(),
+                Arc::clone(&input_guard),
             )
             .await
         {
             return Json(output);
         }
+        let mut input_guard = Arc::try_unwrap(input_guard)
+            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
 
         if self.should_prefer_kde_clipboard_text_backend() {
             let portal_target = match self
@@ -5390,6 +5410,7 @@ impl ComputerUseLinux {
         button: Option<&str>,
         count: u32,
         received: Option<serde_json::Value>,
+        input_guard: Arc<tokio::sync::OwnedMutexGuard<()>>,
     ) -> Option<ActionOutput> {
         if crate::pixelflux::PixelfluxConfig::from_env().is_none() || count.clamp(1, 10) > 3 {
             return None;
@@ -5415,6 +5436,7 @@ impl ComputerUseLinux {
                 count: count.clamp(1, 3) as u8,
             },
             received,
+            input_guard,
         )
         .await
     }
@@ -5439,11 +5461,12 @@ impl ComputerUseLinux {
         }
     }
 
-    async fn pixelflux_send(
+    async fn pixelflux_send<G: Send + 'static>(
         &self,
         action: &str,
         request: crate::pixelflux::PixelfluxAction,
         received: Option<serde_json::Value>,
+        input_guard: G,
     ) -> Option<ActionOutput> {
         let config = crate::pixelflux::PixelfluxConfig::from_env()?;
         if let Err(error) = crate::pixelflux::probe(&config).await {
@@ -5452,7 +5475,17 @@ impl ComputerUseLinux {
             }
             return Some(pixelflux_action_output(action, Err(error), received));
         }
-        let result = crate::pixelflux::send(&config, &request).await.map(|_| ());
+        let (_retained, dispatched) = run_cancellation_safe_input(input_guard, async move {
+            Ok::<_, String>(crate::pixelflux::send(&config, &request).await.map(|_| ()))
+        })
+        .await;
+        let result = match dispatched {
+            Ok(result) => result,
+            Err(error) => return Some(ActionOutput {
+                ok: false, implemented: true, action: action.to_string(), received,
+                message: format!("pixelflux input task stopped ({error}); it may have run, so check the screen before retrying"),
+            }),
+        };
         if let Err(error) = &result {
             if crate::pixelflux::outcome_unknown(error) {
                 return Some(ActionOutput {
@@ -16547,6 +16580,113 @@ mod pixelflux_routing_tests {
     use crate::remote_desktop::LogicalMonitor;
     use std::os::unix::fs::PermissionsExt;
 
+    #[tokio::test]
+    async fn cancelled_pixelflux_typing_keeps_input_locked() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn read_request(stream: &mut tokio::net::TcpStream) {
+            let mut request = Vec::new();
+            let mut bytes = [0; 4096];
+            loop {
+                let n = stream.read(&mut bytes).await.unwrap();
+                assert!(n > 0, "fixture request ended early");
+                request.extend_from_slice(&bytes[..n]);
+                if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..end]);
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("Content-Length: "))
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    if request.len() >= end + 4 + length {
+                        return;
+                    }
+                }
+            }
+        }
+        const TEST: &str =
+            "server::pixelflux_routing_tests::cancelled_pixelflux_typing_keeps_input_locked";
+        if std::env::var_os("CUL_CANCEL_PIXELFLUX_CHILD").is_none() {
+            let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("target/pixelflux-cancel-fixture");
+            std::fs::create_dir_all(&root).unwrap();
+            let systemctl = root.join("systemctl");
+            std::fs::write(&systemctl, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env_clear()
+                .env("CUL_CANCEL_PIXELFLUX_CHILD", "1")
+                .env("PATH", &root)
+                .env("HOME", &root)
+                .env("XDG_RUNTIME_DIR", &root)
+                .env(
+                    "DBUS_SESSION_BUS_ADDRESS",
+                    format!("unix:path={}/no-bus", root.display()),
+                )
+                .env("DISPLAY", ":9876")
+                .env("WAYLAND_DISPLAY", "no-wayland")
+                .env("XDG_CURRENT_DESKTOP", "fixture")
+                .env("XDG_SESSION_TYPE", "wayland")
+                .env("COMPUTER_USE_LINUX_FORCE_YDOTOOL_POINTER", "1")
+                .env("COMPUTER_USE_LINUX_FORCE_YDOTOOL_KEYBOARD", "1")
+                .env("CU_DISABLE_ABS_POINTER", "1")
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "cancelled pixelflux request unlocked input"
+            );
+            return;
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        std::env::set_var(
+            "PIXELFLUX_CU",
+            listener.local_addr().unwrap().port().to_string(),
+        );
+        std::env::set_var("PIXELFLUX_CU_TOKEN", "fixture-token");
+        let (sent, started) = tokio::sync::oneshot::channel();
+        let (finish, finished) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            let reply = b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"result\":\"ok\"}";
+            let (mut probe, _) = listener.accept().await.unwrap();
+            read_request(&mut probe).await;
+            probe.write_all(reply).await.unwrap();
+            drop(probe);
+            let (mut action, _) = listener.accept().await.unwrap();
+            read_request(&mut action).await;
+            sent.send(()).unwrap();
+            finished.await.unwrap();
+            action.write_all(reply).await.unwrap();
+        });
+        let server = super::ComputerUseLinux::default();
+        let input_lock = std::sync::Arc::clone(&server.input_operation_lock);
+        let caller = tokio::spawn(async move {
+            let params =
+                serde_json::from_value(serde_json::json!({"text": "fixture typing"})).unwrap();
+            server.dispatch_type_text(params).await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), started)
+            .await
+            .unwrap()
+            .unwrap();
+        caller.abort();
+        let _ = caller.await;
+        let still_locked = input_lock.try_lock().is_err();
+        finish.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), peer)
+            .await
+            .unwrap()
+            .unwrap();
+        let _guard = tokio::time::timeout(std::time::Duration::from_secs(2), input_lock.lock())
+            .await
+            .unwrap();
+        assert!(
+            still_locked,
+            "typing continued after its operation lock was released"
+        );
+    }
+
     fn monitor(width: i32, height: i32) -> LogicalMonitor {
         LogicalMonitor {
             x: 0,
@@ -16660,8 +16800,13 @@ mod pixelflux_routing_tests {
 
     async fn record_click_message() {
         for (button, count) in [("right", 2), ("middle", 3)] {
+            let guard = std::sync::Arc::new(
+                std::sync::Arc::new(tokio::sync::Mutex::new(()))
+                    .lock_owned()
+                    .await,
+            );
             assert!(super::ComputerUseLinux::default()
-                .try_pixelflux_click(10, 20, false, None, Some(button), count, None)
+                .try_pixelflux_click(10, 20, false, None, Some(button), count, None, guard)
                 .await
                 .is_none());
         }

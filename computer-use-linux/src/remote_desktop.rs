@@ -237,14 +237,15 @@ async fn start_portal_pointer_session_inner(try_gnome_eis: bool) -> Result<Porta
         Err(error) if gnome_eis => {
             // ConnectToEIS may already have upgraded this session, including
             // after a lost reply. Notify* is then forbidden. No input was sent;
-            // close it and discard its token before opening a legacy session.
+            // close it before opening a legacy session. Retain the grant's
+            // restore token so persistence can avoid another consent dialog.
             let _ = tokio::time::timeout(
                 RELEASE_TIMEOUT,
                 close_portal_session(&connection, &session_handle),
             )
             .await;
             cleanup.disarm();
-            commit_restore_permit(permit, ParsedRestoreToken::Absent).await;
+            commit_restore_permit(permit, restore_token).await;
             return Err(anyhow::Error::new(GnomeEisStartupFailure(format!(
                 "{error:#}"
             ))));
