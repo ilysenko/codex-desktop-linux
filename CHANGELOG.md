@@ -7,6 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.34.
+  Accessibility trees use the compact node encoding by default, with
+  `verbose: true` for the full encoding. `get_app_state` takes
+  `interactive_only: true` and scopes the tree to the targeted window, and
+  the element action tools take the same app target `click` takes.
+- Synchronize the embedded Computer Use backend to standalone v0.7.33. Drive
+  Selkies desktops through the pixelflux computer-use API, use the portal's
+  negotiated EIS pointer regions on GNOME, and bound wlroots output
+  discovery.
+- Refuse an unfocused targeted `get_app_state` screenshot before capturing
+  anything, instead of grabbing the desktop and raising a portal prompt only
+  to discard the image.
+- Hyprland background mode: with `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`,
+  targeted keyboard input goes through `send_key_state` on the control
+  socket without focusing the window, and unfocused targets are captured
+  with `grim -T`, including windows on hidden workspaces. Keys never appear
+  in process arguments, the indicator shows the input (masked unless the
+  field is confirmed non-secret), and delivery errors say how many presses
+  were confirmed so the caller sends only the remainder.
 - Synchronize the embedded Computer Use backend to standalone v0.7.32. Add
   Selkies labwc window listing and activation, fix Konsole terminal paste and
   KWin logical output geometry, and repair GNOME capture acknowledgement.
@@ -78,6 +97,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   registration with a bounded modifier release watcher, while Wayland uses the
   XDG GlobalShortcuts and RemoteDesktop portals for press, release, and paste
   handling without direct input-device access or elevated permissions.
+
+### Fixed
+
+- Keep the remote desktop restore grant when EIS setup fails after Start on a
+  non-GNOME session such as COSMIC, so persistence does not drop the grant
+  and prompt for consent again. The GNOME EIS fallback path already retained
+  it.
+- Connect the pixelflux client to the configured loopback host instead of
+  always dialing 127.0.0.1, so `[::1]:PORT` reaches an IPv6-only server. Read
+  screenshot dimensions from the PNG header instead of fully decoding the
+  image, cap the typing request timeout at two minutes, and refuse text past
+  the timeout budget before anything is sent instead of timing out mid-typing.
 
 ### Changed
 

@@ -143,7 +143,7 @@ pub fn resolve_window_target<'a>(
     target: &WindowTarget,
 ) -> Result<&'a WindowInfo> {
     if let Some(window_id) = target.window_id {
-        return resolve_window_id_target(windows, target, window_id);
+        return resolve_window_id_target(windows, window_id);
     }
 
     if target.has_terminal_target() {
@@ -226,75 +226,15 @@ fn resolve_app_id_target<'a>(windows: &'a [WindowInfo], app_id: &str) -> Result<
     Ok(first)
 }
 
-fn resolve_window_id_target<'a>(
-    windows: &'a [WindowInfo],
-    target: &WindowTarget,
-    window_id: u64,
-) -> Result<&'a WindowInfo> {
-    if let Some(window) = windows.iter().find(|window| window.window_id == window_id) {
-        return Ok(window);
-    }
-
-    let matches = windows
+fn resolve_window_id_target(windows: &[WindowInfo], window_id: u64) -> Result<&WindowInfo> {
+    windows
         .iter()
-        .filter(|window| window_id_matches_json_number(window.window_id, window_id))
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [window] => Ok(*window),
-        [] => Err(anyhow::anyhow!("No window matched window_id {window_id}.")),
-        windows => resolve_rounded_window_id_matches(windows, target, window_id),
-    }
-}
-
-fn resolve_rounded_window_id_matches<'a>(
-    windows: &[&'a WindowInfo],
-    target: &WindowTarget,
-    window_id: u64,
-) -> Result<&'a WindowInfo> {
-    let ids = windows
-        .iter()
-        .map(|window| window.window_id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    if has_window_id_disambiguator(target) {
-        let matches = windows
-            .iter()
-            .copied()
-            .filter(|window| window_id_disambiguators_match(window, target))
-            .collect::<Vec<_>>();
-        match matches.as_slice() {
-            [window] => return Ok(*window),
-            [] => bail!(
-                "window_id {window_id} matched multiple windows after JSON number rounding ({ids}), but none matched the provided title, pid, app_id, or wm_class disambiguators."
-            ),
-            _ => {}
-        }
-    }
-
-    bail!(
-        "window_id {window_id} matched multiple windows after JSON number rounding ({ids}); add title, pid, app_id, or wm_class to disambiguate."
-    );
-}
-
-fn has_window_id_disambiguator(target: &WindowTarget) -> bool {
-    target.pid.is_some()
-        || normalized_target(target.app_id.as_deref()).is_some()
-        || normalized_target(target.wm_class.as_deref()).is_some()
-        || normalized_target(target.title.as_deref()).is_some()
-}
-
-fn window_id_disambiguators_match(window: &WindowInfo, target: &WindowTarget) -> bool {
-    target.pid.is_none_or(|pid| window.pid == Some(pid))
-        && optional_exact_match(&window.app_id, target.app_id.as_deref())
-        && optional_exact_match(&window.wm_class, target.wm_class.as_deref())
-        && optional_title_match(&window.title, target.title.as_deref())
-}
-
-fn window_id_matches_json_number(actual: u64, requested: u64) -> bool {
-    const JS_SAFE_INTEGER_MAX: u64 = (1_u64 << 53) - 1;
-    (actual > JS_SAFE_INTEGER_MAX || requested > JS_SAFE_INTEGER_MAX)
-        && (actual as f64) == (requested as f64)
+        .find(|window| window.window_id == window_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No window matched window_id {window_id}. Re-run list_windows and pass a current window_id."
+            )
+        })
 }
 
 fn unique_window_match<'a>(

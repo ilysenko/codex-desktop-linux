@@ -40,9 +40,11 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.32. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.34. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
+
+On Hyprland, `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` lets targeted `type_text`, `press_key`, `get_app_state` and `screenshot` work on a window without focusing it, including one on a hidden workspace: keys go through `send_key_state` on the control socket (never in a process's arguments) and the window is captured alone with `grim -T`. The indicator shows the input, masked unless the target field is confirmed non-secret. Text must be printable US-layout ASCII, tab or newline, and the active keymap must be US; anything else is refused before anything is sent. An unfocused Chromium ignores browser accelerators.
 
 MCP discovery probes are supported before initialization, including metadata-bearing discovery requests. Agent activity appears through the native GNOME indicator or the Wayland overlay helper. Captures hide the indicator before reading the screen. Portal captures clean new Pictures files and preserve existing images. Set `CODEX_COMPUTER_USE_INDICATOR=0` to disable action indicators; capture exclusion remains active. GNOME extension version 3 supports Shell 45 through 51. Existing Shell sessions need a logout and login to load refreshed extension files.
 
@@ -91,8 +93,11 @@ sockets, literal IP addresses, and `localhost` need no resolver helper. A remote
 hostname in `DISPLAY` requires `getent ahosts` for bounded name resolution;
 missing or failed resolution reports the X11 route as unavailable.
 
-Element-targeted `click` and `scroll` refuse an `element_index` from another
-app's `get_app_state` snapshot and ask for a snapshot of the target. On GNOME
+Element-targeted `click`, `scroll`, `perform_action` and `set_value` refuse an
+`element_index` or `element_identifier` from another app or window and ask for
+a snapshot of the target. `window_id` values are integers up to 2^53-1, which
+JavaScript clients carry exactly; a larger value is refused with a prompt to
+re-run `list_windows`. On GNOME
 Wayland with a scaled monitor, portal pointer input multiplies the stream point
 by the monitor scale, matching mutter's logical layout mode. After targeted
 typing, focus feedback reports an incomplete search or an app without an AT-SPI
@@ -118,6 +123,15 @@ with Ctrl-C or SIGTERM before disabling accessibility. Stop cancels pending
 work and releases the listener without disabling other clients or restoring
 an old setting. Applications launched during a reset/reassertion interval may
 still need restarting.
+
+`get_app_state` returns compact tree nodes by default: null, empty and default
+fields are left out and actions are listed by name. `verbose=true` returns full
+nodes and the full diagnostics dump. `interactive_only=true` keeps only nodes
+with an action, editable text or a value, plus headings, status and live
+regions, windows and dialogs, with the same `element_index` values as the full
+tree. A `title` or `window_id` target narrows an app with several windows under
+one AT-SPI root (Chromium) to that window's subtree, keeping its popups and
+dialogs.
 
 Scope `get_app_state` with `app_name_or_bundle_identifier` or a window target
 (`window_id`, `pid`, `app_id`, `wm_class`, `title`). Without one it returns the

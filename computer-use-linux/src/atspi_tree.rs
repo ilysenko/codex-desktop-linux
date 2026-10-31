@@ -334,6 +334,9 @@ pub(crate) struct AccessibilitySnapshot {
     /// True when max_nodes, max_depth, the child read budget, or the deadline stopped
     /// traversal with unread elements left. Failed element reads do not count.
     pub truncated: bool,
+    /// Name of the AT-SPI window the tree was narrowed to, when an app root
+    /// exposed several windows and exactly one matched the window title.
+    pub window_scope: Option<String>,
 }
 
 pub async fn snapshot_tree(
@@ -345,6 +348,7 @@ pub async fn snapshot_tree(
     Ok(snapshot_accessibility_tree(
         app_name_or_bundle_identifier,
         target_pid,
+        None,
         max_nodes,
         max_depth,
     )
@@ -352,9 +356,14 @@ pub async fn snapshot_tree(
     .nodes)
 }
 
+/// Read the accessibility tree of the matching app roots. With
+/// `window_title`, an app root that exposes several windows (Chromium puts
+/// every browser window under one application) is read only through the
+/// window whose name matches it; its other children stay.
 pub(crate) async fn snapshot_accessibility_tree(
     app_name_or_bundle_identifier: Option<&str>,
     target_pid: Option<u32>,
+    window_title: Option<&str>,
     max_nodes: usize,
     max_depth: u32,
 ) -> Result<AccessibilitySnapshot> {
@@ -368,6 +377,9 @@ pub(crate) async fn snapshot_accessibility_tree(
         snapshot_tree_inner(
             app_name_or_bundle_identifier,
             target_pid,
+            window_title
+                .map(str::trim)
+                .filter(|title| !title.is_empty()),
             max_nodes,
             max_depth,
             stop_reading,
@@ -380,6 +392,7 @@ pub(crate) async fn snapshot_accessibility_tree(
 async fn snapshot_tree_inner(
     app_name_or_bundle_identifier: Option<&str>,
     target_pid: Option<u32>,
+    window_title: Option<&str>,
     max_nodes: usize,
     max_depth: u32,
     stop_reading: Instant,
@@ -404,6 +417,7 @@ async fn snapshot_tree_inner(
     let app_filter_matched = selected_roots.app_filter_matched;
     let mut nodes = Vec::new();
     let mut truncated = false;
+    let mut window_scope = None;
     let mut traversal = BoundedTraversal::new(max_nodes);
 
     traversal.enqueue(
@@ -430,6 +444,7 @@ async fn snapshot_tree_inner(
             };
             let node = read_node(&proxy, &object_ref, index, parent_index, depth).await;
             let mut cut = false;
+            let mut scope = None;
             let child_refs = if depth < max_depth && remaining > 0 {
                 match children_up_to(&proxy, remaining, &mut remaining_traversal_reads).await {
                     Ok(batch) => {
@@ -437,7 +452,15 @@ async fn snapshot_tree_inner(
                         // already-exhausted budget returns the I/O-free empty batch, so
                         // fall back to the child_count read_node already fetched.
                         cut = batch.incomplete || (batch.attempted == 0 && node.child_count > 0);
-                        batch.items
+                        match window_title.filter(|_| depth == 0) {
+                            Some(title) => {
+                                let (children, matched) =
+                                    scope_to_window(&conn, batch.items, title).await;
+                                scope = matched;
+                                children
+                            }
+                            None => batch.items,
+                        }
                     }
                     Err(_) => Vec::new(),
                 }
@@ -446,17 +469,20 @@ async fn snapshot_tree_inner(
                 cut = node.child_count > 0;
                 Vec::new()
             };
-            Some((node, child_refs, cut))
+            Some((node, child_refs, cut, scope))
         })
         .await;
         let Ok(read) = read else {
             truncated = true;
             break;
         };
-        let Some((node, child_refs, cut)) = read else {
+        let Some((node, child_refs, cut, scope)) = read else {
             continue;
         };
         truncated |= cut;
+        if scope.is_some() {
+            window_scope = scope;
+        }
         nodes.push(node);
 
         traversal.enqueue(
@@ -473,7 +499,91 @@ async fn snapshot_tree_inner(
         root_pid,
         app_filter_matched,
         truncated,
+        window_scope,
     })
+}
+
+/// Children of an app root, narrowed to the window named `title` when the root
+/// holds several windows. Returns the children to read and the matched window
+/// name. Only the other named frames are dropped: popups, menus, dialogs and
+/// unnamed windows are kept, since Chromium puts a window's popups and dialogs
+/// beside it under the app root.
+async fn scope_to_window(
+    conn: &AccessibilityConnection,
+    children: Vec<ObjectRefOwned>,
+    title: &str,
+) -> (Vec<ObjectRefOwned>, Option<String>) {
+    // An app root has a handful of windows; read them in order.
+    let mut labels = Vec::with_capacity(children.len());
+    for child in &children {
+        labels.push(match open_accessible(conn, child).await {
+            Ok(proxy) => (
+                role_name(&proxy).await,
+                optional_string(proxy.name().await.ok()),
+            ),
+            Err(_) => (String::new(), None),
+        });
+    }
+    let Some(chosen) = matching_window(&labels, title) else {
+        return (children, None);
+    };
+    let name = labels[chosen].1.clone();
+    let keep = kept_beside_window(&labels, chosen);
+    let kept = children
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(child, keep)| keep.then_some(child))
+        .collect();
+    (kept, name)
+}
+
+/// Which app root children (`(role, name)`) stay when `chosen` is the targeted
+/// window: it, and every child that is not another named frame.
+fn kept_beside_window(children: &[(String, Option<String>)], chosen: usize) -> Vec<bool> {
+    children
+        .iter()
+        .enumerate()
+        .map(|(index, (role, name))| {
+            index == chosen
+                || role != "frame"
+                || name.as_deref().is_none_or(|name| name.trim().is_empty())
+        })
+        .collect()
+}
+
+pub(crate) fn is_window_role(role: &str) -> bool {
+    matches!(role, "frame" | "window" | "dialog" | "file chooser")
+}
+
+/// Index of the one window among an app root's children (`(role, name)`)
+/// that `title` names, when the root has at least two windows. An exact name
+/// wins, then a case-insensitive one, then the one name that contains
+/// `title`, ignoring case. A tie at the first rule that matches, or no match,
+/// returns `None`, which keeps every window.
+fn matching_window(children: &[(String, Option<String>)], title: &str) -> Option<usize> {
+    let windows: Vec<(usize, &str)> = children
+        .iter()
+        .enumerate()
+        .filter(|(_, (role, _))| is_window_role(role))
+        .map(|(index, (_, name))| (index, name.as_deref().unwrap_or_default().trim()))
+        .collect();
+    if windows.len() < 2 {
+        return None;
+    }
+    let title = title.trim();
+    let lowered = title.to_lowercase();
+    let rules: [&dyn Fn(&str) -> bool; 3] = [
+        &|name| name == title,
+        &|name| name.to_lowercase() == lowered,
+        &|name| name.to_lowercase().contains(&lowered),
+    ];
+    for rule in rules {
+        let mut matches = windows.iter().filter(|(_, name)| rule(name));
+        if let Some((index, _)) = matches.next() {
+            return matches.next().is_none().then_some(*index);
+        }
+    }
+    None
 }
 
 /// Compact description of the AT-SPI element that currently holds keyboard
@@ -2509,6 +2619,63 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("5-second deadline"));
         assert_eq!(name_reads.load(Ordering::SeqCst), 1);
+    }
+
+    fn app_children(children: &[(&str, &str)]) -> Vec<(String, Option<String>)> {
+        children
+            .iter()
+            .map(|(role, name)| (role.to_string(), Some(name.to_string())))
+            .collect()
+    }
+
+    #[test]
+    fn a_window_title_picks_one_of_several_app_windows() {
+        let chromium = app_children(&[
+            ("frame", "GitHub - Chromium"),
+            ("frame", "PlanetScale - Chromium"),
+            ("menu", ""),
+        ]);
+        assert_eq!(
+            matching_window(&chromium, "PlanetScale - Chromium"),
+            Some(1)
+        );
+        assert_eq!(
+            matching_window(&chromium, "planetscale - chromium"),
+            Some(1)
+        );
+        // A title substring, as a caller passes it.
+        assert_eq!(matching_window(&chromium, "PlanetScale"), Some(1));
+        // Matches every window: keep them all.
+        assert_eq!(matching_window(&chromium, "Chromium"), None);
+        assert_eq!(matching_window(&chromium, "Gmail"), None);
+    }
+
+    #[test]
+    fn an_exact_window_name_wins_over_a_substring_match() {
+        let windows = app_children(&[("frame", "Docs"), ("frame", "Docs - Settings")]);
+        assert_eq!(matching_window(&windows, "Docs"), Some(0));
+    }
+
+    #[test]
+    fn narrowing_keeps_popups_and_dialogs_beside_the_window() {
+        let chromium = app_children(&[
+            ("frame", "GitHub - Chromium"),
+            ("frame", "PlanetScale - Chromium"),
+            ("window", ""),
+            ("dialog", "Open File"),
+            ("menu", ""),
+        ]);
+        let chosen = matching_window(&chromium, "PlanetScale").unwrap();
+        assert_eq!(
+            kept_beside_window(&chromium, chosen),
+            [false, true, true, true, true]
+        );
+    }
+
+    #[test]
+    fn one_window_is_never_narrowed() {
+        let single = app_children(&[("frame", "PlanetScale - Chromium"), ("menu", "")]);
+        assert_eq!(matching_window(&single, "PlanetScale"), None);
     }
 
     #[test]

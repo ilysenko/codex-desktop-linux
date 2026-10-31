@@ -10,22 +10,28 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 // pixelflux types on its own seat one key at a time (up to ~28 ms a character) and replies when done.
 const TYPE_MS_PER_CHAR: u64 = 40;
+// A single request must not wait forever no matter how long the text is.
+const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(120);
+// Longest `Type` text that still finishes inside `MAX_SEND_TIMEOUT` at
+// `TYPE_MS_PER_CHAR` per character: (120 s - 5 s) / 40 ms = 2875.
+const MAX_TYPE_CHARS: usize = 2_875;
 const MAX_BODY: usize = 64 * 1024 * 1024;
 const MAX_HEADERS: usize = 64 * 1024;
 
 pub(crate) struct PixelfluxConfig {
+    pub(crate) host: String,
     pub(crate) port: u16,
     pub(crate) token: String,
 }
 
 impl PixelfluxConfig {
-    /// `PIXELFLUX_CU` plus `PIXELFLUX_CU_TOKEN`. A non-loopback port is ignored
-    /// so this client cannot be pointed at another host.
+    /// `PIXELFLUX_CU` plus `PIXELFLUX_CU_TOKEN`. A non-loopback address is
+    /// ignored so this client cannot be pointed at another host.
     pub(crate) fn from_env() -> Option<Self> {
-        let port_raw = std::env::var("PIXELFLUX_CU")
+        let raw = std::env::var("PIXELFLUX_CU")
             .ok()
             .filter(|value| !value.is_empty())?;
-        let Some(port) = loopback_port(&port_raw) else {
+        let Some((host, port)) = loopback_endpoint(&raw) else {
             eprintln!(
                 "[codex-computer-use] PIXELFLUX_CU must be a bare port or a loopback address (127.0.0.1, localhost, or [::1]); ignoring it"
             );
@@ -34,7 +40,11 @@ impl PixelfluxConfig {
         let token = std::env::var("PIXELFLUX_CU_TOKEN")
             .ok()
             .filter(|value| !value.is_empty())?;
-        Some(Self { port, token })
+        Some(Self {
+            host: host.to_string(),
+            port,
+            token,
+        })
     }
 }
 
@@ -87,16 +97,28 @@ pub(crate) async fn send(
     config: &PixelfluxConfig,
     action: &PixelfluxAction,
 ) -> Result<PixelfluxReply> {
+    // Refuse over-budget text before anything is sent. Timing out partway
+    // through typing would release the input lock while pixelflux is still
+    // typing, letting the next call interleave its keystrokes.
+    if let PixelfluxAction::Type { text } = action {
+        let chars = text.chars().count();
+        if chars > MAX_TYPE_CHARS {
+            return Err(anyhow!(DispatchError::Rejected(format!(
+                "text is {chars} characters; split it into chunks of at most {MAX_TYPE_CHARS} characters"
+            ))));
+        }
+    }
     exchange(config, &action_body(action)?, send_timeout(action)).await
 }
 
 fn send_timeout(action: &PixelfluxAction) -> Duration {
-    match action {
+    let timeout = match action {
         PixelfluxAction::Type { text } => SEND_TIMEOUT.saturating_add(Duration::from_millis(
             (text.chars().count() as u64).saturating_mul(TYPE_MS_PER_CHAR),
         )),
         _ => SEND_TIMEOUT,
-    }
+    };
+    timeout.min(MAX_SEND_TIMEOUT)
 }
 
 pub(crate) async fn probe(config: &PixelfluxConfig) -> Result<()> {
@@ -138,19 +160,19 @@ impl std::fmt::Display for DispatchError {
 }
 impl std::error::Error for DispatchError {}
 
-fn loopback_port(raw: &str) -> Option<u16> {
-    let port = if let Some(rest) = raw.strip_prefix("[::1]:") {
-        rest
+fn loopback_endpoint(raw: &str) -> Option<(&'static str, u16)> {
+    let (host, port) = if let Some(rest) = raw.strip_prefix("[::1]:") {
+        ("::1", rest)
     } else if let Some(rest) = raw.strip_prefix("127.0.0.1:") {
-        rest
+        ("127.0.0.1", rest)
     } else if let Some(rest) = raw.strip_prefix("localhost:") {
-        rest
+        ("localhost", rest)
     } else if raw.bytes().all(|byte| byte.is_ascii_digit()) {
-        raw
+        ("127.0.0.1", raw)
     } else {
         return None;
     };
-    port.parse().ok()
+    Some((host, port.parse().ok()?))
 }
 
 fn action_body(action: &PixelfluxAction) -> Result<Vec<u8>> {
@@ -255,12 +277,17 @@ async fn exchange_inner(config: &PixelfluxConfig, body: &[u8]) -> Result<Pixelfl
     {
         bail!("PIXELFLUX_CU_TOKEN contains a character that cannot go in an HTTP header");
     }
-    let mut stream = TcpStream::connect(("127.0.0.1", config.port))
+    let mut stream = TcpStream::connect((config.host.as_str(), config.port))
         .await
         .context("pixelflux connection failed")?;
+    // Bracket the IPv6 loopback so the Host header stays valid.
+    let authority = if config.host.contains(':') {
+        format!("[{}]:{}", config.host, config.port)
+    } else {
+        format!("{}:{}", config.host, config.port)
+    };
     let header = format!(
-        "POST /computer-use HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
-        port = config.port,
+        "POST /computer-use HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
         token = config.token,
         len = body.len(),
     );
@@ -569,6 +596,7 @@ mod tests {
 
     fn config(port: u16) -> PixelfluxConfig {
         PixelfluxConfig {
+            host: "127.0.0.1".to_string(),
             port,
             token: "secret".to_string(),
         }
@@ -587,14 +615,20 @@ mod tests {
             let _reset = EnvReset::apply(&[("PIXELFLUX_CU", port), ("PIXELFLUX_CU_TOKEN", token)]);
             assert!(PixelfluxConfig::from_env().is_none(), "{port:?} {token:?}");
         }
-        for port in ["5000", "127.0.0.1:5000", "[::1]:5000", "localhost:5000"] {
+        for (raw, host) in [
+            ("5000", "127.0.0.1"),
+            ("127.0.0.1:5000", "127.0.0.1"),
+            ("[::1]:5000", "::1"),
+            ("localhost:5000", "localhost"),
+        ] {
             let _reset = EnvReset::apply(&[
-                ("PIXELFLUX_CU", Some(port)),
+                ("PIXELFLUX_CU", Some(raw)),
                 ("PIXELFLUX_CU_TOKEN", Some("secret")),
             ]);
             let got =
-                PixelfluxConfig::from_env().unwrap_or_else(|| panic!("expected Some for {port}"));
-            assert_eq!(got.port, 5000, "{port}");
+                PixelfluxConfig::from_env().unwrap_or_else(|| panic!("expected Some for {raw}"));
+            assert_eq!(got.host, host, "{raw}");
+            assert_eq!(got.port, 5000, "{raw}");
             assert_eq!(got.token, "secret");
         }
         let _reset = EnvReset::apply(&[
@@ -794,9 +828,41 @@ mod tests {
         // 1,000 characters at pixelflux's ~28 ms each take 28 s; count characters, not bytes.
         assert!(typed("x".repeat(1_000)) >= SEND_TIMEOUT + Duration::from_secs(28));
         assert_eq!(typed("é".repeat(1_000)), typed("x".repeat(1_000)));
+        // ... but even a novel-length paste waits at most the cap.
+        assert_eq!(typed("x".repeat(1_000_000)), MAX_SEND_TIMEOUT);
         let key = PixelfluxAction::Key {
             chord: "ctrl+l".to_string(),
         };
         assert_eq!(send_timeout(&key), SEND_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn over_budget_text_is_rejected_before_sending() {
+        // No listener: rejection must happen before any connection attempt,
+        // so nothing is typed and the failure is clean, not "may have run".
+        let error = send(
+            &config(1),
+            &PixelfluxAction::Type {
+                text: "x".repeat(MAX_TYPE_CHARS + 1),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(!outcome_unknown(&error), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("split it into chunks"),
+            "{error:#}"
+        );
+        // At exactly the budget the request still goes out (and fails here
+        // only because nothing listens).
+        let error = send(
+            &config(1),
+            &PixelfluxAction::Type {
+                text: "x".repeat(MAX_TYPE_CHARS),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(is_unreachable(&error), "{error:#}");
     }
 }

@@ -430,13 +430,15 @@ async fn capture_with_pixelflux(
     let reply =
         crate::pixelflux::send(config, &crate::pixelflux::PixelfluxAction::Screenshot).await?;
     let bytes = reply.data.context("pixelflux screenshot had no image")?;
-    let image = image::load_from_memory(&bytes).context("pixelflux screenshot was not an image")?;
+    // Read only the PNG header: a full decode here would inflate an
+    // arbitrary-size image just to learn its dimensions.
+    let (width, height) = png_dimensions(&bytes).context("pixelflux screenshot was not a PNG")?;
     Ok(RawScreenshotCapture {
         mime_type: "image/png".to_string(),
         bytes,
         source: "pixelflux".to_string(),
-        width: image.width(),
-        height: image.height(),
+        width,
+        height,
     })
 }
 
@@ -1018,7 +1020,7 @@ fn cleanup_gnome_requested_path(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
-fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+pub(crate) fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
     const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
     if bytes.len() < 24 || &bytes[..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
         bail!("screenshot file was not a valid PNG");

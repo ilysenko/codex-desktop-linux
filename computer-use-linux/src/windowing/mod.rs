@@ -384,65 +384,33 @@ mod tests {
     }
 
     #[test]
-    fn resolves_large_window_id_after_json_number_rounding() {
-        let exact_window_id = 7_511_476_032_840_641_491;
-        let rounded_window_id = 7_511_476_032_840_642_000;
-        assert_ne!(exact_window_id, rounded_window_id);
-        assert_eq!(exact_window_id as f64, rounded_window_id as f64);
+    fn window_id_input_rejects_integers_above_javascript_safe_range() {
+        // Issue #341: the Firefox ID a JavaScript client received for a KWin
+        // window, after rounding. 18446744073709552000 is u64::MAX after
+        // JavaScript rounding, which serde_json reads as a float; negative
+        // and fractional numbers are not window IDs either.
+        for window_id in [
+            "17289304398224070000",
+            "18446744073709552000",
+            "9007199254740992",
+            "-1",
+            "1.5",
+        ] {
+            let error =
+                serde_json::from_str::<WindowTarget>(&format!(r#"{{"window_id":{window_id}}}"#))
+                    .unwrap_err()
+                    .to_string();
+            assert!(error.contains("0 to 9007199254740991"), "{error}");
+            assert!(error.contains("re-run list_windows"), "{error}");
+        }
 
-        let windows = vec![window(
-            exact_window_id,
-            "Untitled — Kate",
-            "org.kde.kate",
-            "org.kde.kate",
-        )];
-
-        let matched = resolve_window_target(
-            &windows,
-            &WindowTarget {
-                window_id: Some(rounded_window_id),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        assert_eq!(matched.window_id, exact_window_id);
-    }
-
-    #[test]
-    fn rounded_window_id_can_be_disambiguated_by_title() {
-        let first_window_id = 7_511_476_032_840_641_491;
-        let second_window_id = 7_511_476_032_840_641_999;
-        let rounded_window_id = 7_511_476_032_840_642_000;
-        assert_eq!(first_window_id as f64, rounded_window_id as f64);
-        assert_eq!(second_window_id as f64, rounded_window_id as f64);
-
-        let windows = vec![
-            window(
-                first_window_id,
-                "First - Kate",
-                "org.kde.kate",
-                "org.kde.kate",
-            ),
-            window(
-                second_window_id,
-                "Second - Kate",
-                "org.kde.kate",
-                "org.kde.kate",
-            ),
-        ];
-
-        let matched = resolve_window_target(
-            &windows,
-            &WindowTarget {
-                window_id: Some(rounded_window_id),
-                title: Some("Second".to_string()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        assert_eq!(matched.window_id, second_window_id);
+        let max =
+            serde_json::from_str::<WindowTarget>(r#"{"window_id":9007199254740991}"#).unwrap();
+        assert_eq!(max.window_id, Some(types::MAX_WINDOW_ID));
+        let null = serde_json::from_str::<WindowTarget>(r#"{"window_id":null}"#).unwrap();
+        assert_eq!(null.window_id, None);
+        let missing = serde_json::from_str::<WindowTarget>("{}").unwrap();
+        assert_eq!(missing.window_id, None);
     }
 
     #[test]

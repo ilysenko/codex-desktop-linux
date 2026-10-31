@@ -21,11 +21,15 @@ desktops, dependencies, permissions, and troubleshooting.
 
 ## Supported operations
 
-The embedded backend tracks standalone computer-use-linux v0.7.33. GNOME
+The embedded backend tracks standalone computer-use-linux v0.7.34. GNOME
 scaled pointer sessions use portal EIS regions when available and retain the
 legacy route when negotiation fails. Selkies containers can set `PIXELFLUX_CU`
 and `PIXELFLUX_CU_TOKEN` to use their loopback computer-use API for capture and
 input. Input with an uncertain outcome is reported without automatic replay.
+KWin window IDs fit in 53 bits, so JavaScript clients carry them exactly.
+Element actions refuse an element owned by another app or window. MCP
+`get_app_state` returns compact nodes by default, accepts `interactive_only`,
+and scopes multi-window Chromium apps to the targeted window.
 
 The in-app API supports window listing, accessibility inspection, screenshots,
 coordinate clicks, keyboard input, text entry, and scrolling. Use the IDs returned

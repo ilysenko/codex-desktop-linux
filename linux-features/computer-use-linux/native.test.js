@@ -272,6 +272,7 @@ test('native client compacts and suppresses repeated large accessibility observa
 
     const full = JSON.parse(await app.getAXState({emit:false,compact:false}));
     assert.match(full.accessibility_tree[0].object_ref,/org\/a11y/);
+    assert.deepEqual(calls.at(-1).params,{include_screenshot:false,verbose:true});
 
     response = {...response,accessibility_tree:tree.map((node,index) => index === 236
       ? {...node,states:node.states.filter(state => state !== 'enabled' && state !== 'showing')}
@@ -284,6 +285,31 @@ test('native client compacts and suppresses repeated large accessibility observa
     assert.equal(changed.window_context.focused,false);
     await assert.rejects(app.getAXState({maxNodes:20,max_nodes:21}),/Conflicting maxNodes/);
   } finally { globalThis.nodeRepl=original; }
+});
+
+test('native client keeps action names from compact backend nodes', async () => {
+  const { installLinuxComputerUse } = await import('./native-client.mjs');
+  const original = globalThis.nodeRepl;
+  globalThis.nodeRepl = {
+    write(){},
+    rpc:async () => ({accessibility_tree:[{
+      index:0, depth:0, object_ref:':1.234/org/a11y/atspi/accessible/0', role:'push button',
+      name:'Save', states:['enabled','focusable'], actions:['click','press'],
+    }]}),
+  };
+  try {
+    const app = await installLinuxComputerUse({}).getApp('editor');
+    const [button] = JSON.parse(await app.getAXState({emit:false,disableDiffing:true})).accessibility_tree;
+    assert.deepEqual(button.actions,['click','press']);
+    assert.equal(button.actionable,true);
+  } finally { globalThis.nodeRepl=original; }
+});
+
+test('native verbose is a boolean get_app_state parameter', async () => {
+  const { validateNativeRequest } = await import('./native-protocol.mjs');
+  assert.doesNotThrow(() => validateNativeRequest({method:'get_app_state', params:{verbose:true}}));
+  assert.throws(() => validateNativeRequest({method:'get_app_state', params:{verbose:'yes'}}), /Invalid native verbose/);
+  assert.throws(() => validateNativeRequest({method:'screenshot', app:'editor', params:{verbose:true}}), /Unsupported native operation parameter/);
 });
 
 test('native client routes screenshot limits separately from accessibility limits', async () => {

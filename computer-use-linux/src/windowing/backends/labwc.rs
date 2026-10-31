@@ -1,5 +1,5 @@
 use crate::windowing::registry::BackendProbe;
-use crate::windowing::types::WindowInfo;
+use crate::windowing::types::{WindowInfo, MAX_WINDOW_ID};
 use crate::windowing::wayland_session::peer_pid;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
@@ -40,7 +40,7 @@ fn window_id(pid: u32, app_id: Option<&str>, title: Option<&str>) -> u64 {
         id ^= u64::from(byte);
         id = id.wrapping_mul(0x100000001b3);
     }
-    id & ((1u64 << 53) - 1)
+    id & MAX_WINDOW_ID
 }
 
 fn unique_window<'a>(windows: &'a [WindowInfo], requested: &WindowInfo) -> Result<&'a WindowInfo> {

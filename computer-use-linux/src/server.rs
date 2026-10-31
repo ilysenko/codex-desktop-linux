@@ -22,6 +22,7 @@ use crate::screenshot::{
     ScreenshotOutputFormat, ScreenshotPayloadOptions,
 };
 use crate::terminal::{terminal_paste_shortcut, TerminalPasteShortcut};
+use crate::tree_encoding::{is_placeholder_text, NodeDetail, TreeNodes};
 use crate::windowing::backends::kwin::{
     KwinElementClickPoint, KwinElementClickTarget, KwinElementFrame,
 };
@@ -103,6 +104,37 @@ struct CachedAccessibilitySnapshot {
     window_id: Option<u64>,
     window_backend: Option<String>,
     recovery_scope: Option<AccessibilityRecoveryScope>,
+    /// Encoding of the result the nodes were returned in; get_tree_page pages
+    /// them in the same one.
+    detail: NodeDetail,
+    /// The AT-SPI window the tree was narrowed to, when the app exposes
+    /// several windows under one root. A post-action tree with no window
+    /// target of its own keeps the same scope.
+    window_scope: Option<String>,
+}
+
+/// The app or window an element action names, as the cached-node target
+/// check sees it: the target pid when one is known, and the resolved window
+/// with its backend when the target named a window.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct ElementOwnerTarget {
+    pid: Option<u32>,
+    window: Option<(u64, String)>,
+}
+
+impl ElementOwnerTarget {
+    fn pid(pid: Option<u32>) -> Self {
+        Self { pid, window: None }
+    }
+
+    /// A resolved window target. The window's own pid wins over `pid`, the
+    /// one the caller passed.
+    fn window(window: &WindowInfo, pid: Option<u32>) -> Self {
+        Self {
+            pid: window.pid.or(pid),
+            window: Some((window.window_id, window.backend.clone())),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -325,12 +357,12 @@ impl ComputerUseLinux {
         &self,
         Parameters(params): Parameters<GetTreePageParams>,
     ) -> Json<GetTreePageOutput> {
-        let nodes = self
+        let (nodes, detail) = self
             .last_snapshot
             .lock()
-            .map(|snapshot| snapshot.nodes.clone())
+            .map(|snapshot| (snapshot.nodes.clone(), snapshot.detail))
             .unwrap_or_default();
-        Json(tree_page(&nodes, params.offset.unwrap_or(0)))
+        Json(tree_page(&nodes, detail, params.offset.unwrap_or(0)))
     }
 
     #[tool(
@@ -448,7 +480,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "get_app_state",
         output_schema = rmcp::handler::server::tool::schema_for_output::<GetAppStateOutput>(),
-        description = "Start an app use session if needed, then get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. Screenshot results include coordinate_width, coordinate_height, scale, format, and quality when the returned image is downscaled or compressed; callers can request jpeg/quality for compression before resizing.",
+        description = "Start an app use session if needed, then get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. Screenshot results include coordinate_width, coordinate_height, scale, format, and quality when the returned image is downscaled or compressed; callers can request jpeg/quality for compression before resizing.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -508,9 +540,25 @@ impl ComputerUseLinux {
             .resolve_accessibility_app_filter(&params, window_context.as_ref(), window_enumerated)
             .await;
         let mut screenshot_captured = None;
+        let mut capture_note = None;
         let (screenshot, screenshot_error) = if include_screenshot {
             let result: Result<ScreenshotCapture> = async {
                 let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
+                if let Some(window) = window_context.as_ref() {
+                    if let Some(capture) = self.hyprland_background_capture(window).await {
+                        let (raw, note) = capture?;
+                        screenshot_captured = Some(true);
+                        capture_note = note;
+                        return crate::screenshot::run_image_task(move || {
+                            prepare_screenshot_payload(raw, screenshot_options)
+                        })
+                        .await;
+                    }
+                    // Refuse an unfocused target before capturing: the call must
+                    // not grab the desktop (and raise a portal prompt) only to
+                    // discard it.
+                    ensure_readonly_screenshot_target_is_visible(window)?;
+                }
                 let raw = {
                     let _hold = self.indicator.hold_for_capture().await?;
                     capture_screenshot_raw().await
@@ -519,7 +567,6 @@ impl ComputerUseLinux {
                 let raw = raw?;
                 self.cache_desktop_size(raw.width, raw.height);
                 let crop = if let Some(window) = window_context.as_ref() {
-                    ensure_readonly_screenshot_target_is_visible(window)?;
                     Some(self.window_crop_rect_for_capture(window, &raw).await?)
                 } else {
                     None
@@ -546,15 +593,20 @@ impl ComputerUseLinux {
         let mut tree_root_pid = None;
         let mut accessibility_tree_truncated = false;
         let mut shell_only_note = None;
+        let mut window_scope = None;
+        let mut interactive_note = None;
+        let detail = NodeDetail::from_verbose(verbose);
         let (accessibility_tree, accessibility_tree_raw_count, accessibility_error, tree_read) =
             if diagnostics.readiness.can_build_accessibility_tree {
                 let target_pid = accessibility_snapshot_target_pid(
                     app_filter.as_deref(),
                     window_context.as_ref().and_then(|window| window.pid),
                 );
+                let window_title = accessibility_window_title(&params, window_context.as_ref());
                 match snapshot_accessibility_tree(
                     app_filter.as_deref(),
                     target_pid,
+                    window_title.as_deref(),
                     max_nodes,
                     max_depth,
                 )
@@ -564,6 +616,7 @@ impl ComputerUseLinux {
                         tree_scoped = snapshot.scoped;
                         tree_root_pid = snapshot.root_pid;
                         accessibility_tree_truncated = snapshot.truncated;
+                        window_scope = snapshot.window_scope;
                         let raw_count = snapshot.nodes.len();
                         let (nodes, note) = compact_accessibility_tree_with_note(
                             snapshot.nodes,
@@ -571,6 +624,17 @@ impl ComputerUseLinux {
                             accessibility_tree_truncated,
                         );
                         shell_only_note = note;
+                        let nodes = if params.interactive_only.unwrap_or(false) {
+                            let compacted = nodes.len();
+                            let nodes = interactive_accessibility_tree(nodes);
+                            interactive_note = Some(format!(
+                                "interactive_only kept {} of {compacted} compacted nodes; element_index values match the full tree.",
+                                nodes.len()
+                            ));
+                            nodes
+                        } else {
+                            nodes
+                        };
                         let read = if raw_count == 0 {
                             TreeRead::Failed
                         } else {
@@ -630,8 +694,10 @@ impl ComputerUseLinux {
                 window_context.as_ref(),
                 &params,
                 tree_scoped,
+                detail,
             )
             .await;
+            self.remember_window_scope(window_scope.clone());
         } else {
             self.commit_snapshot(&[], None).await;
         }
@@ -666,6 +732,10 @@ impl ComputerUseLinux {
         } else if let Some(error) = &window_error {
             message.push_str(&format!(" Window target resolution failed: {error}"));
         }
+        if let Some(note) = capture_note {
+            message.push(' ');
+            message.push_str(&note);
+        }
         if let Some(warning) = unscoped_accessibility_tree_warning(
             tree_scoped,
             accessibility_error.is_none(),
@@ -681,6 +751,15 @@ impl ComputerUseLinux {
         if let Some(note) = shell_only_note {
             message.push(' ');
             message.push_str(note);
+        }
+        if let Some(window) = window_scope {
+            message.push_str(&format!(
+                " The app exposes several windows; the tree covers only the window named {window:?}."
+            ));
+        }
+        if let Some(note) = interactive_note {
+            message.push(' ');
+            message.push_str(&note);
         }
 
         // Full diagnostics are huge (portal/process dumps); emit them only on
@@ -703,7 +782,7 @@ impl ComputerUseLinux {
             backend: "linux-atspi".to_string(),
             screenshot: screenshot.as_ref().map(ScreenshotSummary::from),
             screenshot_error,
-            accessibility_tree: Vec::new(),
+            accessibility_tree: TreeNodes::new(Vec::new(), detail),
             accessibility_tree_raw_count,
             accessibility_tree_spill: None,
             tree_scoped,
@@ -715,7 +794,7 @@ impl ComputerUseLinux {
         };
         // The tree gets whatever the rest of the result leaves of the budget.
         let rest = serde_json::to_string(&output).map_or(0, |json| json.len());
-        let mut accessibility_tree = accessibility_tree;
+        let mut accessibility_tree = TreeNodes::new(accessibility_tree, detail);
         let (spill, note) = fit_tree(
             &self.tree_spiller,
             &mut accessibility_tree,
@@ -752,9 +831,65 @@ impl ComputerUseLinux {
         result
     }
 
+    /// Background mode for the screenshot tool: an unfocused Hyprland target is
+    /// captured with `grim -T` and never raised.
+    async fn hyprland_background_screenshot(
+        &self,
+        target: &WindowTarget,
+        params: &ScreenshotParams,
+    ) -> Option<Result<CallToolResult>> {
+        if !crate::hyprland_input::background_enabled() {
+            return None;
+        }
+        let windows = list_windows().await.ok()?;
+        let window = resolve_window_target(&windows, target).ok()?.clone();
+        let (raw, note) = match self.hyprland_background_capture(&window).await? {
+            Ok(capture) => capture,
+            Err(error) => return Some(Err(error.context("targeted screenshot failed"))),
+        };
+        let options = params.screenshot_options();
+        let capture = match crate::screenshot::run_image_task(move || {
+            prepare_screenshot_payload(raw, options)
+        })
+        .await
+        {
+            Ok(capture) => capture,
+            Err(error) => return Some(Err(error.context("screenshot resize failed"))),
+        };
+        let mut caption = serde_json::json!({
+            "width": capture.width,
+            "height": capture.height,
+            "coordinate_width": capture.coordinate_width,
+            "coordinate_height": capture.coordinate_height,
+            "scale": capture.scale,
+            "resized": capture.resized,
+            "bytes": capture.bytes,
+            "original_bytes": capture.original_bytes,
+            "max_bytes": capture.max_bytes,
+            "format": capture.format,
+            "quality": capture.quality,
+            "source": capture.source,
+            "cropped_to_window": true,
+            "window_title": window.title,
+            "window_raised": false,
+        });
+        if let Some(note) = note {
+            caption["hidden_workspace_note"] = serde_json::json!(note);
+        }
+        Some(Ok(CallToolResult::success(vec![
+            ContentBlock::image(data_url_payload(&capture.data_url), capture.mime_type),
+            ContentBlock::text(caption.to_string()),
+        ])))
+    }
+
     async fn capture_screenshot(&self, params: ScreenshotParams) -> Result<CallToolResult> {
         let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
         let target = params.window_target();
+        if let (Some(target), false) = (target.as_ref(), params.full_screen.unwrap_or(false)) {
+            if let Some(result) = self.hyprland_background_screenshot(target, &params).await {
+                return result;
+            }
+        }
         let target_window = match target.as_ref() {
             Some(target) => Some(
                 self.resolve_screenshot_window(target, params.raise_window.unwrap_or(true))
@@ -1007,7 +1142,7 @@ impl ComputerUseLinux {
         let input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let mut portal_target_point = None;
         let mut input_focus = None;
-        let mut target_pid = params.pid;
+        let mut owner_target = ElementOwnerTarget::pid(params.pid);
         if let Err(message) = validate_click_coordinate_space(&params) {
             return Json(ActionOutput {
                 ok: false,
@@ -1053,7 +1188,7 @@ impl ComputerUseLinux {
                     });
                 }
             };
-            target_pid = focus_target_pid(focus.as_ref()).or(target_pid);
+            owner_target = focus_owner_target(focus.as_ref(), params.pid);
             tokio::time::sleep(Duration::from_millis(120)).await;
             // Window-relative coordinates: translate by the window's top-left so
             // the agent can click the pixel it saw in a window-cropped screenshot.
@@ -1105,20 +1240,22 @@ impl ComputerUseLinux {
         if params.x.zip(params.y).is_none()
             || params.coordinate_space == ClickCoordinateSpace::Atspi
         {
-            if let Some(node) = self.cached_node_for(
-                params.element_index,
-                &params.selector(),
-                ElementResolvePurpose::Click,
-            ) {
-                if let Err(message) = self.check_node_target(&node, target_pid).await {
-                    return Json(ActionOutput {
-                        ok: false,
-                        implemented: true,
-                        action: "click".to_string(),
-                        message,
-                        received,
-                    });
-                }
+            if let Err(message) = self
+                .check_cached_element_target(
+                    params.element_index,
+                    &params.selector(),
+                    ElementResolvePurpose::Click,
+                    &owner_target,
+                )
+                .await
+            {
+                return Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "click".to_string(),
+                    message,
+                    received,
+                });
             }
         }
         let target = match self.resolve_click_target(&params) {
@@ -1529,7 +1666,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "perform_action",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Invoke an accessibility action exposed by an element selected by index, identifier, or semantic selector. Defaults to the primary action unless action is provided. A stale semantic target can recover once with verified process/window ownership. Recovery invalidates cached indices; call get_app_state before further element_index actions. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Invoke an accessibility action exposed by an element selected by index, identifier, or semantic selector. Defaults to the primary action unless action is provided. A stale semantic target can recover once with verified process/window ownership. Recovery invalidates cached indices; call get_app_state before further element_index actions. Pass the target app (pid, window_id, app_id, wm_class, or window_title, as for click) to refuse an element_index or selector from another app's or window's get_app_state snapshot, and an element_identifier owned by another pid; the window is not focused. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -1543,16 +1680,18 @@ impl ComputerUseLinux {
     ) -> Result<CallToolResult, ErrorData> {
         let capture = params.capture.clone();
         let requested_action = requested_or_primary_action(params.action.as_deref());
+        let target = params.target.window_target();
         let Json(output) = self
             .perform_element_action(&params, Some(requested_action))
             .await;
-        self.finish_action_output(output, &capture, None).await
+        self.finish_action_output(output, &capture, target.as_ref())
+            .await
     }
 
     #[tool(
         name = "set_value",
         output_schema = rmcp::handler::server::tool::schema_for_output::<SetValueToolOutput>(),
-        description = "Set the value of a settable accessibility element selected by index, identifier, or semantic selector. Editable-text writes are verified by exact readback; password fields are explicitly unverifiable. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Set the value of a settable accessibility element selected by index, identifier, or semantic selector. Editable-text writes are verified by exact readback; password fields are explicitly unverifiable. Pass the target app (pid, window_id, app_id, wm_class, or window_title, as for click) to refuse an element_index or selector from another app's or window's get_app_state snapshot, and an element_identifier owned by another pid; the window is not focused. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -1565,14 +1704,36 @@ impl ComputerUseLinux {
         Parameters(params): Parameters<SetValueParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let capture = params.capture.clone();
+        let target = params.target.window_target();
         let (output, verified) = self.dispatch_set_value(params).await;
-        self.finish_set_value_output(output, verified, &capture)
+        self.finish_set_value_output(output, verified, &capture, target.as_ref())
             .await
     }
 
     async fn dispatch_set_value(&self, params: SetValueParams) -> (ActionOutput, Option<bool>) {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let received = Some(serde_json::json!(params.clone()));
+        if let Err(message) = self
+            .check_element_action_target(
+                &params.target,
+                params.element_index,
+                params.element_identifier.as_deref(),
+                &params.selector(),
+                ElementResolvePurpose::SetValue,
+            )
+            .await
+        {
+            return (
+                ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "set_value".to_string(),
+                    message,
+                    received,
+                },
+                None,
+            );
+        }
         let object_ref = match self.resolve_object_ref(
             params.element_index,
             params.element_identifier.as_deref(),
@@ -1660,7 +1821,7 @@ impl ComputerUseLinux {
         };
         let input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let mut portal_target_point = None;
-        let mut target_pid = params.pid;
+        let mut owner_target = ElementOwnerTarget::pid(params.pid);
         // Raise/focus the target window first (parity with click) so wheel
         // events land on the intended app.
         let mut window_target = params.window_target();
@@ -1686,7 +1847,7 @@ impl ComputerUseLinux {
                     });
                 }
             };
-            target_pid = focus_target_pid(focus.as_ref()).or(target_pid);
+            owner_target = focus_owner_target(focus.as_ref(), params.pid);
             tokio::time::sleep(Duration::from_millis(120)).await;
             if params.relative == Some(true) {
                 let Some(focus) = focus.as_ref() else {
@@ -1776,20 +1937,22 @@ impl ComputerUseLinux {
             }
         }
         if params.x.is_none() && params.y.is_none() {
-            if let Some(node) = self.cached_node_for(
-                params.element_index,
-                &ElementSelector::default(),
-                ElementResolvePurpose::Click,
-            ) {
-                if let Err(message) = self.check_node_target(&node, target_pid).await {
-                    return Json(ActionOutput {
-                        ok: false,
-                        implemented: true,
-                        action: "scroll".to_string(),
-                        message,
-                        received,
-                    });
-                }
+            if let Err(message) = self
+                .check_cached_element_target(
+                    params.element_index,
+                    &ElementSelector::default(),
+                    ElementResolvePurpose::Click,
+                    &owner_target,
+                )
+                .await
+            {
+                return Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "scroll".to_string(),
+                    message,
+                    received,
+                });
             }
         }
         let target_point =
@@ -2336,6 +2499,22 @@ impl ComputerUseLinux {
         let input_guard =
             InputOperationGuard::new(Arc::clone(&self.input_operation_lock).lock_owned().await);
         let window_target = params.window_target();
+        if let Some(output) = self
+            .hyprland_background_input(
+                "press_key",
+                &params.window_target(),
+                &params.key,
+                crate::hyprland_input::chord_to_key_press(&params.key)
+                    .map(|press| vec![press])
+                    .ok_or_else(|| {
+                        "Unsupported key. Use names like Enter, Escape, Tab, ArrowLeft, Super, Ctrl+L, or a single US keyboard letter/digit.".to_string()
+                    }),
+                received.clone(),
+            )
+            .await
+        {
+            return Json(output);
+        }
         let focus = match self.focus_target_for_input(&window_target).await {
             Ok(focus) => focus,
             Err(message) => {
@@ -2561,6 +2740,18 @@ impl ComputerUseLinux {
         let input_guard =
             InputOperationGuard::new(Arc::clone(&self.input_operation_lock).lock_owned().await);
         let window_target = params.window_target();
+        if let Some(output) = self
+            .hyprland_background_input(
+                "type_text",
+                &window_target,
+                &params.text,
+                crate::hyprland_input::text_to_key_presses(&params.text),
+                received.clone(),
+            )
+            .await
+        {
+            return Json(output);
+        }
         let focus = match self.focus_target_for_input(&window_target).await {
             Ok(focus) => focus,
             Err(message) => {
@@ -2918,8 +3109,8 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.33",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send literal type_text through KDE clipboard integration on Plasma Wayland, wtype on compatible Wayland compositors, or portal keysyms on other Wayland sessions. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable) and warn when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype uses a single literal argument after -- to avoid stdin keymap-refresh corruption; text is visible in process arguments, so confirmed password fields are rejected (use set_value). Terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call; split larger input into smaller calls or expose accessibility. Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, click, and input results warn when the target window or coordinate is partially or fully off-screen; use move_window/resize_window (GNOME Shell extension backend) to bring a window fully on-screen before retrying. scroll accepts the same window targeting and relative coordinates as click. get_app_state returns a compact readiness block by default; pass verbose=true for the full diagnostics dump. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
+    version = "0.7.34",
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send literal type_text through KDE clipboard integration on Plasma Wayland, wtype on compatible Wayland compositors, or portal keysyms on other Wayland sessions. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable) and warn when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype uses a single literal argument after -- to avoid stdin keymap-refresh corruption; text is visible in process arguments, so confirmed password fields are rejected (use set_value). Terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call; split larger input into smaller calls or expose accessibility. Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, click, and input results warn when the target window or coordinate is partially or fully off-screen; use move_window/resize_window (GNOME Shell extension backend) to bring a window fully on-screen before retrying. scroll accepts the same window targeting and relative coordinates as click. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -3358,7 +3549,7 @@ struct PostActionObservation {
     screenshot_error: Option<String>,
     /// Post-action compacted AT-SPI accessibility tree when `include_tree=true` was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
-    accessibility_tree: Option<Vec<AccessibilityNode>>,
+    accessibility_tree: Option<TreeNodes>,
     /// Raw AT-SPI node count before compaction when `include_tree=true` was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     accessibility_tree_raw_count: Option<usize>,
@@ -3379,7 +3570,11 @@ struct PostActionObservation {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ActivateWindowParams {
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::windowing::types::deserialize_window_id"
+    )]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
     #[serde(default)]
     pid: Option<u32>,
@@ -3529,7 +3724,11 @@ struct GetAppStateParams {
     app_name_or_bundle_identifier: Option<String>,
     /// Compositor window id. Also scopes the accessibility tree to that window's
     /// application when possible.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::windowing::types::deserialize_window_id"
+    )]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
     /// Process id. Also scopes the accessibility tree to that process when it
     /// exposes AT-SPI.
@@ -3592,10 +3791,19 @@ struct GetAppStateParams {
     #[serde(default)]
     #[schemars(range(min = 1, max = 95))]
     quality: Option<u8>,
-    /// Include the full diagnostics report (large). Default false: only the
-    /// compact readiness block is returned.
+    /// Include the full diagnostics report (large) and return tree nodes in the
+    /// full encoding, with null and empty fields and action descriptions and
+    /// keybindings. Default false: only the compact readiness block, and
+    /// compact nodes.
     #[serde(default)]
     verbose: Option<bool>,
+    /// Return only nodes that can be acted on (an action, editable text, or a
+    /// value), plus headings, status/live regions, windows and dialogs.
+    /// Containers are collapsed: each node's parent_index points at its
+    /// nearest kept ancestor. element_index values are the same as in the full
+    /// tree, so they work with click, perform_action and set_value.
+    #[serde(default)]
+    interactive_only: Option<bool>,
 }
 
 impl GetAppStateParams {
@@ -3627,7 +3835,11 @@ impl GetAppStateParams {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ScreenshotParams {
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::windowing::types::deserialize_window_id"
+    )]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
     #[serde(default)]
     pid: Option<u32>,
@@ -3791,7 +4003,7 @@ struct GetTreePageParams {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct GetTreePageOutput {
     /// Nodes from `offset`, as many as fit in one result.
-    nodes: Vec<AccessibilityNode>,
+    nodes: TreeNodes,
     offset: usize,
     /// Offset of the next page, or null when this page ends the tree.
     next_offset: Option<usize>,
@@ -3802,11 +4014,11 @@ struct GetTreePageOutput {
 
 /// A page of `nodes` from `offset` that fits the inline budget. Always at least
 /// one node, so paging advances even past a node larger than the budget.
-fn tree_page(nodes: &[AccessibilityNode], offset: usize) -> GetTreePageOutput {
+fn tree_page(nodes: &[AccessibilityNode], detail: NodeDetail, offset: usize) -> GetTreePageOutput {
     let node_count = nodes.len();
     if node_count == 0 {
         return GetTreePageOutput {
-            nodes: Vec::new(),
+            nodes: TreeNodes::new(Vec::new(), detail),
             offset,
             next_offset: None,
             node_count,
@@ -3815,7 +4027,7 @@ fn tree_page(nodes: &[AccessibilityNode], offset: usize) -> GetTreePageOutput {
     }
     let start = offset.min(node_count);
     let rest = &nodes[start..];
-    let fit = crate::tree_spill::inline_prefix_len(rest, tree_budget(TREE_PAGE_RESERVE))
+    let fit = crate::tree_spill::inline_prefix_len(rest, detail, tree_budget(TREE_PAGE_RESERVE))
         .max(usize::from(!rest.is_empty()));
     let end = start + fit;
     let next_offset = (end < node_count).then_some(end);
@@ -3831,7 +4043,7 @@ fn tree_page(nodes: &[AccessibilityNode], offset: usize) -> GetTreePageOutput {
         None => format!("Offset {offset} is past the end of the {node_count}-node tree."),
     };
     GetTreePageOutput {
-        nodes: rest[..fit].to_vec(),
+        nodes: TreeNodes::new(rest[..fit].to_vec(), detail),
         offset: start,
         next_offset,
         node_count,
@@ -3923,8 +4135,9 @@ struct GetAppStateOutput {
     screenshot: Option<ScreenshotSummary>,
     screenshot_error: Option<String>,
     /// Compacted tree, or its leading nodes when the whole tree is in
-    /// `accessibility_tree_spill`.
-    accessibility_tree: Vec<AccessibilityNode>,
+    /// `accessibility_tree_spill`. Nodes use the compact encoding (empty and
+    /// default fields left out, actions by name) unless verbose=true.
+    accessibility_tree: TreeNodes,
     accessibility_tree_raw_count: usize,
     /// Set when the compacted tree was too large to return inline: the whole
     /// tree is in this private file, with the same element_index values.
@@ -3983,7 +4196,11 @@ struct ClickParams {
     // Optional window target: when set, the window is raised/focused before the
     // click so a coordinate click reliably lands on the intended app rather than
     // whatever window happens to be stacked on top at that pixel.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::windowing::types::deserialize_window_id"
+    )]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
     #[serde(default)]
     pid: Option<u32>,
@@ -4006,25 +4223,13 @@ struct ClickParams {
 impl ClickParams {
     /// A window target if any window-identifying field was supplied.
     fn window_target(&self) -> Option<WindowTarget> {
-        if self.window_id.is_none()
-            && self.pid.is_none()
-            && self.app_id.is_none()
-            && self.wm_class.is_none()
-            && self.window_title.is_none()
-        {
-            return None;
-        }
-        Some(WindowTarget {
-            window_id: self.window_id,
-            pid: self.pid,
-            tty: None,
-            terminal_pid: None,
-            terminal_command: None,
-            terminal_cwd: None,
-            app_id: self.app_id.clone(),
-            wm_class: self.wm_class.clone(),
-            title: self.window_title.clone(),
-        })
+        optional_window_target(
+            self.window_id,
+            self.pid,
+            &self.app_id,
+            &self.wm_class,
+            &self.window_title,
+        )
     }
 
     fn selector(&self) -> ElementSelector<'_> {
@@ -4034,6 +4239,71 @@ impl ClickParams {
             text: self.text.as_deref(),
             states: &self.states,
         }
+    }
+}
+
+/// The window target named by the click, scroll, perform_action and set_value
+/// fields, if any of them was supplied.
+fn optional_window_target(
+    window_id: Option<u64>,
+    pid: Option<u32>,
+    app_id: &Option<String>,
+    wm_class: &Option<String>,
+    window_title: &Option<String>,
+) -> Option<WindowTarget> {
+    if window_id.is_none()
+        && pid.is_none()
+        && app_id.is_none()
+        && wm_class.is_none()
+        && window_title.is_none()
+    {
+        return None;
+    }
+    Some(WindowTarget {
+        window_id,
+        pid,
+        tty: None,
+        terminal_pid: None,
+        terminal_command: None,
+        terminal_cwd: None,
+        app_id: app_id.clone(),
+        wm_class: wm_class.clone(),
+        title: window_title.clone(),
+    })
+}
+
+/// The optional app or window target of perform_action and set_value, the
+/// same fields click and scroll take. AT-SPI actions need no focus, so the
+/// target is not raised; it names the app whose get_app_state snapshot a
+/// cached element_index or selector must come from.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+struct ElementActionTarget {
+    #[serde(
+        default,
+        deserialize_with = "crate::windowing::types::deserialize_window_id"
+    )]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
+    window_id: Option<u64>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    wm_class: Option<String>,
+    #[serde(default)]
+    window_title: Option<String>,
+}
+
+impl ElementActionTarget {
+    /// A window target if any window-identifying field was supplied.
+    fn window_target(&self) -> Option<WindowTarget> {
+        optional_window_target(
+            self.window_id,
+            self.pid,
+            &self.app_id,
+            &self.wm_class,
+            &self.window_title,
+        )
     }
 }
 
@@ -4053,6 +4323,8 @@ struct ActionParams {
     states: Vec<String>,
     #[serde(default)]
     action: Option<String>,
+    #[serde(flatten)]
+    target: ElementActionTarget,
     #[serde(flatten)]
     capture: PostActionCaptureParams,
 }
@@ -4084,6 +4356,8 @@ struct SetValueParams {
     states: Vec<String>,
     value: String,
     #[serde(flatten)]
+    target: ElementActionTarget,
+    #[serde(flatten)]
     capture: PostActionCaptureParams,
 }
 
@@ -4112,7 +4386,11 @@ struct ScrollParams {
     pages: Option<f64>,
     // Optional window target (parity with click): the window is raised/focused
     // before scrolling so the wheel events land on the intended app.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::windowing::types::deserialize_window_id"
+    )]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
     #[serde(default)]
     pid: Option<u32>,
@@ -4145,25 +4423,13 @@ fn scroll_units(pages: Option<f64>) -> std::result::Result<i32, String> {
 impl ScrollParams {
     /// A window target if any window-identifying field was supplied.
     fn window_target(&self) -> Option<WindowTarget> {
-        if self.window_id.is_none()
-            && self.pid.is_none()
-            && self.app_id.is_none()
-            && self.wm_class.is_none()
-            && self.window_title.is_none()
-        {
-            return None;
-        }
-        Some(WindowTarget {
-            window_id: self.window_id,
-            pid: self.pid,
-            tty: None,
-            terminal_pid: None,
-            terminal_command: None,
-            terminal_cwd: None,
-            app_id: self.app_id.clone(),
-            wm_class: self.wm_class.clone(),
-            title: self.window_title.clone(),
-        })
+        optional_window_target(
+            self.window_id,
+            self.pid,
+            &self.app_id,
+            &self.wm_class,
+            &self.window_title,
+        )
     }
 }
 
@@ -4180,7 +4446,11 @@ struct DragParams {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct PressKeyParams {
     key: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::windowing::types::deserialize_window_id"
+    )]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
     #[serde(default)]
     pid: Option<u32>,
@@ -4205,7 +4475,11 @@ struct PressKeyParams {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct TypeTextParams {
     text: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::windowing::types::deserialize_window_id"
+    )]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
     #[serde(default)]
     pid: Option<u32>,
@@ -4887,9 +5161,22 @@ impl ComputerUseLinux {
                 || target_pid.is_some()
                 || app_filter.is_some();
             let (max_nodes, max_depth) = crate::atspi_tree::snapshot_limits(None, None);
+            let cached_window_scope = self.last_snapshot.lock().ok().and_then(|snapshot| {
+                snapshot
+                    .window_scope
+                    .clone()
+                    .map(|scope| (scope, snapshot.pid))
+            });
+            let window_title = post_action_window_title(
+                target,
+                resolved_window.as_ref(),
+                target_pid,
+                cached_window_scope,
+            );
             match snapshot_accessibility_tree(
                 app_filter.as_deref(),
                 target_pid,
+                window_title.as_deref(),
                 max_nodes,
                 max_depth,
             )
@@ -4907,7 +5194,7 @@ impl ComputerUseLinux {
                     let error = "GNOME accessibility is disabled; call setup_accessibility first."
                         .to_string();
                     notes.push(format!("Post-action accessibility tree failed: {error}"));
-                    observation.accessibility_tree = Some(Vec::new());
+                    observation.accessibility_tree = Some(TreeNodes::default());
                     observation.accessibility_tree_raw_count = Some(0);
                     observation.tree_scoped = Some(false);
                     observation.accessibility_tree_truncated = Some(false);
@@ -4921,6 +5208,7 @@ impl ComputerUseLinux {
                         snapshot.truncated,
                     );
                     self.commit_snapshot(&nodes, snapshot.root_pid).await;
+                    self.remember_window_scope(snapshot.window_scope.clone());
                     if let Some(warning) = unscoped_accessibility_tree_warning(
                         snapshot.scoped,
                         true,
@@ -4934,7 +5222,7 @@ impl ComputerUseLinux {
                     if let Some(note) = shell_only_note {
                         notes.push(note.to_string());
                     }
-                    let mut nodes = nodes;
+                    let mut nodes = TreeNodes::from(nodes);
                     let (spill, spill_note) = fit_tree(
                         &self.tree_spiller,
                         &mut nodes,
@@ -4951,7 +5239,7 @@ impl ComputerUseLinux {
                     self.commit_snapshot(&[], None).await;
                     let error = format!("{error:#}");
                     notes.push(format!("Post-action accessibility tree failed: {error}"));
-                    observation.accessibility_tree = Some(Vec::new());
+                    observation.accessibility_tree = Some(TreeNodes::default());
                     observation.accessibility_tree_raw_count = Some(0);
                     observation.tree_scoped = Some(false);
                     observation.accessibility_tree_truncated = Some(false);
@@ -5018,6 +5306,7 @@ impl ComputerUseLinux {
         mut output: ActionOutput,
         verified: Option<bool>,
         capture: &PostActionCaptureParams,
+        target: Option<&WindowTarget>,
     ) -> Result<CallToolResult, ErrorData> {
         if !output.ok && verified != Some(false) {
             return self.action_tool_result(
@@ -5030,7 +5319,7 @@ impl ComputerUseLinux {
             );
         }
         let (observation, screenshot, notes) = self
-            .capture_post_action_observation(capture, None, None)
+            .capture_post_action_observation(capture, target, None)
             .await;
         output = with_notes(output, notes);
         self.action_tool_result(
@@ -5338,6 +5627,142 @@ impl ComputerUseLinux {
             return Some(UNMATCHABLE_ACCESSIBILITY_APP_FILTER.to_string());
         }
         candidates.into_iter().next()
+    }
+
+    /// Hyprland background capture: when opted in with
+    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` and the target is an
+    /// unfocused Hyprland window, capture just that window with `grim -T`
+    /// instead of raising it or grabbing the desktop through the portal.
+    /// Returns `None` to fall through to the regular capture path. The note
+    /// explains the repeated capture used for windows on hidden workspaces.
+    async fn hyprland_background_capture(
+        &self,
+        window: &WindowInfo,
+    ) -> Option<Result<(RawScreenshotCapture, Option<String>)>> {
+        if !crate::hyprland_input::background_enabled()
+            || window.backend != registry::HYPRLAND_BACKEND
+            || window.focused
+        {
+            return None;
+        }
+        Some(
+            async {
+                let capture =
+                    crate::windowing::backends::hyprland::capture_window(window.window_id).await?;
+                let note = capture.hidden_workspace.as_ref().map(|hidden| {
+                    let state = if hidden.settled {
+                        "the last two frames matched, so the image is current"
+                    } else {
+                        "frames were still changing (animation, caret or loading), so details may lag"
+                    };
+                    format!(
+                        "Window_id {} is on hidden workspace {}, which Hyprland does not repaint; it was captured {} times so the window drew current frames, and {state}. The accessibility tree stays authoritative.",
+                        window.window_id, hidden.workspace, hidden.captures
+                    )
+                });
+                let source = match &capture.hidden_workspace {
+                    Some(hidden) if hidden.settled => {
+                        "hyprland-grim-toplevel (hidden workspace, settled)"
+                    }
+                    Some(_) => "hyprland-grim-toplevel (hidden workspace, still changing)",
+                    None => "hyprland-grim-toplevel",
+                };
+                Ok((
+                    RawScreenshotCapture {
+                        mime_type: "image/png".to_string(),
+                        bytes: capture.png,
+                        source: source.to_string(),
+                        width: capture.width,
+                        height: capture.height,
+                    },
+                    note,
+                ))
+            }
+            .await,
+        )
+    }
+
+    /// Hyprland background input: when opted in with
+    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` and the call names a
+    /// target window, keys go to that window through `send_key_state` without
+    /// focusing it, so the user's focus, cursor and workspace stay put.
+    /// Returns `None` to fall through to the focus-then-type path.
+    async fn hyprland_background_input(
+        &self,
+        action: &str,
+        target: &WindowTarget,
+        shown: &str,
+        presses: std::result::Result<Vec<crate::hyprland_input::KeyPress>, String>,
+        received: Option<serde_json::Value>,
+    ) -> Option<ActionOutput> {
+        if !crate::hyprland_input::background_enabled()
+            || !target.has_target()
+            || !env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
+                desktop
+                    .split(':')
+                    .any(|part| part.eq_ignore_ascii_case("hyprland"))
+            })
+        {
+            return None;
+        }
+        let fail = |message: String| Some(action_result(action, Err(message), received.clone()));
+        let presses = match presses {
+            Ok(presses) => presses,
+            Err(message) => return fail(message),
+        };
+        let windows = match list_windows().await {
+            Ok(windows) => windows,
+            Err(error) => return fail(format!("Did not send input: {error:#}")),
+        };
+        let window = match resolve_window_target(&windows, target) {
+            Ok(window) => window.clone(),
+            Err(error) => return fail(format!("Did not send input: {error:#}")),
+        };
+        if window.backend != registry::HYPRLAND_BACKEND {
+            return None;
+        }
+        match crate::windowing::backends::hyprland::devices_json().await {
+            Ok(json) if crate::hyprland_input::keymap_is_us(&json) => {}
+            Ok(_) => {
+                return fail(
+                    "Did not send input: Hyprland background input maps keys for a US layout, and the active keymap is not US.".to_string(),
+                )
+            }
+            Err(error) => return fail(format!("Did not send input: {error:#}")),
+        }
+        // The target is not focused, so probe its own app. Anything that is
+        // not a confirmed non-secret field is masked on the indicator.
+        // Without a pid the probe would read the user's focused app instead.
+        let probe = match window.pid {
+            Some(pid) if self.indicator.enabled() => {
+                timeout(Duration::from_millis(250), probe_focused_element(Some(pid)))
+                    .await
+                    .ok()
+                    .and_then(|probe| probe.ok())
+            }
+            _ => None,
+        };
+        let secret = probe.as_ref().is_none_or(focus_requires_secret_protection);
+        if action == "press_key" {
+            self.indicator.keys(shown, secret).await;
+        } else {
+            self.indicator.text(action, shown, secret).await;
+        }
+        let result =
+            crate::windowing::backends::hyprland::send_key_events(window.window_id, &presses).await;
+        Some(match result {
+            Ok(()) => successful_action_with_focus(
+                action,
+                &format!(
+                    "Action sent through Hyprland send_key_state to window_id {} ({} key presses) without focusing it; focus, cursor and workspace were not changed.",
+                    window.window_id,
+                    presses.len()
+                ),
+                received,
+                None,
+            ),
+            Err(error) => action_result(action, Err(format!("{error:#}")), received),
+        })
     }
 
     async fn focus_target_for_input(
@@ -5795,6 +6220,12 @@ impl ComputerUseLinux {
         self.cache_snapshot(nodes, target_pid);
     }
 
+    fn remember_window_scope(&self, window_scope: Option<String>) {
+        if let Ok(mut cached) = self.last_snapshot.lock() {
+            cached.window_scope = window_scope;
+        }
+    }
+
     async fn commit_app_state_snapshot(
         &self,
         nodes: &[AccessibilityNode],
@@ -5802,6 +6233,7 @@ impl ComputerUseLinux {
         window: Option<&WindowInfo>,
         params: &GetAppStateParams,
         scoped: bool,
+        detail: NodeDetail,
     ) {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let recovery_scope = scoped.then(|| AccessibilityRecoveryScope {
@@ -5809,6 +6241,9 @@ impl ComputerUseLinux {
             target_pid,
         });
         self.cache_snapshot_with_window(nodes, target_pid, recovery_scope, window);
+        if let Ok(mut cached) = self.last_snapshot.lock() {
+            cached.detail = detail;
+        }
     }
 
     fn cache_snapshot(&self, nodes: &[AccessibilityNode], target_pid: Option<u32>) {
@@ -5840,6 +6275,8 @@ impl ComputerUseLinux {
                 window_id: window.map(|window| window.window_id),
                 window_backend: window.map(|window| window.backend.clone()),
                 recovery_scope,
+                detail: NodeDetail::Compact,
+                window_scope: None,
             };
         }
     }
@@ -5850,37 +6287,101 @@ impl ComputerUseLinux {
     }
 
     /// Reject an element-targeted action whose cached node belongs to a
-    /// different app than the action's target. A snapshot taken for a pid is
-    /// judged by that pid; an untargeted snapshot mixes apps, so its node is
-    /// judged by the pid that owns it on the accessibility bus. When neither is
-    /// known the action proceeds, since a mismatch cannot be shown.
+    /// different app or window than the action's target. With a target pid,
+    /// a snapshot taken for a pid is judged by that pid; an untargeted
+    /// snapshot mixes apps, so its node is judged by the pid that owns it on
+    /// the accessibility bus. When neither is known the action proceeds, since
+    /// a mismatch cannot be shown. A window target with no known pid (i3,
+    /// sway and COSMIC report none) is judged by the snapshot's window and
+    /// fails closed when the snapshot recorded no comparable window.
     async fn check_node_target(
         &self,
         node: &AccessibilityNode,
-        target_pid: Option<u32>,
+        target: &ElementOwnerTarget,
     ) -> std::result::Result<(), String> {
-        let Some(target_pid) = target_pid else {
+        if let Some(target_pid) = target.pid {
+            let snapshot_pid = self
+                .last_snapshot
+                .lock()
+                .ok()
+                .and_then(|snapshot| snapshot.pid);
+            let owner_pid = match snapshot_pid {
+                Some(pid) => Some(pid),
+                None => object_ref_owner_pid(&node.object_ref).await.ok().flatten(),
+            };
+            return match owner_pid {
+                Some(owner_pid) if owner_pid != target_pid => Err(node_target_mismatch_message(
+                    node.index, owner_pid, target_pid,
+                )),
+                _ => Ok(()),
+            };
+        }
+        let Some((target_window, target_backend)) = target.window.as_ref() else {
             return Ok(());
         };
-        let snapshot_pid = self
+        let snapshot_window = self
             .last_snapshot
             .lock()
             .ok()
-            .and_then(|snapshot| snapshot.pid);
-        let owner_pid = match snapshot_pid {
-            Some(pid) => Some(pid),
-            None => object_ref_owner_pid(&node.object_ref).await.ok().flatten(),
-        };
-        match owner_pid {
-            Some(owner_pid) if owner_pid != target_pid => Err(node_target_mismatch_message(
-                node.index, owner_pid, target_pid,
-            )),
-            _ => Ok(()),
+            .and_then(|snapshot| snapshot.window_id.zip(snapshot.window_backend.clone()));
+        match snapshot_window {
+            Some((window_id, backend)) if backend == *target_backend => {
+                if window_id == *target_window {
+                    Ok(())
+                } else {
+                    Err(node_window_mismatch_message(
+                        node.index,
+                        window_id,
+                        *target_window,
+                    ))
+                }
+            }
+            _ => Err(node_window_unverified_message(node.index, *target_window)),
         }
     }
 
-    /// The cached node an element-targeted click or scroll would act on, when
-    /// the call names one. Resolution errors are left to the tool's own path.
+    /// Reject an element action whose cached element_index or selector
+    /// resolves to a node from another app's or window's snapshot. Shared by
+    /// click, scroll, perform_action and set_value. A call that names no
+    /// cached element or no target passes; resolution errors are left to the
+    /// tool.
+    async fn check_cached_element_target(
+        &self,
+        element_index: Option<u32>,
+        selector: &ElementSelector<'_>,
+        purpose: ElementResolvePurpose,
+        target: &ElementOwnerTarget,
+    ) -> std::result::Result<(), String> {
+        match self.cached_node_for(element_index, selector, purpose) {
+            Some(node) => self.check_node_target(&node, target).await,
+            None => Ok(()),
+        }
+    }
+
+    /// The app or window an AT-SPI element action targets, without raising
+    /// the window: the action needs no focus. A bare pid is used as given;
+    /// window_id, app_id, wm_class and title resolve through the window
+    /// matcher click uses before it focuses. An unresolvable target fails
+    /// closed.
+    async fn element_action_owner(
+        &self,
+        target: Option<&WindowTarget>,
+    ) -> std::result::Result<ElementOwnerTarget, String> {
+        let Some(target) = target.filter(|target| target.has_target()) else {
+            return Ok(ElementOwnerTarget::default());
+        };
+        let pid_only = target.window_id.is_none()
+            && trimmed_nonempty(target.app_id.as_deref()).is_none()
+            && trimmed_nonempty(target.wm_class.as_deref()).is_none()
+            && trimmed_nonempty(target.title.as_deref()).is_none();
+        if pid_only {
+            return Ok(ElementOwnerTarget::pid(target.pid));
+        }
+        element_action_owner_from(list_windows().await, target)
+    }
+
+    /// The cached node an element-targeted action would act on, when the
+    /// call names one. Resolution errors are left to the tool's own path.
     fn cached_node_for(
         &self,
         element_index: Option<u32>,
@@ -6121,6 +6622,35 @@ impl ComputerUseLinux {
             .clone()
     }
 
+    /// The target check perform_action and set_value run before resolving
+    /// their element. An element_identifier names the object itself, not a
+    /// cached snapshot node, so it is checked only against a known target pid,
+    /// by the pid that owns it on the accessibility bus.
+    async fn check_element_action_target(
+        &self,
+        target: &ElementActionTarget,
+        element_index: Option<u32>,
+        element_identifier: Option<&str>,
+        selector: &ElementSelector<'_>,
+        purpose: ElementResolvePurpose,
+    ) -> std::result::Result<(), String> {
+        let owner = self
+            .element_action_owner(target.window_target().as_ref())
+            .await?;
+        if let Some(element_identifier) = trimmed_nonempty(element_identifier) {
+            let Some(target_pid) = owner.pid else {
+                return Ok(());
+            };
+            let owner_pid = object_ref_owner_pid(element_identifier)
+                .await
+                .ok()
+                .flatten();
+            return check_identifier_owner(owner_pid, Some(target_pid));
+        }
+        self.check_cached_element_target(element_index, selector, purpose, &owner)
+            .await
+    }
+
     fn resolve_object_ref(
         &self,
         element_index: Option<u32>,
@@ -6187,9 +6717,11 @@ impl ComputerUseLinux {
         );
         let (max_nodes, max_depth) =
             crate::atspi_tree::snapshot_limits(params.max_nodes, params.max_depth);
+        let window_title = accessibility_window_title(params, window_context.as_ref());
         let snapshot = snapshot_accessibility_tree(
             app_filter.as_deref(),
             accessibility_snapshot_target_pid(app_filter.as_deref(), target_pid),
+            window_title.as_deref(),
             max_nodes,
             max_depth,
         )
@@ -6232,6 +6764,18 @@ impl ComputerUseLinux {
     {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let received = Some(serde_json::json!(params.clone()));
+        if let Err(message) = self
+            .check_element_action_target(
+                &params.target,
+                params.element_index,
+                params.element_identifier.as_deref(),
+                &params.selector(),
+                ElementResolvePurpose::Action,
+            )
+            .await
+        {
+            return action_error_output(message, &received);
+        }
         let object_ref = match self.resolve_object_ref(
             params.element_index,
             params.element_identifier.as_deref(),
@@ -6943,11 +7487,12 @@ fn tree_budget(rest: usize) -> usize {
 /// file when it does not fit. Returns the spill and a note for the message.
 fn fit_tree(
     spiller: &crate::tree_spill::TreeSpiller,
-    nodes: &mut Vec<AccessibilityNode>,
+    tree: &mut TreeNodes,
     budget: usize,
 ) -> (Option<crate::tree_spill::TreeSpill>, Option<String>) {
-    let total = nodes.len();
-    match spiller.fit(nodes, budget) {
+    let total = tree.len();
+    let detail = tree.detail;
+    match spiller.fit(&mut tree.nodes, detail, budget) {
         Ok(None) => (None, None),
         Ok(Some(spill)) => {
             let note = format!(
@@ -7038,6 +7583,172 @@ fn nearest_kept_parent(
     None
 }
 
+/// The compacted tree cut to what an agent acts on or reads results from:
+/// controls and nodes with a specific action, editable text or a value,
+/// headings, status and live regions with their text, and app roots, windows
+/// and dialogs. Removed containers are
+/// collapsed: a kept node's parent_index names its nearest kept ancestor and
+/// child_count counts kept children. Indices are not renumbered, so an
+/// element_index means the same node as in the full compacted tree.
+fn interactive_accessibility_tree(nodes: Vec<AccessibilityNode>) -> Vec<AccessibilityNode> {
+    let position: std::collections::HashMap<u32, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (node.index, position))
+        .collect();
+    // Nodes come in traversal order, so a parent is classified before its children.
+    let mut in_live_region = vec![false; nodes.len()];
+    let mut keep = vec![false; nodes.len()];
+    for (index, node) in nodes.iter().enumerate() {
+        let below_live_region = node
+            .parent_index
+            .and_then(|parent| position.get(&parent))
+            .is_some_and(|&parent| parent < index && in_live_region[parent]);
+        in_live_region[index] = below_live_region || is_live_region_role(&node.role);
+        keep[index] = is_interactive_tree_node(node, below_live_region);
+    }
+    let kept_ancestor = |node: &AccessibilityNode| {
+        let mut parent = node.parent_index;
+        while let Some(index) = parent {
+            let position = *position.get(&index)?;
+            if keep[position] {
+                return Some(index);
+            }
+            parent = nodes[position].parent_index;
+        }
+        None
+    };
+    let parents: Vec<Option<u32>> = nodes.iter().map(kept_ancestor).collect();
+    let mut child_counts: std::collections::HashMap<u32, i32> = std::collections::HashMap::new();
+    for (parent, keep) in parents.iter().zip(&keep) {
+        if let (true, Some(parent)) = (*keep, parent) {
+            *child_counts.entry(*parent).or_default() += 1;
+        }
+    }
+    nodes
+        .into_iter()
+        .zip(parents)
+        .zip(keep)
+        .filter_map(|((mut node, parent), keep)| {
+            keep.then(|| {
+                node.parent_index = parent;
+                node.child_count = child_counts.get(&node.index).copied().unwrap_or_default();
+                node
+            })
+        })
+        .collect()
+}
+
+/// Roles that read out results: headings and status or live regions.
+fn is_result_role(role: &str) -> bool {
+    matches!(
+        role,
+        "heading"
+            | "alert"
+            | "status bar"
+            | "statusbar"
+            | "notification"
+            | "log"
+            | "marquee"
+            | "timer"
+            | "info bar"
+    )
+}
+
+fn is_live_region_role(role: &str) -> bool {
+    role != "heading" && is_result_role(role)
+}
+
+/// Roles of controls an agent operates, whatever actions the toolkit lists.
+fn is_control_role(role: &str) -> bool {
+    matches!(
+        role,
+        "push button"
+            | "button"
+            | "toggle button"
+            | "check box"
+            | "radio button"
+            | "link"
+            | "entry"
+            | "password text"
+            | "combo box"
+            | "menu item"
+            | "check menu item"
+            | "radio menu item"
+            | "page tab"
+            | "slider"
+            | "spin button"
+            | "switch"
+    )
+}
+
+/// Whether interactive_only keeps a node. `in_live_region` is true below a
+/// status or live region, whose text is the result an agent reads.
+fn is_interactive_tree_node(node: &AccessibilityNode, in_live_region: bool) -> bool {
+    let role = node.role.as_str();
+    // App roots and their windows (depth 0 and 1) frame everything else, and
+    // KWin element clicks map through the depth-1 window.
+    node.depth <= 1
+        || is_actionable_accessibility_node(node)
+        || is_control_role(role)
+        || crate::atspi_tree::is_window_role(role)
+        || ((is_result_role(role) || in_live_region) && has_meaningful_node_copy(node))
+        // A live region whose text sits in its children frames that text.
+        || (is_live_region_role(role) && node.child_count > 0)
+}
+
+/// Window title that narrows an app root holding several windows to one, when
+/// the caller targeted a window by title or id. The resolved window's full
+/// title is preferred over the caller's substring.
+fn accessibility_window_title(
+    params: &GetAppStateParams,
+    window: Option<&WindowInfo>,
+) -> Option<String> {
+    targeted_window_title(params.window_id, params.title.as_deref(), window)
+}
+
+/// The window a post-action tree is narrowed to. An action that names a
+/// window by window_id or title uses it. One that names none keeps the window
+/// the last snapshot of the same app was narrowed to, so
+/// get_app_state(title=...) followed by perform_action(include_tree=true)
+/// does not widen to every window of the app again.
+fn post_action_window_title(
+    target: Option<&WindowTarget>,
+    resolved_window: Option<&WindowInfo>,
+    target_pid: Option<u32>,
+    cached_window_scope: Option<(String, Option<u32>)>,
+) -> Option<String> {
+    let targeted = target.and_then(|target| {
+        targeted_window_title(target.window_id, target.title.as_deref(), resolved_window)
+    });
+    if targeted.is_some()
+        || target.is_some_and(|target| target.window_id.is_some() || target.title.is_some())
+    {
+        return targeted;
+    }
+    cached_window_scope
+        .filter(|(_, cached_pid)| cached_pid.is_some() && *cached_pid == target_pid)
+        .map(|(scope, _)| scope)
+}
+
+/// accessibility_window_title for a target given as its window_id and title.
+fn targeted_window_title(
+    window_id: Option<u64>,
+    title: Option<&str>,
+    window: Option<&WindowInfo>,
+) -> Option<String> {
+    let requested_title = title.map(str::trim).filter(|title| !title.is_empty());
+    if window_id.is_none() && requested_title.is_none() {
+        return None;
+    }
+    window
+        .and_then(|window| window.title.as_deref())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .or(requested_title)
+        .map(str::to_string)
+}
+
 fn should_keep_accessibility_node(node: &AccessibilityNode) -> bool {
     if node.depth <= 1 {
         return true;
@@ -7047,14 +7758,34 @@ fn should_keep_accessibility_node(node: &AccessibilityNode) -> bool {
         return true;
     }
 
+    // interactive_only runs on this tree, so keep what it keeps: controls
+    // whatever their actions, and a live region whose text sits in its children.
+    if is_control_role(&node.role) || (is_live_region_role(&node.role) && node.child_count > 0) {
+        return true;
+    }
+
     matches!(
         node.role.as_str(),
         "page tab" | "menu item" | "menu" | "list item" | "tree item"
     ) && !is_sentinel_or_missing_bounds(node.bounds.as_ref())
 }
 
+/// Actions Chromium lists on every element, whether or not it does anything:
+/// a generic default action, the context menu, and a click forwarded to the
+/// nearest clickable ancestor.
+const GENERIC_ACTIONS: &[&str] = &[
+    "doDefault",
+    "showContextMenu",
+    "clickAncestor",
+    "click-ancestor",
+];
+
 fn is_actionable_accessibility_node(node: &AccessibilityNode) -> bool {
-    !node.actions.is_empty() || node.supports_editable_text || node.value.is_some()
+    node.actions
+        .iter()
+        .any(|action| !GENERIC_ACTIONS.contains(&action.name.as_str()))
+        || node.supports_editable_text
+        || node.value.is_some()
 }
 
 fn has_meaningful_node_copy(node: &AccessibilityNode) -> bool {
@@ -7063,8 +7794,10 @@ fn has_meaningful_node_copy(node: &AccessibilityNode) -> bool {
         || has_non_empty_text(node.text.as_ref().and_then(|text| text.content.as_deref()))
 }
 
+/// Readable copy: not empty, whitespace, or only the U+FFFC characters a
+/// container's text holds for its children.
 fn has_non_empty_text(value: Option<&str>) -> bool {
-    value.map(str::trim).is_some_and(|value| !value.is_empty())
+    value.is_some_and(|value| !is_placeholder_text(value))
 }
 
 fn is_sentinel_or_missing_bounds(bounds: Option<&Bounds>) -> bool {
@@ -7899,6 +8632,82 @@ fn node_target_mismatch_message(element_index: u32, owner_pid: u32, target_pid: 
     format!(
         "element_index {element_index} comes from the latest get_app_state snapshot of pid {owner_pid}, not the target pid {target_pid}. Call get_app_state for the target app and use an index from that result."
     )
+}
+
+fn node_window_mismatch_message(
+    element_index: u32,
+    snapshot_window: u64,
+    target_window: u64,
+) -> String {
+    format!(
+        "element_index {element_index} comes from the latest get_app_state snapshot of window_id {snapshot_window}, not the target window_id {target_window}. Call get_app_state for the target window and use an index from that result."
+    )
+}
+
+fn node_window_unverified_message(element_index: u32, target_window: u64) -> String {
+    format!(
+        "Did not act because element_index {element_index} could not be tied to target window_id {target_window}: the window backend reports no pid for it and the latest get_app_state snapshot was not taken for that window. Pass pid, or call get_app_state for that window and use an index from that result."
+    )
+}
+
+fn identifier_target_mismatch_message(owner_pid: u32, target_pid: u32) -> String {
+    format!(
+        "element_identifier belongs to pid {owner_pid}, not the target pid {target_pid}. Use an element_identifier from the target app, or drop the target."
+    )
+}
+
+/// Refuse an element_identifier whose bus owner is known and is not the
+/// target pid. An unknown owner or target proceeds: the identifier names the
+/// object itself.
+fn check_identifier_owner(
+    owner_pid: Option<u32>,
+    target_pid: Option<u32>,
+) -> std::result::Result<(), String> {
+    match (owner_pid, target_pid) {
+        (Some(owner_pid), Some(target_pid)) if owner_pid != target_pid => {
+            Err(identifier_target_mismatch_message(owner_pid, target_pid))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Resolve a window-style element action target against a window listing.
+fn element_action_owner_from(
+    windows: Result<Vec<WindowInfo>>,
+    target: &WindowTarget,
+) -> std::result::Result<ElementOwnerTarget, String> {
+    windows
+        .and_then(|windows| {
+            resolve_window_target(&windows, target)
+                .map(|window| ElementOwnerTarget::window(window, target.pid))
+        })
+        .map_err(|error| {
+            let error = format!("{error:#}");
+            match window_permission_hint(&error) {
+                Some(hint) => format!(
+                    "Did not act because the target window could not be resolved: {error}. {hint}"
+                ),
+                None => {
+                    format!("Did not act because the target window could not be resolved: {error}")
+                }
+            }
+        })
+}
+
+/// The ownership target of a click or scroll: the focused window's pid, else
+/// the requested window's, else the pid the caller passed, plus the
+/// requested window.
+fn focus_owner_target(focus: Option<&WindowFocusResult>, pid: Option<u32>) -> ElementOwnerTarget {
+    match focus {
+        Some(focus) => ElementOwnerTarget {
+            pid: focus_target_pid(Some(focus)).or(pid),
+            window: Some((
+                focus.requested_window.window_id,
+                focus.requested_window.backend.clone(),
+            )),
+        },
+        None => ElementOwnerTarget::pid(pid),
+    }
 }
 
 fn focus_target_pid(focus: Option<&WindowFocusResult>) -> Option<u32> {
@@ -10181,7 +10990,7 @@ printf '%s %s\n' "${0##*/}" "$*" >> "$CUL_POINTER_TEST_LOG"
             backend: "linux-atspi".to_string(),
             screenshot: screenshot.map(ScreenshotSummary::from),
             screenshot_error: None,
-            accessibility_tree: Vec::new(),
+            accessibility_tree: TreeNodes::default(),
             accessibility_tree_spill: None,
             accessibility_tree_raw_count: 0,
             tree_scoped: true,
@@ -11439,6 +12248,298 @@ esac
         assert_eq!(compacted.len(), 3);
         assert_eq!(compacted[2].role, "page tab");
         assert_eq!(compacted[2].name.as_deref(), Some("Hidden"));
+    }
+
+    fn tree_node(index: u32, parent: Option<u32>, depth: u32, role: &str) -> AccessibilityNode {
+        AccessibilityNode {
+            index,
+            parent_index: parent,
+            depth,
+            object_ref: format!(":1.{index}/node"),
+            role: role.to_string(),
+            name: None,
+            description: None,
+            child_count: 0,
+            bounds: None,
+            states: Vec::new(),
+            actions: Vec::new(),
+            value: None,
+            text: None,
+            supports_editable_text: false,
+        }
+    }
+
+    fn placeholder_text(children: usize) -> crate::atspi_tree::AccessibilityText {
+        crate::atspi_tree::AccessibilityText {
+            character_count: children as i32,
+            caret_offset: Some(0),
+            content: Some("\u{fffc}".repeat(children)),
+            truncated: false,
+            selections: Vec::new(),
+        }
+    }
+
+    fn named_action(index: i32, name: &str) -> AccessibilityAction {
+        AccessibilityAction {
+            index,
+            name: name.to_string(),
+            description: String::new(),
+            keybinding: String::new(),
+        }
+    }
+
+    #[test]
+    fn compaction_drops_containers_whose_text_is_only_child_placeholders() {
+        // Chromium sections report one U+FFFC per child as their text.
+        let mut section = tree_node(2, Some(1), 2, "section");
+        section.text = Some(placeholder_text(1));
+        let mut button = tree_node(3, Some(2), 3, "push button");
+        button.name = Some("Save".to_string());
+        button.actions = vec![named_action(0, "click")];
+        let nodes = vec![
+            tree_node(0, None, 0, "application"),
+            tree_node(1, Some(0), 1, "frame"),
+            section,
+            button,
+        ];
+
+        let compacted = compact_accessibility_tree(nodes);
+
+        let roles: Vec<_> = compacted.iter().map(|node| node.role.as_str()).collect();
+        assert_eq!(roles, ["application", "frame", "push button"]);
+        assert_eq!(compacted[2].parent_index, Some(1));
+    }
+
+    fn chromium_generic_actions() -> Vec<AccessibilityAction> {
+        vec![
+            named_action(0, "doDefault"),
+            named_action(1, "showContextMenu"),
+        ]
+    }
+
+    #[test]
+    fn compaction_drops_chromium_containers_with_only_generic_actions() {
+        // Chromium lists doDefault and showContextMenu on every element.
+        let mut panel = tree_node(2, Some(1), 2, "panel");
+        panel.actions = chromium_generic_actions();
+        panel.text = Some(placeholder_text(1));
+        let mut button = tree_node(3, Some(2), 3, "push button");
+        button.name = Some("Save".to_string());
+        button.actions = vec![named_action(0, "press"), named_action(1, "showContextMenu")];
+        let nodes = vec![
+            tree_node(0, None, 0, "application"),
+            tree_node(1, Some(0), 1, "frame"),
+            panel,
+            button,
+        ];
+
+        let compacted = compact_accessibility_tree(nodes);
+
+        let roles: Vec<_> = compacted.iter().map(|node| node.role.as_str()).collect();
+        assert_eq!(roles, ["application", "frame", "push button"]);
+    }
+
+    #[test]
+    fn interactive_tree_keeps_controls_and_results_with_their_indices() {
+        let mut nodes = vec![
+            tree_node(0, None, 0, "application"),
+            tree_node(1, Some(0), 1, "frame"),
+            tree_node(2, Some(1), 2, "section"),
+            tree_node(3, Some(2), 3, "heading"),
+            tree_node(4, Some(2), 3, "section"),
+            tree_node(5, Some(4), 4, "link"),
+            tree_node(6, Some(5), 5, "static"),
+            tree_node(7, Some(4), 4, "entry"),
+            tree_node(8, Some(2), 3, "statusbar"),
+            tree_node(9, Some(2), 3, "progress bar"),
+            tree_node(10, Some(2), 3, "paragraph"),
+            tree_node(11, Some(8), 4, "static"),
+            tree_node(12, Some(2), 3, "notification"),
+            tree_node(13, Some(2), 3, "button"),
+        ];
+        for node in &mut nodes {
+            node.actions = chromium_generic_actions();
+        }
+        nodes[3].name = Some("Results".to_string());
+        nodes[5].actions = vec![named_action(0, "jump"), named_action(1, "showContextMenu")];
+        nodes[5].name = Some("Docs".to_string());
+        // Text inside the link only forwards clicks to it.
+        nodes[6].actions = vec![named_action(0, "clickAncestor")];
+        nodes[6].name = Some("Docs".to_string());
+        nodes[7].supports_editable_text = true;
+        nodes[9].value = Some(crate::atspi_tree::AccessibilityValue {
+            current: 40.0,
+            minimum: 0.0,
+            maximum: 100.0,
+            minimum_increment: 1.0,
+            text: None,
+        });
+        nodes[10].name = Some("Body copy".to_string());
+        // The status region's text sits in a child, as in Chromium; an empty
+        // notification (node 12) announces nothing, and a button with no
+        // specific action (node 13) is still a control.
+        nodes[8].child_count = 1;
+        nodes[11].name = Some("Saved".to_string());
+
+        // get_app_state compacts first, then filters the compacted tree.
+        let kept = interactive_accessibility_tree(compact_accessibility_tree(nodes));
+
+        let summary: Vec<_> = kept
+            .iter()
+            .map(|node| (node.role.as_str(), node.parent_index, node.child_count))
+            .collect();
+        // Compaction renumbers: the frame is 1 and the status bar 6.
+        assert_eq!(
+            summary,
+            [
+                ("application", None, 1),
+                ("frame", Some(0), 6),
+                ("heading", Some(1), 0),
+                ("link", Some(1), 0),
+                ("entry", Some(1), 0),
+                ("statusbar", Some(1), 1),
+                ("progress bar", Some(1), 0),
+                ("static", Some(6), 0),
+                ("button", Some(1), 0),
+            ]
+        );
+        assert_eq!(kept[7].name.as_deref(), Some("Saved"));
+    }
+
+    #[test]
+    fn interactive_indices_resolve_to_the_same_cached_nodes() {
+        let backend = ComputerUseLinux::default();
+        let mut nodes: Vec<_> = (0..4)
+            .map(|index| tree_node(index, index.checked_sub(1), index, "section"))
+            .collect();
+        nodes[3].role = "push button".to_string();
+        nodes[3].actions = vec![named_action(0, "click")];
+        let kept = interactive_accessibility_tree(nodes);
+        backend.cache_snapshot(&kept, None);
+
+        let node = backend
+            .resolve_cached_node(
+                Some(3),
+                &ElementSelector::default(),
+                ElementResolvePurpose::Action,
+            )
+            .unwrap();
+        assert_eq!(node.object_ref, ":1.3/node");
+        assert!(backend
+            .resolve_cached_node(
+                Some(2),
+                &ElementSelector::default(),
+                ElementResolvePurpose::Action
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn output_schema_lets_compact_nodes_leave_out_default_fields() {
+        let schema = rmcp::handler::server::tool::schema_for_output::<GetAppStateOutput>();
+        let required = |name: &str| -> Vec<String> {
+            schema["$defs"][name]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|field| field.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(
+            required("CompactNode"),
+            ["index", "depth", "object_ref", "role"]
+        );
+        assert_eq!(required("CompactText"), ["character_count"]);
+    }
+
+    #[test]
+    fn post_action_tree_keeps_the_snapshot_window_scope_of_the_same_app() {
+        let scope = Some(("PlanetScale - Chromium".to_string(), Some(7)));
+        // An untargeted perform_action or set_value on the same app keeps it.
+        assert_eq!(
+            post_action_window_title(None, None, Some(7), scope.clone()).as_deref(),
+            Some("PlanetScale - Chromium")
+        );
+        // A pid-only target of the same app keeps it too.
+        let pid_only = WindowTarget {
+            pid: Some(7),
+            ..WindowTarget::default()
+        };
+        assert_eq!(
+            post_action_window_title(Some(&pid_only), None, Some(7), scope.clone()).as_deref(),
+            Some("PlanetScale - Chromium")
+        );
+        // Another app, or a snapshot with no pid, does not inherit it.
+        assert_eq!(
+            post_action_window_title(None, None, Some(8), scope.clone()),
+            None
+        );
+        assert_eq!(
+            post_action_window_title(None, None, None, Some(("x".to_string(), None))),
+            None
+        );
+        // A target that names its own window uses that window.
+        let titled = WindowTarget {
+            title: Some("Other".to_string()),
+            ..WindowTarget::default()
+        };
+        assert_eq!(
+            post_action_window_title(Some(&titled), None, Some(7), scope).as_deref(),
+            Some("Other")
+        );
+    }
+
+    #[test]
+    fn compact_tree_pages_and_spills_in_the_snapshot_encoding() {
+        let mut node = tree_node(0, None, 0, "frame");
+        node.actions = vec![named_action(0, "click")];
+        let page = tree_page(&[node.clone()], NodeDetail::Compact, 0);
+        let json = serde_json::to_value(&page).unwrap();
+        assert_eq!(json["nodes"][0]["actions"], serde_json::json!(["click"]));
+        assert!(json["nodes"][0].get("value").is_none());
+
+        let page = tree_page(&[node], NodeDetail::Full, 0);
+        let json = serde_json::to_value(&page).unwrap();
+        assert_eq!(json["nodes"][0]["actions"][0]["name"], "click");
+        assert!(json["nodes"][0]["value"].is_null());
+    }
+
+    #[test]
+    fn window_title_narrows_only_title_or_window_id_targets() {
+        let params = |value: serde_json::Value| -> GetAppStateParams {
+            serde_json::from_value(value).unwrap()
+        };
+        let window = WindowInfo {
+            title: Some("PlanetScale - Chromium".to_string()),
+            ..kwin_window(42)
+        };
+
+        assert_eq!(
+            accessibility_window_title(&params(serde_json::json!({"pid": 7})), Some(&window)),
+            None,
+            "a pid target keeps every window of the app"
+        );
+        assert_eq!(
+            accessibility_window_title(
+                &params(serde_json::json!({"title": "PlanetScale"})),
+                Some(&window)
+            )
+            .as_deref(),
+            Some("PlanetScale - Chromium")
+        );
+        assert_eq!(
+            accessibility_window_title(&params(serde_json::json!({"title": "PlanetScale"})), None)
+                .as_deref(),
+            Some("PlanetScale")
+        );
+        assert_eq!(
+            accessibility_window_title(
+                &params(serde_json::json!({"window_id": 42})),
+                Some(&window)
+            )
+            .as_deref(),
+            Some("PlanetScale - Chromium")
+        );
     }
 
     #[test]
@@ -13209,7 +14310,7 @@ esac
             "ş".repeat(WTYPE_MAX_TEXT_BYTES / 2 + 1),
         ] {
             let params: TypeTextParams =
-                serde_json::from_value(serde_json::json!({"text": text, "window_id": u64::MAX}))
+                serde_json::from_value(serde_json::json!({"text": text, "window_id": crate::windowing::types::MAX_WINDOW_ID}))
                     .unwrap();
             let result = server.type_text(Parameters(params)).await.unwrap();
             let structured = result
@@ -14288,6 +15389,7 @@ mod action_recovery_tests {
                 root_pid,
                 app_filter_matched: true,
                 truncated: false,
+                window_scope: None,
             },
             target_pid,
             window: None,
@@ -14353,7 +15455,14 @@ mod action_recovery_tests {
         .unwrap();
 
         backend
-            .commit_app_state_snapshot(&[action_node(0, OLD_REF)], Some(1234), None, &params, true)
+            .commit_app_state_snapshot(
+                &[action_node(0, OLD_REF)],
+                Some(1234),
+                None,
+                &params,
+                true,
+                NodeDetail::Compact,
+            )
             .await;
         let scope = backend
             .last_snapshot
@@ -14375,7 +15484,14 @@ mod action_recovery_tests {
         assert_eq!(scope.target_pid, Some(1234));
 
         backend
-            .commit_app_state_snapshot(&[action_node(0, OLD_REF)], None, None, &params, false)
+            .commit_app_state_snapshot(
+                &[action_node(0, OLD_REF)],
+                None,
+                None,
+                &params,
+                false,
+                NodeDetail::Compact,
+            )
             .await;
         assert!(backend
             .last_snapshot
@@ -14517,6 +15633,7 @@ mod action_recovery_tests {
                     Some(&recovery_window(42, 1234)),
                     &serde_json::from_value(params).unwrap(),
                     true,
+                    NodeDetail::Compact,
                 )
                 .await;
             let dispatches = Arc::new(AtomicUsize::new(0));
@@ -14567,6 +15684,7 @@ mod action_recovery_tests {
                 None,
                 &serde_json::from_value(serde_json::json!({"window_id": 42})).unwrap(),
                 true,
+                NodeDetail::Compact,
             )
             .await;
         let refreshes = Arc::new(AtomicUsize::new(0));
@@ -14620,6 +15738,7 @@ mod action_recovery_tests {
                     Some(&original_window),
                     &serde_json::from_value(serde_json::json!({"window_id": 42})).unwrap(),
                     true,
+                    NodeDetail::Compact,
                 )
                 .await;
             let dispatches = Arc::new(AtomicUsize::new(0));
@@ -14799,6 +15918,7 @@ mod action_recovery_tests {
                     }))
                     .unwrap(),
                     true,
+                    NodeDetail::Compact,
                 )
                 .await;
             let fresh_window = fresh_window_id.map(|window_id| WindowInfo {
@@ -15135,6 +16255,7 @@ mod action_recovery_tests {
                 Some(&recovery_window(42, 5678)),
                 &serde_json::from_value(serde_json::json!({"window_id": 42})).unwrap(),
                 true,
+                NodeDetail::Compact,
             )
             .await;
 
@@ -15457,7 +16578,7 @@ mod node_target_scope_tests {
         backend.cache_snapshot(std::slice::from_ref(&node), Some(2_690_687));
 
         let error = backend
-            .check_node_target(&node, Some(2_690_664))
+            .check_node_target(&node, &ElementOwnerTarget::pid(Some(2_690_664)))
             .await
             .unwrap_err();
         assert!(error.contains("pid 2690687"), "{error}");
@@ -15475,10 +16596,13 @@ mod node_target_scope_tests {
         backend.cache_snapshot(std::slice::from_ref(&node), Some(2_690_664));
 
         assert!(backend
-            .check_node_target(&node, Some(2_690_664))
+            .check_node_target(&node, &ElementOwnerTarget::pid(Some(2_690_664)))
             .await
             .is_ok());
-        assert!(backend.check_node_target(&node, None).await.is_ok());
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::pid(None))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -15489,7 +16613,10 @@ mod node_target_scope_tests {
         let node = cached_node(2, ":1.9999/org/a11y/atspi/accessible/42");
         backend.cache_snapshot(std::slice::from_ref(&node), None);
 
-        assert!(backend.check_node_target(&node, Some(1)).await.is_ok());
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::pid(Some(1)))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -15538,7 +16665,7 @@ mod node_target_scope_tests {
             "snapshot publication must wait for input"
         );
         assert!(backend
-            .check_node_target(&checked_node, Some(10))
+            .check_node_target(&checked_node, &ElementOwnerTarget::pid(Some(10)))
             .await
             .is_ok());
         let params = ClickParams {
@@ -15585,6 +16712,222 @@ mod node_target_scope_tests {
         backend.cache_snapshot(&[], Some(11));
         backend.clear_cached_nodes();
         assert_eq!(backend.last_snapshot.lock().unwrap().pid, None);
+    }
+
+    const APP_A: u32 = 2_690_664;
+    const APP_B: u32 = 2_690_687;
+
+    /// get_app_state of app A, then of app B: the cache holds B's nodes.
+    fn backend_after_snapshots_of_a_then_b() -> ComputerUseLinux {
+        let backend = ComputerUseLinux::default();
+        backend.cache_snapshot(
+            &[cached_node(2, ":1.7/org/a11y/atspi/accessible/7")],
+            Some(APP_A),
+        );
+        backend.cache_snapshot(
+            &[cached_node(2, ":1.9/org/a11y/atspi/accessible/42")],
+            Some(APP_B),
+        );
+        backend
+    }
+
+    fn pid_target(pid: u32) -> ElementActionTarget {
+        ElementActionTarget {
+            pid: Some(pid),
+            ..Default::default()
+        }
+    }
+
+    async fn perform_action_dispatches(
+        backend: &ComputerUseLinux,
+        params: ActionParams,
+    ) -> (ActionOutput, Vec<String>) {
+        let dispatched = Arc::new(Mutex::new(Vec::new()));
+        let Json(output) = backend
+            .perform_element_action_with(
+                &params,
+                Some("click"),
+                {
+                    let dispatched = Arc::clone(&dispatched);
+                    move |object_ref, _| {
+                        dispatched.lock().unwrap().push(object_ref);
+                        async {
+                            Ok(crate::atspi_tree::ActionInvocation {
+                                action_index: 0,
+                                action_name: Some("click".to_string()),
+                                ok: true,
+                            })
+                        }
+                    }
+                },
+                |_| async { panic!("an indexed action must not refresh") },
+            )
+            .await;
+        let dispatched = dispatched.lock().unwrap().clone();
+        (output, dispatched)
+    }
+
+    #[tokio::test]
+    async fn perform_action_refuses_an_index_from_another_apps_snapshot() {
+        let backend = backend_after_snapshots_of_a_then_b();
+        let (output, dispatched) = perform_action_dispatches(
+            &backend,
+            ActionParams {
+                element_index: Some(2),
+                target: pid_target(APP_A),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        assert!(!output.ok);
+        assert!(dispatched.is_empty(), "dispatched to {dispatched:?}");
+        assert_eq!(
+            output.message,
+            node_target_mismatch_message(2, APP_B, APP_A),
+            "perform_action must refuse with the wording click uses"
+        );
+    }
+
+    #[tokio::test]
+    async fn perform_action_refuses_a_selector_from_another_apps_snapshot() {
+        let backend = backend_after_snapshots_of_a_then_b();
+        let (output, dispatched) = perform_action_dispatches(
+            &backend,
+            ActionParams {
+                role: Some("push button".to_string()),
+                name: Some("Hit me".to_string()),
+                target: pid_target(APP_A),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        assert!(!output.ok);
+        assert!(dispatched.is_empty(), "dispatched to {dispatched:?}");
+        assert!(
+            output.message.contains("target pid 2690664"),
+            "{}",
+            output.message
+        );
+    }
+
+    #[tokio::test]
+    async fn perform_action_on_the_snapshot_target_or_without_one_dispatches() {
+        let backend = backend_after_snapshots_of_a_then_b();
+        let b_ref = ":1.9/org/a11y/atspi/accessible/42".to_string();
+        for target in [pid_target(APP_B), ElementActionTarget::default()] {
+            let (output, dispatched) = perform_action_dispatches(
+                &backend,
+                ActionParams {
+                    element_index: Some(2),
+                    target,
+                    ..Default::default()
+                },
+            )
+            .await;
+            assert!(output.ok, "{}", output.message);
+            assert_eq!(dispatched, vec![b_ref.clone()]);
+        }
+    }
+
+    #[tokio::test]
+    async fn set_value_refuses_an_index_from_another_apps_snapshot() {
+        let backend = backend_after_snapshots_of_a_then_b();
+        let (output, verified) = backend
+            .dispatch_set_value(SetValueParams {
+                element_index: Some(2),
+                value: "written for app A".to_string(),
+                target: pid_target(APP_A),
+                ..Default::default()
+            })
+            .await;
+
+        assert!(!output.ok);
+        assert_eq!(verified, None);
+        assert_eq!(
+            output.message,
+            node_target_mismatch_message(2, APP_B, APP_A),
+            "set_value must refuse with the wording click uses"
+        );
+    }
+
+    /// An i3, sway or COSMIC window: the backend reports no pid.
+    fn pidless_window(window_id: u64) -> WindowInfo {
+        WindowInfo {
+            window_id,
+            title: Some(format!("window {window_id}")),
+            app_id: None,
+            wm_class: None,
+            pid: None,
+            bounds: None,
+            workspace: None,
+            focused: false,
+            hidden: false,
+            client_type: None,
+            backend: "i3".to_string(),
+            terminal: None,
+        }
+    }
+
+    fn pidless_owner(window_id: u64) -> ElementOwnerTarget {
+        let windows = vec![pidless_window(10), pidless_window(20)];
+        let target = WindowTarget {
+            window_id: Some(window_id),
+            ..Default::default()
+        };
+        element_action_owner_from(Ok(windows), &target).unwrap()
+    }
+
+    #[tokio::test]
+    async fn pidless_window_target_refuses_another_windows_snapshot() {
+        // get_app_state of window 20, then an action that targets window 10.
+        let backend = ComputerUseLinux::default();
+        let node = cached_node(2, ":1.9/org/a11y/atspi/accessible/42");
+        backend.cache_snapshot_with_window(
+            std::slice::from_ref(&node),
+            None,
+            None,
+            Some(&pidless_window(20)),
+        );
+
+        assert_eq!(
+            backend
+                .check_node_target(&node, &pidless_owner(10))
+                .await
+                .unwrap_err(),
+            node_window_mismatch_message(2, 20, 10)
+        );
+        assert!(backend
+            .check_node_target(&node, &pidless_owner(20))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn pidless_window_target_fails_closed_without_a_snapshot_window() {
+        let backend = ComputerUseLinux::default();
+        let node = cached_node(2, ":1.9/org/a11y/atspi/accessible/42");
+        backend.cache_snapshot(std::slice::from_ref(&node), None);
+
+        assert_eq!(
+            backend
+                .check_node_target(&node, &pidless_owner(10))
+                .await
+                .unwrap_err(),
+            node_window_unverified_message(2, 10)
+        );
+    }
+
+    #[test]
+    fn identifier_owned_by_another_pid_is_refused() {
+        assert_eq!(
+            check_identifier_owner(Some(APP_B), Some(APP_A)).unwrap_err(),
+            identifier_target_mismatch_message(APP_B, APP_A)
+        );
+        assert!(check_identifier_owner(Some(APP_A), Some(APP_A)).is_ok());
+        assert!(check_identifier_owner(None, Some(APP_A)).is_ok());
+        assert!(check_identifier_owner(Some(APP_B), None).is_ok());
     }
 }
 
@@ -16387,7 +17730,7 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
         let (output, verified) =
             editable_text_action_result(EditableTextSetOutcome::MismatchAfterDeadline, None);
         let result = server
-            .finish_set_value_output(output, verified, &set_value_capture)
+            .finish_set_value_output(output, verified, &set_value_capture, None)
             .await
             .unwrap();
         assert_eq!(result.is_error, Some(true));
@@ -16405,7 +17748,7 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
         std::fs::write(&log_path, "").unwrap();
         let output = action_result("set_value", Err("pre-dispatch failure".to_string()), None);
         let result = server
-            .finish_set_value_output(output, None, &set_value_capture)
+            .finish_set_value_output(output, None, &set_value_capture, None)
             .await
             .unwrap();
         assert_eq!(result.is_error, Some(true));
@@ -16524,7 +17867,7 @@ mod tree_spill_server_tests {
         let (backend, root) = backend("index");
         let tree: Vec<_> = (0..300).map(node).collect();
         backend.cache_snapshot(&tree, None);
-        let mut inline = tree.clone();
+        let mut inline = TreeNodes::new(tree.clone(), NodeDetail::Full);
         let (spill, note) = fit_tree(&backend.tree_spiller, &mut inline, tree_budget(2_000));
         let spill = spill.expect("a 300-node tree spills");
         assert!(note.unwrap().contains("get_tree_page"));
@@ -16551,7 +17894,7 @@ mod tree_spill_server_tests {
         let mut seen = Vec::new();
         let mut offset = 0;
         loop {
-            let page = tree_page(&tree, offset);
+            let page = tree_page(&tree, NodeDetail::Full, offset);
             assert!(!page.nodes.is_empty());
             assert!(
                 serde_json::to_string(&page).unwrap().len()
@@ -16565,15 +17908,17 @@ mod tree_spill_server_tests {
             }
         }
         assert_eq!(seen, (0..300).collect::<Vec<_>>());
-        assert!(tree_page(&tree, 999).nodes.is_empty());
-        assert!(tree_page(&[], 0).message.contains("call get_app_state"));
+        assert!(tree_page(&tree, NodeDetail::Full, 999).nodes.is_empty());
+        assert!(tree_page(&[], NodeDetail::Full, 0)
+            .message
+            .contains("call get_app_state"));
     }
 
     #[test]
     fn a_page_holds_one_node_even_past_the_budget() {
         let mut huge = node(0);
         huge.name = Some("x".repeat(crate::tree_spill::INLINE_RESULT_BYTES * 2));
-        let page = tree_page(&[huge, node(1)], 0);
+        let page = tree_page(&[huge, node(1)], NodeDetail::Full, 0);
         assert_eq!(page.nodes.len(), 1);
         assert_eq!(page.next_offset, Some(1));
     }
