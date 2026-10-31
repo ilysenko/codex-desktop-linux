@@ -456,7 +456,11 @@ function installPortalBackend(source) {
   patched = replaceUnique(patched,
     new RegExp(`${escapeRegExp(accessReady)}&&\\(${IDENT}\\|\\|${IDENT}\\)&&${IDENT}\\.forEach\\((${IDENT})=>\\{\\1\\(\\)\\}\\),${IDENT}\\}`, "u"),
     match => match.replace(/,([\w$]+)\}$/u, ",codexLinuxGlobalShortcutsPortalSchedule(),$1}"), "application access publication");
-  const quitting = new RegExp(`markAppQuitting:\\(\\)=>\\{(?=(?:${IDENT}(?:\\?\\.|\\.)markAppQuitting\\(\\),){2,}${IDENT}\\.dispose\\(\\)\\})`, "u");
+  const quitting = new RegExp(
+    `markAppQuitting:\\(\\)=>\\{(?=let (?<pending>${IDENT})=${IDENT}\\(\\);${notNull("\\k<pending>")}&&${IDENT}\\(\\k<pending>\\),` +
+      `(?:${IDENT}(?:\\?\\.|\\.)markAppQuitting\\(\\),){2,}${IDENT}\\.dispose\\(\\)\\})`,
+    "u",
+  );
   uniqueAnchor(quitting, "accepted application quit before window cleanup");
   patched = replaceUnique(patched, quitting,
     match => `${match}codexLinuxGlobalShortcutsPortalShutdown();`, "accepted application quit before window cleanup");

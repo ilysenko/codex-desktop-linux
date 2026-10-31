@@ -31,7 +31,8 @@ test("shared backend fails closed for missing and ambiguous lifecycle anchors", 
   for (const input of [source.replace("generation:0", "generation:1"), source + source,
     source.replace("beginCapture()", "renamedCapture()"), source.replace("suspendDepth+=1", "suspendDepth+=2"),
     source.replace('status:"loading"', 'status:"pending"'), source.replace("flushAndDisposeContext:r", "flushContext:r"),
-    source.replace("markAppQuitting:()=>", "markQuitting:()=>")]) {
+    source.replace("markAppQuitting:()=>", "markQuitting:()=>"),
+    source.replace("null!=e&&clearPendingUpdate(e)", "clearPendingUpdate(e)")]) {
     assert.throws(() => installPortalBackend(input));
   }
   const misleading = "function unrelated(e){if(wrongCheck(e)||otherCheck(e))return;}" + source;
