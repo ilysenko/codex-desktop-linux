@@ -7,11 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- Synchronize the embedded Computer Use backend to standalone v0.7.34.
+- Synchronize the embedded Computer Use backend to standalone v0.7.35.
   Accessibility trees use the compact node encoding by default, with
   `verbose: true` for the full encoding. `get_app_state` takes
   `interactive_only: true` and scopes the tree to the targeted window, and
-  the element action tools take the same app target `click` takes.
+  the element action tools take the same app target `click` takes. v0.7.35
+  adds the capture-order refusal and Hyprland background mode below, plus the
+  EIS restore-grant and pixelflux fixes under Fixed.
 - Synchronize the embedded Computer Use backend to standalone v0.7.33. Drive
   Selkies desktops through the pixelflux computer-use API, use the portal's
   negotiated EIS pointer regions on GNOME, and bound wlroots output
