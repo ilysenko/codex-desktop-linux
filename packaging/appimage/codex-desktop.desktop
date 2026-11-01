@@ -12,8 +12,3 @@ StartupNotify=true
 StartupWMClass=codex-desktop
 X-GNOME-WMClass=codex-desktop
 X-AppImage-Version=__VERSION__
-Actions=new-window;
-
-[Desktop Action new-window]
-Name=New Window
-Exec=env CHROME_DESKTOP=codex-desktop.desktop CODEX_MULTI_LAUNCH=1 AppRun --new-instance

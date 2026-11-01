@@ -371,22 +371,12 @@ render_desktop_entry() {
         mv "$rendered_target" "$target"
     else
         awk '
-            BEGIN { actions_rewritten = 0 }
             /^\[Desktop Action CheckForUpdates\]$/ { skip = 1; next }
             /^\[Desktop Action InstallReadyUpdate\]$/ { skip = 1; next }
             /^\[/ { skip = 0 }
             skip { next }
-            /^Actions=/ {
-                print "Actions=new-window;"
-                actions_rewritten = 1
-                next
-            }
+            /^Actions=/ { next }
             { print }
-            END {
-                if (actions_rewritten == 0) {
-                    print "Actions=new-window;"
-                }
-            }
         ' "$rendered_target" > "$target"
         rm -f "$rendered_target"
     fi

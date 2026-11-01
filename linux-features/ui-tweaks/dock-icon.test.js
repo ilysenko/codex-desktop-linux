@@ -959,7 +959,7 @@ test("desktop synchronization serializes the per-app launcher transaction with a
   }
 });
 
-test("AppImage synchronization writes persistent launch commands for the app and action", () => {
+test("AppImage synchronization writes a persistent launch command for the app", () => {
   const fixture = createDesktopSyncFixture();
   try {
     const sourceDir = path.join(fixture.tempDir, "mounted AppDir");
@@ -991,12 +991,6 @@ test("AppImage synchronization writes persistent launch commands for the app and
     assert.doesNotMatch(managed, /\bAppRun\b/);
     assert.equal(
       managed.includes(`Exec="${desktopAppImage}" --show %u\n`),
-      true,
-    );
-    assert.equal(
-      managed.includes(
-        `Exec=env CHROME_DESKTOP=codex-desktop.desktop CODEX_MULTI_LAUNCH=1 "${desktopAppImage}" --new-instance\n`,
-      ),
       true,
     );
     const validation = childProcess.spawnSync("desktop-file-validate", [fixture.managedDesktop], {

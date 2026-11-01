@@ -599,7 +599,7 @@
                 /^\[Desktop Action InstallReadyUpdate\]$/ { skip = 1; next }
                 /^\[/ { skip = 0 }
                 skip { next }
-                /^Actions=/ { print "Actions=new-window;"; next }
+                /^Actions=/ { next }
                 { print }
               ' "$source_dir/packaging/linux/codex-desktop.desktop" \
                 > "$out/share/applications/codex-desktop.desktop"

@@ -563,44 +563,6 @@ function runStageHook(env) {
   });
 }
 
-function runLauncherMultiLaunchPolicy(installDir, env = {}) {
-  const launcher = fs.readFileSync(path.join(REPO_ROOT, "launcher", "start.sh.template"), "utf8");
-  const functions = launcher
-    .split("early_truthy_env_value() {", 2)[1]
-    .split('configure_multi_launch_instance "$@"', 1)[0];
-  const probe = path.join(installDir, "multi-launch-policy-probe.sh");
-  fs.writeFileSync(probe, [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    `SCRIPT_DIR=${JSON.stringify(installDir)}`,
-    'SINGLE_INSTANCE_REQUIRED_MARKER="$SCRIPT_DIR/.codex-linux/single-instance-required"',
-    'CODEX_LINUX_APP_ID="codex-remote-policy-test"',
-    'CODEX_LINUX_APP_DISPLAY_NAME="ChatGPT"',
-    'CODEX_LINUX_WEBVIEW_PORT="62000"',
-    'CODEX_MULTI_LAUNCH_PORT_RANGE="62000-62004"',
-    'CODEX_MULTI_LAUNCH_REQUEST=""',
-    'APP_STATE_DIR="$SCRIPT_DIR/state"',
-    'APP_PID_FILE="$APP_STATE_DIR/app.pid"',
-    'WEBVIEW_PID_FILE="$APP_STATE_DIR/webview.pid"',
-    'LAUNCH_ACTION_RUNTIME_DIR="$APP_STATE_DIR/runtime"',
-    'LAUNCH_ACTION_SOCKET="$LAUNCH_ACTION_RUNTIME_DIR/launch-action.sock"',
-    'LOG_DIR="$SCRIPT_DIR/log"',
-    'MULTI_LAUNCH_REQUESTED=0',
-    'MULTI_LAUNCH_ACTIVE=0',
-    'CODEX_LINUX_INSTANCE_ID=""',
-    'LAUNCHER_ARGS=()',
-    "early_truthy_env_value() {",
-    functions,
-    'configure_multi_launch_instance "$@"',
-    'printf "active=%s port=%s args=%s\\n" "$MULTI_LAUNCH_ACTIVE" "$CODEX_LINUX_WEBVIEW_PORT" "${LAUNCHER_ARGS[*]}"',
-    "",
-  ].join("\n"));
-  return spawnSync("bash", [probe, "--new-instance"], {
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-  });
-}
-
 function writeDesktopAppServerRemoteControlMarker(appDir) {
   const marker = path.join(appDir, ".codex-linux", "desktop-app-server-remote-control-enabled");
   fs.mkdirSync(path.dirname(marker), { recursive: true });

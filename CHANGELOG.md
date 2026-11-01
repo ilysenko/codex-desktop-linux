@@ -98,6 +98,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Desktop entries no longer offer a "New Window" action. It relied on the
+  retired multi-instance launcher (`--new-instance`, `CODEX_MULTI_LAUNCH`),
+  which the official app ignores, so it did nothing while the app was running
+  (#1655). Use the app's own New Window command instead.
 - The app no longer stops at launch with "Organization settings could not be
   loaded" on upstream 26.1021+. The remote-mobile-control patch added
   `--remote-control` (or the `proxy` subcommand) to every app-server launch,
