@@ -1605,6 +1605,60 @@ async fn remote_desktop_interface_version(connection: &Connection) -> Result<u32
         .context("RemoteDesktop version property failed")
 }
 
+/// Whether the session bus positively has no RemoteDesktop portal.
+pub(crate) async fn remote_desktop_portal_missing() -> bool {
+    hydrate_session_bus_env();
+    let Ok(address) = zbus::Address::session() else {
+        return false;
+    };
+    remote_desktop_portal_missing_at(address).await
+}
+
+/// Only an answer from a running bus proves absence: the bus reports that no
+/// portal service is installed, or the portal object does not export the
+/// interface (xdg-desktop-portal-wlr implements only Screenshot and
+/// ScreenCast). A bus socket that is missing or refuses connections may
+/// belong to a bus that has not started yet or is restarting, and a timeout
+/// may be a slow portal. Those keep the portal path, which reports its own
+/// error.
+async fn remote_desktop_portal_missing_at(address: zbus::Address) -> bool {
+    let connect = async { zbus::connection::Builder::address(address)?.build().await };
+    let Ok(Ok(connection)) = tokio::time::timeout(PORTAL_CALL_TIMEOUT, connect).await else {
+        return false;
+    };
+    let reply = tokio::time::timeout(
+        PORTAL_CALL_TIMEOUT,
+        connection.call_method(
+            Some(PORTAL_DESKTOP_SERVICE),
+            PORTAL_DESKTOP_PATH,
+            Some("org.freedesktop.DBus.Introspectable"),
+            "Introspect",
+            &(),
+        ),
+    )
+    .await;
+    match reply {
+        Ok(Ok(message)) => message
+            .body()
+            .deserialize::<String>()
+            .is_ok_and(|xml| lacks_interface(&xml, PORTAL_REMOTE_DESKTOP_INTERFACE)),
+        Ok(Err(zbus::Error::MethodError(name, _, _))) => {
+            name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown"
+        }
+        _ => false,
+    }
+}
+
+/// True only for introspection that parses and does not list `interface`.
+fn lacks_interface(introspection: &str, interface: &str) -> bool {
+    zbus_xml::Node::try_from(introspection).is_ok_and(|node| {
+        !node
+            .interfaces()
+            .iter()
+            .any(|item| item.name().as_str() == interface)
+    })
+}
+
 async fn claim_restore_permit(
     persistence: &RemoteDesktopPersistence,
     kind: PortalDeviceKind,
@@ -3253,6 +3307,79 @@ mod tests {
         assert!(!acceptable_restore_token(
             &"a".repeat(RESTORE_TOKEN_MAX_LEN + 1)
         ));
+    }
+
+    #[tokio::test]
+    async fn only_a_running_bus_can_report_the_remote_desktop_portal_missing() {
+        struct ScreenCastOnly;
+        #[zbus::interface(name = "org.freedesktop.portal.ScreenCast")]
+        impl ScreenCastOnly {}
+        struct RemoteDesktop;
+        #[zbus::interface(name = "org.freedesktop.portal.RemoteDesktop")]
+        impl RemoteDesktop {}
+
+        let dir = TempState::new();
+        let socket = dir.path.join("bus");
+        let address = format!("unix:path={}", socket.display());
+        let probe = || remote_desktop_portal_missing_at(address.parse().unwrap());
+        // No service directories, so the bus cannot activate an installed portal.
+        let config = dir.path.join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "<busconfig><type>session</type><listen>{address}</listen>\
+                 <policy context=\"default\"><allow send_destination=\"*\"/>\
+                 <allow receive_sender=\"*\"/><allow own=\"*\"/></policy></busconfig>"
+            ),
+        )
+        .unwrap();
+
+        assert!(!probe().await, "a bus that has not started yet");
+
+        struct Bus(std::process::Child);
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut bus = Bus(std::process::Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--nopidfile", "--print-address=1"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("start private dbus-daemon"));
+        let mut printed = String::new();
+        io::BufRead::read_line(
+            &mut io::BufReader::new(bus.0.stdout.take().unwrap()),
+            &mut printed,
+        )
+        .unwrap();
+        assert!(probe().await, "no portal service on a running bus");
+
+        let portal = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name(PORTAL_DESKTOP_SERVICE)
+            .unwrap()
+            .serve_at(PORTAL_DESKTOP_PATH, ScreenCastOnly)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        assert!(probe().await, "a portal without RemoteDesktop");
+
+        portal
+            .object_server()
+            .at(PORTAL_DESKTOP_PATH, RemoteDesktop)
+            .await
+            .unwrap();
+        assert!(!probe().await, "a portal with RemoteDesktop");
+
+        drop(bus);
+        assert!(socket.exists());
+        assert!(!probe().await, "a bus socket that refuses connections");
+
+        assert!(!lacks_interface("not xml", PORTAL_REMOTE_DESKTOP_INTERFACE));
     }
 
     #[test]

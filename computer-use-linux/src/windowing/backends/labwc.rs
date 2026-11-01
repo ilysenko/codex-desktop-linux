@@ -277,14 +277,13 @@ fn ipc_matches(value: Option<&str>, expected: Option<&str>) -> bool {
 
 mod foreign {
     use super::WindowInfo;
+    use crate::windowing::wayland_session::{bounded_sync, SyncState};
     use anyhow::{bail, Context, Result};
     use std::collections::HashMap;
-    use std::os::fd::{AsFd, AsRawFd};
+    use std::os::fd::AsRawFd;
     use std::time::Instant;
     use wayland_client::protocol::{wl_callback, wl_registry, wl_seat};
-    use wayland_client::{
-        event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle,
-    };
+    use wayland_client::{event_created_child, Connection, Dispatch, Proxy, QueueHandle};
     use wayland_protocols_wlr::foreign_toplevel::v1::client::{
         zwlr_foreign_toplevel_handle_v1, zwlr_foreign_toplevel_manager_v1,
     };
@@ -330,13 +329,13 @@ mod foreign {
         let qh = queue.handle();
         let mut state = State::default();
         let _registry = conn.display().get_registry(&qh, ());
-        bounded_sync(&conn, &mut queue, &mut state, deadline)?;
+        bounded_sync(&conn, &mut queue, &mut state, deadline, "labwc activation")?;
         if state.manager.is_none() || state.seat.is_none() {
             bail!("labwc activation requires foreign-toplevel-management and a seat");
         }
         // Bind requests were sent while dispatching registry events. Wait for
         // their initial handles and titles without a blocking roundtrip.
-        bounded_sync(&conn, &mut queue, &mut state, deadline)?;
+        bounded_sync(&conn, &mut queue, &mut state, deadline, "labwc activation")?;
         if state.finished {
             bail!("labwc toplevel manager has finished");
         }
@@ -364,62 +363,7 @@ mod foreign {
             bail!("labwc activation timed out before dispatch");
         }
         proxy.activate(state.seat.as_ref().unwrap());
-        bounded_sync(&conn, &mut queue, &mut state, deadline)
-    }
-
-    fn bounded_sync(
-        conn: &Connection,
-        queue: &mut EventQueue<State>,
-        state: &mut State,
-        deadline: Instant,
-    ) -> Result<()> {
-        if Instant::now() >= deadline {
-            bail!("labwc activation timed out");
-        }
-        state.synced = false;
-        conn.display().sync(&queue.handle(), ());
-        loop {
-            queue
-                .dispatch_pending(state)
-                .context("Wayland dispatch failed")?;
-            if Instant::now() >= deadline {
-                bail!("labwc activation timed out");
-            }
-            if state.synced {
-                return Ok(());
-            }
-            queue.flush().context("Wayland flush failed")?;
-            if let Some(guard) = queue.prepare_read() {
-                let mut fd = libc::pollfd {
-                    fd: queue.as_fd().as_raw_fd(),
-                    events: libc::POLLIN,
-                    revents: 0,
-                };
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                let timeout_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
-                // SAFETY: fd is a valid single pollfd, and poll only updates revents.
-                let ready = unsafe { libc::poll(&mut fd, 1, timeout_ms) };
-                if ready < 0 {
-                    let error = std::io::Error::last_os_error();
-                    if error.kind() == std::io::ErrorKind::Interrupted {
-                        continue;
-                    }
-                    return Err(error).context("Wayland poll failed");
-                }
-                if ready == 0 {
-                    bail!("labwc activation timed out");
-                }
-                match guard.read() {
-                    Ok(_) => {}
-                    Err(wayland_client::backend::WaylandError::Io(error))
-                        if matches!(
-                            error.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-                        ) => {}
-                    Err(error) => return Err(error).context("Wayland read failed"),
-                }
-            }
-        }
+        bounded_sync(&conn, &mut queue, &mut state, deadline, "labwc activation")
     }
 
     #[derive(Default)]
@@ -430,6 +374,12 @@ mod foreign {
         synced: bool,
         handles: HashMap<u32, HandleState>,
         proxies: Vec<zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1>,
+    }
+
+    impl SyncState for State {
+        fn synced(&mut self) -> &mut bool {
+            &mut self.synced
+        }
     }
 
     #[derive(Default)]

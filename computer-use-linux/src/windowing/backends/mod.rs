@@ -5,4 +5,5 @@ pub mod i3;
 pub mod kwin;
 pub mod labwc;
 pub mod niri;
+pub mod wlr_foreign_toplevel;
 pub mod x11;

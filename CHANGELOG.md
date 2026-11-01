@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.36. List
+  and focus windows through `zwlr_foreign_toplevel_manager_v1` on wlroots
+  compositors without a dedicated backend, and send `press_key` chords
+  through `wtype` where no RemoteDesktop portal exists. Hyprland background
+  input releases a key left down by a failed batch. Same-pid windows,
+  post-action trees and decorated window titles close gaps in the element
+  ownership check, and an unraised window crop of an unfocused target is
+  refused. `CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD` keeps working for the
+  new chord route.
 - Synchronize the embedded Computer Use backend to standalone v0.7.35.
   Accessibility trees use the compact node encoding by default, with
   `verbose: true` for the full encoding. `get_app_state` takes

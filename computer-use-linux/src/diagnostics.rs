@@ -1,6 +1,7 @@
 use crate::windowing::registry::{
     self, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, LABWC_BACKEND, NIRI_BACKEND, X11_BACKEND,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, LABWC_BACKEND, NIRI_BACKEND,
+    WLR_FOREIGN_TOPLEVEL_BACKEND, X11_BACKEND,
 };
 use crate::ydotool;
 use schemars::JsonSchema;
@@ -432,10 +433,10 @@ fn capability_map_with_portal_keyboard(
     if windowing.niri.ok {
         window_backends.push(NIRI_BACKEND.to_string());
     }
-    // i3, labwc and the generic X11/EWMH backend have no dedicated
-    // WindowingReport field; read them from the probe map so the capability
-    // list matches the registry order.
-    for backend in [I3_BACKEND, LABWC_BACKEND] {
+    // i3, labwc, wlr-foreign-toplevel and the generic X11/EWMH backend have
+    // no dedicated WindowingReport field; read them from the probe map so the
+    // capability list matches the registry order.
+    for backend in [I3_BACKEND, LABWC_BACKEND, WLR_FOREIGN_TOPLEVEL_BACKEND] {
         if windowing
             .backends
             .get(backend)
@@ -953,7 +954,7 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
             "A window listing backend is available for list_windows, focused_window, and targeted input verification."
         }
     } else {
-        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session. On niri, export the session's NIRI_SOCKET or expose an unambiguous matching socket in XDG_RUNTIME_DIR; the niri binary is optional. On labwc, the Selkies IPC socket labwc.sock lists windows."
+        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session. On niri, export the session's NIRI_SOCKET or expose an unambiguous matching socket in XDG_RUNTIME_DIR; the niri binary is optional. On labwc, the Selkies IPC socket labwc.sock lists windows. On other wlroots compositors, zwlr_foreign_toplevel_manager_v1 lists windows."
     }
     .to_string();
 

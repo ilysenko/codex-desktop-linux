@@ -8,7 +8,7 @@ pub(crate) mod wayland_session;
 pub use registry::{
     COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
     HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, LABWC_BACKEND, NIRI_BACKEND, UNAVAILABLE_BACKEND,
-    WINDOW_PERMISSION_HINT, X11_BACKEND,
+    WINDOW_PERMISSION_HINT, WLR_FOREIGN_TOPLEVEL_BACKEND, X11_BACKEND,
 };
 #[allow(unused_imports)]
 pub use target::{
@@ -58,6 +58,7 @@ mod tests {
                 NIRI_BACKEND,
                 I3_BACKEND,
                 LABWC_BACKEND,
+                WLR_FOREIGN_TOPLEVEL_BACKEND,
                 X11_BACKEND,
             ]
         );
