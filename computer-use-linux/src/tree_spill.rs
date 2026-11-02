@@ -25,6 +25,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::atspi_tree::AccessibilityNode;
+use crate::tree_encoding::{node_json_len, EncodedNodes, NodeDetail};
 
 /// Largest whole tool result, in serialized bytes, before the tree is spilled.
 /// It keeps a result inside a 10,000-token host limit (about 40,000 bytes of
@@ -81,13 +82,14 @@ impl TreeSpiller {
     pub(crate) fn fit(
         &self,
         nodes: &mut Vec<AccessibilityNode>,
+        detail: NodeDetail,
         budget: usize,
     ) -> Result<Option<TreeSpill>, (usize, String)> {
-        let inline = inline_prefix_len(nodes, budget);
+        let inline = inline_prefix_len(nodes, detail, budget);
         if inline == nodes.len() {
             return Ok(None);
         }
-        let result = self.write(nodes).map(|(path, bytes)| TreeSpill {
+        let result = self.write(nodes, detail).map(|(path, bytes)| TreeSpill {
             path: path.display().to_string(),
             node_count: nodes.len(),
             bytes,
@@ -99,7 +101,11 @@ impl TreeSpiller {
             .map_err(|error| (inline, format!("{error:#}")))
     }
 
-    fn write(&self, nodes: &[AccessibilityNode]) -> io::Result<(PathBuf, usize)> {
+    fn write(
+        &self,
+        nodes: &[AccessibilityNode],
+        detail: NodeDetail,
+    ) -> io::Result<(PathBuf, usize)> {
         let dir = self.dir.as_deref().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -122,7 +128,7 @@ impl TreeSpiller {
                 .custom_flags(libc::O_NOFOLLOW)
                 .open(&path)?;
             let mut writer = BufWriter::new(file);
-            serde_json::to_writer(&mut writer, nodes)?;
+            serde_json::to_writer(&mut writer, &EncodedNodes { nodes, detail })?;
             writer.flush()?;
             Ok::<_, io::Error>(writer.get_ref().metadata()?.len() as usize)
         })();
@@ -239,12 +245,15 @@ fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Number of leading nodes whose JSON array fits in `budget` bytes.
-pub(crate) fn inline_prefix_len(nodes: &[AccessibilityNode], budget: usize) -> usize {
+/// Number of leading nodes whose JSON array, in `detail`, fits in `budget` bytes.
+pub(crate) fn inline_prefix_len(
+    nodes: &[AccessibilityNode],
+    detail: NodeDetail,
+    budget: usize,
+) -> usize {
     let mut used: usize = 2; // the array brackets
     for (index, node) in nodes.iter().enumerate() {
-        let size = serde_json::to_string(node).map_or(usize::MAX, |json| json.len())
-            + usize::from(index > 0);
+        let size = node_json_len(node, detail).saturating_add(usize::from(index > 0));
         if used.saturating_add(size) > budget {
             return index;
         }
@@ -357,7 +366,7 @@ mod tests {
         let spiller = TreeSpiller::new(Some(dir.clone()));
         let mut nodes = vec![node(0, 10), node(1, 10)];
         assert!(matches!(
-            spiller.fit(&mut nodes, INLINE_RESULT_BYTES),
+            spiller.fit(&mut nodes, NodeDetail::Full, INLINE_RESULT_BYTES),
             Ok(None)
         ));
         assert_eq!(nodes.len(), 2);
@@ -371,7 +380,7 @@ mod tests {
         let spiller = TreeSpiller::new(Some(dir.clone()));
         let mut nodes = big_tree();
         let spill = spiller
-            .fit(&mut nodes, INLINE_RESULT_BYTES)
+            .fit(&mut nodes, NodeDetail::Full, INLINE_RESULT_BYTES)
             .unwrap()
             .expect("spilled");
         assert_eq!(
@@ -404,11 +413,11 @@ mod tests {
         let (root, dir) = scratch("replace");
         let spiller = TreeSpiller::new(Some(dir.clone()));
         let first = spiller
-            .fit(&mut big_tree(), INLINE_RESULT_BYTES)
+            .fit(&mut big_tree(), NodeDetail::Full, INLINE_RESULT_BYTES)
             .unwrap()
             .unwrap();
         let second = spiller
-            .fit(&mut big_tree(), INLINE_RESULT_BYTES)
+            .fit(&mut big_tree(), NodeDetail::Full, INLINE_RESULT_BYTES)
             .unwrap()
             .unwrap();
         assert!(!Path::new(&first.path).exists());
@@ -477,7 +486,9 @@ mod tests {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
         let spiller = TreeSpiller::new(Some(dir.clone()));
         let mut nodes = big_tree();
-        let (inline, error) = spiller.fit(&mut nodes, INLINE_RESULT_BYTES).unwrap_err();
+        let (inline, error) = spiller
+            .fit(&mut nodes, NodeDetail::Full, INLINE_RESULT_BYTES)
+            .unwrap_err();
         assert_eq!(nodes.len(), inline);
         assert!(error.contains("open to other users"), "{error}");
         assert!(files(&dir).is_empty());
@@ -506,7 +517,9 @@ mod tests {
     fn without_a_spill_directory_the_tree_is_cut_and_says_why() {
         let spiller = TreeSpiller::new(None);
         let mut nodes = big_tree();
-        let (inline, error) = spiller.fit(&mut nodes, INLINE_RESULT_BYTES).unwrap_err();
+        let (inline, error) = spiller
+            .fit(&mut nodes, NodeDetail::Full, INLINE_RESULT_BYTES)
+            .unwrap_err();
         assert_eq!(nodes.len(), inline);
         assert!(error.contains("no private directory"));
     }

@@ -250,7 +250,15 @@ async fn start_portal_pointer_session_inner(try_gnome_eis: bool) -> Result<Porta
                 "{error:#}"
             ))));
         }
-        Err(error) => return Err(error),
+        Err(error) => {
+            // EIS setup failed after Start produced a restore token (for
+            // example on COSMIC, where there is no GNOME EIS fallback path).
+            // Retain the grant's restore token so persistence can avoid
+            // another consent dialog, mirroring the GNOME arm above and the
+            // early bail-outs after Start.
+            commit_restore_permit(permit, restore_token).await;
+            return Err(error);
+        }
     };
     if ei.is_some() {
         // EIS takes global logical coordinates on COSMIC and GNOME. Stream

@@ -1,6 +1,30 @@
 use crate::terminal::TerminalWindowContext;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Largest integer a JSON client that parses numbers as IEEE-754 doubles
+/// (JavaScript's `Number.MAX_SAFE_INTEGER`) carries exactly. Every backend
+/// keeps `window_id` at or below it so IDs round-trip through any MCP client.
+pub const MAX_WINDOW_ID: u64 = (1 << 53) - 1;
+
+/// Deserialize an optional `window_id` input, rejecting any number a
+/// JavaScript client cannot have received exactly from `list_windows`.
+/// The input is read as a generic JSON number first, so a rounded ID above
+/// `u64::MAX` (which serde_json parses as a float) gets the same prompt.
+pub fn deserialize_window_id<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(number) = Option::<serde_json::Number>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    match number.as_u64() {
+        Some(window_id) if window_id <= MAX_WINDOW_ID => Ok(Some(window_id)),
+        _ => Err(serde::de::Error::custom(format!(
+            "window_id {number} is not an integer from 0 to {MAX_WINDOW_ID} (2^53-1), the largest integer JavaScript clients carry exactly. Window IDs from list_windows always fit, so this one is stale or was rounded; re-run list_windows and pass the current window_id."
+        ))),
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct WindowInfo {
@@ -35,7 +59,8 @@ pub(crate) fn app_id_leaf(app_id: &str) -> &str {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 pub struct WindowTarget {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_window_id")]
+    #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     pub window_id: Option<u64>,
     #[serde(default)]
     pub pid: Option<u32>,

@@ -22,7 +22,7 @@ export function installLinuxComputerUse(cua) {
   const meaningful = value => typeof value === 'string' ? value.replaceAll('\uFFFC', '').trim() || undefined : undefined;
   const compactNode = node => {
     const states = Array.isArray(node.states) ? node.states.map(meaningful).filter(Boolean) : [];
-    const actionNames = Array.isArray(node.actions) ? node.actions.map(action => meaningful(action?.name)).filter(Boolean) : [];
+    const actionNames = Array.isArray(node.actions) ? node.actions.map(action => meaningful(typeof action === 'string' ? action : action?.name)).filter(Boolean) : [];
     const textContent = meaningful(node.text?.content);
     const text = node.text && {
       ...(Number.isInteger(node.text.character_count) && node.text.character_count > 0 ? { character_count: node.text.character_count } : {}),
@@ -88,7 +88,7 @@ export function installLinuxComputerUse(cua) {
     }
     if (typeof app !== 'string' || !app.trim()) throw new Error('getApp requires a non-empty app id');
     const unsupported = async () => { throw new Error('This native Linux Computer Use operation is not supported'); };
-    const state = options => call('get_app_state', app, { include_screenshot: false, ...axBackendOptions(options) });
+    const state = options => call('get_app_state', app, { include_screenshot: false, ...axBackendOptions(options), ...(options?.compact === false ? { verbose: true } : {}) });
     let previousAccessibilityState;
     const screenshotMetadata = (result) => result.screenshot ? {
       width: result.screenshot.width, height: result.screenshot.height,

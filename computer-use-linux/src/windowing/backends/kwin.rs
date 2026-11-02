@@ -2,7 +2,7 @@ use crate::diagnostics::hydrate_session_bus_env;
 use crate::remote_desktop::LogicalMonitor;
 use crate::terminal::enrich_terminal_windows;
 use crate::windowing::registry::BackendProbe;
-use crate::windowing::types::{WindowBounds, WindowInfo};
+use crate::windowing::types::{WindowBounds, WindowInfo, MAX_WINDOW_ID};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::{
@@ -1593,6 +1593,12 @@ impl TryFrom<KwinRawWindow> for WindowInfo {
 
 fn kwin_window_id_from_uuid(uuid: &str) -> u64 {
     let normalized = normalize_kwin_uuid(uuid).unwrap_or_else(|| uuid.trim().to_ascii_lowercase());
+    // Keep the FNV-1a hash within 53 bits so JavaScript MCP clients, which
+    // parse JSON numbers as doubles, can pass the ID back unchanged.
+    kwin_uuid_hash(&normalized) & MAX_WINDOW_ID
+}
+
+fn kwin_uuid_hash(normalized: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in normalized.as_bytes() {
         hash ^= u64::from(*byte);
@@ -1833,6 +1839,24 @@ mod adapter_tests {
             "temporary KWin plugin sequence exhausted"
         );
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn kwin_window_ids_fit_javascript_safe_integers() {
+        // Issue #341: this UUID's full 64-bit hash is above 2^53-1, so the old
+        // ID lost precision in JavaScript clients and could not round-trip.
+        let uuid = "{B4DFACF8-A559-43C9-8B1F-ECD5CFD78359}";
+        let full_hash = kwin_uuid_hash("b4dfacf8-a559-43c9-8b1f-ecd5cfd78359");
+        assert!(full_hash > MAX_WINDOW_ID);
+
+        let window_id = kwin_window_id_from_uuid(uuid);
+        assert!(window_id <= MAX_WINDOW_ID);
+        assert_eq!(window_id as f64 as u64, window_id);
+        assert_eq!(window_id, full_hash & MAX_WINDOW_ID);
+        assert_eq!(
+            kwin_window_id_from_uuid("b4dfacf8-a559-43c9-8b1f-ecd5cfd78359"),
+            window_id
+        );
     }
 
     #[test]

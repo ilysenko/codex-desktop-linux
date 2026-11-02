@@ -2,7 +2,7 @@ export const maxBridgeMessageBytes = 8 * 1024 * 1024;
 
 const parameters = {
   list_apps: [],
-  get_app_state: ['include_screenshot', 'max_nodes', 'max_depth', 'max_width', 'max_height', 'max_bytes', 'scale', 'format', 'quality'],
+  get_app_state: ['include_screenshot', 'verbose', 'max_nodes', 'max_depth', 'max_width', 'max_height', 'max_bytes', 'scale', 'format', 'quality'],
   screenshot: ['max_width', 'max_height', 'max_bytes', 'scale', 'format', 'quality'],
   click: ['x', 'y', 'button', 'click_count', 'relative'],
   scroll: ['x', 'y', 'direction', 'pages', 'relative'],
@@ -17,6 +17,7 @@ function validateParameters(params) {
     }
   };
   if (params.include_screenshot !== undefined && typeof params.include_screenshot !== 'boolean') throw new Error('Invalid native include_screenshot parameter');
+  if (params.verbose !== undefined && typeof params.verbose !== 'boolean') throw new Error('Invalid native verbose parameter');
   integer('max_nodes', 1, 10000);
   integer('max_depth', 0, 64);
   integer('max_width', 1, 4096);
