@@ -236,6 +236,7 @@ node --test launcher/start.test.js tests/deb-prerm.test.js scripts/lib/upstream-
   scripts/patch-linux-window-ui.test.js scripts/patches/runner.test.js \
   scripts/patches/lib/asar-layout.test.js \
   scripts/patches/lib/global-shortcuts-portal.test.js \
+  scripts/patches/lib/minified-js.test.js scripts/patches/lib/assets.test.js \
   scripts/patches/core/*/test.js \
   scripts/lib/linux-features.test.js
 

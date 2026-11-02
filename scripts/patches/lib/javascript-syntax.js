@@ -31,4 +31,34 @@ function validateMainProcessSyntax(extractedDir) {
   }
 }
 
-module.exports = { validateMainProcessSyntax };
+function sourceParsesAs(inputType, source) {
+  const result = spawnSync(process.execPath, [`--input-type=${inputType}`, "--check"], {
+    input: source,
+    // Diagnostics echo whole minified lines; only the exit status matters.
+    stdio: ["pipe", "ignore", "ignore"],
+    timeout: 30_000,
+    env: { ...process.env, NODE_OPTIONS: "" },
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  return result.status === 0;
+}
+
+// Parses without evaluating. Webview chunks are ES modules; the script
+// fallback keeps classic worker or legacy assets acceptable.
+function javascriptSourceParses(source) {
+  return sourceParsesAs("module", source) || sourceParsesAs("commonjs", source);
+}
+
+// A patch must not turn a parseable bundle into an unparseable one: a broken
+// webview chunk leaves the renderer blank after ready-to-show.
+function patchBreaksJavaScriptSyntax(original, patched) {
+  return !javascriptSourceParses(patched) && javascriptSourceParses(original);
+}
+
+module.exports = {
+  javascriptSourceParses,
+  patchBreaksJavaScriptSyntax,
+  validateMainProcessSyntax,
+};

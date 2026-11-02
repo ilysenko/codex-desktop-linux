@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { findExportedAlias } = require("./minified-js.js");
+const { patchBreaksJavaScriptSyntax } = require("./javascript-syntax.js");
 
 function readDirectoryNames(dir) {
   if (!fs.existsSync(dir)) {
@@ -35,6 +36,18 @@ function regexpTest(filenamePattern, name) {
   return filenamePattern.test(name);
 }
 
+const JAVASCRIPT_ASSET_PATTERN = /\.(?:c|m)?js$/;
+
+function rejectsSyntaxBreak(assetName, original, patched) {
+  if (!JAVASCRIPT_ASSET_PATTERN.test(assetName) || !patchBreaksJavaScriptSyntax(original, patched)) {
+    return false;
+  }
+  console.warn(
+    `WARN: Patched webview asset ${assetName} no longer parses as JavaScript — keeping the original asset`,
+  );
+  return true;
+}
+
 function patchAssetFiles(extractedDir, filenamePattern, patchFn, missingWarnMessage) {
   const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
   if (!fs.existsSync(webviewAssetsDir)) {
@@ -60,6 +73,9 @@ function patchAssetFiles(extractedDir, filenamePattern, patchFn, missingWarnMess
     const currentSource = fs.readFileSync(filePath, "utf8");
     const patchedSource = patchFn(currentSource);
     if (patchedSource !== currentSource) {
+      if (rejectsSyntaxBreak(candidate, currentSource, patchedSource)) {
+        return { matched: candidates.length, changed: 0 };
+      }
       pendingWrites.push({ filePath, patchedSource });
     }
   }
@@ -107,7 +123,7 @@ function patchUniqueAssetFile(
 
   const [{ assetName, source }] = matches;
   const patchedSource = patchFn(source);
-  if (patchedSource === source) {
+  if (patchedSource === source || rejectsSyntaxBreak(assetName, source, patchedSource)) {
     return { matched: 1, changed: 0, assetName };
   }
   fs.writeFileSync(path.join(webviewAssetsDir, assetName), patchedSource, "utf8");
