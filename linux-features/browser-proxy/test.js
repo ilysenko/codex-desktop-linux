@@ -148,18 +148,20 @@ process.exitCode = result.status ?? 1;
   return { ...fixture, bash, launcher };
 }
 
-function runWithFilteredCua(fixture, grandparentEnvironment, parentEnvironment = {}, childEnvironment = {}) {
+function runWithFilteredCua(fixture, grandparentEnvironment, parentEnvironment = {}, childEnvironment = {}, nodeArgs = []) {
   const parentAssignments = Object.entries(parentEnvironment).map(
     ([name, value]) => `${name}=${value}`,
   );
   // Keep app-server's Bash stand-in alive while CUA waits for node_repl. Both
   // helpers receive separately filtered environments, as in the upstream chain.
-  const script = `node="$1"; launcher="$2"; wrapper="$3"; child_environment="$4"; shift 4;
-env -i -- PATH="$PATH" HOME="\${HOME:-/tmp}" "$@" "$node" "$launcher" "$wrapper" "$child_environment";
+  const script = `node="$1"; launcher="$2"; wrapper="$3"; child_environment="$4"; node_arg_count="$5"; shift 5;
+node_args=("\${@:1:node_arg_count}"); shift "$node_arg_count";
+env -i -- PATH="$PATH" HOME="\${HOME:-/tmp}" "$@" "$node" "\${node_args[@]}" "$launcher" "$wrapper" "$child_environment";
 status=$?; :; exit "$status"`;
   return run(fixture.bash, [
     "-c", script, "browser-proxy-app-server", process.execPath,
-    fixture.launcher, fixture.nodeRepl, JSON.stringify(childEnvironment), ...parentAssignments,
+    fixture.launcher, fixture.nodeRepl, JSON.stringify(childEnvironment), String(nodeArgs.length),
+    ...nodeArgs, ...parentAssignments,
   ], { env: grandparentEnvironment });
 }
 
@@ -377,6 +379,82 @@ for (const identityMismatch of [undefined, "launcher", "node", "app-server"]) {
   });
 }
 
+for (const form of ["separate", "equals", "repeated", "separator"]) {
+  test(`CUA proxy recovery recognizes the launcher after ${form} Node import options`, () => {
+    const fixture = makeFakeCuaInstall();
+    try {
+      const preload = path.join(fixture.root, "preload with spaces.mjs");
+      fs.writeFileSync(preload, "// No-op preload, as used by the bundled CUA launcher.\n");
+      const nodeArgs = {
+        separate: ["--import", preload],
+        equals: [`--import=${preload}`],
+        repeated: ["--import", preload, `--import=${preload}`],
+        separator: ["--import", preload, "--"],
+      }[form];
+      const result = runWithFilteredCua(fixture, cleanProxyEnvironment({
+        HTTPS_PROXY: "http://127.0.0.1:18443",
+        UNRELATED_SECRET: "do-not-inherit",
+      }), {}, {}, nodeArgs);
+      const values = reportedEnvironment(result.stdout);
+      assert.equal(values.get("HTTPS_PROXY"), "http://127.0.0.1:18443");
+      assert.equal(values.get("NODE_USE_ENV_PROXY"), "1");
+      assert.equal(values.get("UNRELATED_SECRET"), "<unset>");
+      assert.equal(values.get("args"), "alpha beta");
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const identityMismatch of ["launcher", "node", "app-server"]) {
+  test(`CUA import options still reject an unrelated ${identityMismatch}`, () => {
+    const fixture = makeFakeCuaInstall(identityMismatch);
+    try {
+      const result = runWithFilteredCua(fixture, cleanProxyEnvironment({
+        HTTPS_PROXY: "http://must-not-inherit.invalid:18443",
+      }), {}, {}, ["--import", "data:text/javascript,"]);
+      const values = reportedEnvironment(result.stdout);
+      assert.equal(values.get("HTTPS_PROXY"), "<unset>");
+      assert.equal(values.get("NODE_USE_ENV_PROXY"), "<unset>");
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const form of ["eval", "import operand", "script argument", "unknown option"]) {
+  test(`CUA proxy recovery rejects a launcher path used as ${form}`, () => {
+    const fixture = makeFakeCuaInstall();
+    try {
+      const bundledLauncher = fixture.launcher;
+      const unrelated = path.join(path.dirname(bundledLauncher), "unrelated.mjs");
+      fs.copyFileSync(bundledLauncher, unrelated);
+      let nodeArgs;
+      if (form === "eval") {
+        nodeArgs = ["--eval", "import(process.argv[1])"];
+      } else if (form === "import operand") {
+        fixture.launcher = unrelated;
+        nodeArgs = ["--import", bundledLauncher];
+      } else if (form === "script argument") {
+        // The unrelated entrypoint shifts its argument away before running the
+        // fixture; the real command line still contains it before the CUA path.
+        fs.writeFileSync(unrelated, "process.argv.splice(1, 1); await import(process.argv[1]);\n");
+        nodeArgs = [unrelated];
+      } else {
+        nodeArgs = ["--no-warnings"];
+      }
+      const result = runWithFilteredCua(fixture, cleanProxyEnvironment({
+        HTTPS_PROXY: "http://must-not-inherit.invalid:18443",
+      }), {}, {}, nodeArgs);
+      const values = reportedEnvironment(result.stdout);
+      assert.equal(values.get("HTTPS_PROXY"), "<unset>");
+      assert.equal(values.get("NODE_USE_ENV_PROXY"), "<unset>");
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
 for (const level of ["child", "direct parent"]) {
   for (const empty of [false, true]) {
     test(`CUA ${level} ${empty ? "empty" : "non-empty"} proxy families block higher ancestors across case`, () => {
@@ -399,6 +477,7 @@ for (const level of ["child", "direct parent"]) {
               cleanProxyEnvironment({ [alternateName]: "grandparent.invalid" }),
               parentEnvironment,
               childEnvironment,
+              ["--import", "data:text/javascript,"],
             );
             const values = reportedEnvironment(result.stdout);
             assert.equal(values.get(preferredName), value, `${preferredName} should retain the ${level} value`);
@@ -426,6 +505,7 @@ for (const level of ["child", "direct parent", "app-server"]) {
           }),
           level === "app-server" ? {} : { NODE_USE_ENV_PROXY: level === "direct parent" ? value : "1" },
           level === "child" ? { NODE_USE_ENV_PROXY: value } : {},
+          ["--import=data:text/javascript,"],
         );
         const values = reportedEnvironment(result.stdout);
         assert.equal(values.get("HTTPS_PROXY"), "http://grandparent.invalid:8443");
