@@ -402,6 +402,19 @@ test("catalog patch targets the 26.1027.51404 option-list helper", () => {
   );
 });
 
+test("catalog patch leaves a shared option-list helper alone", () => {
+  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
+  for (const user of ["function Other(e){return qDt(e).length}", "export{qDt as shared};"]) {
+    const source = `${splitResolverCatalogFixture()}${user}`;
+    assert.equal(catalogPatchContract(source), "drifted");
+    const { result, warnings } = withCapturedWarnings(() => applyCatalogPatch(source, presets));
+    assert.equal(result, source);
+    assert.equal(warnings.length, 1);
+  }
+  const aliased = `${splitResolverCatalogFixture()}export{Other as qDt};function Other(){}`;
+  assert.equal(catalogPatchContract(aliased), "current");
+});
+
 test("catalog patch keeps a bundle with quote-bearing regex literals parseable (#1659)", () => {
   const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
   for (const fixture of [catalogFixture(), splitResolverCatalogFixture()]) {

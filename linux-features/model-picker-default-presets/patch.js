@@ -228,8 +228,16 @@ function catalogSelectionResolverSection(source) {
   if (name == null) {
     return null;
   }
+  // The helper is shared code: patch it only while the selection resolver is
+  // its sole user (one definition plus one reference). An export alias such
+  // as "X as qDt" names another binding; exporting the helper itself counts.
+  const references = source.match(
+    new RegExp(`(?<![\\w$.])(?<!\\bas )${escapeRegExp(name)}(?![\\w$])`, "gu"),
+  )?.length ?? 0;
   const caller = uniqueFunctionWithMarkers(source, [...CATALOG_SELECTION_MARKERS, `=${name}(`]);
-  return caller == null || caller.start === optionList.start ? null : optionList;
+  return references !== 2 || caller == null || caller.start === optionList.start
+    ? null
+    : optionList;
 }
 
 // The flattened option array starts with the catalog's public options and

@@ -82,6 +82,8 @@ const REGEX_PREFIX_KEYWORDS = new Set([
   "yield",
 ]);
 
+const CONDITION_KEYWORDS = new Set(["for", "if", "while", "with"]);
+
 function isLineTerminator(char) {
   return char === "\n" || char === "\r" || char === " " || char === " ";
 }
@@ -160,8 +162,14 @@ function slashStartsRegex(previous) {
 // literals, whose quotes and braces are not code. Minified bundles contain
 // regexes such as /[`"']+/ that a quote-only scanner misreads.
 function findMatchingBrace(source, openIndex) {
+  if (!Number.isInteger(openIndex) || openIndex < 0) {
+    return -1;
+  }
   let depth = 0;
   const templateDepths = [];
+  // One entry per open parenthesis: whether it holds an if/while/for/with
+  // condition, after which a slash starts a regex rather than a division.
+  const parenthesesAreConditions = [];
   let previous = { kind: "punct", value: "{" };
 
   const enterTemplateChunk = (startIndex) => {
@@ -242,6 +250,15 @@ function findMatchingBrace(source, openIndex) {
       const property = previous.kind === "punct" && previous.value === "." &&
         source[start - 2] !== ".";
       previous = { kind: "word", value: source.slice(start, i + 1), property };
+    } else if (char === "(") {
+      parenthesesAreConditions.push(
+        previous.kind === "word" && !previous.property && CONDITION_KEYWORDS.has(previous.value),
+      );
+      previous = { kind: "punct", value: "(" };
+    } else if (char === ")") {
+      previous = parenthesesAreConditions.pop()
+        ? { kind: "punct", value: "condition)" }
+        : { kind: "punct", value: ")" };
     } else if ((char === "+" || char === "-") && source[i - 1] === char && previous.value === char) {
       // A postfix ++/-- ends an operand, so a following slash divides.
       previous = { kind: "value" };

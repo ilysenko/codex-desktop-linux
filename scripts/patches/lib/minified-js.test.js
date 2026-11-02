@@ -64,6 +64,7 @@ test("findMatchingBrace tells regex literals from division", () => {
     "function a(e){let t=e++/2/1;return t}",
     "function a(e){return typeof/}/,e.return/2/1}",
     "function a(e){let t=[/`/,/[\\]}]/];return t}",
+    "function a(e){if(e)/}/.test(e);while(!e)/`/.exec(e);return(e)/2}",
   ];
   for (const source of cases) {
     assert.strictEqual(findMatchingBrace(source, source.indexOf("{")), source.length - 1, source);
@@ -81,4 +82,9 @@ test("findMatchingBrace skips comments and nested template substitutions", () =>
   ].join("");
   assert.strictEqual(findMatchingBrace(source, source.indexOf("{")), source.length - 1);
   assert.strictEqual(findMatchingBrace("function a(){`${", 12), -1);
+});
+
+test("findMatchingBrace reports a missing opening brace as not found", () => {
+  const source = "{a}";
+  assert.strictEqual(findMatchingBrace(source, source.indexOf("{", 1)), -1);
 });

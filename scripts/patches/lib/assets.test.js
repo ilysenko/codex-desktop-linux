@@ -38,6 +38,18 @@ test("javascriptSourceParses accepts modules and classic scripts only", () => {
   assert.equal(javascriptSourceParses(MODULE), true);
   assert.equal(javascriptSourceParses("with(self){postMessage(1)}"), true);
   assert.equal(javascriptSourceParses(BREAK(MODULE)), false);
+  assert.equal(javascriptSourceParses("return 1"), false);
+});
+
+test("patchUniqueAssetFile keeps a classic script whose patch moves code to the top level", () => {
+  const script = "function f(){return 1}var y=2;";
+  withAssets({ "worker.js": script }, ({ root, read, warnings }) => {
+    const patch = (source) => source.replace("{return 1}", "{}return 1;");
+    const result = patchUniqueAssetFile(root, /\.js$/, () => true, patch, "missing", "ambiguous");
+    assert.equal(result.changed, 0);
+    assert.equal(read("worker.js"), script);
+    assert.equal(warnings.length, 1);
+  });
 });
 
 test("patchUniqueAssetFile keeps an asset whose patch breaks its syntax", () => {
