@@ -62,6 +62,10 @@ proxy variables available to the same-user Browser Use helper, just as they
 are already available to its Codex app-server parent. Values are never logged.
 The wrapper verifies the CUA launcher path and both executable paths before
 crossing that one intermediary; it never searches arbitrary ancestors.
+It recognizes the launcher after Node's `--import module` or `--import=module`
+preloads (including repeated preloads and an optional `--` separator). Unknown
+Node options are rejected; a launcher path in a preload operand, eval command,
+or another script's arguments does not identify the bundled launcher.
 Child and direct-parent proxy families retain priority, including explicitly
 empty values. If a process environment cannot be read, existing configuration
 is preserved.
