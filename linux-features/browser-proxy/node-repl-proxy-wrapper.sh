@@ -24,7 +24,35 @@ if [ -r "/proc/$PPID/cmdline" ]; then
     mapfile -d '' -t parent_args < "/proc/$PPID/cmdline" || true
 fi
 cua_launcher="$bin_dir/../lib/node_modules/@oai/cua-repl/bin/cua-repl.mjs"
-if [ "${parent_args[1]:-}" = "$(readlink -f -- "$cua_launcher")" ] &&
+# Only skip the preload options used by the bundled launcher. Searching every
+# argument could mistake an import operand or an eval/script argument for the
+# entrypoint and copy proxy credentials across an unrelated intermediary.
+parent_runs_cua_launcher() {
+    local index=1
+    while [ "$index" -lt "${#parent_args[@]}" ]; do
+        case "${parent_args[$index]}" in
+            --import)
+                index=$((index + 1))
+                [ -n "${parent_args[$index]:-}" ] || return 1
+                [[ "${parent_args[$index]}" != -* ]] || return 1
+                index=$((index + 1))
+                ;;
+            --import=*)
+                [ -n "${parent_args[$index]#--import=}" ] || return 1
+                index=$((index + 1))
+                ;;
+            --)
+                index=$((index + 1))
+                break
+                ;;
+            -*) return 1 ;;
+            *) break ;;
+        esac
+    done
+    [ "${parent_args[$index]:-}" = "$(readlink -f -- "$cua_launcher")" ]
+}
+
+if parent_runs_cua_launcher &&
    [ "$(readlink -f -- "/proc/$PPID/exe")" = "$(readlink -f -- "$bin_dir/node")" ]; then
     app_server_pid=""
     while read -r key value rest; do
