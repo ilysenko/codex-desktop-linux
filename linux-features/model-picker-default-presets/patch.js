@@ -201,13 +201,60 @@ function catalogNormalizerSection(source) {
   ]);
 }
 
+const CATALOG_OPTION_LIST_MARKERS = Object.freeze([
+  "internalOptions??[]",
+  "versionOptions?.flatMap(",
+]);
+const CATALOG_SELECTION_MARKERS = Object.freeze([
+  "defaultThinkingEffortByModelSlug",
+  "thinkingEffort!=null",
+]);
+
+// The selection resolver either builds the flattened option list inline, or
+// (since 26.1027.51404) calls a one-line helper that returns it. The patch
+// target is the function that owns that option array.
 function catalogSelectionResolverSection(source) {
-  return uniqueFunctionWithMarkers(source, [
-    "internalOptions??[]",
-    "versionOptions?.flatMap(",
-    "defaultThinkingEffortByModelSlug",
-    "thinkingEffort!=null",
+  const inline = uniqueFunctionWithMarkers(source, [
+    ...CATALOG_OPTION_LIST_MARKERS,
+    ...CATALOG_SELECTION_MARKERS,
   ]);
+  const optionList = uniqueFunctionWithMarkers(source, CATALOG_OPTION_LIST_MARKERS);
+  if (inline != null) {
+    return optionList != null && optionList.start === inline.start ? inline : null;
+  }
+  const name = optionList == null
+    ? null
+    : /^function ([A-Za-z_$][\w$]*)\(/u.exec(optionList.source)?.[1];
+  if (name == null) {
+    return null;
+  }
+  // The helper is shared code: patch it only while the selection resolver is
+  // its sole user (one definition plus one reference). An export alias such
+  // as "X as qDt" names another binding; exporting the helper itself counts.
+  const references = source.match(
+    new RegExp(`(?<![\\w$.])(?<!\\bas )${escapeRegExp(name)}(?![\\w$])`, "gu"),
+  )?.length ?? 0;
+  const caller = uniqueFunctionWithMarkers(source, [...CATALOG_SELECTION_MARKERS, `=${name}(`]);
+  return references !== 2 || caller == null || caller.start === optionList.start
+    ? null
+    : optionList;
+}
+
+// The flattened option array starts with the catalog's public options and
+// includes its internal options.
+function catalogOptionArrayStart(section, catalogParameter) {
+  const head = `[...${catalogParameter}?.options??[]`;
+  const start = section.indexOf(head);
+  if (start < 0 || section.indexOf(head, start + 1) >= 0) {
+    return -1;
+  }
+  const end = matchingSquareBracket(section, start);
+  const internal = section.indexOf(`...${catalogParameter}?.internalOptions??[]`, start);
+  return end > 0 && internal > start && internal < end ? start : -1;
+}
+
+function sectionsOverlap(left, right) {
+  return left.start < right.end && right.start < left.end;
 }
 
 function matchingSquareBracket(source, openingIndex) {
@@ -297,7 +344,10 @@ function catalogPatchContract(source) {
   const markerCount = source.split(CATALOG_PATCH_MARKER).length - 1;
   const presetOptionsCount = source.split(CATALOG_PRESET_OPTIONS_KEY).length - 1;
   const normalizer = catalogNormalizerSection(source);
-  const resolver = catalogSelectionResolverSection(source);
+  const found = catalogSelectionResolverSection(source);
+  const resolver = found != null && normalizer != null && sectionsOverlap(normalizer, found)
+    ? null
+    : found;
   if (markerCount === 0 && presetOptionsCount === 0) {
     return normalizer == null || resolver == null ? "drifted" : "current";
   }
@@ -352,9 +402,13 @@ function applyCatalogPatch(source, context = {}) {
   const resolverSignature = /^function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)[,)]/u.exec(
     resolver.source,
   );
-  const resolverOptionsStart = resolver.source.indexOf("=[", resolverSignature?.[0].length ?? 0) + 1;
-  const resolverOptionsEnd = matchingSquareBracket(resolver.source, resolverOptionsStart);
-  if (resolverSignature == null || resolverOptionsStart <= 0 || resolverOptionsEnd < 0) {
+  const resolverOptionsStart = resolverSignature == null
+    ? -1
+    : catalogOptionArrayStart(resolver.source, resolverSignature[1]);
+  const resolverOptionsEnd = resolverOptionsStart < 0
+    ? -1
+    : matchingSquareBracket(resolver.source, resolverOptionsStart);
+  if (resolverOptionsStart < 0 || resolverOptionsEnd < 0) {
     warn(
       "Could not locate the ChatGPT model selection option array",
       "model picker Default catalog patch",
@@ -396,11 +450,19 @@ function applyCatalogPatch(source, context = {}) {
       patchedSource.slice(replacement.end);
   }
   const helperIndex = Math.min(normalizer.start, resolver.start);
-  return (
+  patchedSource =
     patchedSource.slice(0, helperIndex) +
     catalogRuntimeHelper(presets) +
-    patchedSource.slice(helperIndex)
-  );
+    patchedSource.slice(helperIndex);
+  // Re-read the result so a mis-scanned section cannot ship a mixed bundle.
+  if (catalogPatchContract(patchedSource) !== "applied") {
+    warn(
+      "Patched ChatGPT model catalog contract is incomplete",
+      "model picker Default catalog patch",
+    );
+    return source;
+  }
+  return patchedSource;
 }
 
 function sliderResolverSection(source) {

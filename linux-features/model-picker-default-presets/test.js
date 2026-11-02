@@ -9,6 +9,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
+const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 const { patchExtractedApp } = require("../../scripts/patches/runner.js");
 const {
   CATALOG_PATCH_MARKER,
@@ -64,6 +65,36 @@ function catalogFixture(name = "FOr") {
     "i=n.find(e=>e.slug===t.slug&&(e.thinkingEffort??null)===r);",
     "return i!=null||t.thinkingEffort!=null?i:n.find(e=>e.slug===t.slug)}",
     "function Next(){}",
+  ].join("");
+}
+
+// Since 26.1027.51404 the selection resolver calls a helper for the list.
+function splitResolverCatalogFixture() {
+  const resolverStart = catalogFixture().indexOf("function ZL(");
+  return [
+    catalogFixture().slice(0, resolverStart),
+    "function qDt(e){return[...e?.options??[],...e?.internalOptions??[],",
+    "...e?.versionOptions?.flatMap(e=>e.options)??[]]}",
+    "function ZL(e,t){let n=qDt(e),",
+    "r=t.thinkingEffort??e?.defaultThinkingEffortByModelSlug?.[t.slug]??null,",
+    "i=n.find(e=>e.slug===t.slug&&(e.thinkingEffort??null)===r);",
+    "return i!=null||t.thinkingEffort!=null?i:n.find(e=>e.slug===t.slug)}",
+    "function Next(){}",
+  ].join("");
+}
+
+// Regex literals with quotes and braces around the catalog functions, as in
+// the 26.1027.51404 bundle where a quote-only scanner corrupted the asset.
+function regexWrappedCatalogFixture(fixture = splitResolverCatalogFixture()) {
+  return [
+    "const t=e=>e;",
+    "function yT(e){let n=e.trim();",
+    "n=n.replace(/^[`\"'\\u201c\\u201d\\u2018\\u2019]+|[`\"'\\u201c\\u201d\\u2018\\u2019]+$/g,``);",
+    "return n}",
+    "function isQuote(e){return e===`\"`}",
+    fixture,
+    "function Pan(){return(Pan=t((()=>{Nan=/[\\t\\n!-,./:-@[-`\\f{-}$\\x80-\\uFFFF]/g})))()}",
+    "var Nan;export{Pan,isQuote,yT};",
   ].join("");
 }
 
@@ -346,6 +377,74 @@ test("catalog patch has one semantic target, is executable, and is idempotent", 
     })).thinkingEffort,
     "extended",
   );
+});
+
+test("catalog patch targets the 26.1027.51404 option-list helper", () => {
+  const presets = context([
+    { model: "gpt-6-astra", effort: "medium", default: true },
+    { model: "gpt-5.6-sol", effort: "high" },
+  ]);
+  const source = splitResolverCatalogFixture();
+  assert.equal(catalogPatchContract(source), "current");
+  const patched = applyCatalogPatch(source, presets);
+  assert.equal(catalogPatchContract(patched), "applied");
+  assert.ok(patched.includes(
+    "...e?.versionOptions?.flatMap(e=>e.options)??[],...e?.codexLinuxDefaultPresetOptions??[]]}" +
+      "function ZL(e,t){let n=qDt(e),",
+  ));
+  assert.equal(applyCatalogPatch(patched, presets), patched);
+  const result = plain(evaluate(patched, "FOr(input)", { input: catalog({ slider_settings: [] }) }));
+  assert.equal(
+    plain(evaluate(patched, "ZL(result,{slug:'gpt-5.6-sol',thinkingEffort:'extended'})", {
+      result,
+    })).thinkingEffort,
+    "extended",
+  );
+});
+
+test("catalog patch leaves a shared option-list helper alone", () => {
+  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
+  for (const user of ["function Other(e){return qDt(e).length}", "export{qDt as shared};"]) {
+    const source = `${splitResolverCatalogFixture()}${user}`;
+    assert.equal(catalogPatchContract(source), "drifted");
+    const { result, warnings } = withCapturedWarnings(() => applyCatalogPatch(source, presets));
+    assert.equal(result, source);
+    assert.equal(warnings.length, 1);
+  }
+  const aliased = `${splitResolverCatalogFixture()}export{Other as qDt};function Other(){}`;
+  assert.equal(catalogPatchContract(aliased), "current");
+});
+
+test("catalog patch keeps a bundle with quote-bearing regex literals parseable (#1659)", () => {
+  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
+  for (const fixture of [catalogFixture(), splitResolverCatalogFixture()]) {
+    const source = regexWrappedCatalogFixture(fixture);
+    assert.equal(javascriptSourceParses(source), true);
+    assert.equal(catalogPatchContract(source), "current");
+    const patched = applyCatalogPatch(source, presets);
+    assert.equal(catalogPatchContract(patched), "applied");
+    assert.equal(javascriptSourceParses(patched), true);
+    assert.ok(patched.includes(
+      "function Pan(){return(Pan=t((()=>{Nan=/[\\t\\n!-,./:-@[-`\\f{-}$\\x80-\\uFFFF]/g})))()}var Nan;",
+    ));
+  }
+});
+
+test("catalog patch rejects an option list that encloses the normalizer", () => {
+  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
+  const resolverStart = catalogFixture().indexOf("function ZL(");
+  const source = [
+    "function Outer(e){",
+    catalogFixture().slice(0, resolverStart),
+    "return[...e?.options??[],...e?.internalOptions??[],...e?.versionOptions?.flatMap(e=>e.options)??[]]}",
+    "function ZL(e,t){let n=Outer(e),",
+    "r=t.thinkingEffort??e?.defaultThinkingEffortByModelSlug?.[t.slug]??null;",
+    "return t.thinkingEffort!=null?n:r}",
+  ].join("");
+  assert.equal(catalogPatchContract(source), "drifted");
+  const { result, warnings } = withCapturedWarnings(() => applyCatalogPatch(source, presets));
+  assert.equal(result, source);
+  assert.equal(warnings.length, 1);
 });
 
 test("catalog patch fails closed on drift, duplicate, and partial states", () => {
