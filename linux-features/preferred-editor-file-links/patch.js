@@ -21,6 +21,12 @@ function applyPreferredEditorFileLinks(source) {
   const [, , browserClick, modifiedClick, path, dispatch, originalArgs] = match;
   // Insert a new conditional branch directly before the upstream branch that
   // chooses between external/modified opening and the internal side panel.
+  const fallbackArgs = match[0].slice(match[0].indexOf(`${dispatch}({`) + dispatch.length + 2, match[0].indexOf("}):"));
+  const sharedArgs = originalArgs.split(",").filter(argument =>
+    !argument.startsWith("activatePresentationAnnotationOnboarding:") && !argument.startsWith("isPreview:"));
+  if (!sharedArgs.every(argument => new RegExp(
+    `(?:^|,)${argument.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:,|$)`,
+  ).test(fallbackArgs))) return drift(source);
   const index = match.index + 1;
   // With no explicit target, upstream resolves the current per-project/global
   // preference, available applications, remote host and editor launch command.

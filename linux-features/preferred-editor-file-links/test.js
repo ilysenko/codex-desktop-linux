@@ -120,6 +120,15 @@ test("missing, duplicate, changed and partially patched contracts fail closed", 
   }
 });
 
+test("fallback editor dispatch retains the same location and callback bindings", () => {
+  for (const field of ["scope", "artifactNavigationTarget", "line", "column", "cwd", "hostConfig", "hostId", "endLine", "onOpenTargetResolved"]) {
+    const changed = fixture.replace(new RegExp(`${field}:[A-Za-z_$][\\w$]*`), `${field}:wrongBinding`);
+    const result = captureWarnings(() => apply(changed));
+    assert.equal(result.value, changed, field);
+    assert.equal(result.warnings.length, 1, field);
+  }
+});
+
 test("optional feature discovery and enabled drift reporting", () => {
   assert.equal(require("./feature.json").defaultEnabled, false);
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "preferred-editor-links-"));
@@ -152,4 +161,27 @@ test("optional feature discovery and enabled drift reporting", () => {
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test("the current signed file click owner preserves preferred-editor dispatch twice", { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, t => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const descriptors = require("./patch.js").descriptors;
+  const app = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const names = findWebviewAssetsContaining(app, descriptors[0].assetNeedles);
+  assert.equal(names.length, 1);
+  const source = fs.readFileSync(path.join(app, "webview/assets", names[0]), "utf8");
+  const patched = apply(source);
+  assert.notEqual(patched, source);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "preferred-editor-signed-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, "webview/assets", names[0]);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, source);
+  for (const status of ["applied", "already-applied"]) {
+    const report = createPatchReport();
+    applyWebviewAssetPatchDescriptors(root, descriptors, {}, report);
+    assert.equal(report.patches[0].status, status);
+  }
+  assert.equal(fs.readFileSync(target, "utf8"), patched);
+  assert.equal(fs.readFileSync(path.join(app, "webview/assets", names[0]), "utf8"), source);
 });
