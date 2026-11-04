@@ -291,12 +291,13 @@ from the tree. X11 windows keep their X11 id; a native Wayland window gets 2^32
 plus its Sway container id, so the two never collide. On i3, pids come from the
 optional `xprop`; without it the window reports no pid, and an element action
 on it needs a snapshot taken for that window. A window counts as hidden while
-it sits in the scratchpad. Sway does not ship `i3-msg` and the backend reads
-only `I3SOCK`, so on Sway it needs the i3 package; without `i3-msg` or the
-socket, Sway windows come from wlr-foreign-toplevel, with no pids or bounds.
-Bounds on a Sway output with a scale other than 1 are logical, so window crops
-and window-relative clicks there can be off (agent-sh/computer-use-linux#375,
-agent-sh/computer-use-linux#376).
+it sits in the scratchpad. Sway does not ship `i3-msg`, and the backend finds
+the socket through `I3SOCK`, not `SWAYSOCK`, so on Sway it needs the i3
+package; without `i3-msg` or the socket, Sway windows come from
+wlr-foreign-toplevel, with no pids or bounds
+(agent-sh/computer-use-linux#376). Bounds on a Sway output with a scale other
+than 1 are logical, so window crops and window-relative clicks there can be
+off (agent-sh/computer-use-linux#375).
 
 The Wayland RemoteDesktop portal asks for consent on every new process by
 default. Set `CODEX_COMPUTER_USE_PERSIST_REMOTE_DESKTOP=1` (standalone alias

@@ -1221,6 +1221,8 @@ mod tests {
         let _guard = crate::pixelflux::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Start from neither name, whatever the caller's environment exports.
+        std::env::remove_var(SCREENSHOT_BACKEND_ENV_STANDALONE);
         std::env::set_var(SCREENSHOT_BACKEND_ENV, "gnome-screenshot");
         assert_eq!(
             forced_backend().unwrap(),
@@ -1294,6 +1296,7 @@ mod tests {
         std::env::set_var("PIXELFLUX_CU", port.to_string());
         std::env::set_var("PIXELFLUX_CU_TOKEN", "secret");
         std::env::remove_var(SCREENSHOT_BACKEND_ENV);
+        std::env::remove_var(SCREENSHOT_BACKEND_ENV_STANDALONE);
         let capture = capture_screenshot_raw().await.unwrap();
         std::env::remove_var("PIXELFLUX_CU");
         std::env::remove_var("PIXELFLUX_CU_TOKEN");

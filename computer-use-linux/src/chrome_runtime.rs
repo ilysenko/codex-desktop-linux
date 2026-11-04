@@ -1616,8 +1616,8 @@ fn start_app_server(
 }
 
 /// `Command::spawn` that retries a transient ETXTBSY. exec fails with it
-/// while any process holds the executable open for writing, as when another
-/// thread forks just after a fresh script was written. The library's
+/// while any process holds the executable open for writing, as a child
+/// forked by another thread during the write does until it execs. The library's
 /// `command_runner` retries the same way; this module is built into the
 /// Chrome host binary, which cannot reach it.
 fn spawn_retrying_busy(command: &mut Command) -> io::Result<Child> {
@@ -3211,13 +3211,21 @@ mod tests {
         let child = command.spawn().unwrap();
         let process_group = child.id() as libc::pid_t;
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !descendant_path.exists() && Instant::now() < deadline {
+        // The shell creates the file before printf writes the pid into it.
+        let descendant_pid = loop {
+            if let Some(pid) = fs::read_to_string(&descendant_path)
+                .ok()
+                .and_then(|text| text.parse::<libc::pid_t>().ok())
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "descendant pid was not written to {}",
+                descendant_path.display()
+            );
             thread::sleep(Duration::from_millis(10));
-        }
-        let descendant_pid = fs::read_to_string(&descendant_path)
-            .unwrap()
-            .parse::<libc::pid_t>()
-            .unwrap();
+        };
         thread::sleep(Duration::from_millis(50));
         let now = Instant::now();
         let mut process = ManagedProcess {
@@ -3375,12 +3383,18 @@ mod tests {
     }
 
     fn resolve_test_python_interpreter(launcher: &Path) -> PathBuf {
-        let output = Command::new(launcher)
+        let mut command = Command::new(launcher);
+        command
             .arg("-c")
             .arg(
                 "import os, sys; sys.stdout.buffer.write(os.fsencode(os.path.realpath(sys.executable)))",
             )
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // The launcher may be a freshly written script.
+        let output = spawn_retrying_busy(&mut command)
+            .and_then(Child::wait_with_output)
             .unwrap_or_else(|error| {
                 panic!(
                     "failed to query Python interpreter through {}: {error}",

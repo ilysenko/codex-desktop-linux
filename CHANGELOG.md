@@ -12,12 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   (focus by `con_id`) with pids from the tree, and focuses X11 windows by
   their decimal id, which Sway requires. A native Wayland window's
   `window_id` is 2^32 plus its Sway container id, so it never collides with
-  an X11 id. A window counts as hidden
-  only while it sits in the scratchpad, so a shown Sway scratchpad window can
-  be cropped and a hidden i3 one is marked hidden. An element action with an
-  exact window target is refused when the cached tree was narrowed to one
-  window but recorded none, or recorded one another window backend listed.
-  The lockfile moves off the yanked async-executor 1.14.0. The screenshot
+  an X11 id. A window counts as hidden only while it sits in the scratchpad,
+  so a shown Sway scratchpad window can be cropped and a hidden i3 one is
+  marked hidden. An element action with an exact window target is refused
+  when the cached tree was narrowed to one window but recorded none, or
+  recorded one another window backend listed. The lockfile moves off the
+  yanked async-executor 1.14.0. The screenshot
   backend pin `CODEX_COMPUTER_USE_SCREENSHOT_BACKEND` also reads the
   standalone `COMPUTER_USE_LINUX_SCREENSHOT_BACKEND`, and the indicator's
   agent name override also reads `CODEX_COMPUTER_USE_AGENT_NAME`, like every
@@ -134,8 +134,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - The Chrome extension host retries an app-server start that fails with
   "Text file busy" (ETXTBSY), as the main backend already does for its
-  helpers. exec fails that way while another thread forks just after the
-  executable was written, which made a Chrome host test flaky.
+  helpers. exec fails that way while a thread that forked during the write
+  still holds the executable open, which made Chrome host tests flaky.
 - Keep the remote desktop restore grant when EIS setup fails after Start on a
   non-GNOME session such as COSMIC, so persistence does not drop the grant
   and prompt for consent again. The GNOME EIS fallback path already retained
