@@ -385,15 +385,20 @@ function inspectGeneralSettingsPage(source) {
     const nextFunction = source.indexOf("function ", bodyStart);
     const body = source.slice(bodyStart, nextFunction === -1 ? source.length : nextFunction);
     const mount = escapeRegExp(settingsMountSource(jsx));
+    // Other Linux settings features may lead the page children with their
+    // own self-contained marked components, such as
+    // `(0,n.jsx)(codexLinuxCommunityFeaturesInGuiSettings,{})`.
+    const linuxChildren = `(?:\\(0,${escapeRegExp(jsx)}\\.jsx\\)\\(codexLinux[A-Za-z]+,\\{\\}\\),)*`;
     const pageCall = new RegExp(
-      `\\(0,${escapeRegExp(jsx)}\\.jsxs\\)\\([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?,\\{title:[A-Za-z_$][\\w$]*,children:\\[([A-Za-z_$][\\w$]*),(${mount},)?([A-Za-z_$][\\w$]*)\\]\\}\\)`,
+      `\\(0,${escapeRegExp(jsx)}\\.jsxs\\)\\([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?,\\{title:[A-Za-z_$][\\w$]*,children:\\[(${linuxChildren})([A-Za-z_$][\\w$]*),(${mount},)?([A-Za-z_$][\\w$]*)\\]\\}\\)`,
       "g",
     );
     for (const call of body.matchAll(pageCall)) {
+      const children = call[0].indexOf("children:[") + "children:[".length;
       pages.push({
         jsx,
-        patched: call[2] != null,
-        insertAt: bodyStart + call.index + call[0].indexOf(`children:[${call[1]},`) + `children:[${call[1]},`.length,
+        patched: call[3] != null,
+        insertAt: bodyStart + call.index + children + call[1].length + call[2].length + 1,
       });
     }
   }

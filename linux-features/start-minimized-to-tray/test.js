@@ -92,15 +92,32 @@ test("main patch answers only the owned preference route in the view-message han
   assert.deepEqual(harness.forwarded, ["/codex/dictation-stream-connect-info"]);
 });
 
-test("the preference route composes with other Linux fetch routes in every patch order", async () => {
-  const patches = [applyMainPatch, applyReadAloudMainBundlePatch, applyAgentWorkspaceMainBridgePatch];
-  const orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
-  for (const order of orders) {
-    const apply = source => order.reduce((current, index) => captureWarnings(() => patches[index](current)).value, source);
+function permutations(items) {
+  return items.length <= 1 ? [items] : items.flatMap((item, index) =>
+    permutations([...items.slice(0, index), ...items.slice(index + 1)]).map(rest => [item, ...rest]));
+}
+
+// account-switcher shape: a helper declaring its own class is injected into a
+// view-message handler method ahead of the "fetch" case, so the nearest
+// "class " keyword no longer names the handler.
+function injectHandlerHelperClass(source) {
+  const helper = "this.codexLinuxFixtureHelper??=(function(){class SwitcherError extends Error{}return SwitcherError})();";
+  return source.includes(helper) ? source : source.replace("async handleMessage(e,t){", `async handleMessage(e,t){${helper}`);
+}
+
+test("the preference route composes with other Linux fetch routes and handler helpers in every patch order", async () => {
+  const patches = [applyMainPatch, applyReadAloudMainBundlePatch, applyAgentWorkspaceMainBridgePatch, injectHandlerHelperClass];
+  for (const order of permutations([0, 1, 2, 3])) {
+    const apply = source => order.reduce((current, index) => {
+      const result = captureWarnings(() => patches[index](current));
+      assert.deepEqual(result.warnings, [], `${order.join()}: ${index}`);
+      return result.value;
+    }, source);
     const patched = apply(startupFixture());
     assert.equal(apply(patched), patched, order.join());
-    assert.equal(patched.split("/*codex-linux-start-minimized-to-tray-route*/").length, 2, order.join());
-    assert.equal(patched.split("/*codex-linux-read-aloud-route*/").length, 2, order.join());
+    for (const marker of ["/*codex-linux-start-minimized-to-tray-route*/", "/*codex-linux-read-aloud-route*/", "/*codex-linux-agent-workspace-route*/"]) {
+      assert.equal(patched.split(marker).length, 2, `${order.join()}: ${marker}`);
+    }
     const harness = viewMessageHarness(patched);
     assert.equal((await harness.request({ action: "set", key: SETTINGS_KEY, value: true })).responseType, "success");
     assert.equal(harness.values.get(SETTINGS_KEY), true, order.join());
@@ -898,6 +915,42 @@ test(
       changed.push(name);
     }
     assert.equal(changed.length, 1);
+  },
+);
+
+test(
+  "signed startup chunk composes the preference route with every other Linux view-message route in both orders",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
+    const descriptor = (feature, id) => require(`../${feature}/patch.js`).descriptors.find(entry => entry.id === id);
+    // account-switcher injects helpers declaring their own classes into the
+    // view-message handler; Chronicle and Read aloud route inside the fetch wrapper.
+    const patches = [
+      descriptor("account-switcher", "account-switcher-main"),
+      descriptor("agent-workspace", "main-bridge"),
+      descriptor("chronicle-skysight", "linux-chronicle-skysight-main-bridge"),
+      descriptor("read-aloud", "main-handler"),
+      descriptor("start-minimized-to-tray", "startup"),
+    ];
+    const markers = ["start-minimized-to-tray", "agent-workspace", "chronicle-skysight", "read-aloud"]
+      .map(id => `/*codex-linux-${id}-route*/`);
+    const owners = fs.readdirSync(buildDir).filter(name => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name))
+      .map(name => ({ name, source: fs.readFileSync(path.join(buildDir, name), "utf8") }))
+      .filter(({ source }) => source.includes('case"fetch":await this.fetchWrapper.handleRequest('));
+    assert.equal(owners.length, 1);
+    const [{ name, source }] = owners;
+    for (const order of [patches, [...patches].reverse()]) {
+      const apply = start => order.reduce((current, { id, apply: patch }) => {
+        const result = captureWarnings(() => patch(current, {}));
+        assert.deepEqual(result.warnings, [], id);
+        return result.value;
+      }, start);
+      const patched = apply(source);
+      for (const marker of markers) assert.equal(patched.split(marker).length, 2, marker);
+      new vm.Script(patched, { filename: name });
+      assert.equal(apply(patched), patched);
+    }
   },
 );
 

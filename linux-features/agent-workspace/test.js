@@ -587,6 +587,38 @@ test("main bridge route is placed in the view-message fetch case with chunk-scop
   }
 });
 
+test("main bridge route composes with other Linux routes and handler helpers in either order", async () => {
+  // start-minimized-to-tray shape: a marked route directly before the forward.
+  const trayRoute = '/*codex-linux-start-minimized-to-tray-route*/if("vscode://codex/codex-linux-start-minimized-to-tray"===t?.url){this.chunkedMessageSender.sendInlineMessageForView(e,{type:"fetch-response",responseType:"success",requestId:t.requestId,status:200,bodyJsonString:"{}"});break}';
+  const addTrayRoute = (source) => source.includes(trayRoute) ? source
+    : source.replace("await this.fetchWrapper.handleRequest(e,t);", `${trayRoute}await this.fetchWrapper.handleRequest(e,t);`);
+  // account-switcher shape: a helper declaring its own class inside a handler
+  // method, so the nearest "class " keyword no longer names the handler.
+  const helper = "this.codexLinuxFixtureHelper??=(function(){class SwitcherError extends Error{}return SwitcherError})();";
+  const addHelper = (source) => source.includes(helper) ? source
+    : source.replace("async handleMessage(e,t){", `async handleMessage(e,t){${helper}`);
+  const others = (source) => addHelper(addTrayRoute(source));
+  for (const order of [[applyAgentWorkspaceMainBridgePatch, others], [others, applyAgentWorkspaceMainBridgePatch]]) {
+    const apply = (source) => order.reduce((current, patch) => {
+      const { value, warnings } = captureWarns(() => patch(current));
+      assert.deepEqual(warnings, []);
+      return value;
+    }, source);
+    const patched = apply(syntheticMainBundle());
+    assert.equal(apply(patched), patched);
+    assert.equal(patched.split("/*codex-linux-agent-workspace-route*/").length, 2);
+    assert.equal(patched.split("/*codex-linux-start-minimized-to-tray-route*/").length, 2);
+    assert.doesNotThrow(() => new vm.Script(patched));
+    const responses = [];
+    const { ViewMessageHandler } = loadMainBundle(patched, { require, process: { platform: "linux", env: {} } });
+    const host = new ViewMessageHandler({ handleRequest: async () => assert.fail("forwarded") }, { get: () => "/opt/agent-workspace-linux" },
+      { sendInlineMessageForView: (webContents, message) => responses.push(message) });
+    await host.handleMessage({ id: 1 }, { type: "fetch", requestId: "aw", url: `vscode://codex/${GLOBAL_STATE_GET_METHOD}`, body: JSON.stringify({ key: SETTINGS_COMMAND_KEY }) });
+    await host.handleMessage({ id: 1 }, { type: "fetch", requestId: "tray", url: "vscode://codex/codex-linux-start-minimized-to-tray", body: "{}" });
+    assert.deepEqual(responses.map(({ requestId, responseType }) => [requestId, responseType]), [["aw", "success"], ["tray", "success"]]);
+  }
+});
+
 test("main bridge patch adds an allowlisted linux-agent-workspace handler", () => {
   const patched = applyAgentWorkspaceMainBridgePatch(syntheticMainBundle());
   assert.match(patched, /"linux-agent-workspace":async/);

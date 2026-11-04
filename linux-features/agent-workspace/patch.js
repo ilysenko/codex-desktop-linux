@@ -188,6 +188,7 @@ function agentWorkspaceFetchSource() {
 }
 
 const VIEW_HANDLER_FIELDS = ["fetchWrapper;", "globalState;", "chunkedMessageSender;"];
+const CLASS_OPEN = /class [A-Za-z_$][\w$]*(?: extends [A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)?\{/g;
 
 // Other Linux features route their own URLs in the same `case"fetch"`; they
 // are tolerated in front of this route only as complete codex-linux routes.
@@ -202,11 +203,18 @@ function findFetchClause(source) {
   if (between.length > 0 && !between.startsWith("/*codex-linux-")) return null;
   // The clause belongs to the view-message handler class that owns the global
   // state and the inline view-message sender used by the dictation route.
-  const classIndex = source.lastIndexOf("class ", caseIndex);
-  const classOpen = classIndex < 0 ? -1 : source.indexOf("{", classIndex);
-  if (classOpen < 0 || findMatchingBrace(source, classOpen) < clause.index) return null;
-  const fields = source.slice(classOpen, classOpen + 1000).split(/[(=]/, 1)[0];
-  if (!VIEW_HANDLER_FIELDS.every((field) => fields.includes(field))) return null;
+  // Look the class up by its field declarations, not the nearest "class "
+  // keyword: other Linux features inject helpers (some declaring their own
+  // classes) into the handler's methods.
+  const owners = [...source.slice(0, caseIndex).matchAll(CLASS_OPEN)]
+    .map((match) => match.index + match[0].length - 1)
+    .filter((open) => {
+      const fields = source.slice(open, open + 1000).split(/[(=]/, 1)[0];
+      return VIEW_HANDLER_FIELDS.every((field) => fields.includes(field));
+    });
+  if (owners.length !== 1) return null;
+  const [classOpen] = owners;
+  if (findMatchingBrace(source, classOpen) < clause.index) return null;
   if (source.lastIndexOf(`async handleMessage(${webContents},${message}){`, caseIndex) < classOpen) return null;
   return { index: caseIndex + 'case"fetch":'.length, webContents, message };
 }

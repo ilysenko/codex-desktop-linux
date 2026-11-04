@@ -59,10 +59,15 @@ function functionAt(source, start) {
   return end < 0 ? null : { start, end: end + 1, text: source.slice(start, end + 1) };
 }
 
+// The innermost function enclosing `index`. Functions that end before
+// `index` are skipped, so helpers other Linux features inline into the same
+// native component (for example ui-tweaks' marked IIFEs) do not hide it.
 function containingFunction(source, index) {
-  const start = source.lastIndexOf("function ", index);
-  const owner = start < 0 ? null : functionAt(source, start);
-  return owner != null && owner.end > index ? owner : null;
+  for (let start = source.lastIndexOf("function ", index); start >= 0; start = start === 0 ? -1 : source.lastIndexOf("function ", start - 1)) {
+    const owner = functionAt(source, start);
+    if (owner != null && owner.end > index) return owner;
+  }
+  return null;
 }
 
 function settingsContract(source) {

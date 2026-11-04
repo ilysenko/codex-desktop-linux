@@ -1500,6 +1500,28 @@ test("general settings patch mounts the read aloud section into the current Gene
   assert.doesNotThrow(() => withoutRuntime.props.children[1].props.ref({}));
 });
 
+test("general settings mount composes with leading marked Linux page rows in either order", () => {
+  // community-features-in-gui-settings leads the page children with its own
+  // self-contained component; it inserts at `children:[` in either order.
+  const community = "(0,n.jsx)(codexLinuxCommunityFeaturesInGuiSettings,{}),";
+  const addCommunity = (source) => source.includes(community) ? source : source.replace("title:t,children:[", `title:t,children:[${community}`);
+  const mount = '(0,n.jsx)("div",{className:"codex-linux-read-aloud-settings-mount",ref:codexLinuxReadAloudSettingsRoot=>{codexLinuxReadAloudSettingsRoot&&globalThis.codexLinuxReadAloudMountSettings?.(codexLinuxReadAloudSettingsRoot)}})';
+  for (const order of [[applyGeneralSettingsPatch, addCommunity], [addCommunity, applyGeneralSettingsPatch]]) {
+    const apply = (source) => order.reduce((current, patch) => {
+      const { result, warnings } = captureWarnings(() => patch(current));
+      assert.deepEqual(warnings, []);
+      return result;
+    }, source);
+    const patched = apply(generalSettingsFixture());
+    assert.equal(apply(patched), patched);
+    assert.ok(patched.includes(`children:[${community}e,${mount},a]`));
+    assert.equal(matchesGeneralSettingsPageContract(patched), true);
+  }
+  // Unmarked leading children remain upstream drift.
+  const drifted = generalSettingsFixture({ page: "s=(0,n.jsxs)(eG.P,{title:t,children:[(0,n.jsx)(Other,{}),e,a]})" });
+  assert.equal(matchesGeneralSettingsPageContract(drifted), false);
+});
+
 test("general settings patch fails closed when the General page contract drifts", () => {
   const sources = [
     generalSettingsFixture({ page: "s=(0,n.jsxs)(eG.P,{title:t,children:[e,a,o]})" }),

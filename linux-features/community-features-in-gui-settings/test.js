@@ -639,6 +639,88 @@ test("other General rows and page children remain in place and a moved patch is 
   assert.equal(fs.readFileSync(f.target, "utf8"), moved);
 });
 
+test("marked helpers inlined into General layouts by other Linux features compose in either order", (t) => {
+  // ui-tweaks shape: a marked IIFE inlined into a native General layout ahead
+  // of the menu row, so the nearest `function ` keyword is not the layout.
+  const helper = "let codexLinuxFixtureEnabled=(function codexLinuxUiTweaksSuggestedPromptsEnabled(){return!0}());";
+  const addHelper = (source) => source.includes(helper) ? source : source.replace("function generalA(){", `function generalA(){${helper}`);
+  for (const helperFirst of [true, false]) {
+    const f = fixture(t);
+    if (helperFirst) fs.writeFileSync(f.target, addHelper(fs.readFileSync(f.target, "utf8")));
+    assert.equal(applySettingsPatch(f.app, f.context).changed, true);
+    if (!helperFirst) fs.writeFileSync(f.target, addHelper(fs.readFileSync(f.target, "utf8")));
+    const patched = fs.readFileSync(f.target, "utf8");
+    assert.equal(applySettingsPatch(f.app, f.context).changed, false);
+    assert.equal(fs.readFileSync(f.target, "utf8"), patched);
+    assert.ok(patched.includes(`children:[(0,j.jsx)(${UI},{}),n,i]`));
+    assert.equal(patched.split(helper).length, 2);
+  }
+  // An unmarked function wrapping the menu row is still a drifted layout.
+  const f = fixture(t), source = settingsFixture(SETTINGS_MODULE.replace(
+    '(0,j.jsx)(menu,{appName:"ChatGPT"})', '(function wrap(){return(0,j.jsx)(menu,{appName:"ChatGPT"})}())'));
+  fs.writeFileSync(f.target, source);
+  assert.throws(() => applySettingsPatch(f.app, f.context), /contract missing or ambiguous/);
+  assert.equal(fs.readFileSync(f.target, "utf8"), source);
+});
+
+test("signed General settings chunk composes every Linux settings insertion in both orders", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
+}, (t) => {
+  const appDir = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const [name] = findWebviewAssetsContaining(appDir, GENERAL_SETTINGS_NEEDLES);
+  const original = fs.readFileSync(path.join(appDir, "webview", "assets", name), "utf8");
+  const featuresRoot = path.resolve(__dirname, "..");
+  const uiTweaks = { feature: { manifest: require("../ui-tweaks/feature.json"), settings: { tweaks: {
+    appearance: { customFontInput: { enabled: true }, dockIcon: { enabled: true } }, home: { suggestedPrompts: { enabled: true } } } } } };
+  const webview = (descriptors, id) => {
+    const descriptor = descriptors.find((entry) => entry.id === id);
+    assert.ok(descriptor, id);
+    return (app) => {
+      const target = path.join(app, "webview", "assets", name);
+      fs.writeFileSync(target, descriptor.apply(fs.readFileSync(target, "utf8"), uiTweaks));
+    };
+  };
+  const steps = [
+    webview(require("../read-aloud/patch.js").descriptors, "settings-toggle"),
+    webview(require("../ui-tweaks/patch.js").descriptors, "appearance-dock-icon-settings-row"),
+    webview(require("../ui-tweaks/patch.js").descriptors, "appearance-custom-font-input"),
+    webview(require("../ui-tweaks/patch.js").descriptors, "home-suggested-prompts-settings-row"),
+    (app) => require("../start-minimized-to-tray/patch.js").applySettingsPatch(app),
+    (app) => require("../reasoning-visibility/settings.js").applySettingsPatch(app),
+    (app) => applySettingsPatch(app, { feature: { dir: __dirname }, featurePatchOptions: { featuresRoot },
+      enabledFeatureIds: ["community-features-in-gui-settings"] }),
+  ];
+  const markers = [`function ${UI}(`, "function codexLinuxStartMinimizedSetting(", "function codexLinuxReasoningVisibilitySetting(",
+    "codex-linux-read-aloud-settings-mount", "codexLinuxManualFontInput", "codexLinuxUiTweaksSuggestedPromptsEnabled"];
+  for (const order of [steps, [...steps].reverse()]) {
+    // Only the settings chunk is copied; one synthetic locale catalog satisfies
+    // the translation steps of the start-minimized and reasoning rows.
+    const app = path.join(temporary(t), "app"), asyncDir = path.join(app, "webview", "assets", "async");
+    fs.mkdirSync(asyncDir, { recursive: true });
+    fs.writeFileSync(path.join(app, "webview", "assets", name), original);
+    fs.writeFileSync(path.join(asyncDir, "900001.loader.js"),
+      'export const __webpack_modules__={ld(e,t,r){var m={"../locales/de-DE.json":function(){return r.e(900002).then(r.t.bind(r,"deCatalog",19))}}}};');
+    fs.writeFileSync(path.join(asyncDir, "900002.catalog.js"),
+      `export const __webpack_modules__={deCatalog(e){e.exports=JSON.parse('{"settings.general.macMenuBar.label":"Menüleiste"}')}};`);
+    const warnings = [], originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      for (const step of order) step(app);
+      const patched = fs.readFileSync(path.join(app, "webview", "assets", name), "utf8");
+      for (const step of order) step(app);
+      assert.equal(fs.readFileSync(path.join(app, "webview", "assets", name), "utf8"), patched);
+      for (const marker of markers) assert.ok(patched.includes(marker), marker);
+      assert.match(patched, /return"macOS"!==([\w$]+)&&"linux"!==\1/);
+      assert.equal(patched.split(`(0,n.jsx)(${UI},{})`).length, 2);
+      const check = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: patched, encoding: "utf8" });
+      assert.equal(check.status, 0, check.stderr);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.deepEqual(warnings.filter((warning) => !/catalog|metadata/i.test(warning)), []);
+  }
+});
+
 test("signed official General settings chunk exposes one module-scoped contract", {
   skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
 }, () => {

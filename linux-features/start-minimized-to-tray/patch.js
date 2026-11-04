@@ -62,6 +62,22 @@ function routeSource(webContents, request) {
   return `${ROUTE_MARKER}if(${JSON.stringify(ROUTE_URL)}===${request}?.url){codexLinuxStartMinimizedRoute(${request},this.globalState,codexLinuxStartMinimizedResponse=>this.chunkedMessageSender.sendInlineMessageForView(${webContents},codexLinuxStartMinimizedResponse));break}`;
 }
 
+// The "fetch" case belongs to exactly one view-message handler class: the one
+// declaring the fetch wrapper, profile global state and inline view-message
+// sender. Look it up by its declaration rather than the nearest "class "
+// keyword, because other Linux features inject helpers (some with their own
+// classes) into the handler's methods.
+const CLASS_OPEN = new RegExp(`class ${ID}(?: extends ${ID}(?:\\.${ID})*)?\\{`, "g");
+function viewHandlerOwnsIndex(source, caseIndex, endIndex) {
+  const owners = [...source.slice(0, caseIndex).matchAll(CLASS_OPEN)]
+    .map((match) => match.index + match[0].length - 1)
+    .filter((open) => {
+      const fields = source.slice(open, open + 1000).split(/[(=]/, 1)[0];
+      return VIEW_HANDLER_FIELDS.every((field) => fields.includes(field));
+    });
+  return owners.length === 1 && findMatchingBrace(source, owners[0]) >= endIndex;
+}
+
 // Other Linux features may route their own URLs in the same "fetch" case
 // before this one; they are tolerated only as complete codex-linux routes.
 function fetchRoutePlan(source) {
@@ -72,11 +88,7 @@ function fetchRoutePlan(source) {
   const caseIndex = source.lastIndexOf(FETCH_CASE, forward.index);
   const between = source.slice(caseIndex + FETCH_CASE.length, forward.index);
   if (caseIndex === -1 || (between.length > 0 && !between.startsWith("/*codex-linux-"))) return null;
-  const classIndex = source.lastIndexOf("class ", caseIndex);
-  const classOpen = classIndex === -1 ? -1 : source.indexOf("{", classIndex);
-  if (classOpen === -1 || findMatchingBrace(source, classOpen) < forward.index) return null;
-  const fields = source.slice(classOpen, classOpen + 1000).split(/[(=]/, 1)[0];
-  if (!VIEW_HANDLER_FIELDS.every((field) => fields.includes(field))) return null;
+  if (caseIndex === -1 || !viewHandlerOwnsIndex(source, caseIndex, forward.index)) return null;
   const route = routeSource(webContents, request);
   const routeCount = source.split(ROUTE_MARKER).length - 1;
   if (routeCount === 1) {
