@@ -6,50 +6,13 @@ const { settingsDescriptor } = require("./settings.js");
 const { persistentDescriptor: persistent } = require("./persistent.js");
 const { requestSummariesDescriptor: summaries } = require("./request-summaries.js");
 const { standaloneDescriptor: standalone, applyStandalonePatch } = require("./standalone.js");
+const { transcriptDescriptor: transcript, applyTranscriptPatch } = require("./transcript.js");
 
 const ident = String.raw`[A-Za-z_$][\w$]*`;
 const marker = (id) => `/*community-reasoning-visibility-${id}*/`;
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const enabled = "codexLinuxReasoningVisibilityEnabled()";
 const enabledPattern = escape(enabled);
-
-// Each contract accepts exactly the upstream form or our complete replacement.
-// Markers alone are never evidence of a successfully patched contract.
-// rspack can copy one module into several async chunks, so every chunk that
-// carries all needles is patched and each one must hold the complete contract.
-function recipe(id, pattern, replacement, assetNeedles, validate = () => true) {
-  const regex = new RegExp(pattern, "g");
-  const matches = (source) => [...source.matchAll(regex)].filter((match) => validate(match.groups));
-  const apply = (source) => {
-    const found = matches(source);
-    if (found.length !== 1) {
-      console.warn(`WARN: reasoning-visibility/${id}: expected one current contract, found ${found.length}; disable this feature and rebuild or update its patch.`);
-      return source;
-    }
-    const match = found[0];
-    const next = replacement(match.groups);
-    return withRuntime(source.slice(0, match.index) + next + source.slice(match.index + match[0].length));
-  };
-  return {
-    id,
-    phase: "webview-asset",
-    order: 20_745,
-    ciPolicy: "optional",
-    assetNeedles,
-    missingDescription: `reasoning visibility ${id} contract`,
-    apply,
-  };
-}
-
-// The transcript projection has its own explicit reasoning grouping exception,
-// compiled as `if(classified?.grouping==="standalone"||persistent?.has(item)===!0){flush(),output.push(…)`.
-const transcript = recipe(
-  "transcript",
-  String.raw`(?<prefix>if\()(?:${enabledPattern}&&"reasoning"===(?<item>${ident})\.type\|\|${escape(marker("transcript"))})?(?<rest>(?<classified>${ident})\?\.grouping==="standalone"\|\|(?<persistent>${ident})\?\.has\((?<current>${ident})\)===!0\)\{(?<flush>${ident})\(\),(?<output>${ident})\.push\(\{type:"activity-item",key:\`transcript-activity-item-)(?=\$\{)`,
-  ({ prefix, rest, current }) => `${prefix}${enabled}&&"reasoning"===${current}.type||${marker("transcript")}${rest}`,
-  ["transcript-activity-item-", "collapseWhenPossible:"],
-  ({ item, current }) => item == null || item === current,
-);
 
 function reasoningComponent(source) {
   const keys = [...source.matchAll(/key:"reasoning-markdown"/g)];
@@ -88,6 +51,7 @@ function applyExpandedPatch(source) {
 
 module.exports = {
   applyStandalonePatch,
+  applyTranscriptPatch,
   reasoningComponent,
   descriptors: [standalone, persistent, transcript, summaries, {
     id: "expanded",
