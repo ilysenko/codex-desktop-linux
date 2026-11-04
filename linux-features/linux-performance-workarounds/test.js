@@ -174,7 +174,9 @@ test("Markdown stylesheet descriptor patches every async CSS copy of the module"
     assert.deepEqual(applyLinuxMarkdownAnimationStylesheetPatch(root), { changed: false, assetNames: [] });
   });
   withExtractedApp({ "async/a.css": patched, "async/b.css": source }, (root) => {
-    assert.deepEqual(applyLinuxMarkdownAnimationStylesheetPatch(root), { changed: true, assetNames: ["async/b.css"] });
+    assert.deepEqual(captureWarnings(() => applyLinuxMarkdownAnimationStylesheetPatch(root)).value, { changed: false, assetNames: [] });
+    assert.equal(fs.readFileSync(path.join(root, "webview/assets/async/a.css"), "utf8"), patched);
+    assert.equal(fs.readFileSync(path.join(root, "webview/assets/async/b.css"), "utf8"), source);
   });
 });
 

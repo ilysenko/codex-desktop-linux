@@ -5,6 +5,8 @@ const path = require("node:path");
 const {
   findMatchingBrace,
 } = require("../../scripts/patches/lib/minified-js.js");
+const { listWebviewAssetFiles } = require("../../scripts/patches/lib/assets.js");
+const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 // rspack references imported bindings as member chains such as `x.It`.
 const JS_MEMBER = `${JS_IDENT}(?:\\.${JS_IDENT})*`;
@@ -17,7 +19,6 @@ const SIDEBAR_STYLE =
 const SIDEBAR_ASSET_NEEDLES = [".sidebarScroll,className:", "vertical-scroll-fade-mask", "[contain:layout_paint]"];
 const TAB_ASSET_NEEDLES = [".render({disabled:", "animateLayout:", "animatePosition:"];
 const MARKDOWN_STYLESHEET_NEEDLES = ["[data-markdown-animated]", ".FadeListDecoration-", ".ImageEnter-"];
-const WEBVIEW_STYLESHEET_DIRECTORIES = ["", "async"];
 const SIDEBAR_WARNING =
   "WARN: Could not uniquely identify the main sidebar scroll container — skipping Linux sidebar scroll performance patch";
 const TAB_WARNING =
@@ -50,13 +51,14 @@ function markdownRules(source) {
       start: match.index,
       end: match.index + match[0].length + image[0].length,
       patched: false,
+      rootHash: match[2],
       replacement: `${match[1]}{opacity:1;animation:none}${match[4]}{animation:none}${image[1]}${image[2]}`,
     });
   }
   for (const match of source.matchAll(patched)) {
     const tail = source.slice(match.index + match[0].length, match.index + match[0].length + 1000);
     const image = tail.match(new RegExp(`^[\\s\\S]*?${imageRule(match[2])}`, "u"));
-    if (image != null) candidates.push({ start: match.index, end: match.index + match[0].length + image[0].length, patched: true, replacement: match[0] + image[0] });
+    if (image != null) candidates.push({ start: match.index, end: match.index + match[0].length + image[0].length, patched: true, rootHash: match[2], replacement: match[0] + image[0] });
   }
   return candidates;
 }
@@ -79,45 +81,28 @@ function applyLinuxMarkdownAnimationPerformancePatch(source) {
   return source;
 }
 
-function listWebviewStylesheets(extractedDir) {
-  const assetsDir = path.join(extractedDir, "webview", "assets");
-  const names = [];
-  for (const directory of WEBVIEW_STYLESHEET_DIRECTORIES) {
-    const dir = path.join(assetsDir, directory);
-    if (!fs.existsSync(dir)) continue;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith(".css")) {
-        names.push(directory === "" ? entry.name : `${directory}/${entry.name}`);
-      }
-    }
-  }
-  return names.sort();
-}
-
-// rspack duplicates a CSS module into every async stylesheet of the chunk
-// groups that use it, so the Markdown rules occur once in each of several
-// CSS files. The webview-asset phase indexes scripts only; this workaround
-// discovers the stylesheets itself and patches all of them or none.
+// rspack duplicates this CSS module across chunk groups. Validate the entire
+// copy set before committing any writes, including recursively nested assets.
 function applyLinuxMarkdownAnimationStylesheetPatch(extractedDir) {
   const assetsDir = path.join(extractedDir, "webview", "assets");
-  const owners = listWebviewStylesheets(extractedDir)
+  const owners = listWebviewAssetFiles(assetsDir, /\.css$/u)
     .map((assetName) => ({ assetName, source: fs.readFileSync(path.join(assetsDir, assetName), "utf8") }))
-    .filter(({ source }) => MARKDOWN_STYLESHEET_NEEDLES.every((needle) => source.includes(needle)));
-  const drifted = owners.filter(({ source }) => !matchesLinuxMarkdownAnimationPerformanceContract(source));
-  if (owners.length === 0 || drifted.length > 0) {
+    // A damaged copy can lose one anchor; a root-only override is unrelated.
+    .filter(({ source }) => MARKDOWN_STYLESHEET_NEEDLES.filter((needle) => source.includes(needle)).length >= 2)
+    .map((owner) => ({ ...owner, rules: markdownRules(owner.source) }));
+  const drifted = owners.filter(({ rules }) => rules.length !== 1);
+  const states = new Set(owners.flatMap(({ rules }) => rules.map(({ rootHash, patched }) => `${rootHash}:${patched}`)));
+  if (owners.length === 0 || drifted.length > 0 || states.size !== 1) {
     console.warn(
-      `WARN: Could not identify the streaming Markdown animation stylesheets in ${assetsDir} ` +
-        `(${owners.length} found, ${drifted.length} drifted${drifted.length ? `: ${drifted.map(({ assetName }) => assetName).join(", ")}` : ""}) — skipping Markdown animation performance workaround`,
+      `WARN: Could not identify one complete streaming Markdown stylesheet state in ${assetsDir} ` +
+        `(${owners.length} found, ${drifted.length} drifted, ${states.size} identities/states) — skipping Markdown animation performance workaround`,
     );
     return { changed: false, assetNames: [] };
   }
-  const writes = owners
-    .map(({ assetName, source }) => ({ assetName, source, patched: applyLinuxMarkdownAnimationPerformancePatch(source) }))
-    .filter(({ source, patched }) => patched !== source);
-  for (const { assetName, patched } of writes) {
-    fs.writeFileSync(path.join(assetsDir, assetName), patched, "utf8");
-  }
-  return { changed: writes.length > 0, assetNames: writes.map(({ assetName }) => assetName) };
+  const result = commitAssetEdits(assetsDir, owners.map(({ assetName, source }) => ({
+    assetName, source, patchedSource: applyLinuxMarkdownAnimationPerformancePatch(source),
+  })));
+  return { changed: result.changed > 0, assetNames: result.changedAssets };
 }
 
 function layoutAnimationFlags(source) {

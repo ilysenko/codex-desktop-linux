@@ -17,7 +17,11 @@ targets by content rather than by chunk name. The sidebar and tab workarounds
 each require exactly one coherent owner among the script chunks. rspack copies
 the streaming Markdown CSS module into every async stylesheet of the chunk
 groups that use it; the Markdown workaround therefore rewrites every copy of
-the fade rules, and leaves all stylesheets untouched if any copy has drifted.
+the fade rules. Every copy must have the same root identity and complete patched
+or original state; mixed, incomplete, differently identified, or drifted copies
+leave all stylesheets untouched. Writes are verified together and rolled back on
+failure; an unverified rollback stops the build. Adaptive timing, image entry,
+reduced-motion rules, and unrelated styles remain unchanged.
 
 Enable it in `linux-features/features.json` only for a reproduced regression:
 
@@ -29,7 +33,7 @@ These are upstream-bundle patches, not baseline compatibility code. Retest the
 measured regression and run:
 
 ```bash
-node --test linux-features/linux-performance-workarounds/test.js
+node --test linux-features/linux-performance-workarounds/test.js linux-features/linux-performance-workarounds/*.test.js
 ```
 
 ## Catalog subfeatures
