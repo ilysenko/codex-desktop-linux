@@ -4,6 +4,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 const {
   applyNativeSettingsAvailabilityPatch: availability,
+  matchesNativeSettingsAvailabilityContract,
   applyNativeSettingsVisibilityPatch: visibility,
   matchesNativeSettingsVisibilityContract,
 } = require("./settings.js");
@@ -56,7 +57,7 @@ test('rejects the retired synthetic Settings contract instead of preserving fabr
 for (const [name, patch, pristine, damage] of [
   ['availability', availability, original, source => source.replace('computerUseAvailability:i', 'computerUseAvailability:other')],
   ['availability flags', availability, original, source => source.replace('available:!0', 'available:!1')],
-  ['availability platform binding', availability, original, source => source.replace('"linux"===o', '"linux"===other')],
+  ['availability platform binding', availability, original, source => source.replace('o==="linux"', 'other==="linux"')],
   ['visibility', visibility, filter, source => source.replace('&&!r.has(e.plugin.id)', '')],
   ['visibility exclusion', visibility, filter, source => source.replace('openai-bundled', 'custom')],
 ]) {
@@ -70,3 +71,60 @@ for (const [name, patch, pristine, damage] of [
     }
   });
 }
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const patches = require('./patch.js');
+const { createPatchReport } = require('../../scripts/lib/patch-report.js');
+const { applyWebviewAssetPatchDescriptors } = require('../../scripts/patches/engine.js');
+const { findWebviewAssetsContaining } = require('../../scripts/patches/lib/assets.js');
+const { javascriptSourceParses } = require('../../scripts/patches/lib/javascript-syntax.js');
+const availabilityCurrent = '/* settings.computerUse.subtitle */function settings(){let i=(0,a.H)(options),{platform:o}=(0,p.V)(),s=read();return {computerUseAvailability:i,available:i.available,plugins:s.availablePlugins}}';
+
+test('availability binds the selected-host argument and preserves genuine plugin/backend state',()=>{
+ const patched=availability(availabilityCurrent);
+ assert.equal(matchesNativeSettingsAvailabilityContract(availabilityCurrent),true);
+ assert.equal(matchesNativeSettingsAvailabilityContract(patched),true);
+ assert.equal(javascriptSourceParses(patched),true);
+ const backend={available:false,isLoading:true,isFetching:true,error:'backend unavailable'};
+ for(const platform of ['linux','macOS','windows','unknown'])for(const hostId of ['local','remote-linux']){
+  const options={hostId},plugins=[{plugin:{name:'computer-use',installed:false,enabled:false}}];
+  const result=vm.runInNewContext(patched+';settings()',{options,a:{H:arg=>{assert.equal(arg,options);return backend}},p:{V:()=>({platform})},read:()=>({availablePlugins:plugins})});
+  assert.equal(result.plugins,plugins);assert.equal(result.computerUseAvailability.error,backend.error);
+  assert.equal(result.available,platform==='linux');if(platform!=='linux')assert.equal(result.computerUseAvailability,backend);
+  assert.equal(backend.available,false);
+ }
+});
+
+test('availability owns the full current function without a fixed consumer lookahead',()=>{
+ const padded=availabilityCurrent.replace('s=read()', 's=/*'+'x'.repeat(6000)+'*/read()');
+ const patched=availability(padded);assert.notEqual(patched,padded);assert.equal(availability(patched),patched);assert.equal(javascriptSourceParses(patched),true);
+});
+
+function availabilityWorkspace(t){
+ const cache=path.join(process.env.XDG_CACHE_HOME||path.join(os.homedir(),'.cache'),'codex-desktop-dev');fs.mkdirSync(cache,{recursive:true});
+ const root=fs.mkdtempSync(path.join(cache,'availability-index-preflight-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const write=(name,source)=>{const file=path.join(root,'webview/assets',name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,source);return file;};
+ const run=()=>{const report=createPatchReport();applyWebviewAssetPatchDescriptors(root,[patches.find(d=>d.id==='ui-availability')],{},report);return report.patches[0];};
+ return {write,run};
+}
+
+test('upstream indexed descriptor patches all valid current page copies and is idempotent',t=>{
+ const {write,run}=availabilityWorkspace(t),first=write('async/241.hash.js',availabilityCurrent),second=write('async/another.hash.js',availabilityCurrent);
+ assert.equal(run().status,'applied');assert.equal(fs.readFileSync(first,'utf8'),availability(availabilityCurrent));assert.equal(fs.readFileSync(second,'utf8'),availability(availabilityCurrent));
+ assert.equal(run().status,'already-applied');
+});
+
+test('indexed availability preflight rejects a malformed copy before changing a valid copy',t=>{
+ t.mock.method(console,'warn',()=>{});const {write,run}=availabilityWorkspace(t);const partial=availability(availabilityCurrent).replace('isLoading:!1','isLoading:!0');
+ const first=write('async/241.hash.js',availabilityCurrent),second=write('async/another.hash.js',partial);
+ assert.equal(run().status,'skipped-optional');assert.equal(fs.readFileSync(first,'utf8'),availabilityCurrent);assert.equal(fs.readFileSync(second,'utf8'),partial);
+});
+
+test('current signed availability page patches through the unchanged upstream needle registry',{skip:!process.env.CODEX_SIGNED_EXTRACTED_APP},t=>{
+ const upstream=process.env.CODEX_SIGNED_EXTRACTED_APP,d=patches.find(x=>x.id==='ui-availability');
+ const names=findWebviewAssetsContaining(upstream,d.assetNeedles);assert.equal(names.length,1);const source=fs.readFileSync(path.join(upstream,'webview/assets',names[0]),'utf8');
+ const {write,run}=availabilityWorkspace(t),file=write(names[0],source);assert.equal(run().status,'applied');assert.equal(javascriptSourceParses(fs.readFileSync(file,'utf8')),true);assert.equal(run().status,'already-applied');
+ assert.equal(fs.readFileSync(path.join(upstream,'webview/assets',names[0]),'utf8'),source);
+});

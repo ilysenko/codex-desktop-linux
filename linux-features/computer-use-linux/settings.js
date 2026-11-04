@@ -1,30 +1,59 @@
 "use strict";
 
-// The native component owns the existing plugin toggle; unified-computer-use
-// owns transport. Never invent an installed/enabled Settings row.
-function applyNativeSettingsAvailabilityPatch(source) {
-  if (source.includes("BundledMarketplaceDonor")) throw new Error("Retired synthetic Linux Settings contract");
-  // rspack/SWC shape: `let f=(0,O.H)(e),{platform:x}=(0,q.V)(),y=`.
-  const hookCall = String.raw`\(0,[\w$]+\.[\w$]+\)`;
-  const marker = /"linux"===[\w$]+&&\([\w$]+=\{\.\.\.[\w$]+,available:/g;
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+
+const IDENTIFIER = "[A-Za-z_$][\\w$]*";
+const AVAILABILITY_MARKER = "/* linux-native-settings-availability */";
+
+function availabilityOwner(source, index) {
+  let owner = null;
+  for (const match of source.matchAll(/function [A-Za-z_$][\w$]*\([^)]*\)\{/g)) {
+    if (match.index > index) break;
+    const end = findMatchingBrace(source, match.index + match[0].length - 1);
+    if (end > index) owner = source.slice(match.index, end + 1);
+  }
+  return owner;
+}
+
+function nativeSettingsAvailabilityState(source) {
+  if (source.includes("BundledMarketplaceDonor")) return { kind: "invalid" };
+  // The current settings page calls Rspack-imported hooks with a memoized
+  // selected-host argument. Keep that argument and every consumer unchanged.
   const pattern = new RegExp(
-    String.raw`let (?<availability>[\w$]+)=(?<hook>${hookCall})\((?<args>[^)]*)\),\{platform:(?<platform>[\w$]+)\}=(?<platformHook>${hookCall})\(\)` +
-      String.raw`(?:,|(?<patched>;"linux"===\k<platform>&&\(\k<availability>=\{\.\.\.\k<availability>,available:!0,isFetching:!1,isLoading:!1\}\);let ))(?<next>[\w$]+)=`,
+    `(?<setup>let (?<availability>${IDENTIFIER})=\\(0,${IDENTIFIER}\\.${IDENTIFIER}\\)\\(${IDENTIFIER}\\),` +
+    `\\{platform:(?<platform>${IDENTIFIER})\\}=\\(0,${IDENTIFIER}\\.${IDENTIFIER}\\)\\(\\))` +
+    `(?:,|(?<patched>;/\\* linux-native-settings-availability \\*/` +
+    `if\\(\\k<platform>==="linux"\\)\\k<availability>=\\{\\.\\.\\.\\k<availability>,` +
+    `available:!0,isFetching:!1,isLoading:!1\\};let ))(?<next>${IDENTIFIER})=`,
     "g",
   );
   const matches = [...source.matchAll(pattern)].filter(match => {
-    // A following owner must not supply the consumer missing from this one.
-    const tail = source.slice(match.index + match[0].length, match.index + match[0].length + 3000).split(/function [\w$]+\(/)[0];
-    return tail.includes(`computerUseAvailability:${match.groups.availability}`) && tail.includes(`${match.groups.availability}.available`);
+    const owner = availabilityOwner(source, match.index);
+    return owner != null && owner.includes(`computerUseAvailability:${match.groups.availability}`) &&
+      owner.includes(`${match.groups.availability}.available`);
   });
   const patchedCount = matches.filter(match => match.groups.patched != null).length;
-  if (matches.length !== 1 || [...source.matchAll(marker)].length !== patchedCount) {
+  if (matches.length !== 1 || source.split(AVAILABILITY_MARKER).length - 1 !== patchedCount) {
+    return { kind: "invalid" };
+  }
+  return { kind: patchedCount === 1 ? "patched" : "current", match: matches[0] };
+}
+
+function matchesNativeSettingsAvailabilityContract(source) {
+  return nativeSettingsAvailabilityState(source).kind !== "invalid";
+}
+
+// The native component owns the existing plugin toggle; unified-computer-use
+// owns transport. Never invent an installed/enabled Settings row.
+function applyNativeSettingsAvailabilityPatch(source) {
+  const state = nativeSettingsAvailabilityState(source);
+  if (state.kind === "invalid") {
     throw new Error("Linux native Settings availability contract missing or ambiguous");
   }
-  if (patchedCount === 1) return source;
-  const match = matches[0];
-  const { availability, hook, args, platform, platformHook, next } = match.groups;
-  const replacement = `let ${availability}=${hook}(${args}),{platform:${platform}}=${platformHook}();"linux"===${platform}&&(${availability}={...${availability},available:!0,isFetching:!1,isLoading:!1});let ${next}=`;
+  if (state.kind === "patched") return source;
+  const { match } = state;
+  const { setup, availability, platform, next } = match.groups;
+  const replacement = `${setup};${AVAILABILITY_MARKER}if(${platform}==="linux")${availability}={...${availability},available:!0,isFetching:!1,isLoading:!1};let ${next}=`;
   return source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
 }
 
@@ -78,5 +107,6 @@ module.exports = {
   NATIVE_SETTINGS_VISIBILITY_NEEDLES,
   applyNativeSettingsAvailabilityPatch,
   applyNativeSettingsVisibilityPatch,
+  matchesNativeSettingsAvailabilityContract,
   matchesNativeSettingsVisibilityContract,
 };
