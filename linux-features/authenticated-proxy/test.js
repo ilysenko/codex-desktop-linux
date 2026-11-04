@@ -576,6 +576,50 @@ test("authenticated-proxy patched request contracts fail closed when damaged or 
   }
 });
 
+function helperBlock(source) {
+  const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+  const start = source.indexOf("function codexLinuxProxyAuthHost(");
+  const last = source.indexOf("function codexLinuxProxyAuthFetch(", start);
+  const end = findMatchingBrace(source, source.indexOf("{", last)) + 1;
+  assert.ok(start >= 0 && last > start && end > last);
+  return { helpers: source.slice(start, end), rest: source.slice(0, start) + source.slice(end) };
+}
+
+function assertDescriptorRejects(source) {
+  const { applyMainBundlePatchDescriptors } = require("../../scripts/patches/engine.js");
+  const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+  const report = createPatchReport();
+  const { result } = withWarnings(() => applyMainBundlePatchDescriptors(source, descriptors, {}, report));
+  assert.equal(result.patchedSource, source);
+  assert.equal(report.patches[0].status, "skipped-optional");
+  assert.ok(result.warnings.length > 0);
+}
+
+test("complete proxy helpers must be program declarations with only the owned call sites", async () => {
+  const patched = applyAuthenticatedProxyPatch(CURRENT);
+  const { helpers, rest } = helperBlock(patched);
+  const hidden = rest + `;function inaccessible(){${helpers}}`;
+  const context = { process: { platform: "linux", env: {} }, electron: { app: { whenReady: async () => {}, on() {} }, net: {} } };
+  await assert.doesNotReject(() => loadChunk(patched, context).boot());
+  await assert.rejects(() => loadChunk(hidden, context).boot(), /codexLinuxInstallProxyAuthHandler is not defined/);
+  for (const source of [
+    hidden,
+    rest + `;if(false){${helpers}}`,
+    rest + `;if(false)${helpers}`,
+    patched.replace("async function boot(){", "async function boot(codexLinuxInstallProxyAuthHandler){"),
+    patched + ";codexLinuxProxyAuthEntry();",
+    CURRENT + ";const codexLinuxProxyAuthFetch=()=>{};",
+  ]) {
+    assert.doesNotThrow(() => new vm.Script(source));
+    assertDescriptorRejects(source);
+  }
+  for (const prefix of ["// another feature\n", "/* another feature */", "function anotherFeature(){}", ";(()=>{})();", "const codexLinuxProxyAuthFetchShadow=0;"]) {
+    const { result, warnings } = withWarnings(() => applyAuthenticatedProxyPatch(prefix + patched));
+    assert.equal(result, prefix + patched);
+    assert.deepEqual(warnings, []);
+  }
+});
+
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
 test("signed main-process chunks patch exactly one chunk", { skip: !signedApp }, () => {
   const directory = path.join(signedApp, ".vite/build");
@@ -598,4 +642,9 @@ test("signed main-process chunks patch exactly one chunk", { skip: !signedApp },
   assert.equal(patched.match(/codexLinuxInstallProxyAuthHandler\(/g).length, 2);
   assert.equal(patched.match(/codexLinuxAttachProxyAuthToRequest\(/g).length, 2);
   assert.equal(patched.match(/codexLinuxProxyAuthFetch\(/g).length, 2);
+  const { helpers, rest } = helperBlock(patched);
+  const hidden = rest + `;function inaccessible(){${helpers}}`;
+  assert.doesNotThrow(() => new vm.Script(hidden));
+  assertDescriptorRejects(hidden);
+
 });

@@ -1,5 +1,8 @@
 "use strict";
 
+const { Script } = require("node:vm");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 
 // The rspack main process spreads code over chunk files and the patch engine
@@ -71,6 +74,38 @@ const HELPER_NEEDLES = [
   "function codexLinuxProxyAuthFetch(",
 ];
 
+const HELPER_BLOCK = APP_LOGIN_HELPER + REQUEST_LOGIN_HELPER + FETCH_HELPER;
+const HELPER_NAMES = HELPER_NEEDLES.map(needle => needle.slice("function ".length, -1));
+const OWNED_HELPER_CALLS = new Map([
+  ["codexLinuxInstallProxyAuthHandler", 1],
+  ["codexLinuxAttachProxyAuthToRequest", 1],
+  ["codexLinuxProxyAuthFetch", 1],
+]);
+
+function helpersHaveProgramScope(source) {
+  const offset = source.indexOf(HELPER_BLOCK);
+  if (offset < 0) return false;
+  const prefix = source.slice(0, offset);
+  // Keep comments/strings and nested braces intact. The lexical declaration
+  // probe also rejects a dangling if/loop/label or expression that could turn
+  // the first helper into a conditional declaration or function expression.
+  if (findMatchingBrace("{" + prefix + "}", 0) !== offset + 1) return false;
+  try {
+    new Script(prefix + "\nconst __codexLinuxProxyHelperScopeProbe = 0;");
+    return true;
+  } catch { return false; }
+}
+
+function helperReferenceCount(source, name) {
+  return [...source.matchAll(new RegExp(`(?<![\\w$])${name}(?![\\w$])`, "g"))].length;
+}
+
+function helperReferencesAreOwned(source) {
+  const withoutHelpers = source.replace(HELPER_BLOCK, "");
+  return HELPER_NAMES.every(name =>
+    helperReferenceCount(withoutHelpers, name) === (OWNED_HELPER_CALLS.get(name) ?? 0));
+}
+
 function count(source, pattern) {
   return [...source.matchAll(pattern)].length;
 }
@@ -94,10 +129,10 @@ function applyAuthenticatedProxyPatch(currentSource) {
   const patchedFetches = count(currentSource, PATCHED_FETCH_PATTERN);
   const requests = count(currentSource, REQUEST_PATTERN);
   const patchedRequests = count(currentSource, PATCHED_REQUEST_PATTERN);
-  const pristine = helpers === 0 && ready === 1 && patchedReady === 0 &&
+  const pristine = helpers === 0 && HELPER_NAMES.every(name => helperReferenceCount(currentSource, name) === 0) && ready === 1 && patchedReady === 0 &&
     fetches === 1 && patchedFetches === 0 && requests === 1 && patchedRequests === 0;
   const complete = helpers === HELPER_NEEDLES.length &&
-    currentSource.includes(APP_LOGIN_HELPER + REQUEST_LOGIN_HELPER + FETCH_HELPER) &&
+    helpersHaveProgramScope(currentSource) && helperReferencesAreOwned(currentSource) &&
     ready === 0 && patchedReady === 1 &&
     fetches === 0 && patchedFetches === 1 && requests === 0 && patchedRequests === 1;
   if (complete) return currentSource;
