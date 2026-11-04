@@ -256,18 +256,28 @@ function applyDockIconMainPatch(source) {
   return mainContract(patchedSource, "patched") != null ? patchedSource : source;
 }
 
-const currentSettingsGatePattern =
-  /return ([A-Za-z_$][\w$]*)!==`macOS`\|\|([A-Za-z_$][\w$]*)===([A-Za-z_$][\w$]*)\.Agent\?null:([A-Za-z_$][\w$]*)/g;
-const patchedSettingsGatePattern =
-  /return ([A-Za-z_$][\w$]*)!==`macOS`&&\1!==`linux`\|\|([A-Za-z_$][\w$]*)===([A-Za-z_$][\w$]*)\.Agent\?null:([A-Za-z_$][\w$]*)/g;
-const settingsRowAnchorPattern = /\bdockIconPreviews\b/g;
+// The official 26.1029 webview is an rspack/SWC build. The Dock icon row
+// visibility gate is one small webpack module that rspack duplicates into
+// every async chunk that needs it, so each copy is patched independently:
+//   function n({platform:e,dockIconPreviews:t,buildFlavor:a="prod"}){
+//     return"macOS"!==e||a===s.x1u.Agent?null:t}
+const settingsGateHead =
+  `function ${id}\\(\\{platform:(?<platform>${id}),dockIconPreviews:(?<previews>${id}),` +
+  `buildFlavor:(?<flavor>${id})="prod"\\}\\)\\{return"macOS"!==\\k<platform>`;
+const settingsGateTail =
+  `\\|\\|\\k<flavor>===${id}(?:\\.${id})*\\.Agent\\?null:\\k<previews>\\}`;
+const currentSettingsGatePattern = new RegExp(`${settingsGateHead}${settingsGateTail}`, "g");
+const patchedSettingsGatePattern = new RegExp(
+  `${settingsGateHead}&&"linux"!==\\k<platform>${settingsGateTail}`,
+  "g",
+);
+const SETTINGS_ASSET_NEEDLES = ["dockIconPreviews", "buildFlavor", '"macOS"!=='];
 
 function dockIconSettingsContract(source) {
   const currentMatches = matches(source, currentSettingsGatePattern);
   const patchedMatches = matches(source, patchedSettingsGatePattern);
-  const rowAnchors = matches(source, settingsRowAnchorPattern);
-  if (rowAnchors.length === 1 && currentMatches.length === 1 && patchedMatches.length === 0) return "current";
-  if (rowAnchors.length === 1 && currentMatches.length === 0 && patchedMatches.length === 1) return "patched";
+  if (currentMatches.length === 1 && patchedMatches.length === 0) return "current";
+  if (currentMatches.length === 0 && patchedMatches.length === 1) return "patched";
   return "drifted";
 }
 
@@ -278,10 +288,14 @@ function applyDockIconSettingsPatch(source) {
     console.warn("WARN: Could not find the current Dock icon settings contract - skipping Dock icon settings patch");
     return source;
   }
-  return source.replace(
-    currentSettingsGatePattern,
-    (_match, platformAlias, buildFlavorAlias, buildFlavorEnumAlias, previewsAlias) =>
-      `return ${platformAlias}!==\`macOS\`&&${platformAlias}!==\`linux\`||${buildFlavorAlias}===${buildFlavorEnumAlias}.Agent?null:${previewsAlias}`,
+  const match = oneMatch(source, currentSettingsGatePattern);
+  const platform = match.groups.platform;
+  const gate = `return"macOS"!==${platform}`;
+  const offset = match[0].indexOf(gate) + gate.length;
+  return replaceMatch(
+    source,
+    match,
+    `${match[0].slice(0, offset)}&&"linux"!==${platform}${match[0].slice(offset)}`,
   );
 }
 
@@ -299,8 +313,9 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_950,
     ciPolicy: "optional",
-    pattern: /^dock-icon-setting-visibility-[A-Za-z0-9_-]+\.js$/,
-    assetMatch: (source) => dockIconSettingsContract(source) !== "drifted",
+    // No assetMatch: every rspack chunk carrying a copy of the gate module is
+    // patched, and a candidate without the gate is left unchanged with a warning.
+    assetNeedles: SETTINGS_ASSET_NEEDLES,
     missingDescription: "official Linux Dock icon setting visibility bundle",
     skipDescription: "Dock icon settings row patch",
     enabled: dockIconEnabled,
@@ -309,9 +324,11 @@ const descriptors = [
 ];
 
 module.exports = {
+  SETTINGS_ASSET_NEEDLES,
   applyDockIconMainPatch,
   applyDockIconSettingsPatch,
   descriptors,
   dockIconConfig,
+  dockIconSettingsContract,
   dockIconEnabled,
 };

@@ -11,7 +11,7 @@ const official = require("./fixtures/official-response-annotation.json");
 const {
   GUARD_NAME, HANDLER_MARKER, RUNTIME_MARKER, enabled,
   codexLinuxResponseAnnotationOwnsSubmitShortcut: ownsShortcut,
-  shortcutContract, patchSource, applyAnnotationSubmit,
+  shortcutContract, patchSource, applyAnnotationSubmit, discoverAnnotationSubmitAssets, validateNativeEditor,
 } = require("./patches/selected-text-annotation-submit.js");
 
 const enabledContext = { feature: { settings: { tweaks: { selection: { annotationSubmit: { enabled: true } } } } } };
@@ -49,6 +49,9 @@ function eventFixture(overrides = {}) {
   return { event, input, editor, form, window, document };
 }
 
+// Runs the frozen official excerpts: the app shortcut owner (window capture
+// handler), the annotation card's capture keydown handler and its submit
+// path, and the composer's direct-submit callbacks and annotation store.
 function nativeHandlers(source, eventState, { mode = "create", storedBody, draft = "当前批注文字", command = "composer.submit" } = {}) {
   const memo = (size) => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
   const annotations = [{ id: "annotation", text: "所选回复", annotation: storedBody }];
@@ -59,56 +62,74 @@ function nativeHandlers(source, eventState, { mode = "create", storedBody, draft
   let generalCalls = 0;
   const jobs = [];
   let registered;
-  const context = vm.createContext({ Element, Symbol, ...eventState,
-    YQs: { c: memo }, znt: { c: memo }, jji: () => false,
-    Zg: (target) => target instanceof Element, Om: () => false,
-    Nji: (options) => { registered = options; },
-    Kqt: () => {
+  const deepEqual = () => util.isDeepStrictEqual;
+  deepEqual.current = [];
+  const context = vm.createContext({ Element, Symbol, Promise, ...eventState,
+    // Shortcut owner dependencies.
+    c: { c: memo, R: null }, la: { QR: () => false, TY: (target) => target instanceof Element },
+    li: { EE: (options) => { registered = options; } },
+    lo: { aP: () => false, W7: () => {
       generalCalls += 1;
-      jobs.push(context.flt(scope, {}).then((payload) => sent.push({ type: "general", annotations: payload.responseTextAnnotations })));
+      jobs.push(context.uN(scope, {}).then((payload) => sent.push({ type: "general", annotations: payload.responseTextAnnotations })));
       editing = null;
       return true;
-    },
-    ic: "scope", YE: "annotations", Hy: "editor", so: () => scope, Z: (atom) => scope.get(atom),
-    Bnt: { default: util.isDeepStrictEqual }, Vnt: { jsx: (_component, props) => props }, jnt: "markers",
-    Zge: (...args) => context.SYr(...args), Uw() {}, BV: (_scope, edit) => edit({ responseTextAnnotations: annotations }),
-    llt: () => [], aFe: async () => null, plt: async () => undefined,
-    Ft: false, K: { getText: () => draft, view: { dom: eventState.input } }, Mn: { current: null },
-    U: true, Ze: null, q: false, pe: true, L: false, kn: { current: [] }, Zn: false, wn: true,
-    X: mode === "edit" ? "annotation" : null, R: true, fe: true,
+    } },
+    // Composer direct-submit callbacks and annotation store dependencies.
+    a: { c: memo }, u: { gh: () => scope, Ul: (atom) => scope.get(atom) }, tT: { PR: "scope" },
+    oS: { zJ: "annotations", zX: "editor", A_: (...args) => context.tI(...args), q5() {} },
+    o: { jsx: (_component, props) => props }, iz: "markers", rR: deepEqual,
+    tr: (_scope, edit) => edit({ responseTextAnnotations: annotations }),
+    uD: { d: () => [] }, cP: { lg: async () => null }, uU: async () => undefined,
+    // Annotation card state: an enabled create/edit editor without design or dictation state.
+    i: true, t3: false, ne: () => false, nr: false, nn: false, na: false, r6: { current: null }, nc() {},
+    rI: { current: null }, eE: true, es: false, eu: false, eJ: null, te: false, rD: true, q: null,
+    eF: { getText: () => draft, view: { dom: eventState.input } },
+    nH: mode === "edit" ? "annotation" : null, ed: true, ec: true, n7: "direct",
   });
-  vm.runInContext(source + "\n" + [official.Rnt, official.SYr, official.flt, official.Jr, official.oa, official.pa, official.gi].join("\n"), context);
-  const callbacks = context.Rnt({ focusComposer() {}, onDirectSubmit: (request) => {
+  vm.runInContext([source, official.submitComment, official.withoutDesignControls, official.directSubmitCallbacks,
+    official.updateAnnotation, official.collectComposerContext,
+    `var n={nl:(${official.commentSubmission}),FJ:(${official.designEditorOpen})};`,
+    `c.R=(${official.resolveCommentSubmission});`,
+    `var annotationKeyDown=${official.annotationKeyDown};`].join("\n"), context);
+  const callbacks = context.iQ({ focusComposer() {}, onDirectSubmit: (request) => {
     assert.equal(request.isCurrent(), true);
     sent.push({ type: "annotation", annotation: request.annotation });
   } });
-  context.C = ({ body }) => callbacks.onDirectSubmit("annotation", body);
-  context.S = ({ body }) => callbacks.onUpdateAnnotation("annotation", body);
-  vm.runInContext(`var _i=${official._i};var yi=_i;var Si=${official.Si};`, context);
-  context.KQs({ id: command, accelerator: "Ctrl+Enter", capture: true, runInRenderer: true, isMacOS: false });
+  context.U = ({ body }) => callbacks.onDirectSubmit("annotation", body);
+  context.W = ({ body }) => callbacks.onUpdateAnnotation("annotation", body);
+  context.lh({ id: command, accelerator: "Ctrl+Enter", capture: true, runInRenderer: true, isMacOS: false });
   assert.equal(registered.capture, true);
-  return { context, sent, jobs, dispatch() { registered.onKeyDown(eventState.event); context.Si(eventState.event); },
+  return { context, sent, jobs, dispatch() { registered.onKeyDown(eventState.event); context.annotationKeyDown(eventState.event); },
     get generalCalls() { return generalCalls; }, get editing() { return editing; } };
 }
 
-function appFixture(t, source = official.KQs) {
+function chunk(id, modules) {
+  return `export const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];` +
+    `export const __webpack_modules__={${modules}};\n//# sourceMappingURL=${id}.js.map`;
+}
+
+const editorModule = 'Edit(e,t,r){var a=r("ABep"),u=r("Card");function f(e){let{onDirectSubmit:T}=e,b=H.formatMessage(' +
+  '{id:"selectedTextAnnotationEditor.noteAriaLabel",defaultMessage:"Note"}),w=(0,a.jsx)(u.s,{inputAriaLabel:b,' +
+  'keyboardEventTarget:window,onDirectSubmit:T});return(0,a.jsxs)("div",{"data-selected-text-annotation-editor":!0,' +
+  'children:[w]})}r.d(t,{x:()=>f})}';
+const cardModule = `Card(e,t,r){r.d(t,{s:()=>tq});function tq(){return{onKeyDownCapture:${official.annotationKeyDown}}}}`;
+
+function appFixture(t, source = official.shortcutOwner) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "annotation-submit-test-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const assets = path.join(root, "webview", "assets");
-  fs.mkdirSync(assets, { recursive: true });
-  const target = path.join(assets, "app-initial-current.js");
-  fs.writeFileSync(target, source);
-  fs.writeFileSync(path.join(assets, "annotation-comment-editor-card-current.js"),
-    `let Si=${official.Si};const registration={onKeyDownCapture:Si};`);
-  fs.writeFileSync(path.join(assets, "annotation-editor-current.js"),
-    'import{t as Card}from"./annotation-comment-editor-card-current.js";' +
-    'const editor={"data-selected-text-annotation-editor":!0,onDirectSubmit:direct,' +
-    'label:`selectedTextAnnotationEditor.noteAriaLabel`};');
-  return { root, assets, target };
+  fs.mkdirSync(path.join(assets, "async"), { recursive: true });
+  const target = path.join(assets, "async", "100001.0000000001.js");
+  const ownerChunk = chunk(100001, `Shrt(e,t,r){r.d(t,{x:()=>lh});${source}}`);
+  fs.writeFileSync(target, ownerChunk);
+  fs.writeFileSync(path.join(assets, "async", "100002.0000000002.js"), chunk(100002, cardModule));
+  fs.writeFileSync(path.join(assets, "async", "100003.0000000003.js"), chunk(100003, editorModule));
+  fs.writeFileSync(path.join(assets, "100004.0000000004.js"), chunk(100004, 'Main(e,t,r){r.e(100003)}'));
+  return { root, assets, target, ownerChunk };
 }
 
-const currentShortcutSource = official.KQs
-  .replace("Kqt(n,e)&&(e.preventDefault(),", "(Kqt(n,e))&&(e.preventDefault(),");
+const currentShortcutSource = official.shortcutOwner
+  .replace("(0,lo.W7)(s,e)&&(e.preventDefault(),", "((0,lo.W7)(s,e))&&(e.preventDefault(),");
 
 function withWarnings(callback) {
   const messages = [];
@@ -125,27 +146,27 @@ test("annotation submit is independently disabled by default and honors a disabl
     settings: { tweaks: { selection: { annotationSubmit: { enabled: false } } } } } }), false);
   const app = appFixture(t);
   assert.deepEqual(applyAnnotationSubmit(app.root), { matched: 0, changed: 0 });
-  assert.equal(fs.readFileSync(app.target, "utf8"), official.KQs);
+  assert.equal(fs.readFileSync(app.target, "utf8"), app.ownerChunk);
 });
 
 test("patch discovers renamed native symbols, preserves registration and memo slots, and is idempotent", () => {
-  const renamed = official.KQs.replace(/\b(KQs|YQs|Kqt|Nji|jji|n|p|e)\b/gu, (name) => `renamed_${name}`);
+  const renamed = official.shortcutOwner.replace(/\b(lh|c|la|lo|li|s|n|e)\b/gu, (name) => `renamed_${name}`);
   const patched = patchSource(renamed);
   assert.equal(shortcutContract(patched).state, "applied");
   assert.equal(patchSource(patched), patched);
-  assert.equal(patched.replace(`/*${HANDLER_MARKER}*/if(${GUARD_NAME}(renamed_n,renamed_e))return;`, "")
+  assert.equal(patched.replace(`/*${HANDLER_MARKER}*/if(${GUARD_NAME}(renamed_s,renamed_e))return;`, "")
     .slice(0, renamed.length), renamed);
 });
 
 test("patch accepts the current shortcut target normalization and grouped dispatch", () => {
-  assert.notEqual(currentShortcutSource, official.KQs);
+  assert.notEqual(currentShortcutSource, official.shortcutOwner);
   const patched = patchSource(currentShortcutSource);
   assert.equal(shortcutContract(patched).state, "applied");
   assert.equal(patchSource(patched), patched);
 });
 
 test("unpatched capture handler reproduces loss of the initial unsaved annotation body", async () => {
-  const native = nativeHandlers(official.KQs, eventFixture());
+  const native = nativeHandlers(official.shortcutOwner, eventFixture());
   native.dispatch();
   await Promise.all(native.jobs);
   assert.equal(native.generalCalls, 1);
@@ -157,7 +178,7 @@ test("unpatched capture handler reproduces loss of the initial unsaved annotatio
 
 test("Ctrl+Enter sends the current native annotation body in create and edit modes", async () => {
   for (const mode of ["create", "edit"]) {
-    const native = nativeHandlers(patchSource(official.KQs), eventFixture(), { mode, storedBody: "旧批注", draft: "  新批注  " });
+    const native = nativeHandlers(patchSource(official.shortcutOwner), eventFixture(), { mode, storedBody: "旧批注", draft: "  新批注  " });
     native.dispatch();
     await Promise.all(native.jobs);
     assert.equal(native.generalCalls, 0);
@@ -171,7 +192,7 @@ test("Ctrl+Enter sends the current native annotation body in create and edit mod
 
 test("all regular composer send commands yield Ctrl+Enter inside the annotation editor", async () => {
   for (const command of ["composer.submit", "composer.submitInBackground", "composer.steer", "composer.queue"]) {
-    const native = nativeHandlers(patchSource(official.KQs), eventFixture(), { command });
+    const native = nativeHandlers(patchSource(official.shortcutOwner), eventFixture(), { command });
     native.dispatch();
     await Promise.all(native.jobs);
     assert.equal(native.generalCalls, 0);
@@ -186,7 +207,7 @@ test("ordinary composer Ctrl+Enter still sends when an annotation editor exists 
   eventState.event.target = normalInput;
   eventState.event.composedPath = () => [normalInput];
   eventState.document.activeElement = normalInput;
-  const native = nativeHandlers(patchSource(official.KQs), eventState);
+  const native = nativeHandlers(patchSource(official.shortcutOwner), eventState);
   native.dispatch();
   await Promise.all(native.jobs);
   assert.equal(native.generalCalls, 1);
@@ -195,7 +216,7 @@ test("ordinary composer Ctrl+Enter still sends when an annotation editor exists 
 
 test("native composition and key-repeat guards prevent both annotation and ordinary sends", () => {
   for (const overrides of [{ repeat: true }, { nativeEvent: { isComposing: true } }]) {
-    const native = nativeHandlers(patchSource(official.KQs), eventFixture(overrides));
+    const native = nativeHandlers(patchSource(official.shortcutOwner), eventFixture(overrides));
     native.dispatch();
     assert.equal(native.generalCalls, 0);
     assert.equal(native.sent.length, 0);
@@ -216,7 +237,7 @@ test("scope matching handles retargeted events and Cmd+Enter without changing un
 
 test("patched capture handler preserves unrelated shortcut dispatch and modified Enter behavior", async () => {
   for (const options of [{ command: "artifact.sendAnnotations" }, { overrides: { altKey: true } }, { overrides: { shiftKey: true } }]) {
-    const native = nativeHandlers(patchSource(official.KQs), eventFixture(options.overrides), options);
+    const native = nativeHandlers(patchSource(official.shortcutOwner), eventFixture(options.overrides), options);
     native.dispatch();
     await Promise.all(native.jobs);
     assert.equal(native.generalCalls, 1);
@@ -225,65 +246,73 @@ test("patched capture handler preserves unrelated shortcut dispatch and modified
 });
 
 test("missing, ambiguous, changed, and partially patched contracts leave assets unchanged", (t) => {
-  const patched = patchSource(official.KQs);
+  const patched = patchSource(official.shortcutOwner);
+  const handler = "n=e=>{if(e.target instanceof Element&&e.target,e.defaultPrevented)return;";
   for (const source of [
-    official.KQs.replace("clearAllUnreads", "renamedCommand"),
-    official.KQs + official.KQs,
-    official.KQs.replace("Kqt(n,e)&&(e.preventDefault(),", "Kqt(n,e)&&(e.stopPropagation(),"),
-    official.KQs.replace("onKeyDown:h", "onKeyDown:otherHandler"),
+    official.shortcutOwner.replace("clearAllUnreads", "renamedCommand"),
+    official.shortcutOwner + official.shortcutOwner,
+    official.shortcutOwner.replace("(0,lo.W7)(s,e)&&(e.preventDefault(),", "(0,lo.W7)(s,e)&&(e.stopPropagation(),"),
+    official.shortcutOwner.replace("onKeyDown:n}", "onKeyDown:otherHandler}"),
     // Retired handler preambles are no longer accepted.
-    official.KQs.replace(
-      "h=e=>{if(e.target instanceof Element&&e.target,e.defaultPrevented)return;",
-      "h=e=>{let target=e.target instanceof Element?e.target:null;if(e.defaultPrevented)return;",
-    ),
-    official.KQs.replace(
-      "h=e=>{if(e.target instanceof Element&&e.target,e.defaultPrevented)return;",
-      "h=e=>{if(e.target instanceof Element&&e.target,!e.defaultPrevented)return;",
-    ),
-    official.KQs.replace("id:n,accelerator:", "id:otherCommand,accelerator:"),
-    official.KQs + `/*${RUNTIME_MARKER}*/`,
+    official.shortcutOwner.replace(handler,
+      "n=e=>{let target=e.target instanceof Element?e.target:null;if(e.defaultPrevented)return;"),
+    official.shortcutOwner.replace(handler,
+      "n=e=>{if(e.target instanceof Element&&e.target,!e.defaultPrevented)return;"),
+    // Retired template-literal command comparisons are no longer accepted.
+    official.shortcutOwner.replace('"focusPageBlockControls"===s', "s===`focusPageBlockControls`"),
+    official.shortcutOwner.replace("id:s,accelerator:", "id:otherCommand,accelerator:"),
+    official.shortcutOwner + `/*${RUNTIME_MARKER}*/`,
     patched.replace("return withinEditor(event.target)", "return false&&withinEditor(event.target)"),
-    patched.replace(`if(${GUARD_NAME}(n,e))return;`, ""),
+    patched.replace(`if(${GUARD_NAME}(s,e))return;`, ""),
   ]) {
-    assert.notEqual(source, official.KQs);
+    assert.notEqual(source, official.shortcutOwner);
     const app = appFixture(t, source);
     const result = withWarnings(() => applyAnnotationSubmit(app.root, enabledContext));
     assert.equal(result.result.changed, 0);
     assert.equal(result.messages.length, 1);
-    assert.equal(fs.readFileSync(app.target, "utf8"), source);
+    assert.equal(fs.readFileSync(app.target, "utf8"), app.ownerChunk);
   }
 });
 
 test("an ambiguous asset set is rejected before either copy changes", (t) => {
   const app = appFixture(t);
-  const duplicate = path.join(app.assets, "app-initial-duplicate.js");
-  fs.writeFileSync(duplicate, official.KQs);
+  const duplicate = path.join(app.assets, "async", "100005.0000000005.js");
+  fs.copyFileSync(app.target, duplicate);
   const result = withWarnings(() => applyAnnotationSubmit(app.root, enabledContext));
   assert.equal(result.result.changed, 0);
   assert.equal(result.messages.length, 1);
-  assert.equal(fs.readFileSync(app.target, "utf8"), official.KQs);
-  assert.equal(fs.readFileSync(duplicate, "utf8"), official.KQs);
+  assert.equal(fs.readFileSync(app.target, "utf8"), app.ownerChunk);
+  assert.equal(fs.readFileSync(duplicate, "utf8"), app.ownerChunk);
 });
 
 test("missing or changed native annotation scope and Ctrl+Enter handling reject the patch", (t) => {
+  const editor = (app) => path.join(app.assets, "async", "100003.0000000003.js");
+  const card = (app) => path.join(app.assets, "async", "100002.0000000002.js");
+  const rewrite = (file, from, to) => {
+    const source = fs.readFileSync(file, "utf8");
+    assert.ok(source.includes(from));
+    fs.writeFileSync(file, source.replace(from, to));
+  };
   for (const mutate of [
-    (app) => fs.unlinkSync(path.join(app.assets, "annotation-editor-current.js")),
-    (app) => {
-      const target = path.join(app.assets, "annotation-editor-current.js");
-      fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("data-selected-text-annotation-editor", "changed-editor-scope"));
-    },
-    (app) => {
-      const target = path.join(app.assets, "annotation-comment-editor-card-current.js");
-      fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("e.ctrlKey", "e.changedModifier"));
-    },
-    (app) => fs.copyFileSync(path.join(app.assets, "annotation-editor-current.js"), path.join(app.assets, "annotation-editor-duplicate.js")),
+    (app) => fs.unlinkSync(editor(app)),
+    (app) => rewrite(editor(app), "data-selected-text-annotation-editor", "changed-editor-scope"),
+    // The editor must render the card module it requires, with onDirectSubmit.
+    (app) => rewrite(editor(app), 'u=r("Card")', 'u=r("Other")'),
+    (app) => rewrite(editor(app), "(0,a.jsx)(u.s,", "(0,a.jsx)(u.other,"),
+    (app) => rewrite(editor(app), "keyboardEventTarget:window,onDirectSubmit:T", "keyboardEventTarget:window"),
+    (app) => fs.unlinkSync(card(app)),
+    (app) => rewrite(card(app), "r.d(t,{s:()=>tq})", "r.d(t,{other:()=>tq})"),
+    (app) => rewrite(card(app), "e.ctrlKey", "e.changedModifier"),
+    (app) => rewrite(card(app), 'n8("direct","keyboard")', 'n8("saved","keyboard")'),
+    (app) => rewrite(card(app), "if(e.defaultPrevented||e.nativeEvent.isComposing)return;", "if(e.defaultPrevented)return;"),
+    (app) => fs.copyFileSync(editor(app), path.join(app.assets, "async", "100006.0000000006.js")),
   ]) {
     const app = appFixture(t);
     mutate(app);
     const result = withWarnings(() => applyAnnotationSubmit(app.root, enabledContext));
     assert.equal(result.result.changed, 0);
     assert.equal(result.messages.length, 1);
-    assert.equal(fs.readFileSync(app.target, "utf8"), official.KQs);
+    assert.equal(fs.readFileSync(app.target, "utf8"), app.ownerChunk);
   }
 });
 
@@ -296,22 +325,20 @@ test("enabled patch changes one asset once and can coexist with another appended
   assert.equal(fs.readFileSync(app.target, "utf8"), patched);
 });
 
-// The behavioral tests above run a frozen excerpt of the native shortcut and
-// annotation code. Minified names and chunk boundaries change every upstream
-// release, so this signed test checks the semantic contract instead: the same
-// owner discovery the patch uses must find exactly one shortcut owner in the
-// current official ASAR, and the patch must apply once and validate.
+// The behavioral tests above run frozen excerpts of the native shortcut and
+// annotation code. Minified names and rspack chunk boundaries change every
+// upstream release, so this signed test checks the semantic contract instead:
+// the same discovery the patch uses must find exactly one shortcut owner and
+// one native editor -> card linkage in the current official ASAR, and the
+// patch must apply once and validate.
 test("current official ASAR exposes one native shortcut owner and accepts the patch", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, (t) => {
-  const assets = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, "webview", "assets");
-  const owners = fs.readdirSync(assets).filter((name) => /^[A-Za-z0-9_-]+\.js$/u.test(name))
-    .map((name) => ({ name, source: fs.readFileSync(path.join(assets, name), "utf8") }))
-    .filter(({ source }) => source.includes("clearAllUnreads") && source.includes("allowWithinEditable:"))
-    .filter(({ source }) => {
-      try { return shortcutContract(source).state === "current"; } catch { return false; }
-    });
+  const { owners, editors, cards } = discoverAnnotationSubmitAssets(process.env.CODEX_SIGNED_EXTRACTED_APP);
   assert.equal(owners.length, 1);
+  assert.match(owners[0].name, /^async\/\d+\.[0-9a-f]+\.js$/u);
+  assert.equal(shortcutContract(owners[0].source).state, "current");
+  validateNativeEditor(editors, cards);
   assert.equal(shortcutContract(patchSource(owners[0].source)).state, "applied");
 
   const copy = fs.mkdtempSync(path.join(os.tmpdir(), "annotation-submit-official-"));
@@ -324,7 +351,12 @@ test("current official ASAR exposes one native shortcut owner and accepts the pa
   const both = { feature: { settings: { tweaks: { selection: {
     annotationSubmit: { enabled: true }, moreDetails: { enabled: true },
   } } } } };
-  assert.equal(moreDetails.applySelectedTextMoreDetails(copy, both).changed, 2);
+  // More details patches its Quick Chat runtime chunk plus every rspack copy of
+  // the selection overlay; none of them is the shortcut owner patched above.
+  const moreDetailsApplied = moreDetails.applySelectedTextMoreDetails(copy, both);
+  assert.ok(moreDetailsApplied.changed >= 2);
+  assert.equal(moreDetailsApplied.changed, moreDetailsApplied.targets.length);
+  assert.ok(!moreDetailsApplied.targets.includes(path.join("webview", "assets", owners[0].name)));
   assert.equal(applyAnnotationSubmit(copy, both).changed, 0);
   assert.equal(moreDetails.applySelectedTextMoreDetails(copy, both).changed, 0);
 });

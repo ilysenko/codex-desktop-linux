@@ -15,7 +15,10 @@ const {
   loadLinuxFeaturePatchDescriptors,
   stageEnabledLinuxFeatureInstall,
 } = require("../../scripts/lib/linux-features.js");
-const { patchUniqueAssetFile } = require("../../scripts/patches/lib/assets.js");
+const {
+  findWebviewAssetsContaining,
+  patchAssetFiles,
+} = require("../../scripts/patches/lib/assets.js");
 const {
   applyDockIconMainPatch,
   applyDockIconSettingsPatch,
@@ -53,8 +56,12 @@ const currentTraySource =
   'let U9=null,K9=!1;async function q9(e){let t=e.buildFlavor,n=await r8e(t,e.repoRoot),i=new d.Tray(n.defaultIcon,"win32"===process.platform&&d.app.isPackaged?function(e){switch(e){case o.i.Prod:return"tray-guid"}}(t):void 0);if(!K9)return i.destroy(),null;let a=new z0e(i,e.onOpenMainWindow);return(U9=a,await a.waitForReady()&&U9===a)?a:(U9===a&&(U9=null,a.destroy()),null)}';
 
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
+// Official 26.1029 rspack/SWC webview chunk carrying the Dock icon row gate
+// module (rspack duplicates it into every async chunk that needs it).
 const currentSettingsSource =
-  "import{n as e}from\"./rolldown-runtime-DAXXjFlN.js\";import{$Jt as t,VWt as n}from\"./app-initial-F3TGi7uJ.js\";function r({platform:e,dockIconPreviews:n,buildFlavor:r=`prod`}){return e!==`macOS`||r===t.Agent?null:n}var i=e((()=>{n()}));export{i as n,r as t};";
+  'export const __rspack_esm_id=572868;export const __rspack_esm_ids=[572868];export const __webpack_modules__={' +
+  'IKhT(e,t,a){var s=a("DBCl");function n({platform:e,dockIconPreviews:t,buildFlavor:a="prod"}){return"macOS"!==e||a===s.x1u.Agent?null:t}a.d(t,{_:()=>n})},' +
+  'kQ2a(e,t,a){var s=a("IKhT");function r(e,t){let n=t?.dockIconPreviews??null;return(0,s._)({platform:e,dockIconPreviews:n})}a.d(t,{r:()=>r})}};';
 
 function renameMinifiedAliases(source) {
   const aliases = [
@@ -431,42 +438,43 @@ test("main and settings repairs apply to unique semantic anchors in the signed b
     descriptor.id.endsWith("settings-row"),
   );
   const assetsDir = path.join(extractedApp, "webview", "assets");
-  const settingsCandidates = fs.readdirSync(assetsDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
-    .map((entry) => ({
-      name: entry.name,
-      source: fs.readFileSync(path.join(assetsDir, entry.name), "utf8"),
-    }))
-    .filter(({ source }) => settingsDescriptor.assetMatch(source));
-  assert.equal(
-    settingsCandidates.length,
-    1,
-    `expected one signed Dock settings contract, found ${settingsCandidates.map(({ name }) => name).join(", ")}`,
-  );
-  const settingsPatched = applyDockIconSettingsPatch(settingsCandidates[0].source);
-  assert.notEqual(settingsPatched, settingsCandidates[0].source);
-  assert.equal(applyDockIconSettingsPatch(settingsPatched), settingsPatched);
+  const settingsCandidates = findWebviewAssetsContaining(extractedApp, settingsDescriptor.assetNeedles)
+    .map((name) => ({ name, source: fs.readFileSync(path.join(assetsDir, name), "utf8") }));
+  assert.ok(settingsCandidates.length >= 1, "expected at least one signed Dock settings gate chunk");
+  for (const { name, source } of settingsCandidates) {
+    const settingsPatched = applyDockIconSettingsPatch(source);
+    assert.notEqual(settingsPatched, source, `expected one signed Dock settings contract in ${name}`);
+    assert.match(settingsPatched, /return"macOS"!==([A-Za-z_$][\w$]*)&&"linux"!==\1\|\|/);
+    assert.equal(applyDockIconSettingsPatch(settingsPatched), settingsPatched);
+  }
 });
 
 test("settings patch exposes the official row on Linux across minified aliases", () => {
   const patched = applyDockIconSettingsPatch(currentSettingsSource);
   assert.match(
     patched,
-    /return e!==`macOS`&&e!==`linux`\|\|r===t\.Agent\?null:n/,
+    /\{platform:e,dockIconPreviews:t,buildFlavor:a="prod"\}\)\{return"macOS"!==e&&"linux"!==e\|\|a===s\.x1u\.Agent\?null:t\}/,
   );
   assert.equal(applyDockIconSettingsPatch(patched), patched);
+  assert.equal(patched.replace('&&"linux"!==e', ""), currentSettingsSource);
 
   const aliases = currentSettingsSource
-    .replace("e!==`macOS`", "platform!==`macOS`")
-    .replace("r===t.Agent", "flavor===flavors.Agent")
-    .replace("?null:n", "?null:previews");
-  assert.match(applyDockIconSettingsPatch(aliases), /platform!==`linux`/);
+    .replace("{platform:e,", "{platform:p,")
+    .replace('"macOS"!==e', '"macOS"!==p')
+    .replace("dockIconPreviews:t,", "dockIconPreviews:previews,")
+    .replace("?null:t}", "?null:previews}")
+    .replace('buildFlavor:a="prod"', 'buildFlavor:flavor="prod"')
+    .replace("a===s.x1u.Agent", "flavor===flavors.Agent");
+  assert.match(applyDockIconSettingsPatch(aliases), /return"macOS"!==p&&"linux"!==p\|\|flavor===flavors\.Agent\?null:previews\}/);
 });
 
 test("settings drift, duplicates, and mixed contracts remain byte-identical", () => {
   const patched = applyDockIconSettingsPatch(currentSettingsSource);
   for (const source of [
-    currentSettingsSource.replace("dockIconPreviews", "dockIconPreviewsDrift"),
+    currentSettingsSource.replace("dockIconPreviews:t,", "dockIconPreviewsDrift:t,"),
+    currentSettingsSource.replace('"macOS"!==e', '"macOS"!==t'),
+    currentSettingsSource.replace("?null:t}", "?null:e}"),
+    currentSettingsSource.replace("buildFlavor:a=\"prod\"", "buildFlavor:a"),
     currentSettingsSource + currentSettingsSource,
     currentSettingsSource + patched,
   ]) {
@@ -480,39 +488,35 @@ test("descriptors select only current official-package contracts", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dock-icon-assets-"));
   try {
     const assets = path.join(root, "webview", "assets");
-    fs.mkdirSync(assets, { recursive: true });
+    fs.mkdirSync(path.join(assets, "async"), { recursive: true });
+    const copies = ["async/572868.36a6c86221.js", "async/968499.fa029184f4.js"];
+    for (const copy of copies) fs.writeFileSync(path.join(assets, copy), currentSettingsSource);
+    // Consumers of the gate without the gate module itself are not candidates.
     fs.writeFileSync(
-      path.join(assets, "dock-icon-setting-visibility-B9IZyljn.js"),
-      currentSettingsSource,
-    );
-    fs.writeFileSync(
-      path.join(assets, "dock-icon-setting-visibility-CsA3Lt9Z.js"),
-      "old DMG fixture",
+      path.join(assets, "async", "24191.7b05d5cf83.js"),
+      'export const __webpack_modules__={x(e,t,a){let n=(0,a("IKhT")._)({platform:e,dockIconPreviews:null})}};',
     );
     const settingsDescriptor = descriptors.find((descriptor) =>
       descriptor.id.endsWith("settings-row"),
     );
-    const result = patchUniqueAssetFile(
+    assert.equal(settingsDescriptor.assetMatch, undefined);
+    assert.equal(settingsDescriptor.pattern ?? settingsDescriptor.assetPattern, undefined);
+    const candidates = findWebviewAssetsContaining(root, settingsDescriptor.assetNeedles);
+    assert.deepEqual(candidates, copies);
+    const result = patchAssetFiles(
       root,
-      settingsDescriptor.pattern,
-      settingsDescriptor.assetMatch,
+      null,
       settingsDescriptor.apply,
       settingsDescriptor.missingDescription,
-      "ambiguous Dock icon Settings bundles",
+      candidates,
     );
-    assert.deepEqual(result, {
-      matched: 1,
-      changed: 1,
-      assetName: "dock-icon-setting-visibility-B9IZyljn.js",
-    });
-    assert.match(
-      fs.readFileSync(path.join(assets, "dock-icon-setting-visibility-B9IZyljn.js"), "utf8"),
-      /!==`linux`/,
-    );
-    assert.equal(
-      fs.readFileSync(path.join(assets, "dock-icon-setting-visibility-CsA3Lt9Z.js"), "utf8"),
-      "old DMG fixture",
-    );
+    assert.equal(result.matched, 2);
+    assert.equal(result.changed, 2);
+    for (const copy of copies) {
+      assert.match(fs.readFileSync(path.join(assets, copy), "utf8"), /&&"linux"!==e\|\|/);
+    }
+    const again = patchAssetFiles(root, null, settingsDescriptor.apply, "missing", candidates);
+    assert.equal(again.changed, 0);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

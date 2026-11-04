@@ -3,12 +3,16 @@
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 const test = require("node:test");
-const { NATIVE_TRACE_MARKER, patchNativeSenderTrace, traceRuntimeSource } = require("./patches/selected-text-more-details-trace.js");
+const { NATIVE_TRACE_MARKER, nativeTraceHelperSource, patchNativeSenderTrace, traceRuntimeSource } =
+  require("./patches/selected-text-more-details-trace.js");
 
 function traceFixture(logger) {
   const logs = [];
   const context = vm.createContext({ logger: logger ?? { info(message, fields) { logs.push(fields.safe); } } });
   vm.runInContext(traceRuntimeSource(), context);
+  vm.runInContext(nativeTraceHelperSource(), context);
+  // The runtime publishes its trace lookup for the native sender's module.
+  vm.runInContext('globalThis[Symbol.for("codex-linux.selected-text-more-details")]={traceFor:codexLinuxQuickChatTraceFor}', context);
   const trace = vm.runInContext("codexLinuxQuickChatCreateTrace(logger)", context);
   return { context, trace, logs };
 }

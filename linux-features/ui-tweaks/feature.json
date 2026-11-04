@@ -58,6 +58,30 @@
       }
     },
     {
+      "name": "dock-icon",
+      "settings": {
+        "tweaks": {
+          "appearance": {
+            "dockIcon": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "suggested-prompts",
+      "settings": {
+        "tweaks": {
+          "home": {
+            "suggestedPrompts": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    },
+    {
       "name": "selected-text-annotation-submit",
       "settings": {
         "tweaks": {
