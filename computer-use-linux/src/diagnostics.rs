@@ -3223,10 +3223,7 @@ pub(crate) mod tests {
         let mut portals = portal_report(Check::fail("missing"));
         portals.screenshot = Check::ok(".Screenshot method sa{sv} o -");
         let accessibility = accessibility_report(Check::ok("bus"), Check::ok("true"));
-        let mut windowing = windowing_report(true, true);
-        // The embedded fixture enables the Codex extension screenshot route with
-        // window focus; switch it off so this test isolates the routes it names.
-        windowing.codex_gnome_shell_extension_screenshot = Check::fail("missing");
+        let windowing = windowing_report(true, true);
         let input = input_report(true);
 
         let readiness = readiness_report(&platform, &portals, &accessibility, &windowing, &input);

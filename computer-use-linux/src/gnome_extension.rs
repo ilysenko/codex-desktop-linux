@@ -109,7 +109,7 @@ pub async fn setup_window_targeting_report() -> WindowTargetingSetupReport {
         "Codex GNOME Shell extension files are available, but enabling the extension failed. Enable it with gnome-extensions after GNOME Shell sees the new extension."
             .to_string()
     } else if system_reload_pending {
-        "GNOME Shell must reload before the computer-use-linux system extension is active. Log out and back in so that GNOME Shell loads the system extension."
+        "GNOME Shell must reload before the Codex GNOME Shell extension is active. Log out and back in so that GNOME Shell loads the system extension."
             .to_string()
     } else if windows_error.is_none() && requires_shell_reload {
         shell_reload_message(extension_was_enabled).to_string()

@@ -41,7 +41,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.38. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.40. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -441,16 +441,14 @@ reuses desktop diagnostics for up to 30 seconds while refreshing accessibility
 on every observation, and wakes immediately when short commands exit. Failed
 actions and observations invalidate cached readiness; `doctor` always probes.
 
-The v0.7.40 sync takes standalone's versions of the input-safety fixes this
-copy carried first. A uinput click or drag whose write fails sends one more
-button release and drops the device, so the next action builds a fresh one. A
-cancelled portal click, drag, key chord or keysym text keeps the input lock
-until its release cleanup has sent the pending release, and a cancelled KDE
-clipboard paste still restores the clipboard. Focus verification before
+The v0.7.40 sync takes standalone's versions of the input-safety and focus
+fixes this copy carried first. The uinput button release, the portal release
+guards and the KDE paste restore behave as before. Focus verification before
 targeted input gives each focused-window query up to 5 s and runs one more
 query after the 1 s transition allowance, so a slow backend such as Hyprland is
-not cut off, while queries that keep reporting another window still fail after
-about 1 s instead of 11 s.
+not cut off, while queries that keep reporting another window fail after about
+1 s instead of 11 s. A failed uinput move before a scroll drops the device, so
+the next action builds a fresh one.
 
 On COSMIC Wayland, pointer input uses per-monitor portal streams instead of
 uinput absolute coordinates. EIS input waits for its devices to resume. Portal
