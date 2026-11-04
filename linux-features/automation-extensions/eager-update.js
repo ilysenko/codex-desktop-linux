@@ -3,39 +3,39 @@
 // The dynamic Codex app tool catalog marks deferred tools with
 // `deferLoading:!0`. Keep automation_update eager so the model can update an
 // automation without first discovering the tool.
-const IDENT = "[A-Za-z_$][\\w$]*";
 const AUTOMATION_UPDATE_EAGER_TOOL_ASSET_NEEDLES = ["deferLoading:!0", "eagerToolNames:", "deferredToolNames:"];
-const EAGER = new RegExp(
-  `${IDENT}\\.name!=="automation_update"&&${IDENT}&&\\(!${IDENT}\\.has\\(${IDENT}\\.name\\)\\|\\|${IDENT}\\.includes\\(${IDENT}\\.name\\)\\)`,
-  "gu",
-);
-const DYNAMIC = new RegExp(
-  `\\.map\\((${IDENT})=>\\(\\{type:"function",\\.\\.\\.\\1,\\.\\.\\.(` +
-    `${IDENT}&&\\(!${IDENT}\\.has\\(\\1\\.name\\)\\|\\|${IDENT}\\.includes\\(\\1\\.name\\)\\)` +
-    `)\\?\\{deferLoading:!0\\}:\\{\\}\\}\\)\\)`,
-  "gu",
-);
+const IDENT = "[A-Za-z_$][\\w$]*";
+const catalogPrefix = `\\.map\\((?<tool>${IDENT})=>\\(\\{type:"function",\\.\\.\\.\\k<tool>,\\.\\.\\.`;
+const deferCondition = `(?<condition>${IDENT}&&\\(!${IDENT}\\.has\\(\\k<tool>\\.name\\)\\|\\|${IDENT}\\.includes\\(\\k<tool>\\.name\\)\\))`;
+const catalogSuffix = `\\?\\{deferLoading:!0\\}:\\{\\}\\}\\)\\)`;
+const CURRENT = new RegExp(catalogPrefix + deferCondition + catalogSuffix, "g");
+const PATCHED = new RegExp(catalogPrefix + `\\k<tool>\\.name!=="automation_update"&&` + deferCondition + catalogSuffix, "g");
 
-function count(source, pattern) {
-  return [...source.matchAll(pattern)].length;
+function catalogState(source) {
+  return {
+    current: [...source.matchAll(CURRENT)],
+    patched: [...source.matchAll(PATCHED)],
+  };
 }
 
 function matchesAutomationUpdateEagerToolContract(source) {
-  return count(source, EAGER) + count(source, DYNAMIC) === 1;
+  const { current, patched } = catalogState(source);
+  return current.length + patched.length === 1;
 }
 
 function applyAutomationUpdateEagerToolPatch(source) {
-  const eager = count(source, EAGER);
-  const dynamic = count(source, DYNAMIC);
-  if (eager === 1 && dynamic === 0) return source;
-  if (eager !== 0 || dynamic !== 1) {
-    console.warn("WARN: Could not find unique dynamic tools construction point — skipping automation_update eager tool patch");
+  const { current, patched } = catalogState(source);
+  if (current.length === 0 && patched.length === 1) return source;
+  if (current.length !== 1 || patched.length !== 0) {
+    console.warn("WARN: Could not find one complete dynamic tools construction point — skipping automation_update eager tool patch");
     return source;
   }
   return source.replace(
-    DYNAMIC,
-    (_match, tool, deferCondition) =>
-      `.map(${tool}=>({type:"function",...${tool},...${tool}.name!=="automation_update"&&${deferCondition}?{deferLoading:!0}:{}}))`,
+    CURRENT,
+    (...args) => {
+      const { tool, condition } = args.at(-1);
+      return `.map(${tool}=>({type:"function",...${tool},...${tool}.name!=="automation_update"&&${condition}?{deferLoading:!0}:{}}))`;
+    },
   );
 }
 
