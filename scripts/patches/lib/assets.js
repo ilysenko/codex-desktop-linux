@@ -184,10 +184,8 @@ function findRequiredWebviewAsset(webviewAssetsDir, filenamePattern, marker, des
     throw new Error(`Missing webview assets directory ${webviewAssetsDir}`);
   }
 
-  const candidates = fs
-    .readdirSync(webviewAssetsDir)
-    .filter((name) => regexpTest(filenamePattern, name))
-    .sort();
+  const candidates = listWebviewScriptAssets(path.dirname(path.dirname(webviewAssetsDir)))
+    .filter((name) => regexpTest(filenamePattern, assetBaseName(name)));
   const matches = marker == null
     ? candidates
     : candidates.filter((name) => readWebviewAsset(webviewAssetsDir, name).includes(marker));
@@ -228,16 +226,7 @@ function findCodexRequestWebviewAsset(webviewAssetsDir) {
     throw new Error(`Missing webview assets directory ${webviewAssetsDir}`);
   }
 
-  const settingStorageCandidates = fs
-    .readdirSync(webviewAssetsDir)
-    .filter((name) => regexpTest(/^setting-storage-.*\.js$/, name))
-    .sort();
-  const allRequestCandidates = fs
-    .readdirSync(webviewAssetsDir)
-    .filter((name) => regexpTest(/\.js$/, name))
-    .sort()
-    .filter((name) => !settingStorageCandidates.includes(name));
-  const modernCandidates = [...settingStorageCandidates, ...allRequestCandidates];
+  const modernCandidates = listWebviewScriptAssets(path.dirname(path.dirname(webviewAssetsDir)));
   const matches = [];
   for (const candidate of modernCandidates) {
     const source = readWebviewAsset(webviewAssetsDir, candidate);
