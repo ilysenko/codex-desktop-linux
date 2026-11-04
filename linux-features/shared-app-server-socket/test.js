@@ -1041,8 +1041,16 @@ test("attached CLI verifier accepts real Linux listeners and accepted connection
           assert.ok(rows.some((line) => / 00000000 0001 03 /.test(line)), "accepted stream row");
         }
         const fdDir = `/proc/${authority.pid}/fd`;
-        const modes = fs.readdirSync(fdDir)
-          .map((fd) => fs.lstatSync(path.join(fdDir, fd)).mode & 0o777);
+        // The authority keeps opening and closing its own descriptors, so an
+        // entry listed here can be gone by the time it is read.
+        const modes = fs.readdirSync(fdDir).flatMap((fd) => {
+          try {
+            return [fs.lstatSync(path.join(fdDir, fd)).mode & 0o777];
+          } catch (error) {
+            if (error.code === "ENOENT") return [];
+            throw error;
+          }
+        });
         assert.ok(modes.includes(0o300));
         assert.ok(modes.includes(0o700));
         const result = spawnSync("bash", ["-c",
