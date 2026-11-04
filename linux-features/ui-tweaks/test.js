@@ -335,7 +335,7 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:home-suggested-prompts-app-page", "extracted-app:pre-webview", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-work-page", "extracted-app:pre-webview", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
-        ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-content", "extracted-app:pre-webview", "optional"],
         ["feature:ui-tweaks:appearance-custom-font-input", "webview-asset", "optional"],
         ["feature:ui-tweaks:selected-text-more-details", "extracted-app:post-webview", "optional"],
         ["feature:ui-tweaks:selected-text-annotation-submit", "extracted-app:post-webview", "optional"],

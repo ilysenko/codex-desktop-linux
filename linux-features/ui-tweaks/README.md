@@ -269,6 +269,15 @@ physical copy of the module in one verified transaction. A gate in another
 scope, a changed binding, or a mixed/incomplete copy set leaves all copies
 unchanged.
 
+The content patch prefers generated suggestions only when the native page,
+project and runtime setting enable them and no explicit source override is
+selected. Otherwise it retains the original curated-source decision, including
+when Suggested Prompts is turned off after building. The native source policy,
+loading/read-settled rules, connected-app filtering and card-to-composer actions
+are reused. The source decision and its policy record must belong to the same
+content component; all copies of that module are validated and committed
+together.
+
 This tweak is independently disabled by default:
 
 ```json
