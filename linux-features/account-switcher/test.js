@@ -413,6 +413,114 @@ const UI_MODULE = 'Ab12(e,t,n){n.d(t,{Profile:()=>Profile});var UI=n("jsx"),Menu
   'return(0,UI.jsxs)("div",{children:[group,workspace,analytics,more]})}}';
 const UI_CHUNK = `export const __rspack_esm_id=1;export const __rspack_esm_ids=[1];export const __webpack_modules__={Zz99(e,t,n){n.d(t,{other:()=>1})},${UI_MODULE}};`;
 
+test("profile complete-state validation rejects wrong bridge methods, helper scope and callback bindings", t => {
+  const warnings = [];
+  t.mock.method(console, "warn", message => warnings.push(message));
+  const patched = applyUi(UI_CHUNK);
+  assert.notEqual(patched, UI_CHUNK);
+  const marker = "/*codexLinuxAccountSwitcherUi*/";
+  const start = patched.indexOf(marker);
+  const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+  const items = patched.indexOf("function codexLinuxAccountSwitcherItems(", start);
+  const end = findMatchingBrace(patched, patched.indexOf("{", items)) + 1;
+  const helpers = patched.slice(start, end), rest = patched.slice(0, start) + patched.slice(end);
+  const damaged = [
+    patched.replace('method:"community/accountSwitcher"', 'method:"community/wrongAccountSwitcher"'),
+    patched.replace('hostId:"local"', 'hostId:"remote"'),
+    patched.replace('params:{locale:intl.locale}', 'params:{locale:wrong.locale}'),
+    patched.replace('close();Bus.O1', 'wrongClose();Bus.O1'),
+    patched.replace('additionalItems:codexLinuxAccountSwitcherItems(items,close,fmt)', 'additionalItems:codexLinuxAccountSwitcherItems(items,wrongClose,fmt)'),
+    patched.replace('codexLinuxAccountSwitcherRow(close,fmt)]', 'codexLinuxAccountSwitcherRow(close,wrongIntl)]'),
+    patched.replace('var UI=n("jsx")', 'var UI=wrongLoader("jsx")'),
+    rest.replace('var UI=', `function inaccessible(){${helpers}}var UI=`),
+    rest + helpers,
+    patched.replace(marker, ""),
+    patched + ';codexLinuxAccountSwitcherRow(close,fmt);',
+    UI_CHUNK + '/*codexLinuxAccountSwitcherUi*/',
+  ];
+  for (const source of damaged) {
+    warnings.length = 0;
+    assert.doesNotThrow(() => new vm.Script(source.replace(/export const /g, "var ")));
+    assert.equal(applyUi(source), source);
+    assert.equal(warnings.length, 1);
+  }
+  const extra = patched + ';const codexLinuxAccountSwitcherRowColor="kept";';
+  warnings.length = 0;
+  assert.equal(applyUi(extra), extra);
+  assert.deepEqual(warnings, []);
+
+  // The corrupted canonical-looking helper actually dispatches the wrong RPC.
+  const wrong = damaged[0];
+  const rowStart = wrong.indexOf("function codexLinuxAccountSwitcherRow(");
+  const rowEnd = findMatchingBrace(wrong, wrong.indexOf("{", rowStart));
+  const sent = [];
+  const row = vm.runInNewContext(`(${wrong.slice(rowStart, rowEnd + 1)})`, {
+    UI: { jsx: (type, props) => ({ type, props }) }, Menu: { tJ: "menu" },
+    Bus: { O1: { dispatchMessage: (...args) => sent.push(args) } },
+  })(() => {}, { locale: "en" });
+  row.props.onClick();
+  assert.equal(sent[0][1].request.method, "community/wrongAccountSwitcher");
+});
+
+function profileWorkspace(t, files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "profile-module-copies-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const [name, source] of Object.entries(files)) {
+    const file = path.join(root, "webview/assets", name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, source);
+  }
+  return root;
+}
+
+function runProfileDescriptor(root) {
+  const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+  const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+  const descriptors = require("./patch.js").descriptors.filter(({ id }) => id === "account-switcher-profile-menu");
+  const report = createPatchReport();
+  applyExtractedAppPatchDescriptors(root, descriptors, {}, report, descriptors[0].phase);
+  return report.patches[0];
+}
+
+test("normal profile descriptor updates all same-ID copies and refuses damaged or mixed replicas", t => {
+  t.mock.method(console, "warn", () => {});
+  const root = profileWorkspace(t, { "async/one.js": UI_CHUNK, "nested/two.js": UI_CHUNK });
+  assert.equal(runProfileDescriptor(root).status, "applied");
+  assert.equal(runProfileDescriptor(root).status, "already-applied");
+  for (const bad of [
+    applyUi(UI_CHUNK),
+    applyUi(UI_CHUNK).replace('method:"community/accountSwitcher"', 'method:"community/wrongAccountSwitcher"'),
+    UI_CHUNK.replace('codex.profileDropdown.settingsPage', 'missing-setting-anchor'),
+    UI_CHUNK.replace('Ab12(e,t,n)', 'OtherProfile(e,t,n)'),
+  ]) {
+    const one = path.join(root, "webview/assets/async/one.js"), two = path.join(root, "webview/assets/nested/two.js");
+    fs.writeFileSync(one, UI_CHUNK);fs.writeFileSync(two, bad);
+    assert.equal(runProfileDescriptor(root).status, "skipped-optional");
+    assert.equal(fs.readFileSync(one, "utf8"), UI_CHUNK);
+    assert.equal(fs.readFileSync(two, "utf8"), bad);
+  }
+});
+
+test("profile replica writes restore original bytes and stop when rollback cannot be verified", t => {
+  t.mock.method(console, "warn", () => {});
+  for (const breakRollback of [false, true]) {
+    const root = profileWorkspace(t, { "async/one.js": UI_CHUNK, "nested/two.js": UI_CHUNK });
+    const originalWrite = fs.writeFileSync;let calls = 0;
+    const mock = t.mock.method(fs, "writeFileSync", (...args) => {
+      calls++;
+      if (calls === 2) { originalWrite(args[0], "partial");throw Error("second profile write"); }
+      if (breakRollback && calls === 3) throw Error("rollback profile write");
+      return originalWrite(...args);
+    });
+    try {
+      if (breakRollback) assert.throws(() => runProfileDescriptor(root), { code: "PATCH_INTEGRITY_FAILURE" });
+      else assert.equal(runProfileDescriptor(root).status, "skipped-optional");
+    } finally { mock.mock.restore(); }
+    assert.equal(fs.readFileSync(path.join(root, "webview/assets/async/one.js"), "utf8"), UI_CHUNK);
+    assert.equal(fs.readFileSync(path.join(root, "webview/assets/nested/two.js"), "utf8"), breakRollback ? "partial" : UI_CHUNK);
+  }
+});
+
 // Loads the fixture chunk like the rspack runtime: run the module factory with
 // a require function resolving its import bindings.
 function loadProfile(source, context, imports) {
@@ -823,6 +931,18 @@ test("official main and profile dropdown chunks patch uniquely and remain valid 
       assert.equal(patched.match(/method:"community\/accountSwitcher"/g).length, 1);
       assert.equal(patched.match(/codexLinuxAccountSwitcherItems\(/g).length, 2);
       assert.equal(patched.match(/codexLinuxAccountSwitcherRow\(/g).length, 3);
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "profile-signed-descriptor-"));
+      try {
+        const target = path.join(root, "webview/assets", changed[0]);
+        fs.mkdirSync(path.dirname(target), { recursive: true });fs.writeFileSync(target, source);
+        assert.equal(runProfileDescriptor(root).status, "applied");
+        assert.equal(runProfileDescriptor(root).status, "already-applied");
+        const wrong = patched.replace('method:"community/accountSwitcher"', 'method:"community/wrongAccountSwitcher"');
+        fs.writeFileSync(target, wrong);
+        assert.equal(runProfileDescriptor(root).status, "skipped-optional");
+        assert.equal(fs.readFileSync(target, "utf8"), wrong);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
       execFileSync(process.execPath, ["--input-type=module", "--check"], { input: patched, stdio: "pipe" });
       // Execute the injected module-scope rows with inert JSX and transport
       // bindings named exactly as the signed module's import bindings.

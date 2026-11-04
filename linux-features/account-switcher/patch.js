@@ -7,6 +7,7 @@ const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-requ
 const { inspectMainLocalConfigSite } = require("../../scripts/patches/lib/main-local-config-sites.js");
 const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
 const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
+const { rspackModuleFactories, findRspackRequireBinding, findUniqueRspackModuleCopies, patchRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { createAccountSwitcher } = require("./runtime.js");
 const IDENT = "[A-Za-z_$][\\w$]*";
 const MAIN_MARKER = "codexLinuxAccountSwitcherMain";
@@ -208,42 +209,15 @@ function patchAccountMainAssets(extractedDir, context = {}) {
   return { ...result, matched: 1, assetName: `.vite/build/${assetName}` };
 }
 
-// rspack chunks hold many module factories keyed by hashed ids:
-// `__webpack_modules__={abCd(e,t,n){...},...}`. Returns the factory that
-// contains `index`, with its require parameter and body bounds.
 function moduleFactoryAt(source, index) {
-  const objectStart = source.indexOf("__webpack_modules__={");
-  if (objectStart === -1) return null;
-  const header = new RegExp(`([A-Za-z0-9_$]+|"[^"]*")\\((${IDENT}(?:,${IDENT}){0,2})?\\)\\{`, "y");
-  let cursor = objectStart + "__webpack_modules__={".length;
-  while (cursor < source.length) {
-    header.lastIndex = cursor;
-    const match = header.exec(source);
-    if (!match) return null;
-    const open = cursor + match[0].length - 1;
-    const end = findMatchingBrace(source, open);
-    if (end === -1) return null;
-    if (index > open && index < end) {
-      const params = (match[2] ?? "").split(",");
-      return { bodyStart: open + 1, end, require: params[2] ?? null };
-    }
-    cursor = end + 1;
-    if (source[cursor] !== ",") return null;
-    cursor += 1;
-  }
-  return null;
+  try {
+    const factories = [...rspackModuleFactories(source, "account-switcher profile")];
+    const factory = factories.find(module => module.start <= index && index < module.end);
+    return factory ?? null;
+  } catch { return null; }
 }
 
-// A module-scope import binding: `var a=n("ABep"),...` at the factory top.
-function moduleImport(source, factory, name) {
-  if (factory.require == null) return false;
-  const body = source.slice(factory.bodyStart, factory.end);
-  const pattern = new RegExp(`(?:\\bvar |,)${name.replace(/\$/g, "\\$")}=${factory.require.replace(/\$/g, "\\$")}\\("[^"]+"\\)`, "g");
-  return [...body.matchAll(pattern)].length === 1;
-}
-
-function applyUi(source) {
-  if (source.includes(UI_MARKER)) return source;
+function applyPristineUi(source, silent = false) {
   const dispatch = unique(source, new RegExp(`(${IDENT})\\.(${IDENT})\\.dispatchMessage\\("avatar-overlay-open",\\{\\}\\)`, "g"));
   const jsx = unique(source, new RegExp(
     `\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}),\\{accountIcon:${IDENT},accountSwitcher:${IDENT},additionalItems:(${IDENT}),` +
@@ -256,7 +230,7 @@ function applyUi(source) {
   const regular = settings == null ? null : unique(source, new RegExp(
     `children:\\[(${IDENT}),(${IDENT}),null,${settings[2].replace(/\$/g, "\\$")}\\]`, "g"));
   if (!dispatch || !jsx || !regular || !settings || !intl) {
-    console.warn("WARN: Account switcher profile-menu contract drifted - skipping patch");
+    if (!silent) console.warn("WARN: Account switcher profile-menu contract drifted - skipping patch");
     return source;
   }
   const [, jsxAlias, , additional, close] = jsx;
@@ -264,10 +238,10 @@ function applyUi(source) {
   const [, busModule, busExport] = dispatch;
   const factory = moduleFactoryAt(source, settings.index);
   const sameModule = factory != null && [dispatch.index, jsx.index, regular.index, intl.index]
-    .every((index) => index > factory.bodyStart && index < factory.end);
+    .every((index) => index > factory.start && index < factory.end);
   if (!sameModule || runtimeAlias !== jsxAlias ||
-      ![jsxAlias, menuModule, busModule].every((name) => moduleImport(source, factory, name))) {
-    console.warn("WARN: Account switcher profile-menu module contract drifted - skipping patch");
+      ![jsxAlias, menuModule, busModule].every((name) => findRspackRequireBinding(factory, name) != null)) {
+    if (!silent) console.warn("WARN: Account switcher profile-menu module contract drifted - skipping patch");
     return source;
   }
   // Minifiers reuse import aliases inside nested scopes (the sidebar branch can
@@ -285,7 +259,7 @@ function applyUi(source) {
   // Keep the existing React memo dependencies: the action references the same
   // onClose callback as the adjacent settings items and contains no account data.
   const edits = [
-    { index: factory.bodyStart + (source.startsWith('"use strict";', factory.bodyStart) ? 13 : 0), old: "", replacement: helpers },
+    { index: factory.start + (source.startsWith('"use strict";', factory.start) ? 13 : 0), old: "", replacement: helpers },
     { index: jsx.index, old: jsx[0], replacement: jsx[0].replace(`additionalItems:${additional},`,
       `additionalItems:codexLinuxAccountSwitcherItems(${additional},${close},${intl[1]}),`) },
     { index: regular.index, old: regular[0], replacement: `children:[${regular[1]},${regular[2]},null,${settings[2]},${row}]` },
@@ -294,13 +268,84 @@ function applyUi(source) {
   return source;
 }
 
+const UI_OWNED_NAMES = [UI_MARKER, "codexLinuxAccountSwitcherRow", "codexLinuxAccountSwitcherItems"];
+
+function uiReferenceCount(source, name) {
+  return [...source.matchAll(new RegExp(`(?<![\\w$])${name}(?![\\w$])`, "g"))].length;
+}
+
+function hasUiReferences(source) {
+  return source.includes(UI_MARKER) || UI_OWNED_NAMES.slice(1).some(name => uiReferenceCount(source, name) > 0);
+}
+
+function pristineUiFromApplied(source) {
+  const marker = `/*${UI_MARKER}*/`;
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex < 0 || source.split(UI_MARKER).length !== 2 ||
+      uiReferenceCount(source, "codexLinuxAccountSwitcherRow") !== 3 ||
+      uiReferenceCount(source, "codexLinuxAccountSwitcherItems") !== 2) return null;
+  const factory = moduleFactoryAt(source, markerIndex);
+  if (factory == null || markerIndex !== factory.start + (source.startsWith('"use strict";', factory.start) ? 13 : 0)) return null;
+  const rowStart = markerIndex + marker.length;
+  if (!source.startsWith("function codexLinuxAccountSwitcherRow(close,intl){", rowStart)) return null;
+  const rowEnd = findMatchingBrace(source, source.indexOf("{", rowStart));
+  const itemsStart = rowEnd + 1;
+  if (rowEnd < rowStart || !source.startsWith("function codexLinuxAccountSwitcherItems(items,close,intl){", itemsStart)) return null;
+  const itemsEnd = findMatchingBrace(source, source.indexOf("{", itemsStart));
+  if (itemsEnd < itemsStart) return null;
+  const withoutHelpers = source.slice(0, markerIndex) + source.slice(itemsEnd + 1);
+  const items = unique(withoutHelpers, new RegExp(
+    `additionalItems:codexLinuxAccountSwitcherItems\\((?<items>${IDENT}),(?<close>${IDENT}),(?<intl>${IDENT})\\),` +
+      `[\\s\\S]{0,500}?onCloseMenu:\\k<close>,`, "g"));
+  const regular = unique(withoutHelpers, new RegExp(
+    `children:\\[(?<first>${IDENT}),(?<second>${IDENT}),(?<settings>${IDENT}),` +
+      `codexLinuxAccountSwitcherRow\\((?<close>${IDENT}),(?<intl>${IDENT})\\)\\]`, "g"));
+  if (items == null || regular == null || items.groups.close !== regular.groups.close || items.groups.intl !== regular.groups.intl) return null;
+  const edits = [
+    { start: items.index, end: items.index + items[0].length,
+      text: items[0].replace(`additionalItems:codexLinuxAccountSwitcherItems(${items.groups.items},${items.groups.close},${items.groups.intl}),`, `additionalItems:${items.groups.items},`) },
+    { start: regular.index, end: regular.index + regular[0].length,
+      text: `children:[${regular.groups.first},${regular.groups.second},${regular.groups.settings}]` },
+  ].sort((a, b) => b.start - a.start);
+  let pristine = withoutHelpers;
+  for (const edit of edits) pristine = pristine.slice(0, edit.start) + edit.text + pristine.slice(edit.end);
+  if (hasUiReferences(pristine)) return null;
+  return applyPristineUi(pristine, true) === source ? pristine : null;
+}
+
+function applyUi(source) {
+  if (hasUiReferences(source)) {
+    if (pristineUiFromApplied(source) != null) return source;
+    console.warn("WARN: Account switcher profile-menu patch is incomplete or incorrectly bound - skipping patch");
+    return source;
+  }
+  return applyPristineUi(source);
+}
+
+function applyProfileAssets(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const needles = ['id:"codex.profileDropdown.settingsPage"', 'id:"codex.profileDropdown.copyUserIdForEmail"', "onCloseMenu:"];
+  const copies = findUniqueRspackModuleCopies(assets, {
+    sourceMatch: source => needles.every(needle => source.includes(needle)),
+    matchModule: source => needles.every(needle => source.includes(needle)),
+    description: "account switcher profile menu",
+  });
+  return patchRspackModuleCopies(assets, copies, (_moduleSource, copy) => {
+    const patched = applyUi(copy.source);
+    if (pristineUiFromApplied(patched) == null) throw new Error("Incomplete account switcher profile-menu contract");
+    const owner = [...rspackModuleFactories(patched, copy.assetName)].find(module => module.moduleId === copy.moduleId);
+    if (owner == null) throw new Error("Account switcher profile module disappeared");
+    return owner.moduleSource;
+  });
+}
+
 const descriptors = [
   { id: "account-switcher-main", phase: "extracted-app:pre-webview", order: 20_970, ciPolicy: "optional", apply: patchAccountMainAssets,
     status: result => result?.matched !== 1 ? { status: "skipped-optional", reason: result?.reason ?? "missing native main owner" } : result.changed > 0 ? "applied" : "already-applied" },
   {
-    id: "account-switcher-profile-menu", phase: "webview-asset", order: 20_970, ciPolicy: "optional",
+    id: "account-switcher-profile-menu", phase: "extracted-app:post-webview", order: 20_970, ciPolicy: "optional",
     assetNeedles: ['id:"codex.profileDropdown.settingsPage"', 'id:"codex.profileDropdown.copyUserIdForEmail"', '"avatar-overlay-open"', "onCloseMenu:"],
-    missingDescription: "profile dropdown bundle", apply: applyUi,
+    apply: applyProfileAssets,
   },
 ];
 

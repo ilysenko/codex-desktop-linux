@@ -5,6 +5,13 @@ profile menu layouts. The native account menu can remember up to 20 ChatGPT logi
 add an account using the official browser OAuth flow, switch to a saved login,
 or forget an inactive saved login.
 
+The profile-menu patch resolves native imports from their owning Rspack factory.
+It verifies the complete helper, RPC method, close callback, locale and both
+menu layouts by restoring the original seam and regenerating it byte-for-byte.
+All copies of one profile module are checked before writing. Mixed, damaged or
+ambiguous copies leave every asset unchanged; an unverifiable rollback stops
+the build.
+
 ## Enable
 
 Add `account-switcher` to `enabled` in the gitignored
