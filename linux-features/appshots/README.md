@@ -15,7 +15,9 @@ This feature is disabled by default. Enable it before building:
 ```
 
 The feature is self-contained. It patches only the optional AppShots webview
-availability gate and the Electron main-process AppShots handlers. Upstream no
+availability gate and the Electron main-process `appshotCapture` service, which
+upstream builds only for macOS and Windows; on Linux its frontmost-window and
+capture methods route to the feature's helper. Upstream no
 longer ships the AppShots hotkey settings surface, so the feature does not
 patch or expose a Linux hotkey selector. It does not add AppShots-specific code
 to `computer-use-linux`, core patch modules, default patch flow, or packaged

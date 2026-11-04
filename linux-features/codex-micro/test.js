@@ -21,55 +21,79 @@ const {
   patchCodexMicroService,
 } = require("./patch.js");
 
-const [appShellContract, dictationContract, composerContract, settingsContract] =
-  CODEX_MICRO_GATE_CONTRACTS;
+const [
+  appShellContract,
+  sidebarContract,
+  dictationContract,
+  composerContract,
+  settingsContract,
+] = CODEX_MICRO_GATE_CONTRACTS;
 
-function appShellSource(gates = 3) {
+function gate(namespace = "N") {
+  return `(0,${namespace}.Zj)("3207467860")`;
+}
+
+function appShellSource(gates = 2) {
   return [
-    "const onboarding=`codex-micro-onboarding-host-current.js`",
-    "const bridge=`codex-micro-bridge-current.js`",
-    "const service=`codexMicro.currentService`",
-    "const routes=[`/settings/codex-micro`,`/settings/codex-micro`]",
+    'const onboarding={id:"codex-micro-onboarding"}',
+    "const service=D.appServices.codexMicro",
     ...Array.from(
       { length: gates },
-      (_, index) => `const gate${index}=gg(\`3207467860\`)`,
+      (_, index) => `const gate${index}=${gate()}`,
     ),
   ].join(";");
 }
 
-function dictationSource() {
+function sidebarSource() {
   return [
-    "const route=`/settings/codex-micro`",
-    "const onDictationTranscriptInsert=insert",
-    "const waveformVariant=`compact`",
-    "const enabled=gg(`3207467860`)",
+    'const active=h.pathname.startsWith("/settings/codex-micro")',
+    'const open=()=>{p("/settings/codex-micro")}',
+    "const status=c.codexMicro",
+    `const enabled=${gate("n3")}`,
+  ].join(";");
+}
+
+function dictationSource(namespace = "Q") {
+  return [
+    "const sounds=o.Szl.dictationSoundsEnabled",
+    "const props={onDictationTranscriptInsert:insert,waveformVariant:eZ}",
+    `const enabled=${gate(namespace)}`,
   ].join(";");
 }
 
 function composerSource() {
-  return "const request={surface:`composer`},mode={effectiveMode:`code`},enabled=gg(`3207467860`)";
+  return `const request={surface:"composer"},mode={effectiveMode:"code"},enabled=${gate("t_")}`;
 }
 
 function settingsVisibilitySource() {
   return [
     'const sections={"codex-micro":true}',
-    "function visible(section){switch(section){case`codex-micro`:return gg(`3207467860`)}}",
+    `function visible(section){let enabled=${gate("I")};switch(section){case"codex-micro":return enabled}}`,
   ].join(";");
 }
+
+const GATE_FIXTURES = {
+  "async/216127.shell.js": () => appShellSource(),
+  "async/91641.sidebar.js": () => sidebarSource(),
+  "async/4317.dictation.js": () => dictationSource("Q"),
+  "async/637431.dictation.js": () => dictationSource("W"),
+  "async/589850.composer.js": () => composerSource(),
+  "async/61039.settings.js": () => settingsVisibilitySource(),
+};
 
 function createExtractedApp(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-micro-test-"));
   const assets = path.join(root, "webview", "assets");
-  fs.mkdirSync(assets, { recursive: true });
-  fs.writeFileSync(path.join(assets, "shell.js"), appShellSource(), "utf8");
-  fs.writeFileSync(path.join(assets, "dictation.js"), dictationSource(), "utf8");
-  fs.writeFileSync(path.join(assets, "composer.js"), composerSource(), "utf8");
+  fs.mkdirSync(path.join(assets, "async"), { recursive: true });
+  for (const [name, source] of Object.entries(GATE_FIXTURES)) {
+    fs.writeFileSync(path.join(assets, name), source(), "utf8");
+  }
+  fs.writeFileSync(path.join(assets, "async", "1.unrelated.js"), "const unrelated=true", "utf8");
   fs.writeFileSync(
-    path.join(assets, "settings.js"),
-    settingsVisibilitySource(),
+    path.join(assets, "async", "2.route-only.js"),
+    'const route="/settings/codex-micro"',
     "utf8",
   );
-  fs.writeFileSync(path.join(assets, "unrelated.js"), "const unrelated=true", "utf8");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { assets, root };
 }
@@ -84,6 +108,7 @@ test("official Linux node-hid is reused without a native binding descriptor", ()
 test("Codex Micro feature gate patches every current callsite", () => {
   const currentContracts = [
     [appShellSource(), appShellContract],
+    [sidebarSource(), sidebarContract],
     [dictationSource(), dictationContract],
     [composerSource(), composerContract],
     [settingsVisibilitySource(), settingsContract],
@@ -113,19 +138,21 @@ test("Codex Micro feature gate patches every current callsite", () => {
     );
   }
   assert.equal(patchedCallsites, 6);
+  for (const [source, contract] of currentContracts) {
+    const owners = CODEX_MICRO_GATE_CONTRACTS.filter((expected) =>
+      expected.anchor(source));
+    assert.deepEqual(owners, [contract]);
+  }
 });
 
 test("Codex Micro feature gate rejects incomplete or drifted contracts", () => {
   const marker = `!0/*${CODEX_MICRO_GATE_MARKER}*/`;
   const cases = {
-    incomplete: appShellSource(2),
-    member: appShellSource().replace(
-      "gg(`3207467860`)",
-      "gates.gg(`3207467860`)",
-    ),
-    duplicate: `${appShellSource()};const extra=\`3207467860\``,
-    mixed: appShellSource()
-      .replace("gg(`3207467860`)", marker),
+    incomplete: appShellSource(1),
+    member: appShellSource().replace(gate(), `gates${gate()}`),
+    legacyTemplate: appShellSource().replace(gate(), "gg(`3207467860`)"),
+    duplicate: `${appShellSource()};const extra="3207467860"`,
+    mixed: appShellSource().replace(gate(), marker),
     malformedPatched: applyCodexMicroFeatureGatePatch(
       appShellSource(),
       appShellContract,
@@ -146,50 +173,82 @@ test("Codex Micro feature gate rejects incomplete or drifted contracts", () => {
   }
 });
 
-test("Codex Micro feature gate discovers and patches all current semantic bundles", (t) => {
+test("Codex Micro feature gate discovers and patches every rspack copy", (t) => {
   const { assets, root } = createExtractedApp(t);
+  const owners = Object.keys(GATE_FIXTURES).sort();
   const discovery = findCodexMicroFeatureGateAssets(root);
   assert.equal(discovery.reason, null);
   assert.deepEqual(
-    discovery.matches.map(({ assetName }) => assetName).sort(),
-    ["composer.js", "dictation.js", "settings.js", "shell.js"],
+    discovery.matches.map(({ assetName }) => assetName),
+    owners,
   );
 
   const result = patchCodexMicroFeatureGateAssets(root);
   assert.equal(result.matched, 1);
-  assert.equal(result.changed, 4);
-  const patched = ["composer.js", "dictation.js", "settings.js", "shell.js"]
+  assert.equal(result.changed, owners.length);
+  const patched = owners
     .map((name) => fs.readFileSync(path.join(assets, name), "utf8"))
     .join(";");
   assert.equal(patched.includes(CODEX_MICRO_GATE_ID), false);
   assert.equal(
     patched.split(CODEX_MICRO_GATE_MARKER).length - 1,
-    6,
+    7,
   );
   assert.deepEqual(patchCodexMicroFeatureGateAssets(root), {
     matched: 1,
     changed: 0,
     reason: null,
-    targets: ["shell.js", "dictation.js", "composer.js", "settings.js"],
+    targets: owners,
   });
 });
 
 test("Codex Micro feature gate fails closed on an extra current callsite", (t) => {
   const { assets, root } = createExtractedApp(t);
   fs.writeFileSync(
-    path.join(assets, "drift.js"),
-    "const unexpected=gg(`3207467860`)",
+    path.join(assets, "async", "3.drift.js"),
+    `const unexpected=${gate()}`,
     "utf8",
   );
   const result = patchCodexMicroFeatureGateAssets(root);
   assert.equal(result.matched, 0);
   assert.equal(result.changed, 0);
-  assert.match(result.reason, /Found 5 Codex Micro feature-gate bundles/);
+  assert.match(result.reason, /async\/3\.drift\.js matches 0 semantic contracts/);
   assert.equal(
-    fs.readFileSync(path.join(assets, "shell.js"), "utf8"),
+    fs.readFileSync(path.join(assets, "async", "216127.shell.js"), "utf8"),
     appShellSource(),
   );
 });
+
+test("Codex Micro feature gate fails closed when a semantic owner disappears", (t) => {
+  const { assets, root } = createExtractedApp(t);
+  fs.rmSync(path.join(assets, "async", "589850.composer.js"));
+  const result = patchCodexMicroFeatureGateAssets(root);
+  assert.equal(result.matched, 0);
+  assert.match(result.reason, /Found 0 current Codex Micro composer gate bundles/);
+});
+
+test(
+  "signed upstream webview exposes every Codex Micro gate owner",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const discovery = findCodexMicroFeatureGateAssets(
+      process.env.CODEX_SIGNED_EXTRACTED_APP,
+    );
+    assert.equal(discovery.reason, null);
+    for (const expected of CODEX_MICRO_GATE_CONTRACTS) {
+      assert.ok(discovery.matches.some((match) => match.expected === expected));
+    }
+    for (const match of discovery.matches) {
+      assert.equal(match.contract.state, "unpatched");
+      const patched = applyCodexMicroFeatureGatePatch(match.source, match.expected);
+      assert.equal(patched.includes(CODEX_MICRO_GATE_ID), false);
+      assert.equal(
+        patched.split(CODEX_MICRO_GATE_MARKER).length - 1,
+        match.expected.gateCount,
+      );
+    }
+  },
+);
 
 test("Linux hot-plug watcher is narrow and idempotent", () => {
   const source = [

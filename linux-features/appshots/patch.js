@@ -3,15 +3,17 @@
 const APPSHOT_HELPER_MARKER = "codexLinuxAppshotStartCapture";
 const APPSHOT_AVAILABILITY_MARKER = "codexLinuxAppshotsPlatformAvailable";
 const IDENT = "[A-Za-z_$][\\w$]*";
+// rspack/SWC shape of the renderer availability atom:
+// `...requirements?.allowAppshots!==!1}function y(e){return"macOS"===e||"windows"===e}`.
 const CURRENT_APPSHOT_AVAILABILITY = new RegExp(
-  `(requirements\\?\\.allowAppshots!==!1\\}function (${IDENT})\\((${IDENT})\\)\\{return )` +
-    `\\3===\\\`macOS\\\`\\|\\|\\3===\\\`windows\\\`\\}`,
+  `(requirements\\?\\.allowAppshots!==!1\\}function (${IDENT})\\((${IDENT})\\)\\{return)` +
+    `"macOS"===\\3\\|\\|"windows"===\\3\\}`,
   "g",
 );
 const PATCHED_APPSHOT_AVAILABILITY = new RegExp(
-  `requirements\\?\\.allowAppshots!==!1\\}function ${IDENT}\\((${IDENT})\\)\\{return ` +
-    `\\1===\\\`linux\\\`\\/\\*${APPSHOT_AVAILABILITY_MARKER}\\*\\/\\|\\|` +
-    `\\1===\\\`macOS\\\`\\|\\|\\1===\\\`windows\\\`\\}`,
+  `requirements\\?\\.allowAppshots!==!1\\}function ${IDENT}\\((${IDENT})\\)\\{return` +
+    `"linux"===\\1\\/\\*${APPSHOT_AVAILABILITY_MARKER}\\*\\/\\|\\|` +
+    `"macOS"===\\1\\|\\|"windows"===\\1\\}`,
 );
 
 function warn(message, patchName) {
@@ -19,7 +21,7 @@ function warn(message, patchName) {
 }
 
 function applyLinuxAppshotAvailabilityPatch(currentSource) {
-  if (currentSource.includes(APPSHOT_AVAILABILITY_MARKER)) {
+  if (PATCHED_APPSHOT_AVAILABILITY.test(currentSource)) {
     return currentSource;
   }
   const matches = [...currentSource.matchAll(CURRENT_APPSHOT_AVAILABILITY)];
@@ -27,13 +29,11 @@ function applyLinuxAppshotAvailabilityPatch(currentSource) {
     return currentSource.replace(
       CURRENT_APPSHOT_AVAILABILITY,
       (_match, prefix, _functionName, platformVar) =>
-        `${prefix}${platformVar}===\`linux\`/*${APPSHOT_AVAILABILITY_MARKER}*/||${platformVar}===\`macOS\`||${platformVar}===\`windows\`}`,
+        `${prefix}"linux"===${platformVar}/*${APPSHOT_AVAILABILITY_MARKER}*/||"macOS"===${platformVar}||"windows"===${platformVar}}`,
     );
   }
 
-  if (currentSource.includes("macOS") || currentSource.includes("appshot")) {
-    warn("Could not find AppShots availability gate", "Linux AppShots availability patch");
-  }
+  warn("Could not find AppShots availability gate", "Linux AppShots availability patch");
   return currentSource;
 }
 
@@ -129,37 +129,102 @@ function applyLinuxAppshotHotkeyPatch(source) {
   return appshotHotkeyState(patched).kind === "patched" ? patched : source;
 }
 
+// The rspack main process exposes AppShots capture as an `appshotCapture`
+// app service class with `getFrontmostWindow()` and `start()` methods, built
+// only for macOS and Windows. Linux constructs the same service and routes both
+// methods to the self-contained helper appended to the owning chunk.
+const APPSHOT_FRONTMOST_CURRENT =
+  /(async getFrontmostWindow\(\)\{return this\.abortController\.signal\.aborted\?null:)(?="win32"===process\.platform\?)/g;
+const APPSHOT_FRONTMOST_PATCHED =
+  /async getFrontmostWindow\(\)\{return this\.abortController\.signal\.aborted\?null:"linux"===process\.platform\?codexLinuxAppshotFrontmostWindow\(\):"win32"===process\.platform\?/g;
+const APPSHOT_START_CURRENT = new RegExp(
+  String.raw`async start\(\{(?<params>[^{}]*)\}\)\{let\{(?<options>[^{}]*)\}=this\.options;if\(this\.abortController\.signal\.aborted\)return null;` +
+    String.raw`(?<linux>if\("linux"===process\.platform\)return codexLinuxAppshotStartCapture\(\{origin:(?<linuxOrigin>${IDENT}),requestId:(?<linuxRequest>${IDENT}),bundleIdentifier:(?<linuxBundle>${IDENT}),windowManager:(?<linuxWindowManager>${IDENT})\}\);)?`,
+  "g",
+);
+const APPSHOT_FACTORY_GUARD =
+  '"darwin"===process.platform&&null!=this.options.requestComputerUseWorker&&null!=this.options.subscribeComputerUseCaptureWorkerEvent||"win32"===process.platform&&null!=this.options.windowsCaptureNativeBridge?new ';
+const APPSHOT_FACTORY_CURRENT = `appshotCapture:${APPSHOT_FACTORY_GUARD}`;
+const APPSHOT_FACTORY_PATCHED = `appshotCapture:"linux"===process.platform||${APPSHOT_FACTORY_GUARD}`;
+
+function destructuredBinding(source, key) {
+  const matches = [...source.matchAll(new RegExp(`(?:^|,)${key}:(${IDENT})(?=,|$)`, "g"))];
+  return matches.length === 1 ? matches[0][1] : null;
+}
+
+function appshotMainProcessState(source) {
+  const frontmostCurrent = [...source.matchAll(APPSHOT_FRONTMOST_CURRENT)];
+  const frontmostPatched = [...source.matchAll(APPSHOT_FRONTMOST_PATCHED)];
+  const starts = [...source.matchAll(APPSHOT_START_CURRENT)]
+    .filter((match) => /(?:^|,)animationDestination:/.test(match.groups.params));
+  const factoryCurrent = source.split(APPSHOT_FACTORY_CURRENT).length - 1;
+  const factoryPatched = source.split(APPSHOT_FACTORY_PATCHED).length - 1;
+  const helperCount = source.split(`function ${APPSHOT_HELPER_MARKER}(`).length - 1;
+  if (starts.length !== 1 || !source.includes(".sendInlineMessageForView(")) {
+    return { kind: "invalid" };
+  }
+  const [start] = starts;
+  const binding = {
+    bundleIdentifier: destructuredBinding(start.groups.params, "bundleIdentifier"),
+    requestId: destructuredBinding(start.groups.params, "requestId"),
+    origin: destructuredBinding(start.groups.options, "origin"),
+    windowManager: destructuredBinding(start.groups.options, "windowManager"),
+  };
+  if (Object.values(binding).some((value) => value == null)) {
+    return { kind: "invalid" };
+  }
+  if (frontmostCurrent.length === 1 && frontmostPatched.length === 0 &&
+      start.groups.linux == null && factoryCurrent === 1 && factoryPatched === 0 &&
+      helperCount === 0 && !source.includes(APPSHOT_HELPER_MARKER)) {
+    return { kind: "current", frontmost: frontmostCurrent[0], start, binding };
+  }
+  if (frontmostCurrent.length === 0 && frontmostPatched.length === 1 &&
+      start.groups.linux != null && factoryCurrent === 0 && factoryPatched === 1 &&
+      helperCount === 1 &&
+      start.groups.linuxOrigin === binding.origin &&
+      start.groups.linuxRequest === binding.requestId &&
+      start.groups.linuxBundle === binding.bundleIdentifier &&
+      start.groups.linuxWindowManager === binding.windowManager) {
+    return { kind: "patched" };
+  }
+  return { kind: "invalid" };
+}
+
+function matchesLinuxAppshotMainProcessContract(source) {
+  return appshotMainProcessState(source).kind !== "invalid";
+}
+
 function applyLinuxAppshotMainProcessPatch(currentSource) {
-  if (currentSource.includes(APPSHOT_HELPER_MARKER)) {
+  const state = appshotMainProcessState(currentSource);
+  if (state.kind === "patched") {
     return currentSource;
   }
-
-  if (!currentSource.includes(".sendInlineMessageForView(")) {
-    warn("Could not find inline renderer message sender", "Linux AppShots main-process patch");
+  if (state.kind !== "current") {
+    // The rspack main process spans several chunks; only one owns AppShots.
+    warn("Could not find the AppShots capture service", "Linux AppShots main-process patch");
     return currentSource;
   }
-
-  const frontmostPattern = /("computer-use-frontmost-window":async\(\{origin:[A-Za-z_$][\w$]*,signal:[A-Za-z_$][\w$]*\}\)=>)(?=process\.platform===`win32`)/g;
-  const capturePattern = /("computer-use-start-capture":async\(\{animationDestination:([A-Za-z_$][\w$]*),animationPresentationStyle:[A-Za-z_$][\w$]*,bundleIdentifier:([A-Za-z_$][\w$]*),origin:([A-Za-z_$][\w$]*),requestId:([A-Za-z_$][\w$]*),signal:[A-Za-z_$][\w$]*\}\)=>\{)if\(process\.platform!==`darwin`&&process\.platform!==`win32`\)return null;/g;
-  const frontmostMatches = [...currentSource.matchAll(frontmostPattern)];
-  const captureMatches = [...currentSource.matchAll(capturePattern)];
-  if (frontmostMatches.length !== 1 || captureMatches.length !== 1) {
-    if (currentSource.includes("computer-use-frontmost-window") || currentSource.includes("computer-use-start-capture")) {
-      warn("Could not find AppShots main-process handlers", "Linux AppShots main-process patch");
-    }
-    return currentSource;
+  const { frontmost, start, binding } = state;
+  const startEnd = start.index + start[0].length;
+  const linuxStart =
+    `if("linux"===process.platform)return codexLinuxAppshotStartCapture({origin:${binding.origin},` +
+    `requestId:${binding.requestId},bundleIdentifier:${binding.bundleIdentifier},` +
+    `windowManager:${binding.windowManager}});`;
+  const frontmostEnd = frontmost.index + frontmost[0].length;
+  const edits = [
+    { index: startEnd, text: linuxStart },
+    { index: frontmostEnd, text: '"linux"===process.platform?codexLinuxAppshotFrontmostWindow():' },
+    {
+      index: currentSource.indexOf(APPSHOT_FACTORY_CURRENT) + "appshotCapture:".length,
+      text: '"linux"===process.platform||',
+    },
+  ].sort((left, right) => right.index - left.index);
+  let patchedSource = currentSource;
+  for (const { index, text } of edits) {
+    patchedSource = patchedSource.slice(0, index) + text + patchedSource.slice(index);
   }
-  let patchedSource = currentSource.replace(
-    frontmostPattern,
-    "$1process.platform===`linux`?codexLinuxAppshotFrontmostWindow():",
-  );
-  patchedSource = patchedSource.replace(
-    capturePattern,
-    (_match, prefix, _animationDestinationVar, bundleIdentifierVar, originVar, requestIdVar) =>
-      `${prefix}if(process.platform===\`linux\`)return codexLinuxAppshotStartCapture({origin:${originVar},requestId:${requestIdVar},bundleIdentifier:${bundleIdentifierVar},windowManager:this.windowManager});if(process.platform!==\`darwin\`&&process.platform!==\`win32\`)return null;`,
-  );
-
-  return appendLinuxAppshotHelper(patchedSource);
+  patchedSource = appendLinuxAppshotHelper(patchedSource);
+  return appshotMainProcessState(patchedSource).kind === "patched" ? patchedSource : currentSource;
 }
 
 function appendLinuxAppshotHelper(source) {
@@ -264,7 +329,7 @@ const descriptors = [
     id: "linux-appshots-availability",
     phase: "webview-asset",
     order: 1090,
-    pattern: /^app-initial-[^.]+\.js$/,
+    assetNeedles: ["allowAppshots", "appshot-hotkey-state"],
     assetMatch: matchesLinuxAppshotAvailabilityContract,
     missingDescription: "AppShots availability bundle",
     skipDescription: "Linux AppShots availability patch",
@@ -278,5 +343,6 @@ module.exports = {
   applyLinuxAppshotMainProcessPatch,
   matchesLinuxAppshotAvailabilityContract,
   matchesLinuxAppshotHotkeyContract,
+  matchesLinuxAppshotMainProcessContract,
   descriptors,
 };

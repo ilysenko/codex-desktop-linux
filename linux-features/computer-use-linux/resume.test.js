@@ -71,8 +71,7 @@ function resumeHarness(source, trustedServicesKey) {
   const cache = only(resumeSource, new RegExp(`=(${IDENT})\\?await (${IDENT})\\((${IDENT})\\):null,${IDENT}=\\1\\?(${IDENT})\\(\\):`, "g"));
   const select = only(resumeSource, new RegExp(`\\?\\.selection\\?\\?await (${IDENT})\\(`, "g"));
   const config = only(resumeSource, new RegExp(
-    `let ${IDENT}=await (${IDENT})\\(\\{\\.\\.\\.(${IDENT}),selection:${selection},` +
-    `hostServicesPipePath:${IDENT}\\|\\|!${IDENT}\\.computerAudio\\?\\2\\.hostServicesPipePath:null\\}\\)`,
+    `let ${IDENT}=await (${IDENT})\\(\\{\\.\\.\\.(${IDENT}),selection:${selection}\\}\\)`,
     "g",
   ));
   const principal = only(resumeSource, new RegExp(

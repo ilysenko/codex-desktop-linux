@@ -80,6 +80,13 @@ The separate `computer-use` component stores the Any App setting and exposes no
 MCP tools. Upstream owns browser control. Missing or ambiguous bundle contracts
 abort an enabled build.
 
+The official renderer is an rspack build whose lazily loaded chunk names carry
+no meaning, so the webview descriptors find their owners by content: the
+Settings → Computer use page, the `computer_use` availability reducer's host
+platform check, and every copy of the Plugins presentation filter that hides
+the native `computer-use` component (rspack duplicates that module into several
+chunks).
+
 The current signed app's `nativeApplications` service supplies the native app
 picker. On Linux this feature uses the running-window backend and desktop-entry
 icons. It returns at most 20 running apps. Default and usage ordering put focused
