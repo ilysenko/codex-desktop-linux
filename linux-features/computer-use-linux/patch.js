@@ -2,7 +2,7 @@
 
 const { applyLinuxComputerUsePluginGatePatch } = require("./plugin-gate.js");
 
-const { mainBundlePatch, webviewAssetPatch } = require("../../scripts/patches/descriptor.js");
+const { mainBundlePatch, webviewAssetPatch, extractedAppPatch, PHASE_EXTRACTED_APP_POST_WEBVIEW } = require("../../scripts/patches/descriptor.js");
 const {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
@@ -11,7 +11,7 @@ const {
 const {
   NATIVE_SETTINGS_VISIBILITY_NEEDLES,
   applyNativeSettingsAvailabilityPatch,
-  applyNativeSettingsVisibilityPatch,
+  applyNativeSettingsVisibilityAssets,
 } = require("./settings.js");
 const { applyUnifiedComputerUsePatch } = require("./unified.js");
 const { applyNativeApplicationsPatch } = require("./native-applications.js");
@@ -71,14 +71,11 @@ module.exports = [
     skipDescription: "Linux Computer Use host-platform patch",
     apply: applyLinuxComputerUseHostPlatformPatch,
   }),
-  webviewAssetPatch({
+  extractedAppPatch({
     id: "native-settings-visibility",
+    phase: PHASE_EXTRACTED_APP_POST_WEBVIEW,
     order: 20_160,
-    // rspack duplicates the Plugins presentation module into several lazy
-    // chunks; every copy must hide the native component, so no assetMatch.
     assetNeedles: NATIVE_SETTINGS_VISIBILITY_NEEDLES,
-    missingDescription: "Plugins presentation filter",
-    skipDescription: "Linux native Settings visibility patch",
-    apply: applyNativeSettingsVisibilityPatch,
+    apply: applyNativeSettingsVisibilityAssets,
   }),
 ];

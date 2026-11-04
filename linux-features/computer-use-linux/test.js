@@ -54,6 +54,7 @@ test("computer-use-linux is opt-in and owns the current Linux descriptors", () =
   }
   const visibility = descriptors.find(({ id }) => id === "native-settings-visibility");
   assert.equal(visibility.assetMatch, undefined);
+  assert.equal(visibility.phase, "extracted-app:post-webview");
   assert.deepEqual(visibility.assetNeedles, ['"built by openai"', '"chatgpt official"']);
   const hostPlatform = descriptors.find(({ id }) => id === "host-platform");
   assert.equal(hostPlatform.assetMatch(hostPlatformFixture()), true);

@@ -1,6 +1,8 @@
 "use strict";
 
-const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const path = require("node:path");
+const { findUniqueRspackModuleCopies, patchRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
+const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
 const IDENTIFIER = "[A-Za-z_$][\\w$]*";
 const AVAILABILITY_MARKER = "/* linux-native-settings-availability */";
@@ -103,10 +105,34 @@ function applyNativeSettingsVisibilityPatch(source) {
   return patched;
 }
 
+function matchesNativeSettingsVisibilityModule(moduleSource) {
+  const state = nativeSettingsVisibilityState(moduleSource);
+  if (state.kind === "invalid" || !NATIVE_SETTINGS_VISIBILITY_NEEDLES.every(needle => moduleSource.includes(needle)) ||
+      !moduleSource.includes('"plugins-connected"') || !moduleSource.includes('"plugins-featured"')) return false;
+  return new RegExp(`:\\(\\)=>${escapeRegExp(state.match.groups.fn)}[,}]`).test(moduleSource);
+}
+
+function applyNativeSettingsVisibilityAssets(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const copies = findUniqueRspackModuleCopies(assets, {
+    sourceMatch: source => NATIVE_SETTINGS_VISIBILITY_NEEDLES.every(needle => source.includes(needle)),
+    matchModule: matchesNativeSettingsVisibilityModule,
+    description: "native Settings plugin presentation owner",
+  });
+  const result = patchRspackModuleCopies(assets, copies, moduleSource => {
+    if (!matchesNativeSettingsVisibilityModule(moduleSource)) {
+      throw new Error("Linux native Settings visibility module contract missing or partially applied");
+    }
+    return applyNativeSettingsVisibilityPatch(moduleSource);
+  });
+  return { ...result, reason: `Native Settings presentation module ${result.moduleId}: ${result.matched} copies` };
+}
+
 module.exports = {
   NATIVE_SETTINGS_VISIBILITY_NEEDLES,
   applyNativeSettingsAvailabilityPatch,
   applyNativeSettingsVisibilityPatch,
+  applyNativeSettingsVisibilityAssets,
   matchesNativeSettingsAvailabilityContract,
   matchesNativeSettingsVisibilityContract,
 };
