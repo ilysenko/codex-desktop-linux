@@ -457,17 +457,30 @@ function installPortalBackend(source) {
     new RegExp(`${escapeRegExp(accessReady)}&&\\(${IDENT}\\|\\|${IDENT}\\)&&${IDENT}\\.forEach\\((${IDENT})=>\\{\\1\\(\\)\\}\\),${IDENT}\\}`, "u"),
     match => match.replace(/,([\w$]+)\}$/u, ",codexLinuxGlobalShortcutsPortalSchedule(),$1}"), "application access publication");
   const quitting = new RegExp(
-    `markAppQuitting:\\(\\)=>\\{(?=let (?<pending>${IDENT})=${IDENT}\\(\\);${notNull("\\k<pending>")}&&${IDENT}\\(\\k<pending>\\),` +
-      `(?:${IDENT}(?:\\?\\.|\\.)markAppQuitting\\(\\),){2,}${IDENT}\\.dispose\\(\\)\\})`,
+    `markAppQuitting:\\(\\)=>\\{(?=(?:${IDENT}(?:\\?\\.|\\.)markAppQuitting\\(\\),){2,}${IDENT}\\.dispose\\(\\)\\})`,
     "u",
   );
   uniqueAnchor(quitting, "accepted application quit before window cleanup");
   patched = replaceUnique(patched, quitting,
     match => `${match}codexLinuxGlobalShortcutsPortalShutdown();`, "accepted application quit before window cleanup");
-  const shutdown = new RegExp(`async function ${IDENT}\\(\\{hotkeyWindowLifecycleManager:(${IDENT}),globalDictationLifecycleManager:(${IDENT}),flushAndDisposeContext:${IDENT},disposables:${IDENT}\\}\\)\\{(?=\\1\\.dispose\\(\\),\\2\\.dispose\\(\\),await )`, "u");
-  uniqueAnchor(shutdown, "application shutdown before shortcut disposal");
-  patched = replaceUnique(patched, shutdown,
-    match => `${match}await codexLinuxGlobalShortcutsPortalShutdown();`, "application shutdown before shortcut disposal");
+  // Accepted quit (will-quit): upstream disposes the shortcut owners and then
+  // drains asynchronously. Stop the portal session before that disposal and
+  // make the drain wait for the helper to release its session.
+  const quitLifecycle = new RegExp(`function(?: ${IDENT})?\\(\\{(?:${IDENT}:${IDENT},)*hotkeyWindowLifecycleManager:(?<hotkey>${IDENT}),globalDictationLifecycleManager:(?<dictation>${IDENT}),(?:${IDENT}:${IDENT},)*flushAndDisposeContext:${IDENT},disposables:${IDENT}(?:,${IDENT}:${IDENT})*\\}\\)\\{`, "u");
+  const quitHeader = uniqueAnchor(quitLifecycle, "accepted application quit lifecycle");
+  const quitOpen = quitHeader.index + quitHeader[0].length - 1;
+  const quitClose = findMatchingBrace(patched, quitOpen);
+  if (quitClose === -1) throw new Error("accepted application quit lifecycle is incomplete");
+  const quitBody = patched.slice(quitOpen, quitClose + 1);
+  const willQuit = new RegExp(`\\.on\\(${literal("will-quit")},`, "u").exec(quitBody);
+  const quitDisposal = `${quitHeader.groups.hotkey}.dispose(),${quitHeader.groups.dictation}.dispose(),Promise.allSettled([`;
+  const quitDisposals = quitBody.split(quitDisposal).length - 1;
+  if (willQuit == null || quitDisposals < 1 || quitBody.indexOf(quitDisposal) < willQuit.index) {
+    throw new Error("application shutdown before shortcut disposal matched 0 times");
+  }
+  patched = patched.slice(0, quitOpen) + quitBody.replaceAll(quitDisposal,
+    `codexLinuxGlobalShortcutsQuitStopped=codexLinuxGlobalShortcutsPortalShutdown(),${quitDisposal}codexLinuxGlobalShortcutsQuitStopped,`) +
+    patched.slice(quitClose + 1);
   // Capture suspension: the first nested suspend pauses the portal session and
   // stops unregistering Electron accelerators that a portal registration owns.
   const suspend = new RegExp(`if\\(1===\\((?<depth>${IDENT})\\+=1\\)\\)for\\(let (?<item>${IDENT}) of\\((?<effects>(?:${IDENT}\\(!0\\),)*)${escapeRegExp(registry)}\\)\\)` +
@@ -491,7 +504,7 @@ function installPortalBackend(source) {
     codexLinuxGlobalShortcutsPortalSchedule, codexLinuxGlobalShortcutsPortalStart,
     codexLinuxGlobalShortcutsPaste, codexLinuxGlobalShortcutsActivate];
   return insertBeforeRegistration(patched,
-    `var codexLinuxGlobalShortcutsPatch=${JSON.stringify(PATCH_MARKER)},codexLinuxGlobalShortcutsPortalRegistrations=new Set(),codexLinuxGlobalShortcutsPortalBackend=null,codexLinuxGlobalShortcutsPortalQueue=Promise.resolve(),codexLinuxGlobalShortcutsPortalScheduled=false,codexLinuxGlobalShortcutsShuttingDown=false,codexLinuxGlobalShortcutsCaptureReady=Promise.resolve();` +
+    `var codexLinuxGlobalShortcutsPatch=${JSON.stringify(PATCH_MARKER)},codexLinuxGlobalShortcutsPortalRegistrations=new Set(),codexLinuxGlobalShortcutsPortalBackend=null,codexLinuxGlobalShortcutsPortalQueue=Promise.resolve(),codexLinuxGlobalShortcutsPortalScheduled=false,codexLinuxGlobalShortcutsShuttingDown=false,codexLinuxGlobalShortcutsQuitStopped=null,codexLinuxGlobalShortcutsCaptureReady=Promise.resolve();` +
     `function codexLinuxGlobalShortcutsAccessReady(){return"ready"===${getAccess}().status}function codexLinuxGlobalShortcutsIsSuspended(){return ${depth}>0}function codexLinuxGlobalShortcutsManagerHas(e){return ${registry}.has(e)}` +
     functions.map(String).join(""));
 }

@@ -3,7 +3,7 @@
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
 const RECORD_REPLAY_PLUGIN_NAME = "record-and-replay";
-const HUD_RUNTIME_VERSION = 5;
+const HUD_RUNTIME_VERSION = 6;
 const RECORD_REPLAY_MODULE_EXPRESSIONS = Object.freeze({
   childProcessVar: 'require("node:child_process")',
   fsVar: 'require("node:fs")',
@@ -167,30 +167,38 @@ function recordReplayHelperSource({ fsVar, pathVar }) {
   return `function codexLinuxRecordReplayWriteTempJson(e){let t=process.env.XDG_RUNTIME_DIR||process.env.TMPDIR||"/tmp",n=${pathVar}.join(t,"codex-record-replay-traces-"+(process.getuid?process.getuid():process.pid));${fsVar}.mkdirSync(n,{recursive:true,mode:448});try{if(${fsVar}.lstatSync(n).isSymbolicLink())throw Error("trace directory is a symlink");${fsVar}.chmodSync(n,448)}catch(r){throw r}let r=${pathVar}.join(n,"trace-"+Date.now()+"-"+process.pid+"-"+Math.random().toString(36).slice(2)+".json");${fsVar}.writeFileSync(r,String(e),{mode:384});return r}`;
 }
 
-const CURRENT_RECORD_REPLAY_BRIDGE_ANCHOR = '"set-remote-wsl-connections-enabled":';
-const RETIRED_RECORD_REPLAY_BRIDGE_ANCHOR = '"get-global-state":async({key:';
+// chronicle-skysight (a required feature) owns the module-scope Linux bridge
+// handler registry and the desktop fetch route that serves it. Record & Replay
+// registers its handlers right after that registry declaration.
+const CHRONICLE_BRIDGE_HANDLERS_NAME = "codexLinuxChronicleBridgeHandlers";
+const CHRONICLE_BRIDGE_HANDLERS_END_MARKER = "/*codex-linux-chronicle-bridge-handlers-end*/";
+const RECORD_REPLAY_BRIDGE_END_MARKER = "/*codex-linux-record-replay-bridge-end*/";
 
-function resolveRecordReplayMainBridgeAnchor(source) {
-  const currentCount = countOccurrences(source, CURRENT_RECORD_REPLAY_BRIDGE_ANCHOR);
-  const retiredCount = countOccurrences(source, RETIRED_RECORD_REPLAY_BRIDGE_ANCHOR);
-  if (currentCount === 1 && retiredCount === 0) return CURRENT_RECORD_REPLAY_BRIDGE_ANCHOR;
-  return null;
+function recordReplayMainBridgeRegistration() {
+  return `${CHRONICLE_BRIDGE_HANDLERS_END_MARKER}\n${recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}\nObject.assign(${CHRONICLE_BRIDGE_HANDLERS_NAME},{${recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}});${RECORD_REPLAY_BRIDGE_END_MARKER}`;
+}
+
+function hasChronicleBridgeDependency(source) {
+  return countOccurrences(source, CHRONICLE_BRIDGE_HANDLERS_END_MARKER) === 1
+    && countOccurrences(source, `const ${CHRONICLE_BRIDGE_HANDLERS_NAME}={`) === 1
+    && countOccurrences(source, "/*codex-linux-chronicle-skysight-route*/") === 1
+    && source.includes("function codexLinuxRecordReplayRun(");
 }
 
 function hasCompleteRecordReplayMainBridgePatch(source) {
   const helperPayload = recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS);
   const bridgePayload = recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS);
-  const resolved = resolveRecordReplayMainBridgeAnchor(source);
-  if (resolved == null) return false;
-  const bridgeInsertion = `${bridgePayload},${resolved}`;
-  return countOccurrences(source, helperPayload) === 1
+  return hasChronicleBridgeDependency(source)
+    && countOccurrences(source, recordReplayMainBridgeRegistration()) === 1
+    && countOccurrences(source, helperPayload) === 1
     && countOccurrences(source, bridgePayload) === 1
-    && countOccurrences(source, bridgeInsertion) === 1;
+    && countOccurrences(source, RECORD_REPLAY_BRIDGE_END_MARKER) === 1;
 }
 
 function hasAnyRecordReplayMainBridgeArtifact(source) {
   return source.includes("codexLinuxRecordReplayWriteTempJson")
-    || source.includes('"linux-record-replay-start"');
+    || source.includes('"linux-record-replay-start"')
+    || source.includes(RECORD_REPLAY_BRIDGE_END_MARKER);
 }
 
 function applyRecordReplayMainBridgePatch(currentSource) {
@@ -201,21 +209,18 @@ function applyRecordReplayMainBridgePatch(currentSource) {
     }
     return currentSource;
   }
-  if (!currentSource.includes("codexLinuxRecordReplayRun")) {
+  if (!hasChronicleBridgeDependency(currentSource)) {
     warn("Chronicle / Skysight dependency bridge is missing", patchName);
     return currentSource;
   }
-
-  const resolved = resolveRecordReplayMainBridgeAnchor(currentSource);
-  if (resolved == null) {
-    warn("Could not uniquely resolve current signed-release bridge insertion point", patchName);
+  const patchedSource = currentSource.replace(
+    CHRONICLE_BRIDGE_HANDLERS_END_MARKER,
+    () => recordReplayMainBridgeRegistration(),
+  );
+  if (!hasCompleteRecordReplayMainBridgePatch(patchedSource)) {
+    warn("Record & Replay bridge registration changed while patching", patchName);
     return currentSource;
   }
-
-  const patchedSource = `${recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}\n${currentSource.replace(
-    resolved,
-    `${recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS)},${resolved}`,
-  )}`;
   return patchedSource;
 }
 
@@ -223,6 +228,9 @@ function recordReplayHudRuntimeSource() {
   return [
     `;(()=>{`,
     `const VERSION=${HUD_RUNTIME_VERSION};`,
+    // rspack appends this runtime to every webview runtime entry; the HUD
+    // belongs to the main window only, not to detached popout windows.
+    `if(/^\\/detached-window(?:\\.html)?(?:\\/|$)/.test(globalThis.location?.pathname??""))return;`,
     `if(globalThis.codexLinuxRecordReplayHudVersion===VERSION)return;`,
     `globalThis.codexLinuxRecordReplayHudVersion=VERSION;`,
     `let seq=0,pending=new Map,hud=null,timer=null,lastStatus=null,stopping=false,canceling=false,capturedTranscripts=new Set,pendingTranscripts=[],desktopSnapshotInFlight=false,lastDesktopSnapshotAt=0;`,
@@ -278,7 +286,7 @@ function recordReplayActiveSpeechContextExpression(dispatchVar, transcriptVar) {
 
 function recordReplayCurrentChatGptBlocks(source) {
   const id = String.raw`[A-Za-z_$][\w$]*`;
-  const starts = source.matchAll(new RegExp(String.raw`if\((?<transcript>${id})\.length>0\|\|(?<handlers>${id})\.chatgpt!=null\)\{`, "g"));
+  const starts = source.matchAll(new RegExp(String.raw`if\((?<transcript>${id})\.length>0\|\|null!=(?<handlers>${id})\.chatgpt\)\{`, "g"));
   const blocks = [];
   for (const start of starts) {
     const openBrace = start.index + start[0].length - 1;
@@ -287,7 +295,7 @@ function recordReplayCurrentChatGptBlocks(source) {
     const text = source.slice(start.index, closeBrace + 1);
     if (countOccurrences(text, "global-dictation-record-history-item") !== 1 ||
         countOccurrences(text, "transcript_dispatched") !== 1) continue;
-    const actionMatches = [...text.matchAll(new RegExp(String.raw`else if\((?<actionContext>${id})\.action===\`send\`\)`, "g"))];
+    const actionMatches = [...text.matchAll(new RegExp(String.raw`else if\("send"===(?<actionContext>${id})\.action\)`, "g"))];
     if (actionMatches.length !== 1) continue;
     const capture = text.match(
       new RegExp(String.raw`^if\([^{}]+\)\{(?<capture>\(globalThis\.codexLinuxRecordReplayCaptureTranscript\?\.\(\k<transcript>,(?<captureAction>${id})\.action\)[^;]+\);)?`.replace("\\k<transcript>", start.groups.transcript)),
@@ -329,8 +337,14 @@ function recordReplayDictationTranscriptState(source) {
   return { kind: "partial" };
 }
 
+const RUNTIME_ENTRY_EXPORT = /export\{[A-Za-z_$][\w$]* as __webpack_require__\}/;
+
 function applyRecordReplayHudPatch(currentSource) {
   if (currentSource.includes("codexLinuxRecordReplayHudVersion=")) {
+    return currentSource;
+  }
+  if (!RUNTIME_ENTRY_EXPORT.test(currentSource) || !currentSource.includes("codex-host-chunked-message-v1")) {
+    warn("Could not find rspack webview runtime entry contract", "Record & Replay HUD runtime patch");
     return currentSource;
   }
   const separator = currentSource.endsWith("\n") ? "" : "\n";
@@ -374,7 +388,7 @@ function hasRecordReplayDictationTranscriptContract(source) {
 function recordReplayCompiledGlobalDictationPattern() {
   const id = String.raw`[A-Za-z_$][\w$]*`;
   return new RegExp(
-    String.raw`(?<dispatch>${id})\.dispatchMessage\(\`global-dictation-completed\`,\{sessionId:(?<session>${id})\.sessionId,text:(?<transcript>${id})\}\),(?<suffix>\k<session>\.analytics\.performance\.mark\(\`transcript_dispatched\`\))`,
+    String.raw`(?<![\w$.])(?<dispatch>${id}(?:\.${id})*)\.dispatchMessage\("global-dictation-completed",\{sessionId:(?<session>${id})\.sessionId,text:(?<transcript>${id})\}\),(?<suffix>\k<session>\.analytics\.performance\.mark\("transcript_dispatched"\))`,
     "",
   );
 }
@@ -394,7 +408,9 @@ function applyRecordReplayGlobalDictationTranscriptPatch(currentSource) {
       compiledCompletedPattern,
       (...args) => {
         const { dispatch, session, transcript, suffix } = args.at(-1);
-        return `${recordReplayActiveSpeechContextExpression(dispatch, transcript)},${dispatch}.dispatchMessage(\`global-dictation-completed\`,{sessionId:${session}.sessionId,text:${transcript}}),${suffix}`;
+        // Parenthesized: upstream dispatches from the else branch of a recovery
+        // ternary, so the extra fetch must stay inside that branch.
+        return `(${recordReplayActiveSpeechContextExpression(dispatch, transcript)},${dispatch}.dispatchMessage("global-dictation-completed",{sessionId:${session}.sessionId,text:${transcript}})),${suffix}`;
       },
     );
   }
@@ -422,8 +438,10 @@ const descriptors = [
     phase: "webview-asset",
     order: 153,
     ciPolicy: "optional",
-    pattern: /^index-.*\.js$/,
-    missingDescription: "webview index bundle",
+    // rspack webview runtime entries (main and detached windows); the HUD
+    // runtime itself stays inert outside the main window.
+    assetNeedles: ["codex-host-chunked-message-v1", "as __webpack_require__}"],
+    missingDescription: "rspack webview runtime entry",
     skipDescription: "Record & Replay HUD runtime patch",
     apply: applyRecordReplayHudPatch,
   },
@@ -432,7 +450,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20695,
     ciPolicy: "optional",
-    pattern: /^app-initial-[A-Za-z0-9_-]+\.js$/,
+    assetNeedles: ["global-dictation-record-history-item", "transcript_dispatched"],
     assetMatch: hasRecordReplayDictationTranscriptContract,
     missingDescription: "composer dictation bundle",
     skipDescription: "Record & Replay dictation transcript patch",
@@ -443,7 +461,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20696,
     ciPolicy: "optional",
-    pattern: /^global-dictation-.*\.js$/,
+    assetNeedles: ["global-dictation-completed", "transcript_dispatched"],
     missingDescription: "global dictation bundle",
     skipDescription: "Record & Replay global dictation transcript patch",
     apply: applyRecordReplayGlobalDictationTranscriptPatch,

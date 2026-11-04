@@ -32,6 +32,9 @@ function captureWarns(fn) {
   }
 }
 
+// Current desktop fetch wrapper: only the dictation route remains upstream.
+const FETCH_WRAPPER_FIXTURE = "class FetchWrapper{constructor(){this.options={chunkedMessageSender:{sendInlineMessageForView:(e,t)=>{(globalThis.viewMessages??=[]).push({view:e,message:t})}}}}async handleRequest(e,t){if(\"/codex/dictation-stream-connect-info\"===t.url)return void await this.handleDictationStreamConnectInfoRequest(e,t);throw Error(\"HTTP requests must use the HTTP fetch service.\")}async handleDictationStreamConnectInfoRequest(e,t){try{this.options.chunkedMessageSender.sendInlineMessageForView(e,{type:\"fetch-response\",responseType:\"success\",requestId:t.requestId,status:200,headers:{\"content-type\":\"application/json\"},bodyJsonString:\"{}\"})}catch(r){this.options.chunkedMessageSender.sendInlineMessageForView(e,{type:\"fetch-response\",responseType:\"error\",requestId:t.requestId,status:432,error:\"failed\"})}}}var fetchWrapper=new FetchWrapper;";
+
 // Previous Vite/rolldown minifier shape (template literals, `x==null`, `var X=class`).
 function retiredMinifierChronicleMainFixture() {
   return [
@@ -45,7 +48,7 @@ function retiredMinifierChronicleMainFixture() {
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
     "var Host=class{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}};var host=new Host;",
-    "var bridge={\"set-remote-wsl-connections-enabled\":()=>null};",
+    FETCH_WRAPPER_FIXTURE,
   ].join("");
 }
 
@@ -62,7 +65,7 @@ function currentChronicleMainFixture() {
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
     "class Host{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:\"darwin\"===process.platform&&null!=this.options.getSkysightRecorderController?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}}var host=new Host;",
-    "class Bridge{handlers={\"set-remote-wsl-connections-enabled\":async()=>null}}var bridge=new Bridge().handlers;",
+    FETCH_WRAPPER_FIXTURE,
   ].join("");
 }
 
@@ -184,6 +187,12 @@ test("chronicle-skysight owns the activity-memory bridge", () => {
   assert.equal(applyChronicleSkysightMainBridgePatch(patched), patched);
   assert.match(patched, /"chronicle-permissions":async/);
   assert.match(patched, /"linux-record-replay-skysight-start":async/);
+  assert.match(patched, /const codexLinuxChronicleBridgeHandlers=\{/);
+  assert.match(
+    patched,
+    /async handleRequest\(e,t\)\{\/\*codex-linux-chronicle-skysight-route\*\/if\(codexLinuxChronicleFetchHandler\(t\?\.url\)\)return void await codexLinuxChronicleFetch\(t,codexLinuxChronicleMessage=>this\.options\.chunkedMessageSender\.sendInlineMessageForView\(e,codexLinuxChronicleMessage\)\);if\("\/codex\/dictation-stream-connect-info"===t\.url\)/,
+  );
+  assert.doesNotMatch(patched, /set-remote-wsl-connections-enabled/);
   assert.match(patched, /\(N\|\|"linux"===process\.platform\)&&\(xe=new Hse\(/);
   assert.match(patched, /request:"linux"===process\.platform\?codexLinuxChronicleRequest:/);
   assert.match(patched, /reconcileComputerHistoryPluginInstallation:"linux"===process\.platform\?\(\)=>\{\}:/);
@@ -232,19 +241,25 @@ test("chronicle-skysight fails closed for missing duplicate ambiguous mixed and 
     .replace("class Hse{", "class Hsf{");
   const variants = {
     retiredMinifier: retiredMinifierChronicleMainFixture(),
-    retiredHandlerAnchor: current.replace(
-      '"set-remote-wsl-connections-enabled":',
-      '"get-global-state":async({key:',
+    missingFetchEntry: current.replace(
+      '"/codex/dictation-stream-connect-info"===t.url',
+      '"/codex/other-route"===t.url',
     ),
-    missingHandlerAnchor: current.replace(
-      '"set-remote-wsl-connections-enabled":',
-      '"set-remote-wsl-connections-disabled":',
+    retiredFetchEntry: current.replace(
+      'throw Error("HTTP requests must use the HTTP fetch service.")',
+      "return this.handleLegacyRequest(e,t)",
     ),
-    duplicateHandlerAnchor: current.replace(
-      '"set-remote-wsl-connections-enabled":',
-      '"set-remote-wsl-connections-enabled":()=>null,"set-remote-wsl-connections-enabled":',
+    duplicateFetchEntry: `${current}class OtherFetchWrapper{async handleRequest(e,t){if("/codex/dictation-stream-connect-info"===t.url)return void await this.handleDictationStreamConnectInfoRequest(e,t);throw Error("HTTP requests must use the HTTP fetch service.")}}`,
+    missingViewResponder: current.replaceAll(
+      "this.options.chunkedMessageSender.sendInlineMessageForView(e,{type:\"fetch-response\"",
+      "this.options.sender.send(e,{type:\"fetch-response\"",
     ),
-    mixedHandlerAnchors: `${current}var retiredBridge={"get-global-state":async({key:e})=>null};`,
+    missingRoute: patched.replace("/*codex-linux-chronicle-skysight-route*/", ""),
+    alteredRoute: patched.replace(
+      /\/\*codex-linux-chronicle-skysight-route\*\/[^;]+\)\);/,
+      (route) => `;${route.replace("return void await ", "")}`,
+    ),
+    missingRegistry: patched.replace("const codexLinuxChronicleBridgeHandlers={", "const codexLinuxChronicleHandlers={"),
     missing: current.replace('this.request("skysightStatus")', 'this.request("statusChanged")'),
     missingRollback: current.replace("Failed to enable Chronicle and stop the recorder during rollback", "Failed"),
     duplicateController: current.slice(0, serviceStart) + duplicateController + current.slice(serviceStart),
@@ -297,6 +312,7 @@ test("chronicle-skysight drives recorder controls without exposing the unsupport
     { state: "stopped", is_running: false, currentSegmentEventsPath: "/last/events.jsonl", currentSegmentMetadataPath: "/last/metadata.json" },
     { ok: true, exclusions: [{ kind: "app", value: "secret-app" }] },
     { ok: true, exclusions: [] },
+    { state: "running", is_running: true },
   ];
   const childProcess = {
     execFile(_bin, args, _options, callback) {
@@ -324,7 +340,7 @@ test("chronicle-skysight drives recorder controls without exposing the unsupport
   };
 
   require("node:vm").runInNewContext(
-    `${patched};globalThis.chronicle=host.services.chronicle;globalThis.controller=xe;globalThis.bridge=bridge;`,
+    `${patched};globalThis.chronicle=host.services.chronicle;globalThis.controller=xe;globalThis.bridge=codexLinuxChronicleBridgeHandlers;globalThis.fetchWrapper=fetchWrapper;`,
     context,
   );
   assert.equal(context.globalThis.chronicle, undefined);
@@ -376,6 +392,37 @@ test("chronicle-skysight drives recorder controls without exposing the unsupport
     ["skysight", "list-exclusions"],
     ["skysight", "update-exclusion", "--kind", "app", "--value", "secret-app", "--reason", "private", "--remove"],
   ]);
+
+  // Webview fetches reach the bridge through the desktop fetch wrapper.
+  const fetchWrapper = context.globalThis.fetchWrapper;
+  await fetchWrapper.handleRequest("view", {
+    requestId: "status-1",
+    url: "vscode://codex/linux-record-replay-skysight-status",
+    body: "{}",
+  });
+  await fetchWrapper.handleRequest("view", {
+    requestId: "bad-body",
+    url: "vscode://codex/linux-record-replay-skysight-status",
+    body: "{",
+  });
+  await fetchWrapper.handleRequest("view", { requestId: "dictation", url: "/codex/dictation-stream-connect-info" });
+  await assert.rejects(
+    fetchWrapper.handleRequest("view", { requestId: "proto", url: "vscode://codex/__proto__", body: "{}" }),
+    /HTTP requests must use the HTTP fetch service/,
+  );
+  await assert.rejects(
+    fetchWrapper.handleRequest("view", { requestId: "other", url: "vscode://codex/linux-record-replay-start", body: "{}" }),
+    /HTTP requests must use the HTTP fetch service/,
+  );
+  const messages = JSON.parse(JSON.stringify(context.globalThis.viewMessages));
+  assert.deepEqual(messages.map(({ view, message }) => [view, message.requestId, message.responseType, message.status]), [
+    ["view", "status-1", "success", 200],
+    ["view", "bad-body", "error", 500],
+    ["view", "dictation", "success", 200],
+  ]);
+  assert.equal(JSON.parse(messages[0].message.bodyJsonString).json.state, "running");
+  assert.match(messages[1].message.error, /Invalid Linux bridge request/);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ["skysight", "status"]);
 });
 
 test("chronicle-skysight Linux controller never invokes upstream migration dependencies", async () => {

@@ -33,9 +33,25 @@ const {
 
 const featureDir = __dirname;
 
+// Current rspack/SWC composer dictation block (double quotes, Yoda comparisons).
 function currentComposerTranscriptFixture() {
+  return "async function send(){let p=\"Create an image of a neon cabin\",c={id:\"session-1\",setTranscript(){}},a={dictationSessionId:\"session-1\",performance:{mark(){}}},i={action:\"send\",recovery:null},s={chatgpt:null,onRecoveryChange:null,onTranscriptRetry:async()=>{},onTranscriptSend:async(t,e)=>globalThis.events.push([\"send\",t,e]),onTranscriptInsert:async(t,e)=>globalThis.events.push([\"insert\",t,e]),onTranscriptCancel:()=>globalThis.events.push([\"cancel\"])},x=null,te={current:i};if(p.length>0||null!=s.chatgpt){null==c&&null==s.chatgpt?une.getInstance().dispatchMessage(\"global-dictation-record-history-item\",{text:p}):c?.setTranscript(p),a.performance.mark(\"transcript_dispatched\");let e=c?.id;if(null!=i.recovery&&null!=s.onRecoveryChange){await s.onTranscriptRetry?.(p,e,x)}else if(\"send\"===i.action){let t=null==x?s.onTranscriptSend(p,e):s.onTranscriptSend(p,e,x);await t}else{let t=null==x?s.onTranscriptInsert(p,e):s.onTranscriptInsert(p,e,x);await t,te.current===i&&\"send\"===te.current.action&&await s.onTranscriptSend(\"\",e,x)}}else s.onTranscriptCancel?.()}";
+}
+
+// Previous Vite/rolldown composer dictation block (template literals, `x==null`).
+function retiredComposerTranscriptFixture() {
   return "async function send(){let p=`Create an image of a neon cabin`,c={setTranscript(){}},a={dictationSessionId:`session-1`,performance:{mark(){}}},i={action:`send`,recovery:null},s={chatgpt:null,onRecoveryChange:null,onTranscriptRetry:async()=>{},onTranscriptSend:async(t,e)=>globalThis.events.push([`send`,t,e]),onTranscriptInsert:async(t,e)=>globalThis.events.push([`insert`,t,e]),onTranscriptCancel:()=>globalThis.events.push([`cancel`])},x=null,te={current:i};if(p.length>0||s.chatgpt!=null){c==null&&s.chatgpt==null?une.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:p}):c?.setTranscript(p),a.performance.mark(`transcript_dispatched`);let e=c==null?void 0:a.dictationSessionId;if(i.recovery!=null&&s.onRecoveryChange!=null){await s.onTranscriptRetry?.(p,e,x)}else if(i.action===`send`){let t=x==null?s.onTranscriptSend(p,e):s.onTranscriptSend(p,e,x);await t}else{let t=x==null?s.onTranscriptInsert(p,e):s.onTranscriptInsert(p,e,x);await t,te.current===i&&te.current.action===`send`&&await s.onTranscriptSend(``,e,x)}}else s.onTranscriptCancel?.()}";
 }
+
+// Current rspack/SWC global dictation success chain: the completion dispatch is
+// the else branch of a recovery ternary and the dispatcher is a member access.
+const CURRENT_GLOBAL_DICTATION_SOURCE =
+  "async function U(e,t,n=null){let r=Date.now(),i=await (null==n?I(e.audio):W(n,e.audio));e.analytics.performance.mark(\"final_received\");let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),null!=e.recovery&&null!=e.onRecoveryChange?globalThis.recovered(a):x.O1.dispatchMessage(\"global-dictation-completed\",{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(\"transcript_dispatched\")}";
+const RETIRED_GLOBAL_DICTATION_SOURCE =
+  "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(`transcript_dispatched`)}";
+
+// Current desktop fetch wrapper: only the dictation route remains upstream.
+const FETCH_WRAPPER_FIXTURE = "class FetchWrapper{constructor(){this.options={chunkedMessageSender:{sendInlineMessageForView:(e,t)=>{(globalThis.viewMessages??=[]).push({view:e,message:t})}}}}async handleRequest(e,t){if(\"/codex/dictation-stream-connect-info\"===t.url)return void await this.handleDictationStreamConnectInfoRequest(e,t);throw Error(\"HTTP requests must use the HTTP fetch service.\")}async handleDictationStreamConnectInfoRequest(e,t){try{this.options.chunkedMessageSender.sendInlineMessageForView(e,{type:\"fetch-response\",responseType:\"success\",requestId:t.requestId,status:200,headers:{\"content-type\":\"application/json\"},bodyJsonString:\"{}\"})}catch(r){this.options.chunkedMessageSender.sendInlineMessageForView(e,{type:\"fetch-response\",responseType:\"error\",requestId:t.requestId,status:432,error:\"failed\"})}}}var fetchWrapper=new FetchWrapper;";
 
 // Previous Vite/rolldown minifier shape (template literals, `x==null`, `var X=class`).
 function retiredChronicleControllerFixture() {
@@ -50,7 +66,7 @@ function retiredChronicleControllerFixture() {
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
     "var Host=class{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:process.platform===`darwin`&&this.options.getSkysightRecorderController!=null?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}};var host=new Host;",
-    "var bridge={\"set-remote-wsl-connections-enabled\":()=>null};",
+    FETCH_WRAPPER_FIXTURE,
   ].join("");
 }
 
@@ -67,7 +83,7 @@ function currentChronicleControllerFixture() {
     "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
     "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
     "class Host{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:\"darwin\"===process.platform&&null!=this.options.getSkysightRecorderController?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}}var host=new Host;",
-    "class Bridge{handlers={\"set-remote-wsl-connections-enabled\":async()=>null}}var bridge=new Bridge().handlers;",
+    FETCH_WRAPPER_FIXTURE,
   ].join("");
 }
 
@@ -205,22 +221,73 @@ test("record-and-replay patch descriptor loads only when feature is enabled", ()
   });
 });
 
-test("record-and-replay dictation descriptor tracks moved upstream composer bundle", () => {
-  const descriptor = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
-  assert.ok(descriptor);
-  assert.equal(descriptor.pattern.test("app-initial-C-fROkKo.js"), true);
-  assert.equal(descriptor.assetMatch(currentComposerTranscriptFixture()), true);
-  assert.equal(descriptor.pattern.test("app-initial~app-main~onboarding-page-BUwCKIcU.js"), false);
-  assert.equal(descriptor.pattern.test("use-dictation-BUwCKIcU.js"), false);
-  assert.equal(descriptor.pattern.test("use-dictation-hotkey-BUwCKIcU.js"), false);
+test("record-and-replay webview descriptors locate rspack chunks by content needles", () => {
+  const hud = descriptors.find((patch) => patch.id === "record-replay-hud");
+  const dictation = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
+  const global = descriptors.find((patch) => patch.id === "record-replay-global-dictation-transcript");
+  for (const descriptor of [hud, dictation, global]) {
+    assert.ok(descriptor);
+    assert.equal(descriptor.pattern, undefined, descriptor.id);
+    assert.equal(descriptor.assetPattern, undefined, descriptor.id);
+  }
+  assert.deepEqual(hud.assetNeedles, ["codex-host-chunked-message-v1", "as __webpack_require__}"]);
+  assert.deepEqual(dictation.assetNeedles, ["global-dictation-record-history-item", "transcript_dispatched"]);
+  assert.deepEqual(global.assetNeedles, ["global-dictation-completed", "transcript_dispatched"]);
+  assert.equal(dictation.assetMatch(currentComposerTranscriptFixture()), true);
+  assert.equal(dictation.assetMatch(retiredComposerTranscriptFixture()), false);
 });
 
-test("record-and-replay global dictation descriptor tracks floating dictation bundles", () => {
-  const descriptor = descriptors.find((patch) => patch.id === "record-replay-global-dictation-transcript");
-  assert.ok(descriptor);
-  assert.equal(descriptor.pattern.test("global-dictation-orb-BTMuOubw.js"), true);
-  assert.equal(descriptor.pattern.test("global-dictation-page-C-bhTjfc.js"), true);
-  assert.equal(descriptor.pattern.test("use-dictation-BUwCKIcU.js"), false);
+test("record-and-replay patches the signed rspack webview and main chunks", { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, () => {
+  const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const assetsDir = path.join(root, "webview/assets");
+  const assets = [
+    ...fs.readdirSync(assetsDir).filter((name) => name.endsWith(".js")),
+    ...fs.readdirSync(path.join(assetsDir, "async")).filter((name) => name.endsWith(".js")).map((name) => `async/${name}`),
+  ];
+  const containing = (needles) => assets.filter((name) => {
+    const source = fs.readFileSync(path.join(assetsDir, name), "utf8");
+    return needles.every((needle) => source.includes(needle));
+  });
+  const dictation = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
+  const dictationOwners = containing(dictation.assetNeedles)
+    .filter((name) => dictation.assetMatch(fs.readFileSync(path.join(assetsDir, name), "utf8"), name));
+  assert.equal(dictationOwners.length, 1, dictationOwners.join(","));
+  const dictationSource = fs.readFileSync(path.join(assetsDir, dictationOwners[0]), "utf8");
+  const dictationPatched = applyRecordReplayDictationTranscriptPatch(dictationSource);
+  assert.notEqual(dictationPatched, dictationSource);
+  assert.equal(applyRecordReplayDictationTranscriptPatch(dictationPatched), dictationPatched);
+
+  const globalOwners = containing(["global-dictation-completed", "transcript_dispatched"]);
+  assert.equal(globalOwners.length, 1, globalOwners.join(","));
+  const globalSource = fs.readFileSync(path.join(assetsDir, globalOwners[0]), "utf8");
+  const { value: globalPatched, warnings: globalWarnings } = captureWarns(() =>
+    applyRecordReplayGlobalDictationTranscriptPatch(globalSource));
+  assert.deepEqual(globalWarnings, []);
+  assert.notEqual(globalPatched, globalSource);
+  assert.match(globalPatched, /:\(\(\(\)=>\{let t=String\(a\?\?""\)\.trim\(\)/);
+
+  const runtimeEntries = containing(["codex-host-chunked-message-v1", "as __webpack_require__}"]);
+  assert.ok(runtimeEntries.length >= 1);
+  for (const name of runtimeEntries) {
+    const source = fs.readFileSync(path.join(assetsDir, name), "utf8");
+    const { value, warnings } = captureWarns(() => applyRecordReplayHudPatch(source));
+    assert.deepEqual(warnings, [], name);
+    assert.notEqual(value, source, name);
+  }
+
+  const buildDir = path.join(root, ".vite/build");
+  const changed = [];
+  for (const name of fs.readdirSync(buildDir).filter((entry) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(entry))) {
+    const source = fs.readFileSync(path.join(buildDir, name), "utf8");
+    const { value: chronicle } = captureWarns(() => applyChronicleSkysightMainBridgePatch(source));
+    const { value: patched } = captureWarns(() => applyRecordReplayMainBridgePatch(chronicle));
+    if (patched === chronicle) continue;
+    changed.push(name);
+    assert.equal(applyRecordReplayMainBridgePatch(patched), patched, name);
+    assert.equal(applyChronicleSkysightMainBridgePatch(patched), patched, name);
+    assert.doesNotThrow(() => new vm.Script(patched, { filename: name }), name);
+  }
+  assert.equal(changed.length, 1, changed.join(","));
 });
 
 test("record-and-replay bridge patch is idempotent and uses execFile", () => {
@@ -232,6 +299,10 @@ test("record-and-replay bridge patch is idempotent and uses execFile", () => {
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayMainBridgePatch(patched), patched);
   assert.match(patched, /"linux-record-replay-doctor":async/);
+  assert.match(
+    patched,
+    /const codexLinuxChronicleBridgeHandlers=\{[^\n]*\};\/\*codex-linux-chronicle-bridge-handlers-end\*\/\nfunction codexLinuxRecordReplayWriteTempJson\([^\n]*\nObject\.assign\(codexLinuxChronicleBridgeHandlers,\{"linux-record-replay-doctor":async/,
+  );
   assert.match(patched, /"chronicle-permissions":async/);
   assert.match(patched, /chronicleSidecarPresent/);
   assert.match(patched, /chronicleSidecarProcessState/);
@@ -290,6 +361,51 @@ test("record-and-replay bridge patch is idempotent and uses execFile", () => {
   );
 });
 
+test("record-and-replay bridge handlers are served through the Chronicle fetch route", async () => {
+  const patched = applyRecordReplayMainBridgePatch(applyChronicleSkysightMainBridgePatch(currentChronicleControllerFixture()));
+  const calls = [];
+  const context = {
+    console,
+    globalThis: {},
+    JSON,
+    Promise,
+    String,
+    process: {
+      platform: "linux",
+      env: { CODEX_RECORD_REPLAY_LINUX_BIN: "/tmp/codex-record-replay-linux" },
+      cwd: () => "/tmp",
+    },
+    require(id) {
+      if (id === "node:child_process") {
+        return {
+          execFile(_bin, args, _options, callback) {
+            calls.push(args);
+            callback(null, JSON.stringify({ state: "active", session_dir: "/tmp/session" }), "");
+          },
+        };
+      }
+      if (id === "node:fs") return fs;
+      if (id === "node:path") return path;
+      throw new Error(`unexpected require: ${id}`);
+    },
+  };
+  vm.runInNewContext(`${patched};globalThis.fetchWrapper=fetchWrapper;`, context);
+  await context.globalThis.fetchWrapper.handleRequest("view", {
+    requestId: "speech",
+    url: "vscode://codex/linux-record-replay-speech-context-active",
+    body: JSON.stringify({ transcript: "hello", source: "codex-global-dictation" }),
+  });
+  const [{ view, message }] = context.globalThis.viewMessages;
+  assert.equal(view, "view");
+  assert.equal(message.responseType, "success");
+  assert.equal(message.requestId, "speech");
+  assert.equal(JSON.parse(message.bodyJsonString).ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ["status"],
+    ["record", "speech", "--session-dir", "/tmp/session", "--text", "hello", "--source", "codex-global-dictation"],
+  ]);
+});
+
 test("record-and-replay rejects incomplete current bridge variants byte-identically", () => {
   const source = currentChronicleControllerFixture();
   const chroniclePatched = applyChronicleSkysightMainBridgePatch(source);
@@ -301,20 +417,15 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
   };
   const bridgePayload = recordReplayBridgeSource(moduleExpressions);
   const helperPayload = recordReplayHelperSource(moduleExpressions);
-  const bridgeAnchor = '"set-remote-wsl-connections-enabled":';
+  const registration = `Object.assign(codexLinuxChronicleBridgeHandlers,{${bridgePayload}});`;
   const variants = {
     "missing current bridge handler": patched.replace(
       '"linux-record-replay-status":async',
       '"linux-record-replay-status-missing":async',
     ),
-    "misplaced bridge payload": `${patched.replace(
-      `${bridgePayload},${bridgeAnchor}`,
-      bridgeAnchor,
-    )}var misplaced={${bridgePayload}};`,
-    "duplicate bridge payload": patched.replace(
-      `${bridgePayload},${bridgeAnchor}`,
-      `${bridgePayload},${bridgePayload},${bridgeAnchor}`,
-    ),
+    "misplaced bridge payload": `${patched.replace(registration, "")}${registration}`,
+    "duplicate bridge payload": patched.replace(registration, `${registration}${registration}`),
+    "missing registration end marker": patched.replace("/*codex-linux-record-replay-bridge-end*/", ""),
     "helper-only partial": `${helperPayload}\n${chroniclePatched}`,
     "duplicate helper payload": `${helperPayload}\n${patched}`,
   };
@@ -328,30 +439,22 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
   }
 });
 
-test("record-and-replay rejects missing, duplicate, retired, and mixed insertion anchors byte-identically", () => {
+test("record-and-replay requires the Chronicle bridge registry and fetch route", () => {
   const current = applyChronicleSkysightMainBridgePatch(currentChronicleControllerFixture());
-  const retired = current.replace(
-    '"set-remote-wsl-connections-enabled":',
-    '"get-global-state":async({key:',
-  );
   const variants = {
-    missing: current.replace(
-      '"set-remote-wsl-connections-enabled":',
-      '"set-remote-wsl-connections-disabled":',
-    ),
-    "duplicate current": current.replace(
-      '"set-remote-wsl-connections-enabled":',
-      '"set-remote-wsl-connections-enabled":()=>null,"set-remote-wsl-connections-enabled":',
-    ),
-    "retired legacy owner": retired,
-    "mixed current and legacy owners": `${current},extra={"get-global-state":async({key:e})=>null}`,
+    "chronicle not applied": currentChronicleControllerFixture(),
+    "missing registry end marker": current.replace("/*codex-linux-chronicle-bridge-handlers-end*/", ""),
+    "duplicate registry end marker": `${current}/*codex-linux-chronicle-bridge-handlers-end*/`,
+    "missing Chronicle fetch route": current.replace("/*codex-linux-chronicle-skysight-route*/", ""),
+    "missing Chronicle registry": current.replace("const codexLinuxChronicleBridgeHandlers={", "const codexLinuxOtherHandlers={"),
+    "missing record runner": current.replace("function codexLinuxRecordReplayRun(", "function codexLinuxRecordReplayExec("),
   };
 
   for (const [name, source] of Object.entries(variants)) {
     const { value, warnings } = captureWarns(() => applyRecordReplayMainBridgePatch(source));
     assert.equal(value, source, name);
     assert.equal(warnings.length, 1, name);
-    assert.match(warnings[0], /uniquely resolve current signed-release bridge insertion point/, name);
+    assert.match(warnings[0], /Chronicle \/ Skysight dependency bridge is missing/, name);
   }
 });
 
@@ -647,11 +750,17 @@ test("record-and-replay bridge temp trace files are private", () => {
 });
 
 test("record-and-replay HUD patch is idempotent and appends runtime UI", () => {
-  const source = "console.log('webview');\n//# sourceMappingURL=index.js.map";
+  const source = "var e,u={Gav4(e,a,c){let f=\"codex-host-chunked-message-v1\"}};export{p as __webpack_require__};\n//# sourceMappingURL=348410.js.map";
   const patched = applyRecordReplayHudPatch(source);
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayHudPatch(patched), patched);
-  assert.match(patched, /sourceMappingURL=index\.js\.map\n;\(\(\)=>/);
+  assert.match(patched, /sourceMappingURL=348410\.js\.map\n;\(\(\)=>/);
+  assert.match(patched, /if\(\/\^\\\/detached-window/);
+  const notEntry = "console.log('webview');";
+  const rejected = captureWarns(() => applyRecordReplayHudPatch(notEntry));
+  assert.equal(rejected.value, notEntry);
+  assert.equal(rejected.warnings.length, 1);
+  assert.match(rejected.warnings[0], /rspack webview runtime entry contract/);
   assert.match(patched, /codexLinuxRecordReplayHudVersion/);
   assert.match(patched, /codex-linux-record-replay-hud/);
   assert.match(patched, /linux-record-replay-status/);
@@ -679,6 +788,7 @@ test("record-and-replay HUD patch is idempotent and appends runtime UI", () => {
 
 test("record-and-replay rejects retired composer transcript contracts", () => {
   const sources = [
+    retiredComposerTranscriptFixture(),
     "function send(e,n){let i=`Create an image of a neon cabin`;i.length>0&&(j.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:i}),e===`send`?n.onTranscriptSend(i):n.onTranscriptInsert(i))}",
     "async function send(){let l=c.trim();l.length>0?(o==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):o.setTranscript(l),r.performance.mark(`transcript_dispatched`),t.action===`send`?await a.onTranscriptSend(l):(await a.onTranscriptInsert(l),U.current===t&&U.current.action===`send`&&await a.onTranscriptSend(``))):a.onTranscriptCancel?.()}",
   ];
@@ -694,7 +804,7 @@ test("record-and-replay matches and executes the current composer transcript blo
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayDictationTranscriptPatch(patched), patched);
   assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(p,i\.action\)/);
-  assert.match(patched, /let e=c==null\?void 0:a\.dictationSessionId/);
+  assert.match(patched, /let e=c\?\.id;/);
   assert.match(patched, /onTranscriptSend\(p,e\)/);
   assert.match(patched, /onTranscriptInsert\(p,e\)/);
 
@@ -731,7 +841,7 @@ test("record-and-replay transcript repair rejects duplicate, partial, mixed, and
     "duplicate patched": patched + patched,
     mixed: current + patched,
     partial,
-    ambiguous: current.replace("else if(i.action===`send`){", "else if(i.action===`send`){if(false){}else if(i.action===`send`){}"),
+    ambiguous: current.replace('else if("send"===i.action){', 'else if("send"===i.action){if(false){}else if("send"===i.action){}'),
   };
   const descriptor = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
 
@@ -746,28 +856,73 @@ test("record-and-replay transcript repair rejects duplicate, partial, mixed, and
 
 test("record-and-replay rejects the retired pre-analytics global dictation contract", () => {
   const source =
-    "async function L(e,t,n=null){let r=await f({transcript:n==null?await y(e.audio):await R(n,e.audio),cleanupEnabled:t});U===e&&(U=null),a.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:r})}";
-  const patched = applyRecordReplayGlobalDictationTranscriptPatch(source);
+    "async function L(e,t,n=null){let r=await f({transcript:null==n?await y(e.audio):await R(n,e.audio),cleanupEnabled:t});U===e&&(U=null),a.dispatchMessage(\"global-dictation-completed\",{sessionId:e.sessionId,text:r})}";
+  const result = captureWarns(() => applyRecordReplayGlobalDictationTranscriptPatch(source));
 
-  assert.equal(patched, source);
+  assert.equal(result.value, source);
+  assert.equal(result.warnings.length, 1);
 });
 
-test("record-and-replay matches the official 26.831.20005 global dictation success chain", () => {
-  const source =
-    "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(`transcript_dispatched`)}";
+test("record-and-replay rejects the retired template-literal global dictation chain", () => {
+  const result = captureWarns(() => applyRecordReplayGlobalDictationTranscriptPatch(RETIRED_GLOBAL_DICTATION_SOURCE));
+  assert.equal(result.value, RETIRED_GLOBAL_DICTATION_SOURCE);
+  assert.equal(result.warnings.length, 1);
+});
+
+test("record-and-replay matches the current rspack global dictation success chain", () => {
+  const source = CURRENT_GLOBAL_DICTATION_SOURCE;
   const patched = applyRecordReplayGlobalDictationTranscriptPatch(source);
 
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayGlobalDictationTranscriptPatch(patched), patched);
   assert.match(patched, /codex-linux-record-replay-global-dictation/);
-  assert.match(patched, /B\.dispatchMessage\(`global-dictation-completed`,\{sessionId:e\.sessionId,text:a\}\)/);
+  assert.match(patched, /x\.O1\.dispatchMessage\("fetch",/);
+  assert.match(patched, /x\.O1\.dispatchMessage\("global-dictation-completed",\{sessionId:e\.sessionId,text:a\}\)\),e\.analytics/);
+});
+
+test("record-and-replay keeps global dictation side effects inside the success branch", async () => {
+  const patched = applyRecordReplayGlobalDictationTranscriptPatch(CURRENT_GLOBAL_DICTATION_SOURCE);
+  const run = async (recovery) => {
+    const context = {
+      Date,
+      Math,
+      JSON,
+      String,
+      globalThis: { recovered() { context.events.push(["recovered"]); } },
+      events: [],
+      J: null,
+      I: async () => "spoken words",
+      W: async () => "spoken words",
+      E: async ({ transcript }) => transcript,
+      x: { O1: { dispatchMessage: (type, payload) => context.events.push([type, payload.url ?? payload.text]) } },
+    };
+    vm.runInNewContext(`${patched};globalThis.run=U`, context);
+    await context.globalThis.run({
+      audio: null,
+      recovery,
+      onRecoveryChange: recovery == null ? null : () => {},
+      analytics: { performance: { mark: (name) => context.events.push(["mark", name]) } },
+    }, false);
+    return JSON.parse(JSON.stringify(context.events));
+  };
+  assert.deepEqual(await run(null), [
+    ["mark", "final_received"],
+    ["fetch", "vscode://codex/linux-record-replay-speech-context-active"],
+    ["global-dictation-completed", "spoken words"],
+    ["mark", "transcript_dispatched"],
+  ]);
+  assert.deepEqual(await run({ recordingId: "r1" }), [
+    ["mark", "final_received"],
+    ["recovered"],
+    ["mark", "transcript_dispatched"],
+  ]);
 });
 
 test("record-and-replay current transcript drift remains byte-identical", () => {
   const composer =
     "let l=c.trim();l.length>0&&(a==null?_m.getInstance().dispatchMessage(`global-dictation-record-history-item`,{text:l}):a.persistTranscript(l),t.performance.mark(`transcript_dispatched`),e.action===`send`?i.onTranscriptSend(l):i.onTranscriptInsert(l))";
   const global =
-    "e.analytics.performance.mark(`transcript_saved`),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a})";
+    "e.analytics.performance.mark(\"transcript_saved\"),x.O1.dispatchMessage(\"global-dictation-completed\",{sessionId:e.sessionId,text:a})";
 
   assert.equal(applyRecordReplayDictationTranscriptPatch(composer), composer);
   assert.equal(applyRecordReplayGlobalDictationTranscriptPatch(global), global);
@@ -775,8 +930,7 @@ test("record-and-replay current transcript drift remains byte-identical", () => 
 
 test("record-and-replay generated transcript runtimes are syntactically valid", () => {
   const source = currentComposerTranscriptFixture();
-  const globalDictationSource =
-    "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(`transcript_dispatched`)}";
+  const globalDictationSource = CURRENT_GLOBAL_DICTATION_SOURCE;
 
   assert.doesNotThrow(() => new vm.Script(recordReplayHudRuntimeSource()));
   assert.doesNotThrow(() => new vm.Script(applyRecordReplayDictationTranscriptPatch(source)));

@@ -30,9 +30,10 @@ test("shared backend fails closed for missing and ambiguous lifecycle anchors", 
   const source = mainBundleFixture();
   for (const input of [source.replace("generation:0", "generation:1"), source + source,
     source.replace("beginCapture()", "renamedCapture()"), source.replace("suspendDepth+=1", "suspendDepth+=2"),
-    source.replace('status:"loading"', 'status:"pending"'), source.replace("flushAndDisposeContext:r", "flushContext:r"),
+    source.replace('status:"loading"', 'status:"pending"'), source.replace("flushAndDisposeContext:p", "flushContext:p"),
     source.replace("markAppQuitting:()=>", "markQuitting:()=>"),
-    source.replace("null!=e&&clearPendingUpdate(e)", "clearPendingUpdate(e)")]) {
+    source.replace('c.app.on("will-quit",', 'c.app.on("before-quit",'),
+    source.replaceAll("a.dispose(),o.dispose(),Promise.allSettled([", "o.dispose(),a.dispose(),Promise.allSettled([")]) {
     assert.throws(() => installPortalBackend(input));
   }
   const misleading = "function unrelated(e){if(wrongCheck(e)||otherCheck(e))return;}" + source;
@@ -60,7 +61,7 @@ test("shared backend installs into the rspack module that owns the registration 
   assert.equal(installPortalBackend(patched), patched);
 
   const accessStart = source.indexOf("var accessState=");
-  const accessEnd = source.indexOf("async function shutdownApp(");
+  const accessEnd = source.indexOf("function flushWithTimeout(");
   const split = chunk(source.slice(0, accessStart) + source.slice(accessEnd), source.slice(accessStart, accessEnd));
   assert.throws(() => installPortalBackend(split), /application access readiness is outside the global shortcut module/);
 });
