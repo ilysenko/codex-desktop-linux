@@ -17,10 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   missing and takes the first of `I3SOCK` and `SWAYSOCK` that names a socket
   file, then the newest i3 socket, then the newest `sway-ipc.*.sock`, so Sway
   works without the i3 package. A failed `swaymsg` command reports the error
-  it printed on stdout. AppShots focuses i3-backend windows by their decimal
-  id, or by `con_id` for a native Wayland window on Sway, through `i3-msg` or
-  `swaymsg`, and skips the X11 window capture for windows without an X11 id;
-  before, it sent the hex id Sway rejects and always ran `i3-msg`.
+  it printed on stdout.
 - Synchronize the embedded Computer Use backend to standalone v0.7.37. The
   i3 backend also serves Sway: it lists and focuses native Wayland windows
   (focus by `con_id`) with pids from the tree, and focuses X11 windows by
@@ -146,6 +143,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- AppShots focuses windows from the i3 backend the way the backend does: by
+  the decimal X11 id, or by `con_id` for a native Wayland window on Sway,
+  through `i3-msg`, or `swaymsg` when i3 is not installed, on the same IPC
+  socket. It sent a hex id, which Sway rejects, and always ran `i3-msg`. It
+  skips the X11 window capture for windows without an X11 id. On Sway it picks
+  a target from Xwayland stacking only when no native Wayland window is open
+  besides ChatGPT, and otherwise offers none instead of guessing.
 - The Chrome extension host retries an app-server start that fails with
   "Text file busy" (ETXTBSY), as the main backend already does for its
   helpers. exec fails that way while a thread that forked during the write

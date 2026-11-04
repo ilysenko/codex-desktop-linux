@@ -876,10 +876,10 @@ function x11AppshotCaptureFixture({ backend = "x11", initiallyFocused = false, f
       assert.equal(name, "node:child_process");
       return { execFile(program, args, _options, callback) {
         // i3 and Sway take the decimal X11 id; Sway rejects the hex form.
-        const id = backend === "i3" ? Number(args[0].match(/^\[id=(\d+)\] focus$/)[1]) : Number(args[2]);
+        const id = backend === "i3" ? Number(args[0].match(/^\[id="(\d+)"\] focus$/)[1]) : Number(args[2]);
         assert.equal(program, backend === "i3" ? "i3-msg" : "wmctrl");
         assert.deepEqual(Array.from(args), backend === "i3"
-          ? [`[id=${id}] focus`] : ["-i", "-a", `0x${id.toString(16)}`]);
+          ? [`[id="${id}"] focus`] : ["-i", "-a", `0x${id.toString(16)}`]);
         activations.push(id);
         if (failure === "activation-command" && id === external.window_id) {
           callback(new Error("activation failed"), "", "");
@@ -896,6 +896,7 @@ function x11AppshotCaptureFixture({ backend = "x11", initiallyFocused = false, f
   });
   vm.runInContext(patched.slice(patched.lastIndexOf(";function codexLinuxAppshotRequire")), context);
   context.codexLinuxAppshotI3Program = () => "i3-msg";
+  context.codexLinuxAppshotI3Socket = () => null;
   context.codexLinuxAppshotBackendJson = async () => ({
     backend, windows: [structuredClone(desktop), structuredClone(external)],
   });
@@ -964,11 +965,87 @@ test("AppShots focuses i3 and Sway windows the way the i3 backend reports them",
   }
 
   // X11 windows take their decimal id; a native Wayland window on Sway is
-  // 2^32 plus its container id and is focused by con_id.
+  // 2^32 plus its container id and is focused by con_id, as i3_focus_command
+  // does. The socket the backend would pick goes in front with -s.
   context.codexLinuxAppshotI3Program = () => "swaymsg";
+  context.codexLinuxAppshotI3Socket = () => null;
+  for (const window_id of [0x200, 2 ** 32 - 1, 2 ** 32, 2 ** 32 + 7]) {
+    assert.equal(await context.codexLinuxAppshotFocusWindow({ window_id }, "i3"), true);
+  }
+  context.codexLinuxAppshotI3Socket = () => "/run/user/1000/sway-ipc.1000.42.sock";
   assert.equal(await context.codexLinuxAppshotFocusWindow({ window_id: 0x200 }, "i3"), true);
-  assert.equal(await context.codexLinuxAppshotFocusWindow({ window_id: 2 ** 32 + 7 }, "i3"), true);
-  assert.deepEqual(calls, [["swaymsg", "[id=512] focus"], ["swaymsg", "[con_id=7] focus"]]);
+  assert.deepEqual(calls, [
+    ["swaymsg", '[id="512"] focus'],
+    ["swaymsg", '[id="4294967295"] focus'],
+    ["swaymsg", '[con_id="0"] focus'],
+    ["swaymsg", '[con_id="7"] focus'],
+    ["swaymsg", "-s", "/run/user/1000/sway-ipc.1000.42.sock", '[id="512"] focus'],
+  ]);
+});
+
+test("AppShots finds the i3 or Sway socket in the backend's order", async (t) => {
+  const net = require("node:net");
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "as-"));
+  const servers = [];
+  t.after(async () => {
+    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+    fs.rmSync(runtime, { recursive: true, force: true });
+  });
+  const listen = (socketPath) => new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(socketPath, () => { servers.push(server); resolve(socketPath); });
+  });
+  const env = {};
+  const context = vm.createContext({
+    Buffer, console: { warn() {} }, setTimeout,
+    process: { env, pid: 101, platform: "linux" },
+    require,
+  });
+  vm.runInContext(patched.slice(patched.lastIndexOf(";function codexLinuxAppshotRequire")), context);
+  const missing = path.join(runtime, "missing.sock");
+  env.XDG_RUNTIME_DIR = runtime;
+  assert.equal(context.codexLinuxAppshotI3Socket(), null);
+  env.I3SOCK = missing;
+  assert.equal(context.codexLinuxAppshotI3Socket(), missing, "a set variable is the last resort");
+  const sway = await listen(path.join(runtime, "sway-ipc.1000.42.sock"));
+  assert.equal(context.codexLinuxAppshotI3Socket(), sway);
+  fs.mkdirSync(path.join(runtime, "i3"));
+  const i3 = await listen(path.join(runtime, "i3", "ipc-socket.7"));
+  assert.equal(context.codexLinuxAppshotI3Socket(), i3, "the i3 runtime socket comes before Sway's");
+  env.SWAYSOCK = sway;
+  assert.equal(context.codexLinuxAppshotI3Socket(), sway, "a set variable naming a socket comes first");
+});
+
+test("AppShots ranks Sway windows by Xwayland stacking only when it lists every target", async () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const context = vm.createContext({
+    Buffer, console: { warn() {} }, setTimeout,
+    process: { env: { WAYLAND_DISPLAY: "wayland-1", XDG_SESSION_TYPE: "wayland" }, pid: 101, platform: "linux" },
+    require() {
+      throw new Error("No module access expected");
+    },
+  });
+  vm.runInContext(patched.slice(patched.lastIndexOf(";function codexLinuxAppshotRequire")), context);
+  let stackingReads = 0;
+  context.codexLinuxAppshotX11Stacking = async () => {
+    stackingReads++;
+    return [{ window_id: "0x1200003" }];
+  };
+  const chatgpt = { app_id: "codex-desktop", pid: 101, window_id: 2 ** 32 + 1, focused: true };
+  const code = { app_id: "code", wm_class: "code", pid: 303, window_id: 0x1200003, focused: false };
+  const firefox = { app_id: "firefox", pid: 404, window_id: 2 ** 32 + 2, focused: false };
+
+  // Every external window is Xwayland: the stacking list covers them.
+  const covered = await context.codexLinuxAppshotResolvedWindow({ backend: "i3", windows: [chatgpt, code] });
+  assert.equal(covered.focusedWindow?.app_id, "code");
+  assert.equal(stackingReads, 1);
+
+  // A native Wayland window is missing from Xwayland stacking, so no target is guessed.
+  const mixed = await context.codexLinuxAppshotResolvedWindow({ backend: "i3", windows: [chatgpt, firefox, code] });
+  assert.equal(mixed.focusedWindow, null);
+  assert.equal(stackingReads, 1);
 });
 
 for (const failure of ["activation-command", "activation-ignored", "target-changed", "focus-changed", "bounds-changed", "restore-ignored"]) {
@@ -1159,14 +1236,18 @@ test("AppShots prefers direct X11 window capture before root screenshot fallback
   );
   // An X11 window under i3 or Xwayland keeps the direct capture; a native
   // Wayland window on Sway (2^32 plus its container id) has no X11 id.
-  assert.deepEqual(
-    Array.from(context.codexLinuxAppshotScreenshotCommands({ backend: "i3", window_id: 0x200 })[0].args),
-    ["-window", "0x200"],
-  );
-  assert.equal(
-    context.codexLinuxAppshotScreenshotCommands({ backend: "i3", window_id: 2 ** 32 + 7 })[0].source,
-    "grim",
-  );
+  for (const window_id of [0x200, 2 ** 32 - 1]) {
+    assert.deepEqual(
+      Array.from(context.codexLinuxAppshotScreenshotCommands({ backend: "i3", window_id })[0].args),
+      ["-window", `0x${window_id.toString(16)}`],
+    );
+  }
+  for (const window_id of [2 ** 32, 2 ** 32 + 7]) {
+    assert.equal(
+      context.codexLinuxAppshotScreenshotCommands({ backend: "i3", window_id })[0].source,
+      "grim",
+    );
+  }
 });
 
 test("AppShots captures accessibility and pixels concurrently", async () => {

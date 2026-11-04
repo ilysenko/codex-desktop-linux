@@ -60,7 +60,10 @@ Privacy and correctness constraints:
   target and restore focus before delivery. The i3 backend also answers on
   Sway: windows are focused by their decimal X11 id, or by `con_id` for a
   native Wayland window, through `i3-msg`, or `swaymsg` when i3 is not
-  installed. If verification or restoration
+  installed, on the IPC socket the backend uses. On Sway the target is the
+  topmost external window in Xwayland stacking order, which lists only
+  Xwayland windows; while a native Wayland window is open besides ChatGPT,
+  no target is offered. If verification or restoration
   fails, no attachment is delivered. Both paths skip ChatGPT and desktop portal windows.
   Other backends fail closed when they cannot provide a safe target.
 - Capture fails closed when no selected window or usable bounds are available.
