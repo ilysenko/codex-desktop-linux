@@ -109,18 +109,23 @@ also check credential-file decoding and the idle-check protocol in a disposable,
 unauthenticated app server. This does not test OAuth with real accounts.
 
 Set `CODEX_ACCOUNT_SWITCHER_OFFICIAL_DIR` to a directory containing the original
-signed main-process chunks (`early-bootstrap*.js`) and profile-dropdown
-JavaScript bundle to also run the current
+signed main-process chunks (`early-bootstrap*.js`) and the rspack webview chunk
+that holds the profile dropdown to also run the current
 bundle contract tests, or set `CODEX_SIGNED_EXTRACTED_APP` to the extracted ASAR
-root as the signed-baseline CI job does on both architectures.
+root as the signed-baseline CI job does on both architectures. The webview
+chunk is found by its menu strings (`codex.profileDropdown.settingsPage`,
+`codex.profileDropdown.copyUserIdForEmail`, `avatar-overlay-open`), not by its
+file name.
 Enabled feature builds fail closed on missing or
-ambiguous anchors, including the imported menu-item component. Both menu layouts
-use a fresh import alias so minified local callbacks cannot become components.
+ambiguous anchors. All profile-menu anchors must live in one rspack module
+factory, and the menu-item, JSX runtime and message-bus references must be that
+module's import bindings. The row is a module-scope function, so minified local
+callbacks that reuse an import alias in a nested scope cannot become components.
 The render regression opens each layout repeatedly with the pet enabled and
 disabled, checks that rendering sends no messages, and exercises the explicit
 account and pet actions. The signed-bundle test also syntax-checks the complete
-profile module as ESM and executes its pet assignment alongside the injected row
-with inert JSX and transport bindings; it does not launch the desktop app.
+patched chunk as ESM and executes the injected rows with inert JSX and
+transport bindings; it does not launch the desktop app.
 Tests cover encryption, permissions, active-task guards,
 cancellation, token refresh preservation, switching, rollback, forgetting,
 storage corruption, authority mismatch, and unexpected OAuth destinations.

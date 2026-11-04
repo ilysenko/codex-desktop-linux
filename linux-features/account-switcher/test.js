@@ -11,6 +11,7 @@ const { spawn, execFileSync } = require("node:child_process");
 const { createAccountSwitcher } = require("./runtime");
 const { applyMain, applyUi } = require("./patch");
 const { loadLinuxFeaturePatchDescriptors, enabledLinuxFeaturePackagePlan } = require("../../scripts/lib/linux-features");
+const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 
 function credentials(name) {
   const token = claims => `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
@@ -392,18 +393,44 @@ test("identity uses the current desktop user_id authority ahead of chatgpt_user_
   assert.equal(f.dialogs.length, 0);
 });
 
+// rspack/SWC webview chunk: module factories keyed by hashed ids, imports as
+// module-scope `var x=n("id")` bindings, double-quoted strings. The sidebar
+// branch reuses the menu-item module alias for the pet callback.
+const UI_MODULE = 'Ab12(e,t,n){n.d(t,{Profile:()=>Profile});var UI=n("jsx"),Menu=n("menu"),Bus=n("bus"),Text=n("text");' +
+  'function Profile(props){let label,settings,group,{sidebarFooter:footer,onClose:close}=props,fmt=intl();' +
+  'fmt.formatMessage({id:"codex.profileDropdown.copyUserIdForEmail",defaultMessage:"Copy user ID for {email}"},{email:"a"});' +
+  'label=(0,UI.jsx)(Text.A,{id:"codex.profileDropdown.settingsPage",defaultMessage:"Settings",description:"Menu item to open Codex settings page"});' +
+  'settings=(0,UI.jsx)(Menu.tJ,{leftIconAsset:asset.T,keyboardShortcut:shortcut,onClick:settingsClick,children:label});' +
+  'group=(0,UI.jsxs)(UI.Fragment,{children:[divider,identity,settings]});' +
+  'if(null!=footer){let Menu=petEnabled?()=>{close(),Bus.O1.dispatchMessage("avatar-overlay-open",{})}:void 0;' +
+  'return(0,UI.jsx)(Layout,{accountIcon:icon,accountSwitcher:switcher,additionalItems:items,onCloseMenu:close,onTogglePet:Menu})}' +
+  'return(0,UI.jsxs)("div",{children:[group,workspace,analytics,more]})}}';
+const UI_CHUNK = `export const __rspack_esm_id=1;export const __rspack_esm_ids=[1];export const __webpack_modules__={Zz99(e,t,n){n.d(t,{other:()=>1})},${UI_MODULE}};`;
+
+// Loads the fixture chunk like the rspack runtime: run the module factory with
+// a require function resolving its import bindings.
+function loadProfile(source, context, imports) {
+  const sandbox = { ...context };
+  vm.runInNewContext(source.replace(/export const /g, "var "), sandbox);
+  const exports = {};
+  const load = id => imports[id];
+  load.d = (target, getters) => {
+    for (const [key, getter] of Object.entries(getters)) Object.defineProperty(target, key, { get: getter });
+  };
+  sandbox.__webpack_modules__.Ab12({}, exports, load);
+  return exports.Profile;
+}
+
 test("semantic contracts preserve renamed symbols, reject partial drift, and route the Polish menu action", async () => {
   const main = 'async function handle(view,message){switch(message.type){case"mcp-request":{log().debug("app_server.bridge_received",{safe:{messageType:"mcp-request",requestId:String(message.request.id),method:message.request.method,originWebcontentsId:view.id,originHostId:message.hostId}});this.sendAppServerResponseToView();this.appServerConnectionRegistry.getAllHostIds();break}}}async function config(options){return[...(0,helpers.computeConfig)(options.globalState,options.hostConfig),...await options.secretAuthStorageConfigOverrides,...await extras(options)]}';
-  const ui = 'import{MenuItem as Item}from"./menu.js";function Profile(props){let memo=(0,Cache.c)(275),{sidebarFooter:footer,ambientUsage:usage,hideUsage:hidden,open:opened,onClose:close}=props,disabled=hidden!==void 0,scope=read(atom);let fmt=intl();fmt.formatMessage({id:`codex.profileDropdown.copyUserIdForEmail`});let label;label=`codex.profileDropdown.settingsPage`;let settings;settings=(0,UI.jsx)(Item,{leftIconAsset:asset,keyboardShortcut:shortcut,onClick:settingsClick,children:label});let group=(0,UI.jsxs)(UI.Fragment,{children:[divider,identity,settings]});let alternate=(0,UI.jsx)(Layout,{accountIcon:icon,accountSwitcher:switcher,additionalItems:items,onCloseMenu:close,onTogglePet:pet});Bridge.dispatchMessage(`avatar-overlay-open`,{});return(0,UI.jsxs)(`div`,{children:[group,workspace,analytics,more]})}';
-  for (const [source, apply, drift] of [[main, applyMain, "secretAuthStorageConfigOverrides"], [ui, applyUi, "accountSwitcher"]]) {
+  for (const [source, apply, drift] of [[main, applyMain, "secretAuthStorageConfigOverrides"], [UI_CHUNK, applyUi, "accountSwitcher"]]) {
     const patched = apply(source);
     assert.notEqual(patched, source);
-    new vm.Script(patched.replace(/import\{[^}]+\}from"\.\/menu.js";/, ""));
+    new vm.Script(patched.replace(/export const /g, "var "));
     assert.equal(apply(patched), patched);
     assert.equal(apply(source + source), source + source);
     assert.equal(apply(source.replace(drift, "retired")), source.replace(drift, "retired"));
   }
-  const patched = applyUi(ui);
   const config = vm.runInNewContext(applyMain(main) + ";config", {
     helpers: { computeConfig: () => ["base"] }, extras: async () => ["extras"],
   });
@@ -415,55 +442,39 @@ test("semantic contracts preserve renamed symbols, reject partial drift, and rou
   // The retired pre-26.1021 config list with a trailing call is no longer accepted.
   const retiredConfig = main.replace("await extras(options)]", "await extras(options),mode(options)]");
   assert.equal(applyMain(retiredConfig), retiredConfig);
-  for (const invalid of [ui.replace('import{MenuItem as Item}from"./menu.js";', ""), 'import{Other as Item}from"./other.js";' + ui]) {
-    assert.equal(applyUi(invalid), invalid, "unverified or ambiguous imports must fail closed");
-  }
-  const collision = applyUi(ui.replace("let fmt=intl()", "let codexLinuxAccountSwitcherMenuItem=0,codexLinuxAccountSwitcherMenuItem1=0,fmt=intl()"));
-  assert.match(collision, /MenuItem as codexLinuxAccountSwitcherMenuItem2,/);
-  const renamed = ui.replaceAll("MenuItem as Item", "RenamedExport as RenamedItem").replaceAll("jsx)(Item,", "jsx)(RenamedItem,");
-  assert.match(applyUi(renamed), /RenamedExport as codexLinuxAccountSwitcherMenuItem,/);
-  const rows = [...patched.matchAll(/\(0,UI\.jsx\)\(codexLinuxAccountSwitcherMenuItem,\{onClick:\(\)=>\{close\(\);Bridge\.dispatchMessage[\s\S]*?`Switch account…`\}\)/g)];
-  assert.equal(rows.length, 2);
-  const sent = [];
-  let closed = 0;
-  for (const [row] of rows) {
-    const rendered = vm.runInNewContext(row, { UI: { jsx: (_, props) => props }, codexLinuxAccountSwitcherMenuItem: {}, close: () => closed++, Bridge: { dispatchMessage: (...args) => sent.push(args) }, fmt: { locale: "pl-PL" } });
-    assert.equal(rendered.children, "Przełącz konto…");
-    rendered.onClick();
-  }
-  assert.equal(closed, 2);
-  assert.equal(sent.length, 2);
-  assert.equal(sent[0][0], "mcp-request");
-  assert.equal(sent[0][1].hostId, "local");
-  assert.equal(sent[0][1].request.method, "community/accountSwitcher");
-  assert.equal(sent[0][1].request.params.locale, "pl-PL");
+  const invalid = {
+    unboundMenuModule: UI_CHUNK.replace('Menu=n("menu"),', ""),
+    unboundBus: UI_CHUNK.replace(',Bus=n("bus")', ""),
+    // Sites split across module factories cannot share the injected helper.
+    splitModules: UI_CHUNK.replace('fmt.formatMessage({id:"codex.profileDropdown.copyUserIdForEmail"', 'fmt.x}},Cd34(e,t,n){fmt.formatMessage({id:"codex.profileDropdown.copyUserIdForEmail"').replace("other:()=>1})}", "other:()=>1})}"),
+    retiredTemplateLiterals: UI_CHUNK.replace('"avatar-overlay-open"', "`avatar-overlay-open`"),
+  };
+  for (const [name, source] of Object.entries(invalid)) assert.equal(applyUi(source), source, name);
+  const renamed = UI_CHUNK.replace(/\bMenu\b/g, "RenamedMenu").replaceAll(".tJ", ".zQ").replace(/\bBus\b/g, "Wire").replaceAll(".O1", ".k9");
+  assert.match(applyUi(renamed), /\(0,UI\.jsx\)\(RenamedMenu\.zQ,\{onClick:\(\)=>\{close\(\);Wire\.k9\.dispatchMessage\("mcp-request"/);
+  const patched = applyUi(UI_CHUNK);
+  assert.equal(patched.match(/method:"community\/accountSwitcher"/g).length, 1);
+  assert.match(patched, /additionalItems:codexLinuxAccountSwitcherItems\(items,close,fmt\),/);
+  assert.match(patched, /children:\[divider,identity,settings,codexLinuxAccountSwitcherRow\(close,fmt\)\]/);
 });
 
 test("rendering either profile layout cannot invoke a shadowing pet callback", () => {
-  const source = 'import{MenuItem as Item}from"./menu.js";function Profile(props){let memo=(0,Cache.c)(275),{sidebarFooter:footer,ambientUsage:usage,hideUsage:hidden,open:opened,onClose:close}=props,scope=read(atom);let fmt=intl();fmt.formatMessage({id:`codex.profileDropdown.copyUserIdForEmail`});let label;label=`codex.profileDropdown.settingsPage`;let settings;settings=(0,UI.jsx)(Item,{leftIconAsset:asset,keyboardShortcut:shortcut,onClick:settingsClick,children:label});let group=(0,UI.jsxs)(UI.Fragment,{children:[divider,identity,settings]});if(footer!=null){let Item=petEnabled?()=>{close();Bridge.dispatchMessage(`avatar-overlay-open`,{})}:void 0;return(0,UI.jsx)(Layout,{accountIcon:icon,accountSwitcher:switcher,additionalItems:items,onCloseMenu:close,onTogglePet:Item})}return(0,UI.jsxs)(`div`,{children:[group,workspace,analytics,more]})}';
-  const patched = applyUi(source);
-  assert.notEqual(patched, source);
-  // Link the fixture's ESM bindings without loading a browser or real profile.
-  const linked = patched.replace(/import\{([^}]+)\}from"\.\/menu.js";/, (_, specifiers) =>
-    specifiers.split(",").map(specifier => {
-      const [exported, local = exported] = specifier.trim().split(/\s+as\s+/);
-      assert.equal(exported, "MenuItem");
-      return `const ${local}=MenuItem;`;
-    }).join(""));
+  const patched = applyUi(UI_CHUNK);
+  assert.notEqual(patched, UI_CHUNK);
   for (const sidebarFooter of [null, {}]) for (const petEnabled of [true, false]) {
     const sent = [], rows = [];
     let closed = 0, petClick;
     const jsx = (type, props) => ({ type, props });
     const MenuItem = props => { rows.push(props); return null; };
-    const context = {
-      MenuItem, petEnabled, UI: { jsx, jsxs: jsx, Fragment: "fragment" },
-      Cache: { c: () => [] }, read: () => null, atom: {}, intl: () => ({ locale: "pl", formatMessage() {} }),
-      Bridge: { dispatchMessage: (...args) => sent.push(args) },
+    const profile = loadProfile(patched, {
+      petEnabled, intl: () => ({ locale: "pl", formatMessage() {} }),
       Layout: props => { petClick = props.onTogglePet; return props.additionalItems; },
-      asset: null, shortcut: null, settingsClick() {}, icon: null, switcher: null,
+      asset: { T: null }, shortcut: null, settingsClick() {}, icon: null, switcher: null,
       items: null, identity: null, divider: null, workspace: null, analytics: null, more: null,
-    };
-    const profile = vm.runInNewContext(linked + ";Profile", context);
+    }, {
+      jsx: { jsx, jsxs: jsx, Fragment: "fragment" }, menu: { tJ: MenuItem },
+      bus: { O1: { dispatchMessage: (...args) => sent.push(args) } }, text: { A: () => null },
+    });
     const render = node => {
       if (Array.isArray(node)) return node.forEach(render);
       if (!node || typeof node !== "object") return;
@@ -481,7 +492,9 @@ test("rendering either profile layout cannot invoke a shadowing pet callback", (
     assert.equal(closed, 1);
     assert.equal(sent.length, 1);
     assert.equal(sent[0][0], "mcp-request");
+    assert.equal(sent[0][1].hostId, "local");
     assert.equal(sent[0][1].request.method, "community/accountSwitcher");
+    assert.equal(sent[0][1].request.params.locale, "pl");
     if (sidebarFooter && petEnabled) {
       petClick();
       assert.equal(closed, 2);
@@ -552,58 +565,65 @@ test("latest bundled CLI decodes the isolated OAuth file and supports the idle-c
 // Use exact current signed-bundle fixtures when supplied by local or CI validation.
 const official = process.env.CODEX_ACCOUNT_SWITCHER_OFFICIAL_DIR;
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
-test("official main and both profile layouts patch uniquely and remain valid JavaScript", { skip: !official && !signedApp }, () => {
-  for (const [prefix, apply] of [["early-bootstrap", applyMain], ["profile-dropdown-items-", applyUi]]) {
-    const directory = official || path.join(signedApp, prefix === "early-bootstrap" ? ".vite/build" : "webview/assets");
-    // rspack spreads the main process over chunks; exactly one must hold the contract.
-    const names = fs.readdirSync(directory).filter(file => file.startsWith(prefix) && file.endsWith(".js")).filter(name => {
+test("official main and profile dropdown chunks patch uniquely and remain valid JavaScript", { skip: !official && !signedApp }, () => {
+  const { descriptors } = require("./patch");
+  const needles = descriptors.find(descriptor => descriptor.id === "account-switcher-profile-menu").assetNeedles;
+  for (const [kind, apply] of [["main", applyMain], ["webview", applyUi]]) {
+    const directory = official || path.join(signedApp, kind === "main" ? ".vite/build" : "webview/assets");
+    // rspack spreads the main process and the webview over chunks; exactly one must hold the contract.
+    const names = kind === "main"
+      ? fs.readdirSync(directory).filter(file => file.startsWith("early-bootstrap") && file.endsWith(".js"))
+      : official ? fs.readdirSync(directory).filter(file => file.endsWith(".js"))
+        : findWebviewAssetsContaining(signedApp, needles);
+    const changed = names.filter(name => {
       const source = fs.readFileSync(path.join(directory, name), "utf8");
       return apply(source) !== source;
     });
-    assert.equal(names.length, 1, `expected a unique ${prefix} bundle`);
-    const source = fs.readFileSync(path.join(directory, names[0]), "utf8");
+    assert.equal(changed.length, 1, `expected a unique ${kind} chunk`);
+    const source = fs.readFileSync(path.join(directory, changed[0]), "utf8");
     const patched = apply(source);
     assert.notEqual(patched, source);
     assert.equal(apply(patched), patched);
-    if (prefix === "early-bootstrap") {
+    if (kind === "main") {
       new vm.Script(patched);
       assert.equal(patched.split("app.quit(").length, source.split("app.quit(").length);
       assert.equal(patched.split("app.relaunch(").length, source.split("app.relaunch(").length);
     } else {
-      assert.equal(patched.match(/method:`community\/accountSwitcher`/g).length, 2);
+      assert.equal(patched.match(/method:"community\/accountSwitcher"/g).length, 1);
+      assert.equal(patched.match(/codexLinuxAccountSwitcherItems\(/g).length, 2);
+      assert.equal(patched.match(/codexLinuxAccountSwitcherRow\(/g).length, 3);
       execFileSync(process.execPath, ["--input-type=module", "--check"], { input: patched, stdio: "pipe" });
-      // Execute the signed bundle's actual pet assignment and injected sidebar
-      // row in the same lexical block, with inert JSX and transport bindings.
-      // Reusing the imported component's minified name here opens the pet during
-      // render (or produces an undefined component when the pet is disabled).
+      // Execute the injected module-scope rows with inert JSX and transport
+      // bindings named exactly as the signed module's import bindings.
       const ident = "[A-Za-z_$][\\w$]*";
-      const pets = [...source.matchAll(new RegExp(`(${ident})=(${ident})\\?\\(\\)=>\\{(${ident})\\(\\),(${ident})\\.dispatchMessage\\(\\\`avatar-overlay-open\\\`,\\{\\}\\)\\}:void 0`, "g"))];
-      const rows = [...patched.matchAll(new RegExp(`\\(0,(${ident})\\.jsx\\)\\((${ident}),\\{onClick:\\(\\)=>\\{(${ident})\\(\\);(${ident})\\.dispatchMessage[\\s\\S]*?locale:(${ident})\\.locale[\\s\\S]*?\\\`Switch account…\\\`\\}\\)`, "g"))];
-      assert.equal(pets.length, 1, "expected a unique pet callback in the signed bundle");
-      assert.equal(rows.length, 2);
-      const pet = pets[0], row = rows[0];
-      assert.equal(pet[3], row[3]);
-      assert.equal(pet[4], row[4]);
-      assert.notEqual(pet[1], row[2], "sidebar component must not resolve to the pet callback");
-      for (const enabled of [true, false]) {
-        const sent = [], rendered = [];
-        let closed = 0;
-        const component = props => { rendered.push(props); return null; };
-        const element = vm.runInNewContext(`(()=>{let ${pet[0]};return ${row[0]}})()`, {
-          [pet[2]]: enabled, [row[1]]: { jsx: (type, props) => ({ type, props }) },
-          [row[2]]: component, [row[3]]: () => closed++,
-          [row[4]]: { dispatchMessage: (...args) => sent.push(args) }, [row[5]]: { locale: "pl" },
-        });
-        assert.equal(element.type, component);
-        element.type(element.props);
-        assert.equal(rendered.length, 1);
-        assert.equal(closed, 0);
-        assert.equal(sent.length, 0);
-        rendered[0].onClick();
-        assert.equal(closed, 1);
-        assert.equal(sent.length, 1);
-        assert.equal(sent[0][0], "mcp-request");
+      const helper = patched.match(new RegExp(
+        `/\\*codexLinuxAccountSwitcherUi\\*/function codexLinuxAccountSwitcherRow\\(close,intl\\)\\{return\\(0,(${ident})\\.jsx\\)\\((${ident})\\.(${ident}),` +
+        `\\{onClick:\\(\\)=>\\{close\\(\\);(${ident})\\.(${ident})\\.dispatchMessage[\\s\\S]*?function codexLinuxAccountSwitcherItems\\(items,close,intl\\)\\{[^{}]*\\{[^{}]*\\}\\)\\}`));
+      assert.ok(helper, "injected module-scope helper");
+      const [code, jsxAlias, menuModule, menuExport, busModule, busExport] = helper;
+      for (const name of [jsxAlias, menuModule, busModule]) {
+        assert.match(source, new RegExp(`[,\\s]${name.replace(/\$/g, "\\$")}=[A-Za-z_$][\\w$]*\\("[^"]+"\\)`), `${name} is a module import binding`);
       }
+      const sent = [], rendered = [];
+      let closed = 0;
+      const component = props => { rendered.push(props); return null; };
+      const jsx = (type, props) => ({ type, props });
+      const items = vm.runInNewContext(`${code};codexLinuxAccountSwitcherItems`, {
+        [jsxAlias]: { jsx, jsxs: jsx, Fragment: "fragment" }, [menuModule]: { [menuExport]: component },
+        [busModule]: { [busExport]: { dispatchMessage: (...args) => sent.push(args) } },
+      });
+      const element = items("existing", () => closed++, { locale: "pl" });
+      assert.equal(element.props.children[0], "existing");
+      const row = element.props.children[1];
+      assert.equal(row.type, component);
+      row.type(row.props);
+      assert.equal(rendered.length, 1);
+      assert.equal(rendered[0].children, "Przełącz konto…");
+      assert.equal(closed, 0);
+      assert.equal(sent.length, 0);
+      rendered[0].onClick();
+      assert.equal(closed, 1);
+      assert.deepEqual([sent.length, sent[0][0], sent[0][1].request.method], [1, "mcp-request", "community/accountSwitcher"]);
     }
     for (const invalid of [source + source, source.replaceAll("mcp-request", "retired-request").replaceAll("accountSwitcher", "retiredSwitcher")]) {
       assert.equal(apply(invalid), invalid);
