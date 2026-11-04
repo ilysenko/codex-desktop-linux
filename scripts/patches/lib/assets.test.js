@@ -79,3 +79,46 @@ test("asset patches still apply valid edits, non-JS assets, and unparseable orig
     assert.deepEqual(warnings, []);
   });
 });
+
+const CODEX_REQUEST_MODULE =
+  'M8aW(e,t,n){n.d(t,{vF:()=>"vscode",Xb:()=>s,IF:()=>a});var r=n("DBCl"),i=n("GDNt");' +
+  'function a(e,t){return["vscode",e,t]}' +
+  "async function s(...e){let[t,n]=e,{params:r,select:i,signal:a,source:l,responsePriority:u}=n??{};return o(t,r,i,a,l,u)}" +
+  "async function o(e,t,n,a,s,o){let l=(await i._n.getInstance().post(`vscode://codex/${e}`,JSON.stringify(t),a,o)).body;return n?n(l):l}}";
+const rspackChunk = (id, ...modules) =>
+  `/*! LICENSE: ${id}.js.LICENSE.txt */\nexport const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];` +
+  `export const __webpack_modules__={${modules.join(",")}};`;
+
+test("findCodexRequestWebviewAsset resolves the rspack request module, export and chunk", () => {
+  const { findCodexRequestWebviewAsset } = require("./assets.js");
+  withAssets({ "158624.entry.js": rspackChunk(158624, "Ab12(e,t,n){t.x=1}") }, ({ root }) => {
+    const assets = path.join(root, "webview", "assets");
+    fs.mkdirSync(path.join(assets, "async"));
+    fs.writeFileSync(
+      path.join(assets, "async", "24191.7b05d5cf83.js"),
+      rspackChunk(24191, "odKs(e,t,n){t.A=1}", CODEX_REQUEST_MODULE),
+    );
+    // A chunk that only mentions the URL without the wrapper contract is ignored.
+    fs.writeFileSync(
+      path.join(assets, "async", "1.a.js"),
+      rspackChunk(1, "Zz00(e,t,n){let a=`vscode://codex/${e}`;t.A=a}"),
+    );
+    assert.deepEqual(findCodexRequestWebviewAsset(assets), {
+      assetName: "async/24191.7b05d5cf83.js",
+      chunkId: 24191,
+      moduleId: "M8aW",
+      exportName: "Xb",
+    });
+
+    fs.writeFileSync(
+      path.join(assets, "async", "2.b.js"),
+      rspackChunk(2, CODEX_REQUEST_MODULE.replace("M8aW", "Q9zz")),
+    );
+    assert.throws(() => findCodexRequestWebviewAsset(assets), /multiple Codex request API assets/);
+    fs.writeFileSync(
+      path.join(assets, "async", "2.b.js"),
+      rspackChunk(2, CODEX_REQUEST_MODULE.replace("M8aW", "Q9zz").replace("Xb:()=>s,", "")),
+    );
+    assert.equal(findCodexRequestWebviewAsset(assets).moduleId, "M8aW");
+  });
+});

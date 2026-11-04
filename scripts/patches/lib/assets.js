@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { findExportedAlias } = require("./minified-js.js");
+const { findMatchingBrace } = require("./minified-js.js");
 const { patchBreaksJavaScriptSyntax } = require("./javascript-syntax.js");
 
 function readDirectoryNames(dir) {
@@ -197,28 +197,53 @@ function findRequiredWebviewAsset(webviewAssetsDir, filenamePattern, marker, des
   return matches[0];
 }
 
+// The rspack webview wraps `vscode://codex/<method>` requests in a module such as
+//   M8aW(e,t,n){n.d(t,{vF:()=>"vscode",Xb:()=>s,IF:()=>a});...
+//     async function s(...e){let[t,n]=e,{params:r,select:i,signal:a,source:l,responsePriority:u}=n??{};
+//       return o(t,r,i,a,l,u)}
+//     async function o(e,t,n,a,s,o){let l=(await i._n.getInstance().post(`vscode://codex/${e}`,...
+// There are no ESM exports between app chunks any more: injected code reaches
+// the wrapper through the webpack require of a module factory, as
+// `require(moduleId)[exportName]`, after loading `chunkId` when needed.
 function findCodexRequestExportName(source) {
-  let match = source.match(
-    /async function\s+([A-Za-z_$][\w$]*)\(\.\.\.[^)]+\)\{let\[[^\]]+\]=[^;]+,\{params:[^}]+source:[^}]+\}=[^;]+;return\s+[A-Za-z_$][\w$]*\([^)]*\)\}/,
-  );
-  if (match != null) {
-    return findExportedAlias(source, match[1]);
+  const ID = "[A-Za-z_$][\\w$]*";
+  const modulesStart = source.indexOf("__webpack_modules__={");
+  if (modulesStart < 0) return null;
+  const header = new RegExp(`^,?("[^"]+"|${ID}|\\d+)\\(((?:${ID}(?:,${ID}){0,2})?)\\)\\{`, "u");
+  const escape = (value) => value.replace(/\$/g, "\\$");
+  const matches = [];
+  let index = modulesStart + "__webpack_modules__={".length;
+  while (index < source.length) {
+    const moduleHeader = header.exec(source.slice(index, index + 200));
+    if (moduleHeader == null) break;
+    const open = index + moduleHeader[0].length - 1;
+    const close = findMatchingBrace(source, open);
+    if (close < 0) break;
+    index = close + 1;
+    const body = source.slice(open, close + 1);
+    const [, exportsParam, requireParam] = moduleHeader[2].split(",");
+    if (requireParam == null || !body.includes("vscode://codex/${")) continue;
+    const raw = [...body.matchAll(new RegExp(
+      `async function (${ID})\\(${ID}(?:,${ID})*\\)\\{let ${ID}=\\(await ${ID}(?:\\.${ID})*\\.getInstance\\(\\)\\.post\\(\`vscode://codex/\\$\\{`,
+      "gu",
+    ))];
+    if (raw.length !== 1) continue;
+    const wrappers = [...body.matchAll(new RegExp(
+      `async function (${ID})\\(\\.\\.\\.(${ID})\\)\\{let\\[(${ID}),(${ID})\\]=\\2,` +
+        `\\{params:(${ID}),select:(${ID}),signal:(${ID}),source:(${ID})(?:,responsePriority:(${ID}))?\\}=\\4\\?\\?\\{\\};` +
+        `return ${escape(raw[0][1])}\\(\\3,\\5,\\6,\\7,\\8(?:,\\9)?\\)\\}`,
+      "gu",
+    ))];
+    if (wrappers.length !== 1) continue;
+    const exportNames = [...body.matchAll(new RegExp(
+      `(?<![\\w$.])${escape(requireParam)}\\.d\\(${escape(exportsParam)},\\{(?:[^{}]*?,)?(${ID}):\\(\\)=>${escape(wrappers[0][1])}(?=[,}])`,
+      "gu",
+    ))];
+    if (exportNames.length !== 1) continue;
+    const moduleId = moduleHeader[1].startsWith("\"") ? JSON.parse(moduleHeader[1]) : moduleHeader[1];
+    matches.push({ moduleId, exportName: exportNames[0][1] });
   }
-
-  match = source.match(
-    /function\s+([A-Za-z_$][\w$]*)\(\.\.\.[^)]+\)\{let\[[^\]]+\]=[^;]+,\{params:[^}]+select:[^}]+signal:[^}]+source:[^}]+\}=[^;]+;return\s+([A-Za-z_$][\w$]*)\([^)]*\)\}/,
-  );
-  if (match != null) {
-    const [, wrapperName, rawRequestName] = match;
-    const rawRequestPattern = new RegExp(
-      `async function\\s+${rawRequestName}\\([^)]*\\)\\{[\\s\\S]{0,600}?vscode://codex/`,
-    );
-    if (rawRequestPattern.test(source)) {
-      return findExportedAlias(source, wrapperName);
-    }
-  }
-
-  return null;
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function findCodexRequestWebviewAsset(webviewAssetsDir) {
@@ -226,16 +251,17 @@ function findCodexRequestWebviewAsset(webviewAssetsDir) {
     throw new Error(`Missing webview assets directory ${webviewAssetsDir}`);
   }
 
-  const modernCandidates = listWebviewScriptAssets(path.dirname(path.dirname(webviewAssetsDir)));
+  const candidates = listWebviewScriptAssets(path.dirname(path.dirname(webviewAssetsDir)));
   const matches = [];
-  for (const candidate of modernCandidates) {
+  for (const candidate of candidates) {
     const source = readWebviewAsset(webviewAssetsDir, candidate);
-    if (!source.includes("vscode://codex/")) {
+    if (!source.includes("vscode://codex/${")) {
       continue;
     }
-    const exportName = findCodexRequestExportName(source);
-    if (exportName != null) {
-      matches.push({ assetName: candidate, exportName });
+    const requestModule = findCodexRequestExportName(source);
+    const chunkId = source.match(/(?:^|[;\n])export const __rspack_esm_id=(\d+);/)?.[1];
+    if (requestModule != null && chunkId != null) {
+      matches.push({ assetName: candidate, chunkId: Number(chunkId), ...requestModule });
     }
   }
 
