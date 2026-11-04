@@ -79,3 +79,21 @@ test("gesture patch accepts renamed identifiers and rejects missing or ambiguous
     assert.throws(() => applyPetOverlayGestureRendererPatch(fixture.replaceAll(anchor, "drifted")));
   assert.throws(() => applyPetOverlayGestureRendererPatch(fixture + fixture));
 });
+
+
+test("gesture applied-state validation rejects damaged forwarding, acknowledgement and helper scope", () => {
+  const patched = applyPetOverlayGestureRendererPatch(fixture);
+  assert.equal(applyPetOverlayGestureRendererPatch(patched), patched);
+  for (const damaged of [
+    patched.replace("codexPetOverlayNativeDrag=false", "codexPetOverlayNativeDrag=true"),
+    patched.replace("crypto.randomUUID():null", "crypto.randomUUID():false"),
+    patched.replace(".codexPetOverlayGestureId==null&&", ""),
+    patched.replace(/codexPetOverlayGestureId:[A-Za-z_$][\w$]*\.current\.codexPetOverlayGestureId,/, ""),
+    patched.replace(/codexPetOverlayGestureId:[A-Za-z_$][\w$]*\.current\.codexPetOverlayGestureId,/, "codexPetOverlayGestureId:wrongRef.current.codexPetOverlayGestureId,"),
+    patched.replace(/[A-Za-z_$][\w$]*\|\|=[A-Za-z_$][\w$]*\.hasMoved;/, ""),
+    patched.replace(".codexPetOverlayCompleteDrag(", ".wrongCompleteDrag("),
+    patched + patched,
+    "function codexPetOverlayConfirmRendererDrag(){}" + fixture,
+    `function hidden(){${patched}}`,
+  ]) assert.throws(() => applyPetOverlayGestureRendererPatch(damaged), /incomplete|ambiguous|outside|scope/);
+});

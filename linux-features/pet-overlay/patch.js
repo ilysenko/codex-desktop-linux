@@ -1745,8 +1745,63 @@ function rendererStatementEnd(source, from) {
 // The rspack Mini page reaches its host dispatcher and app services through
 // imported member chains (for example `G.O1.dispatchMessage` and
 // `tW.appServices.avatarOverlay`), so those captures accept member chains.
+function verifyPetOverlayGestureRendererPatch(source) {
+  const ident = "[A-Za-z_$][\\w$]*";
+  const ownPrefix = `let codexPetOverlayNativeDrag=false;\n${codexPetOverlayConfirmRendererDrag}\n`;
+  const prefixIndex = source.indexOf(ownPrefix);
+  const { findMatchingBrace: closingBrace } = require("../../scripts/patches/lib/minified-js.js");
+  if (prefixIndex < 0 || source.split(ownPrefix).length !== 2 ||
+      closingBrace("{" + source.slice(0, prefixIndex) + "}", 0) !== prefixIndex + 1) {
+    throw Error("Pet overlay renderer gesture helper is incomplete or outside program scope");
+  }
+  const prefix = new RegExp(`(?<![\\w$.])(?<fn>${ident})=async\\((?<event>${ident}),(?<released>${ident})\\)=>\\{(?:var ${ident}(?:,${ident})*;)?let (?:${ident},)*(?<gesture>${ident})=(?<ref>${ident})\\.current;`, "gu");
+  const finalizers = [...source.matchAll(prefix)].map(match => {
+    const open = source.indexOf("{", match.index);
+    const end = closingBrace(source, open);
+    return { match, end, body: source.slice(match.index, end + 1) };
+  }).filter(({ body }) => body.includes("await codexPetOverlayConfirmRendererDrag(") && body.includes('"avatar-overlay-drag-end"'));
+  if (finalizers.length !== 1) throw Error("Pet overlay applied gesture finalizer is incomplete or ambiguous");
+  const { match, end, body } = finalizers[0];
+  const { gesture } = match.groups;
+  const acknowledgement = `if(${gesture}.codexPetOverlayGestureId!=null){`;
+  const ackIndex = body.indexOf(acknowledgement);
+  const ackEnd = ackIndex < 0 ? -1 : closingBrace(body, ackIndex + acknowledgement.length - 1);
+  if (ackIndex < 0 || ackEnd < ackIndex || body.indexOf(acknowledgement, ackIndex + 1) !== -1) {
+    throw Error("Pet overlay gesture acknowledgement is incomplete or ambiguous");
+  }
+  let restoredBody = body.slice(0, ackIndex) + body.slice(ackEnd + 1);
+  const guards = new RegExp(`${ident}\\.codexPetOverlayGestureId==null&&`, "g");
+  if ([...restoredBody.matchAll(guards)].length !== 3) throw Error("Pet overlay gesture fallback guards are incomplete");
+  restoredBody = restoredBody.replace(guards, "").replace(match[0], match[0].replace("=async(", "=("));
+  let restored = (source.slice(0, match.index) + restoredBody + source.slice(end + 1)).replace(ownPrefix, "");
+  const fields = [
+    new RegExp(`codexPetOverlayGestureId:codexPetOverlayNativeDrag\\?crypto\\.randomUUID\\(\\):null,`, "g"),
+    new RegExp(`codexPetOverlayGestureId:${ident}\\.current\\.codexPetOverlayGestureId,`, "g"),
+    new RegExp(`codexPetOverlayNativeDrag=${ident}\\.layout\\?\\.codexPetOverlayNativeDrag===!0;`, "g"),
+  ];
+  for (const field of fields) {
+    if ([...restored.matchAll(field)].length !== 1) throw Error("Pet overlay gesture forwarding is incomplete or ambiguous");
+    restored = restored.replace(field, "");
+  }
+  if (restored.includes("codexPetOverlayConfirmRendererDrag")) throw Error("Pet overlay acknowledgement escaped its gesture owner");
+  // Regenerate every injected statement from the recovered native contract.
+  // This proves bindings and the complete acknowledgement, including moved-state
+  // synchronization. Other feature prefixes may precede our program-level helper.
+  const regenerated = applyPetOverlayGestureRendererPatch(restored);
+  if (regenerated.replace(ownPrefix, "") !== source.replace(ownPrefix, "")) {
+    throw Error("Pet overlay renderer gesture patch is incomplete or inconsistent");
+  }
+}
+
 function applyPetOverlayGestureRendererPatch(source) {
-  if (source.includes("function codexPetOverlayConfirmRendererDrag(")) return source;
+  if (source.includes("codexPetOverlayConfirmRendererDrag")) {
+    if (source.split(String(codexPetOverlayConfirmRendererDrag)).length - 1 !== 1 ||
+        source.split("codexPetOverlayConfirmRendererDrag").length - 1 !== 2) {
+      throw Error("Pet overlay renderer gesture patch is incomplete or ambiguous");
+    }
+    verifyPetOverlayGestureRendererPatch(source);
+    return source;
+  }
   const ident = "[A-Za-z_$][\\w$]*";
   const member = `(?<![\\w$.])${ident}(?:\\.${ident})*`;
   const one = (pattern, label, text = source) => {
