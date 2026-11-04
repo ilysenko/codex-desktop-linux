@@ -5,6 +5,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { createHash } = require("node:crypto");
+const { isPatchIntegrityError } = require("../../scripts/patches/integrity-error.js");
+const { applyExtractedAppPatchDescriptors, normalizeDescriptor } = require("../../scripts/patches/engine.js");
+const { createPatchReport, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
 const {
   CODEX_MICRO_GATE_CONTRACTS,
@@ -202,6 +206,92 @@ test("Codex Micro feature gate discovers and patches every rspack copy", (t) => 
   });
 });
 
+function gateDescriptorReport(root, context = {}) {
+  const original = descriptors.find(descriptor => descriptor.id === "webview-feature-gate");
+  const descriptor = normalizeDescriptor({
+    ...original,
+    id: "feature:codex-micro:webview-feature-gate",
+    name: "feature:codex-micro:webview-feature-gate",
+    featureId: "codex-micro",
+    sourceKind: "feature",
+  });
+  const report = createPatchReport();
+  report.enabledFeatures = ["codex-micro"];
+  applyExtractedAppPatchDescriptors(root, [descriptor], context, report, descriptor.phase);
+  return report;
+}
+
+function gateBytes(assets) {
+  return Object.fromEntries(Object.keys(GATE_FIXTURES).sort().map(name =>
+    [name, fs.readFileSync(path.join(assets, name))]));
+}
+
+test("all six gates roll back interrupted and silently corrupted writes, then retry completely", t => {
+  for (const failure of ["interruption", "silent corruption"]) {
+    for (let failAt = 1; failAt <= 6; failAt++) {
+      const { assets, root } = createExtractedApp(t);
+      const originals = gateBytes(assets);
+      const unrelated = fs.readFileSync(path.join(assets, "async/1.unrelated.js"));
+      let writes = 0;
+      assert.throws(() => patchCodexMicroFeatureGateAssets(root, {
+        writeFileSync(file, bytes) {
+          writes++;
+          if (writes === failAt && failure === "silent corruption") {
+            fs.writeFileSync(file, "silently corrupted asset");
+            return;
+          }
+          fs.writeFileSync(file, bytes);
+          if (writes === failAt) throw new Error("interrupted gate write");
+        },
+      }), failure === "interruption" ? /interrupted gate write/ : /write byte verification failed/);
+      assert.deepEqual(gateBytes(assets), originals, `${failure} at ${failAt}`);
+      assert.deepEqual(fs.readFileSync(path.join(assets, "async/1.unrelated.js")), unrelated);
+      const retried = patchCodexMicroFeatureGateAssets(root);
+      assert.equal(retried.changed, 6);
+      for (const match of findCodexMicroFeatureGateAssets(root).matches) {
+        const before = originals[match.assetName].toString("utf8");
+        assert.equal(match.source, applyCodexMicroFeatureGatePatch(before, match.expected));
+      }
+      assert.equal(patchCodexMicroFeatureGateAssets(root).changed, 0);
+    }
+  }
+});
+
+test("unverifiable rollback is fatal through the normal extracted-app descriptor phase", t => {
+  for (const failure of ["throws", "silent"]) {
+    const { assets, root } = createExtractedApp(t);
+    const originals = gateBytes(assets);
+    let writes = 0;
+    assert.throws(() => gateDescriptorReport(root, {
+      writeFileSync(file, bytes) {
+        writes++;
+        if (writes > 2) {
+          if (failure === "throws") throw new Error("rollback denied");
+          return;
+        }
+        fs.writeFileSync(file, bytes);
+        if (writes === 2) throw new Error("interrupted second gate write");
+      },
+    }), error => isPatchIntegrityError(error) && /could not restore original bytes/.test(error.message));
+    assert.notDeepEqual(gateBytes(assets), originals);
+  }
+});
+
+test("a transaction refusing invalid generated syntax is never reported as already-applied", t => {
+  const { assets, root } = createExtractedApp(t);
+  const source = appShellSource().replace(gate(), "new " + gate());
+  assert.doesNotThrow(() => new Function(source));
+  fs.writeFileSync(path.join(assets, "async/216127.shell.js"), source);
+  const originals = gateBytes(assets);
+  assert.throws(() => patchCodexMicroFeatureGateAssets(root), /did not commit every prepared change/);
+  assert.deepEqual(gateBytes(assets), originals);
+  const report = gateDescriptorReport(root);
+  assert.equal(report.patches[0].status, "skipped-optional");
+  assert.match(report.patches[0].reason, /did not commit every prepared change/);
+  assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
+  assert.deepEqual(gateBytes(assets), originals);
+});
+
 test("Codex Micro feature gate fails closed on an extra current callsite", (t) => {
   const { assets, root } = createExtractedApp(t);
   fs.writeFileSync(
@@ -249,6 +339,35 @@ test(
     }
   },
 );
+
+test("the actual official six-asset descriptor preserves native output and becomes already-applied", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null,
+}, t => {
+  const originalRoot = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const { matches, reason } = findCodexMicroFeatureGateAssets(originalRoot);
+  assert.equal(reason, null);
+  assert.equal(matches.length, 6);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-micro-signed-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const assets = path.join(root, "webview/assets");
+  const originals = new Map();
+  for (const match of matches) {
+    const target = path.join(assets, match.assetName);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, match.source);
+    originals.set(match.assetName, createHash("sha256").update(match.source).digest("hex"));
+  }
+  const first = gateDescriptorReport(root);
+  assert.equal(first.patches.length, 1);
+  assert.equal(first.patches[0].status, "applied");
+  for (const match of matches) {
+    assert.equal(fs.readFileSync(path.join(assets, match.assetName), "utf8"),
+      applyCodexMicroFeatureGatePatch(match.source, match.expected));
+    assert.equal(createHash("sha256").update(fs.readFileSync(match.assetPath)).digest("hex"), originals.get(match.assetName));
+  }
+  const second = gateDescriptorReport(root);
+  assert.equal(second.patches[0].status, "already-applied");
+});
 
 test("Linux hot-plug watcher is narrow and idempotent", () => {
   const source = [

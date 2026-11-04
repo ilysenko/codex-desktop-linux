@@ -13,9 +13,17 @@ of the known app-shell, sidebar, dictation, composer, or settings owners. Native
 install the staged copy from
 `.codex-linux/features/codex-micro/70-codex-micro.rules` and then reload udev.
 
+Renderer gate assets are committed as one verified batch. An interrupted or
+silently corrupted write restores the original bytes so a retry can patch the
+complete batch. If restoration cannot be verified, the patch raises a fatal
+integrity error and stops the build.
+
 Enable `codex-micro` in the gitignored `linux-features/features.json`, rebuild,
 reconnect the device, and verify Settings → Codex Micro.
 
 ```bash
 node --test linux-features/codex-micro/test.js
+# Include the current official gate/service contracts and independent descriptor check:
+CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
+  node --test linux-features/codex-micro/test.js
 ```
