@@ -54,6 +54,8 @@ const MAX_UNIX_SOCKET_PATH_BYTES: usize = 107;
 const PROCESS_REAPER_INTERVAL: Duration = Duration::from_millis(250);
 const UNCONNECTED_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCONNECTED_PROCESS_GRACE: Duration = Duration::from_secs(2);
+const TEXT_FILE_BUSY_RETRIES: u32 = 5;
+const TEXT_FILE_BUSY_BACKOFF: Duration = Duration::from_millis(5);
 const MANIFEST_FILE_NAME: &str = "chrome-native-hosts-v2.json";
 const OPEN_LOCAL_FILE_METHOD: &str = "codexRuntime/openLocalFile";
 
@@ -1523,7 +1525,7 @@ fn start_app_server(
             Ok(())
         });
     }
-    let mut child = command.spawn().map_err(|error| {
+    let mut child = spawn_retrying_busy(&mut command).map_err(|error| {
         RuntimeError::internal(format!("Failed to start Codex app-server: {error}"))
     })?;
     if let Some(stderr) = child.stderr.take() {
@@ -1611,6 +1613,33 @@ fn start_app_server(
     Err(RuntimeError::internal(
         "Timed out waiting for Codex app-server to start",
     ))
+}
+
+/// `Command::spawn` that retries a transient ETXTBSY. exec fails with it
+/// while any process holds the executable open for writing, as when another
+/// thread forks just after a fresh script was written. The library's
+/// `command_runner` retries the same way; this module is built into the
+/// Chrome host binary, which cannot reach it.
+fn spawn_retrying_busy(command: &mut Command) -> io::Result<Child> {
+    spawn_retrying_busy_with(command, |attempt| {
+        thread::sleep(TEXT_FILE_BUSY_BACKOFF * attempt)
+    })
+}
+
+fn spawn_retrying_busy_with(command: &mut Command, mut wait: impl FnMut(u32)) -> io::Result<Child> {
+    let mut attempt = 0;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if error.raw_os_error() == Some(libc::ETXTBSY)
+                    && attempt < TEXT_FILE_BUSY_RETRIES =>
+            {
+                attempt += 1;
+                wait(attempt);
+            }
+            result => return result,
+        }
+    }
 }
 
 fn app_server_child_path(node_path: &Path) -> RuntimeResult<OsString> {
@@ -2504,6 +2533,39 @@ mod tests {
         drop(second_lease);
         wait_for_process_count(&manager, 0);
         manager.shutdown();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn app_server_spawn_retries_an_executable_held_open_for_writing() {
+        let root = test_root("busy-spawn");
+        fs::create_dir_all(&root).unwrap();
+        let script = root.join("busy.sh");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // An open write handle makes exec fail with ETXTBSY, as a sibling
+        // thread's fork does while a fresh script is still open.
+        let held = OpenOptions::new().write(true).open(&script).unwrap();
+        let mut waits = 0;
+        let error =
+            spawn_retrying_busy_with(&mut Command::new(&script), |_| waits += 1).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::ETXTBSY));
+        assert_eq!(waits, TEXT_FILE_BUSY_RETRIES);
+
+        // Released during the first wait, a later attempt starts it. The
+        // wait keeps the real backoff: a sibling test thread that forked
+        // while the handle was open holds a copy until its child execs.
+        let mut held = Some(held);
+        let mut first_wait = None;
+        let mut child = spawn_retrying_busy_with(&mut Command::new(&script), |attempt| {
+            first_wait.get_or_insert(attempt);
+            held.take();
+            thread::sleep(TEXT_FILE_BUSY_BACKOFF * attempt);
+        })
+        .unwrap();
+        assert!(child.wait().unwrap().success());
+        assert_eq!(first_wait, Some(1));
         fs::remove_dir_all(root).unwrap();
     }
 

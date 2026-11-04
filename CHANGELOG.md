@@ -132,6 +132,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The Chrome extension host retries an app-server start that fails with
+  "Text file busy" (ETXTBSY), as the main backend already does for its
+  helpers. exec fails that way while another thread forks just after the
+  executable was written, which made a Chrome host test flaky.
 - Keep the remote desktop restore grant when EIS setup fails after Start on a
   non-GNOME session such as COSMIC, so persistence does not drop the grant
   and prompt for consent again. The GNOME EIS fallback path already retained
