@@ -143,6 +143,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- A successful uinput scroll notifies the Codex avatar cursor, as every other
+  pointer route already did.
 - AppShots focuses windows from the i3 backend the way the backend does: by
   the decimal X11 id, or by `con_id` for a native Wayland window on Sway,
   through `i3-msg`, or `swaymsg` when i3 is not installed, on the same IPC

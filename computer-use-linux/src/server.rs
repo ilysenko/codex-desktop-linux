@@ -2064,7 +2064,9 @@ impl ComputerUseLinux {
                 })
                 .await;
                 let _input_guard = input_guard;
-                return Json(abs_pointer_result("scroll", result, received));
+                return Json(pointer_action_result(abs_pointer_result(
+                    "scroll", result, received,
+                )));
             }
         }
         if let Some(session) = self.cached_portal_pointer_session() {
