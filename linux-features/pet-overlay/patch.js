@@ -1794,10 +1794,14 @@ function applyPetOverlayGestureRendererPatch(source) {
 }
 
 function applyPetOverlayRendererPatch(source) {
-  if (source.includes("function codexPetOverlayScheduleQuickChatFocus(")) {
-    return source;
-  }
   const ident = "[A-Za-z_$][\\w$]*";
+  const patchedSchedule = new RegExp(
+    `let\\{requestId:(?<request>${ident}),layoutRevision:(?<revision>${ident})\\}=(?<preparation>${ident}),` +
+    `(?<timer>${ident})=codexPetOverlayScheduleQuickChatFocus\\(\\(\\)=>\\{` +
+    `[^{};]{0,200}\\.completeQuickChatFocus\\(\\k<request>,\\k<revision>\\)` +
+    `[\\s\\S]{0,500}?\\.catch\\(${ident}\\)\\},\\k<preparation>\\.codexPetOverlayHiddenFocus===!0\\);return \\k<timer>`,
+    "g",
+  );
   const containingBlock = index => {
     for (let start = source.lastIndexOf("{", index); start >= 0; start = source.lastIndexOf("{", start - 1)) {
       const end = findMatchingBrace(source, start);
@@ -1808,12 +1812,22 @@ function applyPetOverlayRendererPatch(source) {
   };
   const actions = [...source.matchAll(new RegExp(`let (?<id>${ident})=(?<action>${ident})\\.requestId;`, "gu"))]
     .map(match => ({ ...containingBlock(match.index), ...match.groups }))
-    .filter(block => block.body.includes(`{requestId:${block.id},layoutRevision:null}`));
+    .filter(block => block.body.includes(`{requestId:${block.id},layoutRevision:null}`) ||
+      block.body.includes(`{requestId:${block.id},layoutRevision:null,codexPetOverlayHiddenFocus:`));
   if (actions.length !== 1) throw new Error("Pet overlay Quick Chat focus action was not found uniquely");
   const action = actions[0], needle = `{requestId:${action.id},layoutRevision:null}`;
+  const patchedAction = `{requestId:${action.id},layoutRevision:null,codexPetOverlayHiddenFocus:${action.action}.codexPetOverlayHiddenFocus===!0}`;
+  if (source.includes("codexPetOverlayScheduleQuickChatFocus") || source.includes("codexPetOverlayHiddenFocus")) {
+    if (source.split(String(codexPetOverlayScheduleQuickChatFocus)).length - 1 !== 1 ||
+        source.split("codexPetOverlayScheduleQuickChatFocus").length - 1 !== 2 ||
+        source.split(patchedAction).length - 1 !== 1 || action.body.split(patchedAction).length - 1 !== 1 ||
+        [...source.matchAll(patchedSchedule)].length !== 1) {
+      throw new Error("Pet overlay Quick Chat focus patch is incomplete or ambiguous");
+    }
+    return source;
+  }
   if (action.body.split(needle).length !== 2) throw new Error("Pet overlay Quick Chat preparation was not found uniquely");
-  let patched = source.slice(0, action.start) + action.body.replace(needle,
-    `{requestId:${action.id},layoutRevision:null,codexPetOverlayHiddenFocus:${action.action}.codexPetOverlayHiddenFocus===!0}`) + source.slice(action.end + 1);
+  let patched = source.slice(0, action.start) + action.body.replace(needle, patchedAction) + source.slice(action.end + 1);
   const pattern = new RegExp(
     `let\\{requestId:(?<request>${ident}),layoutRevision:(?<revision>${ident})\\}=(?<preparation>${ident}),(?<timer>${ident})=window\\.requestAnimationFrame\\(\\(\\)=>\\{\\k<timer>=window\\.requestAnimationFrame\\(\\(\\)=>\\{(?<complete>[\\s\\S]{0,500}?\\.completeQuickChatFocus\\([\\s\\S]{0,500}?\\.catch\\(${ident}\\))\\}\\)\\}\\);return\\(\\)=>\\{window\\.cancelAnimationFrame\\(\\k<timer>\\)\\}`,
     "gu",

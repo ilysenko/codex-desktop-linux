@@ -9,6 +9,8 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
+const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const nativeLayout = require("./fixtures/native-layout.js");
 const nativeWindowGeometry = require("./fixtures/native-window-geometry.js");
 const nativeInputPolicy = require("./fixtures/native-input-policy.js");
@@ -303,6 +305,42 @@ test("pet-overlay is discoverable and disabled until listed in features.json", (
 // rspack Mini page chunk.
 const quickChatFocusFixture = `function action(t){if(null!=t.requestId){let e=t.requestId;if(nZ?.requestId===e)return null;return cr({requestId:e,layoutRevision:null})}return null}
 function prepare(h,w,x){if(null==w||h?.layoutRevision==null)return;let{requestId:e,layoutRevision:t}=h,a=window.requestAnimationFrame(()=>{a=window.requestAnimationFrame(()=>{w.completeQuickChatFocus(e,t).then(t=>{t&&x(e)}).catch(n8)})});return()=>{window.cancelAnimationFrame(a)}}`;
+
+test("Mini focus rejects missing, duplicated and partial applied states", () => {
+  const patched = applyPetOverlayRendererPatch(quickChatFocusFixture);
+  for (const source of ["", quickChatFocusFixture + quickChatFocusFixture, patched + patched,
+    patched.replace("window.setTimeout(callback, 0)", "window.setTimeout(callback, 5)"),
+    patched.replace("codexPetOverlayHiddenFocus:t.codexPetOverlayHiddenFocus===!0", ""),
+    patched.replace("codexPetOverlayHiddenFocus:t.codexPetOverlayHiddenFocus===!0", "codexPetOverlayHiddenFocus:e.codexPetOverlayHiddenFocus===!0"),
+    patched.replace("w.completeQuickChatFocus(e,t)","w.completeQuickChatFocus(t,e)"),
+    "function codexPetOverlayScheduleQuickChatFocus(){}" + quickChatFocusFixture]) {
+    assert.throws(() => applyPetOverlayRendererPatch(source), /not found|incomplete|ambiguous/);
+  }
+});
+
+test("current signed Mini focus owner passes the normal descriptor twice", { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, t => {
+  const descriptor = require("./patch.js").descriptors.filter(({ id }) => id === "pet-overlay-hidden-focus");
+  const assets = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP,"webview/assets");
+  const owners = findWebviewAssetsContaining(process.env.CODEX_SIGNED_EXTRACTED_APP,descriptor[0].assetNeedles);
+  assert.equal(owners.length,1);
+  const source = fs.readFileSync(path.join(assets,owners[0]),"utf8");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(),"mini-focus-signed-"));t.after(() => fs.rmSync(dir,{recursive:true,force:true}));
+  const target = path.join(dir,"webview/assets",owners[0]);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,source);
+  for (const expected of ["applied","already-applied"]) {
+    const report=createPatchReport();applyWebviewAssetPatchDescriptors(dir,descriptor,{},report);assert.equal(report.patches[0].status,expected);
+  }
+  const broken = applyPetOverlayRendererPatch(source).replace(
+    /codexPetOverlayHiddenFocus:[A-Za-z_$][\w$]*\.codexPetOverlayHiddenFocus===!0/,
+    "codexPetOverlayHiddenFocus:wrongAction.codexPetOverlayHiddenFocus===!0",
+  );
+  fs.writeFileSync(target,broken);
+  const brokenReport=createPatchReport();
+  captureWarnings(() => applyWebviewAssetPatchDescriptors(dir,descriptor,{},brokenReport));
+  assert.ok(!["applied","already-applied"].includes(brokenReport.patches[0].status));
+  assert.equal(fs.readFileSync(target,"utf8"),broken);
+  fs.writeFileSync(target,applyPetOverlayRendererPatch(source));
+  assert.equal(fs.readFileSync(path.join(assets,owners[0]),"utf8"),source);
+});
 
 function quickChatFocusScenario(visibilityState) {
   let serial = 0;
