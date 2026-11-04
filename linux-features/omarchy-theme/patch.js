@@ -24,11 +24,28 @@ function omarchyThemeRuntimeSource() {
   ].join("");
 }
 
+// The official webview is an rspack build. index.html loads the runtime entry
+// chunk that exports __webpack_require__ and boots the app; the detached-window
+// entry has the same runtime shape but boots initializeDetachedWindow instead.
+const INDEX_ENTRY_NEEDLES = ["as __webpack_require__}", "codex-host-chunked-message-v1"];
+const DETACHED_WINDOW_ENTRY_MARKER = "initializeDetachedWindow";
+
+function isWebviewIndexEntry(source, assetName = "") {
+  return typeof source === "string" &&
+    !assetName.includes("/") &&
+    INDEX_ENTRY_NEEDLES.every((needle) => source.includes(needle)) &&
+    !source.includes(DETACHED_WINDOW_ENTRY_MARKER);
+}
+
 function applyOmarchyThemeLoader(source) {
   if (typeof source !== "string") {
     return source;
   }
   if (source.includes("codexLinuxOmarchyThemeVersion=")) {
+    return source;
+  }
+  if (!isWebviewIndexEntry(source)) {
+    console.warn("WARN: Could not confirm the webview index entry chunk - skipping Omarchy theme CSS loader");
     return source;
   }
   return `${source}\n${omarchyThemeRuntimeSource()}`;
@@ -44,12 +61,15 @@ module.exports = {
       phase: "webview-asset",
       order: 20_780,
       ciPolicy: "optional",
-      pattern: /^index-.*\.js$/,
+      assetNeedles: INDEX_ENTRY_NEEDLES,
+      assetMatch: isWebviewIndexEntry,
       missingDescription: "webview index bundle",
       skipDescription: "Omarchy theme CSS loader",
       apply: applyOmarchyThemeLoader,
     },
   ],
+  INDEX_ENTRY_NEEDLES,
   applyOmarchyThemeLoader,
+  isWebviewIndexEntry,
   omarchyThemeRuntimeSource,
 };

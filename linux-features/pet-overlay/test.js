@@ -25,10 +25,16 @@ const {
 } = require("../../scripts/lib/linux-features.js");
 const {
   DESCRIPTOR_ID,
+  RENDERER_FOCUS_NEEDLES,
+  RENDERER_GESTURE_NEEDLES,
+  applyPetOverlayGestureRendererPatch,
   applyPetOverlayPatch,
   applyPetOverlayRendererPatch,
+  descriptors: petOverlayDescriptors,
   mergedPetOverlaySettings,
 } = require("./patch.js");
+const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+const { patchBreaksJavaScriptSyntax } = require("../../scripts/patches/lib/javascript-syntax.js");
 
 function copyFeatureTo(featuresRoot) {
   const featureDir = path.join(featuresRoot, "pet-overlay");
@@ -272,8 +278,10 @@ test("pet-overlay is discoverable and disabled until listed in features.json", (
   }
 });
 
-const quickChatFocusFixture = `function action(t){let e=t.requestId;return cr({requestId:e,layoutRevision:null})}
-function prepare(o,u,f){if(u==null||o?.layoutRevision==null)return;let{requestId:e,layoutRevision:t}=o,n=window.requestAnimationFrame(()=>{n=window.requestAnimationFrame(()=>{u.completeQuickChatFocus(e,t).then(t=>{t&&f(e)}).catch(failed)})});return()=>{window.cancelAnimationFrame(n)}}`;
+// Quick Chat focus action and schedule shapes from the signed 26.1029.61003
+// rspack Mini page chunk.
+const quickChatFocusFixture = `function action(t){if(null!=t.requestId){let e=t.requestId;if(nZ?.requestId===e)return null;return cr({requestId:e,layoutRevision:null})}return null}
+function prepare(h,w,x){if(null==w||h?.layoutRevision==null)return;let{requestId:e,layoutRevision:t}=h,a=window.requestAnimationFrame(()=>{a=window.requestAnimationFrame(()=>{w.completeQuickChatFocus(e,t).then(t=>{t&&x(e)}).catch(n8)})});return()=>{window.cancelAnimationFrame(a)}}`;
 
 function quickChatFocusScenario(visibilityState) {
   let serial = 0;
@@ -281,13 +289,14 @@ function quickChatFocusScenario(visibilityState) {
   const context = {
     document: { visibilityState: "visible" },
     cr: value => value,
+    nZ: null,
     window: {
       setTimeout: callback => { timers.set(++serial, callback); return serial; },
       clearTimeout: id => timers.delete(id),
       requestAnimationFrame: callback => { frames.set(++serial, callback); return serial; },
       cancelAnimationFrame: id => frames.delete(id),
     },
-    failed: error => errors.push(error),
+    n8: error => errors.push(error),
   };
   const patched = applyPetOverlayRendererPatch(quickChatFocusFixture);
   assert.equal(applyPetOverlayRendererPatch(patched), patched);
@@ -358,7 +367,7 @@ test("Mini focus renderer patch rejects missing and duplicate scheduling anchors
 });
 
 test("Mini focus renderer patch handles renamed minified identifiers and fails closed on action drift", () => {
-  const renamed = quickChatFocusFixture.replace(/\b[etnouf]\b/g, id => `$${id}`);
+  const renamed = quickChatFocusFixture.replace(/\b[ethawx]\b/g, id => `$${id}`);
   assert.doesNotThrow(() => new vm.Script(applyPetOverlayRendererPatch(renamed)));
   assert.throws(() => applyPetOverlayRendererPatch(quickChatFocusFixture.replace("layoutRevision:null", "other:null")));
 });
@@ -3534,5 +3543,38 @@ test(
       changed.push(name);
     }
     assert.equal(changed.length, 1);
+  },
+);
+
+test("renderer descriptors select the Mini page chunk by content needles", () => {
+  const byId = new Map(petOverlayDescriptors.map(descriptor => [descriptor.id, descriptor]));
+  assert.deepEqual(byId.get("pet-overlay-kwin-gesture").assetNeedles, RENDERER_GESTURE_NEEDLES);
+  assert.deepEqual(byId.get("pet-overlay-hidden-focus").assetNeedles, RENDERER_FOCUS_NEEDLES);
+  assert.ok(petOverlayDescriptors.every(({ pattern }) => pattern == null));
+  for (const needle of RENDERER_FOCUS_NEEDLES) assert.ok(quickChatFocusFixture.includes(needle), needle);
+  const gestureFixture = fs.readFileSync(path.join(__dirname, "fixtures", "native-renderer-gesture.js"), "utf8");
+  for (const needle of RENDERER_GESTURE_NEEDLES) assert.ok(gestureFixture.includes(needle), needle);
+});
+
+test(
+  "renderer patches change exactly one signed Mini page chunk and keep it a valid module",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+    const focusOwners = findWebviewAssetsContaining(root, RENDERER_FOCUS_NEEDLES);
+    const gestureOwners = findWebviewAssetsContaining(root, RENDERER_GESTURE_NEEDLES);
+    assert.equal(focusOwners.length, 1);
+    assert.deepEqual(gestureOwners, focusOwners);
+    const source = fs.readFileSync(path.join(root, "webview", "assets", focusOwners[0]), "utf8");
+    const focused = applyPetOverlayRendererPatch(source);
+    const patched = applyPetOverlayGestureRendererPatch(focused);
+    assert.notEqual(focused, source);
+    assert.notEqual(patched, focused);
+    assert.equal(patchBreaksJavaScriptSyntax(source, patched), false);
+    assert.equal(applyPetOverlayRendererPatch(patched), patched);
+    assert.equal(applyPetOverlayGestureRendererPatch(patched), patched);
+    assert.match(patched, /=async\([\w$]+,[\w$]+\)=>\{/);
+    assert.match(patched, /codexPetOverlayGestureId==null&&[\w$]+\.[\w$]+\.dispatchMessage\("avatar-overlay-drag-end",/);
+    assert.match(patched, /await codexPetOverlayConfirmRendererDrag\([\w$]+,[\w$]+\.appServices\.avatarOverlay,/);
   },
 );

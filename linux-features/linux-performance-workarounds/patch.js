@@ -1,12 +1,13 @@
 "use strict";
 
-const { webviewAssetPatch } = require("../../scripts/patches/descriptor.js");
+const { extractedAppPatch, webviewAssetPatch } = require("../../scripts/patches/descriptor.js");
 const {
+  SIDEBAR_ASSET_NEEDLES,
+  TAB_ASSET_NEEDLES,
   applyLinuxAppShellTabLayoutPerformancePatch,
-  applyLinuxMarkdownAnimationPerformancePatch,
+  applyLinuxMarkdownAnimationStylesheetPatch,
   applyLinuxSidebarScrollPerformancePatch,
   matchesLinuxAppShellTabLayoutPerformanceContract,
-  matchesLinuxMarkdownAnimationPerformanceContract,
   matchesLinuxSidebarScrollPerformanceContract,
 } = require("./implementation.js");
 
@@ -16,7 +17,7 @@ module.exports = [
     phase: "webview-asset",
     order: 20_100,
     ciPolicy: "optional",
-    pattern: /^[A-Za-z0-9_-]+\.js$/,
+    assetNeedles: SIDEBAR_ASSET_NEEDLES,
     assetMatch: matchesLinuxSidebarScrollPerformanceContract,
     missingDescription: "main sidebar scroll bundle",
     skipDescription: "sidebar scroll performance workaround",
@@ -27,21 +28,19 @@ module.exports = [
     phase: "webview-asset",
     order: 20_110,
     ciPolicy: "optional",
-    pattern: /^[A-Za-z0-9_-]+\.js$/,
+    assetNeedles: TAB_ASSET_NEEDLES,
     assetMatch: matchesLinuxAppShellTabLayoutPerformanceContract,
     missingDescription: "app-shell tab layout bundle",
     skipDescription: "app-shell tab layout performance workaround",
     apply: applyLinuxAppShellTabLayoutPerformancePatch,
   }),
-  webviewAssetPatch({
+  // The rspack stylesheet lives in webview/assets/async/*.css, which the
+  // script-only webview-asset index does not cover.
+  extractedAppPatch({
     id: "markdown-animation",
-    phase: "webview-asset",
+    phase: "extracted-app:post-webview",
     order: 20_120,
     ciPolicy: "optional",
-    pattern: /^[A-Za-z0-9_-]+\.css$/,
-    assetMatch: matchesLinuxMarkdownAnimationPerformanceContract,
-    missingDescription: "streaming Markdown animation stylesheet",
-    skipDescription: "Markdown animation performance workaround",
-    apply: applyLinuxMarkdownAnimationPerformancePatch,
+    apply: applyLinuxMarkdownAnimationStylesheetPatch,
   }),
 ];

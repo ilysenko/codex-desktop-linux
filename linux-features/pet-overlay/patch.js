@@ -1284,38 +1284,81 @@ async function codexPetOverlayConfirmRendererDrag(gesture, api, altKey, sample) 
   }
 }
 
+function escapeRendererRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// End of the statement starting at `from`: the first `;` outside nested
+// braces and string literals. Template literals, regular expressions, and
+// division at statement level are unexpected in the gesture result and fail
+// closed.
+function rendererStatementEnd(source, from) {
+  for (let index = from; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === ";") return index;
+    if (char === "{") {
+      index = findMatchingBrace(source, index);
+      if (index === -1) return -1;
+    } else if (char === '"' || char === "'") {
+      let close = index + 1;
+      while (close < source.length && source[close] !== char) close += source[close] === "\\" ? 2 : 1;
+      if (close >= source.length) return -1;
+      index = close;
+    } else if (char === "`" || char === "/" || char === "}") {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+// The rspack Mini page reaches its host dispatcher and app services through
+// imported member chains (for example `G.O1.dispatchMessage` and
+// `tW.appServices.avatarOverlay`), so those captures accept member chains.
 function applyPetOverlayGestureRendererPatch(source) {
   if (source.includes("function codexPetOverlayConfirmRendererDrag(")) return source;
   const ident = "[A-Za-z_$][\\w$]*";
+  const member = `(?<![\\w$.])${ident}(?:\\.${ident})*`;
   const one = (pattern, label, text = source) => {
     const matches = [...text.matchAll(pattern)];
     if (matches.length !== 1) throw Error(`Pet overlay ${label} was not found uniquely`);
     return matches[0];
   };
-  const prefix = new RegExp(`(?<fn>${ident})=\\((?<event>${ident}),(?<released>${ident})\\)=>\\{let (?<gesture>${ident})=(?<ref>${ident})\\.current;`, "gu");
+  const prefix = new RegExp(`(?<![\\w$.])(?<fn>${ident})=\\((?<event>${ident}),(?<released>${ident})\\)=>\\{(?:var ${ident}(?:,${ident})*;)?let (?:${ident},)*(?<gesture>${ident})=(?<ref>${ident})\\.current;`, "gu");
   const finals = [...source.matchAll(prefix)].map(match => {
     const open = source.indexOf("{", match.index), end = findMatchingBrace(source, open);
-    return { match, body: source.slice(match.index, end + 1) };
-  }).filter(entry => entry.body.includes("`avatar-overlay-drag-end`") && entry.body.includes("beganOnQuickChatBar"));
+    return { match, body: end === -1 ? "" : source.slice(match.index, end + 1) };
+  }).filter(entry => entry.body.includes('"avatar-overlay-drag-end"') && entry.body.includes("beganOnQuickChatBar"));
   if (finals.length !== 1) throw Error("Pet overlay gesture finalizer was not found uniquely");
   const { match, body } = finals[0], { event, released, gesture, ref } = match.groups;
-  const service = one(new RegExp(`(?<api>${ident})\\.avatarOverlay\\?\\.setQuickChatStashed\\(null\\)`, "gu"), "gesture service").groups.api;
+  const service = one(new RegExp(`(?<api>${member})\\.avatarOverlay\\?\\.setQuickChatStashed\\(null\\)`, "gu"), "gesture service").groups.api;
   const layout = one(new RegExp(`let\\{isGlobalRealtimeVoicePresentation:${ident},isVisible:${ident},layout:${ident},[^{};]+\\}=(?<message>${ident});`, "gu"), "gesture layout");
-  const start = one(new RegExp(`${ref.replace(/[$]/g, "\\$")}\\.current=\\{beganOnQuickChatBar:`, "gu"), "gesture start");
-  const dispatch = one(new RegExp(`(?<dispatcher>${ident})\\.dispatchMessage\\(\`avatar-overlay-drag-start\`,\\{`, "gu"), "gesture dispatch");
-  const finish = one(new RegExp(`let\\{hasMoved:(?<moved>${ident}),releaseSample:(?<sample>${ident}),velocity:${ident}\\}=[^;]+;`, "gu"), "gesture result", body);
-  let finalizer = body.replace(match[0], match[0].replace("=(", "=async("));
+  const start = one(new RegExp(`(?<![\\w$.])${escapeRendererRegExp(ref)}\\.current=\\{beganOnQuickChatBar:`, "gu"), "gesture start");
+  const dispatch = one(new RegExp(`(?<dispatcher>${member})\\.dispatchMessage\\("avatar-overlay-drag-start",\\{`, "gu"), "gesture dispatch");
+  const finish = one(new RegExp(`let\\{hasMoved:(?<moved>${ident}),releaseSample:(?<sample>${ident}),velocity:${ident}\\}=`, "gu"), "gesture result", body);
+  const finishEnd = rendererStatementEnd(body, finish.index + finish[0].length);
+  if (finishEnd === -1) throw Error("Pet overlay gesture result statement was not found");
+  const finishStatement = body.slice(finish.index, finishEnd + 1);
   const pointer = `{pointerScreenX:codexPetOverlayReleaseSample.screenX,pointerScreenY:codexPetOverlayReleaseSample.screenY,shouldMove:${finish.groups.moved}&&!${gesture}.hasMoved&&${finish.groups.sample}!=null,...(${released}?{pointerWindowX:${event}.clientX,pointerWindowY:${event}.clientY}:{})}`;
-  finalizer = finalizer.replace(finish[0],
-    `${finish[0]}if(${gesture}.codexPetOverlayGestureId!=null){const codexPetOverlayReleaseSample=${finish.groups.sample}??${gesture}.samples.at(-1)??${gesture};await codexPetOverlayConfirmRendererDrag(${gesture},${service}.avatarOverlay,${released}&&!${gesture}.usesOrbPhysics&&${event}.altKey===!0,${pointer});${finish.groups.moved}||=${gesture}.hasMoved;}`);
+  const confirm = `if(${gesture}.codexPetOverlayGestureId!=null){const codexPetOverlayReleaseSample=${finish.groups.sample}??${gesture}.samples.at(-1)??${gesture};await codexPetOverlayConfirmRendererDrag(${gesture},${service}.avatarOverlay,${released}&&!${gesture}.usesOrbPhysics&&${event}.altKey===!0,${pointer});${finish.groups.moved}||=${gesture}.hasMoved;}`;
+  let finalizer = match[0].replace("=(", "=async(") + body.slice(match[0].length, finish.index) +
+    finishStatement + confirm + body.slice(finishEnd + 1);
   for (const kind of ["move", "end", "release"]) {
-    const call = one(new RegExp(`${dispatch.groups.dispatcher.replace(/[$]/g, "\\$")}\\.dispatchMessage\\(\`avatar-overlay-drag-${kind}\`,`, "gu"), `gesture ${kind}`, body)[0];
-    finalizer = finalizer.replace(call, `${gesture}.codexPetOverlayGestureId==null&&${call}`);
+    const call = one(new RegExp(`(?<![\\w$.])${escapeRendererRegExp(dispatch.groups.dispatcher)}\\.dispatchMessage\\("avatar-overlay-drag-${kind}",`, "gu"), `gesture ${kind}`, finalizer);
+    finalizer = finalizer.slice(0, call.index) + `${gesture}.codexPetOverlayGestureId==null&&` + finalizer.slice(call.index);
   }
-  let patched = source.replace(body, finalizer)
-    .replace(layout[0], `${layout[0]}codexPetOverlayNativeDrag=${layout.groups.message}.layout?.codexPetOverlayNativeDrag===!0;`)
-    .replace(start[0], `${ref}.current={codexPetOverlayGestureId:codexPetOverlayNativeDrag?crypto.randomUUID():null,beganOnQuickChatBar:`)
-    .replace(dispatch[0], `${dispatch[0]}codexPetOverlayGestureId:${ref}.current.codexPetOverlayGestureId,`);
+  const edits = [
+    { index: match.index, length: body.length, text: finalizer },
+    { index: layout.index, length: layout[0].length, text: `${layout[0]}codexPetOverlayNativeDrag=${layout.groups.message}.layout?.codexPetOverlayNativeDrag===!0;` },
+    { index: start.index, length: start[0].length, text: `${ref}.current={codexPetOverlayGestureId:codexPetOverlayNativeDrag?crypto.randomUUID():null,beganOnQuickChatBar:` },
+    { index: dispatch.index, length: dispatch[0].length, text: `${dispatch[0]}codexPetOverlayGestureId:${ref}.current.codexPetOverlayGestureId,` },
+  ].sort((left, right) => right.index - left.index);
+  if (edits.some((edit, index) => index > 0 && edit.index + edit.length > edits[index - 1].index)) {
+    throw Error("Pet overlay gesture anchors overlap");
+  }
+  let patched = source;
+  for (const edit of edits) patched = patched.slice(0, edit.index) + edit.text + patched.slice(edit.index + edit.length);
+  // rspack chunks are ES modules; these declarations are chunk-scoped and
+  // visible to the Mini page module factory defined below them.
   return `let codexPetOverlayNativeDrag=false;\n${codexPetOverlayConfirmRendererDrag}\n${patched}`;
 }
 
@@ -1354,13 +1397,18 @@ function applyPetOverlayRendererPatch(source) {
   return `${codexPetOverlayScheduleQuickChatFocus}\n${patched}`;
 }
 
+// The rspack webview loads the Mini page from a numbered async chunk; select
+// it by the strings its patched contracts own.
+const RENDERER_GESTURE_NEEDLES = ['"avatar-overlay-drag-end"', "beganOnQuickChatBar", ".setQuickChatStashed(null)"];
+const RENDERER_FOCUS_NEEDLES = [".completeQuickChatFocus(", "layoutRevision:null"];
+
 const descriptors = [
   {
     id: "pet-overlay-kwin-gesture",
     phase: "webview-asset",
     order: 20_830,
     ciPolicy: "optional",
-    pattern: /^avatar-overlay-native-page-[^.]+\.js$/,
+    assetNeedles: RENDERER_GESTURE_NEEDLES,
     apply: applyPetOverlayGestureRendererPatch,
   },
   {
@@ -1375,13 +1423,15 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_820,
     ciPolicy: "optional",
-    pattern: /^avatar-overlay-native-page-[^.]+\.js$/,
+    assetNeedles: RENDERER_FOCUS_NEEDLES,
     apply: applyPetOverlayRendererPatch,
   },
 ];
 
 module.exports = {
   DESCRIPTOR_ID,
+  RENDERER_FOCUS_NEEDLES,
+  RENDERER_GESTURE_NEEDLES,
   descriptors,
   applyPetOverlayPatch,
   applyPetOverlayRendererPatch,
