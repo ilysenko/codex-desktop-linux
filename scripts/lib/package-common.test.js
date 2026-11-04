@@ -234,6 +234,62 @@ test("Chronicle-only packaging retains the shared backend for updater rebuilds",
   assert.equal(fs.statSync(retainedBackend).mode & 0o777, 0o755);
 });
 
+test("AppShots-only updater retains its private helpers without enabling Computer Use", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-appshots-builder-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, "features.json"), app = path.join(root, "app"), builder = path.join(root, "builder");
+  fs.writeFileSync(config, JSON.stringify({ enabled: ["appshots"] }));
+  const helperBytes = Buffer.alloc(20);
+  Buffer.from([127, 69, 76, 70, 2, 1]).copy(helperBytes);
+  helperBytes.writeUInt16LE(62, 18);
+  for (const binary of ["codex-computer-use-linux", "codex-computer-use-cosmic"]) {
+    const source = path.join(app, "resources/native/appshots", binary);
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, helperBytes, { mode: 0o755 });
+  }
+  runPackageCommon([
+    `export CODEX_LINUX_FEATURES_CONFIG=${JSON.stringify(config)}`,
+    `stage_update_builder_linux_features_tree ${JSON.stringify(builder)}`,
+    `stage_update_builder_enabled_plugin_templates ${JSON.stringify(builder)}`,
+    `stage_enabled_native_feature_artifacts ${JSON.stringify(builder)}`,
+  ].join("\n"), app);
+  for (const binary of ["codex-computer-use-linux", "codex-computer-use-cosmic"]) {
+    const staged = path.join(builder, "target/release", binary);
+    assert.deepEqual(fs.readFileSync(staged), helperBytes);
+    assert.equal(fs.statSync(staged).mode & 0o777, 0o755);
+  }
+  assert.equal(fs.existsSync(path.join(builder, "linux-features/appshots/stage.sh")), true);
+  for (const relative of ["computer-use-linux", "Cargo.toml", "Cargo.lock", "plugins", "linux-features/computer-use-linux", "target/release/codex-computer-use-indicator"])
+    assert.equal(fs.existsSync(path.join(builder, relative)), false, relative);
+  const rebuilt = path.join(root, "rebuilt");
+  childProcess.execFileSync("bash", [path.join(builder, "linux-features/appshots/stage.sh")], {
+    encoding: "utf8", env: { ...process.env, SCRIPT_DIR: builder, INSTALL_DIR: rebuilt, ARCH: "amd64", CODEX_COMPUTER_USE_BINARY_SOURCE: "", CODEX_COMPUTER_USE_COSMIC_BINARY_SOURCE: "" },
+  });
+  for (const binary of ["codex-computer-use-linux", "codex-computer-use-cosmic"])
+    assert.deepEqual(fs.readFileSync(path.join(rebuilt, "resources/native/appshots", binary)), helperBytes);
+});
+
+for (const enabled of [[], ["appshots"], ["computer-use-linux"], ["appshots", "computer-use-linux"]]) {
+  test(`AppShots native helper build selection: ${enabled.join(",") || "disabled"}`, (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-appshots-build-"));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const config = path.join(root, "features.json"), log = path.join(root, "cargo.log"), bin = path.join(root, "bin");
+    fs.writeFileSync(config, JSON.stringify({ enabled }));
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "cargo"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$APPSHOTS_CARGO_LOG"\n', { mode: 0o755 });
+    childProcess.execFileSync("make", ["--no-print-directory", "build-native-feature-helpers"], {
+      cwd: repoRoot, encoding: "utf8",
+      env: { ...process.env, CODEX_LINUX_FEATURES_CONFIG: config, PATH: `${bin}:${process.env.PATH}`, APPSHOTS_CARGO_LOG: log },
+    });
+    const builds = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : [];
+    assert.equal(builds.length, enabled.length === 0 ? 0 : 1);
+    if (builds.length !== 0) {
+      assert.match(builds[0], /--bin codex-computer-use-linux --bin codex-computer-use-cosmic/);
+      assert.equal(builds[0].includes("--bin codex-computer-use-indicator"), enabled.includes("computer-use-linux"));
+    }
+  });
+}
+
 for (const enabled of [[], ["global-dictation"], ["wayland-global-shortcuts"], ["global-dictation", "wayland-global-shortcuts"]]) {
   test(`shortcut helper packaging and build selection: ${enabled.join(",") || "disabled"}`, (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-shortcuts-package-"));

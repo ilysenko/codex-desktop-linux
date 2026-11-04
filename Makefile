@@ -66,7 +66,8 @@ build-native-feature-helpers:
 	[ -f "$$config" ] || config=linux-features/features.example.json; \
 	enabled="$$(CODEX_LINUX_FEATURES_CONFIG="$$config" node scripts/lib/linux-features.js --enabled)"; \
 	has() { printf '%s\n' "$$enabled" | grep -Fxq "$$1"; }; \
-	if has computer-use-linux; then cargo build $(CARGO_JOBS_ARG) --release -p codex-computer-use-linux --bin codex-computer-use-linux --bin codex-computer-use-cosmic --bin codex-computer-use-indicator; fi; \
+	if has computer-use-linux; then cargo build $(CARGO_JOBS_ARG) --release -p codex-computer-use-linux --bin codex-computer-use-linux --bin codex-computer-use-cosmic --bin codex-computer-use-indicator; \
+	elif has appshots; then cargo build $(CARGO_JOBS_ARG) --release -p codex-computer-use-linux --bin codex-computer-use-linux --bin codex-computer-use-cosmic; fi; \
 	if has global-dictation || has wayland-global-shortcuts; then cargo build $(CARGO_JOBS_ARG) --release --manifest-path global-dictation-linux/Cargo.toml --target-dir global-dictation-linux/target; fi; \
 	if has pet-overlay; then cargo build $(CARGO_JOBS_ARG) --release --manifest-path linux-features/pet-overlay/kwin-helper/Cargo.toml; fi; \
 	if has read-aloud-mcp; then cargo build $(CARGO_JOBS_ARG) --release -p codex-read-aloud-linux; fi; \

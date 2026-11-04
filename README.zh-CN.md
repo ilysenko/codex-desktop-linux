@@ -249,7 +249,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `agent-workspace` | 隐藏桌面环境中的 agent-workspace 设置和 bridge | [文档](linux-features/agent-workspace/README.md) |
 | `api-key-model-visibility` | 显示 API-key compatible provider 返回的模型 | [文档](linux-features/api-key-model-visibility/README.md) |
 | `api-key-service-tier` | API-key compatible provider 的 Fast/service-tier UI | [文档](linux-features/api-key-service-tier/README.md) |
-| `appshots` | 从 composer 捕获并裁剪当前 Linux 窗口 | [文档](linux-features/appshots/README.md) |
+| `appshots` | 从 composer 捕获并裁剪 Linux 窗口，并独立打包窗口元数据后端 | [文档](linux-features/appshots/README.md) |
 | `authored-message-visibility` | 工具活动折叠后，仍显示助手和用户消息 | [文档](linux-features/authored-message-visibility/README.md) |
 | `authenticated-proxy` | 带用户名和密码的 HTTP proxy | [文档](linux-features/authenticated-proxy/README.md) |
 | `automation-extensions` | 多时间调度和 eager `automation_update` | [文档](linux-features/automation-extensions/README.md) |

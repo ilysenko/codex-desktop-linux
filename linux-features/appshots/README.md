@@ -14,14 +14,24 @@ This feature is disabled by default. Enable it before building:
 }
 ```
 
-The feature is self-contained. It patches only the optional AppShots webview
-availability gate and the Electron main-process `appshotCapture` service, which
-upstream builds only for macOS and Windows; on Linux its frontmost-window and
-capture methods route to the feature's helper. Upstream no
-longer ships the AppShots hotkey settings surface, so the feature does not
-patch or expose a Linux hotkey selector. It does not add AppShots-specific code
-to `computer-use-linux`, core patch modules, default patch flow, or packaged
-runtime hooks.
+The feature patches the optional AppShots webview
+availability gate and the Electron main-process AppShots capture and hotkey
+services. Upstream no longer ships the AppShots hotkey settings surface, so the
+feature does not expose a Linux hotkey selector. It keeps an unset Linux shortcut
+disabled and honors previously saved shortcuts when the session supports them.
+It stages its own bare-modifier helper and Electron args hook without adding
+AppShots-specific code to `computer-use-linux` or core patch modules.
+
+AppShots packages the existing Linux Computer Use backend and its COSMIC helper
+privately under `resources/native/appshots/`. It does not enable the Computer Use
+plugin, control UI, host service, or activity indicator. Native builds prepare
+these two helpers through `make build-native-feature-helpers`; direct
+`./install.sh` builds require those release binaries or explicit
+`CODEX_COMPUTER_USE_BINARY_SOURCE` and `CODEX_COMPUTER_USE_COSMIC_BINARY_SOURCE`
+inputs. Updater rebuilds retain the prebuilt helpers without Cargo sources.
+At runtime, `CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE` takes precedence over the
+private helper; an already staged unified Computer Use plugin or its cache
+remains an alternative.
 
 For window metadata and AT-SPI text, the feature shells out to the bundled
 Linux Computer Use backend's existing `windows` and `state` commands. For X11
@@ -68,7 +78,9 @@ Privacy and correctness constraints:
   no target is offered. If verification or restoration
   fails, no attachment is delivered. Both paths skip ChatGPT and desktop portal windows.
   Other backends fail closed when they cannot provide a safe target.
-- Capture fails closed when no selected window or usable bounds are available.
+- Capture fails closed when the bundled backend is unavailable, or when no
+  selected window or usable bounds are available. Disposing the capture service
+  cancels queued work and suppresses attachment delivery from an in-flight capture.
 - Capture fails closed when no screenshot tool is available or the crop does not
   intersect the captured image. The portal picker also exposes Output and
   Region pages, but this window-attachment integration accepts only an explicit
@@ -77,8 +89,9 @@ Privacy and correctness constraints:
   ChatGPT is restored as soon as both inputs have been acquired, before the PNG
   and metadata are sent back to the composer. Capture transactions are
   serialized so two requests cannot race compositor focus or exchange targets.
-- Global hotkeys remain disabled on Linux because the current upstream package
-  no longer includes the AppShots hotkey settings surface.
+- Linux does not receive a default global hotkey. Previously saved shortcuts
+  remain eligible; bare-modifier shortcuts are restricted to X11 sessions. The
+  current upstream package no longer includes the AppShots hotkey settings surface.
 - Previously saved `Alt + Alt` and `Shift + Shift` choices are backed by a feature-local
   `bare-modifier-monitor` helper staged into `resources/native/`. It requires
   the left and right modifier keycodes, so tapping only one physical modifier

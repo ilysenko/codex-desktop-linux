@@ -4,7 +4,8 @@
   "description": "Opt-in AppShots composer integration that captures and crops a selected Linux window without core AppShots backend changes.",
   "defaultEnabled": false,
   "entrypoints": {
-    "patchDescriptors": "./patch.js"
+    "patchDescriptors": "./patch.js",
+    "stageHook": "./stage.sh"
   },
   "resources": [
     {

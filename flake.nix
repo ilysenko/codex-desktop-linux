@@ -334,15 +334,17 @@
         mkWorkspaceHelpers = featureIds:
           let
             computerUseEnabled = lib.elem "computer-use-linux" featureIds;
+            computerUseBackendEnabled = computerUseEnabled || lib.elem "appshots" featureIds;
             readAloudEnabled = lib.elem "read-aloud-mcp" featureIds;
             recordReplayBackendEnabled =
               lib.elem "chronicle-skysight" featureIds || lib.elem "record-and-replay" featureIds;
             cargoPackages =
-              lib.optionals computerUseEnabled [ "codex-computer-use-linux" ]
+              lib.optionals computerUseBackendEnabled [ "codex-computer-use-linux" ]
               ++ lib.optionals readAloudEnabled [ "codex-read-aloud-linux" ]
               ++ lib.optionals recordReplayBackendEnabled [ "codex-record-replay-linux" ];
             expectedBinaries =
-              lib.optionals computerUseEnabled [ "codex-computer-use-linux" "codex-computer-use-cosmic" "codex-computer-use-indicator" ]
+              lib.optionals computerUseBackendEnabled [ "codex-computer-use-linux" "codex-computer-use-cosmic" ]
+              ++ lib.optionals computerUseEnabled [ "codex-computer-use-indicator" ]
               ++ lib.optionals readAloudEnabled [ "codex-read-aloud-linux" ]
               ++ lib.optionals recordReplayBackendEnabled [ "codex-record-replay-linux" ];
           in
@@ -351,7 +353,8 @@
             version = "0.1.0";
             src = helperWorkspaceSource;
             cargoLock.lockFile = ./Cargo.lock;
-            cargoBuildFlags = lib.concatMap (package: [ "-p" package ]) cargoPackages;
+            cargoBuildFlags = lib.concatMap (package: [ "-p" package ]) cargoPackages
+              ++ lib.concatMap (binary: [ "--bin" binary ]) expectedBinaries;
             doCheck = false;
             installPhase = ''
               runHook preInstall
@@ -544,9 +547,11 @@
               export CODEX_LINUX_SOURCE_COMMIT="${flakeSourceCommit}"
               export CODEX_LINUX_SOURCE_REMOTE="${flakeSourceRemote}"
               ''}
-              ${lib.optionalString (lib.elem "computer-use-linux" effectiveFeatureIds) ''
+              ${lib.optionalString (lib.elem "computer-use-linux" effectiveFeatureIds || lib.elem "appshots" effectiveFeatureIds) ''
               export CODEX_COMPUTER_USE_BINARY_SOURCE="${workspaceHelpers}/bin/codex-computer-use-linux"
               export CODEX_COMPUTER_USE_COSMIC_BINARY_SOURCE="${workspaceHelpers}/bin/codex-computer-use-cosmic"
+              ''}
+              ${lib.optionalString (lib.elem "computer-use-linux" effectiveFeatureIds) ''
               export CODEX_COMPUTER_USE_INDICATOR_BINARY_SOURCE="${workspaceHelpers}/bin/codex-computer-use-indicator"
               ''}
               ${lib.optionalString (lib.elem "read-aloud-mcp" effectiveFeatureIds) ''
