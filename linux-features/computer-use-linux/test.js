@@ -22,9 +22,8 @@ const {
 const {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
-  applyLinuxComputerUseHostPlatformPatch,
-  matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");
+const { applyLinuxComputerUseHostPlatformPatch, matchesLinuxComputerUseHostPlatformContract } = require("./host-platform.js");
 
 test("computer-use-linux is opt-in and owns the current Linux descriptors", () => {
   assert.equal(manifest.defaultEnabled, false);
@@ -63,7 +62,7 @@ test("computer-use-linux is opt-in and owns the current Linux descriptors", () =
 
 function hostPlatformFixture(host = '"macOS"===S||"windows"===S', args = "areRequirementsPending:L,areRequiredFeaturesEnabled:M,enabled:T,isBrowserAndComputerUseAllowed:U,isAnyFeatureLoading:x,isComputerUseGateEnabled:b,") {
   return 'function E(e){let{isLoading:A,platform:S}=(0,_.V)(),t={enabled:!0,featureName:"computer_use",hostId:e};' +
-    `return function({areRequirementsPending:e,isHostCompatiblePlatform:s}){return e?"loading":s?"available":"unsupported-platform"}({${args}isHostCompatiblePlatform:${host},isPlatformLoading:A,windowType:"electron"})}`;
+    `return function({areRequirementsPending:e,areRequiredFeaturesEnabled:t,enabled:n,isBrowserAndComputerUseAllowed:r,isAnyFeatureLoading:i,isComputerUseGateEnabled:a,isHostCompatiblePlatform:s,isPlatformLoading:o,windowType:l}){return n?"electron"!==l?"window-type-disabled":e?"loading":r?a?o?"loading":s?i?"loading":t?"available":"config-requirement-disabled":"unsupported-platform":"statsig-disabled":"config-requirement-disabled":"disabled"}({${args}isHostCompatiblePlatform:${host},isPlatformLoading:A,windowType:"electron"})}`;
 }
 
 test("computer-use-linux staging consumes release artifacts without invoking Cargo", () => {
@@ -167,7 +166,7 @@ test("retired host-platform contracts are rejected byte-identically", () => {
     hostPlatformFixture().replace('featureName:"computer_use"', 'featureName:"browser_use"'),
   ]) {
     assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false, source);
-    assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+    assert.throws(() => applyLinuxComputerUseHostPlatformPatch(source), /host-platform contract/);
   }
 });
 
@@ -180,7 +179,7 @@ test("malformed, duplicate, and mixed host-platform contracts are rejected byte-
     hostPlatformFixture() + patched,
   ]) {
     assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false, source);
-    assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+    assert.throws(() => applyLinuxComputerUseHostPlatformPatch(source), /host-platform contract/);
   }
 });
 

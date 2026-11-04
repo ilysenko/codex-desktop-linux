@@ -6,8 +6,6 @@ const { mainBundlePatch, webviewAssetPatch } = require("../../scripts/patches/de
 const {
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
-  applyLinuxComputerUseHostPlatformPatch,
-  matchesLinuxComputerUseHostPlatformContract,
 } = require("../../scripts/patches/impl/computer-use.js");
 
 const {
@@ -17,6 +15,7 @@ const {
 } = require("./settings.js");
 const { applyUnifiedComputerUsePatch } = require("./unified.js");
 const { applyNativeApplicationsPatch } = require("./native-applications.js");
+const { applyLinuxComputerUseHostPlatformPatch, matchesLinuxComputerUseHostPlatformContract } = require("./host-platform.js");
 
 module.exports = [
   mainBundlePatch({

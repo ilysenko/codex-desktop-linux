@@ -177,83 +177,11 @@ function applyLinuxComputerUseFeaturePatch(currentSource) {
   return currentSource;
 }
 
-// The rspack/SWC renderer inlines the computer_use availability reducer as an
-// IIFE whose argument object carries an inline host platform expression:
-// `isHostCompatiblePlatform:"macOS"===S||"windows"===S`.
-const COMPUTER_USE_HOST_PLATFORM_LOOKBACK = 4000;
-
-function applyCurrentComputerUseHostPlatformContract(currentSource) {
-  const contractPattern =
-    /\(\{areRequirementsPending:[A-Za-z_$][\w$]*,areRequiredFeaturesEnabled:[A-Za-z_$][\w$]*,enabled:[A-Za-z_$][\w$]*,isBrowserAndComputerUseAllowed:[A-Za-z_$][\w$]*,isAnyFeatureLoading:[A-Za-z_$][\w$]*,isComputerUseGateEnabled:[A-Za-z_$][\w$]*,isHostCompatiblePlatform:([^,{}]+),isPlatformLoading:[A-Za-z_$][\w$]*,windowType:"electron"\}\)/g;
-  const candidates = [];
-  for (const match of currentSource.matchAll(contractPattern)) {
-    const context = currentSource.slice(
-      Math.max(0, match.index - COMPUTER_USE_HOST_PLATFORM_LOOKBACK),
-      match.index,
-    );
-    if (!context.includes('featureName:"computer_use"')) {
-      continue;
-    }
-
-    const hostExpression = match[1];
-    const pristine = hostExpression.match(
-      /^"macOS"===([A-Za-z_$][\w$]*)\|\|"windows"===\1$/,
-    );
-    const patched = hostExpression.match(
-      /^"linux"===([A-Za-z_$][\w$]*)\|\|"macOS"===\1\|\|"windows"===\1$/,
-    );
-    let kind = "malformed";
-    let platformVar = null;
-    if (pristine != null) {
-      kind = "pristine";
-      platformVar = pristine[1];
-    } else if (patched != null) {
-      kind = "patched";
-      platformVar = patched[1];
-    }
-    candidates.push({ hostExpression, kind, match, platformVar });
-  }
-
-  if (candidates.length !== 1 || candidates[0].kind === "malformed") {
-    return null;
-  }
-
-  const candidate = candidates[0];
-  if (candidate.kind === "patched") {
-    return currentSource;
-  }
-
-  const hostExpressionStart = candidate.match.index +
-    candidate.match[0].indexOf(candidate.hostExpression);
-  const hostExpressionEnd = hostExpressionStart + candidate.hostExpression.length;
-  return currentSource.slice(0, hostExpressionStart) +
-    `"linux"===${candidate.platformVar}||${candidate.hostExpression}` +
-    currentSource.slice(hostExpressionEnd);
-}
-
-function matchesLinuxComputerUseHostPlatformContract(currentSource) {
-  return applyCurrentComputerUseHostPlatformContract(currentSource) != null;
-}
-
-function applyLinuxComputerUseHostPlatformPatch(currentSource) {
-  const patchedSource = applyCurrentComputerUseHostPlatformContract(currentSource);
-  if (patchedSource != null) {
-    return patchedSource;
-  }
-
-  console.warn(
-    "WARN: Could not find current Computer Use host-platform gate — skipping Linux Computer Use host-platform patch",
-  );
-  return currentSource;
-}
-
 module.exports = {
   COMPUTER_USE_UI_ENV_VAR,
   COMPUTER_USE_UI_SETTINGS_KEY,
   applyLinuxComputerUseAvatarCursorBridgePatch,
   applyLinuxComputerUseFeaturePatch,
-  applyLinuxComputerUseHostPlatformPatch,
   isComputerUseUiEnabled,
   linuxComputerUseCursorBridgeRuntimeSource,
-  matchesLinuxComputerUseHostPlatformContract,
 };
