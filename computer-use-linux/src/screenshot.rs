@@ -296,6 +296,9 @@ impl ScreenshotPayloadOptions {
 /// fallback chain. Accepts `gnome-shell`, `gnome-extension`, `portal`, `x11`,
 /// `gnome-screenshot`, or `pixelflux`.
 const SCREENSHOT_BACKEND_ENV: &str = "CODEX_COMPUTER_USE_SCREENSHOT_BACKEND";
+/// Standalone computer-use-linux name for [`SCREENSHOT_BACKEND_ENV`], read
+/// when the Codex name is unset or blank.
+const SCREENSHOT_BACKEND_ENV_STANDALONE: &str = "COMPUTER_USE_LINUX_SCREENSHOT_BACKEND";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScreenshotBackend {
@@ -443,17 +446,20 @@ async fn capture_with_pixelflux(
 }
 
 fn forced_backend() -> Result<Option<ScreenshotBackend>> {
-    match std::env::var(SCREENSHOT_BACKEND_ENV) {
-        Ok(value) if !value.trim().is_empty() => {
-            ScreenshotBackend::parse(&value).map(Some).ok_or_else(|| {
-                anyhow!(
-                    "{SCREENSHOT_BACKEND_ENV}={value:?} is not a recognized backend \
-                     (expected gnome-shell, gnome-extension, portal, x11, gnome-screenshot, or pixelflux)"
-                )
-            })
+    for key in [SCREENSHOT_BACKEND_ENV, SCREENSHOT_BACKEND_ENV_STANDALONE] {
+        match std::env::var(key) {
+            Ok(value) if !value.trim().is_empty() => {
+                return ScreenshotBackend::parse(&value).map(Some).ok_or_else(|| {
+                    anyhow!(
+                        "{key}={value:?} is not a recognized backend \
+                         (expected gnome-shell, gnome-extension, portal, x11, gnome-screenshot, or pixelflux)"
+                    )
+                });
+            }
+            _ => {}
         }
-        _ => Ok(None),
     }
+    Ok(None)
 }
 
 pub async fn capture_screenshot() -> Result<ScreenshotCapture> {
@@ -1215,6 +1221,8 @@ mod tests {
         let _guard = crate::pixelflux::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Start from neither name, whatever the caller's environment exports.
+        std::env::remove_var(SCREENSHOT_BACKEND_ENV_STANDALONE);
         std::env::set_var(SCREENSHOT_BACKEND_ENV, "gnome-screenshot");
         assert_eq!(
             forced_backend().unwrap(),
@@ -1235,6 +1243,29 @@ mod tests {
         assert!(error.to_string().contains("not a recognized backend"));
 
         std::env::remove_var(SCREENSHOT_BACKEND_ENV);
+        assert_eq!(forced_backend().unwrap(), None);
+
+        // The standalone name is an alias; the Codex name wins when both are set.
+        std::env::set_var(SCREENSHOT_BACKEND_ENV_STANDALONE, "gnome-screenshot");
+        assert_eq!(
+            forced_backend().unwrap(),
+            Some(ScreenshotBackend::GnomeScreenshot)
+        );
+        std::env::set_var(SCREENSHOT_BACKEND_ENV, "x11");
+        assert_eq!(forced_backend().unwrap(), Some(ScreenshotBackend::X11));
+        std::env::set_var(SCREENSHOT_BACKEND_ENV, "  ");
+        assert_eq!(
+            forced_backend().unwrap(),
+            Some(ScreenshotBackend::GnomeScreenshot)
+        );
+        std::env::set_var(SCREENSHOT_BACKEND_ENV_STANDALONE, "bogus");
+        let error = forced_backend().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("COMPUTER_USE_LINUX_SCREENSHOT_BACKEND"));
+
+        std::env::remove_var(SCREENSHOT_BACKEND_ENV);
+        std::env::remove_var(SCREENSHOT_BACKEND_ENV_STANDALONE);
         assert_eq!(forced_backend().unwrap(), None);
     }
 
@@ -1265,6 +1296,7 @@ mod tests {
         std::env::set_var("PIXELFLUX_CU", port.to_string());
         std::env::set_var("PIXELFLUX_CU_TOKEN", "secret");
         std::env::remove_var(SCREENSHOT_BACKEND_ENV);
+        std::env::remove_var(SCREENSHOT_BACKEND_ENV_STANDALONE);
         let capture = capture_screenshot_raw().await.unwrap();
         std::env::remove_var("PIXELFLUX_CU");
         std::env::remove_var("PIXELFLUX_CU_TOKEN");

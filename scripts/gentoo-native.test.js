@@ -174,7 +174,9 @@ function nativePackageFixture(t) {
   const nodeWrapper = `#!/bin/bash\nif [[ "$1" == */upstream-linux-package.js ]]; then\n shift\n while [ "$#" -gt 0 ]; do if [ "$1" = --metadata ]; then cp "$GENTOO_TEST_METADATA" "$2"; exit 0; fi; shift; done\n exit 1\nfi\nexec "$GENTOO_TEST_NODE" "$@"\n`;
   fs.writeFileSync(path.join(bin, "node"), nodeWrapper, { mode: 0o755 });
   if (cp.spawnSync('python3', ['-c', 'import portage']).status !== 0) {
-    fs.writeFileSync(path.join(bin, 'python3'), '#!/bin/bash\n[[ "$1" == */validate-gentoo-dependencies.py ]] || exit 99\nexit 0\n', { mode: 0o755 });
+    // Drain stdin like the real validator: exiting unread would SIGPIPE the
+    // script's printf, which pipefail turns into exit 141.
+    fs.writeFileSync(path.join(bin, 'python3'), '#!/bin/bash\n[[ "$1" == */validate-gentoo-dependencies.py ]] || exit 99\ncat >/dev/null\nexit 0\n', { mode: 0o755 });
   }
   const env = { ...process.env, PATH: bin + path.delimiter + process.env.PATH, TMPDIR: dir,
     APP_DIR_OVERRIDE: app, DIST_DIR_OVERRIDE: dist, PACKAGE_WITH_UPDATER: "0",

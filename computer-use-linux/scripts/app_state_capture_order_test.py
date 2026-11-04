@@ -73,7 +73,8 @@ class CaptureOrderTests(unittest.TestCase):
             CODEX_COMPUTER_USE_SCREENSHOT_BACKEND='gnome-screenshot',
             PATH=str(self.root)+':/usr/bin:/bin')
         for name in ('DISPLAY', 'WAYLAND_DISPLAY', 'AT_SPI_BUS_ADDRESS', 'NIRI_SOCKET',
-                     'SWAYSOCK', 'I3SOCK', 'COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND'):
+                     'SWAYSOCK', 'I3SOCK', 'COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND',
+                     'CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND'):
             self.env.pop(name, None)
         for name in ('systemctl', 'gdbus', 'xdotool', 'wtype', 'xrandr', 'ydotool', 'ydotoold',
                      'grim', 'kscreen-doctor', 'swaymsg', 'i3-msg', 'niri'):

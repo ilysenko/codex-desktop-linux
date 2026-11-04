@@ -11,7 +11,8 @@
 
 use std::env;
 
-pub const BACKGROUND_ENV: &str = "COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND";
+pub const BACKGROUND_ENV: &str = "CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND";
+pub const BACKGROUND_ENV_STANDALONE: &str = "COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND";
 
 /// One key press: Hyprland modifier mask (e.g. `"CTRL SHIFT"`, or empty) and
 /// an xkb key name on the unshifted level of a US layout.
@@ -31,9 +32,12 @@ impl KeyPress {
 }
 
 /// Opt-in for Hyprland background mode: targeted keyboard input and
-/// window capture that never focus or raise the target.
+/// window capture that never focus or raise the target. The standalone
+/// name is an alias.
 pub fn background_enabled() -> bool {
-    env::var(BACKGROUND_ENV).ok().as_deref() == Some("1")
+    [BACKGROUND_ENV, BACKGROUND_ENV_STANDALONE]
+        .iter()
+        .any(|key| env::var(key).ok().as_deref() == Some("1"))
 }
 
 /// Maps literal text to key presses. Errors name the first unsupported
@@ -135,7 +139,12 @@ pub fn chord_to_key_press(chord: &str) -> Option<KeyPress> {
         key = Some(named_key(&part)?);
     }
     let key = key.or_else(|| {
-        // A lone modifier ("Super") is a key press in its own right.
+        // A lone modifier ("Super") is a key press in its own right. Only
+        // alone: press_key refuses modifiers with no key ("Ctrl+Shift") on
+        // every other backend.
+        if mods.len() != 1 {
+            return None;
+        }
         let last = mods.pop()?;
         Some(
             match last {
@@ -253,10 +262,8 @@ mod tests {
         assert_eq!(chord_to_key_press("Page-Down"), Some(kp("", "Next")));
         assert_eq!(chord_to_key_press("F12"), Some(kp("", "F12")));
         assert_eq!(chord_to_key_press("Super"), Some(kp("", "Super_L")));
-        assert_eq!(
-            chord_to_key_press("Ctrl+Shift"),
-            Some(kp("CTRL", "Shift_L"))
-        );
+        // Modifiers with no key are refused, as press_key does elsewhere.
+        assert_eq!(chord_to_key_press("Ctrl+Shift"), None);
         assert_eq!(chord_to_key_press("Ctrl+L+K"), None);
         assert_eq!(chord_to_key_press("Ctrl+é"), None);
         assert_eq!(chord_to_key_press("Ctrl++"), None);

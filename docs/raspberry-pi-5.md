@@ -94,8 +94,9 @@ The following checks passed on the test Pi:
 A combined Chromium workflow was validated on the Labwc Wayland session after
 the desktop-control dependencies were completed. Initially, screenshots worked,
 but accessibility discovery, pointer input, and keyboard input were incomplete.
-Labwc is not currently a supported window-control backend, so window listing
-and focus were supplied separately through manual `wlrctl` shell commands.
+The backend used for that validation had no window control for stock Labwc, so
+window listing and focus were supplied separately through manual `wlrctl` shell
+commands.
 
 The successful Pi configuration added:
 
@@ -130,9 +131,10 @@ successful retry.
 
 The public item verifies that the combined workflow published and persisted the
 result. It does not establish that the backend's built-in `list_windows`,
-`focused_window`, or targeted-input verification supported Labwc. Treat those
-window-control capabilities as unavailable on Labwc until a dedicated backend
-is implemented.
+`focused_window`, or targeted-input verification supported Labwc. Since
+Computer Use v0.7.36 the backend lists and focuses stock Labwc windows through
+`zwlr_foreign_toplevel_manager_v1`, the interface `wlrctl` uses, without pids
+or bounds. That path has not been validated on the Pi yet.
 
 Granting access to `/dev/uinput` and running `ydotoold` allows synthetic input.
 Limit access to trusted local users, keep the device rule group-scoped, and do

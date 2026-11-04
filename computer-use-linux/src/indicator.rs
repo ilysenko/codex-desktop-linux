@@ -47,7 +47,18 @@ pub const CAPTURE_REPLY_EMPTY: &[u8] = b"empty";
 const DISABLE_ENV: &str = "COMPUTER_USE_LINUX_INDICATOR";
 const HIDE_TEXT_ENV: &str = "COMPUTER_USE_LINUX_INDICATOR_HIDE_TEXT";
 const AGENT_ENV: &str = "COMPUTER_USE_LINUX_AGENT_NAME";
+const CODEX_AGENT_ENV: &str = "CODEX_COMPUTER_USE_AGENT_NAME";
 const BINARY_ENV: &str = "COMPUTER_USE_LINUX_INDICATOR_BIN";
+
+/// The agent name shown on the indicator, from `CODEX_COMPUTER_USE_AGENT_NAME`
+/// or its standalone alias `COMPUTER_USE_LINUX_AGENT_NAME`. A blank value
+/// counts as unset.
+fn agent_override(lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
+    [CODEX_AGENT_ENV, AGENT_ENV]
+        .into_iter()
+        .filter_map(lookup)
+        .find(|name| !name.trim().is_empty())
+}
 
 /// How long the overlay cursor takes to reach a target. Pointer actions wait
 /// this long so the cursor lands before the real input happens.
@@ -296,9 +307,7 @@ impl Default for Indicator {
                 .ok()
                 .as_deref()
                 == Some("1"),
-            agent_override: env::var(AGENT_ENV)
-                .ok()
-                .filter(|name| !name.trim().is_empty()),
+            agent_override: agent_override(|key| env::var(key).ok()),
             peer: OnceLock::new(),
             socket,
             path: live.then(socket_path).flatten(),
@@ -663,6 +672,41 @@ fn spawn_overlay() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_override_reads_the_codex_name_and_its_standalone_alias() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        assert_eq!(
+            agent_override(env(&[("CODEX_COMPUTER_USE_AGENT_NAME", "Helper")])),
+            Some("Helper".to_string())
+        );
+        assert_eq!(
+            agent_override(env(&[("COMPUTER_USE_LINUX_AGENT_NAME", "Helper")])),
+            Some("Helper".to_string())
+        );
+        assert_eq!(
+            agent_override(env(&[
+                ("CODEX_COMPUTER_USE_AGENT_NAME", "Codex name"),
+                ("COMPUTER_USE_LINUX_AGENT_NAME", "Standalone name"),
+            ])),
+            Some("Codex name".to_string())
+        );
+        assert_eq!(
+            agent_override(env(&[
+                ("CODEX_COMPUTER_USE_AGENT_NAME", "  "),
+                ("COMPUTER_USE_LINUX_AGENT_NAME", "Standalone name"),
+            ])),
+            Some("Standalone name".to_string())
+        );
+        assert_eq!(agent_override(env(&[])), None);
+    }
 
     #[test]
     fn agent_names_come_from_client_info() {

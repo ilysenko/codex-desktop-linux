@@ -120,21 +120,55 @@ struct CachedAccessibilitySnapshot {
 struct ElementOwnerTarget {
     pid: Option<u32>,
     window: Option<(u64, String)>,
+    /// The target names exactly this window: a `window_id`, or an app_id,
+    /// wm_class or title that matches one window. An `app_id` shared by
+    /// several windows resolves to the first, which the caller did not name.
+    exact_window: bool,
 }
 
 impl ElementOwnerTarget {
     fn pid(pid: Option<u32>) -> Self {
-        Self { pid, window: None }
+        Self {
+            pid,
+            ..Self::default()
+        }
     }
 
     /// A resolved window target. The window's own pid wins over `pid`, the
     /// one the caller passed.
-    fn window(window: &WindowInfo, pid: Option<u32>) -> Self {
+    fn window(window: &WindowInfo, pid: Option<u32>, exact_window: bool) -> Self {
         Self {
             pid: window.pid.or(pid),
             window: Some((window.window_id, window.backend.clone())),
+            exact_window,
         }
     }
+}
+
+/// The previous snapshot's window scope, pid and window, for a post-action
+/// tree that narrows through that scope.
+#[derive(Debug, Clone)]
+struct CachedTreeWindow {
+    scope: String,
+    pid: Option<u32>,
+    window: Option<(u64, String)>,
+}
+
+/// How a cached tree was returned: its node encoding, which get_tree_page
+/// pages in, and the AT-SPI window it was narrowed to.
+#[derive(Debug, Clone, Default)]
+struct TreeShape {
+    detail: NodeDetail,
+    window_scope: Option<String>,
+}
+
+/// Whether an action brought its target window to the front, so a
+/// post-action `screenshot_after: "window"` crop shows that window.
+/// perform_action and set_value act through AT-SPI and leave it where it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetRaised {
+    Yes,
+    No,
 }
 
 #[derive(Clone)]
@@ -694,10 +728,12 @@ impl ComputerUseLinux {
                 window_context.as_ref(),
                 &params,
                 tree_scoped,
-                detail,
+                TreeShape {
+                    detail,
+                    window_scope: window_scope.clone(),
+                },
             )
             .await;
-            self.remember_window_scope(window_scope.clone());
         } else {
             self.commit_snapshot(&[], None).await;
         }
@@ -1133,7 +1169,7 @@ impl ComputerUseLinux {
         let capture = params.capture.clone();
         let target = params.window_target();
         let Json(output) = self.dispatch_click(params).await;
-        self.finish_action_output(output, &capture, target.as_ref())
+        self.finish_action_output(output, &capture, target.as_ref(), TargetRaised::Yes)
             .await
     }
 
@@ -1188,7 +1224,7 @@ impl ComputerUseLinux {
                     });
                 }
             };
-            owner_target = focus_owner_target(focus.as_ref(), params.pid);
+            owner_target = focus_owner_target(focus.as_ref(), params.pid, params.window_id);
             tokio::time::sleep(Duration::from_millis(120)).await;
             // Window-relative coordinates: translate by the window's top-left so
             // the agent can click the pixel it saw in a window-cropped screenshot.
@@ -1684,7 +1720,7 @@ impl ComputerUseLinux {
         let Json(output) = self
             .perform_element_action(&params, Some(requested_action))
             .await;
-        self.finish_action_output(output, &capture, target.as_ref())
+        self.finish_action_output(output, &capture, target.as_ref(), TargetRaised::No)
             .await
     }
 
@@ -1801,7 +1837,7 @@ impl ComputerUseLinux {
         let capture = params.capture.clone();
         let target = params.window_target();
         let Json(output) = self.dispatch_scroll(params).await;
-        self.finish_action_output(output, &capture, target.as_ref())
+        self.finish_action_output(output, &capture, target.as_ref(), TargetRaised::Yes)
             .await
     }
 
@@ -1847,7 +1883,7 @@ impl ComputerUseLinux {
                     });
                 }
             };
-            owner_target = focus_owner_target(focus.as_ref(), params.pid);
+            owner_target = focus_owner_target(focus.as_ref(), params.pid, params.window_id);
             tokio::time::sleep(Duration::from_millis(120)).await;
             if params.relative == Some(true) {
                 let Some(focus) = focus.as_ref() else {
@@ -2248,7 +2284,8 @@ impl ComputerUseLinux {
     ) -> Result<CallToolResult, ErrorData> {
         let capture = params.capture.clone();
         let Json(output) = self.dispatch_drag(params).await;
-        self.finish_action_output(output, &capture, None).await
+        self.finish_action_output(output, &capture, None, TargetRaised::Yes)
+            .await
     }
 
     async fn dispatch_drag(&self, params: DragParams) -> Json<ActionOutput> {
@@ -2475,7 +2512,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "press_key",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Press a key or key-combination on the keyboard, optionally after focusing a target window or terminal selector. Key grammar (case-insensitive; hyphens/spaces ignored): combos join with '+', e.g. Ctrl+L or Ctrl+Shift+T. Modifiers: ctrl/control, alt/option, shift, meta/super/cmd/command. Named keys: enter/return, escape/esc, tab, backspace, delete/del, space, home, end, pageup, pagedown, arrowleft/left, arrowright/right, arrowup/up, arrowdown/down, f1-f12. Plus single US letters a-z and digits 0-9. Anything else returns an error (never silently dropped). On Wayland, chords are sent through an active remote desktop portal keyboard session when one is available (or when ydotool is absent), falling back to ydotool otherwise. Portal chords send modifiers and named keys as keysyms so remapped keys (e.g. Caps Lock swapped with Control) follow the active keymap; letters and digits are physical US positions. Note: compositor-level shortcuts (e.g. Super+Up) may be consumed by GNOME before reaching the app. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Press a key or key-combination on the keyboard, optionally after focusing a target window or terminal selector. Key grammar (case-insensitive; hyphens/spaces ignored): combos join with '+', e.g. Ctrl+L or Ctrl+Shift+T. Modifiers: ctrl/control, alt/option, shift, meta/super/cmd/command. Named keys: enter/return, escape/esc, tab, backspace, delete/del, space, home, end, pageup, pagedown, arrowleft/left, arrowright/right, arrowup/up, arrowdown/down, f1-f12. Plus single US letters a-z and digits 0-9. Anything else returns an error (never silently dropped). On Wayland, chords are sent through an active remote desktop portal keyboard session when one is available (or when ydotool is absent), falling back to ydotool otherwise. When ydotool is absent and the session has no RemoteDesktop portal (for example wlroots compositors), chords go through wtype instead. Portal chords send modifiers and named keys as keysyms so remapped keys (e.g. Caps Lock swapped with Control) follow the active keymap; letters and digits are physical US positions. Note: compositor-level shortcuts (e.g. Super+Up) may be consumed by GNOME before reaching the app. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -2490,7 +2527,8 @@ impl ComputerUseLinux {
         let capture = params.capture.clone();
         let target = params.window_target();
         let Json(output) = self.dispatch_press_key(params).await;
-        self.finish_action_output(output, &capture, Some(&target))
+        let raised = keyboard_target_raised(&target);
+        self.finish_action_output(output, &capture, Some(&target), raised)
             .await
     }
 
@@ -2504,7 +2542,10 @@ impl ComputerUseLinux {
                 "press_key",
                 &params.window_target(),
                 &params.key,
-                crate::hyprland_input::chord_to_key_press(&params.key)
+                // The shared press_key grammar decides what is a key, so
+                // background mode accepts exactly what every backend accepts.
+                key_chord(&params.key)
+                    .and_then(|_| crate::hyprland_input::chord_to_key_press(&params.key))
                     .map(|press| vec![press])
                     .ok_or_else(|| {
                         "Unsupported key. Use names like Enter, Escape, Tab, ArrowLeft, Super, Ctrl+L, or a single US keyboard letter/digit.".to_string()
@@ -2555,7 +2596,39 @@ impl ComputerUseLinux {
         let input_guard = Arc::try_unwrap(input_guard)
             .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
 
-        if self.should_prefer_portal_keyboard_for_chords().await {
+        let route = self.chord_route().await;
+        if route == ChordRoute::Wtype {
+            let Some(args) = wtype_key_args(&params.key) else {
+                return Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "press_key".to_string(),
+                    message: "Unsupported key. Use names like Enter, Escape, Tab, ArrowLeft, Super, Ctrl+L, or a single US keyboard letter/digit.".to_string(),
+                    received,
+                });
+            };
+            let (input_guard, result) =
+                run_cancellation_safe_input(input_guard, async move { run_wtype_key(&args).await })
+                    .await;
+            let _input_guard = input_guard;
+            let output = match result {
+                Ok(()) => successful_action_with_focus(
+                    "press_key",
+                    "Action sent through wtype (Wayland virtual-keyboard protocol).",
+                    received,
+                    focus.clone(),
+                ),
+                Err(error) => {
+                    action_result_with_focus("press_key", Err(error), received, focus.clone())
+                }
+            };
+            if output.ok && focus.is_some() {
+                let notes = self.input_landing_notes(focus.as_ref(), false).await;
+                return Json(with_notes(output, notes));
+            }
+            return Json(output);
+        }
+        if route == ChordRoute::Portal {
             let portal_target = match self
                 .portal_keyboard_target(&params.window_target(), focus.as_ref())
                 .await
@@ -2726,7 +2799,8 @@ impl ComputerUseLinux {
                 " Field contents were not verified; re-observe the target before retrying.",
             );
         }
-        self.finish_action_output(output, &capture, Some(&target))
+        let raised = keyboard_target_raised(&target);
+        self.finish_action_output(output, &capture, Some(&target), raised)
             .await
     }
 
@@ -3109,7 +3183,7 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.35",
+    version = "0.7.38",
     instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send literal type_text through KDE clipboard integration on Plasma Wayland, wtype on compatible Wayland compositors, or portal keysyms on other Wayland sessions. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable) and warn when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype uses a single literal argument after -- to avoid stdin keymap-refresh corruption; text is visible in process arguments, so confirmed password fields are rejected (use set_value). Terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call; split larger input into smaller calls or expose accessibility. Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, click, and input results warn when the target window or coordinate is partially or fully off-screen; use move_window/resize_window (GNOME Shell extension backend) to bring a window fully on-screen before retrying. scroll accepts the same window targeting and relative coordinates as click. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {}
@@ -4692,6 +4766,23 @@ impl ComputerUseLinux {
         !ydotool_backend_available().await
     }
 
+    /// Chord route for `press_key`. The portal stays preferred wherever it
+    /// exists; the portal probe only runs when wtype could replace it.
+    async fn chord_route(&self) -> ChordRoute {
+        let prefer_portal = self.should_prefer_portal_keyboard_for_chords().await;
+        let portal_pinned = self.cached_portal_keyboard_session().is_some()
+            || env_flag_enabled_any(&[
+                "COMPUTER_USE_LINUX_FORCE_PORTAL_KEYBOARD",
+                "CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD",
+            ]);
+        let wtype = self.should_prefer_wtype_keyboard();
+        let portal_missing = prefer_portal
+            && !portal_pinned
+            && wtype
+            && crate::remote_desktop::remote_desktop_portal_missing().await;
+        chord_route_from(prefer_portal, portal_pinned, wtype, portal_missing)
+    }
+
     fn should_prefer_kde_clipboard_text_backend(&self) -> bool {
         !env_flag_enabled_any(&[
             "COMPUTER_USE_LINUX_FORCE_YDOTOOL_KEYBOARD",
@@ -5000,6 +5091,7 @@ impl ComputerUseLinux {
         capture: &PostActionCaptureParams,
         target: Option<&WindowTarget>,
         fallback_window: Option<&WindowInfo>,
+        raised: TargetRaised,
     ) -> (
         PostActionObservation,
         Option<ScreenshotCapture>,
@@ -5027,6 +5119,7 @@ impl ComputerUseLinux {
                             .resolve_post_action_window(target, fallback_window)
                             .await
                             .context("targeted post-action screenshot failed")?;
+                        ensure_post_action_crop_shows_target(raised, target, &window)?;
                         resolved_window = Some(window.clone());
                         Some(window)
                     }
@@ -5137,11 +5230,19 @@ impl ComputerUseLinux {
                         .flatten()
                 };
             }
+            // A tree for a named window must not borrow the previous
+            // snapshot's app: on i3 without xprop and on COSMIC the window has no pid, and
+            // that app may not be the one holding it.
+            let window_targeted = resolved_window.is_some()
+                && (target.is_some_and(WindowTarget::has_target) || fallback_window.is_some());
             let target_pid = resolved_window
                 .as_ref()
                 .and_then(|window| window.pid)
                 .or_else(|| target.and_then(|target| target.pid))
                 .or_else(|| {
+                    if window_targeted {
+                        return None;
+                    }
                     self.last_snapshot
                         .lock()
                         .ok()
@@ -5161,18 +5262,28 @@ impl ComputerUseLinux {
                 || target_pid.is_some()
                 || app_filter.is_some();
             let (max_nodes, max_depth) = crate::atspi_tree::snapshot_limits(None, None);
-            let cached_window_scope = self.last_snapshot.lock().ok().and_then(|snapshot| {
-                snapshot
-                    .window_scope
-                    .clone()
-                    .map(|scope| (scope, snapshot.pid))
+            let cached_tree = self.last_snapshot.lock().ok().and_then(|snapshot| {
+                Some(CachedTreeWindow {
+                    scope: snapshot.window_scope.clone()?,
+                    pid: snapshot.pid,
+                    window: snapshot.window_id.zip(snapshot.window_backend.clone()),
+                })
             });
             let window_title = post_action_window_title(
                 target,
                 resolved_window.as_ref(),
                 target_pid,
-                cached_window_scope,
+                cached_tree
+                    .as_ref()
+                    .map(|cached| (cached.scope.clone(), cached.pid)),
             );
+            // Without a window_id or title of its own, a narrowed tree was
+            // narrowed through the previous snapshot's window scope.
+            let narrowed_through_cache = cached_tree.filter(|_| {
+                window_title.is_some()
+                    && !target
+                        .is_some_and(|target| target.window_id.is_some() || target.title.is_some())
+            });
             match snapshot_accessibility_tree(
                 app_filter.as_deref(),
                 target_pid,
@@ -5207,8 +5318,19 @@ impl ComputerUseLinux {
                         snapshot.scoped,
                         snapshot.truncated,
                     );
-                    self.commit_snapshot(&nodes, snapshot.root_pid).await;
-                    self.remember_window_scope(snapshot.window_scope.clone());
+                    let tree_window = post_action_tree_window(
+                        resolved_window.as_ref().filter(|_| window_targeted),
+                        snapshot.root_pid,
+                        snapshot.window_scope.as_deref(),
+                        narrowed_through_cache.as_ref(),
+                    );
+                    self.commit_observed_snapshot(
+                        &nodes,
+                        snapshot.root_pid,
+                        tree_window,
+                        snapshot.window_scope.clone(),
+                    )
+                    .await;
                     if let Some(warning) = unscoped_accessibility_tree_warning(
                         snapshot.scoped,
                         true,
@@ -5278,6 +5400,7 @@ impl ComputerUseLinux {
         mut output: ActionOutput,
         capture: &PostActionCaptureParams,
         target: Option<&WindowTarget>,
+        raised: TargetRaised,
     ) -> Result<CallToolResult, ErrorData> {
         if !output.ok {
             return self.action_tool_result(
@@ -5289,7 +5412,7 @@ impl ComputerUseLinux {
             );
         }
         let (observation, screenshot, notes) = self
-            .capture_post_action_observation(capture, target, None)
+            .capture_post_action_observation(capture, target, None, raised)
             .await;
         output = with_notes(output, notes);
         self.action_tool_result(
@@ -5319,7 +5442,7 @@ impl ComputerUseLinux {
             );
         }
         let (observation, screenshot, notes) = self
-            .capture_post_action_observation(capture, target, None)
+            .capture_post_action_observation(capture, target, None, TargetRaised::No)
             .await;
         output = with_notes(output, notes);
         self.action_tool_result(
@@ -5354,7 +5477,12 @@ impl ComputerUseLinux {
             .and_then(|focus| focus.focused_window.as_ref())
             .or_else(|| output.focus.as_ref().map(|focus| &focus.requested_window));
         let (observation, screenshot, notes) = self
-            .capture_post_action_observation(capture, Some(target), fallback_window)
+            .capture_post_action_observation(
+                capture,
+                Some(target),
+                fallback_window,
+                TargetRaised::Yes,
+            )
             .await;
         let message = (!notes.is_empty()).then(|| notes.join(" "));
         self.action_tool_result(
@@ -5384,7 +5512,12 @@ impl ComputerUseLinux {
         }
         let fallback_window = output.window.as_ref();
         let (observation, screenshot, notes) = self
-            .capture_post_action_observation(capture, Some(target), fallback_window)
+            .capture_post_action_observation(
+                capture,
+                Some(target),
+                fallback_window,
+                TargetRaised::Yes,
+            )
             .await;
         for note in notes {
             if !output.message.is_empty() {
@@ -5630,7 +5763,8 @@ impl ComputerUseLinux {
     }
 
     /// Hyprland background capture: when opted in with
-    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` and the target is an
+    /// `CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND=1` (or the standalone
+    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`) and the target is an
     /// unfocused Hyprland window, capture just that window with `grim -T`
     /// instead of raising it or grabbing the desktop through the portal.
     /// Returns `None` to fall through to the regular capture path. The note
@@ -5648,7 +5782,7 @@ impl ComputerUseLinux {
         Some(
             async {
                 let capture =
-                    crate::windowing::backends::hyprland::capture_window(window.window_id).await?;
+                    crate::windowing::backends::hyprland::capture_window(window).await?;
                 let note = capture.hidden_workspace.as_ref().map(|hidden| {
                     let state = if hidden.settled {
                         "the last two frames matched, so the image is current"
@@ -5683,7 +5817,8 @@ impl ComputerUseLinux {
     }
 
     /// Hyprland background input: when opted in with
-    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` and the call names a
+    /// `CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND=1` (or the standalone
+    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`) and the call names a
     /// target window, keys go to that window through `send_key_state` without
     /// focusing it, so the user's focus, cursor and workspace stay put.
     /// Returns `None` to fall through to the focus-then-type path.
@@ -5695,21 +5830,10 @@ impl ComputerUseLinux {
         presses: std::result::Result<Vec<crate::hyprland_input::KeyPress>, String>,
         received: Option<serde_json::Value>,
     ) -> Option<ActionOutput> {
-        if !crate::hyprland_input::background_enabled()
-            || !target.has_target()
-            || !env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
-                desktop
-                    .split(':')
-                    .any(|part| part.eq_ignore_ascii_case("hyprland"))
-            })
-        {
+        if !hyprland_background_applies(target) {
             return None;
         }
         let fail = |message: String| Some(action_result(action, Err(message), received.clone()));
-        let presses = match presses {
-            Ok(presses) => presses,
-            Err(message) => return fail(message),
-        };
         let windows = match list_windows().await {
             Ok(windows) => windows,
             Err(error) => return fail(format!("Did not send input: {error:#}")),
@@ -5721,6 +5845,12 @@ impl ComputerUseLinux {
         if window.backend != registry::HYPRLAND_BACKEND {
             return None;
         }
+        // Background mode never moves focus, so input it cannot map for the
+        // target is refused rather than typed through the focusing path.
+        let presses = match presses {
+            Ok(presses) => presses,
+            Err(message) => return fail(message),
+        };
         match crate::windowing::backends::hyprland::devices_json().await {
             Ok(json) if crate::hyprland_input::keymap_is_us(&json) => {}
             Ok(_) => {
@@ -6220,10 +6350,26 @@ impl ComputerUseLinux {
         self.cache_snapshot(nodes, target_pid);
     }
 
-    fn remember_window_scope(&self, window_scope: Option<String>) {
-        if let Ok(mut cached) = self.last_snapshot.lock() {
-            cached.window_scope = window_scope;
-        }
+    /// Commit a post-action tree with the window it was taken for and its
+    /// window scope, under the same guard as the nodes.
+    async fn commit_observed_snapshot(
+        &self,
+        nodes: &[AccessibilityNode],
+        target_pid: Option<u32>,
+        window: Option<(u64, String)>,
+        window_scope: Option<String>,
+    ) {
+        let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
+        self.store_snapshot_for(
+            nodes,
+            target_pid,
+            None,
+            window,
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope,
+            },
+        );
     }
 
     async fn commit_app_state_snapshot(
@@ -6233,17 +6379,14 @@ impl ComputerUseLinux {
         window: Option<&WindowInfo>,
         params: &GetAppStateParams,
         scoped: bool,
-        detail: NodeDetail,
+        shape: TreeShape,
     ) {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let recovery_scope = scoped.then(|| AccessibilityRecoveryScope {
             params: params.clone(),
             target_pid,
         });
-        self.cache_snapshot_with_window(nodes, target_pid, recovery_scope, window);
-        if let Ok(mut cached) = self.last_snapshot.lock() {
-            cached.detail = detail;
-        }
+        self.store_snapshot(nodes, target_pid, recovery_scope, window, shape);
     }
 
     fn cache_snapshot(&self, nodes: &[AccessibilityNode], target_pid: Option<u32>) {
@@ -6266,17 +6409,54 @@ impl ComputerUseLinux {
         recovery_scope: Option<AccessibilityRecoveryScope>,
         window: Option<&WindowInfo>,
     ) {
+        self.store_snapshot(
+            nodes,
+            target_pid,
+            recovery_scope,
+            window,
+            TreeShape::default(),
+        );
+    }
+
+    /// Replace the cached snapshot in one write, so its nodes, ownership,
+    /// encoding and window scope always come from the same tree.
+    fn store_snapshot(
+        &self,
+        nodes: &[AccessibilityNode],
+        target_pid: Option<u32>,
+        recovery_scope: Option<AccessibilityRecoveryScope>,
+        window: Option<&WindowInfo>,
+        shape: TreeShape,
+    ) {
+        self.store_snapshot_for(
+            nodes,
+            target_pid,
+            recovery_scope,
+            window.map(|window| (window.window_id, window.backend.clone())),
+            shape,
+        );
+    }
+
+    /// store_snapshot for a window given as its id and backend.
+    fn store_snapshot_for(
+        &self,
+        nodes: &[AccessibilityNode],
+        target_pid: Option<u32>,
+        recovery_scope: Option<AccessibilityRecoveryScope>,
+        window: Option<(u64, String)>,
+        shape: TreeShape,
+    ) {
         // A spilled file matches only the snapshot it was written from.
         self.tree_spiller.remove_current();
         if let Ok(mut cached) = self.last_snapshot.lock() {
             *cached = CachedAccessibilitySnapshot {
                 nodes: nodes.to_vec(),
                 pid: target_pid,
-                window_id: window.map(|window| window.window_id),
-                window_backend: window.map(|window| window.backend.clone()),
+                window_id: window.as_ref().map(|(window_id, _)| *window_id),
+                window_backend: window.map(|(_, backend)| backend),
                 recovery_scope,
-                detail: NodeDetail::Compact,
-                window_scope: None,
+                detail: shape.detail,
+                window_scope: shape.window_scope,
             };
         }
     }
@@ -6286,13 +6466,23 @@ impl ComputerUseLinux {
         self.cache_snapshot(&[], None);
     }
 
+    /// The window the cached snapshot was taken for, with its backend.
+    fn snapshot_window(&self) -> Option<(u64, String)> {
+        self.last_snapshot
+            .lock()
+            .ok()
+            .and_then(|snapshot| snapshot.window_id.zip(snapshot.window_backend.clone()))
+    }
+
     /// Reject an element-targeted action whose cached node belongs to a
     /// different app or window than the action's target. With a target pid,
     /// a snapshot taken for a pid is judged by that pid; an untargeted
     /// snapshot mixes apps, so its node is judged by the pid that owns it on
     /// the accessibility bus. When neither is known the action proceeds, since
-    /// a mismatch cannot be shown. A window target with no known pid (i3,
-    /// sway and COSMIC report none) is judged by the snapshot's window and
+    /// a mismatch cannot be shown. When the pids match and the snapshot's tree
+    /// was narrowed to one window of the app, a window target must name that
+    /// window, since an app's windows share its pid. A window target with no known pid (i3
+    /// without xprop, COSMIC) is judged by the snapshot's window and
     /// fails closed when the snapshot recorded no comparable window.
     async fn check_node_target(
         &self,
@@ -6309,34 +6499,71 @@ impl ComputerUseLinux {
                 Some(pid) => Some(pid),
                 None => object_ref_owner_pid(&node.object_ref).await.ok().flatten(),
             };
-            return match owner_pid {
-                Some(owner_pid) if owner_pid != target_pid => Err(node_target_mismatch_message(
+            if let Some(owner_pid) = owner_pid.filter(|owner_pid| *owner_pid != target_pid) {
+                return Err(node_target_mismatch_message(
                     node.index, owner_pid, target_pid,
-                )),
-                _ => Ok(()),
+                ));
+            }
+            // Windows of one app share its pid. A tree narrowed to another
+            // window of the same app is still refused when the target names
+            // one window exactly; an app-wide tree holds every window, and an
+            // inexact target picked one arbitrarily, so both pass on the pid.
+            // A narrowed tree that recorded no comparable window cannot show
+            // which window it holds, so an exact target fails closed.
+            let Some((target_window, target_backend)) =
+                target.window.as_ref().filter(|_| target.exact_window)
+            else {
+                return Ok(());
             };
+            let narrowed = self
+                .last_snapshot
+                .lock()
+                .ok()
+                .is_some_and(|snapshot| snapshot.window_scope.is_some());
+            if !narrowed {
+                return Ok(());
+            }
+            return self.check_snapshot_window(
+                node.index,
+                *target_window,
+                target_backend,
+                node_window_unrecorded_message,
+            );
         }
         let Some((target_window, target_backend)) = target.window.as_ref() else {
             return Ok(());
         };
-        let snapshot_window = self
-            .last_snapshot
-            .lock()
-            .ok()
-            .and_then(|snapshot| snapshot.window_id.zip(snapshot.window_backend.clone()));
-        match snapshot_window {
-            Some((window_id, backend)) if backend == *target_backend => {
-                if window_id == *target_window {
+        self.check_snapshot_window(
+            node.index,
+            *target_window,
+            target_backend,
+            node_window_unverified_message,
+        )
+    }
+
+    /// Compare the snapshot's recorded window with the target window. A
+    /// snapshot with no window, or one listed by another window backend,
+    /// cannot be compared and is refused with `uncomparable`'s message.
+    fn check_snapshot_window(
+        &self,
+        element_index: u32,
+        target_window: u64,
+        target_backend: &str,
+        uncomparable: fn(u32, u64) -> String,
+    ) -> std::result::Result<(), String> {
+        match self.snapshot_window() {
+            Some((window_id, backend)) if backend == target_backend => {
+                if window_id == target_window {
                     Ok(())
                 } else {
                     Err(node_window_mismatch_message(
-                        node.index,
+                        element_index,
                         window_id,
-                        *target_window,
+                        target_window,
                     ))
                 }
             }
-            _ => Err(node_window_unverified_message(node.index, *target_window)),
+            _ => Err(uncomparable(element_index, target_window)),
         }
     }
 
@@ -8005,6 +8232,77 @@ fn prepare_app_state_screenshot(
     prepare_screenshot_payload(raw, options)
 }
 
+/// Whether targeted keyboard input goes through Hyprland background mode,
+/// which never raises or focuses the target.
+fn hyprland_background_applies(target: &WindowTarget) -> bool {
+    crate::hyprland_input::background_enabled()
+        && target.has_target()
+        && env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
+            desktop
+                .split(':')
+                .any(|part| part.eq_ignore_ascii_case("hyprland"))
+        })
+}
+
+/// What a targeted keyboard action did to its window, for the post-action
+/// window crop.
+fn keyboard_target_raised(target: &WindowTarget) -> TargetRaised {
+    if hyprland_background_applies(target) {
+        TargetRaised::No
+    } else {
+        TargetRaised::Yes
+    }
+}
+
+/// The window a post-action tree can be recorded as taken for, so a
+/// follow-up action on that window passes the ownership check. A window with
+/// a pid needs the tree to come from that pid. A window without one (i3
+/// without xprop, COSMIC) needs the tree narrowed to the frame its title names; an
+/// app-wide tree may hold another app's nodes, and recording it would let
+/// them pass. A focused-window guess is never passed in.
+///
+/// A target with no window_id or title narrows through the previous
+/// snapshot's window scope (`cached`). That tree is the cached window's only
+/// when it came from the cached pid and matched the very frame the cache
+/// named; then it inherits the cached window. Otherwise it is recorded as no
+/// window, never as the window the target resolved to, which can be another
+/// window of the app.
+fn post_action_tree_window(
+    window: Option<&WindowInfo>,
+    root_pid: Option<u32>,
+    window_scope: Option<&str>,
+    cached: Option<&CachedTreeWindow>,
+) -> Option<(u64, String)> {
+    if let Some(cached) = cached {
+        let same_tree = root_pid.is_some()
+            && root_pid == cached.pid
+            && window_scope == Some(cached.scope.as_str());
+        return cached.window.clone().filter(|_| same_tree);
+    }
+    window
+        .filter(|window| match window.pid {
+            Some(pid) => root_pid == Some(pid),
+            None => window_scope.is_some(),
+        })
+        .map(|window| (window.window_id, window.backend.clone()))
+}
+
+/// A crop of a targeted window the action did not raise could show whatever
+/// covers it, so it needs the window to be focused already.
+fn ensure_post_action_crop_shows_target(
+    raised: TargetRaised,
+    target: Option<&WindowTarget>,
+    window: &WindowInfo,
+) -> Result<()> {
+    if raised == TargetRaised::No && target.is_some_and(WindowTarget::has_target) && !window.focused
+    {
+        anyhow::bail!(
+            "targeted post-action screenshot needs the target window to be focused, and this action does not raise it; use screenshot_after=\"screen\" or the screenshot tool"
+        );
+    }
+    Ok(())
+}
+
 fn ensure_readonly_screenshot_target_is_visible(window: &WindowInfo) -> Result<()> {
     if window.hidden {
         anyhow::bail!("targeted get_app_state screenshot requires a visible, unminimized window");
@@ -8650,6 +8948,12 @@ fn node_window_unverified_message(element_index: u32, target_window: u64) -> Str
     )
 }
 
+fn node_window_unrecorded_message(element_index: u32, target_window: u64) -> String {
+    format!(
+        "Did not act because element_index {element_index} could not be tied to target window_id {target_window}: the latest get_app_state snapshot was narrowed to one window of this app, and the window it recorded, if any, cannot be compared with the target (none was recorded, or another window backend listed it). Call get_app_state for the target window and use an index from that result."
+    )
+}
+
 fn identifier_target_mismatch_message(owner_pid: u32, target_pid: u32) -> String {
     format!(
         "element_identifier belongs to pid {owner_pid}, not the target pid {target_pid}. Use an element_identifier from the target app, or drop the target."
@@ -8672,14 +8976,22 @@ fn check_identifier_owner(
 }
 
 /// Resolve a window-style element action target against a window listing.
+///
+/// When the window listing itself is unavailable (GNOME without the Shell
+/// extension) and the call also passed a pid, the pid still proves
+/// ownership, so the check falls back to it. Without a pid it fails closed.
 fn element_action_owner_from(
     windows: Result<Vec<WindowInfo>>,
     target: &WindowTarget,
 ) -> std::result::Result<ElementOwnerTarget, String> {
+    if windows.is_err() && target.pid.is_some() {
+        return Ok(ElementOwnerTarget::pid(target.pid));
+    }
     windows
         .and_then(|windows| {
+            let exact = names_one_window(&windows, target);
             resolve_window_target(&windows, target)
-                .map(|window| ElementOwnerTarget::window(window, target.pid))
+                .map(|window| ElementOwnerTarget::window(window, target.pid, exact))
         })
         .map_err(|error| {
             let error = format!("{error:#}");
@@ -8694,10 +9006,26 @@ fn element_action_owner_from(
         })
 }
 
+/// Whether `target` names exactly one window of the listing: a `window_id`,
+/// or a selector that matches a single window on its own.
+fn names_one_window(windows: &[WindowInfo], target: &WindowTarget) -> bool {
+    target.window_id.is_some()
+        || windows
+            .iter()
+            .filter(|window| resolve_window_target(std::slice::from_ref(*window), target).is_ok())
+            .take(2)
+            .count()
+            == 1
+}
+
 /// The ownership target of a click or scroll: the focused window's pid, else
 /// the requested window's, else the pid the caller passed, plus the
-/// requested window.
-fn focus_owner_target(focus: Option<&WindowFocusResult>, pid: Option<u32>) -> ElementOwnerTarget {
+/// requested window. Only a `window_id` counts as naming that window exactly.
+fn focus_owner_target(
+    focus: Option<&WindowFocusResult>,
+    pid: Option<u32>,
+    window_id: Option<u64>,
+) -> ElementOwnerTarget {
     match focus {
         Some(focus) => ElementOwnerTarget {
             pid: focus_target_pid(Some(focus)).or(pid),
@@ -8705,6 +9033,7 @@ fn focus_owner_target(focus: Option<&WindowFocusResult>, pid: Option<u32>) -> El
                 focus.requested_window.window_id,
                 focus.requested_window.backend.clone(),
             )),
+            exact_window: window_id.is_some(),
         },
         None => ElementOwnerTarget::pid(pid),
     }
@@ -9766,6 +10095,113 @@ fn validate_wtype_text(text: &str) -> std::result::Result<(), String> {
     }
     Ok(())
 }
+
+/// Where `press_key` sends a chord.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChordRoute {
+    Portal,
+    Wtype,
+    /// xdotool on X11, otherwise ydotool.
+    Command,
+}
+
+/// wtype replaces the portal only when the session has no RemoteDesktop
+/// portal at all, and the portal is neither forced nor already holding the
+/// user's consent. Wherever the portal exists it stays preferred.
+fn chord_route_from(
+    prefer_portal: bool,
+    portal_pinned: bool,
+    wtype: bool,
+    portal_missing: bool,
+) -> ChordRoute {
+    if !prefer_portal {
+        ChordRoute::Command
+    } else if !portal_pinned && wtype && portal_missing {
+        ChordRoute::Wtype
+    } else {
+        ChordRoute::Portal
+    }
+}
+
+/// wtype arguments for a chord: hold each modifier with `-M`, tap the key by
+/// keysym name with `-k`, then release the modifiers in reverse with `-m`.
+/// wtype uploads its own keymap, so keysyms do not depend on the layout.
+/// `-M` only changes the modifier state, so a lone modifier is tapped as its
+/// left-hand keysym, like the portal route.
+fn wtype_key_args(key: &str) -> Option<Vec<String>> {
+    let parts = key
+        .split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let (key_part, modifier_parts) = parts.split_last()?;
+
+    // Validate through the same evdev grammar so every backend accepts
+    // exactly the same input set.
+    key_chord(key)?;
+
+    let modifiers = modifier_parts
+        .iter()
+        .map(|part| wtype_modifier_name(part))
+        .collect::<Option<Vec<_>>>()?;
+    let mut args = Vec::new();
+    for modifier in &modifiers {
+        args.extend(["-M".to_string(), modifier.to_string()]);
+    }
+    let keysym = match wtype_modifier_keysym(key_part).filter(|_| modifier_parts.is_empty()) {
+        Some(bare) => bare.to_string(),
+        None => xdotool_keysym_name(key_part)?,
+    };
+    args.extend(["-k".to_string(), keysym]);
+    for modifier in modifiers.iter().rev() {
+        args.extend(["-m".to_string(), modifier.to_string()]);
+    }
+    Some(args)
+}
+
+fn wtype_modifier_name(key: &str) -> Option<&'static str> {
+    match normalize_key(key).as_str() {
+        "ctrl" | "control" => Some("ctrl"),
+        "alt" | "option" => Some("alt"),
+        "shift" => Some("shift"),
+        "meta" | "super" | "cmd" | "command" => Some("logo"),
+        _ => None,
+    }
+}
+
+/// Standalone keysym for a bare modifier press (`press_key "Super"`).
+fn wtype_modifier_keysym(key: &str) -> Option<&'static str> {
+    match normalize_key(key).as_str() {
+        "ctrl" | "control" => Some("Control_L"),
+        "alt" | "option" => Some("Alt_L"),
+        "shift" => Some("Shift_L"),
+        "meta" | "super" | "cmd" | "command" => Some("Super_L"),
+        _ => None,
+    }
+}
+
+/// Pause, in milliseconds, after wtype uploads its keymap and before the
+/// first key. Each wtype run is a new virtual keyboard, and on Sway the
+/// focused client gets a fresh `wl_keyboard.enter` for it. A key pressed
+/// before that enter arrives only in its held-key list, so the client never
+/// sees the press.
+const WTYPE_KEY_SETTLE_MS: u64 = 50;
+
+async fn run_wtype_key(args: &[String]) -> std::result::Result<(), String> {
+    let mut command = TokioCommand::new("wtype");
+    command
+        .args(["-s", &WTYPE_KEY_SETTLE_MS.to_string()])
+        .args(args);
+    let output =
+        crate::command_runner::output_with_timeout(command, "run wtype", INPUT_COMMAND_TIMEOUT)
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+    if !output.status.success() {
+        return Err(command_output_error("wtype", output));
+    }
+    Ok(())
+}
+
 fn xdotool_available() -> bool {
     which_in_path("xdotool")
 }
@@ -11638,6 +12074,46 @@ esac
             Some("x11"),
             Some("wayland-0")
         ));
+    }
+
+    #[test]
+    fn chords_use_wtype_only_where_no_remote_desktop_portal_exists() {
+        // (prefer_portal, portal_pinned, wtype, portal_missing)
+        assert_eq!(chord_route_from(true, false, true, true), ChordRoute::Wtype);
+        // The portal exists: it stays preferred even when wtype is present.
+        assert_eq!(
+            chord_route_from(true, false, true, false),
+            ChordRoute::Portal
+        );
+        // Forced portal or an existing consented session keeps the portal.
+        assert_eq!(chord_route_from(true, true, true, true), ChordRoute::Portal);
+        // Without wtype the portal reports its own error.
+        assert_eq!(
+            chord_route_from(true, false, false, true),
+            ChordRoute::Portal
+        );
+        // ydotool, xdotool and forced ydotool keep their command route.
+        assert_eq!(
+            chord_route_from(false, false, true, true),
+            ChordRoute::Command
+        );
+    }
+
+    #[test]
+    fn wtype_chords_hold_modifiers_around_one_keysym() {
+        let args = |key| wtype_key_args(key).map(|args| args.join(" "));
+        assert_eq!(args("Return").as_deref(), Some("-k Return"));
+        assert_eq!(
+            args("Ctrl+Shift+T").as_deref(),
+            Some("-M ctrl -M shift -k t -m shift -m ctrl")
+        );
+        assert_eq!(args("cmd+l").as_deref(), Some("-M logo -k l -m logo"));
+        assert_eq!(args("Alt+F4").as_deref(), Some("-M alt -k F4 -m alt"));
+        assert_eq!(args("Super").as_deref(), Some("-k Super_L"));
+        assert_eq!(args("Page Down").as_deref(), Some("-k Page_Down"));
+        assert!(wtype_key_args("Ctrl+Hyper+L").is_none());
+        assert!(wtype_key_args("Ctrl+F13").is_none());
+        assert!(wtype_key_args("").is_none());
     }
 
     #[test]
@@ -15461,7 +15937,7 @@ mod action_recovery_tests {
                 None,
                 &params,
                 true,
-                NodeDetail::Compact,
+                TreeShape::default(),
             )
             .await;
         let scope = backend
@@ -15490,7 +15966,7 @@ mod action_recovery_tests {
                 None,
                 &params,
                 false,
-                NodeDetail::Compact,
+                TreeShape::default(),
             )
             .await;
         assert!(backend
@@ -15633,7 +16109,7 @@ mod action_recovery_tests {
                     Some(&recovery_window(42, 1234)),
                     &serde_json::from_value(params).unwrap(),
                     true,
-                    NodeDetail::Compact,
+                    TreeShape::default(),
                 )
                 .await;
             let dispatches = Arc::new(AtomicUsize::new(0));
@@ -15684,7 +16160,7 @@ mod action_recovery_tests {
                 None,
                 &serde_json::from_value(serde_json::json!({"window_id": 42})).unwrap(),
                 true,
-                NodeDetail::Compact,
+                TreeShape::default(),
             )
             .await;
         let refreshes = Arc::new(AtomicUsize::new(0));
@@ -15738,7 +16214,7 @@ mod action_recovery_tests {
                     Some(&original_window),
                     &serde_json::from_value(serde_json::json!({"window_id": 42})).unwrap(),
                     true,
-                    NodeDetail::Compact,
+                    TreeShape::default(),
                 )
                 .await;
             let dispatches = Arc::new(AtomicUsize::new(0));
@@ -15918,7 +16394,7 @@ mod action_recovery_tests {
                     }))
                     .unwrap(),
                     true,
-                    NodeDetail::Compact,
+                    TreeShape::default(),
                 )
                 .await;
             let fresh_window = fresh_window_id.map(|window_id| WindowInfo {
@@ -16255,7 +16731,7 @@ mod action_recovery_tests {
                 Some(&recovery_window(42, 5678)),
                 &serde_json::from_value(serde_json::json!({"window_id": 42})).unwrap(),
                 true,
-                NodeDetail::Compact,
+                TreeShape::default(),
             )
             .await;
 
@@ -16852,7 +17328,7 @@ mod node_target_scope_tests {
         );
     }
 
-    /// An i3, sway or COSMIC window: the backend reports no pid.
+    /// An i3 (no xprop) or COSMIC window: the backend reports no pid.
     fn pidless_window(window_id: u64) -> WindowInfo {
         WindowInfo {
             window_id,
@@ -16917,6 +17393,279 @@ mod node_target_scope_tests {
                 .unwrap_err(),
             node_window_unverified_message(2, 10)
         );
+    }
+
+    #[test]
+    fn unlisted_windows_fall_back_to_a_passed_pid_only() {
+        let with_pid = WindowTarget {
+            app_id: Some("org.gnome.TextEditor".to_string()),
+            pid: Some(7),
+            ..Default::default()
+        };
+        assert_eq!(
+            element_action_owner_from(Err(anyhow::anyhow!("no window backend")), &with_pid),
+            Ok(ElementOwnerTarget::pid(Some(7)))
+        );
+        let without_pid = WindowTarget {
+            app_id: Some("org.gnome.TextEditor".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            element_action_owner_from(Err(anyhow::anyhow!("no window backend")), &without_pid)
+                .is_err()
+        );
+        // A listing that works but does not match still fails closed.
+        assert!(element_action_owner_from(Ok(vec![pidless_window(20)]), &with_pid).is_err());
+    }
+
+    #[test]
+    fn unraised_target_window_crop_needs_focus() {
+        let target = WindowTarget {
+            window_id: Some(20),
+            ..Default::default()
+        };
+        let mut window = pidless_window(20);
+        assert!(
+            ensure_post_action_crop_shows_target(TargetRaised::No, Some(&target), &window).is_err()
+        );
+        assert!(
+            ensure_post_action_crop_shows_target(TargetRaised::Yes, Some(&target), &window).is_ok()
+        );
+        // No target: the crop is of the focused window anyway.
+        assert!(ensure_post_action_crop_shows_target(TargetRaised::No, None, &window).is_ok());
+        window.focused = true;
+        assert!(
+            ensure_post_action_crop_shows_target(TargetRaised::No, Some(&target), &window).is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn same_pid_window_target_refuses_another_windows_snapshot() {
+        // Chromium: windows 20 and 10 share pid 7. get_app_state of window 20,
+        // then an action that targets window 10.
+        let backend = ComputerUseLinux::default();
+        let node = cached_node(2, ":1.9/org/a11y/atspi/accessible/42");
+        let mut window_20 = pidless_window(20);
+        window_20.pid = Some(7);
+        let mut window_10 = pidless_window(10);
+        window_10.pid = Some(7);
+        backend.store_snapshot(
+            std::slice::from_ref(&node),
+            Some(7),
+            None,
+            Some(&window_20),
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope: Some("Window 20".to_string()),
+            },
+        );
+
+        assert_eq!(
+            backend
+                .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, true))
+                .await
+                .unwrap_err(),
+            node_window_mismatch_message(2, 20, 10)
+        );
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::window(&window_20, None, true))
+            .await
+            .is_ok());
+        // A pid-only target cannot tell the windows apart and passes.
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::pid(Some(7)))
+            .await
+            .is_ok());
+        // An app-wide tree holds every window: its nodes pass on the pid.
+        backend.cache_snapshot_with_window(
+            std::slice::from_ref(&node),
+            Some(7),
+            None,
+            Some(&window_20),
+        );
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, true))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn same_pid_exact_target_fails_closed_when_the_narrowed_tree_recorded_no_window() {
+        // A tree narrowed through the cached scope that came from another pid
+        // or frame records no window (post_action_tree_window). An exact
+        // target then cannot be checked against it.
+        let backend = ComputerUseLinux::default();
+        let node = cached_node(2, ":1.9/org/a11y/atspi/accessible/42");
+        let mut window_10 = pidless_window(10);
+        window_10.pid = Some(7);
+        backend.store_snapshot(
+            std::slice::from_ref(&node),
+            Some(7),
+            None,
+            None,
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope: Some("Window 20".to_string()),
+            },
+        );
+
+        assert_eq!(
+            backend
+                .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, true))
+                .await
+                .unwrap_err(),
+            node_window_unrecorded_message(2, 10)
+        );
+        // An inexact target and a pid-only target still pass on the pid.
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, false))
+            .await
+            .is_ok());
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::pid(Some(7)))
+            .await
+            .is_ok());
+
+        // A narrowed tree whose window another backend listed (the GNOME
+        // extension failed and Introspect answered) is not comparable either.
+        let mut window_10_other_backend = window_10.clone();
+        window_10_other_backend.backend = "gnome-shell-introspect".to_string();
+        backend.store_snapshot(
+            std::slice::from_ref(&node),
+            Some(7),
+            None,
+            Some(&window_10_other_backend),
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope: Some("Window 10".to_string()),
+            },
+        );
+        assert_eq!(
+            backend
+                .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, true))
+                .await
+                .unwrap_err(),
+            node_window_unrecorded_message(2, 10)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_inexact_window_target_passes_on_the_pid() {
+        // Chromium: windows 10 and 20 share pid 7 and app_id. The tree was
+        // narrowed to window 20; app_id resolves to the first window, 10.
+        let chromium = |window_id: u64, title: &str| {
+            let mut window = pidless_window(window_id);
+            window.pid = Some(7);
+            window.app_id = Some("chromium".to_string());
+            window.title = Some(title.to_string());
+            window
+        };
+        let windows = vec![chromium(10, "GitHub"), chromium(20, "PlanetScale")];
+        let backend = ComputerUseLinux::default();
+        let node = cached_node(2, ":1.9/org/a11y/atspi/accessible/42");
+        backend.store_snapshot(
+            std::slice::from_ref(&node),
+            Some(7),
+            None,
+            Some(&windows[1]),
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope: Some("PlanetScale".to_string()),
+            },
+        );
+
+        let by_app_id = element_action_owner_from(
+            Ok(windows.clone()),
+            &WindowTarget {
+                app_id: Some("chromium".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!by_app_id.exact_window);
+        assert!(backend.check_node_target(&node, &by_app_id).await.is_ok());
+
+        // A title that names window 10 alone is exact and still refused.
+        let by_title = element_action_owner_from(
+            Ok(windows),
+            &WindowTarget {
+                title: Some("GitHub".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(by_title.exact_window);
+        assert_eq!(
+            backend
+                .check_node_target(&node, &by_title)
+                .await
+                .unwrap_err(),
+            node_window_mismatch_message(2, 20, 10)
+        );
+    }
+
+    #[test]
+    fn post_action_tree_records_only_a_window_it_holds() {
+        let mut with_pid = pidless_window(20);
+        with_pid.pid = Some(7);
+        assert!(post_action_tree_window(Some(&with_pid), Some(7), None, None).is_some());
+        assert!(post_action_tree_window(Some(&with_pid), Some(8), None, None).is_none());
+        // No pid: only a tree narrowed to the window's frame is recorded.
+        let pidless = pidless_window(20);
+        assert!(post_action_tree_window(Some(&pidless), Some(8), None, None).is_none());
+        assert!(post_action_tree_window(Some(&pidless), None, Some("Window 20"), None).is_some());
+        assert!(post_action_tree_window(None, Some(7), Some("Window 20"), None).is_none());
+        // app_id resolved window 10, but the tree was narrowed through the
+        // cached scope of window 20: it is window 20's tree.
+        let mut window_10 = pidless_window(10);
+        window_10.pid = Some(7);
+        let cached = CachedTreeWindow {
+            scope: "Window 20".to_string(),
+            pid: Some(7),
+            window: Some((20, "i3".to_string())),
+        };
+        let record = |root_pid, scope, cached: &CachedTreeWindow| {
+            post_action_tree_window(Some(&window_10), root_pid, scope, Some(cached))
+        };
+        assert_eq!(
+            record(Some(7), Some("Window 20"), &cached),
+            Some((20, "i3".to_string()))
+        );
+        // A tree from no pid or another pid is not the cached window's.
+        assert_eq!(record(None, Some("Window 20"), &cached), None);
+        assert_eq!(record(Some(8), Some("Window 20"), &cached), None);
+        // Another frame matched this time, or none did: record nothing.
+        assert_eq!(record(Some(7), Some("Window 2"), &cached), None);
+        assert_eq!(record(Some(7), None, &cached), None);
+        // A cached scope with no cached window never falls back to window 10.
+        let no_window = CachedTreeWindow {
+            window: None,
+            ..cached.clone()
+        };
+        assert_eq!(record(Some(7), Some("Window 20"), &no_window), None);
+    }
+
+    #[tokio::test]
+    async fn post_action_tree_keeps_its_window_for_the_next_action() {
+        // sway: click(window_id=20, include_tree=true), then an action on
+        // window 20 with an index from that tree.
+        let backend = ComputerUseLinux::default();
+        let node = cached_node(2, ":1.9/org/a11y/atspi/accessible/42");
+        backend
+            .commit_observed_snapshot(
+                std::slice::from_ref(&node),
+                None,
+                Some((20, "i3".to_string())),
+                Some("Window 20".to_string()),
+            )
+            .await;
+
+        assert!(backend
+            .check_node_target(&node, &pidless_owner(20))
+            .await
+            .is_ok());
+        let cached = backend.last_snapshot.lock().unwrap();
+        assert_eq!(cached.window_scope.as_deref(), Some("Window 20"));
     }
 
     #[test]

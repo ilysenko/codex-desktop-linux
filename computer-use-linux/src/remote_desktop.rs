@@ -560,11 +560,18 @@ fn parse_kscreen_monitor_layout(json: &[u8]) -> Option<Vec<LogicalMonitor>> {
     (!layout.is_empty()).then_some(layout)
 }
 
+/// One `get_outputs` entry. Sway sends disabled outputs with `"scale": null`
+/// and a zero rect, and non-desktop outputs (VR headsets) without `active`,
+/// `rect` or `scale`, so every field is optional and only active desktop
+/// outputs are read.
 #[derive(serde::Deserialize)]
 struct SwayOutput {
+    #[serde(default)]
     active: bool,
-    rect: SwayRect,
-    scale: f64,
+    #[serde(default)]
+    non_desktop: bool,
+    rect: Option<SwayRect>,
+    scale: Option<f64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -575,23 +582,23 @@ struct SwayRect {
     height: i32,
 }
 
-fn parse_sway_monitor_layout(json: &[u8]) -> Option<Vec<LogicalMonitor>> {
+pub(crate) fn parse_sway_monitor_layout(json: &[u8]) -> Option<Vec<LogicalMonitor>> {
     let outputs: Vec<SwayOutput> = serde_json::from_slice(json).ok()?;
     let layout = outputs
         .into_iter()
-        .filter(|output| output.active)
+        .filter(|output| output.active && !output.non_desktop)
         .map(|output| {
-            (output.scale.is_finite()
-                && output.scale > 0.0
-                && output.rect.width > 0
-                && output.rect.height > 0)
-                .then_some(LogicalMonitor {
-                    x: output.rect.x,
-                    y: output.rect.y,
-                    width: output.rect.width,
-                    height: output.rect.height,
-                    scale: output.scale,
-                })
+            let rect = output.rect?;
+            let scale = output.scale?;
+            (scale.is_finite() && scale > 0.0 && rect.width > 0 && rect.height > 0).then_some(
+                LogicalMonitor {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                    scale,
+                },
+            )
         })
         .collect::<Option<Vec<_>>>()?;
     (!layout.is_empty()).then_some(layout)
@@ -1603,6 +1610,60 @@ async fn remote_desktop_interface_version(connection: &Connection) -> Result<u32
         .await
         .context("RemoteDesktop version property timed out")?
         .context("RemoteDesktop version property failed")
+}
+
+/// Whether the session bus positively has no RemoteDesktop portal.
+pub(crate) async fn remote_desktop_portal_missing() -> bool {
+    hydrate_session_bus_env();
+    let Ok(address) = zbus::Address::session() else {
+        return false;
+    };
+    remote_desktop_portal_missing_at(address).await
+}
+
+/// Only an answer from a running bus proves absence: the bus reports that no
+/// portal service is installed, or the portal object does not export the
+/// interface (xdg-desktop-portal-wlr implements only Screenshot and
+/// ScreenCast). A bus socket that is missing or refuses connections may
+/// belong to a bus that has not started yet or is restarting, and a timeout
+/// may be a slow portal. Those keep the portal path, which reports its own
+/// error.
+async fn remote_desktop_portal_missing_at(address: zbus::Address) -> bool {
+    let connect = async { zbus::connection::Builder::address(address)?.build().await };
+    let Ok(Ok(connection)) = tokio::time::timeout(PORTAL_CALL_TIMEOUT, connect).await else {
+        return false;
+    };
+    let reply = tokio::time::timeout(
+        PORTAL_CALL_TIMEOUT,
+        connection.call_method(
+            Some(PORTAL_DESKTOP_SERVICE),
+            PORTAL_DESKTOP_PATH,
+            Some("org.freedesktop.DBus.Introspectable"),
+            "Introspect",
+            &(),
+        ),
+    )
+    .await;
+    match reply {
+        Ok(Ok(message)) => message
+            .body()
+            .deserialize::<String>()
+            .is_ok_and(|xml| lacks_interface(&xml, PORTAL_REMOTE_DESKTOP_INTERFACE)),
+        Ok(Err(zbus::Error::MethodError(name, _, _))) => {
+            name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown"
+        }
+        _ => false,
+    }
+}
+
+/// True only for introspection that parses and does not list `interface`.
+fn lacks_interface(introspection: &str, interface: &str) -> bool {
+    zbus_xml::Node::try_from(introspection).is_ok_and(|node| {
+        !node
+            .interfaces()
+            .iter()
+            .any(|item| item.name().as_str() == interface)
+    })
 }
 
 async fn claim_restore_permit(
@@ -2704,6 +2765,26 @@ mod tests {
     }
 
     #[test]
+    fn sway_layout_skips_disabled_and_non_desktop_outputs() {
+        // HEADLESS-2 is from Sway 1.11 `get_outputs` after `output HEADLESS-2
+        // disable`, trimmed; DP-3 is the non-desktop shape Sway sends.
+        let layout = parse_sway_monitor_layout(
+            br#"[
+                {"name":"HEADLESS-1","type":"output","active":true,"non_desktop":false,
+                 "scale":1.5,"rect":{"x":0,"y":0,"width":1280,"height":720}},
+                {"name":"HEADLESS-2","type":"output","active":false,"non_desktop":false,
+                 "power":false,"primary":false,"scale":null,
+                 "rect":{"x":0,"y":0,"width":0,"height":0}},
+                {"name":"DP-3","type":"output","make":"Valve","model":"Index",
+                 "serial":"0","non_desktop":true}
+            ]"#,
+        )
+        .expect("disabled and non-desktop outputs are skipped");
+        assert_eq!(layout.len(), 1);
+        assert_eq!((layout[0].width, layout[0].scale), (1280, 1.5));
+    }
+
+    #[test]
     fn parses_sway_logical_output_rectangles() {
         let layout = parse_sway_monitor_layout(
             br#"[
@@ -3253,6 +3334,79 @@ mod tests {
         assert!(!acceptable_restore_token(
             &"a".repeat(RESTORE_TOKEN_MAX_LEN + 1)
         ));
+    }
+
+    #[tokio::test]
+    async fn only_a_running_bus_can_report_the_remote_desktop_portal_missing() {
+        struct ScreenCastOnly;
+        #[zbus::interface(name = "org.freedesktop.portal.ScreenCast")]
+        impl ScreenCastOnly {}
+        struct RemoteDesktop;
+        #[zbus::interface(name = "org.freedesktop.portal.RemoteDesktop")]
+        impl RemoteDesktop {}
+
+        let dir = TempState::new();
+        let socket = dir.path.join("bus");
+        let address = format!("unix:path={}", socket.display());
+        let probe = || remote_desktop_portal_missing_at(address.parse().unwrap());
+        // No service directories, so the bus cannot activate an installed portal.
+        let config = dir.path.join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "<busconfig><type>session</type><listen>{address}</listen>\
+                 <policy context=\"default\"><allow send_destination=\"*\"/>\
+                 <allow receive_sender=\"*\"/><allow own=\"*\"/></policy></busconfig>"
+            ),
+        )
+        .unwrap();
+
+        assert!(!probe().await, "a bus that has not started yet");
+
+        struct Bus(std::process::Child);
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut bus = Bus(std::process::Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--nopidfile", "--print-address=1"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("start private dbus-daemon"));
+        let mut printed = String::new();
+        io::BufRead::read_line(
+            &mut io::BufReader::new(bus.0.stdout.take().unwrap()),
+            &mut printed,
+        )
+        .unwrap();
+        assert!(probe().await, "no portal service on a running bus");
+
+        let portal = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name(PORTAL_DESKTOP_SERVICE)
+            .unwrap()
+            .serve_at(PORTAL_DESKTOP_PATH, ScreenCastOnly)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        assert!(probe().await, "a portal without RemoteDesktop");
+
+        portal
+            .object_server()
+            .at(PORTAL_DESKTOP_PATH, RemoteDesktop)
+            .await
+            .unwrap();
+        assert!(!probe().await, "a portal with RemoteDesktop");
+
+        drop(bus);
+        assert!(socket.exists());
+        assert!(!probe().await, "a bus socket that refuses connections");
+
+        assert!(!lacks_interface("not xml", PORTAL_REMOTE_DESKTOP_INTERFACE));
     }
 
     #[test]

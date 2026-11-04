@@ -475,7 +475,7 @@ fn clean(value: &str) -> Option<String> {
 /// True if `cmd` is an executable found on `$PATH`. Used to gate focus
 /// capabilities on `xprop` without spawning it (xprop with no args would block
 /// reading a window interactively).
-fn command_on_path(cmd: &str) -> bool {
+pub(crate) fn command_on_path(cmd: &str) -> bool {
     env::var_os("PATH").is_some_and(|paths| {
         env::split_paths(&paths).any(|dir| {
             dir.join(cmd).metadata().is_ok_and(|metadata| {

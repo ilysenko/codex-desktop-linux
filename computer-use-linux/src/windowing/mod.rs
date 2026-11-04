@@ -8,7 +8,7 @@ pub(crate) mod wayland_session;
 pub use registry::{
     COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
     HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, LABWC_BACKEND, NIRI_BACKEND, UNAVAILABLE_BACKEND,
-    WINDOW_PERMISSION_HINT, X11_BACKEND,
+    WINDOW_PERMISSION_HINT, WLR_FOREIGN_TOPLEVEL_BACKEND, X11_BACKEND,
 };
 #[allow(unused_imports)]
 pub use target::{
@@ -24,7 +24,21 @@ pub use types::{WindowBounds, WindowFocusResult, WindowInfo, WindowTarget};
 mod tests {
     use super::backends::gnome::window_from_properties;
     use super::backends::hyprland::{parse_hyprland_clients, HYPRLAND_BACKEND};
-    use super::backends::i3::{parse_i3_tree, parse_xprop_pid, I3_BACKEND};
+    use super::backends::i3::{
+        choose_socket, i3_focus_command, ipc_program_from, parse_i3_tree, parse_xprop_pid,
+        windows_needing_xprop_pid, I3_BACKEND, SWAY_CONTAINER_ID_BASE,
+    };
+    use crate::remote_desktop::LogicalMonitor;
+
+    fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64) -> LogicalMonitor {
+        LogicalMonitor {
+            x,
+            y,
+            width,
+            height,
+            scale,
+        }
+    }
     use super::registry::{
         backend_can_exact_focus, descriptors, list_note, COSMIC_WAYLAND_BACKEND,
         GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND, NIRI_BACKEND,
@@ -58,6 +72,7 @@ mod tests {
                 NIRI_BACKEND,
                 I3_BACKEND,
                 LABWC_BACKEND,
+                WLR_FOREIGN_TOPLEVEL_BACKEND,
                 X11_BACKEND,
             ]
         );
@@ -651,6 +666,7 @@ mod tests {
                   "window": null,
                   "nodes": [
                     {
+                      "id": 94163003829504,
                       "type": "con",
                       "focused": false,
                       "window": 25165826,
@@ -672,6 +688,7 @@ mod tests {
                   "window": null,
                   "nodes": [
                     {
+                      "id": 94163003840832,
                       "type": "con",
                       "focused": true,
                       "window": 67108868,
@@ -687,6 +704,7 @@ mod tests {
                   ],
                   "floating_nodes": [
                     {
+                      "id": 94163003851200,
                       "type": "con",
                       "focused": false,
                       "window": 73400323,
@@ -706,10 +724,11 @@ mod tests {
           ]
         }"#;
 
-        let windows = parse_i3_tree(tree_json).unwrap();
+        let windows = parse_i3_tree(tree_json, None).unwrap();
 
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].window_id, 67108868);
+        assert_eq!(windows[0].pid, None);
         assert_eq!(windows[0].title.as_deref(), Some("Codex"));
         assert_eq!(windows[0].app_id.as_deref(), Some("codex"));
         assert_eq!(windows[0].wm_class.as_deref(), Some("Codex"));
@@ -720,6 +739,336 @@ mod tests {
         assert_eq!(windows[0].bounds.as_ref().unwrap().x, Some(0));
         assert_eq!(windows[1].title.as_deref(), Some("Save File"));
         assert_eq!(windows[1].bounds.as_ref().unwrap().width, 600);
+    }
+
+    #[test]
+    fn i3_focus_command_uses_decimal_ids() {
+        let tree = r#"{
+          "id": 1, "type": "root", "nodes": [{
+            "id": 4, "type": "workspace", "num": 1, "nodes": [
+              {"id": 5, "type": "con", "name": "foot", "app_id": "foot", "pid": 7,
+               "shell": "xdg_shell", "window": null},
+              {"id": 6, "type": "con", "name": "xterm", "app_id": null, "pid": 8,
+               "shell": "xwayland", "window": 4194316}
+            ]
+          }]
+        }"#;
+        let windows = parse_i3_tree(tree, None).unwrap();
+        // Sway rejects hex ids ("The value for 'id' should be numeric").
+        assert_eq!(
+            i3_focus_command(windows[0].window_id),
+            r#"[id="4194316"] focus"#
+        );
+        assert_eq!(
+            i3_focus_command(windows[1].window_id),
+            r#"[con_id="5"] focus"#
+        );
+    }
+
+    #[test]
+    fn sway_container_ids_never_share_a_window_id_with_x11_ids() {
+        // Sway container ids and X11 ids count independently, so container
+        // 4194316 and X11 window 4194316 can exist at once.
+        let tree = r#"{
+          "id": 1, "type": "root", "nodes": [{
+            "id": 4, "type": "workspace", "num": 1, "nodes": [
+              {"id": 4194316, "type": "con", "name": "foot", "app_id": "foot",
+               "pid": 7, "shell": "xdg_shell", "window": null},
+              {"id": 6, "type": "con", "name": "xterm", "app_id": null, "pid": 8,
+               "shell": "xwayland", "window": 4194316}
+            ]
+          }]
+        }"#;
+        let windows = parse_i3_tree(tree, None).unwrap();
+        let ids = windows.iter().map(|w| w.window_id).collect::<Vec<_>>();
+        assert_eq!(ids, vec![4194316, SWAY_CONTAINER_ID_BASE + 4194316]);
+        assert_eq!(windows[0].client_type.as_deref(), Some("x11"));
+        assert_eq!(windows[1].client_type.as_deref(), Some("wayland"));
+        assert!(windows.iter().all(|w| w.window_id <= types::MAX_WINDOW_ID));
+        assert_eq!(
+            i3_focus_command(windows[1].window_id),
+            r#"[con_id="4194316"] focus"#
+        );
+    }
+
+    #[test]
+    fn parses_sway_tree_with_wayland_and_xwayland_windows() {
+        // Shaped like `i3-msg -t get_tree` on Sway 1.11 with foot and xterm.
+        let tree_json = r#"{
+          "id": 1,
+          "type": "root",
+          "name": "root",
+          "window": null,
+          "focused": false,
+          "nodes": [
+            {
+              "id": 2,
+              "type": "output",
+              "name": "__i3",
+              "window": null,
+              "nodes": [
+                {
+                  "id": 2147483646,
+                  "type": "workspace",
+                  "name": "__i3_scratch",
+                  "num": null,
+                  "window": null,
+                  "nodes": [],
+                  "floating_nodes": [
+                    {
+                      "id": 9,
+                      "type": "floating_con",
+                      "name": "stashed",
+                      "pid": 4300,
+                      "app_id": "cul-stash",
+                      "shell": "xdg_shell",
+                      "window": null,
+                      "scratchpad_state": "fresh",
+                      "visible": false,
+                      "nodes": [],
+                      "floating_nodes": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 3,
+              "type": "output",
+              "name": "HEADLESS-1",
+              "window": null,
+              "nodes": [
+                {
+                  "id": 4,
+                  "type": "workspace",
+                  "name": "1",
+                  "num": 1,
+                  "window": null,
+                  "nodes": [
+                    {
+                      "id": 7,
+                      "type": "con",
+                      "name": null,
+                      "layout": "splitv",
+                      "window": null,
+                      "nodes": [
+                        {
+                          "id": 5,
+                          "type": "con",
+                          "name": "cul-foot",
+                          "focused": true,
+                          "pid": 4242,
+                          "app_id": "cul-foot",
+                          "shell": "xdg_shell",
+                          "window": null,
+                          "scratchpad_state": "none",
+                          "visible": true,
+                          "rect": {"x": 0, "y": 0, "width": 1280, "height": 360},
+                          "nodes": [],
+                          "floating_nodes": []
+                        },
+                        {
+                          "id": 6,
+                          "type": "con",
+                          "name": "xterm",
+                          "pid": 4250,
+                          "app_id": null,
+                          "shell": "xwayland",
+                          "window": 4194316,
+                          "window_properties": {
+                            "class": "XTerm",
+                            "instance": "xterm",
+                            "title": "xterm"
+                          },
+                          "visible": true,
+                          "rect": {"x": 0, "y": 360, "width": 1280, "height": 360},
+                          "nodes": [],
+                          "floating_nodes": []
+                        }
+                      ],
+                      "floating_nodes": []
+                    }
+                  ],
+                  "floating_nodes": [
+                    {
+                      "id": 8,
+                      "type": "floating_con",
+                      "name": "shown from the scratchpad",
+                      "pid": 0,
+                      "app_id": null,
+                      "shell": "xwayland",
+                      "window": 6291458,
+                      "window_properties": {"class": "Zenity", "instance": "zenity"},
+                      "scratchpad_state": "fresh",
+                      "visible": true,
+                      "rect": {"x": 100, "y": 100, "width": 400, "height": 300},
+                      "nodes": [],
+                      "floating_nodes": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }"#;
+
+        let windows = parse_i3_tree(tree_json, Some(&[monitor(0, 0, 1280, 720, 1.0)])).unwrap();
+
+        assert_eq!(windows.len(), 4);
+        let foot = &windows[2];
+        assert_eq!(foot.window_id, SWAY_CONTAINER_ID_BASE + 5);
+        assert_eq!(foot.title.as_deref(), Some("cul-foot"));
+        assert_eq!(foot.app_id.as_deref(), Some("cul-foot"));
+        assert_eq!(foot.wm_class, None);
+        assert_eq!(foot.pid, Some(4242));
+        assert_eq!(foot.workspace, Some(1));
+        assert!(foot.focused);
+        assert!(!foot.hidden);
+        assert_eq!(foot.client_type.as_deref(), Some("wayland"));
+        assert_eq!(foot.bounds.as_ref().unwrap().height, 360);
+        let stashed = &windows[3];
+        assert_eq!(stashed.window_id, SWAY_CONTAINER_ID_BASE + 9);
+        assert!(stashed.hidden, "a window under __i3_scratch is not shown");
+        let xterm = &windows[0];
+        assert_eq!(
+            xterm.window_id, 4194316,
+            "an Xwayland window keeps its X11 id"
+        );
+        assert_eq!(xterm.app_id.as_deref(), Some("xterm"));
+        assert_eq!(xterm.wm_class.as_deref(), Some("XTerm"));
+        assert_eq!(xterm.pid, Some(4250));
+        assert!(!xterm.focused);
+        assert_eq!(xterm.client_type.as_deref(), Some("x11"));
+        assert_eq!(xterm.backend, I3_BACKEND);
+        let shown = &windows[1];
+        assert_eq!(shown.window_id, 6291458);
+        assert_eq!(shown.pid, None, "pid 0 is not a pid");
+        assert!(!shown.hidden, "a scratchpad window on a workspace is shown");
+        assert_eq!(shown.workspace, Some(1));
+
+        // Only X11 windows without a tree pid are looked up through xprop,
+        // by their X11 id.
+        let lookups = windows_needing_xprop_pid(&windows);
+        assert_eq!(lookups, vec![1]);
+        assert_eq!(windows[lookups[0]].window_id, 6291458);
+    }
+
+    /// A Sway tree with one Wayland window at layout (1380, 50), 640x360.
+    const SWAY_ONE_WINDOW: &str = r#"{
+      "id": 1, "type": "root", "nodes": [{
+        "id": 4, "type": "workspace", "num": 1, "nodes": [
+          {"id": 5, "type": "con", "name": "foot", "app_id": "foot", "pid": 7,
+           "shell": "xdg_shell", "window": null,
+           "rect": {"x": 1380, "y": 50, "width": 640, "height": 360}}
+        ]
+      }]
+    }"#;
+
+    #[test]
+    fn sway_bounds_scale_to_capture_pixels_on_a_uniform_scale() {
+        // Two outputs at scale 2, the left one at layout x 1280: the capture
+        // starts at layout (1280, 0) and has twice the layout's pixels.
+        let outputs = [
+            monitor(1280, 0, 1280, 720, 2.0),
+            monitor(2560, 0, 1280, 720, 2.0),
+        ];
+        let windows = parse_i3_tree(SWAY_ONE_WINDOW, Some(&outputs)).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.x, bounds.y), (Some(200), Some(100)));
+        assert_eq!((bounds.width, bounds.height), (1280, 720));
+    }
+
+    #[test]
+    fn sway_bounds_round_outward_and_never_scale_below_one() {
+        // Scale 1.25 with a 1-px offset from the origin: edges round outward.
+        let windows =
+            parse_i3_tree(SWAY_ONE_WINDOW, Some(&[monitor(1379, 49, 1280, 720, 1.25)])).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.x, bounds.y), (Some(1), Some(1)));
+        // Right edge (1 + 640) * 1.25 = 801.25 rounds out to 802.
+        assert_eq!((bounds.width, bounds.height), (801, 451));
+        // grim never captures below scale 1, so scale 0.75 maps as 1.
+        let windows =
+            parse_i3_tree(SWAY_ONE_WINDOW, Some(&[monitor(0, 0, 1280, 720, 0.75)])).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.x, bounds.width), (Some(1380), 640));
+    }
+
+    #[test]
+    fn i3_socket_prefers_a_live_env_socket_then_the_runtime_dir() {
+        let i3 = Some("/run/i3.sock".to_string());
+        let sway = Some("/run/sway.sock".to_string());
+        let live = |live: &'static [&'static str]| {
+            move |path: &std::path::Path| live.iter().any(|live| path == std::path::Path::new(live))
+        };
+        let runtime = || Some(std::path::PathBuf::from("/run/user/sway-ipc.1.sock"));
+        let none = || None;
+        // Both live: I3SOCK wins (a live Sway sets both to one path).
+        assert_eq!(
+            choose_socket(
+                &[i3.clone(), sway.clone()],
+                live(&["/run/i3.sock", "/run/sway.sock"]),
+                runtime
+            ),
+            Some("/run/i3.sock".into())
+        );
+        // A stale I3SOCK does not hide a live SWAYSOCK.
+        assert_eq!(
+            choose_socket(
+                &[i3.clone(), sway.clone()],
+                live(&["/run/sway.sock"]),
+                runtime
+            ),
+            Some("/run/sway.sock".into())
+        );
+        // Neither live: the runtime dir socket, else the first set variable.
+        assert_eq!(
+            choose_socket(&[i3.clone(), sway.clone()], live(&[]), runtime),
+            Some("/run/user/sway-ipc.1.sock".into())
+        );
+        assert_eq!(
+            choose_socket(&[i3.clone(), sway.clone()], live(&[]), none),
+            Some("/run/i3.sock".into())
+        );
+        assert_eq!(choose_socket(&[None, None], live(&[]), none), None);
+    }
+
+    #[test]
+    fn sway_bounds_are_left_out_when_the_capture_layout_is_unknown() {
+        let mixed = [
+            monitor(0, 0, 1280, 720, 1.0),
+            monitor(1280, 0, 1280, 720, 2.0),
+        ];
+        let windows = parse_i3_tree(SWAY_ONE_WINDOW, Some(&mixed)).unwrap();
+        assert!(
+            windows[0].bounds.is_none(),
+            "mixed scales have no single pixel space"
+        );
+        let windows = parse_i3_tree(SWAY_ONE_WINDOW, None).unwrap();
+        assert!(windows[0].bounds.is_none(), "no outputs, no mapping");
+    }
+
+    #[test]
+    fn i3_bounds_stay_x11_pixels() {
+        let tree = r#"{
+          "id": 1, "type": "root", "nodes": [{
+            "id": 4, "type": "workspace", "num": 1, "nodes": [
+              {"id": 5, "type": "con", "name": "xterm", "window": 4194316,
+               "rect": {"x": 100, "y": 50, "width": 640, "height": 360}}
+            ]
+          }]
+        }"#;
+        let windows = parse_i3_tree(tree, Some(&[monitor(0, 0, 1280, 720, 2.0)])).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.x, bounds.width), (Some(100), 640));
+    }
+
+    #[test]
+    fn i3_backend_uses_swaymsg_only_without_i3_msg() {
+        assert_eq!(ipc_program_from(true, true), "i3-msg");
+        assert_eq!(ipc_program_from(true, false), "i3-msg");
+        assert_eq!(ipc_program_from(false, true), "swaymsg");
+        assert_eq!(ipc_program_from(false, false), "i3-msg");
     }
 
     #[test]
