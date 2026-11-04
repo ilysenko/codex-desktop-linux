@@ -82,6 +82,11 @@ impl AbsPointer {
     /// Create the absolute pointer sized to the capture's `width`×`height`.
     /// Waits 500 ms for libinput to enumerate the device before its first event.
     pub fn create(width: i32, height: i32) -> Result<Self> {
+        // uinput devices are kernel-wide: a unit test's cleared environment
+        // would not keep this one off the developer's desktop.
+        if cfg!(test) {
+            anyhow::bail!("unit tests do not create real uinput devices");
+        }
         let geometry = AbsPointerGeometry::from_dimensions(width, height);
         let (max_x, max_y) = geometry.axis_maxima();
         // value, min, max, fuzz, flat, resolution. resolution=1 unit/px.
