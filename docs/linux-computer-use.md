@@ -47,7 +47,7 @@ Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland,
 
 On Hyprland, `CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND=1` (standalone alias `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`) lets targeted `type_text`, `press_key`, `get_app_state` and `screenshot` work on a window without focusing it, including one on a hidden workspace: keys go through `send_key_state` on the control socket (never in a process's arguments) and the window is captured alone with `grim -T`. The indicator shows the input, masked unless the target field is confirmed non-secret. Text must be printable US-layout ASCII, tab or newline, and the active keymap must be US; anything else is refused before anything is sent, and so is a modifier-only chord such as `Ctrl+Shift`. An unfocused Chromium ignores browser accelerators. When a batch stops between a key's down and up events, or its outcome is unknown, the backend sends a release that waits at most a second, and the error says whether the release went through.
 
-MCP discovery probes are supported before initialization, including metadata-bearing discovery requests. Agent activity appears through the native GNOME indicator or the Wayland overlay helper. Captures hide the indicator before reading the screen. Portal captures clean new Pictures files and preserve existing images. Set `CODEX_COMPUTER_USE_INDICATOR=0` to disable action indicators; capture exclusion remains active. GNOME extension version 3 supports Shell 45 through 51. Existing Shell sessions need a logout and login to load refreshed extension files.
+MCP discovery probes are supported before initialization, including metadata-bearing discovery requests. Agent activity appears through the native GNOME indicator or the Wayland overlay helper. Captures hide the indicator before reading the screen. Portal captures clean new Pictures files and preserve existing images. Set `CODEX_COMPUTER_USE_INDICATOR=0` to disable action indicators; capture exclusion remains active. `CODEX_COMPUTER_USE_AGENT_NAME` (standalone alias `COMPUTER_USE_LINUX_AGENT_NAME`) overrides the agent name the indicator shows. GNOME extension version 3 supports Shell 45 through 51. Existing Shell sessions need a logout and login to load refreshed extension files.
 
 ## Runtime Dependencies
 
@@ -83,7 +83,8 @@ On a native X11 session (never XWayland), screenshots can use one root-window
 `GetImage` after GNOME Shell, the Codex GNOME Shell extension, and the portal,
 and before `gnome-screenshot`. Pixels are device pixels, the space xdotool input
 uses. `doctor` reports it as `platform.x11_display` and the `x11`
-screenshot capability; `CODEX_COMPUTER_USE_SCREENSHOT_BACKEND=x11` pins it.
+screenshot capability; `CODEX_COMPUTER_USE_SCREENSHOT_BACKEND=x11` (standalone
+alias `COMPUTER_USE_LINUX_SCREENSHOT_BACKEND`) pins it.
 X11/EWMH window origins come from the X server instead of `wmctrl -lG`, which
 counts the frame offset twice, so window crops and relative clicks line up
 with the client area.
@@ -290,7 +291,12 @@ from the tree. X11 windows keep their X11 id; a native Wayland window gets 2^32
 plus its Sway container id, so the two never collide. On i3, pids come from the
 optional `xprop`; without it the window reports no pid, and an element action
 on it needs a snapshot taken for that window. A window counts as hidden while
-it sits in the scratchpad.
+it sits in the scratchpad. Sway does not ship `i3-msg` and the backend reads
+only `I3SOCK`, so on Sway it needs the i3 package; without `i3-msg` or the
+socket, Sway windows come from wlr-foreign-toplevel, with no pids or bounds.
+Bounds on a Sway output with a scale other than 1 are logical, so window crops
+and window-relative clicks there can be off (agent-sh/computer-use-linux#375,
+agent-sh/computer-use-linux#376).
 
 The Wayland RemoteDesktop portal asks for consent on every new process by
 default. Set `CODEX_COMPUTER_USE_PERSIST_REMOTE_DESKTOP=1` (standalone alias

@@ -32,8 +32,8 @@ Element actions refuse an element owned by another app or window. MCP
 and scopes multi-window Chromium apps to the targeted window. Wlroots
 compositors without a dedicated backend list windows through
 `zwlr_foreign_toplevel_manager_v1`, and `press_key` uses `wtype` where no
-RemoteDesktop portal exists. The i3 backend also lists and focuses native
-Wayland and Xwayland windows on Sway.
+RemoteDesktop portal exists. With `i3-msg` installed, the i3 backend also
+lists and focuses native Wayland and Xwayland windows on Sway.
 
 The in-app API supports window listing, accessibility inspection, screenshots,
 coordinate clicks, keyboard input, text entry, and scrolling. Use the IDs returned
