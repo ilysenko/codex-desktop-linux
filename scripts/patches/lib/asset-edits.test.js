@@ -184,4 +184,3 @@ test("multi-asset commit rejects duplicate and escaping paths before writing", (
     assert.equal(read("a.js"), MODULE);
   });
 });
-

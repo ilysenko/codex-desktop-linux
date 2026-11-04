@@ -37,10 +37,10 @@ run_node_tests() {
     # exit 0 (nodejs/node#64833). Where timeout exists, the watchdog below ends
     # a run that a leaked handle holds open; without it the run has no limit.
 
-    # Every *.test.js and every test.js; a git pathspec * also matches /.
+    # Tracked Node test entrypoints; a git pathspec * also matches /.
     while IFS= read -r file; do
         test_files+=("$file")
-    done < <(git ls-files '*.test.js' '*/test.js')
+    done < <(git ls-files '*.test.js' '*.test.cjs' '*.test.mjs' '*/test.js')
 
     if [ "${#test_files[@]}" -eq 0 ]; then
         return 0

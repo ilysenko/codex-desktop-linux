@@ -30,8 +30,8 @@ jobs:
       - name: Guided installer tests
         run: python3 scripts/feature-picker.test.py
       - name: Node tests
-        # Syntax-checks every tracked .js file, then runs every *.test.js and
-        # test.js in a fresh TMPDIR and fails when a run leaves anything there.
+        # Syntax-checks tracked JavaScript and runs every tracked Node test in
+        # a fresh TMPDIR, failing when a run leaves anything there.
         run: bash scripts/ci/run-node-checks.sh all
       - name: Smoke tests
         run: bash tests/scripts_smoke.sh
