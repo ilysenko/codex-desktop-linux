@@ -11,6 +11,19 @@ are wanted:
 { "enabled": ["automation-extensions"] }
 ```
 
+Multiple times keep the native custom-RRULE editor and save path. Local
+multi-time recurrences use the existing custom mode and retain their recurrence
+text when edited and saved. Existing single-time controls, cloud date/time-zone
+normalization and upstream validation remain unchanged. `BYHOUR` and `BYMINUTE`
+follow RRULE semantics: `BYHOUR=0,23;BYMINUTE=0,59` represents four times, and the
+summary displays their sorted, distinct values.
+
+The schedule patch identifies one Rspack module and validates every physical
+copy before writing. Its applied state must regenerate exactly, including the
+complete helper bodies, inclusive 23-hour/59-minute bounds, caller bindings and
+module scope. Damaged or mixed copies reject the enabled build instead of
+being reported as already applied.
+
 The feature patches current upstream webview assets and therefore may require
 an update when those private bundle shapes change. Validate it with:
 
