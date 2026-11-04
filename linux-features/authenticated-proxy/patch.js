@@ -15,14 +15,21 @@ const PATCHED_READY_PATTERN = new RegExp(
     `(?=,${JS_IDENT}\\("main app\\.whenReady resolved")`,
   "g",
 );
-const FETCH_TAIL =
-  `\\{let ${JS_IDENT}=\\{method:${JS_IDENT},(?:cache:${JS_IDENT},)?headers:${JS_IDENT},body:${JS_IDENT}\\(\\),` +
-  `redirect:[^,{}]{1,120},signal:${JS_IDENT},credentials:(?<credentialsFlag>${JS_IDENT})\\?"include":"same-origin"\\};` +
-  `\\(${JS_IDENT}\\|\\|!\\k<credentialsFlag>&&\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${JS_IDENT},${JS_IDENT}\\)\\)&&\\(${JS_IDENT}\\.credentials="omit"\\),` +
-  `${JS_IDENT}=await this\\.options\\.applicationNetwork\\.fetch\\(`;
-const FETCH_GATE = new RegExp(`if\\(null==(${JS_IDENT})\\)(?=${FETCH_TAIL})`, "g");
-const PATCHED_FETCH_GATE = new RegExp(
-  `if\\(null==(${JS_IDENT})&&!codexLinuxProxyAuthEntry\\(\\)\\)(?=${FETCH_TAIL})`,
+// Keep the upstream URL/method credentials policy in front of both network
+// paths. Matching all of its bindings prevents a nearby unrelated fetch from
+// being mistaken for the application network owner.
+const FETCH_PREFIX =
+  `if\\(null==${JS_IDENT}\\)\\{let (?<options>${JS_IDENT})=\\{method:(?<method>${JS_IDENT}),` +
+  `(?:cache:${JS_IDENT},)?headers:${JS_IDENT},body:${JS_IDENT}\\(\\),redirect:[^,{}]{1,120},signal:${JS_IDENT},` +
+  `credentials:(?<cookies>${JS_IDENT})\\?"include":"same-origin"\\};` +
+  `\\(${JS_IDENT}\\|\\|!\\k<cookies>&&\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\((?<url>${JS_IDENT}),\\k<method>\\)\\)&&` +
+  `\\(\\k<options>\\.credentials="omit"\\),(?<response>${JS_IDENT})=await `;
+const FETCH_PATTERN = new RegExp(
+  `${FETCH_PREFIX}this\\.options\\.applicationNetwork\\.fetch\\(\\k<url>,\\k<options>\\)`,
+  "g",
+);
+const PATCHED_FETCH_PATTERN = new RegExp(
+  `${FETCH_PREFIX}codexLinuxProxyAuthFetch\\(this,\\k<url>,\\k<options>\\)`,
   "g",
 );
 const REQUEST_PATTERN = new RegExp(
@@ -52,11 +59,16 @@ const APP_LOGIN_HELPER =
   "function codexLinuxInstallProxyAuthHandler(e){let t=codexLinuxProxyAuthEntry();if(t==null)return;e.app.on(`login`,(n,r,i,a,o)=>{if(!a?.isProxy)return;let s=codexLinuxProxyAuthHost(a.host),l=String(a.port??``).trim();if(t.host!==s||t.port&&t.port!==l)return;n.preventDefault(),o(t.username,t.password)})}";
 const REQUEST_LOGIN_HELPER =
   "function codexLinuxAttachProxyAuthToRequest(e){let t=codexLinuxProxyAuthEntry();if(t==null||e==null)return;e.on(`login`,(n,r)=>{if(!n?.isProxy){r();return}let i=codexLinuxProxyAuthHost(n.host),a=String(n.port??``).trim();if(t.host!==i||t.port&&t.port!==a){r();return}r(t.username,t.password)})}";
+// Preserve finalized fetch options such as trace export's redirect:"error"
+// when proxy authentication requires ClientRequest, without reading the body twice.
+const FETCH_HELPER =
+  "function codexLinuxProxyAuthFetch(e,t,n){return codexLinuxProxyAuthEntry()==null?e.options.applicationNetwork.fetch(t,n):e.performProgressRequest({body:n.body,headers:n.headers,method:n.method,onUploadProgress:null,resolvedUrl:t,redirect:n.redirect,signal:n.signal,useSessionCookies:n.credentials===`include`})}";
 const HELPER_NEEDLES = [
   "function codexLinuxProxyAuthHost(",
   "function codexLinuxProxyAuthEntry(",
   "function codexLinuxInstallProxyAuthHandler(",
   "function codexLinuxAttachProxyAuthToRequest(",
+  "function codexLinuxProxyAuthFetch(",
 ];
 
 function count(source, pattern) {
@@ -64,7 +76,7 @@ function count(source, pattern) {
 }
 
 function applyAuthenticatedProxyPatch(currentSource) {
-  const helpers = HELPER_NEEDLES.filter((needle) => currentSource.includes(needle)).length;
+  const helpers = HELPER_NEEDLES.reduce((total, needle) => total + currentSource.split(needle).length - 1, 0);
   const ready = count(currentSource, READY_PATTERN);
   const patchedReady = count(currentSource, PATCHED_READY_PATTERN);
   if (helpers === 0 && ready === 0 && patchedReady === 0) {
@@ -78,13 +90,15 @@ function applyAuthenticatedProxyPatch(currentSource) {
     return currentSource;
   }
 
-  const fetches = count(currentSource, FETCH_GATE);
-  const patchedFetches = count(currentSource, PATCHED_FETCH_GATE);
+  const fetches = count(currentSource, FETCH_PATTERN);
+  const patchedFetches = count(currentSource, PATCHED_FETCH_PATTERN);
   const requests = count(currentSource, REQUEST_PATTERN);
   const patchedRequests = count(currentSource, PATCHED_REQUEST_PATTERN);
   const pristine = helpers === 0 && ready === 1 && patchedReady === 0 &&
     fetches === 1 && patchedFetches === 0 && requests === 1 && patchedRequests === 0;
-  const complete = helpers === HELPER_NEEDLES.length && ready === 0 && patchedReady === 1 &&
+  const complete = helpers === HELPER_NEEDLES.length &&
+    currentSource.includes(APP_LOGIN_HELPER + REQUEST_LOGIN_HELPER + FETCH_HELPER) &&
+    ready === 0 && patchedReady === 1 &&
     fetches === 0 && patchedFetches === 1 && requests === 0 && patchedRequests === 1;
   if (complete) return currentSource;
   if (!pristine) {
@@ -96,7 +110,12 @@ function applyAuthenticatedProxyPatch(currentSource) {
 
   let patchedSource = currentSource
     .replace(READY_PATTERN, (match, electron) => `(codexLinuxInstallProxyAuthHandler(${electron}),${match})`)
-    .replace(FETCH_GATE, (_match, progressVar) => `if(null==${progressVar}&&!codexLinuxProxyAuthEntry())`)
+    .replace(FETCH_PATTERN, (...args) => {
+      const groups = args.at(-1);
+      const original = args[0];
+      return original.slice(0, original.lastIndexOf("this.options.applicationNetwork.fetch(")) +
+        `codexLinuxProxyAuthFetch(this,${groups.url},${groups.options})`;
+    })
     .replace(REQUEST_PATTERN, (...args) => {
       const groups = args.at(-1);
       return `let ${groups.request}=${groups.owner}.request({method:${groups.method},url:${groups.url},redirect:${groups.redirect},headers:${groups.headers},useSessionCookies:${groups.cookies}});` +
@@ -110,7 +129,7 @@ function applyAuthenticatedProxyPatch(currentSource) {
   // visible to every module factory in that chunk.
   const strictDirective = '"use strict";';
   const helperInsertionIndex = patchedSource.startsWith(strictDirective) ? strictDirective.length : 0;
-  return patchedSource.slice(0, helperInsertionIndex) + APP_LOGIN_HELPER + REQUEST_LOGIN_HELPER +
+  return patchedSource.slice(0, helperInsertionIndex) + APP_LOGIN_HELPER + REQUEST_LOGIN_HELPER + FETCH_HELPER +
     patchedSource.slice(helperInsertionIndex);
 }
 

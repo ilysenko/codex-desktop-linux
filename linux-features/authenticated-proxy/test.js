@@ -197,11 +197,11 @@ test("launcher hook shell syntax is valid", () => {
 // rspack chunk fixture: CommonJS chunk, Electron reached through a module-local
 // alias, double-quoted strings and `null==x` comparisons as in the signed bundle.
 const READY = 'async function boot(){let eT=Date.now();if(await ea.app.whenReady(),ew("main app.whenReady resolved",eT),!1){}return eT}';
-const FETCH = 'class Fetcher{constructor(){this.options={applicationNetwork:ea.net}}async performDesktopFetch(){let o={},n="GET",i=null,l="https://chatgpt.com/wham/usage",h={aborted:!1,addEventListener(){},removeEventListener(){}},m=!0,v=null,s="follow",C=()=>null,d=!1,e;if(null==i){let t={method:n,headers:o,body:C(),redirect:null==v?s:"error",signal:h,credentials:m?"include":"same-origin"};(d||!m&&(0,Pv.$o)(l,n))&&(t.credentials="omit"),e=await this.options.applicationNetwork.fetch(l,t)}else e=await this.performProgressRequest({body:C(),headers:o,method:n,onUploadProgress:i,resolvedUrl:l,redirect:null==v?void 0:"error",signal:h,useSessionCookies:m});return e}';
+const FETCH = 'class Fetcher{constructor(){this.options={applicationNetwork:ea.net}}async performDesktopFetch({method="GET",url="https://chatgpt.com/wham/usage",cookies=!0,omitCookies=!1,onUploadProgress=null,redirect="follow"}={}){let o={},n=method,i=onUploadProgress,l=url,h={aborted:!1,addEventListener(){},removeEventListener(){}},m=cookies,v=null,s=redirect,C=()=>{this.bodyReads=(this.bodyReads??0)+1;return null},d=omitCookies,e;if(null==i){let t={method:n,headers:o,body:C(),redirect:null==v?s:"error",signal:h,credentials:m?"include":"same-origin"};(d||!m&&(0,Pv.$o)(l,n))&&(t.credentials="omit"),e=await this.options.applicationNetwork.fetch(l,t)}else e=await this.performProgressRequest({body:C(),headers:o,method:n,onUploadProgress:i,resolvedUrl:l,redirect:null==v?void 0:"error",signal:h,useSessionCookies:m});return e}';
 const REQUEST = 'performProgressRequest({body:e,headers:t,method:r,onUploadProgress:n,resolvedUrl:i,redirect:s,signal:a,useSessionCookies:o}){return new Promise((l,c)=>{let d=this.options.applicationNetwork.request({method:r,url:i,redirect:s,headers:t,useSessionCookies:o}),u=-1,h=(e,t)=>{e!==u&&(u=e,n({loaded:e,total:t}))};d.on("upload-progress",h);let p=()=>{d.removeListener("upload-progress",h)},m=()=>{p(),a.removeEventListener("abort",f)},f=()=>{m(),d.abort(),c(new DOMException("The operation was aborted","AbortError"))};if(a.addEventListener("abort",f,{once:!0}),a.aborted)return void f();d.on("error",e=>{m(),c(e)}),d.on("response",e=>{p();let t=d.getUploadProgress();t.started&&h(t.current,t.total);let r=[];e.on("data",e=>{r.push(e)}),e.on("error",e=>{m(),c(e)}),e.on("end",()=>{m();let t=Buffer.concat(r),n=new Headers;for(let[t,r]of Object.entries(e.headers))for(let e of Array.isArray(r)?r:[r])n.append(t,e);l(new Response(0===t.length?null:t,{status:e.statusCode,statusText:e.statusMessage,headers:n}))})});let _=e instanceof ArrayBuffer?Buffer.from(e):e;d.end(_)})}}';
 
 function chunk(body) {
-  return `exports.ids=[916],exports.modules={35575(e,t,r){"use strict";r.d(t,{boot:()=>boot,Fetcher:()=>Fetcher});var ea=r(4482),ew=()=>{};${body}}};`;
+  return `exports.ids=[916],exports.modules={35575(e,t,r){"use strict";r.d(t,{boot:()=>boot,Fetcher:()=>Fetcher});var ea=r(4482),Pv=r(99),ew=()=>{};${body}}};`;
 }
 
 const CURRENT = chunk(READY + FETCH + REQUEST);
@@ -224,6 +224,7 @@ function loadChunk(source, context) {
   vm.runInNewContext(source, { ...context, exports: chunkExports, require: undefined });
   const moduleExports = {};
   const load = (id) => {
+    if (id === 99) return { $o: context.omitCredentials ?? (() => false) };
     assert.equal(id, 4482);
     return context.electron;
   };
@@ -343,8 +344,8 @@ test("leaves an incomplete existing proxy helper set untouched", () => {
 
 test("routes current authenticated proxy desktop fetch shape through ClientRequest", async () => {
   const patched = applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, CURRENT);
-  assert.match(patched, /if\(null==i&&!codexLinuxProxyAuthEntry\(\)\)\{let t=/);
-  assert.match(patched, /codexLinuxAttachProxyAuthToRequest\(d\);let u=-1,h=\(e,t\)=>\{null!=n&&e!==u/);
+  assert.match(patched, /!m&&\(0,Pv\.\$o\)\(l,n\)&&\(t\.credentials="omit"\),e=await codexLinuxProxyAuthFetch\(this,l,t\)/);
+  assert.match(patched, /codexLinuxAttachProxyAuthToRequest\(d\);let u=-1,h=\(\)=>\{if\(n==null\)return;/);
 
   let fetchCalls = 0;
   const plain = loadChunk(patched, {
@@ -434,6 +435,97 @@ test("routes current authenticated proxy desktop fetch shape through ClientReque
   assert.deepEqual(credentials, { username: "user", password: "p@ss" });
 });
 
+test("retains upstream credentials and caller redirect policies for plain and authenticated requests", async () => {
+  const patched = applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, CURRENT);
+  const modes = [
+    { platform: "linux", env: {}, proxy: false },
+    { platform: "linux", env: proxyEnv(), proxy: true },
+    { platform: "win32", env: proxyEnv(), proxy: false },
+  ];
+  const cases = [
+    { method: "POST", url: "https://chatgpt.com/backend-api/omit", cookies: true, expected: "include" },
+    { method: "POST", url: "https://chatgpt.com/backend-api/omit", cookies: false, expected: "omit" },
+    { method: "GET", url: "https://chatgpt.com/backend-api/omit", cookies: false, expected: "same-origin" },
+    { method: "POST", url: "https://chatgpt.com/backend-api/keep", cookies: false, expected: "same-origin" },
+    { method: "POST", url: "https://chatgpt.com/backend-api/omit", cookies: true, progress: true, expected: "include" },
+    { method: "POST", url: "https://chatgpt.com/backend-api/omit", cookies: false, progress: true, expected: "omit" },
+    ...["follow", "manual", "error"].map(redirect => ({
+      method: "POST", url: "https://chatgpt.com/backend-api/omit", cookies: false, redirect, expected: "omit",
+    })),
+  ];
+
+  for (const mode of modes) {
+    for (const scenario of cases) {
+      const calls = [];
+      const policyCalls = [];
+      const credentials = [];
+      const progress = [];
+      const module = loadChunk(patched, {
+        ArrayBuffer, Buffer, DOMException, Date, Headers, Response,
+        setInterval() { return 1; },
+        clearInterval() {},
+        process: { platform: mode.platform, env: mode.env },
+        omitCredentials(url, method) {
+          policyCalls.push([url, method]);
+          return url.endsWith("/omit") && method === "POST";
+        },
+        electron: {
+          net: {
+            fetch(url, options) {
+              calls.push({ kind: "fetch", url, options });
+              return Promise.resolve(new Response("fetch"));
+            },
+            request(options) {
+              calls.push({ kind: "request", url: options.url, options });
+              const handlers = {};
+              return {
+                abort() {},
+                getUploadProgress() { return { started: true, current: 3, total: 9 }; },
+                on(event, callback) { handlers[event] = callback; return this; },
+                end() {
+                  handlers.login?.(
+                    { isProxy: true, host: "proxy.example", port: 8080 },
+                    (...values) => credentials.push(values),
+                  );
+                  const responseHandlers = {};
+                  handlers.response({
+                    statusCode: 200, statusMessage: "OK", headers: {},
+                    on(event, callback) { responseHandlers[event] = callback; return this; },
+                  });
+                  responseHandlers.end();
+                },
+              };
+            },
+          },
+        },
+      });
+
+      const fetcher = new module.Fetcher();
+      await fetcher.performDesktopFetch({
+        ...scenario,
+        onUploadProgress: scenario.progress ? (value) => progress.push([value.loaded, value.total]) : null,
+      });
+      assert.equal(fetcher.bodyReads, 1, "request body is serialized once");
+      assert.deepEqual(policyCalls, scenario.cookies || scenario.progress ? [] : [[scenario.url, scenario.method]]);
+      assert.deepEqual(progress, scenario.progress ? [[3, 9]] : []);
+      assert.equal(calls.length, 1);
+      const [call] = calls;
+      assert.equal(call.kind, mode.proxy || scenario.progress ? "request" : "fetch");
+      assert.equal(call.url, scenario.url);
+      assert.equal(call.options.method, scenario.method);
+      assert.equal(call.options.redirect, scenario.progress ? undefined : (scenario.redirect ?? "follow"));
+      assert.equal(Object.keys(call.options.headers).length, 0, "credentials are not added to origin headers");
+      if (mode.proxy || scenario.progress) {
+        assert.equal(call.options.useSessionCookies, scenario.expected === "include");
+        assert.deepEqual(credentials, mode.proxy ? [["user", "p@ss"]] : []);
+      } else {
+        assert.equal(call.options.credentials, scenario.expected);
+        assert.deepEqual(credentials, []);
+      }
+    }
+  }
+});
+
 test("chunks without the app ready point stay untouched", () => {
   for (const source of [chunk(FETCH + REQUEST), chunk("function other(){return 1}")]) {
     const { result, warnings } = withWarnings(() => applyAuthenticatedProxyPatch(source));
@@ -450,6 +542,9 @@ test("authenticated-proxy current contracts fail closed when missing, duplicate,
     duplicateReady: chunk(READY + READY.replace("boot", "boot2") + FETCH + REQUEST),
     duplicateNetwork: chunk(READY + FETCH + REQUEST + FETCH + REQUEST),
     ambiguous: patched + FETCH + REQUEST,
+    retiredWithoutCookiePolicy: chunk(READY + FETCH.replace('!m&&(0,Pv.$o)(l,n)&&(t.credentials="omit"),', "") + REQUEST),
+    wrongPolicyMethod: chunk(READY + FETCH.replace("(l,n)", "(l,o)") + REQUEST),
+    wrongPolicyOptions: chunk(READY + FETCH.replace('t.credentials="omit"', 'other.credentials="omit"') + REQUEST),
     retiredQuotes: chunk(READY + FETCH.replace('"include":"same-origin"', "`include`:`same-origin`") + REQUEST),
   };
   for (const [name, source] of Object.entries(variants)) {
@@ -470,6 +565,8 @@ test("authenticated-proxy patched request contracts fail closed when damaged or 
     partial: patched.replace("null!=n&&", ""),
     duplicate: patched.replace(patchedOwner, patchedOwner + patchedOwner),
     unready: patched.replace("(codexLinuxInstallProxyAuthHandler(ea),await ea.app.whenReady())", "await ea.app.whenReady()"),
+    damagedFetchHelper: patched.replace("useSessionCookies:n.credentials===`include`", "useSessionCookies:true"),
+    damagedFetchPolicy: patched.replace('(t.credentials="omit")', '(t.credentials="include")'),
   };
   for (const [name, source] of Object.entries(variants)) {
     assert.notEqual(source, patched, name);
@@ -487,16 +584,18 @@ test("signed main-process chunks patch exactly one chunk", { skip: !signedApp },
     for (const name of fs.readdirSync(directory).filter((file) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(file))) {
       const source = fs.readFileSync(path.join(directory, name), "utf8");
       const patched = applyAuthenticatedProxyPatch(source);
-      if (patched !== source) changed.push({ name, patched });
+      if (patched !== source) changed.push({ name, source, patched });
     }
   });
   assert.equal(changed.length, 1);
-  const [{ patched }] = changed;
+  const [{ source, patched }] = changed;
+  assert.match(source, /async performDesktopFetch\(\{[^}]*redirect:[A-Za-z_$][\w$]*,resolvedUrl:/);
+  assert.ok(source.includes('method:"POST",redirect:"error",resolvedUrl:'), "the current trace exporter explicitly forbids redirects");
   assert.doesNotThrow(() => new vm.Script(patched));
   const { result, warnings } = withWarnings(() => applyAuthenticatedProxyPatch(patched));
   assert.equal(result, patched);
   assert.deepEqual(warnings, []);
   assert.equal(patched.match(/codexLinuxInstallProxyAuthHandler\(/g).length, 2);
   assert.equal(patched.match(/codexLinuxAttachProxyAuthToRequest\(/g).length, 2);
-  assert.equal(patched.match(/!codexLinuxProxyAuthEntry\(\)/g).length, 1);
+  assert.equal(patched.match(/codexLinuxProxyAuthFetch\(/g).length, 2);
 });
