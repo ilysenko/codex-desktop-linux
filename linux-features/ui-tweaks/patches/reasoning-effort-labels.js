@@ -12,6 +12,7 @@ const ENGLISH_REASONING_LABELS = Object.freeze({
   "composer.mode.local.reasoning.xhigh.label": "XHigh",
   "composer.mode.local.reasoning.max.label": "Max",
   "composer.mode.local.reasoning.ultra.label": "Ultra",
+  "composer.mode.local.reasoning.persistent.label": "Persistent",
 });
 const IDENT = "[A-Za-z_$][\\w$]*";
 

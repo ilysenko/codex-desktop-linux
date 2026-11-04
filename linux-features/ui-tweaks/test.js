@@ -13,6 +13,7 @@ require("./gentoo-support.test.js");
 require("./custom-font-input.test.js");
 require("./selected-text-more-details.test.js");
 require("./selected-text-annotation-submit.test.js");
+require("./reasoning-effort-labels.test.js");
 
 const {
   discoverLinuxFeatureManifests,
@@ -143,6 +144,7 @@ function simplifiedChineseLocaleFixture() {
     "composer.mode.local.reasoning.xhigh.label": "极高",
     "composer.mode.local.reasoning.max.label": "最高",
     "composer.mode.local.reasoning.ultra.label": "极高",
+    "composer.mode.local.reasoning.persistent.label": "持续",
   };
   const members = Object.entries(labels)
     .map(([key, value]) => `"${key}":"${value}"`)

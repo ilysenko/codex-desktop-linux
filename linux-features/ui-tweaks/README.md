@@ -294,7 +294,8 @@ Config keys:
 ### `reasoning.keepEffortLabelsEnglish`
 
 Leaves the current reasoning effort values as `None`, `Minimal`, `Medium`,
-`High`, `XHigh`, `Max`, and `Ultra` in the Simplified Chinese locale. The
+`High`, `XHigh`, `Max`, and `Ultra`, plus the `Persistent` continuation-mode
+label, in the Simplified Chinese locale. The
 surrounding picker title and usage warning remain translated. This avoids
 collapsing distinct upstream values such as `XHigh` and `Ultra` into the same
 Chinese label. The Simplified Chinese catalog is an rspack async chunk with a
