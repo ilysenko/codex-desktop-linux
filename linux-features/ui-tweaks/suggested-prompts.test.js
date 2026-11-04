@@ -60,11 +60,7 @@ function featureSyncFixture() {
 }
 
 function workPageFixture() {
-  return [
-    'function workHome(){let Pe=(0,er.Zj)("2425897452"),{authMethod:Fe,email:Le,planAtLogin:Re}=(0,f.As)(),',
-    "{data:b}=(0,v.U)(),{data:Ue}=(0,w.YL)(),We=Ue?.plan_type??b?.plan??Re;",
-    'return(0,r.jsx)(eh.HomeTaskSuggestions,{generatedSuggestionsEnabled:Pe&&(0,s.ML4)({authMethod:Fe,email:b?.email??Le,plan:We}),mode:"work"})}',
-  ].join("");
+  return require("./fixtures/suggested-prompts-work-page.js").chunk();
 }
 
 function mainFixture() {
@@ -174,11 +170,11 @@ test("Work Home patch enables generated suggestions while preserving account eli
   assert.equal((patched.match(new RegExp(WORK_PAGE_ELIGIBILITY_MARKER, "g")) || []).length, 1);
   assert.match(
     patched,
-    /Pe=\(\(0,er\.Zj\)\("2425897452"\),function codexLinuxUiTweaksSuggestedPromptsEnabled\(\)\{return!0\}\(\)\)/,
+    /Pe=\(\(0,er\.gate\)\("2425897452"\),function codexLinuxUiTweaksSuggestedPromptsEnabled\(\)\{return!0\}\(\)\)/,
   );
   assert.match(
     patched,
-    /generatedSuggestionsEnabled:Pe&&\(\(0,s\.ML4\)\(\{authMethod:Fe,email:b\?\.email\?\?Le,plan:We\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsWorkPageEligible\(\)\{return!0\}\(\)\)/,
+    /generatedSuggestionsEnabled:Pe&&\(\(0,s\.eligible\)\(\{authMethod:Fe,email:b\?\.email\?\?Le,plan:We\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsWorkPageEligible\(\)\{return!0\}\(\)\)/,
   );
   assert.equal(applySuggestedPromptsWorkPagePatch(patched), patched);
 });

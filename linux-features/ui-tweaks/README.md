@@ -240,8 +240,8 @@ generated-source selector each live in a numbered async webview chunk, and the
 main-process eligibility check lives in an `early-bootstrap-*` chunk. Chunk
 names identify nothing, so each descriptor locates its chunk by content needles
 (the rollout gate id, the feature-sync IPC message, the generated-suggestion
-props) and then requires one complete semantic owner. The normal Home page
-integration discovers one Rspack module identity and validates all physical
+props) and then requires one complete semantic owner. Normal Home and Work Home
+each discover one Rspack module identity and validate all physical
 copies before writing, including copies that have lost their discovery needles;
 unrelated modules remain untouched.
 
@@ -250,6 +250,15 @@ Its rollout hook, account predicate, navigation callback and lazy content
 provider are resolved through the native Rspack imports. The content provider
 keeps the runtime status gate and passes the current host, project and callback
 to the native suggestion component; card-to-composer actions remain upstream.
+
+Work Home uses a separate native suggestion component. Its page, lazy route,
+mode-preparation callback, runtime gates, query and editor actions must resolve
+through the current native imports before any page copy is changed. The query
+uses the current host, mode and Home-feed capability; project and Work execution
+location are destination metadata, rather than query keys. Selection prepares
+the destination mode and the native content action then fills and focuses the
+composer. A card without the native auto-send flag fills and focuses without sending. The upstream
+account, draft, document and hint checks remain in place across preparation.
 
 This tweak is independently disabled by default:
 

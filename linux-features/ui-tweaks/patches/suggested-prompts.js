@@ -198,7 +198,7 @@ function suggestedPromptsWorkPageContract(source) {
     cleanEligibility.length === 1 &&
     cleanEligibility[0][1] === cleanRollouts[0][1]
   ) {
-    return "current";
+    return require("./suggested-prompts-work-page.js").inspectPage(source) ? "current" : "drifted";
   }
   if (
     markerOccurrenceCount(source, RUNTIME_MARKER) === 1 &&
@@ -212,7 +212,7 @@ function suggestedPromptsWorkPageContract(source) {
     patchedEligibility[0][1] === patchedRollouts[0][1] &&
     completePatchedGateCount(source, RUNTIME_MARKER) === 1
   ) {
-    return "patched";
+    return require("./suggested-prompts-work-page.js").inspectPage(source) ? "patched" : "drifted";
   }
   return "drifted";
 }
@@ -483,7 +483,7 @@ const descriptors = [
   },
   {
     id: "home-suggested-prompts-work-page",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20_985,
     ciPolicy: "optional",
     enabled: suggestedPromptsEnabled,
@@ -491,7 +491,7 @@ const descriptors = [
     assetMatch: (source) => suggestedPromptsWorkPageContract(source) !== "drifted",
     missingDescription: "current Suggested Prompts Work Home bundle",
     skipDescription: "ui-tweaks Suggested Prompts Work Home patch",
-    apply: applySuggestedPromptsWorkPagePatch,
+    apply: (extractedDir) => require("./suggested-prompts-work-page.js").applyToExtractedApp(extractedDir),
   },
   {
     id: "home-suggested-prompts-settings-row",
