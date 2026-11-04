@@ -560,11 +560,18 @@ fn parse_kscreen_monitor_layout(json: &[u8]) -> Option<Vec<LogicalMonitor>> {
     (!layout.is_empty()).then_some(layout)
 }
 
+/// One `get_outputs` entry. Sway sends disabled outputs with `"scale": null`
+/// and a zero rect, and non-desktop outputs (VR headsets) without `active`,
+/// `rect` or `scale`, so every field is optional and only active desktop
+/// outputs are read.
 #[derive(serde::Deserialize)]
 struct SwayOutput {
+    #[serde(default)]
     active: bool,
-    rect: SwayRect,
-    scale: f64,
+    #[serde(default)]
+    non_desktop: bool,
+    rect: Option<SwayRect>,
+    scale: Option<f64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -575,23 +582,23 @@ struct SwayRect {
     height: i32,
 }
 
-fn parse_sway_monitor_layout(json: &[u8]) -> Option<Vec<LogicalMonitor>> {
+pub(crate) fn parse_sway_monitor_layout(json: &[u8]) -> Option<Vec<LogicalMonitor>> {
     let outputs: Vec<SwayOutput> = serde_json::from_slice(json).ok()?;
     let layout = outputs
         .into_iter()
-        .filter(|output| output.active)
+        .filter(|output| output.active && !output.non_desktop)
         .map(|output| {
-            (output.scale.is_finite()
-                && output.scale > 0.0
-                && output.rect.width > 0
-                && output.rect.height > 0)
-                .then_some(LogicalMonitor {
-                    x: output.rect.x,
-                    y: output.rect.y,
-                    width: output.rect.width,
-                    height: output.rect.height,
-                    scale: output.scale,
-                })
+            let rect = output.rect?;
+            let scale = output.scale?;
+            (scale.is_finite() && scale > 0.0 && rect.width > 0 && rect.height > 0).then_some(
+                LogicalMonitor {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                    scale,
+                },
+            )
         })
         .collect::<Option<Vec<_>>>()?;
     (!layout.is_empty()).then_some(layout)
@@ -2755,6 +2762,26 @@ mod tests {
             (layout[0].x, layout[0].y, layout[0].width, layout[0].height),
             (0, 0, 1920, 1080)
         );
+    }
+
+    #[test]
+    fn sway_layout_skips_disabled_and_non_desktop_outputs() {
+        // HEADLESS-2 is from Sway 1.11 `get_outputs` after `output HEADLESS-2
+        // disable`, trimmed; DP-3 is the non-desktop shape Sway sends.
+        let layout = parse_sway_monitor_layout(
+            br#"[
+                {"name":"HEADLESS-1","type":"output","active":true,"non_desktop":false,
+                 "scale":1.5,"rect":{"x":0,"y":0,"width":1280,"height":720}},
+                {"name":"HEADLESS-2","type":"output","active":false,"non_desktop":false,
+                 "power":false,"primary":false,"scale":null,
+                 "rect":{"x":0,"y":0,"width":0,"height":0}},
+                {"name":"DP-3","type":"output","make":"Valve","model":"Index",
+                 "serial":"0","non_desktop":true}
+            ]"#,
+        )
+        .expect("disabled and non-desktop outputs are skipped");
+        assert_eq!(layout.len(), 1);
+        assert_eq!((layout[0].width, layout[0].scale), (1280, 1.5));
     }
 
     #[test]

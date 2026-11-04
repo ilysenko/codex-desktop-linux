@@ -25,9 +25,20 @@ mod tests {
     use super::backends::gnome::window_from_properties;
     use super::backends::hyprland::{parse_hyprland_clients, HYPRLAND_BACKEND};
     use super::backends::i3::{
-        i3_focus_command, parse_i3_tree, parse_xprop_pid, windows_needing_xprop_pid, I3_BACKEND,
-        SWAY_CONTAINER_ID_BASE,
+        choose_socket, i3_focus_command, ipc_program_from, parse_i3_tree, parse_xprop_pid,
+        windows_needing_xprop_pid, I3_BACKEND, SWAY_CONTAINER_ID_BASE,
     };
+    use crate::remote_desktop::LogicalMonitor;
+
+    fn monitor(x: i32, y: i32, width: i32, height: i32, scale: f64) -> LogicalMonitor {
+        LogicalMonitor {
+            x,
+            y,
+            width,
+            height,
+            scale,
+        }
+    }
     use super::registry::{
         backend_can_exact_focus, descriptors, list_note, COSMIC_WAYLAND_BACKEND,
         GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND, NIRI_BACKEND,
@@ -713,7 +724,7 @@ mod tests {
           ]
         }"#;
 
-        let windows = parse_i3_tree(tree_json).unwrap();
+        let windows = parse_i3_tree(tree_json, None).unwrap();
 
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].window_id, 67108868);
@@ -742,7 +753,7 @@ mod tests {
             ]
           }]
         }"#;
-        let windows = parse_i3_tree(tree).unwrap();
+        let windows = parse_i3_tree(tree, None).unwrap();
         // Sway rejects hex ids ("The value for 'id' should be numeric").
         assert_eq!(
             i3_focus_command(windows[0].window_id),
@@ -768,7 +779,7 @@ mod tests {
             ]
           }]
         }"#;
-        let windows = parse_i3_tree(tree).unwrap();
+        let windows = parse_i3_tree(tree, None).unwrap();
         let ids = windows.iter().map(|w| w.window_id).collect::<Vec<_>>();
         assert_eq!(ids, vec![4194316, SWAY_CONTAINER_ID_BASE + 4194316]);
         assert_eq!(windows[0].client_type.as_deref(), Some("x11"));
@@ -901,7 +912,7 @@ mod tests {
           ]
         }"#;
 
-        let windows = parse_i3_tree(tree_json).unwrap();
+        let windows = parse_i3_tree(tree_json, Some(&[monitor(0, 0, 1280, 720, 1.0)])).unwrap();
 
         assert_eq!(windows.len(), 4);
         let foot = &windows[2];
@@ -940,6 +951,124 @@ mod tests {
         let lookups = windows_needing_xprop_pid(&windows);
         assert_eq!(lookups, vec![1]);
         assert_eq!(windows[lookups[0]].window_id, 6291458);
+    }
+
+    /// A Sway tree with one Wayland window at layout (1380, 50), 640x360.
+    const SWAY_ONE_WINDOW: &str = r#"{
+      "id": 1, "type": "root", "nodes": [{
+        "id": 4, "type": "workspace", "num": 1, "nodes": [
+          {"id": 5, "type": "con", "name": "foot", "app_id": "foot", "pid": 7,
+           "shell": "xdg_shell", "window": null,
+           "rect": {"x": 1380, "y": 50, "width": 640, "height": 360}}
+        ]
+      }]
+    }"#;
+
+    #[test]
+    fn sway_bounds_scale_to_capture_pixels_on_a_uniform_scale() {
+        // Two outputs at scale 2, the left one at layout x 1280: the capture
+        // starts at layout (1280, 0) and has twice the layout's pixels.
+        let outputs = [
+            monitor(1280, 0, 1280, 720, 2.0),
+            monitor(2560, 0, 1280, 720, 2.0),
+        ];
+        let windows = parse_i3_tree(SWAY_ONE_WINDOW, Some(&outputs)).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.x, bounds.y), (Some(200), Some(100)));
+        assert_eq!((bounds.width, bounds.height), (1280, 720));
+    }
+
+    #[test]
+    fn sway_bounds_round_outward_and_never_scale_below_one() {
+        // Scale 1.25 with a 1-px offset from the origin: edges round outward.
+        let windows =
+            parse_i3_tree(SWAY_ONE_WINDOW, Some(&[monitor(1379, 49, 1280, 720, 1.25)])).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.x, bounds.y), (Some(1), Some(1)));
+        // Right edge (1 + 640) * 1.25 = 801.25 rounds out to 802.
+        assert_eq!((bounds.width, bounds.height), (801, 451));
+        // grim never captures below scale 1, so scale 0.75 maps as 1.
+        let windows =
+            parse_i3_tree(SWAY_ONE_WINDOW, Some(&[monitor(0, 0, 1280, 720, 0.75)])).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.x, bounds.width), (Some(1380), 640));
+    }
+
+    #[test]
+    fn i3_socket_prefers_a_live_env_socket_then_the_runtime_dir() {
+        let i3 = Some("/run/i3.sock".to_string());
+        let sway = Some("/run/sway.sock".to_string());
+        let live = |live: &'static [&'static str]| {
+            move |path: &std::path::Path| live.iter().any(|live| path == std::path::Path::new(live))
+        };
+        let runtime = || Some(std::path::PathBuf::from("/run/user/sway-ipc.1.sock"));
+        let none = || None;
+        // Both live: I3SOCK wins (a live Sway sets both to one path).
+        assert_eq!(
+            choose_socket(
+                &[i3.clone(), sway.clone()],
+                live(&["/run/i3.sock", "/run/sway.sock"]),
+                runtime
+            ),
+            Some("/run/i3.sock".into())
+        );
+        // A stale I3SOCK does not hide a live SWAYSOCK.
+        assert_eq!(
+            choose_socket(
+                &[i3.clone(), sway.clone()],
+                live(&["/run/sway.sock"]),
+                runtime
+            ),
+            Some("/run/sway.sock".into())
+        );
+        // Neither live: the runtime dir socket, else the first set variable.
+        assert_eq!(
+            choose_socket(&[i3.clone(), sway.clone()], live(&[]), runtime),
+            Some("/run/user/sway-ipc.1.sock".into())
+        );
+        assert_eq!(
+            choose_socket(&[i3.clone(), sway.clone()], live(&[]), none),
+            Some("/run/i3.sock".into())
+        );
+        assert_eq!(choose_socket(&[None, None], live(&[]), none), None);
+    }
+
+    #[test]
+    fn sway_bounds_are_left_out_when_the_capture_layout_is_unknown() {
+        let mixed = [
+            monitor(0, 0, 1280, 720, 1.0),
+            monitor(1280, 0, 1280, 720, 2.0),
+        ];
+        let windows = parse_i3_tree(SWAY_ONE_WINDOW, Some(&mixed)).unwrap();
+        assert!(
+            windows[0].bounds.is_none(),
+            "mixed scales have no single pixel space"
+        );
+        let windows = parse_i3_tree(SWAY_ONE_WINDOW, None).unwrap();
+        assert!(windows[0].bounds.is_none(), "no outputs, no mapping");
+    }
+
+    #[test]
+    fn i3_bounds_stay_x11_pixels() {
+        let tree = r#"{
+          "id": 1, "type": "root", "nodes": [{
+            "id": 4, "type": "workspace", "num": 1, "nodes": [
+              {"id": 5, "type": "con", "name": "xterm", "window": 4194316,
+               "rect": {"x": 100, "y": 50, "width": 640, "height": 360}}
+            ]
+          }]
+        }"#;
+        let windows = parse_i3_tree(tree, Some(&[monitor(0, 0, 1280, 720, 2.0)])).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.x, bounds.width), (Some(100), 640));
+    }
+
+    #[test]
+    fn i3_backend_uses_swaymsg_only_without_i3_msg() {
+        assert_eq!(ipc_program_from(true, true), "i3-msg");
+        assert_eq!(ipc_program_from(true, false), "i3-msg");
+        assert_eq!(ipc_program_from(false, true), "swaymsg");
+        assert_eq!(ipc_program_from(false, false), "i3-msg");
     }
 
     #[test]

@@ -18,7 +18,7 @@ pub use x11::X11_BACKEND;
 /// Reported when no window backend answered, so no backend can be named.
 pub const UNAVAILABLE_BACKEND: &str = "unavailable";
 
-pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, the COSMIC Wayland helper, KWin/Plasma DBus scripting, Hyprland hyprctl, the niri IPC socket, labwc.sock, i3-msg, or zwlr_foreign_toplevel_manager_v1. On GNOME, run setup_window_targeting to install the extension backend.";
+pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, the COSMIC Wayland helper, KWin/Plasma DBus scripting, Hyprland hyprctl, the niri IPC socket, labwc.sock, i3-msg or swaymsg, or zwlr_foreign_toplevel_manager_v1. On GNOME, run setup_window_targeting to install the extension backend.";
 
 #[derive(Debug, Clone, Copy)]
 pub struct BackendDescriptor {
@@ -115,8 +115,8 @@ const DESCRIPTORS: &[BackendDescriptor] = &[
     BackendDescriptor {
         id: I3_BACKEND,
         failure_label: "i3",
-        list_note: "Window list came from i3-msg over the i3 or Sway IPC socket. Native Wayland windows on Sway get ids above 2^32, derived from their container id. Terminal windows may include best-effort PTY and active-process context when the process tree is readable; on i3 the pid also needs xprop.",
-        missing_hint: "On i3 or Sway, ensure i3-msg can reach the active IPC socket.",
+        list_note: "Window list came from i3-msg or swaymsg over the i3 or Sway IPC socket. Native Wayland windows on Sway get ids above 2^32, derived from their container id. Terminal windows may include best-effort PTY and active-process context when the process tree is readable; on i3 the pid also needs xprop.",
+        missing_hint: "On i3 or Sway, ensure i3-msg or swaymsg can reach the active IPC socket (I3SOCK or SWAYSOCK).",
         can_exact_focus: true,
     },
     BackendDescriptor {
