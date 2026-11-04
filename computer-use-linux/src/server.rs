@@ -3183,7 +3183,7 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.36",
+    version = "0.7.37",
     instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send literal type_text through KDE clipboard integration on Plasma Wayland, wtype on compatible Wayland compositors, or portal keysyms on other Wayland sessions. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable) and warn when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype uses a single literal argument after -- to avoid stdin keymap-refresh corruption; text is visible in process arguments, so confirmed password fields are rejected (use set_value). Terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call; split larger input into smaller calls or expose accessibility. Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, click, and input results warn when the target window or coordinate is partially or fully off-screen; use move_window/resize_window (GNOME Shell extension backend) to bring a window fully on-screen before retrying. scroll accepts the same window targeting and relative coordinates as click. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {}
@@ -5231,7 +5231,7 @@ impl ComputerUseLinux {
                 };
             }
             // A tree for a named window must not borrow the previous
-            // snapshot's app: on i3, sway and COSMIC the window has no pid, and
+            // snapshot's app: on i3 without xprop and on COSMIC the window has no pid, and
             // that app may not be the one holding it.
             let window_targeted = resolved_window.is_some()
                 && (target.is_some_and(WindowTarget::has_target) || fallback_window.is_some());
@@ -6481,8 +6481,8 @@ impl ComputerUseLinux {
     /// the accessibility bus. When neither is known the action proceeds, since
     /// a mismatch cannot be shown. When the pids match and the snapshot's tree
     /// was narrowed to one window of the app, a window target must name that
-    /// window, since an app's windows share its pid. A window target with no known pid (i3,
-    /// sway and COSMIC report none) is judged by the snapshot's window and
+    /// window, since an app's windows share its pid. A window target with no known pid (i3
+    /// without xprop, COSMIC) is judged by the snapshot's window and
     /// fails closed when the snapshot recorded no comparable window.
     async fn check_node_target(
         &self,
@@ -6508,6 +6508,8 @@ impl ComputerUseLinux {
             // window of the same app is still refused when the target names
             // one window exactly; an app-wide tree holds every window, and an
             // inexact target picked one arbitrarily, so both pass on the pid.
+            // A narrowed tree that recorded no comparable window cannot show
+            // which window it holds, so an exact target fails closed.
             let Some((target_window, target_backend)) =
                 target.window.as_ref().filter(|_| target.exact_window)
             else {
@@ -6521,35 +6523,47 @@ impl ComputerUseLinux {
             if !narrowed {
                 return Ok(());
             }
-            return match self.snapshot_window() {
-                Some((window_id, backend))
-                    if backend == *target_backend && window_id != *target_window =>
-                {
-                    Err(node_window_mismatch_message(
-                        node.index,
-                        window_id,
-                        *target_window,
-                    ))
-                }
-                _ => Ok(()),
-            };
+            return self.check_snapshot_window(
+                node.index,
+                *target_window,
+                target_backend,
+                node_window_unrecorded_message,
+            );
         }
         let Some((target_window, target_backend)) = target.window.as_ref() else {
             return Ok(());
         };
+        self.check_snapshot_window(
+            node.index,
+            *target_window,
+            target_backend,
+            node_window_unverified_message,
+        )
+    }
+
+    /// Compare the snapshot's recorded window with the target window. A
+    /// snapshot with no window, or one listed by another window backend,
+    /// cannot be compared and is refused with `uncomparable`'s message.
+    fn check_snapshot_window(
+        &self,
+        element_index: u32,
+        target_window: u64,
+        target_backend: &str,
+        uncomparable: fn(u32, u64) -> String,
+    ) -> std::result::Result<(), String> {
         match self.snapshot_window() {
-            Some((window_id, backend)) if backend == *target_backend => {
-                if window_id == *target_window {
+            Some((window_id, backend)) if backend == target_backend => {
+                if window_id == target_window {
                     Ok(())
                 } else {
                     Err(node_window_mismatch_message(
-                        node.index,
+                        element_index,
                         window_id,
-                        *target_window,
+                        target_window,
                     ))
                 }
             }
-            _ => Err(node_window_unverified_message(node.index, *target_window)),
+            _ => Err(uncomparable(element_index, target_window)),
         }
     }
 
@@ -8242,8 +8256,8 @@ fn keyboard_target_raised(target: &WindowTarget) -> TargetRaised {
 
 /// The window a post-action tree can be recorded as taken for, so a
 /// follow-up action on that window passes the ownership check. A window with
-/// a pid needs the tree to come from that pid. A window without one (i3,
-/// sway, COSMIC) needs the tree narrowed to the frame its title names; an
+/// a pid needs the tree to come from that pid. A window without one (i3
+/// without xprop, COSMIC) needs the tree narrowed to the frame its title names; an
 /// app-wide tree may hold another app's nodes, and recording it would let
 /// them pass. A focused-window guess is never passed in.
 ///
@@ -8931,6 +8945,12 @@ fn node_window_mismatch_message(
 fn node_window_unverified_message(element_index: u32, target_window: u64) -> String {
     format!(
         "Did not act because element_index {element_index} could not be tied to target window_id {target_window}: the window backend reports no pid for it and the latest get_app_state snapshot was not taken for that window. Pass pid, or call get_app_state for that window and use an index from that result."
+    )
+}
+
+fn node_window_unrecorded_message(element_index: u32, target_window: u64) -> String {
+    format!(
+        "Did not act because element_index {element_index} could not be tied to target window_id {target_window}: the latest get_app_state snapshot was narrowed to one window of this app, and the window it recorded, if any, cannot be compared with the target (none was recorded, or another window backend listed it). Call get_app_state for the target window and use an index from that result."
     )
 }
 
@@ -17308,7 +17328,7 @@ mod node_target_scope_tests {
         );
     }
 
-    /// An i3, sway or COSMIC window: the backend reports no pid.
+    /// An i3 (no xprop) or COSMIC window: the backend reports no pid.
     fn pidless_window(window_id: u64) -> WindowInfo {
         WindowInfo {
             window_id,
@@ -17467,6 +17487,66 @@ mod node_target_scope_tests {
             .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, true))
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn same_pid_exact_target_fails_closed_when_the_narrowed_tree_recorded_no_window() {
+        // A tree narrowed through the cached scope that came from another pid
+        // or frame records no window (post_action_tree_window). An exact
+        // target then cannot be checked against it.
+        let backend = ComputerUseLinux::default();
+        let node = cached_node(2, ":1.9/org/a11y/atspi/accessible/42");
+        let mut window_10 = pidless_window(10);
+        window_10.pid = Some(7);
+        backend.store_snapshot(
+            std::slice::from_ref(&node),
+            Some(7),
+            None,
+            None,
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope: Some("Window 20".to_string()),
+            },
+        );
+
+        assert_eq!(
+            backend
+                .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, true))
+                .await
+                .unwrap_err(),
+            node_window_unrecorded_message(2, 10)
+        );
+        // An inexact target and a pid-only target still pass on the pid.
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, false))
+            .await
+            .is_ok());
+        assert!(backend
+            .check_node_target(&node, &ElementOwnerTarget::pid(Some(7)))
+            .await
+            .is_ok());
+
+        // A narrowed tree whose window another backend listed (the GNOME
+        // extension failed and Introspect answered) is not comparable either.
+        let mut window_10_other_backend = window_10.clone();
+        window_10_other_backend.backend = "gnome-shell-introspect".to_string();
+        backend.store_snapshot(
+            std::slice::from_ref(&node),
+            Some(7),
+            None,
+            Some(&window_10_other_backend),
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope: Some("Window 10".to_string()),
+            },
+        );
+        assert_eq!(
+            backend
+                .check_node_target(&node, &ElementOwnerTarget::window(&window_10, None, true))
+                .await
+                .unwrap_err(),
+            node_window_unrecorded_message(2, 10)
+        );
     }
 
     #[tokio::test]

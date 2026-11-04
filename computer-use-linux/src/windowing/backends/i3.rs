@@ -1,13 +1,18 @@
 use crate::command_runner;
 use crate::terminal::enrich_terminal_windows;
 use crate::windowing::registry::BackendProbe;
-use crate::windowing::types::{WindowBounds, WindowInfo};
+use crate::windowing::types::{WindowBounds, WindowInfo, MAX_WINDOW_ID};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::{env, fs, os::unix::fs::FileTypeExt, path::PathBuf, process::Command};
 use tokio::process::Command as TokioCommand;
 
 pub const I3_BACKEND: &str = "i3";
+
+/// Native Wayland windows on Sway are listed as this base plus their container
+/// id. X11 ids fit in 32 bits, so the two kinds never share a `window_id`,
+/// although Sway container ids and X11 ids count independently.
+pub(crate) const SWAY_CONTAINER_ID_BASE: u64 = 1 << 32;
 
 pub fn probe() -> BackendProbe {
     match i3_msg_command().args(["-t", "get_tree"]).output() {
@@ -70,17 +75,22 @@ pub async fn list_windows() -> Result<Vec<WindowInfo>> {
     Ok(windows)
 }
 
+/// Window ids are X11 ids where the window has one (every i3 window, Xwayland
+/// on Sway) and `SWAY_CONTAINER_ID_BASE` plus the Sway container id for native
+/// Wayland windows. X11 ids rise
+/// with each new window of a client, which terminal pairing relies on; i3
+/// container ids are heap addresses that are reused after a window closes.
 pub(crate) fn parse_i3_tree(json: &str) -> Result<Vec<WindowInfo>> {
     let root: I3Node =
         serde_json::from_str(json).context("failed to parse i3-msg get_tree output")?;
     let mut windows = Vec::new();
-    collect_i3_windows(&root, None, false, &mut windows);
+    collect_i3_windows(&root, None, false, false, &mut windows);
     windows.sort_by_key(|window| window.window_id);
     Ok(windows)
 }
 
 pub async fn activate_window(window_id: u64) -> Result<()> {
-    let selector = format!(r#"[id="0x{window_id:x}"] focus"#);
+    let selector = i3_focus_command(window_id);
     let mut command = i3_msg_command_async();
     command.arg(&selector);
     let output = command_runner::output(command, &format!("run i3-msg {selector}")).await?;
@@ -112,37 +122,67 @@ pub async fn activate_window(window_id: u64) -> Result<()> {
     }
 }
 
+/// Sway parses criteria ids as decimal numbers and rejects hex; i3 accepts
+/// both. A native Wayland window on Sway has no X11 id, so it is focused by
+/// its container id.
+pub(crate) fn i3_focus_command(window_id: u64) -> String {
+    match window_id.checked_sub(SWAY_CONTAINER_ID_BASE) {
+        Some(con_id) => format!(r#"[con_id="{con_id}"] focus"#),
+        None => format!(r#"[id="{window_id}"] focus"#),
+    }
+}
+
 fn collect_i3_windows(
     node: &I3Node,
     workspace: Option<i32>,
     in_dockarea: bool,
+    in_scratchpad: bool,
     windows: &mut Vec<WindowInfo>,
 ) {
     let node_type = node.node_type.as_deref();
-    let current_workspace = if node_type == Some("workspace") {
-        node.num
-    } else {
-        workspace
-    };
+    let is_workspace = node_type == Some("workspace");
+    let current_workspace = if is_workspace { node.num } else { workspace };
     let current_in_dockarea = in_dockarea || node_type == Some("dockarea");
+    // i3 and Sway keep scratchpad windows that are not shown under this
+    // workspace. `scratchpad_state` does not say whether a window is shown:
+    // Sway keeps it `fresh` on a shown window, and i3 reports `none` on the
+    // window node itself.
+    let current_in_scratchpad =
+        in_scratchpad || (is_workspace && node.name.as_deref() == Some("__i3_scratch"));
 
-    if let Some(window) = node.to_window_info(current_workspace, current_in_dockarea) {
+    if let Some(window) = node.to_window_info(
+        current_workspace,
+        current_in_dockarea,
+        current_in_scratchpad,
+    ) {
         windows.push(window);
     }
 
-    for child in &node.nodes {
-        collect_i3_windows(child, current_workspace, current_in_dockarea, windows);
-    }
-    for child in &node.floating_nodes {
-        collect_i3_windows(child, current_workspace, current_in_dockarea, windows);
+    for child in node.nodes.iter().chain(&node.floating_nodes) {
+        collect_i3_windows(
+            child,
+            current_workspace,
+            current_in_dockarea,
+            current_in_scratchpad,
+            windows,
+        );
     }
 }
 
+/// X11 windows whose tree entry has no pid: every i3 window, and an Xwayland
+/// window on Sway that reported pid 0. Their `window_id` is the X11 id.
+pub(crate) fn windows_needing_xprop_pid(windows: &[WindowInfo]) -> Vec<usize> {
+    windows
+        .iter()
+        .enumerate()
+        .filter(|(_, window)| window.pid.is_none() && window.client_type.as_deref() == Some("x11"))
+        .map(|(index, _)| index)
+        .collect()
+}
+
 async fn hydrate_i3_window_pids(windows: &mut [WindowInfo]) {
-    for window in windows {
-        if window.pid.is_none() {
-            window.pid = i3_window_pid(window.window_id).await;
-        }
+    for index in windows_needing_xprop_pid(windows) {
+        windows[index].pid = i3_window_pid(windows[index].window_id).await;
     }
 }
 
@@ -231,10 +271,19 @@ struct I3CommandReply {
 
 #[derive(Debug, Deserialize)]
 struct I3Node {
+    /// Container id. Every node has one on i3 and on Sway.
+    id: Option<u64>,
     #[serde(rename = "type")]
     node_type: Option<String>,
     name: Option<String>,
+    /// X11 window id; null for native Wayland windows and for containers.
     window: Option<u64>,
+    /// Sway only: set on every window, `xdg_shell` or `xwayland`.
+    shell: Option<String>,
+    /// Sway only: the Wayland app id; null for Xwayland windows.
+    app_id: Option<String>,
+    /// Sway only: the client pid. i3 reports none.
+    pid: Option<i64>,
     window_type: Option<String>,
     window_properties: Option<I3WindowProperties>,
     rect: Option<I3Rect>,
@@ -246,7 +295,6 @@ struct I3Node {
     #[serde(default)]
     floating_nodes: Vec<I3Node>,
     num: Option<i32>,
-    scratchpad_state: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -265,11 +313,31 @@ struct I3Rect {
 }
 
 impl I3Node {
-    fn to_window_info(&self, workspace: Option<i32>, in_dockarea: bool) -> Option<WindowInfo> {
+    fn to_window_info(
+        &self,
+        workspace: Option<i32>,
+        in_dockarea: bool,
+        in_scratchpad: bool,
+    ) -> Option<WindowInfo> {
         if in_dockarea {
             return None;
         }
-        let window_id = self.window?;
+        // An X11 window has its X11 id (i3, Xwayland on Sway). A native
+        // Wayland window on Sway has a shell and no X11 id, so it is named by
+        // its container id above SWAY_CONTAINER_ID_BASE. Split, tabbed and
+        // stacked containers have neither.
+        let wayland = self.window.is_none()
+            && self
+                .shell
+                .as_deref()
+                .is_some_and(|shell| shell != "xwayland");
+        let window_id = if wayland {
+            SWAY_CONTAINER_ID_BASE
+                .checked_add(self.id?)
+                .filter(|id| *id <= MAX_WINDOW_ID)?
+        } else {
+            self.window.filter(|id| *id < SWAY_CONTAINER_ID_BASE)?
+        };
         if self.window_type.as_deref() == Some("dock") {
             return None;
         }
@@ -285,11 +353,13 @@ impl I3Node {
                 .and_then(|properties| properties.class.as_deref())
                 .or_else(|| properties.and_then(|properties| properties.instance.as_deref())),
         );
-        let app_id = clean_string(
-            properties
-                .and_then(|properties| properties.instance.as_deref())
-                .or(wm_class.as_deref()),
-        );
+        let app_id = clean_string(self.app_id.as_deref()).or_else(|| {
+            clean_string(
+                properties
+                    .and_then(|properties| properties.instance.as_deref())
+                    .or(wm_class.as_deref()),
+            )
+        });
         let rect = self.rect.as_ref().or(self.geometry.as_ref());
         let bounds = rect.map(|rect| WindowBounds {
             x: Some(rect.x),
@@ -303,12 +373,15 @@ impl I3Node {
             title,
             app_id,
             wm_class,
-            pid: None,
+            pid: self
+                .pid
+                .filter(|pid| *pid > 0)
+                .and_then(|pid| u32::try_from(pid).ok()),
             bounds,
             workspace,
             focused: self.focused,
-            hidden: self.scratchpad_state.as_deref() == Some("fresh"),
-            client_type: Some("x11".to_string()),
+            hidden: in_scratchpad,
+            client_type: Some(if wayland { "wayland" } else { "x11" }.to_string()),
             backend: I3_BACKEND.to_string(),
             terminal: None,
         })

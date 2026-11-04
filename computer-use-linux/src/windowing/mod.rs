@@ -24,7 +24,10 @@ pub use types::{WindowBounds, WindowFocusResult, WindowInfo, WindowTarget};
 mod tests {
     use super::backends::gnome::window_from_properties;
     use super::backends::hyprland::{parse_hyprland_clients, HYPRLAND_BACKEND};
-    use super::backends::i3::{parse_i3_tree, parse_xprop_pid, I3_BACKEND};
+    use super::backends::i3::{
+        i3_focus_command, parse_i3_tree, parse_xprop_pid, windows_needing_xprop_pid, I3_BACKEND,
+        SWAY_CONTAINER_ID_BASE,
+    };
     use super::registry::{
         backend_can_exact_focus, descriptors, list_note, COSMIC_WAYLAND_BACKEND,
         GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND, NIRI_BACKEND,
@@ -652,6 +655,7 @@ mod tests {
                   "window": null,
                   "nodes": [
                     {
+                      "id": 94163003829504,
                       "type": "con",
                       "focused": false,
                       "window": 25165826,
@@ -673,6 +677,7 @@ mod tests {
                   "window": null,
                   "nodes": [
                     {
+                      "id": 94163003840832,
                       "type": "con",
                       "focused": true,
                       "window": 67108868,
@@ -688,6 +693,7 @@ mod tests {
                   ],
                   "floating_nodes": [
                     {
+                      "id": 94163003851200,
                       "type": "con",
                       "focused": false,
                       "window": 73400323,
@@ -711,6 +717,7 @@ mod tests {
 
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].window_id, 67108868);
+        assert_eq!(windows[0].pid, None);
         assert_eq!(windows[0].title.as_deref(), Some("Codex"));
         assert_eq!(windows[0].app_id.as_deref(), Some("codex"));
         assert_eq!(windows[0].wm_class.as_deref(), Some("Codex"));
@@ -721,6 +728,218 @@ mod tests {
         assert_eq!(windows[0].bounds.as_ref().unwrap().x, Some(0));
         assert_eq!(windows[1].title.as_deref(), Some("Save File"));
         assert_eq!(windows[1].bounds.as_ref().unwrap().width, 600);
+    }
+
+    #[test]
+    fn i3_focus_command_uses_decimal_ids() {
+        let tree = r#"{
+          "id": 1, "type": "root", "nodes": [{
+            "id": 4, "type": "workspace", "num": 1, "nodes": [
+              {"id": 5, "type": "con", "name": "foot", "app_id": "foot", "pid": 7,
+               "shell": "xdg_shell", "window": null},
+              {"id": 6, "type": "con", "name": "xterm", "app_id": null, "pid": 8,
+               "shell": "xwayland", "window": 4194316}
+            ]
+          }]
+        }"#;
+        let windows = parse_i3_tree(tree).unwrap();
+        // Sway rejects hex ids ("The value for 'id' should be numeric").
+        assert_eq!(
+            i3_focus_command(windows[0].window_id),
+            r#"[id="4194316"] focus"#
+        );
+        assert_eq!(
+            i3_focus_command(windows[1].window_id),
+            r#"[con_id="5"] focus"#
+        );
+    }
+
+    #[test]
+    fn sway_container_ids_never_share_a_window_id_with_x11_ids() {
+        // Sway container ids and X11 ids count independently, so container
+        // 4194316 and X11 window 4194316 can exist at once.
+        let tree = r#"{
+          "id": 1, "type": "root", "nodes": [{
+            "id": 4, "type": "workspace", "num": 1, "nodes": [
+              {"id": 4194316, "type": "con", "name": "foot", "app_id": "foot",
+               "pid": 7, "shell": "xdg_shell", "window": null},
+              {"id": 6, "type": "con", "name": "xterm", "app_id": null, "pid": 8,
+               "shell": "xwayland", "window": 4194316}
+            ]
+          }]
+        }"#;
+        let windows = parse_i3_tree(tree).unwrap();
+        let ids = windows.iter().map(|w| w.window_id).collect::<Vec<_>>();
+        assert_eq!(ids, vec![4194316, SWAY_CONTAINER_ID_BASE + 4194316]);
+        assert_eq!(windows[0].client_type.as_deref(), Some("x11"));
+        assert_eq!(windows[1].client_type.as_deref(), Some("wayland"));
+        assert!(windows.iter().all(|w| w.window_id <= types::MAX_WINDOW_ID));
+        assert_eq!(
+            i3_focus_command(windows[1].window_id),
+            r#"[con_id="4194316"] focus"#
+        );
+    }
+
+    #[test]
+    fn parses_sway_tree_with_wayland_and_xwayland_windows() {
+        // Shaped like `i3-msg -t get_tree` on Sway 1.11 with foot and xterm.
+        let tree_json = r#"{
+          "id": 1,
+          "type": "root",
+          "name": "root",
+          "window": null,
+          "focused": false,
+          "nodes": [
+            {
+              "id": 2,
+              "type": "output",
+              "name": "__i3",
+              "window": null,
+              "nodes": [
+                {
+                  "id": 2147483646,
+                  "type": "workspace",
+                  "name": "__i3_scratch",
+                  "num": null,
+                  "window": null,
+                  "nodes": [],
+                  "floating_nodes": [
+                    {
+                      "id": 9,
+                      "type": "floating_con",
+                      "name": "stashed",
+                      "pid": 4300,
+                      "app_id": "cul-stash",
+                      "shell": "xdg_shell",
+                      "window": null,
+                      "scratchpad_state": "fresh",
+                      "visible": false,
+                      "nodes": [],
+                      "floating_nodes": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 3,
+              "type": "output",
+              "name": "HEADLESS-1",
+              "window": null,
+              "nodes": [
+                {
+                  "id": 4,
+                  "type": "workspace",
+                  "name": "1",
+                  "num": 1,
+                  "window": null,
+                  "nodes": [
+                    {
+                      "id": 7,
+                      "type": "con",
+                      "name": null,
+                      "layout": "splitv",
+                      "window": null,
+                      "nodes": [
+                        {
+                          "id": 5,
+                          "type": "con",
+                          "name": "cul-foot",
+                          "focused": true,
+                          "pid": 4242,
+                          "app_id": "cul-foot",
+                          "shell": "xdg_shell",
+                          "window": null,
+                          "scratchpad_state": "none",
+                          "visible": true,
+                          "rect": {"x": 0, "y": 0, "width": 1280, "height": 360},
+                          "nodes": [],
+                          "floating_nodes": []
+                        },
+                        {
+                          "id": 6,
+                          "type": "con",
+                          "name": "xterm",
+                          "pid": 4250,
+                          "app_id": null,
+                          "shell": "xwayland",
+                          "window": 4194316,
+                          "window_properties": {
+                            "class": "XTerm",
+                            "instance": "xterm",
+                            "title": "xterm"
+                          },
+                          "visible": true,
+                          "rect": {"x": 0, "y": 360, "width": 1280, "height": 360},
+                          "nodes": [],
+                          "floating_nodes": []
+                        }
+                      ],
+                      "floating_nodes": []
+                    }
+                  ],
+                  "floating_nodes": [
+                    {
+                      "id": 8,
+                      "type": "floating_con",
+                      "name": "shown from the scratchpad",
+                      "pid": 0,
+                      "app_id": null,
+                      "shell": "xwayland",
+                      "window": 6291458,
+                      "window_properties": {"class": "Zenity", "instance": "zenity"},
+                      "scratchpad_state": "fresh",
+                      "visible": true,
+                      "rect": {"x": 100, "y": 100, "width": 400, "height": 300},
+                      "nodes": [],
+                      "floating_nodes": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }"#;
+
+        let windows = parse_i3_tree(tree_json).unwrap();
+
+        assert_eq!(windows.len(), 4);
+        let foot = &windows[2];
+        assert_eq!(foot.window_id, SWAY_CONTAINER_ID_BASE + 5);
+        assert_eq!(foot.title.as_deref(), Some("cul-foot"));
+        assert_eq!(foot.app_id.as_deref(), Some("cul-foot"));
+        assert_eq!(foot.wm_class, None);
+        assert_eq!(foot.pid, Some(4242));
+        assert_eq!(foot.workspace, Some(1));
+        assert!(foot.focused);
+        assert!(!foot.hidden);
+        assert_eq!(foot.client_type.as_deref(), Some("wayland"));
+        assert_eq!(foot.bounds.as_ref().unwrap().height, 360);
+        let stashed = &windows[3];
+        assert_eq!(stashed.window_id, SWAY_CONTAINER_ID_BASE + 9);
+        assert!(stashed.hidden, "a window under __i3_scratch is not shown");
+        let xterm = &windows[0];
+        assert_eq!(
+            xterm.window_id, 4194316,
+            "an Xwayland window keeps its X11 id"
+        );
+        assert_eq!(xterm.app_id.as_deref(), Some("xterm"));
+        assert_eq!(xterm.wm_class.as_deref(), Some("XTerm"));
+        assert_eq!(xterm.pid, Some(4250));
+        assert!(!xterm.focused);
+        assert_eq!(xterm.client_type.as_deref(), Some("x11"));
+        assert_eq!(xterm.backend, I3_BACKEND);
+        let shown = &windows[1];
+        assert_eq!(shown.window_id, 6291458);
+        assert_eq!(shown.pid, None, "pid 0 is not a pid");
+        assert!(!shown.hidden, "a scratchpad window on a workspace is shown");
+        assert_eq!(shown.workspace, Some(1));
+
+        // Only X11 windows without a tree pid are looked up through xprop,
+        // by their X11 id.
+        let lookups = windows_needing_xprop_pid(&windows);
+        assert_eq!(lookups, vec![1]);
+        assert_eq!(windows[lookups[0]].window_id, 6291458);
     }
 
     #[test]
