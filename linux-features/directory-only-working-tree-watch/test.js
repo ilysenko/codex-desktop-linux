@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const {
   createPatchReport,
@@ -332,6 +333,42 @@ test("the current OpenAI Parcel route hands the working tree to the Watchbound h
   assert.equal(partial.changed, 0);
   assert.equal(partial.source, `${helperOnly.source}${CURRENT_PARCEL_HELPER}` +
     `${CURRENT_GIT_ROUTE_PREFIX}${CURRENT_PARCEL_ROUTE}${CURRENT_GIT_ROUTE_SUFFIX}`);
+});
+
+test("current ignore source remains a lazy factory with dynamic environment and pruning", async () => {
+  const result = patchWorkerSource(currentWorkerSource(), normalizedSettings());
+  assert.equal(result.changed, 1);
+  const member = result.source.split("return{git:{")[1].split(",createExecutionHost:")[0];
+  const processStub = { env: { HOME: "/home/first" } };
+  const targets = () => ["target"];
+  const factory = vm.runInNewContext(`({${member}}).getWatchIgnoreSources`, {
+    s: false, process: processStub, Bee: targets,
+  });
+  const first = factory("/repo/first");
+  assert.equal(first.pruneIgnoredDirectories, true);
+  assert.equal(first.getWatchTargets, targets);
+  assert.equal((await first.getEnvironment()).defaultExcludesFile, "/home/first/.config/git/ignore");
+  processStub.env.HOME = "/home/second";
+  const second = factory("/repo/second");
+  assert.notEqual(first, second);
+  assert.equal((await second.getEnvironment()).defaultExcludesFile, "/home/second/.config/git/ignore");
+  assert.equal(vm.runInNewContext(`({${member}}).getWatchIgnoreSources`, {
+    s: true, process: processStub, Bee: targets,
+  }), undefined);
+});
+
+test("rejects retired ignore source objects and incomplete current factory policy", () => {
+  for (const source of [
+    currentWorkerSource().replace("getWatchIgnoreSources:s?void 0:()=>({", "watchIgnoreSources:s?void 0:{")
+      .replace("pruneIgnoredDirectories:!0}),", "pruneIgnoredDirectories:!0},"),
+    currentWorkerSource().replace(",pruneIgnoredDirectories:!0", ""),
+    currentWorkerSource().replace("pruneIgnoredDirectories:!0", "pruneIgnoredDirectories:!1"),
+  ]) {
+    const result = patchWorkerSource(source, normalizedSettings());
+    assert.equal(result.changed, 0);
+    assert.equal(result.matched, 0);
+    assert.equal(result.source, source);
+  }
 });
 
 test("correlates minified aliases instead of pinning their spellings", () => {
