@@ -57,11 +57,17 @@ The feature is disabled in committed defaults.
 ## Validation
 
 ```bash
-node --test linux-features/reasoning-visibility/test.js
+node --test linux-features/reasoning-visibility/test.js linux-features/reasoning-visibility/*.test.js
 # Also check the contracts against an extracted signed app.asar:
 CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
-  node --test linux-features/reasoning-visibility/test.js
+  node --test linux-features/reasoning-visibility/test.js linux-features/reasoning-visibility/*.test.js
 ```
+
+Set `CODEX_SIGNED_EXTRACTED_APP` to a retained extraction of the currently
+verified official ASAR to include real-owner and complete patch-runner checks.
+They use independent disk-cache copies and do not launch the app or send a model
+request. Scope regressions verify that helpers in unrelated modules cannot make
+an incomplete patch appear applied.
 
 Six semantic ASAR contracts cover activity classification, collapsed-turn
 persistence, transcript projection, summary requests, the native disclosure,
@@ -75,7 +81,9 @@ JSON modules named by the upstream locale loader map.
 Contracts capture local identifiers. Missing, ambiguous, or incomplete
 contracts are left untouched and reported; the build gate refuses promotion
 when an enabled feature cannot apply completely.
-The native markdown renderer, scrolling behavior, and manual toggle are reused.
+The native markdown renderer, streaming/resume rules, scrolling behavior, and
+manual toggle are reused. Empty completed bodies stay hidden while the switch is
+on; unavailable summary content is never created.
 
 After rebuilding, enable the setting and restart the application.
 Send a task that produces a reasoning summary, followed by tool activity and a
