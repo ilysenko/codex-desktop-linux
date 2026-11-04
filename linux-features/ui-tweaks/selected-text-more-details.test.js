@@ -6,6 +6,9 @@ const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 const test = require("node:test");
+const { applyExtractedAppPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
+const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+const { PatchIntegrityError } = require("../../scripts/patches/integrity-error.js");
 require("./selected-text-more-details-trace.test.js");
 const { BINDINGS_EXPORT, OPEN_EXPORT, AVAILABLE_EXPORT, RUNTIME_MARKER, OVERLAY_MARKER, REGISTRY_KEY, enabled,
   restoreUpstream, runtimeSource, patchSources, applySelectedTextMoreDetails, descriptors } =
@@ -105,6 +108,12 @@ function warnings(callback) {
   console.warn = (message) => captured.push(message);
   try { return { result: callback(), warnings: captured }; }
   finally { console.warn = original; }
+}
+
+function runDescriptor(root, report = createPatchReport()) {
+  applyExtractedAppPatchDescriptors(root, normalizePatchDescriptors(descriptors), enabledContext, report,
+    "extracted-app:post-webview");
+  return report.patches[0];
 }
 
 test("More details is opt-in and a disabled override preserves both original assets", (t) => {
@@ -239,6 +248,62 @@ test("independently minified overlay copies in several chunks are all patched", 
   assert.equal(restoreUpstream(patchedCopy), withoutToolbar(overlayFixture(renamed)));
   assert.equal(fs.readFileSync(toolbar, "utf8"), chunk(4, [toolbarModule]));
   assert.equal(applySelectedTextMoreDetails(app.root, enabledContext).changed, 0);
+});
+
+for (const failure of ["throws after truncation", "silently truncates"]) {
+  test(`More details restores all three original assets when a later write ${failure}`, (t) => {
+    const app = appFixture(t);
+    const replica = path.join(app.assets, "async", "3.cccc.js");
+    fs.copyFileSync(app.overlay, replica);
+    const original = new Map([app.runtime, app.overlay, replica].map(file => [file, fs.readFileSync(file)]));
+    const write = fs.writeFileSync;
+    let writes = 0;
+    const mock = t.mock.method(fs, "writeFileSync", (file, bytes) => {
+      if (++writes === 2) {
+        write(file, "truncated asset");
+        if (failure === "throws after truncation") throw Error("interrupted More details write");
+        return;
+      }
+      write(file, bytes);
+    });
+    const failed = warnings(() => runDescriptor(app.root));
+    assert.equal(failed.result.status, "skipped-optional");
+    assert.match(failed.result.reason, failure === "throws after truncation"
+      ? /interrupted More details write/ : /write byte verification failed/);
+    for (const [file, bytes] of original) assert.deepEqual(fs.readFileSync(file), bytes);
+    mock.mock.restore();
+    assert.equal(runDescriptor(app.root).status, "applied");
+    assert.equal(runDescriptor(app.root).status, "already-applied");
+  });
+}
+
+test("More details preserves fatal integrity status when rollback cannot restore an original asset", (t) => {
+  const app = appFixture(t);
+  const replica = path.join(app.assets, "async", "3.cccc.js");
+  fs.copyFileSync(app.overlay, replica);
+  const original = new Map([app.runtime, app.overlay, replica].map(file => [file, fs.readFileSync(file)]));
+  const write = fs.writeFileSync;
+  let writes = 0, damaged;
+  t.mock.method(fs, "writeFileSync", (file, bytes) => {
+    writes += 1;
+    if (writes === 2) {
+      damaged = file;
+      write(file, "truncated asset");
+      throw Error("interrupted More details write");
+    }
+    if (writes === 3) return; // A silent rollback failure must remain fatal.
+    write(file, bytes);
+  });
+  const report = createPatchReport();
+  warnings(() => assert.throws(() => runDescriptor(app.root, report), error => {
+    assert.ok(error instanceof PatchIntegrityError);
+    assert.equal(error.code, "PATCH_INTEGRITY_FAILURE");
+    assert.match(error.message, /rollback could not restore original bytes/);
+    return true;
+  }));
+  assert.equal(report.patches[0].status, "failed-integrity");
+  assert.equal(fs.readFileSync(damaged, "utf8"), "truncated asset");
+  for (const [file, bytes] of original) if (file !== damaged) assert.deepEqual(fs.readFileSync(file), bytes);
 });
 
 test("already-patched validation rejects every incomplete or edited insertion byte-identically", (t) => {
@@ -649,15 +714,20 @@ test("long source replies remain bounded while preserving the selected passage i
 test("More details matches the complete signed official bundle", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, (t) => {
-  const copy = fs.mkdtempSync(path.join(os.tmpdir(), "selected-text-official-test-"));
+  const cache = path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "codex-desktop-dev");
+  fs.mkdirSync(cache, { recursive: true });
+  const copy = fs.mkdtempSync(path.join(cache, "selected-text-official-test-"));
   t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
-  fs.cpSync(path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, "webview"), path.join(copy, "webview"), { recursive: true });
+  fs.cpSync(path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, "webview"), path.join(copy, "webview"),
+    { recursive: true, mode: fs.constants.COPYFILE_FICLONE });
+  assert.equal(runDescriptor(copy).status, "applied");
+  assert.equal(runDescriptor(copy).status, "already-applied");
   const result = warnings(() => applySelectedTextMoreDetails(copy, enabledContext));
   assert.deepEqual(result.warnings, []);
   // The Quick Chat runtime chunk plus every chunk that carries a copy of the
   // selected-text overlay module.
   assert.ok(result.result.matched >= 2);
-  assert.equal(result.result.changed, result.result.matched);
+  assert.equal(result.result.changed, 0);
   const again = warnings(() => applySelectedTextMoreDetails(copy, enabledContext));
   assert.deepEqual(again.warnings, []);
   assert.equal(again.result.changed, 0);
@@ -666,4 +736,24 @@ test("More details matches the complete signed official bundle", {
     const original = fs.readFileSync(path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, target), "utf8");
     assert.equal(restoreUpstream(patched), original);
   }
+  for (const target of result.result.targets) {
+    fs.copyFileSync(path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, target), path.join(copy, target));
+  }
+  const write = fs.writeFileSync;
+  let writes = 0;
+  const mock = t.mock.method(fs, "writeFileSync", (file, bytes) => {
+    if (++writes === 2) {
+      write(file, "truncated official asset");
+      throw Error("interrupted signed More details write");
+    }
+    write(file, bytes);
+  });
+  assert.equal(warnings(() => runDescriptor(copy)).result.status, "skipped-optional");
+  for (const target of result.result.targets) {
+    assert.deepEqual(fs.readFileSync(path.join(copy, target)),
+      fs.readFileSync(path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, target)));
+  }
+  mock.mock.restore();
+  assert.equal(runDescriptor(copy).status, "applied");
+  assert.equal(runDescriptor(copy).status, "already-applied");
 });

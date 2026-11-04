@@ -834,11 +834,16 @@ function applySelectedTextMoreDetails(extractedDir, context = {}) {
     const result = patchSources(targets, references);
     const changed = Object.keys(targets).filter((name) => result.chunks[name] !== targets[name]);
     if (result.applied && changed.length > 0) throw new Error("Unexpected selected-text re-patch");
-    for (const name of changed) fs.writeFileSync(path.join(assets, name), result.chunks[name]);
+    const { commitAssetEdits } = require("../../../scripts/patches/lib/asset-edits.js");
+    const committed = commitAssetEdits(assets, Object.keys(targets).map((assetName) => ({
+      assetName, source: targets[assetName], patchedSource: result.chunks[assetName],
+    })));
+    if (committed.changed !== changed.length) throw new Error("Selected-text asset transaction did not commit every change");
     const patchedNames = Object.keys(targets).filter((name) => hasPatchSpans(result.chunks[name])).sort();
-    return { matched: patchedNames.length, changed: changed.length,
+    return { matched: patchedNames.length, changed: committed.changed,
       targets: patchedNames.map((name) => path.join("webview", "assets", name)) };
   } catch (error) {
+    if (error?.code === "PATCH_INTEGRITY_FAILURE") throw error;
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`WARN: Could not restore selected-text More details: ${reason} - skipping ui-tweaks patch`);
     return { matched: 0, changed: 0, reason };

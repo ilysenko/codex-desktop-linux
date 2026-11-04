@@ -419,7 +419,10 @@ evaluates. The selection overlay reads that registry; until it exists, the menu
 keeps its upstream actions without More details. rspack duplicates the overlay
 module into several lazy chunks, and every copy is patched. All inserted code
 is wrapped in marker comments, so an already patched asset is verified by
-restoring the upstream bytes and re-applying the patch.
+restoring the upstream bytes and re-applying the patch. The runtime and overlay
+assets are committed together with byte verification. A failed write restores
+their original bytes; if restoration cannot be verified, the build stops with
+an integrity failure.
 
 | Log stage or timing type | What it measures |
 | --- | --- |
