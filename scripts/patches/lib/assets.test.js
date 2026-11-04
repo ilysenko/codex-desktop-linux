@@ -55,7 +55,7 @@ test("patchUniqueAssetFile keeps a classic script whose patch moves code to the 
 test("patchUniqueAssetFile keeps an asset whose patch breaks its syntax", () => {
   withAssets({ "app-a.js": MODULE }, ({ root, read, warnings }) => {
     const result = patchUniqueAssetFile(root, /\.js$/, () => true, BREAK, "missing", "ambiguous");
-    assert.deepEqual(result, { matched: 1, changed: 0, assetName: "app-a.js" });
+    assert.deepEqual(result, { matched: 1, changed: 0, assetName: "app-a.js", changedAssets: [] });
     assert.equal(read("app-a.js"), MODULE);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /app-a\.js no longer parses as JavaScript/u);
@@ -65,7 +65,7 @@ test("patchUniqueAssetFile keeps an asset whose patch breaks its syntax", () => 
 test("patchAssetFiles writes nothing when any patched asset breaks syntax", () => {
   withAssets({ "a.js": MODULE, "b.js": MODULE.replaceAll("Pan", "Bar") }, ({ root, read }) => {
     const patch = (source) => (source.includes("Bar") ? BREAK(source) : `${source}//ok`);
-    assert.deepEqual(patchAssetFiles(root, /\.js$/, patch, "missing"), { matched: 2, changed: 0 });
+    assert.deepEqual(patchAssetFiles(root, /\.js$/, patch, "missing"), { matched: 2, changed: 0, changedAssets: [] });
     assert.equal(read("a.js"), MODULE);
   });
 });

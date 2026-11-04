@@ -54,17 +54,21 @@ function rejectsSyntaxBreak(assetName, original, patched) {
 // webview/assets (for example "async/24191.7b05d5cf83.js").
 const WEBVIEW_SCRIPT_DIRECTORIES = ["", "async"];
 
-function listWebviewScriptAssets(extractedDir) {
+function listWebviewAssets(extractedDir) {
   const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
   const names = [];
   for (const directory of WEBVIEW_SCRIPT_DIRECTORIES) {
     for (const entry of readDirectoryEntries(path.join(webviewAssetsDir, directory))) {
-      if (entry.isFile() && /\.js$/.test(entry.name)) {
+      if (entry.isFile()) {
         names.push(directory === "" ? entry.name : `${directory}/${entry.name}`);
       }
     }
   }
   return names.sort();
+}
+
+function listWebviewScriptAssets(extractedDir) {
+  return listWebviewAssets(extractedDir).filter((name) => /\.js$/.test(name));
 }
 
 function readDirectoryEntries(dir) {
@@ -91,7 +95,7 @@ function selectAssetCandidates(extractedDir, filenamePattern, candidates) {
   if (candidates != null) {
     return [...candidates].sort();
   }
-  return listWebviewScriptAssets(extractedDir)
+  return listWebviewAssets(extractedDir)
     .filter((name) => regexpTest(filenamePattern, assetBaseName(name)));
 }
 
@@ -288,6 +292,7 @@ function findImportedAsset(webviewAssetsDir, importerAsset, description) {
 
 module.exports = {
   findWebviewAssetsContaining,
+  listWebviewAssets,
   listWebviewScriptAssets,
   findCodexRequestWebviewAsset,
   findIconAsset,
