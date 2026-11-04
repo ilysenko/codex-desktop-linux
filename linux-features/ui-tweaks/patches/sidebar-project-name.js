@@ -29,7 +29,7 @@ function sidebarProjectNameCss(style = DEFAULT_PROJECT_NAME_STYLE) {
 function sidebarProjectNameStyleRuntimeSource(style = DEFAULT_PROJECT_NAME_STYLE) {
   const css = sidebarProjectNameCss(style);
   return [
-    `;(()=>{const ${RUNTIME_MARKER}=true;`,
+    `;(()=>{const ${RUNTIME_MARKER}=true;if(typeof document==="undefined")return;`,
     `const STYLE_ID=${JSON.stringify(STYLE_ID)};`,
     `const CSS=${JSON.stringify(css)};`,
     `function install(){if(typeof document==="undefined")return;const target=document.head||document.documentElement;if(!target)return;let style=document.getElementById(STYLE_ID);if(style){style.textContent!==CSS&&(style.textContent=CSS);return}style=document.createElement("style");style.id=STYLE_ID;style.textContent=CSS;target.appendChild(style)}`,
@@ -82,7 +82,7 @@ function normalizedProjectNameStyle(context) {
 }
 
 function looksLikeSidebarProjectBundle(source) {
-  return SIDEBAR_PROJECT_NAME_MARKERS.every((marker) => source.includes(marker));
+  return SIDEBAR_PROJECT_NAME_MARKERS.every((marker) => source.split(marker).length === 2);
 }
 
 function hasPartialSidebarProjectMarkers(source) {
@@ -97,7 +97,7 @@ function applySidebarProjectNameStylePatch(source, context = {}) {
     }
 
     const { enabled, style } = normalizedProjectNameStyle(context);
-    if (!enabled || source.includes(RUNTIME_MARKER) || source.includes(STYLE_ID)) {
+    if (!enabled) {
       return source;
     }
 
@@ -108,7 +108,15 @@ function applySidebarProjectNameStylePatch(source, context = {}) {
       return source;
     }
 
-    return `${source}\n${sidebarProjectNameStyleRuntimeSource(style)}`;
+    const runtime = sidebarProjectNameStyleRuntimeSource(style);
+    const markerCount = source.split(RUNTIME_MARKER).length - 1;
+    const styleCount = source.split(STYLE_ID).length - 1;
+    if (markerCount === 1 && styleCount === 1 && source.split(runtime).length === 2) return source;
+    if (markerCount !== 0 || styleCount !== 0) {
+      warn("Found incomplete or mismatched sidebar project name runtime");
+      return source;
+    }
+    return `${source}\n${runtime}`;
   } catch (error) {
     warn(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
     return source;
