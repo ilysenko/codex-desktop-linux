@@ -3,8 +3,22 @@
 const IDENT = "[A-Za-z_$][\\w$]*";
 const CONTRACTS = Object.freeze({
   landingRoute: [{
-    pattern: new RegExp(`${IDENT}\\?\\.tbo_config\\?\\.tbo_available==null`, "gu"),
-    replacement: "!1",
+    pattern: new RegExp(
+      `(?<account>${IDENT})\\?\\.tbo_config\\?\\.tbo_available==null` +
+        `\\|\\|null==\\k<account>\\.structure\\|\\|null==\\k<account>\\.plan_type`,
+      "gu",
+    ),
+    patchedPattern: new RegExp(
+      `(?<account>${IDENT})\\?\\.tbo_config==null/\\*codexDotsLandingRoute\\*/` +
+        `\\|\\|null==\\k<account>\\.structure\\|\\|null==\\k<account>\\.plan_type`,
+      "gu",
+    ),
+    marker: "codexDotsLandingRoute",
+    replacement: (...args) => {
+      const { account } = args.at(-1);
+      return `${account}?.tbo_config==null/*codexDotsLandingRoute*/||null==${account}.structure||null==${account}.plan_type`;
+    },
+    validate: (source, [match]) => source.split(`if(${match.groups.account}.tbo_config.tbo_available){`).length === 2,
     expected: 1,
   }],
   appShared: [{
@@ -38,8 +52,23 @@ function contractState(source, replacements) {
   const matches = replacements.map((contract) => [
     ...source.matchAll(new RegExp(contract.pattern.source, contract.pattern.flags)),
   ]);
-  if (matches.every((found) => found.length === 0)) return "patched";
-  return matches.every((found, index) => found.length === replacements[index].expected)
+  // Marked contracts prove their complete applied state. Unmarked contracts
+  // retain their existing matching behavior until they opt into that metadata.
+  if (replacements.every(contract => contract.marker == null && contract.patchedPattern == null)) {
+    if (matches.every(found => found.length === 0)) return "patched";
+    return matches.every((found,index) => found.length === replacements[index].expected) ? "pristine" : "invalid";
+  }
+  if (replacements.some(contract => contract.marker == null || contract.patchedPattern == null)) return "invalid";
+  const patched = replacements.map((contract) => contract.patchedPattern == null ? [] : [
+    ...source.matchAll(new RegExp(contract.patchedPattern.source, contract.patchedPattern.flags)),
+  ]);
+  const markers = replacements.map((contract) => contract.marker == null ? 0 : source.split(contract.marker).length - 1);
+  const valid = (contract, found) => contract.validate == null || contract.validate(source, found);
+  if (matches.every((found) => found.length === 0) &&
+      patched.every((found, index) => found.length === replacements[index].expected &&
+        markers[index] === replacements[index].expected && valid(replacements[index], found))) return "patched";
+  return matches.every((found, index) => found.length === replacements[index].expected &&
+    patched[index].length === 0 && markers[index] === 0 && valid(replacements[index], found))
     ? "pristine"
     : "invalid";
 }
@@ -70,7 +99,8 @@ function applyDotsPersonalizationPatch(source) {
 }
 
 function matchesContract(source, contracts) {
-  return contractState(source, contracts) === "pristine";
+  const state = contractState(source, contracts);
+  return state === "pristine" || state === "patched" && contracts.every(contract => contract.marker != null && contract.patchedPattern != null);
 }
 
 const descriptors = [
@@ -79,7 +109,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_900,
     ciPolicy: "optional",
-    assetNeedles: ["tbo_available==null"],
+    assetNeedles: [".tbo_config.tbo_available", ".structure", ".plan_type"],
     assetMatch: (source) => matchesContract(source, CONTRACTS.landingRoute),
     missingDescription: "ChatGPT Dots landing route bundle",
     skipDescription: "ChatGPT Dots landing route patch",

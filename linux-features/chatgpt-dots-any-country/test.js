@@ -6,10 +6,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const { applyWebviewAssetPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
-const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+const { captureWarnings, createPatchReport } = require("../../scripts/lib/patch-report.js");
 const {
   CONTRACTS,
   applyDotsAppSharedPatch,
@@ -21,8 +22,9 @@ const {
 // Reduced rspack chunks shaped like the signed stable Linux 26.1029 webview.
 const chunk = (id, body) => `export const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];` +
   `export const __webpack_modules__={${body}};`;
+const LANDING_ROUTE = 'function route(account,status){if("pending"===status)return"loading";if("error"===status||account?.tbo_config?.tbo_available==null||null==account.structure||null==account.plan_type)return"load-error";if(account.tbo_config.tbo_available){return"enter"}return"unavailable"}';
 const FIXTURES = {
-  "async/221857.4c17f751f6.js": chunk(221857, 'Ab12(e,t,n){function route(){if("error"===$||N?.tbo_config?.tbo_available==null||null==N.structure)return null;if(N.tbo_config.tbo_available){return redirect}}}'),
+  "async/221857.4c17f751f6.js": chunk(221857, `Ab12(e,t,n){${LANDING_ROUTE}}`),
   "async/24191.7b05d5cf83.js": chunk(24191, 'Cd34(e,t,n){function capable(){if(e.query.getData(s.sE,t)?.accounts[t]?.account.tbo_config?.tbo_available!==!0)throw Error();let capable="success"===r&&n?.accounts[t]?.account.tbo_config?.tbo_available===!0;return capable||"error"===l&&r?.accounts[n]?.account.tbo_config?.tbo_available===!0}}'),
   "async/860646.06b6da0005.js": chunk(860646, 'Ef56(e,t,n){first?.accounts[M]?.account.tbo_config?.tbo_available!==!0; second?.accounts[c]?.account.tbo_config?.tbo_available!==!0;}'),
 };
@@ -65,12 +67,57 @@ test("feature is disabled until selected", () => {
   });
 });
 
-test("landing route stays visible while preserving the server gate", () => {
-  const patched = applyDotsLandingRoutePatch(FIXTURES["async/221857.4c17f751f6.js"]);
+test("landing route stays visible while preserving the server gate and missing-config safety", () => {
+  const patched = applyDotsLandingRoutePatch(LANDING_ROUTE);
   assert.doesNotMatch(patched, /tbo_available==null/);
-  assert.ok(patched.includes('if("error"===$||!1||null==N.structure)'));
-  assert.match(patched, /if\(N\.tbo_config\.tbo_available\)/);
-  assert.equal(applyDotsLandingRoutePatch(patched), patched);
+  assert.match(patched,/if\(account\.tbo_config\.tbo_available\)/);
+  assert.equal(applyDotsLandingRoutePatch(patched),patched);
+  const route=vm.runInNewContext(patched+";route");
+  const account={structure:"personal",plan_type:"plus"};
+  for(const tbo_config of [{},{tbo_available:null},{tbo_available:false}]) assert.equal(route({...account,tbo_config}),"unavailable");
+  assert.equal(route({...account,tbo_config:{tbo_available:true}}),"enter");
+  assert.equal(route(undefined),"load-error");
+  assert.equal(route(account),"load-error");
+  assert.equal(route({...account,tbo_config:null}),"load-error");
+  assert.equal(route({...account,tbo_config:{}},"error"),"load-error");
+  assert.equal(route(undefined,"pending"),"loading");
+});
+
+test("landing recognizes only a complete original or marked applied contract", () => {
+  const patched=applyDotsLandingRoutePatch(LANDING_ROUTE),descriptor=descriptors[0];
+  assert.equal(descriptor.assetMatch(LANDING_ROUTE),true);
+  assert.equal(descriptor.assetMatch(patched),true);
+  assert.ok(descriptor.assetNeedles.every(needle=>LANDING_ROUTE.includes(needle)&&patched.includes(needle)));
+  const repeated=captureWarnings(()=>applyDotsLandingRoutePatch(patched));
+  assert.equal(repeated.value,patched);assert.deepEqual(repeated.warnings,[]);
+  for(const source of ["",LANDING_ROUTE+LANDING_ROUTE,LANDING_ROUTE+patched,patched+patched,
+    patched.replace("/*codexDotsLandingRoute*/",""),
+    patched.replace("?.tbo_config==null/*codexDotsLandingRoute*/","!1/*codexDotsLandingRoute*/"),
+    LANDING_ROUTE.replace("if(account.tbo_config.tbo_available){","if(false){"),
+    LANDING_ROUTE.replace("null==account.plan_type","null==other.plan_type")]){
+    const result=captureWarnings(()=>applyDotsLandingRoutePatch(source));
+    assert.equal(result.value,source);assert.equal(result.warnings.length,1);
+  }
+});
+
+test("landing production discovery keeps stable needles through the second run and rejects ambiguity", () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"dots-landing-rspack-"));
+  try{
+    const assets=path.join(root,"webview/assets/async");fs.mkdirSync(assets,{recursive:true});
+    const file=path.join(assets,"221857.current.js"),descriptor=normalizePatchDescriptors([descriptors[0]]);
+    fs.writeFileSync(file,FIXTURES["async/221857.4c17f751f6.js"]);
+    for(const expected of ["applied","already-applied"]){
+      const report=createPatchReport();applyWebviewAssetPatchDescriptors(root,descriptor,{},report);
+      assert.equal(report.patches[0].status,expected);
+      assert.equal(report.patches[0].assetName,"async/221857.current.js");
+      assert.ok(descriptors[0].assetNeedles.every(needle=>fs.readFileSync(file,"utf8").includes(needle)));
+    }
+    const duplicate=path.join(assets,"duplicate.current.js");fs.copyFileSync(file,duplicate);
+    const before=fs.readFileSync(file,"utf8"),report=createPatchReport();
+    captureWarnings(()=>applyWebviewAssetPatchDescriptors(root,descriptor,{},report));
+    assert.equal(report.patches[0].status,"skipped-optional");
+    assert.equal(fs.readFileSync(file,"utf8"),before);assert.equal(fs.readFileSync(duplicate,"utf8"),before);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
 test("shared Dots capability checks no longer reject a country-gated account", () => {
@@ -118,4 +165,22 @@ test("the signed official webview has one pristine chunk per Dots contract", { s
       descriptor.assetMatch(fs.readFileSync(path.join(signedApp, "webview", "assets", name), "utf8")));
     assert.equal(matches.length, 1, descriptor.id);
   }
+});
+
+test("signed landing owner patches through the production descriptor twice without changing inputs", {skip:!signedApp}, () => {
+  const {findWebviewAssetsContaining}=require("../../scripts/patches/lib/assets.js");
+  const descriptor=descriptors[0],assets=path.join(signedApp,"webview/assets");
+  const owners=findWebviewAssetsContaining(signedApp,descriptor.assetNeedles)
+    .map(assetName=>({assetName,source:fs.readFileSync(path.join(assets,assetName),"utf8")}))
+    .filter(({source})=>descriptor.assetMatch(source));
+  assert.equal(owners.length,1);const[owner]=owners;
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"dots-landing-signed-"));
+  try{
+    const target=path.join(root,"webview/assets",owner.assetName);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,owner.source);
+    for(const expected of ["applied","already-applied"]){
+      const report=createPatchReport();applyWebviewAssetPatchDescriptors(root,normalizePatchDescriptors([descriptor]),{},report);
+      assert.equal(report.patches[0].status,expected);assert.equal(report.patches[0].assetName,owner.assetName);
+    }
+    assert.equal(fs.readFileSync(path.join(assets,owner.assetName),"utf8"),owner.source);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
