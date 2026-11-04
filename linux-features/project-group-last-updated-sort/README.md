@@ -11,7 +11,9 @@ This feature makes `Last updated` sort both project groups and their task rows
 by recency. `Priority` and `Manual order` keep upstream's saved project-group
 ordering behavior.
 
-The current sidebar supplies thread references and a separate recency getter.
+The current sidebar compiles both the project-group sorter and the adjacent
+projectless sorter as inline function expressions. It supplies thread
+references and a separate recency getter.
 The feature reuses that getter for project ordering; it does not assume that
 references contain task objects or timestamps. The patch selects a unique sidebar
 contract across renderer assets and verifies the full helper and call context on

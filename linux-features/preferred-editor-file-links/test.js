@@ -11,22 +11,28 @@ const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-fe
 const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
-// File-reference dispatch contract as compiled by official Linux 26.1027.30824
-// (one ternary chain); upstream minified names are deliberately replaced by
-// descriptive aliases. The branches before it handle directories and
-// artifact-template skills; the branch after it handles modified clicks.
-const fixture = "function click(file,modified,browser=false){directory?explicit():artifactHandled?artifactOpen():panel&&!browser&&!modified?open({scope:scope,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,endLine:endLine,isPreview:preview,openInSidePanel:sidePanel,onOpenTargetResolved:resolved}):fallback()}/*data-file-reference*/";
+// File-reference dispatch contract as compiled by official Linux 26.1029.61003
+// (rspack, one conditional chain); upstream minified names are deliberately
+// replaced by descriptive aliases. The branches before it handle file-manager
+// targets and artifact-template skills; the last branch opens the side panel.
+const fixture = "function click(file,modified,browser=false){directory?explicit():null!=template&&!modified&&artifactOpen()?resolved(file,null):" +
+  "!panel||browser||modified?!modified||(0,paths.previewable)(file)&&panel?(0,files.openWorkspaceFile)({scope:scope,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,browserEnabled:browser,endLine:endLine,...panel&&!modified?{isPreview:preview}:{},modifiedClick:modified,openInSidePanel:panel,onOpenTargetResolved:resolved}):fallback():" +
+  "(0,files.openWorkspaceFile)({scope:scope,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,endLine:endLine,isPreview:preview,openInSidePanel:panel,onOpenTargetResolved:resolved})}";
+const chunk = (body) => "export const __rspack_esm_id=391924;export const __rspack_esm_ids=[391924];" +
+  `export const __webpack_modules__={Ab12(e,t,n){${body}}};`;
 
 function harness(source = apply(fixture)) {
   const calls = [];
   const context = {
-    panel: true, sidePanel: true, directory: false, artifactHandled: false,
+    panel: true, directory: false, template: null,
     scope: {}, artifact: {}, line: 12, column: 7, cwd: "/repo",
     host: { id: "remote" }, hostId: "remote", endLine: 13,
     preview: true, resolved: () => {},
     open: args => calls.push(args), fallback: () => calls.push("fallback"),
-    explicit: () => calls.push("directory"), artifactOpen: () => calls.push("artifact"),
+    explicit: () => calls.push("directory"), artifactOpen: () => { calls.push("artifact"); return true; },
+    paths: { previewable: file => /\.(?:html|png|pdf)$/.test(file) },
   };
+  context.files = { openWorkspaceFile: args => context.open(args) };
   vm.runInNewContext(source, context);
   return { calls, context };
 }
@@ -81,13 +87,16 @@ test("previews, modifiers, directories and artifact-template routes remain uncha
   }
   context.click("/repo/main.rs", true);
   assert.equal(calls.at(-1), "fallback");
-  context.click("https://example.test/main.rs", false, true);
+  context.click("/repo/main.rs", true, true);
   assert.equal(calls.at(-1), "fallback");
+  context.click("https://example.test/main.rs", false, true);
+  assert.equal(calls.at(-1).browserEnabled, true);
+  assert.equal(calls.at(-1).modifiedClick, false);
   context.directory = true;
   context.click("/repo/directory.rs", false);
   assert.equal(calls.at(-1), "directory");
   context.directory = false;
-  context.artifactHandled = true;
+  context.template = "skill";
   context.click("/repo/main.rs", false);
   assert.equal(calls.at(-1), "artifact");
 });
@@ -103,7 +112,7 @@ test("idempotence and minified alias changes", () => {
 });
 
 test("missing, duplicate, changed and partially patched contracts fail closed", () => {
-  for (const source of ["", fixture + fixture, fixture.replace("onOpenTargetResolved", "changed"), fixture.replace("hostConfig:host,", ""), "/*preferred-editor-file-links*/" + fixture, apply(fixture) + fixture]) {
+  for (const source of ["", fixture + fixture, fixture.replace("onOpenTargetResolved", "changed"), fixture.replaceAll("hostConfig:host,", ""), fixture.replace("!modified||(0,paths", "modified||(0,paths"), fixture.replace("openInSidePanel:panel,onOpenTargetResolved:resolved})}", "openInSidePanel:other,onOpenTargetResolved:resolved})}"), "/*preferred-editor-file-links*/" + fixture, apply(fixture) + fixture]) {
     const result = captureWarnings(() => apply(source));
     assert.equal(result.value, source);
     assert.equal(result.warnings.length, 1);
@@ -116,7 +125,7 @@ test("optional feature discovery and enabled drift reporting", () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "preferred-editor-links-"));
   try {
     const config = path.join(temp, "features.json");
-    const assets = path.join(temp, "webview", "assets");
+    const assets = path.join(temp, "webview", "assets", "async");
     fs.mkdirSync(assets, { recursive: true });
     const options = { featuresRoot: path.join(__dirname, ".."), featuresConfigPath: config };
     fs.writeFileSync(config, JSON.stringify({ enabled: [] }));
@@ -124,18 +133,17 @@ test("optional feature discovery and enabled drift reporting", () => {
     fs.writeFileSync(config, JSON.stringify({ enabled: ["preferred-editor-file-links"] }));
     const descriptors = loadLinuxFeaturePatchDescriptors(options);
     assert.equal(descriptors.length, 1);
-    const file = path.join(assets, "app-primary-newhash.js");
+    const file = path.join(assets, "391924.f510bb1655.js");
     for (const scenario of ["valid", "already", "missing", "drift", "ambiguous"]) {
       for (const name of fs.readdirSync(assets)) fs.unlinkSync(path.join(assets, name));
-      const source = scenario === "already" ? apply(fixture) : scenario === "drift" ? fixture.replace("hostConfig:host,", "") : fixture;
+      const source = chunk(scenario === "already" ? apply(fixture) : scenario === "drift" ? fixture.replaceAll("hostConfig:host,", "") : scenario === "ambiguous" ? fixture + fixture : fixture);
       if (scenario !== "missing") fs.writeFileSync(file, source);
-      if (scenario === "ambiguous") fs.writeFileSync(path.join(assets, "other.js"), source);
       const report = createPatchReport();
       report.enabledFeatures = ["preferred-editor-file-links"];
       captureWarnings(() => applyWebviewAssetPatchDescriptors(temp, descriptors, {}, report));
       if (["valid", "already"].includes(scenario)) {
         assert.equal(enabledFeatureFailuresFromReport(report).length, 0);
-        assert.equal(fs.readFileSync(file, "utf8"), apply(fixture));
+        assert.equal(fs.readFileSync(file, "utf8"), chunk(apply(fixture)));
       } else {
         assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
         if (scenario !== "missing") assert.equal(fs.readFileSync(file, "utf8"), source);

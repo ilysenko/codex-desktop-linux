@@ -42,5 +42,7 @@ node --test linux-features/chatgpt-sidebar-separate-history/test.js
 ```
 
 Matching follows the semantic source-selector and preference declarations,
-independently of chunk hashes and minified aliases. Missing, duplicate, or
-partially patched contracts are preserved without changes.
+independently of chunk hashes and minified aliases. In the rspack webview the
+selector's module must require the module that declares the sidebar
+preferences and read exactly the in-memory source atom it exports. Missing,
+duplicate, or partially patched contracts are preserved without changes.

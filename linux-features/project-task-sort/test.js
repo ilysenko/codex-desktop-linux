@@ -11,15 +11,21 @@ const vm = require("node:vm");
 const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
-const { patchUniqueAssetFile } = require("../../scripts/patches/lib/assets.js");
+const { applyWebviewAssetPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
+const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const {
   applyProjectTaskSortPatch,
   matchesProjectTaskSortContract,
   descriptors,
 } = require("./patch.js");
 
-const currentProjectSource =
-  "function d4n(e,t){switch(e.kind){case`local`:return e.summary==null?e.at:t===`updated_at`?e.summary.recencyAt??e.summary.updatedAt:e.summary.createdAt;case`remote`:return((t===`updated_at`?e.task.updated_at??e.task.created_at:e.task.created_at??e.task.updated_at)??0)*1e3}}";
+// Current signed 26.1029.61003 shape: the project task sorter compiles its
+// timestamp selector as an inline function expression.
+const comparator =
+  'function(e,t){switch(e.kind){case"local":if(null==e.summary)return e.at;return"updated_at"===t?e.summary.recencyAt??e.summary.updatedAt:e.summary.createdAt;case"remote":return(("updated_at"===t?e.task.updated_at??e.task.created_at:e.task.created_at??e.task.updated_at)??0)*1e3}}';
+const currentProjectSource = `function u(e,t){return e.map((e,n)=>({task:e,timestamp:${comparator}(e,t),index:n}))}`;
+const chunk = (body) => "export const __rspack_esm_id=24191;export const __rspack_esm_ids=[24191];" +
+  `export const __webpack_modules__={YZnq(e,t,n){${body}n.d(t,{u:()=>u})}};`;
 
 function captureWarns(fn) {
   const originalWarn = console.warn;
@@ -45,8 +51,7 @@ function applyPatchTwice(source) {
 function timestampFunction(source = currentProjectSource) {
   const patched = applyPatchTwice(source);
   const context = {};
-  const functionName = patched.match(/^function ([A-Za-z_$][\w$]*)/)?.[1];
-  vm.runInNewContext(`${patched};globalThis.timestamp=${functionName}`, context);
+  vm.runInNewContext(`${patched};globalThis.timestamp=(task,mode)=>u([task],mode)[0].timestamp`, context);
   return context.timestamp;
 }
 
@@ -132,9 +137,10 @@ test("explicit, pending, legacy, invalid, and remote timestamps retain upstream 
 
 test("semantic comparator matching is independent of minified aliases", () => {
   const renamed = currentProjectSource
-    .replace("d4n(e,t)", "createdComparator(task,mode)")
-    .replaceAll("e.", "task.")
-    .replaceAll("t===", "mode===");
+    .replace("function(e,t){switch", "function createdComparator(task,mode){switch")
+    .replaceAll("e.summary", "task.summary").replaceAll("e.at", "task.at").replaceAll("e.task", "task.task")
+    .replace("switch(e.kind)", "switch(task.kind)")
+    .replaceAll("===t?", "===mode?");
   const timestamp = timestampFunction(renamed);
   assert.equal(
     timestamp({
@@ -147,7 +153,7 @@ test("semantic comparator matching is independent of minified aliases", () => {
 });
 
 test("drift and duplicate semantic comparators fail closed byte-identically", () => {
-  const drifted = currentProjectSource.replace("e.at", "e.pendingWorktree.createdAt");
+  const drifted = currentProjectSource.replace("return e.at", "return e.pendingWorktree.createdAt");
   for (const source of [
     drifted,
     `${currentProjectSource}${currentProjectSource}`,
@@ -162,43 +168,40 @@ test("drift and duplicate semantic comparators fail closed byte-identically", ()
   }
 });
 
-test("descriptor locates one semantic asset and rejects missing or ambiguous assets", () => {
+test("descriptor locates one semantic rspack chunk and rejects missing or ambiguous chunks", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "project-task-sort-assets-"));
   try {
     const assetsDir = path.join(tempDir, "webview", "assets");
-    fs.mkdirSync(assetsDir, { recursive: true });
-    fs.writeFileSync(path.join(assetsDir, "renamed-project-chunk.js"), currentProjectSource);
-    fs.writeFileSync(path.join(assetsDir, "unrelated.js"), "export const value=1;");
+    fs.mkdirSync(path.join(assetsDir, "async"), { recursive: true });
+    const target = path.join(assetsDir, "async", "24191.7b05d5cf83.js");
+    fs.writeFileSync(target, chunk(currentProjectSource));
+    fs.writeFileSync(path.join(assetsDir, "async", "1.0000000000.js"), chunk("function other(){}"));
+    const run = () => {
+      const report = createPatchReport();
+      const { warnings } = captureWarns(() =>
+        applyWebviewAssetPatchDescriptors(tempDir, normalizePatchDescriptors(descriptors), {}, report));
+      return { report: report.patches[0], warnings };
+    };
 
-    const patch = () => patchUniqueAssetFile(
-      tempDir,
-      descriptors[0].pattern,
-      descriptors[0].assetMatch,
-      descriptors[0].apply,
-      "missing",
-      "ambiguous",
-    );
-    assert.deepEqual(patch(), {
-      matched: 1,
-      changed: 1,
-      assetName: "renamed-project-chunk.js",
-    });
-    assert.equal(matchesProjectTaskSortContract(
-      fs.readFileSync(path.join(assetsDir, "renamed-project-chunk.js"), "utf8"),
-    ), true);
+    let result = run();
+    assert.equal(result.report.status, "applied");
+    assert.equal(result.report.assetName, "async/24191.7b05d5cf83.js");
+    assert.equal(fs.readFileSync(target, "utf8"), chunk(applyProjectTaskSortPatch(currentProjectSource)));
+    assert.equal(run().report.status, "already-applied");
 
-    fs.writeFileSync(path.join(assetsDir, "duplicate-project-chunk.js"), currentProjectSource);
-    const { value, warnings } = captureWarns(patch);
-    assert.deepEqual(value, { matched: 2, changed: 0, assetName: null });
-    assert.deepEqual(warnings, [
-      "ambiguous: duplicate-project-chunk.js, renamed-project-chunk.js",
-    ]);
+    fs.writeFileSync(target, chunk(currentProjectSource));
+    const duplicate = path.join(assetsDir, "async", "2.0000000000.js");
+    fs.writeFileSync(duplicate, chunk(currentProjectSource));
+    result = run();
+    assert.notEqual(result.report.status, "applied");
+    assert.equal(fs.readFileSync(target, "utf8"), chunk(currentProjectSource));
+    assert.equal(fs.readFileSync(duplicate, "utf8"), chunk(currentProjectSource));
 
-    fs.rmSync(path.join(assetsDir, "duplicate-project-chunk.js"));
-    fs.rmSync(path.join(assetsDir, "renamed-project-chunk.js"));
-    const missing = captureWarns(patch);
-    assert.deepEqual(missing.value, { matched: 0, changed: 0, assetName: null });
-    assert.deepEqual(missing.warnings, ["missing"]);
+    fs.rmSync(duplicate);
+    fs.rmSync(target);
+    result = run();
+    assert.notEqual(result.report.status, "applied");
+    assert.equal(result.warnings.length, 1);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

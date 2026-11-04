@@ -36,14 +36,16 @@ Remove the feature ID and rebuild to disable it; no user data cleanup is needed.
 
 ## Validation and limitations
 
-The patch targets the current signed stable Linux package `26.903.61454` on
+The patch targets the current signed stable Linux package `26.1029.61003` on
 `amd64` and `arm64`. It has no display-server-specific behavior. A prior local
 workaround was confirmed to restore follow-ups on CachyOS/X11 with Nix and
 package `26.901.51231`; no obsolete package-specific branch is retained here.
 
-The matcher requires one complete guard with the current semantics. Unknown,
-ambiguous, or partially patched guards remain byte-identical and cause the
-enabled feature's normal build enforcement to reject the candidate. Remove or
+The matcher requires one complete guard with the current semantics in each
+renderer chunk that carries it; rspack duplicates the composer module into
+several lazily loaded chunks and every copy is patched. Unknown, ambiguous, or
+partially patched guards remain byte-identical and cause the enabled feature's
+normal build enforcement to reject the candidate. Remove or
 update the feature when upstream fixes or changes this guard.
 
 ```bash
