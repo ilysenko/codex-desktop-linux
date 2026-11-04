@@ -7,6 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.40.
+  v0.7.39 changed only the standalone npm wrapper and crates.io packaging, so
+  it brings no crate source change here. Standalone synced back the generic
+  fixes this copy carried first, and the copy now takes standalone's versions
+  of them. A uinput click or drag whose write fails sends one more button
+  release and drops the device. A cancelled portal click, drag, key chord or
+  keysym text keeps the input lock until its release cleanup is done, and a
+  cancelled KDE clipboard paste still restores the clipboard. Focus
+  verification gives each focused-window query up to 5 s and runs one more
+  query after the 1 s transition allowance, so queries that keep reporting
+  another window fail after about 1 s instead of 11 s. Portal pointer input on
+  niri reads niri's output layout through the niri backend, which also finds
+  the IPC socket when the `niri` binary is missing. `doctor` hides `wtype`
+  under `*_FORCE_XDOTOOL_KEYBOARD=1` only when xdotool and `DISPLAY` are
+  available, since keyboard input uses wtype otherwise. A wtype that cannot
+  start is detected by its errno instead of its error text. When the portal
+  backend turns out unavailable between the preference check and the call,
+  input takes the next route instead of failing, and an untargeted scroll
+  whose portal cannot start falls back to ydotool unless
+  `*_FORCE_PORTAL_POINTER=1` is set, as in standalone.
 - Synchronize the embedded Computer Use backend to standalone v0.7.38. On
   Sway the i3 backend scales window bounds from layout coordinates to capture
   pixels when every active output has the same scale, with edges rounded

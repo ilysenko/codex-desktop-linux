@@ -131,8 +131,12 @@ the desktop is not GNOME, KDE or COSMIC. The portal stays
 preferred when it exists, when a portal keyboard session is already active, or
 with `CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD=1` (standalone alias
 `COMPUTER_USE_LINUX_FORCE_PORTAL_KEYBOARD=1`); the `*_FORCE_YDOTOOL_KEYBOARD=1`
-and `*_FORCE_XDOTOOL_KEYBOARD=1` names also skip `wtype`. A failed or denied
-portal request is never replayed through `wtype`.
+names also skip `wtype`, and so do the `*_FORCE_XDOTOOL_KEYBOARD=1` names when
+`xdotool` is installed and `DISPLAY` is set. A failed or denied portal request
+is never replayed through `wtype`. A `wtype` or `xdotool` on `PATH` without an
+execute bit is not selected, so input takes the next route. A selected `wtype`
+that cannot start (a missing interpreter, a `noexec` mount) makes `type_text`
+fall back to ydotool, since nothing was typed.
 
 On X11, `type_text` keeps xdotool's 12 ms per-character delay so XTEST events
 stay ordered. `CODEX_COMPUTER_USE_XDOTOOL_TYPE_DELAY_MS` overrides it; the
@@ -328,13 +332,18 @@ or screenshots:
 `doctor` evaluates pointer and keyboard portal capability independently. A
 keyboard-only or pointer-only RemoteDesktop implementation remains useful when
 its supported modality is complete, but pointer-only support does not make
-keyboard readiness green.
+keyboard readiness green. The keyboard check is reported as
+`portals.remote_desktop_keyboard`. `doctor` does not list `wtype` as an input
+backend when keyboard input goes elsewhere: with `*_FORCE_PORTAL_KEYBOARD=1`, or
+with `*_FORCE_XDOTOOL_KEYBOARD=1` when `xdotool` and `DISPLAY` are available.
 
 Niri window listing and exact focus prefer `niri msg` and fall back to direct
 JSON IPC over the active session socket. The Computer Use backend hydrates
 `NIRI_SOCKET` for GUI starts. If it is unset, socket discovery requires a
 unique socket matching `WAYLAND_DISPLAY`; ambiguous or stale sockets are
 refused. The `niri` binary is optional when the direct socket is reachable.
+Portal pointer input on niri maps coordinates with niri's logical output
+layout, read the same way, before it falls back to wlr-output-management.
 Window positions account for output origin, window offsets and a uniform known
 scale. If niri omits a position or output scaling is unknown or mixed, bounds
 are absent or keep null coordinates rather than guessing. Listing and exact
@@ -431,6 +440,17 @@ The v0.7.28 through v0.7.31 sync reports an unavailable window backend accuratel
 reuses desktop diagnostics for up to 30 seconds while refreshing accessibility
 on every observation, and wakes immediately when short commands exit. Failed
 actions and observations invalidate cached readiness; `doctor` always probes.
+
+The v0.7.40 sync takes standalone's versions of the input-safety fixes this
+copy carried first. A uinput click or drag whose write fails sends one more
+button release and drops the device, so the next action builds a fresh one. A
+cancelled portal click, drag, key chord or keysym text keeps the input lock
+until its release cleanup has sent the pending release, and a cancelled KDE
+clipboard paste still restores the clipboard. Focus verification before
+targeted input gives each focused-window query up to 5 s and runs one more
+query after the 1 s transition allowance, so a slow backend such as Hyprland is
+not cut off, while queries that keep reporting another window still fail after
+about 1 s instead of 11 s.
 
 On COSMIC Wayland, pointer input uses per-monitor portal streams instead of
 uinput absolute coordinates. EIS input waits for its devices to resume. Portal
