@@ -471,6 +471,9 @@ fn temporary_kwin_plugin_name() -> Result<String> {
     Ok(format!("codex_kwin_window_query_{pid}_{sequence}_{nonce}"))
 }
 
+/// Take the next plugin sequence number. An exhausted counter stays at
+/// `u64::MAX` and every later call fails, where `fetch_add` would wrap it to
+/// 0 and hand out used numbers again.
 fn next_kwin_plugin_sequence(counter: &AtomicU64) -> Result<u64> {
     let mut current = counter.load(Ordering::Relaxed);
     loop {
@@ -1838,7 +1841,10 @@ mod adapter_tests {
             next_kwin_plugin_sequence(&counter).unwrap_err().to_string(),
             "temporary KWin plugin sequence exhausted"
         );
+        // An exhausted counter stays exhausted instead of wrapping to 0 and
+        // handing out sequence numbers again.
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+        assert!(next_kwin_plugin_sequence(&counter).is_err());
     }
 
     #[test]

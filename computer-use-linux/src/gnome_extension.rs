@@ -343,6 +343,7 @@ fn enabled_extensions_literal(current: &str) -> Option<String> {
     if enabled_extensions_contains_uuid(trimmed) {
         return Some(trimmed.to_string());
     }
+
     let quoted = format!("'{UUID}'");
     let list = if trimmed == "@as []" { "[]" } else { trimmed };
     if list == "[]" {

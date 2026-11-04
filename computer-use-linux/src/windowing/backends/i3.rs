@@ -99,8 +99,9 @@ async fn sway_outputs() -> Option<Vec<LogicalMonitor>> {
 }
 
 /// Maps Sway's layout coordinates to capture pixels when every active output
-/// has the same scale. With mixed scales the capture layout is not known
-/// here, so window bounds are left out and window crops are refused.
+/// has the same scale. When the active outputs differ in scale, or one has an
+/// unusable scale, no mapping is built: window bounds are left out, so window
+/// crops and window-relative clicks are refused.
 #[derive(Debug, Clone, Copy)]
 struct SwayCaptureLayout {
     origin_x: i32,
@@ -348,7 +349,7 @@ fn i3_msg_command_async() -> TokioCommand {
     command
 }
 
-/// The first of `I3SOCK` and `SWAYSOCK` that names a live socket, then the
+/// The first of `I3SOCK` and `SWAYSOCK` that names a socket file, then the
 /// newest i3 socket (`i3/ipc-socket.*`), then the newest Sway socket
 /// (`sway-ipc.*.sock`) in the runtime dir. A set variable that names no
 /// socket is still used when nothing else is found, so the error names it.

@@ -51,7 +51,7 @@ use std::{
     future::Future,
     os::unix::{
         ffi::OsStrExt,
-        fs::{FileTypeExt, MetadataExt, PermissionsExt},
+        fs::{FileTypeExt, MetadataExt},
     },
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -298,6 +298,7 @@ impl ComputerUseLinux {
         }
         Json(send_completion_notification(Path::new("notify-send"), Duration::from_secs(2)).await)
     }
+
     #[tool(
         name = "doctor",
         description = "Report Linux Computer Use desktop integration readiness.",
@@ -1424,8 +1425,8 @@ impl ComputerUseLinux {
         {
             return Json(output);
         }
-        let mut input_guard = Arc::try_unwrap(input_guard)
-            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
+        let input_guard = Arc::try_unwrap(input_guard)
+            .expect("pixelflux fallback must not retain dispatched input");
         if self.should_prefer_xdotool_pointer() {
             let off_screen_note = self.off_screen_note_for_point(x, y).await;
             if let Some(xdotool_args) = xdotool_pointer_click_args(
@@ -1468,96 +1469,53 @@ impl ComputerUseLinux {
         // move, which acceleration + fractional scaling distort) and unlike the
         // portal (per-monitor coordinate scaling + an approval dialog), the
         // absolute pointer uses screenshot-pixel coordinates directly and
-        // reports the point it emitted after desktop-edge clamping. Keep the
-        // operation guard through cancellation so a partial click is never
-        // replayed through a fallback backend.
-        let off_screen_note = self.off_screen_note_for_point(x, y).await;
-        let abs_pointer_ready = if let Some(kwin_click) = kwin_click {
-            match self
-                .ensure_abs_pointer_for_kwin_capture(
-                    kwin_click.capture_size.0,
-                    kwin_click.capture_size.1,
-                )
-                .await
-            {
-                Ok(ready) => ready,
-                Err(message) => {
-                    return self.kwin_element_click_failure(
-                        kwin_click.element_index,
-                        &message,
-                        received,
-                    );
+        // reports the point it emitted after desktop-edge clamping.
+        if let Some(abs_button) =
+            crate::abs_pointer::PointerButton::from_name(params.button.as_deref())
+        {
+            let abs_pointer_ready = if let Some(kwin_click) = kwin_click {
+                match self
+                    .ensure_abs_pointer_for_kwin_capture(
+                        kwin_click.capture_size.0,
+                        kwin_click.capture_size.1,
+                    )
+                    .await
+                {
+                    Ok(ready) => ready,
+                    Err(message) => {
+                        return self.kwin_element_click_failure(
+                            kwin_click.element_index,
+                            &message,
+                            received,
+                        );
+                    }
                 }
-            }
-        } else {
-            self.ensure_abs_pointer().await
-        };
-        if let (true, Some(btn)) = (
-            abs_pointer_ready,
-            crate::abs_pointer::PointerButton::from_name(params.button.as_deref()),
-        ) {
-            let count = params.click_count.unwrap_or(1).clamp(1, 10);
-            let abs_pointer = Arc::clone(&self.abs_pointer);
-            let (returned_guard, clicked) =
-                run_cancellation_safe_guarded(input_guard, async move {
-                    tokio::task::spawn_blocking(move || {
-                        let mut guard = abs_pointer.lock().ok()?;
-                        let result = guard
-                            .as_mut()?
-                            .click(x, y, btn, count)
-                            .map_err(|error| format!("{error:#}"));
-                        if result.is_err() {
-                            guard.take();
-                        }
-                        Some(result)
+            } else {
+                self.ensure_abs_pointer().await
+            };
+            if abs_pointer_ready {
+                let pointer = Arc::clone(&self.abs_pointer);
+                let count = params.click_count.unwrap_or(1).clamp(1, 10);
+                let (input_guard, result) = run_cancellation_safe_input(input_guard, async move {
+                    run_abs_pointer(pointer, move |pointer| {
+                        pointer.click(x, y, abs_button, count)
                     })
                     .await
-                    .ok()
-                    .flatten()
                 })
                 .await;
-            let Some(returned_guard) = returned_guard else {
-                return Json(with_notes(
-                    action_result("click", Err(clicked.unwrap_err()), received),
-                    off_screen_note,
+                let _input_guard = input_guard;
+                return Json(kwin_element_click_dispatch_output(
+                    pointer_action_result(abs_pointer_result("click", result, received)),
+                    kwin_click,
+                    "the uinput absolute pointer",
                 ));
-            };
-            input_guard = returned_guard;
-            match clicked {
-                Ok(Some(Ok(landing))) => {
-                    return Json(kwin_element_click_dispatch_output(
-                        with_notes(
-                            pointer_action_result(ActionOutput {
-                                ok: true,
-                                implemented: true,
-                                action: "click".to_string(),
-                                message: "Action sent through the uinput absolute pointer."
-                                    .to_string(),
-                                received,
-                            }),
-                            abs_pointer_clamp_note(landing).or(off_screen_note.clone()),
-                        ),
-                        kwin_click,
-                        "the uinput absolute pointer",
-                    ));
-                }
-                Ok(Some(Err(error))) => {
-                    return Json(with_notes(
-                        action_result(
-                            "click",
-                            Err(format!(
-                                "uinput click may have started before it failed; the device was invalidated and input was not replayed through another backend: {error}"
-                            )),
-                            received,
-                        ),
-                        off_screen_note,
-                    ));
-                }
-                Ok(None) => {}
-                Err(_) => unreachable!("missing guard already handled the guarded task failure"),
             }
         }
         let off_screen_note = self.off_screen_note_for_point(x, y).await;
+        // A portal release guard holds a clone, so a cancelled action keeps
+        // the lock until its button is up; this one keeps it until a failed
+        // session is cleared.
+        let input_guard = InputOperationGuard::new(input_guard);
         if let Some(session) = self.cached_portal_pointer_session() {
             let Some((portal_x, portal_y)) =
                 portal_target_point.or_else(|| self.logical_portal_point(&session, x, y))
@@ -1574,7 +1532,7 @@ impl ComputerUseLinux {
                 portal_y,
                 PointerButton::from_name(params.button.as_deref()),
                 params.click_count.unwrap_or(1).clamp(1, 10),
-                InputOperationGuard::new(input_guard),
+                input_guard.clone(),
             )
             .await
             {
@@ -1626,7 +1584,7 @@ impl ComputerUseLinux {
                         portal_y,
                         PointerButton::from_name(params.button.as_deref()),
                         params.click_count.unwrap_or(1).clamp(1, 10),
-                        InputOperationGuard::new(input_guard),
+                        input_guard.clone(),
                     )
                     .await
                     {
@@ -1658,22 +1616,8 @@ impl ComputerUseLinux {
                         }
                     }
                 }
-                Ok(None) => {
-                    return Json(with_notes(
-                        pointer_action_result(portal_action_error(
-                            "click",
-                            anyhow::anyhow!("the selected portal pointer backend was unavailable"),
-                            received,
-                        )),
-                        off_screen_note,
-                    ));
-                }
-                Err(error) => {
-                    return Json(with_notes(
-                        pointer_action_result(portal_start_error("click", error, received)),
-                        off_screen_note,
-                    ));
-                }
+                Ok(None) => {}
+                Err(error) => return Json(portal_start_error("click", error, received)),
             }
         }
         if self.is_wayland_session() {
@@ -2069,7 +2013,7 @@ impl ComputerUseLinux {
             return Json(output);
         }
         let input_guard = Arc::try_unwrap(input_guard)
-            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
+            .expect("pixelflux fallback must not retain dispatched input");
 
         let off_screen_note = match target_point {
             Some((x, y)) => self.off_screen_note_for_point(x, y).await,
@@ -2225,22 +2169,17 @@ impl ComputerUseLinux {
                         }
                     }
                 }
-                Ok(None) => {
-                    return Json(with_notes(
-                        pointer_action_result(portal_action_error(
-                            "scroll",
-                            anyhow::anyhow!("the selected portal pointer backend was unavailable"),
-                            received,
-                        )),
-                        off_screen_note,
-                    ));
+                Ok(None) => {}
+                Err(error)
+                    if target_point.is_some()
+                        || env_flag_enabled_any(&[
+                            "COMPUTER_USE_LINUX_FORCE_PORTAL_POINTER",
+                            "CODEX_COMPUTER_USE_FORCE_PORTAL_POINTER",
+                        ]) =>
+                {
+                    return Json(portal_start_error("scroll", error, received));
                 }
-                Err(error) => {
-                    return Json(with_notes(
-                        pointer_action_result(portal_start_error("scroll", error, received)),
-                        off_screen_note,
-                    ));
-                }
+                Err(_) => {}
             }
         }
         if target_point.is_some() && self.is_wayland_session() {
@@ -2314,8 +2253,8 @@ impl ComputerUseLinux {
         {
             return Json(output);
         }
-        let mut input_guard = Arc::try_unwrap(input_guard)
-            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
+        let input_guard = Arc::try_unwrap(input_guard)
+            .expect("pixelflux fallback must not retain dispatched input");
 
         if self.should_prefer_xdotool_pointer() {
             let (input_guard, result) = run_cancellation_safe_input(input_guard, async move {
@@ -2338,58 +2277,34 @@ impl ComputerUseLinux {
         }
         // Preferred backend: the uinput absolute pointer (accurate landing).
         if self.ensure_abs_pointer().await {
-            let abs_pointer = Arc::clone(&self.abs_pointer);
-            let start = (params.start_x, params.start_y);
-            let end = (params.end_x, params.end_y);
-            let (returned_guard, dragged) =
-                run_cancellation_safe_guarded(input_guard, async move {
-                    tokio::task::spawn_blocking(move || {
-                        if let Ok(mut guard) = abs_pointer.lock() {
-                            let result = guard.as_mut().map(|pointer| {
-                                pointer
-                                    .drag(start, end, crate::abs_pointer::PointerButton::Left)
-                                    .map_err(|error| format!("{error:#}"))
-                            });
-                            if result.as_ref().is_some_and(Result::is_err) {
-                                guard.take();
-                            }
-                            result
-                        } else {
-                            None
-                        }
-                    })
-                    .await
-                    .ok()
-                    .flatten()
+            let pointer = Arc::clone(&self.abs_pointer);
+            let (input_guard, result) = run_cancellation_safe_input(input_guard, async move {
+                run_abs_pointer(pointer, move |pointer| {
+                    pointer.drag(
+                        (params.start_x, params.start_y),
+                        (params.end_x, params.end_y),
+                        crate::abs_pointer::PointerButton::Left,
+                    )
                 })
-                .await;
-            let Some(returned_guard) = returned_guard else {
-                return Json(action_result("drag", Err(dragged.unwrap_err()), received));
-            };
-            input_guard = returned_guard;
-            match dragged {
-                Ok(Some(Ok(()))) => {
-                    return Json(pointer_action_result(ActionOutput {
-                        ok: true,
-                        implemented: true,
-                        action: "drag".to_string(),
-                        message: "Action sent through the uinput absolute pointer.".to_string(),
-                        received,
-                    }));
-                }
-                Ok(Some(Err(error))) => {
-                    return Json(action_result(
-                        "drag",
-                        Err(format!(
-                            "uinput drag may have started before it failed; the device was invalidated and input was not replayed through another backend: {error}"
-                        )),
-                        received,
-                    ));
-                }
-                Ok(None) => {}
-                Err(_) => unreachable!("missing guard already handled the guarded task failure"),
-            }
+                .await
+            })
+            .await;
+            let _input_guard = input_guard;
+            return Json(match result {
+                Ok(()) => pointer_action_result(ActionOutput {
+                    ok: true,
+                    implemented: true,
+                    action: "drag".to_string(),
+                    message: "Action sent through the uinput absolute pointer.".to_string(),
+                    received,
+                }),
+                Err(error) => abs_pointer_error("drag", error, received),
+            });
         }
+        // A portal release guard holds a clone, so a cancelled action keeps
+        // the lock until its button is up; this one keeps it until a failed
+        // session is cleared.
+        let input_guard = InputOperationGuard::new(input_guard);
         if let Some(session) = self.cached_portal_pointer_session() {
             let _ = self.capture_space_rect().await;
             let Some((start_x, start_y)) =
@@ -2414,7 +2329,7 @@ impl ComputerUseLinux {
                 start_y,
                 end_x,
                 end_y,
-                InputOperationGuard::new(input_guard),
+                input_guard.clone(),
             )
             .await
             {
@@ -2460,7 +2375,7 @@ impl ComputerUseLinux {
                         start_y,
                         end_x,
                         end_y,
-                        InputOperationGuard::new(input_guard),
+                        input_guard.clone(),
                     )
                     .await
                     {
@@ -2482,18 +2397,8 @@ impl ComputerUseLinux {
                         }
                     }
                 }
-                Ok(None) => {
-                    return Json(pointer_action_result(portal_action_error(
-                        "drag",
-                        anyhow::anyhow!("the selected portal pointer backend was unavailable"),
-                        received,
-                    )));
-                }
-                Err(error) => {
-                    return Json(pointer_action_result(portal_start_error(
-                        "drag", error, received,
-                    )));
-                }
+                Ok(None) => {}
+                Err(error) => return Json(portal_start_error("drag", error, received)),
             }
         }
         if self.is_wayland_session() {
@@ -2536,7 +2441,6 @@ impl ComputerUseLinux {
         let received = Some(serde_json::json!(params.clone()));
         let input_guard =
             InputOperationGuard::new(Arc::clone(&self.input_operation_lock).lock_owned().await);
-        let window_target = params.window_target();
         if let Some(output) = self
             .hyprland_background_input(
                 "press_key",
@@ -2556,7 +2460,7 @@ impl ComputerUseLinux {
         {
             return Json(output);
         }
-        let focus = match self.focus_target_for_input(&window_target).await {
+        let focus = match self.focus_target_for_input(&params.window_target()).await {
             Ok(focus) => focus,
             Err(message) => {
                 return Json(ActionOutput {
@@ -2594,7 +2498,7 @@ impl ComputerUseLinux {
             }
         }
         let input_guard = Arc::try_unwrap(input_guard)
-            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
+            .expect("pixelflux fallback must not retain dispatched input");
 
         let route = self.chord_route().await;
         if route == ChordRoute::Wtype {
@@ -2662,7 +2566,10 @@ impl ComputerUseLinux {
                                 .collect();
                             (modifiers, PortalKey::Keycode(i32::from(chord_key)))
                         });
-                    match press_key_chord(&session, &modifiers, key, Some(input_guard)).await {
+                    // The release cleanup holds a clone, so a cancelled chord
+                    // keeps the lock until its keys are up; this one keeps it
+                    // through the landing notes.
+                    match press_key_chord(&session, &modifiers, key, input_guard.clone()).await {
                         Ok(()) => {
                             let notes = self.input_landing_notes(focus.as_ref(), false).await;
                             return Json(with_notes(
@@ -2686,22 +2593,8 @@ impl ComputerUseLinux {
                         }
                     }
                 }
-                Ok(None) => {
-                    return Json(action_result_with_focus(
-                        "press_key",
-                        Err("the selected portal keyboard backend was unavailable; input was not replayed through another backend".to_string()),
-                        received,
-                        focus,
-                    ));
-                }
-                Err(error) => {
-                    return Json(action_result_with_focus(
-                        "press_key",
-                        Err(format!("remote desktop portal keyboard initialization failed; input was not replayed through another backend: {error:#}")),
-                        received,
-                        focus,
-                    ));
-                }
+                Ok(None) => {}
+                Err(error) => return Json(portal_start_error("press_key", error, received)),
             }
         }
         let Some(key_events) = key_sequence(&params.key) else {
@@ -2713,6 +2606,9 @@ impl ComputerUseLinux {
                 received,
             });
         };
+        // X11: prefer xdotool/XTEST. ydotool's raw evdev scancodes get
+        // re-mapped by the active XKB layout on X11, so named keys and chords
+        // arrive as stray glyphs instead of real key events (issue #58).
         if self.should_prefer_xdotool_keyboard() {
             if let Some(spec) = xdotool_key_spec(&params.key) {
                 let xdotool_args = vec!["key".to_string(), "--clearmodifiers".to_string(), spec];
@@ -2882,7 +2778,7 @@ impl ComputerUseLinux {
             return Json(output);
         }
         let mut input_guard = Arc::try_unwrap(input_guard)
-            .unwrap_or_else(|_| panic!("pixelflux fallback must not retain dispatched input"));
+            .expect("pixelflux fallback must not retain dispatched input");
 
         if self.should_prefer_kde_clipboard_text_backend() {
             let portal_target = match self
@@ -2913,6 +2809,9 @@ impl ComputerUseLinux {
                     let session_for_input = session.clone();
                     let text = params.text.clone();
                     let portal_operation_guard = input_guard.clone();
+                    // The paste puts the user's clipboard back after the
+                    // shortcut. Run it to the end even if this call is
+                    // cancelled, and hold both locks until it has.
                     let (guards, guarded_result) =
                         run_cancellation_safe_guarded((input_guard, clipboard_guard), async move {
                             run_kde_clipboard_paste_text(
@@ -2966,22 +2865,8 @@ impl ComputerUseLinux {
                         }
                     }
                 }
-                Ok(None) => {
-                    return Json(action_result_with_focus(
-                        "type_text",
-                        Err("the selected KDE portal keyboard backend was unavailable; input was not replayed through another backend".to_string()),
-                        received,
-                        focus,
-                    ));
-                }
-                Err(error) => {
-                    return Json(action_result_with_focus(
-                        "type_text",
-                        Err(format!("KDE portal keyboard initialization failed; input was not replayed through another backend: {error:#}")),
-                        received,
-                        focus,
-                    ));
-                }
+                Ok(None) => {}
+                Err(error) => return Json(portal_start_error("type_text", error, received)),
             }
         }
         if self.should_prefer_portal_text_backend() {
@@ -3006,7 +2891,7 @@ impl ComputerUseLinux {
                         "Portal keyboard input is unavailable; no text was sent.".to_string()
                     })?;
                 focus = self.focus_target_for_input(&portal_target).await?;
-                type_text_with_keysyms(&session, &keysyms, Some(input_guard))
+                type_text_with_keysyms(&session, &keysyms, input_guard.clone())
                     .await
                     .map_err(|error| {
                         self.clear_portal_keyboard_session(&session);
@@ -3030,6 +2915,9 @@ impl ComputerUseLinux {
                 Err(error) => action_result_with_focus("type_text", Err(error), received, focus),
             });
         }
+        // X11: xdotool type resolves keysyms against the live XKB layout.
+        // ydotool's raw scancodes get re-mapped by X11 and mangle symbols and
+        // digits (`_` → `%`, `1` → `+`) even on a plain US layout (issue #58).
         if self.should_prefer_xdotool_keyboard() {
             let delay_ms = xdotool_type_delay_ms();
             let args = xdotool_type_args_with_delay(&params.text, delay_ms);
@@ -3183,7 +3071,7 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.38",
+    version = "0.7.40",
     instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send literal type_text through KDE clipboard integration on Plasma Wayland, wtype on compatible Wayland compositors, or portal keysyms on other Wayland sessions. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable) and warn when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype uses a single literal argument after -- to avoid stdin keymap-refresh corruption; text is visible in process arguments, so confirmed password fields are rejected (use set_value). Terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call; split larger input into smaller calls or expose accessibility. Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, click, and input results warn when the target window or coordinate is partially or fully off-screen; use move_window/resize_window (GNOME Shell extension backend) to bring a window fully on-screen before retrying. scroll accepts the same window targeting and relative coordinates as click. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {}
@@ -3397,7 +3285,7 @@ async fn execute_shell(params: RunShellParams) -> RunShellOutput {
         );
     }
 
-    let cwd = match fs::canonicalize(&requested_cwd) {
+    let cwd = match std::fs::canonicalize(&requested_cwd) {
         Ok(path) if path.is_dir() => path,
         Ok(_) => {
             return shell_error_output(
@@ -3987,7 +3875,8 @@ impl ScreenshotParams {
 }
 
 /// Screenshot metadata for `get_app_state` and post-action captures. The image
-/// bytes travel as a separate `image` content block, not inside this JSON.
+/// bytes travel as a separate `image` content block (issue #145), not inside
+/// this JSON.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct ScreenshotSummary {
     mime_type: String,
@@ -4040,7 +3929,8 @@ impl From<&ScreenshotCapture> for ScreenshotSummary {
 
 /// Assemble a structured tool result: the screenshot (when present) as a
 /// structured image block first, then the JSON report as text and as
-/// `structured_content`. Inlining base64 made hosts treat the image as text.
+/// `structured_content`. Inlining the base64 in the JSON made hosts treat a
+/// 100KB+ image as plain text tokens (issue #145).
 fn structured_tool_result<T: Serialize>(
     output: T,
     screenshot: Option<ScreenshotCapture>,
@@ -4725,6 +4615,8 @@ impl ComputerUseLinux {
         )
     }
 
+    // Literal text needs a layout-aware route even when raw ydotool input is
+    // available. KDE uses clipboard paste; compatible compositors use wtype.
     fn should_prefer_portal_text_backend(&self) -> bool {
         prefer_portal_text_backend(
             env_flag_enabled_any(&[
@@ -4742,6 +4634,14 @@ impl ComputerUseLinux {
         )
     }
 
+    /// Portal keyboard policy for `press_key` chords. Unlike literal text
+    /// (where KDE prefers the clipboard paste backend), key chords have no
+    /// clipboard route, so the portal keyboard session is preferred on ANY
+    /// Wayland session — including Plasma. An already-active keyboard
+    /// session (e.g. established by a KDE clipboard paste) is reused even
+    /// when ydotool is available, so the consent the user already granted
+    /// keeps covering key chords; otherwise the portal is preferred only
+    /// when ydotool is absent or the portal is forced.
     async fn should_prefer_portal_keyboard_for_chords(&self) -> bool {
         if env_flag_enabled_any(&[
             "COMPUTER_USE_LINUX_FORCE_YDOTOOL_KEYBOARD",
@@ -4791,19 +4691,16 @@ impl ComputerUseLinux {
             && self.is_kde_wayland_session()
     }
 
-    fn should_prefer_xdotool_pointer(&self) -> bool {
-        crate::diagnostics::hydrate_session_bus_env();
-        prefer_xdotool_pointer(
-            env_flag_enabled_any(&[
-                "COMPUTER_USE_LINUX_FORCE_YDOTOOL_POINTER",
-                "CODEX_COMPUTER_USE_FORCE_YDOTOOL_POINTER",
-            ]),
-            env::var("XDG_SESSION_TYPE").ok().as_deref(),
-            env_var_non_empty("DISPLAY"),
-            env::var("WAYLAND_DISPLAY").ok().as_deref(),
-        )
-    }
-
+    /// Keyboard policy for X11 sessions: prefer `xdotool` (XTEST).
+    ///
+    /// ydotool writes raw evdev scancodes to a virtual uinput device. On X11
+    /// the server then re-interprets them through the active XKB layout, so
+    /// `press_key "Return"` and chords like `ctrl+a` land as stray characters,
+    /// and literal text can mangle symbols/digits (issue #58). XTEST resolves
+    /// keysyms against the live layout instead.
+    ///
+    /// `COMPUTER_USE_LINUX_FORCE_YDOTOOL_KEYBOARD=1` opts out;
+    /// `COMPUTER_USE_LINUX_FORCE_XDOTOOL_KEYBOARD=1` forces it on.
     fn should_prefer_xdotool_keyboard(&self) -> bool {
         prefer_xdotool_keyboard(
             env_flag_enabled_any(&[
@@ -4826,14 +4723,6 @@ impl ComputerUseLinux {
                 "COMPUTER_USE_LINUX_FORCE_YDOTOOL_KEYBOARD",
                 "CODEX_COMPUTER_USE_FORCE_YDOTOOL_KEYBOARD",
             ]),
-            env_flag_enabled_any(&[
-                "COMPUTER_USE_LINUX_FORCE_XDOTOOL_KEYBOARD",
-                "CODEX_COMPUTER_USE_FORCE_XDOTOOL_KEYBOARD",
-            ]),
-            env_flag_enabled_any(&[
-                "COMPUTER_USE_LINUX_FORCE_PORTAL_KEYBOARD",
-                "CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD",
-            ]),
             self.is_wayland_session(),
             crate::diagnostics::wtype_compatible_wayland_desktop(
                 env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
@@ -4853,6 +4742,19 @@ impl ComputerUseLinux {
         Some(wtype_text_mode_for_desktop(
             env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
         ))
+    }
+
+    fn should_prefer_xdotool_pointer(&self) -> bool {
+        crate::diagnostics::hydrate_session_bus_env();
+        prefer_xdotool_pointer(
+            env_flag_enabled_any(&[
+                "COMPUTER_USE_LINUX_FORCE_YDOTOOL_POINTER",
+                "CODEX_COMPUTER_USE_FORCE_YDOTOOL_POINTER",
+            ]),
+            env::var("XDG_SESSION_TYPE").ok().as_deref(),
+            env_var_non_empty("DISPLAY"),
+            env::var("WAYLAND_DISPLAY").ok().as_deref(),
+        )
     }
 
     fn is_cosmic_wayland_session(&self) -> bool {
@@ -8605,6 +8507,20 @@ fn unsafe_pointer_fallback(action: &str, received: Option<serde_json::Value>) ->
     }
 }
 
+fn portal_start_error(
+    action: &str,
+    error: anyhow::Error,
+    received: Option<serde_json::Value>,
+) -> ActionOutput {
+    ActionOutput {
+        ok: false,
+        implemented: true,
+        action: action.to_string(),
+        message: format!("Input was not sent because the remote desktop portal could not start; input was not replayed through ydotool: {error:#}"),
+        received,
+    }
+}
+
 fn abs_pointer_error(
     action: &str,
     error: String,
@@ -8675,20 +8591,6 @@ fn portal_action_error(
         message: format!(
             "Remote desktop portal {action} may have started before it failed; input was not replayed through another backend: {error:#}"
         ),
-        received,
-    }
-}
-
-fn portal_start_error(
-    action: &str,
-    error: anyhow::Error,
-    received: Option<serde_json::Value>,
-) -> ActionOutput {
-    ActionOutput {
-        ok: false,
-        implemented: true,
-        action: action.to_string(),
-        message: format!("Input was not sent because the remote desktop portal could not start; input was not replayed through ydotool: {error:#}"),
         received,
     }
 }
@@ -9299,36 +9201,6 @@ fn wheel_mousemove_args(dx: i32, dy: i32) -> Vec<String> {
     ]
 }
 
-async fn run_cancellation_safe_guarded<G, T, F>(
-    guard: G,
-    operation: F,
-) -> (Option<G>, std::result::Result<T, String>)
-where
-    G: Send + 'static,
-    T: Send + 'static,
-    F: Future<Output = T> + Send + 'static,
-{
-    // Dropping a JoinHandle detaches its task, retaining the guard until the
-    // stateful input operation has completed even if the caller is cancelled.
-    match tokio::spawn(async move { (guard, operation.await) }).await {
-        Ok((guard, result)) => (Some(guard), Ok(result)),
-        Err(error) => (None, Err(format!("stateful input task failed: {error}"))),
-    }
-}
-
-async fn run_cancellation_safe_input<G, T, F>(
-    input_guard: G,
-    operation: F,
-) -> (Option<G>, std::result::Result<T, String>)
-where
-    G: Send + 'static,
-    T: Send + 'static,
-    F: Future<Output = std::result::Result<T, String>> + Send + 'static,
-{
-    let (input_guard, result) = run_cancellation_safe_guarded(input_guard, operation).await;
-    (input_guard, result.and_then(|result| result))
-}
-
 async fn run_ydotool_sequence(
     commands: &[Vec<String>],
 ) -> std::result::Result<Vec<Output>, String> {
@@ -9473,10 +9345,47 @@ where
         let pointer = guard
             .as_mut()
             .ok_or_else(|| "absolute pointer is unavailable".to_string())?;
-        operation(pointer).map_err(|error| format!("{error:#}"))
+        let result = operation(pointer).map_err(|error| format!("{error:#}"));
+        if result.is_err() {
+            // A failed write may have left a button down or an event half
+            // sent. Drop the device, which the kernel releases, so the next
+            // action builds a fresh one.
+            guard.take();
+        }
+        result
     })
     .await
     .map_err(|error| format!("absolute pointer task failed: {error}"))?
+}
+
+async fn run_cancellation_safe_guarded<G, T, F>(
+    guard: G,
+    operation: F,
+) -> (Option<G>, std::result::Result<T, String>)
+where
+    G: Send + 'static,
+    T: Send + 'static,
+    F: Future<Output = T> + Send + 'static,
+{
+    // Dropping a JoinHandle detaches its task, retaining the guard until the
+    // stateful input operation has completed even if the caller is cancelled.
+    match tokio::spawn(async move { (guard, operation.await) }).await {
+        Ok((guard, result)) => (Some(guard), Ok(result)),
+        Err(error) => (None, Err(format!("stateful input task failed: {error}"))),
+    }
+}
+
+async fn run_cancellation_safe_input<G, T, F>(
+    input_guard: G,
+    operation: F,
+) -> (Option<G>, std::result::Result<T, String>)
+where
+    G: Send + 'static,
+    T: Send + 'static,
+    F: Future<Output = std::result::Result<T, String>> + Send + 'static,
+{
+    let (input_guard, result) = run_cancellation_safe_guarded(input_guard, operation).await;
+    (input_guard, result.and_then(|result| result))
 }
 
 async fn run_ydotool(args: &[String]) -> std::result::Result<Output, String> {
@@ -9586,6 +9495,9 @@ impl KdeClipboardPasteError {
         }
     }
 
+    /// The clipboard write failed, but it may have taken effect (a timed out
+    /// call can still land). No paste was sent, yet the outcome is unknown,
+    /// so the text is not retyped through another backend.
     fn ambiguous_clipboard_set(message: String) -> Self {
         Self {
             message,
@@ -9593,6 +9505,31 @@ impl KdeClipboardPasteError {
             clear_portal_keyboard_session: false,
         }
     }
+}
+
+/// Put `text` on the clipboard. A failed write may still have landed, so
+/// put `previous` back and refuse to retype the text another way.
+async fn replace_kde_clipboard<F, Fut>(
+    text: &str,
+    previous: &str,
+    set: F,
+) -> std::result::Result<(), KdeClipboardPasteError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = std::result::Result<(), String>>,
+{
+    let Err(set_error) = set(text.to_string()).await else {
+        return Ok(());
+    };
+    let message = match set(previous.to_string()).await {
+        Ok(()) => format!(
+            "KDE clipboard replacement failed ambiguously and the previous contents were restored; text was not replayed through another backend: {set_error}"
+        ),
+        Err(restore_error) => format!(
+            "KDE clipboard replacement failed ambiguously; restoring the previous contents also failed, and text was not replayed through another backend: {set_error}; restore failed: {restore_error}"
+        ),
+    };
+    Err(KdeClipboardPasteError::ambiguous_clipboard_set(message))
 }
 
 async fn run_kde_clipboard_paste_text(
@@ -9604,21 +9541,13 @@ async fn run_kde_clipboard_paste_text(
     let previous = kde_clipboard_contents()
         .await
         .map_err(KdeClipboardPasteError::before_text_input)?;
-    if let Err(set_error) = kde_set_clipboard_contents(text).await {
-        let restore_result = kde_set_clipboard_contents(&previous).await;
-        let message = match restore_result {
-            Ok(()) => format!(
-                "KDE clipboard replacement failed ambiguously and the previous contents were restored; text was not replayed through another backend: {set_error}"
-            ),
-            Err(restore_error) => format!(
-                "KDE clipboard replacement failed ambiguously; restoring the previous contents also failed, and text was not replayed through another backend: {set_error}; restore failed: {restore_error}"
-            ),
-        };
-        return Err(KdeClipboardPasteError::ambiguous_clipboard_set(message));
-    }
+    replace_kde_clipboard(text, &previous, |value| async move {
+        kde_set_clipboard_contents(&value).await
+    })
+    .await?;
 
     let (modifiers, keycode) = kde_clipboard_paste_chord(paste_shortcut);
-    let paste_result = press_keycode_chord(session, modifiers, keycode, Some(operation_guard))
+    let paste_result = press_keycode_chord(session, modifiers, keycode, operation_guard)
         .await
         .map_err(|error| format!("{error:#}"));
 
@@ -9799,6 +9728,13 @@ fn ydotool_output_error(output: Output) -> String {
     command_output_error("ydotool", output)
 }
 
+/// X11 keyboard input runs through `xdotool` (XTEST) instead of ydotool.
+///
+/// ydotool injects raw evdev keycodes into a virtual uinput device. Under X11
+/// the server re-interprets those scancodes through the active XKB layout, so
+/// named keys and chords land as unrelated glyphs and literal text can mangle
+/// symbols/digits (`_` → `%`, `1` → `+`). XTEST resolves keysyms against the
+/// live layout, which is what X11 clients actually expect. See issue #58.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeyboardCommandBackend {
     Wtype,
@@ -9931,9 +9867,9 @@ where
     validate_wtype_text(text)?;
     validate_wtype_privacy(mode, secret)?;
     let available = if program.components().count() > 1 {
-        wtype_file_available(program)
+        executable_file(program)
     } else {
-        program.to_str().is_some_and(wtype_in_path)
+        program.to_str().is_some_and(which_in_path)
     };
     if !available {
         return fallback().await.map(|output| KeyboardCommandResult {
@@ -9971,7 +9907,8 @@ where
     };
     let output = match result {
         Ok(output) => output,
-        Err(error) if wtype_spawn_unavailable(&error) => {
+        // wtype never started, so nothing was typed: same as a missing wtype.
+        Err(error) if spawn_never_started(&error) => {
             return fallback().await.map(|output| KeyboardCommandResult {
                 output,
                 backend: KeyboardCommandBackend::Ydotool,
@@ -9979,14 +9916,13 @@ where
         }
         Err(error) => return Err(format!("{error:#}")),
     };
-    if output.status.success() {
-        Ok(KeyboardCommandResult {
-            output,
-            backend: KeyboardCommandBackend::Wtype,
-        })
-    } else {
-        Err(command_output_error("wtype", output))
+    if !output.status.success() {
+        return Err(command_output_error("wtype", output));
     }
+    Ok(KeyboardCommandResult {
+        output,
+        backend: KeyboardCommandBackend::Wtype,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10096,6 +10032,26 @@ fn validate_wtype_text(text: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 
+/// True when `xdotool` can drive this session: an X11 session with `DISPLAY`
+/// set and the binary present. `COMPUTER_USE_LINUX_FORCE_YDOTOOL_KEYBOARD=1`
+/// opts out; `COMPUTER_USE_LINUX_FORCE_XDOTOOL_KEYBOARD=1` forces it on.
+fn xdotool_available() -> bool {
+    which_in_path("xdotool")
+}
+
+fn wtype_available() -> bool {
+    which_in_path("wtype")
+}
+
+fn prefer_wtype_keyboard(
+    force_ydotool: bool,
+    is_wayland: bool,
+    compatible_desktop: bool,
+    available: bool,
+) -> bool {
+    !force_ydotool && is_wayland && compatible_desktop && available
+}
+
 /// Where `press_key` sends a chord.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChordRoute {
@@ -10202,55 +10158,12 @@ async fn run_wtype_key(args: &[String]) -> std::result::Result<(), String> {
     Ok(())
 }
 
-fn xdotool_available() -> bool {
-    which_in_path("xdotool")
-}
-
-fn wtype_available() -> bool {
-    wtype_in_path("wtype")
-}
-
-fn wtype_file_available(path: &Path) -> bool {
-    std::fs::metadata(path)
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-fn wtype_in_path(binary: &str) -> bool {
-    let Ok(path) = env::var("PATH") else {
-        return false;
-    };
-    env::split_paths(&path).any(|directory| wtype_file_available(&directory.join(binary)))
-}
-
-fn wtype_spawn_unavailable(error: &anyhow::Error) -> bool {
-    let message = format!("{error:#}");
-    [
-        "No such file or directory",
-        "Permission denied",
-        "Exec format error",
-        "Text file busy",
-    ]
-    .iter()
-    .any(|needle| message.contains(needle))
-}
-
-fn prefer_wtype_keyboard(
-    force_ydotool: bool,
-    force_xdotool: bool,
-    force_portal: bool,
-    is_wayland: bool,
-    compatible_desktop: bool,
-    available: bool,
-) -> bool {
-    !force_ydotool
-        && !force_xdotool
-        && !force_portal
-        && is_wayland
-        && compatible_desktop
-        && available
-}
-
+/// Default per-character delay for `xdotool type`, in milliseconds (xdotool's
+/// own default). `--delay 0` lets XTEST key events race each other on some X
+/// servers (Cinnamon on Mint 22, issue #147): every character arrives, but in
+/// a random order. A small delay keeps them ordered.
+/// `CODEX_COMPUTER_USE_XDOTOOL_TYPE_DELAY_MS` overrides it, or the standalone
+/// `COMPUTER_USE_LINUX_XDOTOOL_TYPE_DELAY_MS`.
 const XDOTOOL_TYPE_DELAY_MS: u64 = 12;
 const XDOTOOL_TYPE_DELAY_ENV: &str = "CODEX_COMPUTER_USE_XDOTOOL_TYPE_DELAY_MS";
 const XDOTOOL_TYPE_DELAY_ENV_STANDALONE: &str = "COMPUTER_USE_LINUX_XDOTOOL_TYPE_DELAY_MS";
@@ -10283,22 +10196,48 @@ fn xdotool_type_args_with_delay(text: &str, delay_ms: u64) -> Vec<String> {
     ]
 }
 
+/// `xdotool type` spends about `delay_ms` per character, so long inputs need
+/// more than the flat input timeout.
 fn xdotool_type_timeout(text: &str, delay_ms: u64) -> Duration {
     let chars = text.chars().count() as u64;
     INPUT_COMMAND_TIMEOUT.saturating_add(Duration::from_millis(chars.saturating_mul(delay_ms)))
 }
 
 fn which_in_path(binary: &str) -> bool {
-    let Ok(path) = env::var("PATH") else {
-        return false;
-    };
-    env::split_paths(&path).any(|directory| {
-        std::fs::metadata(directory.join(binary))
-            .map(|metadata| metadata.is_file())
-            .unwrap_or(false)
-    })
+    env::var_os("PATH").is_some_and(|path| executable_in(&path, binary))
 }
 
+/// True when a directory of `path` (a `PATH` value) holds an executable
+/// `binary`.
+fn executable_in(path: &std::ffi::OsStr, binary: &str) -> bool {
+    env::split_paths(path).any(|dir| executable_file(&dir.join(binary)))
+}
+
+/// True when the program never started: exec found no file, no permission,
+/// no usable format or interpreter, or the file stayed busy after
+/// `spawn_retrying_busy` gave up.
+fn spawn_never_started(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .any(|error| {
+            matches!(
+                error.raw_os_error(),
+                Some(libc::ENOENT | libc::EACCES | libc::ENOEXEC | libc::ETXTBSY)
+            )
+        })
+}
+
+/// A regular file with an execute bit set, which exec needs.
+fn executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+/// Map our key grammar onto an `xdotool key` spec such as `ctrl+a`, `Return`,
+/// or `shift+F5`. Returns `None` for keys the grammar does not accept, so the
+/// caller keeps its existing "never silently dropped" error.
 fn xdotool_key_spec(key: &str) -> Option<String> {
     let parts = key
         .split('+')
@@ -10307,12 +10246,15 @@ fn xdotool_key_spec(key: &str) -> Option<String> {
         .collect::<Vec<_>>();
     let (key_part, modifier_parts) = parts.split_last()?;
 
+    // Validate through the same evdev grammar so both backends accept exactly
+    // the same input set.
     key_chord(key)?;
 
     let mut spec = Vec::new();
     for part in modifier_parts {
         spec.push(xdotool_modifier_name(part)?.to_string());
     }
+
     if modifier_parts.is_empty() {
         if let Some(bare) = xdotool_modifier_keysym(key_part) {
             return Some(bare.to_string());
@@ -10332,8 +10274,15 @@ fn xdotool_modifier_name(key: &str) -> Option<&'static str> {
     }
 }
 
+/// Standalone keysym for a bare modifier press (`press_key "Super"`).
 fn xdotool_modifier_keysym(key: &str) -> Option<&'static str> {
-    xdotool_modifier_name(key)
+    match normalize_key(key).as_str() {
+        "ctrl" | "control" => Some("ctrl"),
+        "alt" | "option" => Some("alt"),
+        "shift" => Some("shift"),
+        "meta" | "super" | "cmd" | "command" => Some("super"),
+        _ => None,
+    }
 }
 
 fn xdotool_keysym_name(key: &str) -> Option<String> {
@@ -10423,6 +10372,9 @@ fn mouse_button_code(button: Option<&str>) -> String {
     .to_string()
 }
 
+/// Parse a chord like `Ctrl+Shift+P` into raw evdev codes: the held
+/// modifiers plus the final key. A bare modifier (`Super`) parses as a
+/// chord with no held modifiers whose key is the modifier itself.
 fn key_chord(key: &str) -> Option<(Vec<u16>, u16)> {
     let parts = key
         .split('+')
@@ -10679,14 +10631,15 @@ fn looks_like_desktop_app(name: &str, command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::atspi_tree::{AccessibilityAction, Bounds};
+    use crate::windows::{WindowBounds, GNOME_SHELL_EXTENSION_BACKEND, NIRI_BACKEND};
+    use std::os::unix::fs::PermissionsExt;
+
     #[test]
     fn mcp_server_version_matches_cargo() {
         let info = rmcp::ServerHandler::get_info(&ComputerUseLinux::default());
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
     }
-    use crate::atspi_tree::{AccessibilityAction, Bounds};
-    use crate::windows::{WindowBounds, GNOME_SHELL_EXTENSION_BACKEND, NIRI_BACKEND};
-    use std::os::unix::fs::PermissionsExt;
 
     /// Restores an environment variable when a test ends, including on panic.
     struct EnvVarGuard {
@@ -11452,6 +11405,8 @@ printf '%s %s\n' "${0##*/}" "$*" >> "$CUL_POINTER_TEST_LOG"
 
     #[test]
     fn app_state_result_emits_screenshot_as_image_block_not_inline_base64() {
+        // Issue #145: the base64 payload must ride a structured image block so
+        // hosts count it as vision tokens instead of a 100KB text blob.
         let raw = RawScreenshotCapture {
             mime_type: "image/png".to_string(),
             bytes: solid_png(64, 32),
@@ -12055,6 +12010,25 @@ esac
     }
 
     #[test]
+    fn incompatible_ydotool_socket_does_not_suppress_portal_fallback() {
+        let incompatible_ydotool = ydotool_backend_available_from(true, false);
+        let compatible_ydotool = ydotool_backend_available_from(true, true);
+
+        assert!(should_prefer_portal_backend_by_default(
+            true,
+            incompatible_ydotool
+        ));
+        assert!(!should_prefer_portal_backend_by_default(
+            true,
+            compatible_ydotool
+        ));
+        assert!(!should_prefer_portal_backend_by_default(
+            false,
+            incompatible_ydotool
+        ));
+    }
+
+    #[test]
     fn xdotool_keyboard_override_policy_matches_documented_precedence() {
         assert!(prefer_xdotool_keyboard(false, true, true, true, true));
         assert!(!prefer_xdotool_keyboard(true, true, true, true, true));
@@ -12064,16 +12038,12 @@ esac
     }
 
     #[test]
-    fn native_x11_pointer_policy_requires_explicit_x11_without_wayland_display() {
-        assert!(native_x11_xdotool_pointer_session(Some("x11"), None));
-        assert!(!native_x11_xdotool_pointer_session(
-            Some("wayland"),
-            Some("wayland-0")
-        ));
-        assert!(!native_x11_xdotool_pointer_session(
-            Some("x11"),
-            Some("wayland-0")
-        ));
+    fn wayland_prefers_wtype_unless_ydotool_is_forced() {
+        assert!(prefer_wtype_keyboard(false, true, true, true));
+        assert!(!prefer_wtype_keyboard(true, true, true, true));
+        assert!(!prefer_wtype_keyboard(false, false, true, true));
+        assert!(!prefer_wtype_keyboard(false, true, false, true));
+        assert!(!prefer_wtype_keyboard(false, true, true, false));
     }
 
     #[test]
@@ -12316,6 +12286,37 @@ esac
             }),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn failed_absolute_pointer_action_drops_the_device() {
+        use crate::abs_pointer::{tests::RecordedEvents, AbsPointer, PointerButton};
+
+        // Call 1 is the press. The device may now hold the button, so the
+        // next action must build a fresh one instead of reusing it.
+        let pointer = Arc::new(Mutex::new(Some(AbsPointer::with_events(
+            RecordedEvents::failing_on(&[1]),
+            100,
+            100,
+        ))));
+        let result = run_abs_pointer(Arc::clone(&pointer), |pointer| {
+            pointer.click(10, 10, PointerButton::Left, 1)
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(pointer.lock().unwrap().is_none());
+
+        let pointer = Arc::new(Mutex::new(Some(AbsPointer::with_events(
+            RecordedEvents::default(),
+            100,
+            100,
+        ))));
+        let result = run_abs_pointer(Arc::clone(&pointer), |pointer| {
+            pointer.click(10, 10, PointerButton::Left, 1)
+        })
+        .await;
+        assert!(result.is_ok());
+        assert!(pointer.lock().unwrap().is_some());
     }
 
     #[test]
@@ -13041,12 +13042,37 @@ esac
         );
     }
 
-    #[test]
-    fn ambiguous_kde_clipboard_set_never_allows_input_replay() {
-        let error = KdeClipboardPasteError::ambiguous_clipboard_set("timed out".to_string());
+    #[tokio::test]
+    async fn failed_kde_clipboard_write_restores_the_old_contents_and_is_not_replayed() {
+        for restore_works in [true, false] {
+            let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let recorded = std::sync::Arc::clone(&writes);
+            let error = replace_kde_clipboard("secret text", "old contents", move |value| {
+                recorded.lock().unwrap().push(value.clone());
+                async move {
+                    if value == "secret text" || !restore_works {
+                        Err("klipper call timed out".to_string())
+                    } else {
+                        Ok(())
+                    }
+                }
+            })
+            .await
+            .unwrap_err();
 
-        assert!(!error.can_fallback_to_ydotool);
-        assert!(!error.clear_portal_keyboard_session);
+            // The write may have landed although it failed, so the user's
+            // clipboard is put back, and the text is not typed another way.
+            assert_eq!(*writes.lock().unwrap(), ["secret text", "old contents"]);
+            assert!(!error.can_fallback_to_ydotool);
+            assert!(!error.clear_portal_keyboard_session);
+            assert!(error.message.contains("not replayed"), "{}", error.message);
+            assert_eq!(
+                error.message.contains("previous contents were restored"),
+                restore_works,
+                "{}",
+                error.message
+            );
+        }
     }
 
     #[test]
@@ -14007,6 +14033,19 @@ esac
     }
 
     #[test]
+    fn native_x11_pointer_policy_requires_explicit_x11_without_wayland_display() {
+        assert!(native_x11_xdotool_pointer_session(Some("x11"), None));
+        assert!(!native_x11_xdotool_pointer_session(
+            Some("wayland"),
+            Some("wayland-0")
+        ));
+        assert!(!native_x11_xdotool_pointer_session(
+            Some("x11"),
+            Some("wayland-0")
+        ));
+    }
+
+    #[test]
     fn xdotool_pointer_command_is_single_no_sync_move_and_click() {
         assert_eq!(
             xdotool_pointer_click_args(1550, 930, 3, Some("right")),
@@ -14049,6 +14088,32 @@ esac
         for button in ["side", "extra", "forward", "back"] {
             assert_eq!(xdotool_pointer_click_args(10, 20, 1, Some(button)), None);
         }
+    }
+
+    #[tokio::test]
+    async fn pointer_xdotool_spawn_failure_uses_ydotool_fallback() {
+        let result = run_xdotool_pointer_or_fallback(
+            Path::new("/definitely/missing/xdotool"),
+            &[],
+            || async { Ok::<_, String>(Vec::new()) },
+        )
+        .await
+        .expect("spawn failure should use fallback");
+
+        assert_eq!(result.backend, KeyboardCommandBackend::Ydotool);
+    }
+
+    #[tokio::test]
+    async fn pointer_xdotool_nonzero_exit_does_not_use_ydotool_fallback() {
+        let result = run_xdotool_pointer_or_fallback(
+            Path::new("/bin/sh"),
+            &["-c".to_string(), "exit 9".to_string()],
+            || async { Err::<Vec<Output>, _>("fallback called".to_string()) },
+        )
+        .await;
+
+        let error = result.expect_err("launched nonzero xdotool must be terminal");
+        assert!(!error.contains("fallback called"));
     }
 
     #[test]
@@ -14184,29 +14249,11 @@ esac
     }
 
     #[test]
-    fn legacy_ydotool_socket_does_not_suppress_portal_fallback() {
-        let legacy_ydotool_available = ydotool_backend_available_from(true, false);
-        let current_ydotool_available = ydotool_backend_available_from(true, true);
-
-        assert!(should_prefer_portal_backend_by_default(
-            true,
-            legacy_ydotool_available
-        ));
-        assert!(!should_prefer_portal_backend_by_default(
-            true,
-            current_ydotool_available
-        ));
-        assert!(!should_prefer_portal_backend_by_default(
-            false,
-            legacy_ydotool_available
-        ));
-    }
-
-    #[test]
     fn key_chord_splits_modifiers_and_key() {
         assert_eq!(key_chord("Ctrl+Shift+P"), Some((vec![29, 42], 25)));
         assert_eq!(key_chord("Ctrl+S"), Some((vec![29], 31)));
         assert_eq!(key_chord("Enter"), Some((vec![], 28)));
+        // A bare modifier is a chord with no held modifiers.
         assert_eq!(key_chord("Super"), Some((vec![], 125)));
         assert_eq!(key_chord("NotAKey"), None);
     }
@@ -14360,7 +14407,17 @@ esac
     }
 
     #[test]
+    fn xdotool_delay_prefers_codex_env_and_accepts_standalone_alias() {
+        assert_eq!(xdotool_type_delay_ms_value(Some("7"), Some("9")), 7);
+        assert_eq!(xdotool_type_delay_ms_value(None, Some("9")), 9);
+        assert_eq!(xdotool_type_delay_ms_value(Some("bad"), Some("9")), 12);
+        assert_eq!(xdotool_type_delay_ms_value(None, None), 12);
+    }
+
+    #[test]
     fn xdotool_type_keeps_a_per_character_delay_so_xtest_events_stay_ordered() {
+        // Issue #147: `--delay 0` delivers characters out of order on some X
+        // servers. The default must stay non-zero.
         const { assert!(XDOTOOL_TYPE_DELAY_MS > 0) };
         let text = "x".repeat(10_000);
         let args = xdotool_type_args_with_delay(&text, XDOTOOL_TYPE_DELAY_MS);
@@ -14396,53 +14453,83 @@ esac
         );
     }
 
-    #[test]
-    fn xdotool_delay_prefers_codex_env_and_accepts_standalone_alias() {
-        assert_eq!(xdotool_type_delay_ms_value(Some("7"), Some("9")), 7);
-        assert_eq!(xdotool_type_delay_ms_value(None, Some("9")), 9);
-        assert_eq!(xdotool_type_delay_ms_value(Some("bad"), Some("9")), 12);
-        assert_eq!(xdotool_type_delay_ms_value(None, None), 12);
+    #[tokio::test]
+    async fn launched_xdotool_failure_does_not_replay_through_ydotool() {
+        let dir = std::env::temp_dir().join(format!(
+            "computer-use-linux-xdotool-fallback-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        std::fs::create_dir_all(&dir).expect("create command test directory");
+        let ydotool = dir.join("ydotool");
+        let xdotool_marker = dir.join("xdotool-ran");
+        let ydotool_marker = dir.join("ydotool-ran");
+        std::fs::write(
+            &ydotool,
+            format!("#!/bin/sh\ntouch '{}'\n", ydotool_marker.display()),
+        )
+        .expect("write fake ydotool");
+        std::fs::set_permissions(&ydotool, std::fs::Permissions::from_mode(0o700))
+            .expect("make fake ydotool executable");
+        let xdotool_args = vec![
+            "-c".to_string(),
+            format!("touch '{}'; exit 9", xdotool_marker.display()),
+        ];
+
+        let result = run_xdotool_or_fallback(Path::new("/bin/sh"), &xdotool_args, || async {
+            TokioCommand::new(&ydotool)
+                .output()
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert!(xdotool_marker.exists(), "fake xdotool did not execute");
+        assert!(
+            !ydotool_marker.exists(),
+            "ydotool replayed input after xdotool started"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn wayland_prefers_wtype_unless_ydotool_is_forced() {
-        assert!(prefer_wtype_keyboard(false, false, false, true, true, true));
-        assert!(!prefer_wtype_keyboard(true, false, false, true, true, true));
-        assert!(!prefer_wtype_keyboard(false, true, false, true, true, true));
-        assert!(!prefer_wtype_keyboard(false, false, true, true, true, true));
-        assert!(!prefer_wtype_keyboard(
-            false, false, false, false, true, true
-        ));
-        assert!(!prefer_wtype_keyboard(
-            false, false, false, true, false, true
-        ));
-        assert!(!prefer_wtype_keyboard(
-            false, false, false, true, true, false
-        ));
+    #[tokio::test]
+    async fn unavailable_xdotool_uses_ydotool_fallback() {
+        let result = run_xdotool_or_fallback(
+            Path::new("/definitely/missing/xdotool"),
+            &xdotool_type_args_with_delay("text", XDOTOOL_TYPE_DELAY_MS),
+            || async {
+                TokioCommand::new("sh")
+                    .args(["-c", "exit 0"])
+                    .output()
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+        )
+        .await
+        .expect("spawn failure should use fallback");
+
+        assert_eq!(result.backend, KeyboardCommandBackend::Ydotool);
+        assert!(result.output.status.success());
     }
 
     #[tokio::test]
     async fn wtype_passes_long_unicode_as_one_literal_argument() {
         let dir = std::env::temp_dir().join(format!(
-            "codex-computer-use-linux-wtype-unicode-{}-{:?}",
+            "computer-use-linux-wtype-unicode-{}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
         ));
         std::fs::create_dir_all(&dir).expect("create command test directory");
         let wtype = dir.join("wtype");
-        let wtype_source = dir.join("wtype.source");
         let captured = dir.join("captured");
-        std::fs::write(
-            &wtype_source,
-            format!(
+        publish_fake_executable(
+            &wtype,
+            &format!(
                 "#!/bin/sh\n[ \"$#\" -eq 2 ] && [ \"$1\" = -- ] || exit 42\nprintf '%s' \"$2\" > '{}'\n",
                 captured.display()
             ),
-        )
-        .expect("write fake wtype");
-        std::fs::set_permissions(&wtype_source, std::fs::Permissions::from_mode(0o700))
-            .expect("make fake wtype executable");
-        std::fs::rename(&wtype_source, &wtype).expect("publish fake wtype atomically");
+        );
         let text =
             "--Türkçe PostgreSQL (W, g, m, v, f, ş, ü) / 0123456789 - ; 'İstanbul'\n".repeat(50);
 
@@ -14836,10 +14923,34 @@ esac
         assert!(validate_wtype_text("").is_ok());
     }
 
+    /// Write an executable script to `path` through a sibling file and a
+    /// rename, so no writable descriptor to `path` exists when it runs. A
+    /// child forked by another test thread while the script was open for
+    /// writing would otherwise make its exec fail with ETXTBSY.
+    fn publish_fake_executable(path: &Path, script: &str) {
+        let source = path.with_extension("source");
+        std::fs::write(&source, script).expect("write fake executable");
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o700))
+            .expect("make fake executable runnable");
+        std::fs::rename(&source, path).expect("publish fake executable");
+    }
+
+    async fn fallback_ran_instead_of_wtype(wtype: &Path) -> KeyboardCommandBackend {
+        run_wtype_type_text_or_fallback(wtype, "text", WtypeTextMode::Argument, false, || async {
+            TokioCommand::new("true")
+                .output()
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .expect("a wtype that cannot start should use the fallback")
+        .backend
+    }
+
     #[tokio::test]
     async fn non_executable_wtype_uses_ydotool_fallback() {
         let dir = std::env::temp_dir().join(format!(
-            "codex-computer-use-linux-wtype-nonexec-{}-{:?}",
+            "computer-use-linux-wtype-nonexec-{}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
         ));
@@ -14847,72 +14958,66 @@ esac
         let wtype = dir.join("wtype");
         std::fs::write(&wtype, "#!/bin/sh\nexit 0\n").expect("write fake wtype");
 
-        let result = run_wtype_type_text_or_fallback(
-            &wtype,
-            "text",
-            WtypeTextMode::Argument,
-            false,
-            || async {
-                TokioCommand::new("true")
-                    .output()
-                    .await
-                    .map_err(|error| error.to_string())
-            },
-        )
-        .await
-        .expect("non-executable wtype should use fallback");
-
-        assert_eq!(result.backend, KeyboardCommandBackend::Ydotool);
+        assert_eq!(
+            fallback_ran_instead_of_wtype(&wtype).await,
+            KeyboardCommandBackend::Ydotool
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
     async fn missing_wtype_interpreter_uses_ydotool_fallback() {
         let dir = std::env::temp_dir().join(format!(
-            "codex-computer-use-linux-wtype-interpreter-{}-{:?}",
+            "computer-use-linux-wtype-interpreter-{}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
         ));
         std::fs::create_dir_all(&dir).expect("create command test directory");
         let wtype = dir.join("wtype");
-        std::fs::write(&wtype, "#!/definitely/missing/interpreter\n").expect("write fake wtype");
+        publish_fake_executable(&wtype, "#!/definitely/missing/interpreter\n");
+
+        assert_eq!(
+            fallback_ran_instead_of_wtype(&wtype).await,
+            KeyboardCommandBackend::Ydotool
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_program_on_path_counts_only_when_it_is_executable() {
+        // No `:` in the name, so the directory can sit in a PATH value.
+        let dir = std::env::temp_dir().join(format!(
+            "computer-use-linux-wtype-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create command test directory");
+        let wtype = dir.join("wtype");
+        std::fs::write(&wtype, "#!/bin/sh\nexit 0\n").expect("write fake wtype");
+        let path = std::env::join_paths([std::path::Path::new("/nonexistent"), dir.as_path()])
+            .expect("join PATH");
+        assert!(!executable_in(&path, "wtype"));
         std::fs::set_permissions(&wtype, std::fs::Permissions::from_mode(0o700))
             .expect("make fake wtype executable");
-
-        let result = run_wtype_type_text_or_fallback(
-            &wtype,
-            "text",
-            WtypeTextMode::Argument,
-            false,
-            || async {
-                TokioCommand::new("true")
-                    .output()
-                    .await
-                    .map_err(|error| error.to_string())
-            },
-        )
-        .await
-        .expect("missing interpreter should use fallback");
-
-        assert_eq!(result.backend, KeyboardCommandBackend::Ydotool);
+        assert!(executable_in(&path, "wtype"));
+        assert!(!executable_in(&path, "xdotool"));
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
     async fn launched_wtype_failure_does_not_replay_through_ydotool() {
         let dir = std::env::temp_dir().join(format!(
-            "codex-computer-use-linux-wtype-fallback-{}-{:?}",
+            "computer-use-linux-wtype-fallback-{}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
         ));
         std::fs::create_dir_all(&dir).expect("create command test directory");
         let wtype = dir.join("wtype");
-        let wtype_source = dir.join("wtype.source");
         let fallback_marker = dir.join("ydotool-ran");
-        std::fs::write(&wtype_source, "#!/bin/sh\nexit 9\n").expect("write fake wtype");
-        std::fs::set_permissions(&wtype_source, std::fs::Permissions::from_mode(0o700))
-            .expect("make fake wtype executable");
-        std::fs::rename(&wtype_source, &wtype).expect("publish fake wtype atomically");
+        publish_fake_executable(&wtype, "#!/bin/sh\nexit 9\n");
 
         let result = run_wtype_type_text_or_fallback(
             &wtype,
@@ -14938,92 +15043,6 @@ esac
     }
 
     #[tokio::test]
-    async fn launched_xdotool_failure_does_not_replay_through_ydotool() {
-        let dir = std::env::temp_dir().join(format!(
-            "codex-xdotool-fallback-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-        ));
-        std::fs::create_dir_all(&dir).expect("create command test directory");
-        let ydotool = dir.join("ydotool");
-        let xdotool_marker = dir.join("xdotool-ran");
-        let ydotool_marker = dir.join("ydotool-ran");
-        std::fs::write(
-            &ydotool,
-            format!("#!/bin/sh\ntouch '{}'\n", ydotool_marker.display()),
-        )
-        .expect("write fake ydotool");
-        std::fs::set_permissions(&ydotool, std::fs::Permissions::from_mode(0o700))
-            .expect("make fake ydotool executable");
-        let xdotool_args = vec![
-            "-c".to_string(),
-            format!("touch '{}'; exit 9", xdotool_marker.display()),
-        ];
-
-        let result = run_xdotool_or_fallback(Path::new("/bin/sh"), &xdotool_args, || async {
-            TokioCommand::new(&ydotool)
-                .output()
-                .await
-                .map_err(|error| error.to_string())
-        })
-        .await;
-
-        assert!(result.is_err());
-        assert!(xdotool_marker.exists(), "fake xdotool did not execute");
-        assert!(
-            !ydotool_marker.exists(),
-            "ydotool replayed input after xdotool started"
-        );
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[tokio::test]
-    async fn unavailable_xdotool_uses_ydotool_fallback() {
-        let result = run_xdotool_or_fallback(
-            Path::new("/definitely/missing/xdotool"),
-            &xdotool_type_args_with_delay("text", XDOTOOL_TYPE_DELAY_MS),
-            || async {
-                TokioCommand::new("sh")
-                    .args(["-c", "exit 0"])
-                    .output()
-                    .await
-                    .map_err(|error| error.to_string())
-            },
-        )
-        .await
-        .expect("spawn failure should use fallback");
-
-        assert_eq!(result.backend, KeyboardCommandBackend::Ydotool);
-        assert!(result.output.status.success());
-    }
-
-    #[tokio::test]
-    async fn pointer_xdotool_spawn_failure_uses_ydotool_fallback() {
-        let result = run_xdotool_pointer_or_fallback(
-            Path::new("/definitely/missing/xdotool"),
-            &[],
-            || async { Ok::<_, String>(Vec::new()) },
-        )
-        .await
-        .expect("spawn failure should use fallback");
-
-        assert_eq!(result.backend, KeyboardCommandBackend::Ydotool);
-    }
-
-    #[tokio::test]
-    async fn pointer_xdotool_nonzero_exit_does_not_use_ydotool_fallback() {
-        let result = run_xdotool_pointer_or_fallback(
-            Path::new("/bin/sh"),
-            &["-c".to_string(), "exit 9".to_string()],
-            || async { Err::<Vec<Output>, _>("fallback called".to_string()) },
-        )
-        .await;
-
-        let error = result.expect_err("launched nonzero xdotool must be terminal");
-        assert!(!error.contains("fallback called"));
-    }
-
-    #[tokio::test]
     async fn cancelling_xdotool_wait_kills_the_child() {
         let dir = std::env::temp_dir().join(format!(
             "computer-use-linux-xdotool-cancel-{}-{:?}",
@@ -15046,7 +15065,7 @@ esac
 
         let task = tokio::spawn(async move { run_xdotool(&xdotool, &[]).await });
         let mut pid = None;
-        for _ in 0..50 {
+        for _ in 0..200 {
             if let Ok(value) = std::fs::read_to_string(&pid_path) {
                 pid = value.parse::<u32>().ok();
                 if pid.is_some() {
@@ -15133,6 +15152,7 @@ esac
             .await
         });
 
+        // Cancel the caller after the paste, before the clipboard restore.
         pasted_rx.await.expect("paste did not finish");
         waiter.abort();
         let _ = waiter.await;
@@ -15151,6 +15171,8 @@ esac
         assert!(clipboard_lock.try_lock().is_ok());
     }
 
+    /// The xdotool path must accept exactly the keys the evdev grammar accepts,
+    /// so switching backends can never silently widen or narrow the surface.
     #[test]
     fn xdotool_key_spec_rejects_everything_key_chord_rejects() {
         for key in ["NotAKey", "", "ctrl+", "ctrl+NotAKey", "f13", "hyper+a"] {
@@ -18425,6 +18447,7 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
         assert_eq!(structured["ok"], true);
         assert!(structured.get("screenshot").is_some());
         let message = structured["message"].as_str().unwrap();
+        // The layout warning survives the post-action capture.
         for expected in [
             "WARNING: X11 keyboard layout",
             "br/ABNT2",

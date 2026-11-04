@@ -8,6 +8,7 @@
 //! to run at all unless `NIRI_SOCKET` is set in its environment.
 
 use crate::command_runner;
+use crate::remote_desktop::LogicalMonitor;
 use crate::terminal::enrich_terminal_windows;
 use crate::windowing::registry::BackendProbe;
 use crate::windowing::types::{WindowBounds, WindowInfo};
@@ -216,6 +217,43 @@ fn output_layout() -> Option<NiriOutputLayout> {
             .map(|reply| parse_workspace_outputs(&reply.value))
             .unwrap_or_default(),
     })
+}
+
+/// The logical monitor layout niri reports, for mapping portal pointer
+/// coordinates. `None` when niri cannot be reached or reports an output with
+/// an unusable size or scale.
+pub(crate) async fn monitor_layout() -> Option<Vec<LogicalMonitor>> {
+    tokio::task::spawn_blocking(|| {
+        let outputs = request_value(OUTPUTS_REQUEST, OUTPUTS_CLI, "Outputs").ok()?;
+        parse_monitor_layout(&outputs.value)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Disabled outputs carry no logical geometry and are skipped. One enabled
+/// output with a zero size or a bad scale makes the whole layout unusable.
+fn parse_monitor_layout(outputs: &Value) -> Option<Vec<LogicalMonitor>> {
+    let outputs = BTreeMap::<String, NiriMonitorOutput>::deserialize(outputs).ok()?;
+    let layout = outputs
+        .into_values()
+        .filter_map(|output| output.logical)
+        .map(|monitor| {
+            (monitor.scale.is_finite()
+                && monitor.scale > 0.0
+                && monitor.width > 0
+                && monitor.height > 0)
+                .then_some(LogicalMonitor {
+                    x: monitor.x,
+                    y: monitor.y,
+                    width: monitor.width,
+                    height: monitor.height,
+                    scale: monitor.scale,
+                })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!layout.is_empty()).then_some(layout)
 }
 
 fn parse_output_geometries(outputs: &Value) -> BTreeMap<String, NiriOutputGeometry> {
@@ -491,6 +529,20 @@ struct NiriOutput {
 struct NiriOutputLogical {
     x: i32,
     y: i32,
+    scale: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct NiriMonitorOutput {
+    logical: Option<NiriMonitorLogical>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NiriMonitorLogical {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
     scale: f64,
 }
 
@@ -1060,6 +1112,54 @@ mod tests {
             r#"{"Ok":{},"Err":"failure"}"#,
         ] {
             assert!(parse_reply(response, "Windows").is_err(), "{response}");
+        }
+    }
+
+    #[test]
+    fn parses_the_logical_monitor_layout_for_portal_pointer_mapping() {
+        let outputs: Value = serde_json::from_str(
+            r#"{
+                "eDP-1":{"logical":{"x":0,"y":0,"width":1920,"height":1080,"scale":2.0,"transform":"Normal"}},
+                "DP-1":{"logical":{"x":1920,"y":0,"width":2560,"height":1440,"scale":1.0,"transform":"Normal"}},
+                "HDMI-A-1":{"logical":null}
+            }"#,
+        )
+        .unwrap();
+
+        let layout = parse_monitor_layout(&outputs).expect("niri layout should parse");
+
+        let mut monitors = layout
+            .iter()
+            .map(|monitor| {
+                (
+                    monitor.x,
+                    monitor.y,
+                    monitor.width,
+                    monitor.height,
+                    monitor.scale,
+                )
+            })
+            .collect::<Vec<_>>();
+        monitors.sort_by_key(|monitor| monitor.0);
+        assert_eq!(
+            monitors,
+            [(0, 0, 1920, 1080, 2.0), (1920, 0, 2560, 1440, 1.0)]
+        );
+    }
+
+    #[test]
+    fn rejects_a_monitor_layout_with_an_unusable_output() {
+        for outputs in [
+            r#"{
+                "eDP-1":{"logical":{"x":0,"y":0,"width":1920,"height":1080,"scale":1.0}},
+                "DP-1":{"logical":{"x":1920,"y":0,"width":1920,"height":1080,"scale":0.0}}
+            }"#,
+            r#"{"eDP-1":{"logical":{"x":0,"y":0,"width":0,"height":1080,"scale":1.0}}}"#,
+            r#"{"eDP-1":{"logical":null}}"#,
+            r#"{}"#,
+        ] {
+            let outputs: Value = serde_json::from_str(outputs).unwrap();
+            assert!(parse_monitor_layout(&outputs).is_none(), "{outputs}");
         }
     }
 }
