@@ -6,6 +6,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
+const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 
 const {
   loadLinuxFeaturePatchDescriptors,
@@ -268,4 +272,28 @@ test("signed official webview has exactly one patchable composer status owner", 
   assert.notEqual(patched, matches[0]);
   assert.match(patched, GET_PATTERN);
   assert.equal(applyPersistentStatusPanelPatch(patched), patched);
+});
+
+
+test("status preference survives fresh native renderer instances and closes cleanly", () => {
+  const storage=new Map(),changes=[];
+  const localStorage={getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
+  function render(storageApi) {
+    const source=applyPersistentStatusPanelPatch(liftedStatusStateComposerSource);
+    const open=source.indexOf("){",source.indexOf("__webpack_modules__"))+1;
+    const body=source.slice(open+1,findMatchingBrace(source,open));
+    const react={useState:init=>[typeof init==="function"?init():init,value=>changes.push(value)]};
+    return vm.runInNewContext(body+";nW",{n:()=>react,localStorage:storageApi,iW:{c:()=>Array(9).fill(Symbol("empty"))},u:{_U:()=>false},uA:{t:"status"},s5:"thread",o:{formatMessage:()=>"status",jsx:(_,props)=>props},Menu:{},StatusPanel:{}})();
+  }
+  let props=render(localStorage);assert.equal(props.open,false);props.setIsStatusMenuOpen(true);assert.equal(storage.get(STORAGE_KEY),"1");
+  props=render(localStorage);assert.equal(props.open,true);props.content.onClose();assert.equal(storage.has(STORAGE_KEY),false);assert.equal(render(localStorage).open,false);assert.deepEqual(changes,[true,false]);
+  const throwing=new Proxy({}, {get(){throw Error("storage unavailable")}});const unavailable=render(throwing);assert.equal(unavailable.open,false);assert.doesNotThrow(()=>unavailable.setIsStatusMenuOpen(true));assert.equal(changes.at(-1),true);
+});
+
+test("current signed status owner runs the indexed production descriptor twice", {skip:!process.env.CODEX_SIGNED_EXTRACTED_APP}, t=>{
+  const original=process.env.CODEX_SIGNED_EXTRACTED_APP,[descriptor]=descriptors;
+  const owners=findWebviewAssetsContaining(original,descriptor.assetNeedles).filter(name=>descriptor.assetMatch(fs.readFileSync(path.join(original,"webview/assets",name),"utf8")));assert.equal(owners.length,1);
+  const source=fs.readFileSync(path.join(original,"webview/assets",owners[0]),"utf8"),dir=fs.mkdtempSync(path.join(os.tmpdir(),"status-rebase-signed-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const file=path.join(dir,"webview/assets",owners[0]);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,source);
+  for(const expected of ["applied","already-applied"]){const report=createPatchReport();applyWebviewAssetPatchDescriptors(dir,descriptors,{},report);assert.equal(report.patches[0].status,expected);}
+  assert.equal(fs.readFileSync(path.join(original,"webview/assets",owners[0]),"utf8"),source);
 });
