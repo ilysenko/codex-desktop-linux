@@ -15,7 +15,6 @@ const LOCAL_COMPOSER_RESOLVER_MARKER =
 const EXISTING_CHAT_OPTIMISTIC_MARKER =
   "codex-linux-model-picker-default-presets-existing-chat-optimistic-selection";
 const EXISTING_CHAT_PRESET_IDS_KEY = "codexLinuxExistingChatDefaultPresetIds";
-const JS_ASSET_PATTERN = /\.js$/;
 const IDENT = "[A-Za-z_$][\\w$]*";
 const EFFORT_TO_THINKING_EFFORT = Object.freeze({
   none: "zero",
@@ -180,6 +179,31 @@ function functionSections(source) {
   return sections;
 }
 
+// rspack chunks register `__webpack_modules__={id(e,t,n){...},...}`; minified
+// helper names repeat across module factories, so related functions are looked
+// up only inside the factory that owns a matched section.
+function enclosingModuleFactory(source, index) {
+  const registry = "__webpack_modules__={";
+  const registryStart = source.indexOf(registry);
+  if (registryStart < 0 || source.indexOf(registry, registryStart + 1) >= 0) return null;
+  const entry = /(?:"[^"\\]*"|[\w$]+)\([^()]*\)\{/y;
+  let cursor = registryStart + registry.length;
+  while (cursor < source.length && source[cursor] !== "}") {
+    entry.lastIndex = cursor;
+    const match = entry.exec(source);
+    if (match == null) return null;
+    const open = cursor + match[0].length - 1;
+    const close = findMatchingBrace(source, open);
+    if (close < 0) return null;
+    if (index > open && index < close) {
+      return { end: close + 1, source: source.slice(cursor, close + 1), start: cursor };
+    }
+    cursor = close + 1;
+    if (source[cursor] === ",") cursor += 1;
+  }
+  return null;
+}
+
 function uniqueFunctionWithMarkers(source, markers) {
   const matches = functionSections(source).filter((section) =>
     markers.every((marker) => section.source.includes(marker)),
@@ -207,37 +231,20 @@ const CATALOG_OPTION_LIST_MARKERS = Object.freeze([
 ]);
 const CATALOG_SELECTION_MARKERS = Object.freeze([
   "defaultThinkingEffortByModelSlug",
-  "thinkingEffort!=null",
+  ".thinkingEffort??null)===",
 ]);
 
-// The selection resolver either builds the flattened option list inline, or
-// (since 26.1027.51404) calls a one-line helper that returns it. The patch
-// target is the function that owns that option array.
+// The selection resolver builds the flattened catalog option list inline; the
+// patch target is the function that owns that option array.
 function catalogSelectionResolverSection(source) {
   const inline = uniqueFunctionWithMarkers(source, [
     ...CATALOG_OPTION_LIST_MARKERS,
     ...CATALOG_SELECTION_MARKERS,
   ]);
   const optionList = uniqueFunctionWithMarkers(source, CATALOG_OPTION_LIST_MARKERS);
-  if (inline != null) {
-    return optionList != null && optionList.start === inline.start ? inline : null;
-  }
-  const name = optionList == null
-    ? null
-    : /^function ([A-Za-z_$][\w$]*)\(/u.exec(optionList.source)?.[1];
-  if (name == null) {
-    return null;
-  }
-  // The helper is shared code: patch it only while the selection resolver is
-  // its sole user (one definition plus one reference). An export alias such
-  // as "X as qDt" names another binding; exporting the helper itself counts.
-  const references = source.match(
-    new RegExp(`(?<![\\w$.])(?<!\\bas )${escapeRegExp(name)}(?![\\w$])`, "gu"),
-  )?.length ?? 0;
-  const caller = uniqueFunctionWithMarkers(source, [...CATALOG_SELECTION_MARKERS, `=${name}(`]);
-  return references !== 2 || caller == null || caller.start === optionList.start
-    ? null
-    : optionList;
+  return inline != null && optionList != null && optionList.start === inline.start
+    ? inline
+    : null;
 }
 
 // The flattened option array starts with the catalog's public options and
@@ -474,84 +481,61 @@ function sliderResolverSection(source) {
   ]);
 }
 
-function powerSelectionResolverSection(source) {
+// The merged picker builds its Default option from the catalog slider settings
+// alone whenever the catalog provides any; version options keep their own
+// model list. The configured presets replace the catalog slider settings, so
+// this owner must keep using them exclusively for Default.
+function defaultOptionBuilderSection(source) {
   return uniqueFunctionWithMarkers(source, [
-    ".sliderSettings?.filter(",
-    "isTppConversation:",
-    "selectionMode:",
-    "powerSettings:",
+    "includeSyntheticDefault:",
+    "paidModelFallbackEnabled:",
+    ".sliderSettings?.length?",
+    "defaultOption:",
   ]);
 }
 
-function firstFunctionParameter(section) {
-  return /^function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)[,)]/u.exec(
-    section?.source ?? "",
-  )?.[1] ?? null;
-}
-
-function upstreamDefaultSliderCondition(section) {
-  const signature = new RegExp(
-    `^function ${IDENT}\\((${IDENT}),(${IDENT}),${IDENT},\\{`,
-    "u",
-  ).exec(section?.source ?? "");
-  if (signature == null) return null;
-  const aliases = [
-    ["isTppConversation", "!1"],
-    ["useMergedPicker", "!1"],
-    ["selectionMode", "(?:\\x60default\\x60|'default'|\"default\")"],
-  ].map(([property, fallback]) => [
-    ...section.source.matchAll(
-      new RegExp(`${property}:(${IDENT})=${fallback}`, "gu"),
+function upstreamDefaultSelectionContract(source) {
+  const section = defaultOptionBuilderSection(source);
+  const catalogParameter = new RegExp(`^function ${IDENT}\\((${IDENT}),\\{`, "u")
+    .exec(section?.source ?? "")?.[1];
+  if (catalogParameter == null) return "drifted";
+  const catalog = escapeRegExp(catalogParameter);
+  const sliderSettings = uniqueMatch(
+    section.source,
+    new RegExp(
+      `(${IDENT})=${catalog}\\?\\.sliderSettings\\?\\.length\\?${catalog}\\.sliderSettings:${IDENT}\\(`,
+      "gu",
     ),
-  ]);
-  if (aliases.some((matches) => matches.length !== 1)) return null;
-  const [tppMode, mergedPicker, selectionMode] = aliases.map(
-    (matches) => matches[0][1],
+  )?.[1];
+  if (sliderSettings == null) return "drifted";
+  const defaultOption = uniqueMatch(
+    section.source,
+    new RegExp(
+      `defaultOption:${IDENT}\\|\\|${IDENT}\\?\\{\\.\\.\\.(${IDENT})\\(${catalog},${IDENT},` +
+        `${escapeRegExp(sliderSettings)}\\),isDefault:!0\\}:void 0`,
+      "gu",
+    ),
   );
-  const explicitPattern = new RegExp(
-    `\\(!\\(${tppMode}\\|\\|${mergedPicker}\\)\\|\\|${selectionMode}===([\\x60'"])model\\1\\)` +
-      `&&${signature[2]}!=null\\?${signature[2]}:`,
-    "gu",
+  if (defaultOption == null) return "drifted";
+  // The option builder lives in the same rspack module factory and must expose
+  // its third argument as the power settings.
+  const moduleFactory = enclosingModuleFactory(source, section.start);
+  const builders = functionSections(moduleFactory?.source ?? "").filter((candidate) =>
+    candidate.source.startsWith(`function ${defaultOption[1]}(`)
   );
-  const explicitMatches = [...section.source.matchAll(explicitPattern)];
-  if (explicitMatches.length !== 1) return null;
-  return {
-    catalogParameter: signature[1],
-    explicitMatch: explicitMatches[0][0],
-    mergedPicker,
-    optionsParameter: signature[2],
-    selectionMode,
-    tppMode,
-  };
-}
-
-function upstreamSliderFilterCondition(section, defaultCondition) {
-  if (section == null || defaultCondition == null) return null;
-  const { catalogParameter, mergedPicker, selectionMode, tppMode } = defaultCondition;
-  const filterPattern = new RegExp(
-    `(${IDENT})=${catalogParameter}\\?\\.sliderSettings\\?\\.filter\\(\\(\\{modelSlug:${IDENT}\\}\\)=>` +
-      `\\(${tppMode}\\|\\|${mergedPicker}\\)&&${selectionMode}===([\\x60'"])default\\2\\|\\|`,
-    "gu",
-  );
-  const filterMatches = [...section.source.matchAll(filterPattern)];
-  if (filterMatches.length !== 1) return null;
-  const sliderSettings = filterMatches[0][1];
-  const defaultPattern = new RegExp(
-    `\\(\\(${tppMode}\\|\\|${mergedPicker}\\)&&${selectionMode}===([\\x60'"])default\\1&&` +
-      `${sliderSettings}\\.length>0\\?${sliderSettings}:`,
-    "gu",
-  );
-  const defaultMatches = [...section.source.matchAll(defaultPattern)];
-  return defaultMatches.length === 1
-    ? { defaultMatch: defaultMatches[0][0], filterMatch: filterMatches[0][0], sliderSettings }
-    : null;
+  if (builders.length !== 1) return "drifted";
+  const builder = new RegExp(
+    `^function ${escapeRegExp(defaultOption[1])}\\(${IDENT},${IDENT},(${IDENT})\\)\\{`,
+    "u",
+  ).exec(builders[0].source);
+  return builder != null && builders[0].source.endsWith(`powerSettings:${builder[1]}}}`)
+    ? "current"
+    : "drifted";
 }
 
 function upstreamDefaultSelectionAssetMatch(source, _assetName, context = {}) {
-  if (normalizePresets(context).length === 0) return false;
-  const section = powerSelectionResolverSection(source);
-  const condition = upstreamDefaultSliderCondition(section);
-  return upstreamSliderFilterCondition(section, condition) != null;
+  return normalizePresets(context).length > 0 &&
+    upstreamDefaultSelectionContract(source) === "current";
 }
 
 function upstreamResetEffectSection(source) {
@@ -615,7 +599,7 @@ function upstreamResetEffectContract(source) {
   const resolution = uniqueMatch(
     section.source,
     new RegExp(
-      `(${IDENT})=${IDENT}\\(\\{[^{}]{0,1200}?canInitializePowerPicker:(${IDENT}),` +
+      `(${IDENT})=(?:${IDENT}|\\(0,${IDENT}\\.${IDENT}\\))\\(\\{[^{}]{0,1200}?canInitializePowerPicker:(${IDENT}),` +
         `[^{}]{0,1200}?fallbackPowerSelection:${fallback},` +
         `[^{}]{0,1200}?menuView:(${IDENT}),` +
         `[^{}]{0,1200}?selectedPowerSelection:${selected},` +
@@ -641,7 +625,7 @@ function upstreamResetEffectContract(source) {
   const resetScope = uniqueMatch(
     section.source,
     new RegExp(
-      `(${IDENT})=${selectedId}==null\\?null:\\x60\\$\\{${resetContext}\\}:` +
+      `(${IDENT})=null==${selectedId}\\?null:\\x60\\$\\{${resetContext}\\}:` +
         `\\$\\{${selectedId}\\}\\x60`,
       "gu",
     ),
@@ -671,10 +655,11 @@ function upstreamResetEffectContract(source) {
   const effect = uniqueMatch(
     section.source,
     new RegExp(
-      `(${IDENT})=\\(\\)=>\\{${loading}\\|\\|\\((${IDENT})\\?` +
-        `${selectedId}!=null&&${resetScope}!=null&&` +
+      `(${IDENT})=\\(\\)=>\\{if\\(!${loading}\\)\\{if\\(!(${IDENT})\\)\\{` +
+        `${resetRef}\\.current=null;return\\}` +
+        `null!=${selectedId}&&null!=${resetScope}&&` +
         `${resetRef}\\.current!==${resetScope}&&\\(${resetRef}\\.current=${resetScope},` +
-        `${resetEvent}\\(${selectedId}\\)\\):${resetRef}\\.current=null\\)\\}`,
+        `${resetEvent}\\(${selectedId}\\)\\)\\}\\}`,
       "gu",
     ),
   );
@@ -683,7 +668,7 @@ function upstreamResetEffectContract(source) {
   const pickerReady = uniqueMatch(
     section.source,
     new RegExp(
-      `(${IDENT})=!${showXHigh}&&${canInitialize}&&${menuView}===([\\x60'"])simple\\2(?=,|;)`,
+      `(${IDENT})=!${showXHigh}&&${canInitialize}&&([\\x60'"])simple\\2===${menuView}(?=,|;)`,
       "gu",
     ),
   );
@@ -716,7 +701,7 @@ function upstreamResetEffectContract(source) {
     ),
   ].map((match) => match.index);
   const effectPredicateIndex =
-    effect.index + effect[0].indexOf(`||(${active}?`) + "||(".length;
+    effect.index + effect[0].indexOf(`{if(!${active})`) + "{if(!".length;
   const dependencyIndex =
     dependencies.index + dependencies[0].indexOf(`,${active},`) + 1;
   const allowedActiveOccurrences = new Set([
@@ -948,11 +933,14 @@ function localComposerRuntime(config) {
 }
 
 const LOCAL_COMPOSER_FALLBACK_PATTERN =
-  /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)==null\?void 0:`\$\{\4\.model\}:\$\{\4\.defaultReasoningEffort\}`\)/gu;
+  /([A-Za-z_$][\w$]*)=(\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(([A-Za-z_$][\w$]*),null==([A-Za-z_$][\w$]*)\?void 0:`\$\{\4\.model\}:\$\{\4\.defaultReasoningEffort\}`\)/gu;
+// The composer picks the slider config from one of two ChatGPT-gated sources.
+const LOCAL_COMPOSER_CONFIG_PATTERN =
+  /sliderModelsConfig:([A-Za-z_$][\w$]*\?[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*)(?=[,}])/gu;
 const LOCAL_COMPOSER_SELECTION_PATTERN = new RegExp(
   `async function (?<handler>[A-Za-z_$][\\w$]*)\\((?<model>[A-Za-z_$][\\w$]*),(?<effort>[A-Za-z_$][\\w$]*)\\)\\{` +
     `let (?<normalized>[A-Za-z_$][\\w$]*)=(?<normalizer>[A-Za-z_$][\\w$]*)\\(\\k<model>\\);` +
-    `await\\((?<delegate>[A-Za-z_$][\\w$]*)==null\\?(?<base>[A-Za-z_$][\\w$]*)\\(\\k<normalized>,\\k<effort>\\):` +
+    `await ?\\(null==(?<delegate>[A-Za-z_$][\\w$]*)\\?(?<base>[A-Za-z_$][\\w$]*)\\(\\k<normalized>,\\k<effort>\\):` +
     `\\k<delegate>\\.setModelAndReasoningEffort\\(\\k<normalized>,\\k<effort>\\)\\)\\}`,
   "gu",
 );
@@ -973,7 +961,7 @@ function localComposerConfigContract(source) {
   const section = localComposerSection(source);
   if (markerCount === 0) {
     if (section == null) return "drifted";
-    const configMatches = section.source.match(/sliderModelsConfig:[A-Za-z_$][\w$]*/g) ?? [];
+    const configMatches = section.source.match(LOCAL_COMPOSER_CONFIG_PATTERN) ?? [];
     const fallbackMatches = section.source.match(LOCAL_COMPOSER_FALLBACK_PATTERN) ?? [];
     const selectionMatches = section.source.match(LOCAL_COMPOSER_SELECTION_PATTERN) ?? [];
     return configMatches.length === 1 &&
@@ -1012,7 +1000,7 @@ function modelSettingsOptimisticTarget(section) {
   const pattern = new RegExp(
     `(?<selection>${id})=\\{model:(?<model>${id}),reasoningEffort:(?<effort>${id}),` +
       `serviceTier:(?<serviceTier>[^;}]+)\\};[\\s\\S]{0,400}?` +
-      `(?<store>${id})\\.set\\((?<atom>${id}),(?<target>${id}),\\k<selection>\\),[\\s\\S]{0,800}?` +
+      `(?<store>${id})\\.set\\((?<atom>${id}(?:\\.${id})?),(?<target>${id}),\\k<selection>\\),[\\s\\S]{0,800}?` +
       `\\.finally\\(\\(\\)=>\\{(?<cleanup>\\k<store>\\.get\\(\\k<atom>,\\k<target>\\)===` +
       `\\k<selection>&&\\k<store>\\.set\\(\\k<atom>,\\k<target>,null\\))\\}\\)`,
     "gu",
@@ -1024,7 +1012,7 @@ function modelSettingsOptimisticTarget(section) {
 function chatGptAuthVariable(section) {
   const matches = [
     ...(section?.source ?? "").matchAll(
-      /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod===`chatgpt`/gu,
+      /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod===(["'`])chatgpt\2(?=[,;])/gu,
     ),
   ];
   return matches.length === 1 ? matches[0][1] : null;
@@ -1123,7 +1111,8 @@ function applyLocalComposerConfigPatch(source, context = {}) {
     return source;
   }
   const section = localComposerSection(source);
-  const configMatch = /sliderModelsConfig:([A-Za-z_$][\w$]*)/u.exec(section.source);
+  const configMatches = [...section.source.matchAll(LOCAL_COMPOSER_CONFIG_PATTERN)];
+  const configMatch = configMatches.length === 1 ? configMatches[0] : null;
   const fallbackMatches = [...section.source.matchAll(LOCAL_COMPOSER_FALLBACK_PATTERN)];
   const selectionMatches = [...section.source.matchAll(LOCAL_COMPOSER_SELECTION_PATTERN)];
   const resetContext = localComposerResetContext(section);
@@ -1135,14 +1124,18 @@ function applyLocalComposerConfigPatch(source, context = {}) {
   ) {
     return source;
   }
-  const configVariable = configMatch[1];
+  const configExpression = `(${configMatch[1]})`;
   let patchedSection = section.source.replace(
     configMatch[0],
-    `sliderModelsConfig:${configVariable}==null?${configVariable}:codexLinuxLocalDefaultPresetConfig`,
+    () =>
+      `sliderModelsConfig:${configExpression}==null?${configExpression}:codexLinuxLocalDefaultPresetConfig`,
   );
   patchedSection = patchedSection.replace(
     LOCAL_COMPOSER_FALLBACK_PATTERN,
-    `$1=$2($3,codexLinuxLocalDefaultPresetFallback(${configVariable}!=null,$3,$4==null?void 0:\`${"${$4.model}:${$4.defaultReasoningEffort}"}\`))`,
+    (_match, result, resolver, selections, upstreamDefault) =>
+      `${result}=${resolver}(${selections},codexLinuxLocalDefaultPresetFallback(` +
+      `${configExpression}!=null,${selections},null==${upstreamDefault}?void 0:` +
+      `\`\${${upstreamDefault}.model}:\${${upstreamDefault}.defaultReasoningEffort}\`))`,
   );
   const patchedSource =
     source.slice(0, section.start) +
@@ -1174,7 +1167,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_797,
     ciPolicy: "optional",
-    pattern: JS_ASSET_PATTERN,
+    assetNeedles: ["includeSyntheticDefault:", "paidModelFallbackEnabled:", ".sliderSettings?.length?"],
     enabled: (context = {}) => normalizePresets(context).length > 0,
     assetMatch: upstreamDefaultSelectionAssetMatch,
     missingDescription: "upstream merged model picker Default-selection bundle",
@@ -1186,7 +1179,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_797.5,
     ciPolicy: "optional",
-    pattern: JS_ASSET_PATTERN,
+    assetNeedles: ["resetContextKey:", "selectedPowerSelectionWithXHigh:", "fallbackPowerSelection:", "onReset:"],
     enabled: (context = {}) => normalizePresets(context).length > 0,
     assetMatch: upstreamResetEffectAssetMatch,
     missingDescription: "upstream model picker reset-effect bundle",
@@ -1198,7 +1191,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_798,
     ciPolicy: "optional",
-    pattern: JS_ASSET_PATTERN,
+    assetNeedles: [".slider_settings.flatMap(", "workspaceModelPolicy"],
     assetMatch: catalogAssetMatch,
     missingDescription: "ChatGPT model catalog normalizer bundle",
     skipDescription: "model picker Default catalog patch",
@@ -1213,7 +1206,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_799,
     ciPolicy: "optional",
-    pattern: JS_ASSET_PATTERN,
+    assetNeedles: ["show_xhigh_in_simple_picker", "powerSelectionsWithXHigh"],
     enabled: (context = {}) => normalizePresets(context).length > 0,
     assetMatch: sliderAssetMatch,
     missingDescription: "ChatGPT model picker slider resolver bundle",
@@ -1225,7 +1218,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_800,
     ciPolicy: "optional",
-    pattern: JS_ASSET_PATTERN,
+    assetNeedles: ["removeXHigh:", "sliderModelsConfig:", "stripGptPrefix:"],
     enabled: (context = {}) => normalizePresets(context).length > 0,
     assetMatch: (source) => localComposerResolverContract(source) !== "drifted",
     missingDescription: "local composer slider config resolver bundle",
@@ -1237,9 +1230,12 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_801,
     ciPolicy: "optional",
-    pattern: JS_ASSET_PATTERN,
+    assetNeedles: [
+      "No conversation available for next-turn model update",
+      "setModelAndReasoningEffortForNextTurn:",
+      "hasManagedNewThreadSettings:",
+    ],
     enabled: (context = {}) => normalizePresets(context).length > 0,
-    assetMatch: (source) => existingChatOptimisticContract(source) !== "drifted",
     missingDescription: "existing-chat model settings state bundle",
     skipDescription: "model picker Default existing-chat selection patch",
     apply: applyExistingChatOptimisticPatch,
@@ -1249,7 +1245,12 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_802,
     ciPolicy: "optional",
-    pattern: JS_ASSET_PATTERN,
+    assetNeedles: [
+      "composer.mode.local.model.custom",
+      "sliderModelsConfig:",
+      "setDefaultModelAndReasoningEffort",
+      "modelsForPicker(",
+    ],
     enabled: (context = {}) => normalizePresets(context).length > 0,
     assetMatch: (source) => localComposerConfigContract(source) !== "drifted",
     missingDescription: "local composer model picker bundle",
@@ -1267,7 +1268,6 @@ module.exports = {
   LOCAL_COMPOSER_RESOLVER_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   THINKING_EFFORT_TO_EFFORT,
-  JS_ASSET_PATTERN,
   SLIDER_PATCH_MARKER,
   applyCatalogPatch,
   applyExistingChatOptimisticPatch,
@@ -1286,6 +1286,7 @@ module.exports = {
   sliderAssetMatch,
   sliderPatchContract,
   upstreamDefaultSelectionAssetMatch,
+  upstreamDefaultSelectionContract,
   upstreamResetEffectAssetMatch,
   upstreamResetEffectContract,
 };

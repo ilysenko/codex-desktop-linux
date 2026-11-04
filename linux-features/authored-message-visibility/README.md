@@ -27,4 +27,8 @@ commentary, an intervening tool, a steering message, and the final answer render
 in order after completion. Expand and collapse again: authored messages must not
 duplicate and ordinary tool activity must remain collapsible. Also check a turn
 without tools. Tests exercise the official partition/classifier and feature
-registration, idempotence, unique asset selection, and drift reporting.
+registration, idempotence, content-based chunk selection, and drift reporting.
+The official webview is an rspack build: the partition module is found by its
+content, and every lazily loaded chunk that carries a copy of it is patched.
+Set `CODEX_SIGNED_EXTRACTED_APP` to an extracted signed `app.asar` to also check
+the official chunk.
