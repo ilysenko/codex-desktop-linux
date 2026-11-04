@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.38. On
+  Sway the i3 backend scales window bounds from layout coordinates to capture
+  pixels when every active output has the same scale, with edges rounded
+  outward, and leaves them out with mixed scales; before, a window crop or
+  window-relative click on a scaled output hit the wrong region. Disabled and
+  non-desktop outputs no longer make the Sway output layout unreadable. The
+  backend runs `swaymsg` when `i3-msg` is missing and takes the first live
+  socket of `I3SOCK` and `SWAYSOCK`, then the newest i3 socket, then the
+  newest `sway-ipc.*.sock`, so Sway works without the i3 package. A failed
+  `swaymsg` command reports the error it printed on stdout.
 - Synchronize the embedded Computer Use backend to standalone v0.7.37. The
   i3 backend also serves Sway: it lists and focuses native Wayland windows
   (focus by `con_id`) with pids from the tree, and focuses X11 windows by

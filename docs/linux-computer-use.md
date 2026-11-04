@@ -41,7 +41,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.37. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.38. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -285,19 +285,20 @@ Activation requires a unique app-id/title match. Window IDs include the title,
 fit JavaScript integers, and require a fresh list after title changes. Bounds
 are omitted until output scaling can be verified.
 
-The i3 backend lists and focuses windows through `i3-msg` over the i3 or Sway
-IPC socket. On Sway it covers native Wayland and Xwayland windows, with pids
-from the tree. X11 windows keep their X11 id; a native Wayland window gets 2^32
-plus its Sway container id, so the two never collide. On i3, pids come from the
-optional `xprop`; without it the window reports no pid, and an element action
-on it needs a snapshot taken for that window. A window counts as hidden while
-it sits in the scratchpad. Sway does not ship `i3-msg`, and the backend finds
-the socket through `I3SOCK`, not `SWAYSOCK`, so on Sway it needs the i3
-package; without `i3-msg` or the socket, Sway windows come from
-wlr-foreign-toplevel, with no pids or bounds
-(agent-sh/computer-use-linux#376). Bounds on a Sway output with a scale other
-than 1 are logical, so window crops and window-relative clicks there can be
-off (agent-sh/computer-use-linux#375).
+The i3 backend lists and focuses windows through `i3-msg`, or `swaymsg` when
+i3 is not installed, over the i3 or Sway IPC socket. The socket is the first
+live one of `I3SOCK` and `SWAYSOCK`, then the newest i3 socket, then the newest
+`sway-ipc.*.sock` in `XDG_RUNTIME_DIR`. On Sway it covers native Wayland and
+Xwayland windows, with pids from the tree. Sway reports bounds in layout
+coordinates; when every active output has the same scale they are scaled to
+capture pixels (never below 1, as grim captures) with edges rounded outward,
+and with mixed scales they are left out, so window crops are refused. X11
+windows keep their X11 id; a native Wayland window gets 2^32 plus its Sway
+container id, so the two never collide. On i3, pids come from the optional
+`xprop`; without it the window reports no pid, and an element action on it
+needs a snapshot taken for that window. A window counts as hidden while it
+sits in the scratchpad. Without `i3-msg` or `swaymsg`, or without a reachable
+socket, Sway windows come from wlr-foreign-toplevel, with no pids or bounds.
 
 The Wayland RemoteDesktop portal asks for consent on every new process by
 default. Set `CODEX_COMPUTER_USE_PERSIST_REMOTE_DESKTOP=1` (standalone alias

@@ -21,7 +21,7 @@ desktops, dependencies, permissions, and troubleshooting.
 
 ## Supported operations
 
-The embedded backend tracks standalone computer-use-linux v0.7.37. GNOME
+The embedded backend tracks standalone computer-use-linux v0.7.38. GNOME
 scaled pointer sessions use portal EIS regions when available and retain the
 legacy route when negotiation fails. Selkies containers can set `PIXELFLUX_CU`
 and `PIXELFLUX_CU_TOKEN` to use their loopback computer-use API for capture and
@@ -32,8 +32,9 @@ Element actions refuse an element owned by another app or window. MCP
 and scopes multi-window Chromium apps to the targeted window. Wlroots
 compositors without a dedicated backend list windows through
 `zwlr_foreign_toplevel_manager_v1`, and `press_key` uses `wtype` where no
-RemoteDesktop portal exists. With `i3-msg` installed, the i3 backend also
-lists and focuses native Wayland and Xwayland windows on Sway.
+RemoteDesktop portal exists. The i3 backend also lists and focuses native
+Wayland and Xwayland windows on Sway through `i3-msg` or `swaymsg`, with
+bounds scaled to capture pixels when every output has the same scale.
 
 The in-app API supports window listing, accessibility inspection, screenshots,
 coordinate clicks, keyboard input, text entry, and scrolling. Use the IDs returned
