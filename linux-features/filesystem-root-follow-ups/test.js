@@ -18,6 +18,7 @@ const guard = 'isMissingWorkspaceRoots:function({composerMode:e,workspaceRootsLo
 const sibling = 'isWorkspaceStatusUnavailable:"local"===e.composerMode&&"unavailable"===e.localWorkspaceMaterialization&&!(e.isLocalModeOnRemoteHost&&e.followUp?.type==="local")';
 const state = `function submitState(e){return{${guard},${sibling}}}`;
 const predicate = 'function isRootless(roots){return roots.length===0||roots.length===1&&"~"===roots[0]}';
+const rootless = vm.runInNewContext('('+predicate+')');
 const chunk = (id, body) => `export const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];` +
   `export const __webpack_modules__={Ab12(e,t,n){var o=n("Pred");${body}n.d(t,{s:()=>submitState})}};`;
 const base = {
@@ -128,7 +129,7 @@ test("disabled feature preserves chunks, enabled feature patches every duplicate
     const files = ["async/17982.d438990d71.js", "async/271446.f0bc8fd171.js"].map((name) => path.join(assets, name));
     for (const [index, filename] of files.entries()) fs.writeFileSync(filename, chunk(index, state));
     const unrelated = path.join(assets, "async/1.0000000000.js");
-    fs.writeFileSync(unrelated, chunk(9, "function other(){}"));
+    fs.writeFileSync(unrelated, chunk(9, "function other(){}").replace("Ab12(","Unrelated("));
     fs.writeFileSync(config, JSON.stringify({ enabled: [] }));
     assert.equal(loadLinuxFeaturePatchDescriptors(options).length, 0);
     patchExtractedApp(dir, options);
@@ -141,7 +142,7 @@ test("disabled feature preserves chunks, enabled feature patches every duplicate
     assert.equal(report.patches.length, 1);
     assert.equal(report.patches[0].status, "applied");
     for (const filename of files) assert.equal(evaluate(fs.readFileSync(filename, "utf8"))(base), false);
-    assert.equal(fs.readFileSync(unrelated, "utf8"), chunk(9, "function other(){}"));
+    assert.equal(fs.readFileSync(unrelated, "utf8"), chunk(9, "function other(){}").replace("Ab12(","Unrelated("));
   });
 });
 
@@ -170,4 +171,52 @@ test("every signed official chunk carrying the guard is patchable", { skip: sign
     assert.notEqual(value, source, name);
     assert.equal(applyPatch(value), value, name);
   }
+});
+
+test('complete current input matrix changes only an existing local slash-root followup',()=>{
+ const before=evaluate(state),after=evaluate(applyPatch(state));
+ const flags=['workspaceRootsLoading','canUseProjectlessThreads','isProjectlessConversation','isBrowserEnvironmentSelectionActive','isRemoteProjectExecution'];
+ for(const composerMode of ['local','cloud','worktree'])for(const workspaceRootsForSubmit of [[],['~'],['/'],['/work'],['/','/work']])for(const followUp of [undefined,null,{type:'cloud'},{type:'local'}])for(let bits=0;bits<32;bits++){
+  const input={composerMode,workspaceRootsForSubmit,followUp,...Object.fromEntries(flags.map((key,index)=>[key,Boolean(bits&(1<<index))]))};
+  assert.equal(after(input),composerMode==='local'&&followUp?.type==='local'&&workspaceRootsForSubmit.includes('/')?false:before(input));
+ }
+});
+
+test('current module identity/mixed/corrupt replicas reject before changing any asset',()=>{
+ for(const [secondBody,secondId]of [[state,'DifferentIdentity'],[applyPatch(state),'Ab12'],[state.replace('}(e),','}(wrongState),'),'Ab12'],['function removedGuard(){}','Ab12']])withApp(({dir,assets,options})=>{
+  const contents=[chunk(1,state),chunk(2,secondBody).replace('Ab12(',secondId+'(')],names=['async/1.js','async/2.js'];
+  names.forEach((name,i)=>fs.writeFileSync(path.join(assets,name),contents[i]));const report=createPatchReport();captureWarnings(()=>patchExtractedApp(dir,{...options,report}));
+  assert.equal(enabledFeatureFailuresFromReport(report).length,1);names.forEach((name,i)=>assert.equal(fs.readFileSync(path.join(assets,name),'utf8'),contents[i]));
+ });
+});
+
+function officialSubmission(moduleSource) {
+  const imported = /^var [\w$]+=([\w$]+)\("[^"]+"\);/.exec(moduleSource);
+  const exported = /[\w$]+\.d\(([\w$]+),\{/.exec(moduleSource);
+  const predicate = /let [\w$]+=\(0,[\w$]+\.([\w$]+)\)\([\w$]+\),[\w$]+=[\w$]+\.some\(/.exec(moduleSource);
+  const submission = /function ([\w$]+)\(([\w$]+)\)\{if\(\2\.isThreadHandoffInProgress\)/.exec(moduleSource);
+  assert.ok(imported && exported && predicate && submission, "expected current submission owner dependencies");
+  const load = () => ({ [predicate[1]]: rootless });
+  load.d = () => {};
+  return vm.runInNewContext(`${moduleSource};${submission[1]}`, { [imported[1]]: load, [exported[1]]: {} });
+}
+
+test("all real current submission factories retain outer policy and stronger argument correlation",{skip:!signedApp},()=>{
+ const {findUniqueRspackModuleCopies}=require("../../scripts/patches/lib/rspack-module-assets.js");
+ const copies=findUniqueRspackModuleCopies(path.join(signedApp,"webview/assets"),{
+  sourceMatch:s=>s.includes("isMissingWorkspaceRoots:function"),
+  matchModule:s=>{const p=captureWarnings(()=>applyPatch(s));return p.warnings.length===0&&p.value!==s;},
+ });
+ assert.ok(copies.length>1);const input={...base,imageAttachments:[],supportsImageInputs:true,hasMessageContent:true};
+ for(const copy of copies){
+  assert.equal(officialSubmission(copy.moduleSource)(input),"missing-workspace");const patched=applyPatch(copy.moduleSource),submit=officialSubmission(patched);
+  assert.equal(submit(input),null);assert.equal(submit({...input,followUp:null}),"missing-workspace");
+  assert.equal(submit({...input,hasWindowsSandboxRequirementError:true}),"windows-sandbox-readiness-error");
+  assert.equal(submit({...input,isThreadHandoffInProgress:true}),"thread-handoff");
+  assert.equal(submit({...input,hasPendingFileAttachments:true}),"file-uploads");
+  assert.equal(submit({...input,hasMessageContent:false}),"empty-message");
+  assert.equal(submit({...input,isLocalModeOnRemoteHost:true,currentRemoteCwd:null}),"missing-remote-project-path");
+  const wrong=copy.moduleSource.replace(/\}\([\w$]+\),isRestorableWorkingDirectory:/,"}(wrongState),isRestorableWorkingDirectory:");
+  assert.notEqual(wrong,copy.moduleSource);const rejected=captureWarnings(()=>applyPatch(wrong));assert.equal(rejected.value,wrong);assert.equal(rejected.warnings.length,1);
+ }
 });

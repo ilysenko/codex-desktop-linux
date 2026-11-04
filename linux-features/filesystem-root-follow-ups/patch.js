@@ -1,5 +1,7 @@
 "use strict";
 
+const path = require("node:path");
+const { findUniqueRspackModuleCopies, patchRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 
 const identifier = "[A-Za-z_$][\\w$]*";
@@ -58,17 +60,29 @@ function applyFilesystemRootFollowUpsPatch(source) {
   return source.slice(0, match.index) + patched + source.slice(match.index + match[0].length);
 }
 
-// The composer module is duplicated into several rspack chunks. Every chunk
-// that carries the guard must be patched; each one is proven independently.
+// Keep the current complete guard and its state/followUp correlation; only
+// the all-copy transaction changes relative to upstream's existing port.
+function applyWorkspaceSubmissionAssets(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const copies = findUniqueRspackModuleCopies(assets, {
+    sourceMatch: source => source.includes(guardProperty) && source.includes("isRemoteProjectExecution:"),
+    matchModule: source => findGuard(source) != null,
+    description: "filesystem root follow-ups submission owner",
+  });
+  const result = patchRspackModuleCopies(assets, copies, source => {
+    if (findGuard(source) == null) throw new Error("Incomplete filesystem root submission contract or state binding");
+    return applyFilesystemRootFollowUpsPatch(source);
+  });
+  return { ...result, reason: `Root follow-up submission module ${result.moduleId}: ${result.matched} copies` };
+}
+
 const descriptors = [{
   id: "workspace-submission",
-  phase: "webview-asset",
+  phase: "extracted-app:post-webview",
   order: 20_910,
   ciPolicy: "optional",
   assetNeedles: [guardProperty, "isRemoteProjectExecution:"],
-  missingDescription: "filesystem root follow-ups workspace guard",
-  skipDescription: "filesystem root follow-ups patch",
-  apply: applyFilesystemRootFollowUpsPatch,
+  apply: applyWorkspaceSubmissionAssets,
 }];
 
 module.exports = { applyFilesystemRootFollowUpsPatch, descriptors };
