@@ -179,6 +179,10 @@ stage_update_builder_linux_features_tree() {
         [ -d "$source" ] || error "Missing enabled Linux feature: $feature_id ($source)"
         mkdir -p "$(dirname "$destination")"
         cp -a "$source" "$destination"
+        # Checkout umasks can make tracked executables group-writable. Keep
+        # private modes while preventing other users from changing build hooks.
+        find "$destination" -type d -exec chmod go-w {} +
+        find "$destination" -type f -perm /111 -exec chmod go-w {} +
         case "$relative_dir" in
             local/*) ;;
             *) remove_update_builder_test_files "$destination" ;;
