@@ -85,6 +85,7 @@ test("normal CI and container smoke run local package verification policy regres
     `the container smoke entrypoint must execute ${suite}`);
   const core = read("scripts/ci/container-entrypoint.sh").split("run_core() {", 2)[1].split("\n}", 1)[0];
   assert.match(core, /bash tests\/scripts_smoke\.sh/);
+  assert.match(core, /bash scripts\/ci\/run-node-checks\.sh tests/);
 });
 
 test("official Linux validation runs fully on every pull request but not hourly", () => {

@@ -50,10 +50,7 @@ run_core() {
     # tests reserve and clean up their own unique directories beneath it.
     mkdir -p --mode=0755 /run/user
     bash tests/scripts_smoke.sh
-    if ! node --test scripts/patch-linux-window-ui.test.js scripts/patches/runner.test.js \
-        scripts/patches/lib/global-shortcuts-portal.test.js \
-        scripts/patches/core/*/test.js \
-        scripts/lib/linux-features.test.js linux-features/*/test.js >"$node_test_log" 2>&1; then
+    if ! bash scripts/ci/run-node-checks.sh tests >"$node_test_log" 2>&1; then
         rg -n -C 30 '^not ok' "$node_test_log" || tail -n 120 "$node_test_log"
         return 1
     fi
