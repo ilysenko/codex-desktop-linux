@@ -1,6 +1,12 @@
 "use strict";
 
 const IDENT = "[A-Za-z_$][\\w$]*";
+const SHARED_QUERY_STATUS =
+  `(?<prefix>function ${IDENT}\\((?<owner>${IDENT})\\)\\{let (?<account>${IDENT})=` +
+  `\\k<owner>\\.get\\(${IDENT}\\.chatGptAuthenticatedAccountId\\$\\);if\\(null==\\k<account>\\|\\|` +
+  `null==\\k<owner>\\.get\\(${IDENT}\\.${IDENT}\\)\\|\\|` +
+  `\\k<owner>\\.queryClient\\.getQueryState\\(\\k<owner>\\.query\\.snapshot\\(` +
+  `(?<query>${IDENT}\\.${IDENT}),\\k<account>\\)\\.queryKey\\)\\?\\.status!=="success"\\|\\|)`;
 const CONTRACTS = Object.freeze({
   landingRoute: [{
     pattern: new RegExp(
@@ -23,11 +29,14 @@ const CONTRACTS = Object.freeze({
   }],
   appShared: [{
     pattern: new RegExp(
-      `${IDENT}\\.query\\.getData\\(${IDENT}(?:\\.${IDENT})?,(?<account>${IDENT})\\)\\?\\.accounts\\[\\k<account>\\]` +
+      SHARED_QUERY_STATUS +
+        `\\k<owner>\\.query\\.getData\\(\\k<query>,\\k<account>\\)\\?\\.accounts\\[\\k<account>\\]` +
         `\\?\\.account\\.tbo_config\\?\\.tbo_available!==!0`,
       "gu",
     ),
-    replacement: "!1",
+    patchedPattern: new RegExp(SHARED_QUERY_STATUS + "!1/\\*codexDotsSharedAccountGate\\*/", "gu"),
+    marker: "codexDotsSharedAccountGate",
+    replacement: (...args) => `${args.at(-1).prefix}!1/*codexDotsSharedAccountGate*/`,
     expected: 1,
   }, {
     pattern: new RegExp(
@@ -35,7 +44,9 @@ const CONTRACTS = Object.freeze({
         `\\?\\.tbo_available===!0`,
       "gu",
     ),
-    replacement: "!0",
+    patchedPattern: /!0\/\*codexDotsSharedCapability\*\//gu,
+    marker: "codexDotsSharedCapability",
+    replacement: "!0/*codexDotsSharedCapability*/",
     expected: 2,
   }],
   personalization: [{
@@ -120,7 +131,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_901,
     ciPolicy: "optional",
-    assetNeedles: ["tbo_available===!0", "tbo_available!==!0", ".query.getData("],
+    assetNeedles: ["chatGptAuthenticatedAccountId$", ".query.snapshot(", ".queryClient.getQueryState("],
     assetMatch: (source) => matchesContract(source, CONTRACTS.appShared),
     missingDescription: "ChatGPT Dots capability bundle",
     skipDescription: "ChatGPT Dots capability patch",
