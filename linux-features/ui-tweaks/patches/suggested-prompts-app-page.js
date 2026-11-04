@@ -60,11 +60,41 @@ function exportGetter(module, key) {
   const getter=one([...body.slice(open+1,end).matchAll(new RegExp(`(?:^|,)${escapeRegExp(key)}:\\(\\)=>(${ID}(?:\\.${ID})?)(?=,|$)`,"gu"))]);
   return getter?{expression:getter[1],requireName:registration[1],exportsName:registration[2]}:null;
 }
+// The current entry either returns its page directly (the compact fixture),
+// or memoizes the ordinary/work choice and returns a scope provider containing
+// that choice. A JSX node created in an unused local proves neither path.
+function returnedHomeEntry(entry, link) {
+  const body=entry.body,returned=one(matches(body,/\breturn\b/gu));
+  if(!returned||link.index<returned.index+6)return false;
+  if(body.slice(returned.index+6).trim().replace(/;$/u,"")===link[0])return true;
+  const wrapper=one(matches(body,new RegExp(
+    `(?<memo>${ID})\\[(?<contextSlot>\\d+)\\]!==(?<context>${ID})\\|\\|\\k<memo>\\[(?<childSlot>\\d+)\\]!==(?<child>${ID})\\?`+
+    `\\((?<value>${ID})=\\(0,${ID}\\.jsxs\\)\\(${ID}\\.${ID},\\{scope:${ID}\\.${ID},value:\\k<context>,children:\\[(?<children>${ID}(?:,${ID})*)\\]\\}\\),`+
+    `\\k<memo>\\[\\k<contextSlot>\\]=\\k<context>,\\k<memo>\\[\\k<childSlot>\\]=\\k<child>,\\k<memo>\\[(?<valueSlot>\\d+)\\]=\\k<value>\\):`+
+    `\\k<value>=\\k<memo>\\[\\k<valueSlot>\\],\\k<value>;?$`,"gu")));
+  if(!wrapper||wrapper.index<=link.index)return false;
+  const {memo,child,children,contextSlot,childSlot,valueSlot}=wrapper.groups;
+  if(children.split(",").filter(name=>name===child).length!==1||new Set([contextSlot,childSlot,valueSlot]).size!==3)return false;
+  const cache=escapeRegExp(memo),selected=escapeRegExp(child),afterLink=link.index+link[0].length;
+  const stored=new RegExp(
+    `^((?:,${cache}\\[\\d+\\]=[^;{},]+)+),${cache}\\[(\\d+)\\]=${selected}\\):${selected}=${cache}\\[\\2\\]`,"u")
+    .exec(body.slice(afterLink));
+  if(!stored||body.slice(afterLink+stored[0].length,wrapper.index)!==","||writes(body,child).length!==2)return false;
+  const selection=one(matches(body.slice(0,link.index),new RegExp(`(?<![\\w$.])${selected}=(${ID})\\?`,"gu"))
+    .filter(match=>match.index>returned.index));
+  if(!selection||body.slice(selection.index-2,selection.index)!=="?(")return false;
+  const ordinaryBranch=body.slice(selection.index+child.length+1,link.index);
+  if(!ordinaryBranch.endsWith(":"))return false;
+  // Parsing this bounded native ternary proves the wanted JSX is its ordinary
+  // branch; the memo/result checks above connect that branch to the return.
+  try { new Script(`const __codexHomeSelection=${ordinaryBranch}null;`);return true; }
+  catch{return false;}
+}
 function graph(module, defs, leaf) {
   const exported=exportGetter(module,"Z");if(!exported||exported.expression.includes("."))return null;
   const entry=defs.find(f=>f.name===exported.expression);if(!entry||!liveFunction(entry)||!liveFunction(leaf))return null;
   const entryLinks=matches(entry.body,new RegExp(`\\(0,${ID}\\.jsx\\)\\((${ID}),\\{\\.\\.\\.(${ID}),hideHeaderUpgrade:!1,prepareTaskSuggestionDestination:${ID}\\}\\)`,"gu"));
-  const link=one(entryLinks);if(!link)return null;
+  const link=one(entryLinks);if(!link||!returnedHomeEntry(entry,link))return null;
   const middle=defs.find(f=>f.name===link[1]);if(!middle||!liveFunction(middle))return null;
   const call=one(matches(middle.body,new RegExp(`(?<![\\w$.])(${ID})=(${ID})=>\\(0,${ID}\\.jsx\\)\\(${escapeRegExp(leaf.name)},`,"gu")));
   if(!call)return null;
@@ -232,4 +262,5 @@ function applyToExtractedApp(extractedDir) {
   });
 }
 
-module.exports={applyToExtractedApp,inspectPage,inspectModule,isCandidate,exportGetter,validateDependencies,entryContext};
+module.exports={applyToExtractedApp,inspectPage,inspectModule,isCandidate,exportGetter,validateDependencies,entryContext,
+  roleHelpers:{ID,one,matches,writes,functions,liveFunction,statementAt,exportGetter,dependencyCopies,resolveFunction,isAccountPredicate,isRolloutHook,entryContext}};

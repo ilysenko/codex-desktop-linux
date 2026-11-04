@@ -7,11 +7,13 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { descriptors, suggestedPromptsAppPageContract: contract, applySuggestedPromptsAppPagePatch: applySource } = require("./patches/suggested-prompts.js");
-const { applyToExtractedApp, inspectModule, isCandidate, validateDependencies, entryContext } = require("./patches/suggested-prompts-app-page.js");
+const { applyToExtractedApp, inspectPage, inspectModule, isCandidate, validateDependencies, entryContext } = require("./patches/suggested-prompts-app-page.js");
 const { findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { exportGetter } = require("./patches/suggested-prompts-app-page.js");
-const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { findMatchingBrace, escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
+const { applyExtractedAppPatchDescriptors, normalizeDescriptor } = require("../../scripts/patches/engine.js");
+const { createPatchReport, captureWarnings } = require("../../scripts/lib/patch-report.js");
 const descriptor = descriptors.find(({ id }) => id === "home-suggested-prompts-app-page");
 
 const fixtures = require("./fixtures/suggested-prompts-app-page.js");
@@ -144,6 +146,8 @@ const corruptions={
   "wrong page export":s=>s.replace('Z:()=>Entry','Z:()=>Frame'),
   "wrong navigation callback":s=>s.replace('onLocalConversationCreated:callback','onLocalConversationCreated:navigate'),
   "entry returns before page":s=>s.replace('function Entry(e){','function Entry(e){return null;'),
+  "entry creates page in unused local then returns null":s=>disconnectedEntry(s,false),
+  "entry creates page in unused local then returns unrelated JSX":s=>disconnectedEntry(s,true),
   "frame returns before consumer":s=>s.replace('function Frame(e){','function Frame(e){return null;'),
   "page returns before consumer":s=>s.replace('function Page(e){','function Page(e){return null;'),
   "provider runtime gate bypass":s=>s.replace('generatedSuggestionsEnabled:enabled,hostId:host,isCodexHome:codex','generatedSuggestionsEnabled:generated,hostId:host,isCodexHome:codex'),
@@ -243,6 +247,48 @@ function nativeFunction(body,name) {
   const start=body.indexOf(`function ${name}(`);assert.ok(start>=0,name);
   const open=body.indexOf("){",start)+1,end=findMatchingBrace(body,open);
   assert.ok(end>open);return body.slice(start,end+1);
+}
+
+// Keep the actual entry's prefix, including its native hooks and nested route
+// guard. Only disconnect its final returned view from the ordinary Home JSX.
+function disconnectedEntry(source,unrelated) {
+  const info=inspectPage(source);assert.ok(info);
+  const entry=nativeFunction(info.module.moduleSource,info.graph.entry),open=entry.indexOf("){")+1;
+  const body=entry.slice(open+1,-1),id="[A-Za-z_$][\\w$]*";
+  const returned=[...body.matchAll(/\breturn\b/gu)].filter(match=>
+    findMatchingBrace("{"+body.slice(0,match.index)+"}",0)===match.index+1);
+  assert.equal(returned.length,1);
+  const links=[...body.matchAll(new RegExp(
+    `\\(0,(${id})\\.jsx\\)\\(${escapeRegExp(info.graph.middle)},\\{\\.\\.\\.${id},hideHeaderUpgrade:!1,prepareTaskSuggestionDestination:${id}\\}\\)`,"gu"))];
+  assert.equal(links.length,1);
+  const [link]=links,ending=unrelated?`return(0,${link[1]}.jsx)("div",{children:"unrelated native view"});`:"return null;";
+  const replacement=entry.slice(0,open+1+returned[0].index)+`let codexAuditUnusedHome=${link[0]};${ending}}`;
+  return source.replace(entry,replacement);
+}
+
+function normalPageDescriptor(root) {
+  const normalized=normalizeDescriptor({...descriptor,id:"feature:ui-tweaks:home-suggested-prompts-app-page",
+    sourceKind:"feature",featureId:"ui-tweaks"});
+  const context={feature:{settings:{tweaks:{home:{suggestedPrompts:{enabled:true}}}}}},report=createPatchReport();
+  captureWarnings(()=>applyExtractedAppPatchDescriptors(root,[normalized],context,report,normalized.phase));
+  return report.patches[0];
+}
+
+for(const applied of [false,true])for(const unrelated of [false,true]) {
+  test(`signed ordinary Home rejects unused page JSX with ${unrelated?"unrelated JSX":"null"} return in ${applied?"applied":"pristine"} source`,{
+    skip:process.env.CODEX_SIGNED_EXTRACTED_APP==null,
+  },t=>{
+    const {owners,files}=signedFixture(),original=owners[0].source;
+    const damaged=disconnectedEntry(applied?applySource(original):original,unrelated);
+    assert.equal(javascriptSourceParses(damaged),true);
+    assert.equal(contract(damaged),"drifted");
+    const root=signedWorkspace(t,{[owners[0].assetName]:damaged});
+    const names=["webview/index.html",...Object.keys(files).map(name=>"webview/assets/"+name)];
+    const before=new Map(names.map(name=>[name,fs.readFileSync(path.join(root,name))]));
+    const report=normalPageDescriptor(root);
+    assert.equal(report.status,"skipped-optional");assert.match(report.reason,/Incomplete ordinary Home page contract/);
+    for(const [name,bytes]of before)assert.deepEqual(fs.readFileSync(path.join(root,name)),bytes,name);
+  });
 }
 
 test("signed native rollout hook and account predicate retain their independent roles",{
