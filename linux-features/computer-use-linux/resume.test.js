@@ -114,6 +114,7 @@ function resumeHarness(source, trustedServicesKey) {
   assert.equal(services[1], call[2]);
 
   let cached;
+  let nodeEnvironment;
   let instructionsAvailable = true;
   const constants = new Proxy({}, {
     get: (_, key) => key === services[2] ? trustedServicesKey : String(key),
@@ -137,7 +138,7 @@ function resumeHarness(source, trustedServicesKey) {
     [select[1]]: () => { throw Error("Unexpected fallback instead of cached selection"); },
     [config[1]]: async () => ({
       "mcp_servers.node_repl": {
-        command: "/node", args: [], env: { [packageRoot[4]]: "/bundled", [executable[1]]: "/node" },
+        command: "/node", args: [], env: { ...nodeEnvironment, [packageRoot[4]]: "/bundled", [executable[1]]: "/node" },
       },
     }),
     [identity[1]]: () => "test-identity",
@@ -156,8 +157,9 @@ function resumeHarness(source, trustedServicesKey) {
   // Function declarations need a shared lexical scope for the builder call.
   vm.createContext(globals);
   const sharedResume = vm.runInContext(`${buildSource}\n(${resumeSource})`, globals);
-  return async (selectionValue, { enabled = true, instructions = true } = {}) => {
+  return async (selectionValue, { enabled = true, instructions = true, env = {} } = {}) => {
     cached = { selection: selectionValue, cuaReplEnabled: enabled };
+    nodeEnvironment = env;
     instructionsAvailable = instructions;
     const result = await sharedResume({
       appServerConnection: {
@@ -188,19 +190,32 @@ test("official per-thread CUA overrides carry the trusted root when resuming cha
   const resume = resumeHarness(patched, trustedServicesKey);
   for (const instructions of [true, false]) {
     for (const surfaces of [["computer"], ["browser"], ["browser", "computer"]]) {
-      const cua = await resume({
-        browserBackends: ["iab"], desktopFeatureAvailability: { deferCuaTools: false },
-        cuaReplSurfaces: surfaces, codexLinuxCuaPluginRoot: "/trusted-plugin",
-      }, { instructions });
-      assert.equal(cua.enabled, true);
-      assert.equal(cua.env.CUA_REPL_ENABLED_SURFACES, surfaces.join(","));
-      assert.equal(cua.env.CODEX_LINUX_CUA_HOST_SOCKET, "/runtime/cua.sock");
-      assert.equal(cua.env.NODE_REPL_JS_BANNER,
-        'await import("@oai/cua/tinyskyAlt");await(await import("/trusted-plugin/scripts/native-client.mjs")).installLinuxComputerUse(cua);');
-      assert.equal(JSON.parse(cua.env.NODE_REPL_TRUSTED_SERVICES).sky,
-        surfaces.includes("computer") ? "/trusted-plugin/scripts/native-service.mjs" : undefined);
-      // Both the packaged instructions path and its ENOENT fallback keep the bridge.
-      assert.equal(cua.env.NODE_REPL_TOOL_OVERRIDES != null, instructions);
+      for (const skyAudio of [undefined, "0", "1"]) {
+        for (const nodeAudio of [undefined, "0", "1"]) {
+          const env = {};
+          if (skyAudio !== undefined) env.SKY_ENABLE_AUDIO = skyAudio;
+          if (nodeAudio !== undefined) env.NODE_REPL_ENABLE_AUDIO = nodeAudio;
+          const cua = await resume({
+            browserBackends: ["iab"], desktopFeatureAvailability: { deferCuaTools: false },
+            cuaReplSurfaces: surfaces, codexLinuxCuaPluginRoot: "/trusted-plugin",
+          }, { instructions, env });
+          assert.equal(cua.enabled, true);
+          assert.equal(cua.env.CUA_REPL_ENABLED_SURFACES, surfaces.join(","));
+          assert.equal(cua.env.CODEX_LINUX_CUA_HOST_SOCKET, "/runtime/cua.sock");
+          assert.equal(cua.env.NODE_REPL_JS_BANNER,
+            'await import("@oai/cua/tinyskyAlt");await(await import("/trusted-plugin/scripts/native-client.mjs")).installLinuxComputerUse(cua);');
+          assert.equal(JSON.parse(cua.env.NODE_REPL_TRUSTED_SERVICES).sky,
+            surfaces.includes("computer") ? "/trusted-plugin/scripts/native-service.mjs" : undefined);
+          assert.equal(JSON.parse(cua.env.NODE_REPL_TRUSTED_SERVICES).browser,
+            surfaces.includes("browser") ? "@oai/browser-desktop/service" : undefined);
+          assert.equal(cua.env.SKY_ENABLE_AUDIO,
+            skyAudio === "1" && !surfaces.includes("computer") ? "0" : skyAudio);
+          assert.equal(cua.env.NODE_REPL_ENABLE_AUDIO,
+            skyAudio === "1" && !surfaces.includes("computer") ? "0" : nodeAudio);
+          // Both the packaged instructions path and its ENOENT fallback keep the bridge.
+          assert.equal(cua.env.NODE_REPL_TOOL_OVERRIDES != null, instructions);
+        }
+      }
     }
   }
   await assert.rejects(resume({

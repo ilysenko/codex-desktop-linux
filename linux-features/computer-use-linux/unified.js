@@ -252,11 +252,10 @@ function applyUnifiedComputerUseModulePatch(source) {
   const patchedServices = [...builderSource.matchAll(new RegExp(
     `${surfaces}\\.includes\\("computer"\\)&&\\((?<services>[\\w$]+)\\.sky=` +
       `${rootPattern(pluginFile(ROOT_PLACEHOLDER, "native-service.mjs"))}\\)`, "g"))];
-  // Optional audio environment block; carried through unchanged.
   const audioEnvironmentPattern =
-    `(?<audio>\\.\\.\\.${nodeRepl}\\?\\.env\\.SKY_[A-Z_]+==="1"\\?\\{` +
+    `(?<audio>\\.\\.\\.${nodeRepl}\\?\\.env\\.SKY_ENABLE_AUDIO==="1"\\?\\{` +
     `SKY_ENABLE_AUDIO:${surfaces}\\.includes\\("computer"\\)\\?"1":"0",` +
-    `[^{}]*\\}:\\{\\},)`;
+    `NODE_REPL_ENABLE_AUDIO:${surfaces}\\.includes\\("computer"\\)\\?${nodeRepl}\\.env\\.NODE_REPL_ENABLE_AUDIO:"0"\\}:\\{\\},)`;
   const environmentPrefix = `\\{\\.\\.\\.${nodeRepl}\\?\\.env,CUA_REPL_ENABLED_SURFACES:${surfaces}\\.join\\(","\\),`;
   const servicesEnvironment = `\\[(?<constants>[\\w$]+)\\.(?<constant>[\\w$]+)\\]:JSON\\.stringify\\((?<services>[\\w$]+)\\)`;
   const currentBanners = [...builderSource.matchAll(new RegExp(

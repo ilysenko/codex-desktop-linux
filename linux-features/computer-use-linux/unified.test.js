@@ -12,7 +12,7 @@ const descriptors = require("./patch.js");
 const selector = [
   'function select(f,l,t,u){let p=f&&t.computerUse&&u.enabled&&("win32"===l.platform||"darwin"===l.platform&&null!=u.paths.serviceAppPath),m=t.computerUse&&(!t.browserUseTinysky||"darwin"!==l.platform||u.enabled),h=[];return f&&t.browser&&h.push("browser"),p&&h.push("computer"),{computerUse:m,cuaReplSurfaces:h}}',
   'async function configure(e){let t=lookup(),enabled=null!=e.nodeRepl&&e.surfaces.length>0,i=(0,constants.Kt)({codexHome:e.codexHome,localVersion:t.plugin.localVersion,marketplaceName:t.marketplace.name,pluginName:t.plugin.name}),a=ei().join(i,".mcp.json"),bootstrap=ei().join(i,"require-browser-access.mjs"),c={};Object.assign(c,build({...e,accessBootstrapPath:bootstrap}));return enabled}',
-  'function build({browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n,accessBootstrapPath:a}){let l={};s.includes("browser")&&(l.browser="@oai/browser-desktop/service"),s.includes("computer")&&(l.sky="@oai/sky/service");let o={...n?.env,CUA_REPL_ENABLED_SURFACES:s.join(","),...n?.env.SKY_AUDIO_ATTACHMENTS==="1"?{SKY_ENABLE_AUDIO:s.includes("computer")?"1":"0",SKY_AUDIO_ATTACHMENTS:s.includes("computer")?"1":"0",NODE_REPL_ENABLE_AUDIO:"0"}:{},[constants.Il]:JSON.stringify(l)};return{env:function({env:e}){let t={};return t.sky="@oai/sky/service",{...e,NODE_REPL_TRUSTED_SERVICES:e.NODE_REPL_TRUSTED_SERVICES??JSON.stringify(t),NODE_REPL_JS_BANNER:e.NODE_REPL_JS_BANNER??"await import(\\"@oai/cua/tinyskyAlt\\");"}}({env:o})}}',
+  'function build({browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n,accessBootstrapPath:a}){let l={};s.includes("browser")&&(l.browser="@oai/browser-desktop/service"),s.includes("computer")&&(l.sky="@oai/sky/service");let o={...n?.env,CUA_REPL_ENABLED_SURFACES:s.join(","),...n?.env.SKY_ENABLE_AUDIO==="1"?{SKY_ENABLE_AUDIO:s.includes("computer")?"1":"0",NODE_REPL_ENABLE_AUDIO:s.includes("computer")?n.env.NODE_REPL_ENABLE_AUDIO:"0"}:{},[constants.Il]:JSON.stringify(l)};return{env:function({env:e}){let t={};return t.sky="@oai/sky/service",{...e,NODE_REPL_TRUSTED_SERVICES:e.NODE_REPL_TRUSTED_SERVICES??JSON.stringify(t),NODE_REPL_JS_BANNER:e.NODE_REPL_JS_BANNER??"await import(\\"@oai/cua/tinyskyAlt\\");"}}({env:o})}}',
   'async function initialize(e){let selection=e.selection,features=selection.desktopFeatureAvailability,backends=selection.browserBackends,surfaces=selection.cuaReplSurfaces,home=selection.codexHome,marketplace=selection.marketplaceName,marketplaces=e.marketplaces,skip=!1,node=selection.nodeRepl,enabled=!1;enabled=await configure({browserBackends:backends,deferTools:features.deferCuaTools,surfaces:surfaces,codexHome:home,marketplaceName:marketplace,marketplaces:marketplaces,nodeRepl:skip?void 0:node});return {selection:selection,cuaReplEnabled:enabled}}',
   'async function threadConfig(e){let connection=e.connection,local=null!=connection,cached=e.cached,features=e.features,posture=features.browserUseTinysky?cached:null,principal=local?await connection.getAuthenticatedPrincipal().catch(()=>null):null,selection=posture?.selection??await selectForThread(e);selection={...selection,browserServicePluginVersion:null};let node=e.nodeRepl??selection.nodeRepl;return posture?.cuaReplEnabled?build({browserBackends:selection.browserBackends,deferTools:selection.desktopFeatureAvailability.deferCuaTools,surfaces:selection.cuaReplSurfaces,nodeRepl:node}):{enabled:!1}}',
 ].join("");
@@ -141,7 +141,7 @@ test("unified banner patch edits only the validated service owner", () => {
 });
 
 test("unified banner patch rejects duplicate banners inside the service owner", () => {
-  const environment = '{...n?.env,CUA_REPL_ENABLED_SURFACES:s.join(","),...n?.env.SKY_AUDIO_ATTACHMENTS==="1"?{SKY_ENABLE_AUDIO:s.includes("computer")?"1":"0",SKY_AUDIO_ATTACHMENTS:s.includes("computer")?"1":"0",NODE_REPL_ENABLE_AUDIO:"0"}:{},[constants.Il]:JSON.stringify(l)}';
+  const environment = '{...n?.env,CUA_REPL_ENABLED_SURFACES:s.join(","),...n?.env.SKY_ENABLE_AUDIO==="1"?{SKY_ENABLE_AUDIO:s.includes("computer")?"1":"0",NODE_REPL_ENABLE_AUDIO:s.includes("computer")?n.env.NODE_REPL_ENABLE_AUDIO:"0"}:{},[constants.Il]:JSON.stringify(l)}';
   const duplicate = selector.replace(`o=${environment}`, `o=${environment},duplicate=${environment}`);
   assert.notEqual(duplicate, selector);
   assert.throws(() => patch(duplicate), /unified.*contract/i);
@@ -248,6 +248,58 @@ test("unified browser-only thread configuration receives its banner root", async
   cached.cuaReplEnabled = false;
   delete selection.codexLinuxCuaPluginRoot;
   assert.equal((await threadConfig({ cached, features: { browserUseTinysky: true } })).enabled, false);
+});
+
+test("unified audio environment preserves current upstream flags for every surface", () => {
+  const original = vm.runInNewContext(`${selector};build`, context());
+  const patched = unified(selector);
+  const build = vm.runInNewContext(`${patched};build`, context());
+  for (const enabledSurfaces of [[], ["browser"], ["computer"], ["browser", "computer"]]) {
+    for (const skyAudio of [undefined, "0", "1"]) {
+      for (const nodeAudio of [undefined, "0", "1"]) {
+        const env = { unrelated: "retained" };
+        if (skyAudio !== undefined) env.SKY_ENABLE_AUDIO = skyAudio;
+        if (nodeAudio !== undefined) env.NODE_REPL_ENABLE_AUDIO = nodeAudio;
+        const parameters = { browserBackends: ["native"], surfaces: enabledSurfaces, nodeRepl: { env } };
+        const before = original(parameters).env;
+        const after = build(parameters, "/trusted-plugin").env;
+        assert.equal(after.SKY_ENABLE_AUDIO, before.SKY_ENABLE_AUDIO);
+        assert.equal(after.NODE_REPL_ENABLE_AUDIO, before.NODE_REPL_ENABLE_AUDIO);
+        assert.equal(after.unrelated, "retained");
+        assert.equal(Object.hasOwn(after, "SKY_AUDIO_ATTACHMENTS"), false);
+        assert.equal(Object.hasOwn(after, "NODE_REPL_ENABLE_AUDIO"),
+          nodeAudio !== undefined || skyAudio === "1");
+        const services = JSON.parse(after[SERVICES]);
+        assert.equal(services.sky, enabledSurfaces.includes("computer")
+          ? "/trusted-plugin/scripts/native-service.mjs" : undefined);
+        assert.equal(services.browser, enabledSurfaces.includes("browser")
+          ? "@oai/browser-desktop/service" : undefined);
+        if (skyAudio === "1") {
+          assert.equal(after.SKY_ENABLE_AUDIO, enabledSurfaces.includes("computer") ? "1" : "0");
+          assert.equal(after.NODE_REPL_ENABLE_AUDIO, enabledSurfaces.includes("computer") ? nodeAudio : "0");
+        }
+      }
+    }
+  }
+});
+
+test("unified audio contract rejects retired and incomplete environment branches", () => {
+  for (const changed of [
+    selector.replace("n?.env.SKY_ENABLE_AUDIO", "n?.env.SKY_AUDIO_ATTACHMENTS"),
+    selector.replace('NODE_REPL_ENABLE_AUDIO:s.includes("computer")?n.env.NODE_REPL_ENABLE_AUDIO:"0"',
+      'NODE_REPL_ENABLE_AUDIO:"0"'),
+    selector.replace('SKY_ENABLE_AUDIO:s.includes("computer")?"1":"0",', ""),
+    selector.replace('NODE_REPL_ENABLE_AUDIO:s.includes("computer")?n.env.NODE_REPL_ENABLE_AUDIO:"0"',
+      'NODE_REPL_ENABLE_AUDIO:s.includes("computer")?other.env.NODE_REPL_ENABLE_AUDIO:"0"'),
+  ]) {
+    assert.notEqual(changed, selector);
+    assert.throws(() => unified(changed), /unified.*contract/i);
+  }
+  const patched = unified(selector);
+  const partial = patched.replace('NODE_REPL_ENABLE_AUDIO:s.includes("computer")?n.env.NODE_REPL_ENABLE_AUDIO:"0"',
+    'NODE_REPL_ENABLE_AUDIO:"0"');
+  assert.notEqual(partial, patched);
+  assert.throws(() => unified(partial), /unified.*contract/i);
 });
 
 test("unified propagation rejects missing, ambiguous, or changed builder consumers", () => {
