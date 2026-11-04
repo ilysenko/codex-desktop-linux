@@ -1,104 +1,157 @@
 "use strict";
 
+const path = require("node:path");
 const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { findUniqueRspackModuleCopies, patchRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
 
-const identifier = String.raw`[A-Za-z_$][\w$]*`;
-const order = String.raw`(?:\(0,${identifier}\.${identifier}\)|${identifier})`;
-const groupsArgument = String.raw`groups:${identifier}\(\{groups:${identifier},items:(?<items>${identifier})\}\)`;
-const projectOrderArgument = String.raw`projectOrder:${order}\(${identifier},${identifier}\.${identifier}\.PROJECT_ORDER\)`;
-// Upstream compiles the unpinned project-group sorter inline:
-// `groups=function({groups:e,projectOrder:t}){return order(e,t)}({groups:filter({…,items}),projectOrder:read(get,keys.PROJECT_ORDER)})`.
-const currentGroupSorterPattern = new RegExp(
-  String.raw`(?<![\w$])${identifier}=function\(\{groups:(?<groups>${identifier}),projectOrder:(?<projectOrder>${identifier})\}\)\{return ?(?<order>${order})\(\k<groups>,\k<projectOrder>\)\}` +
-    String.raw`\(\{${groupsArgument},${projectOrderArgument}\}\)`,
-  "g",
-);
-const patchedGroupSorterPattern = new RegExp(
-  String.raw`(?<![\w$])${identifier}=function\(\{groups:e,getRecencyAt:t,projectOrder:n,sortMode:codexLinuxProjectSortMode\}\)\{if\(codexLinuxProjectSortMode!=="updated_at"\)return ?(?<order>${order})\(e,n\);` +
-    String.raw`(?:(?!\}\(\{groups:)[^]){0,400}\}\(\{${groupsArgument},${projectOrderArgument},getRecencyAt:(?<recency>${identifier}),sortMode:(?<mode>${identifier})\}\)`,
-  "g",
-);
-const projectlessSorterStart = new RegExp(
-  String.raw`^,${identifier}=function\(\{explicitChatThreadKeys:${identifier},getRecencyAt:${identifier},items:${identifier},projectGroups:${identifier},projectlessThreadIds:${identifier}\}\)\{`,
-);
-const MODE_LOOKBEHIND = 3000;
+const ID = "[A-Za-z_$][\\w$]*";
+const MARKER = "codexLinuxProjectGroupsUpdated";
+const INLINE_HEAD = new RegExp(
+  `function\\(\\{groups:(?<groups>${ID}),(?:getRecencyAt:codexLinuxProjectGetRecencyAt,)?` +
+  `projectOrder:(?<order>${ID})(?:,sortMode:codexLinuxProjectSortMode)?\\}\\)\\{`, "g");
+const CALLBACK = new RegExp(`\\(${ID},\\{get:(?<get>${ID}),scope:${ID}\\}\\)=>\\{`, "g");
+const GROUP_CALL = new RegExp(
+  `^\\(\\{groups:(?<filter>${ID})\\(\\{groups:(?<groups>${ID}),items:(?<items>${ID})\\}\\),` +
+  `projectOrder:\\(0,${ID}\\.${ID}\\)\\((?<get>${ID}),${ID}\\.${ID}\\.PROJECT_ORDER\\)` +
+  `(?:,getRecencyAt:(?<recency>${ID}),sortMode:(?<mode>${ID}))?\\}\\)`);
 
 function allMatches(source, pattern) {
   return [...source.matchAll(new RegExp(pattern.source, pattern.flags))];
 }
 
-// Bind the unpinned group sorter to the adjacent projectless sorter that
-// receives the same normalized sidebar items. Recency comes from upstream's
-// key resolver passed to that sorter, and the mode from the sidebar settings.
-function callContext(source, match) {
-  const prefix = source.slice(Math.max(0, match.index - MODE_LOOKBEHIND), match.index);
-  const modes = [...prefix.matchAll(new RegExp(
-    String.raw`\{chatSortMode:${identifier},projectSortMode:(${identifier})\}=${identifier}\(${identifier}(?:\.${identifier})?\)`, "g",
-  ))];
-  const tailStart = match.index + match[0].length;
-  const start = source.slice(tailStart, tailStart + 400).match(projectlessSorterStart);
-  if (modes.length !== 1 || start == null) return null;
-  const close = findMatchingBrace(source, tailStart + start[0].length - 1);
-  if (close < 0) return null;
-  const resolver = source.slice(close + 1, close + 400).match(new RegExp(
-    String.raw`^\(\{explicitChatThreadKeys:${identifier},getRecencyAt:(${identifier}),items:${escapeRegExp(match.groups.items)},projectGroups:${identifier},projectlessThreadIds:new Set\(${identifier}\?\?\[\]\)\}\)`,
-  ));
-  return resolver ? { mode: modes[0][1], recency: resolver[1] } : null;
+function sorterSource(groups, order, orderFunction) {
+  return `function({groups:${groups},getRecencyAt:codexLinuxProjectGetRecencyAt,projectOrder:${order},sortMode:codexLinuxProjectSortMode}){/*${MARKER}*/if(codexLinuxProjectSortMode!=="updated_at")return${orderFunction}(${groups},${order});return ${groups}.map((group,index)=>({group,index,recencyAt:group.threadKeys.reduce((latest,key)=>{let timestamp=codexLinuxProjectGetRecencyAt(key);return Number.isFinite(timestamp)?Math.max(latest,timestamp):latest},Number.isFinite(group.projectUpdatedAt)?group.projectUpdatedAt:0)})).sort((left,right)=>right.recencyAt-left.recencyAt||left.index-right.index).map(({group})=>group)}`;
 }
 
-function patchedGroupSorter(orderFunction) {
-  return `function({groups:e,getRecencyAt:t,projectOrder:n,sortMode:codexLinuxProjectSortMode}){if(codexLinuxProjectSortMode!=="updated_at")return ${orderFunction}(e,n);return e.map((e,n)=>({group:e,index:n,recencyAt:e.threadKeys.reduce((e,n)=>Math.max(e,t(n)??0),e.projectUpdatedAt??0)})).sort((e,t)=>t.recencyAt-e.recencyAt||e.index-t.index).map(({group:e})=>e)}`;
+function containingCallback(source, index, getter) {
+  const callbacks = allMatches(source, CALLBACK).map((match) => {
+    const start = match.index + match[0].length;
+    return { start, end: findMatchingBrace(source, start - 1), getter: match.groups.get };
+  }).filter((scope) => scope.getter === getter && scope.start <= index && index < scope.end);
+  return callbacks.length === 1 ? callbacks[0] : null;
+}
+
+function nestedFunctionContains(source, start, end, index) {
+  // A binding in an inner function cannot supply the sidebar callback. The
+  // semantic callback and initializer anchors already delimit this small region.
+  const nested = new RegExp(`(?:function(?: ${ID})?\\([^)]*\\)|(?:\\([^)]*\\)|${ID})=>)\\{`, "g");
+  for (const match of source.slice(start, end).matchAll(nested)) {
+    const open = start + match.index + match[0].length - 1;
+    if (open < index && index < findMatchingBrace(source, open)) return true;
+  }
+  return false;
+}
+
+function recencyContext(source, scope, beforeCall) {
+  const pattern = new RegExp(
+    `\\{chatSortMode:${ID},projectSortMode:(?<mode>${ID})\\}=${escapeRegExp(scope.getter)}\\(${ID}\\.${ID}\\),` +
+    `(?<cache>${ID})=new Map,(?<recency>${ID})=(?<key>${ID})=>\\{` +
+    `let (?<cached>${ID})=\\k<cache>\\.get\\(\\k<key>\\);if\\(null!=\\k<cached>\\)return \\k<cached>;` +
+    `let (?<value>${ID})=\\(0,${ID}\\.${ID}\\)\\(${escapeRegExp(scope.getter)},\\k<key>\\);` +
+    `return \\k<cache>\\.set\\(\\k<key>,\\k<value>\\),\\k<value>\\}`, "g");
+  const matches = allMatches(source.slice(scope.start, beforeCall), pattern);
+  if (matches.length !== 1) return null;
+  const match = matches[0];
+  if (nestedFunctionContains(source, scope.start, beforeCall, scope.start + match.index)) return null;
+  return match.groups;
+}
+
+function projectlessContext(source, callEnd, scopeEnd, items) {
+  const tail = source.slice(callEnd, scopeEnd);
+  const header = new RegExp(`^,${ID}=function\\(\\{explicitChatThreadKeys:${ID},getRecencyAt:${ID},items:${ID},projectGroups:${ID},projectlessThreadIds:${ID}\\}\\)\\{`).exec(tail);
+  if (header == null) return null;
+  const open = callEnd + header[0].length - 1;
+  const end = findMatchingBrace(source, open);
+  if (end < open || end >= scopeEnd) return null;
+  return new RegExp(
+    `^\\(\\{explicitChatThreadKeys:${ID},getRecencyAt:(?<recency>${ID}),items:${escapeRegExp(items)},` +
+    `projectGroups:(?<groups>${ID}),projectlessThreadIds:new Set\\(${ID}\\?\\?\\[\\]\\)\\}\\)`
+  ).exec(source.slice(end + 1, scopeEnd))?.groups ?? null;
+}
+
+function projectTaskContext(source, scope, output, recency, mode) {
+  const pattern = new RegExp(`${escapeRegExp(output)}=${escapeRegExp(output)}\\.map\\((${ID})=>\\{`, "g");
+  const matches = allMatches(source.slice(scope.start, scope.end), pattern);
+  if (matches.length !== 1) return false;
+  const match = matches[0];
+  const open = scope.start + match.index + match[0].length - 1;
+  const end = findMatchingBrace(source, open);
+  if (end < open || end >= scope.end) return false;
+  const body = source.slice(open + 1, end);
+  return body.includes(`getRecencyAt:${recency},items:${match[1]}.threadKeys.flatMap(`) &&
+    body.includes("manualThreadIds:") && body.includes(`,sortMode:${mode}})`);
 }
 
 function contract(source) {
-  const current = allMatches(source, currentGroupSorterPattern);
-  const patched = allMatches(source, patchedGroupSorterPattern);
-  if (current.length + patched.length !== 1) return null;
-  const isPatched = patched.length === 1;
-  const match = (isPatched ? patched : current)[0];
-  const orderFunction = match.groups.order;
-  // The replacement sorter declares e, t and n; the order function must not
-  // resolve through one of those parameter names.
-  if (/^(?:\(0,)?[etn](?:\.|$)/.test(orderFunction)) return null;
-  const context = callContext(source, match);
-  if (!context) return null;
-  if (isPatched) {
-    if (match.groups.recency !== context.recency || match.groups.mode !== context.mode) return null;
-    if (!match[0].includes(`=${patchedGroupSorter(orderFunction)}({`)) return null;
-  } else if (
-    [context.recency, context.mode].some((name) => ["e", "t", "n"].includes(name))
-  ) {
-    return null;
-  }
-  return { isPatched, match, context, orderFunction };
+  const heads = allMatches(source, INLINE_HEAD);
+  if (heads.length !== 1) return null;
+  const head = heads[0];
+  const open = head.index + head[0].length - 1;
+  const end = findMatchingBrace(source, open);
+  if (end < open) return null;
+  const body = source.slice(open + 1, end);
+  const { groups, order } = head.groups;
+  const current = new RegExp(`^return(?<fn>\\(0,${ID}\\.${ID}\\))\\(${escapeRegExp(groups)},${escapeRegExp(order)}\\)$`).exec(body);
+  const patched = new RegExp(`^/\\*${MARKER}\\*/if\\(codexLinuxProjectSortMode!=="updated_at"\\)return(?<fn>\\(0,${ID}\\.${ID}\\))\\(${escapeRegExp(groups)},${escapeRegExp(order)}\\);`).exec(body);
+  if ((current == null) === (patched == null)) return null;
+  const isPatched = patched != null;
+  const orderFunction = (current ?? patched).groups.fn;
+  const functionSource = source.slice(head.index, end + 1);
+  if (isPatched && (functionSource !== sorterSource(groups, order, orderFunction) || source.split(MARKER).length !== 2)) return null;
+  if (!isPatched && (source.includes(MARKER) || head[0] !== `function({groups:${groups},projectOrder:${order}}){`)) return null;
+  const call = GROUP_CALL.exec(source.slice(end + 1));
+  if (call == null || isPatched !== (call.groups.recency != null)) return null;
+  const callEnd = end + 1 + call[0].length;
+  const scope = containingCallback(source, head.index, call.groups.get);
+  if (scope == null) return null;
+  const context = recencyContext(source, scope, head.index);
+  const projectless = projectlessContext(source, callEnd, scope.end, call.groups.items);
+  if (context == null || projectless == null || context.recency !== projectless.recency) return null;
+  const pinned = new RegExp(
+    `\\{pinnedGroups:(?<pinned>${ID}),unpinnedGroups:${escapeRegExp(call.groups.groups)}\\}=\\(0,${ID}\\.${ID}\\)\\(${escapeRegExp(projectless.groups)},${ID}\\),` +
+    `${ID}=${escapeRegExp(call.groups.filter)}\\(\\{groups:\\k<pinned>,items:${escapeRegExp(call.groups.items)}\\}\\),(?<output>${ID})=$`
+  ).exec(source.slice(scope.start, head.index));
+  if (pinned == null || !projectTaskContext(source, scope, pinned.groups.output, context.recency, context.mode)) return null;
+  if (isPatched && (call.groups.recency !== context.recency || call.groups.mode !== context.mode)) return null;
+  return { isPatched, start: head.index, end: callEnd, functionSource, call: call[0], groups, order, orderFunction, context };
 }
 
 function applyProjectGroupLastUpdatedSortPatch(source) {
   const found = contract(source);
-  if (!found) {
+  if (found == null) {
     console.warn("WARN: Could not find current project group sorting insertion points - skipping project group Last updated sort feature patch");
     return source;
   }
   if (found.isPatched) return source;
-  const { match, context, orderFunction } = found;
-  const sorterEnd = match[0].indexOf("}({") + 1;
-  const declaration = match[0].slice(0, match[0].indexOf("=") + 1);
-  const call = match[0].slice(sorterEnd);
-  const patched = `${declaration}${patchedGroupSorter(orderFunction)}` +
-    `${call.slice(0, -2)},getRecencyAt:${context.recency},sortMode:${context.mode}})`;
-  return source.slice(0, match.index) + patched + source.slice(match.index + match[0].length);
+  const call = `${found.call.slice(0, -2)},getRecencyAt:${found.context.recency},sortMode:${found.context.mode}})`;
+  const patched = source.slice(0, found.start) + sorterSource(found.groups, found.order, found.orderFunction) + call + source.slice(found.end);
+  if (contract(patched)?.isPatched) return patched;
+  console.warn("WARN: Project group Last updated sort post-patch verification failed");
+  return source;
+}
+
+function identifiesOwner(source) {
+  return source.includes("projectOrder:") && source.includes("explicitChatThreadKeys") && source.includes("projectSortMode:");
+}
+
+function patchProjectGroupAssets(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const copies = findUniqueRspackModuleCopies(assets, {
+    matchModule: identifiesOwner, sourceMatch: identifiesOwner,
+    description: "project group sorting sidebar",
+  });
+  return patchRspackModuleCopies(assets, copies, (source) => {
+    if (contract(source) == null) throw new Error("Incomplete project group sorting sidebar contract");
+    return applyProjectGroupLastUpdatedSortPatch(source);
+  });
 }
 
 const descriptors = [{
   id: "last-updated-project-groups",
-  phase: "webview-asset",
+  phase: "extracted-app:pre-webview",
   order: 20_900,
   ciPolicy: "optional",
-  assetNeedles: [".PROJECT_ORDER)", "projectSortMode:", "explicitChatThreadKeys:"],
-  assetMatch: (source) => contract(source) != null,
-  missingDescription: "unique project group sort webview bundle",
-  skipDescription: "project group Last updated sorting feature patch",
-  apply: applyProjectGroupLastUpdatedSortPatch,
+  apply: patchProjectGroupAssets,
 }];
 
 module.exports = { applyProjectGroupLastUpdatedSortPatch, descriptors };

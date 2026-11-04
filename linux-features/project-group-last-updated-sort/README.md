@@ -11,14 +11,18 @@ This feature makes `Last updated` sort both project groups and their task rows
 by recency. `Priority` and `Manual order` keep upstream's saved project-group
 ordering behavior.
 
-The current sidebar compiles both the project-group sorter and the adjacent
-projectless sorter as inline function expressions. It supplies thread
-references and a separate recency getter.
+The current sidebar supplies thread references and a separate recency getter.
 The feature reuses that getter for project ordering; it does not assume that
 references contain task objects or timestamps. The patch selects a unique sidebar
-contract across renderer assets and verifies the full helper and call context on
-repeat application. Missing, ambiguous, or partial contracts leave the asset
-unchanged and reject a build when this feature is enabled.
+module identity across current Rspack assets. It correlates the inline group
+sorter with the same callback's sort preferences, cached recency getter, adjacent
+projectless sorter, pinned-group split, and per-project task sorter. Equal or
+missing timestamps retain the input group order.
+
+If the module has several chunk copies, they are validated and patched together.
+Repeat application verifies the complete generated sorter and its actual getter
+and mode arguments. Missing, ambiguous, damaged, or partially applied module
+copies leave every asset unchanged and reject a build when this feature is enabled.
 
 The feature is disabled by default because it intentionally changes upstream
 sidebar semantics. Enable it in `linux-features/features.json`:
