@@ -5,6 +5,7 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const { execFileSync } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "../..");
 
@@ -86,6 +87,27 @@ test("normal CI and container smoke run local package verification policy regres
   const core = read("scripts/ci/container-entrypoint.sh").split("run_core() {", 2)[1].split("\n}", 1)[0];
   assert.match(core, /bash tests\/scripts_smoke\.sh/);
   assert.match(core, /bash scripts\/ci\/run-node-checks\.sh tests/);
+});
+
+test("local apt CI uses the shared Node 24 bootstrap before installing only CI extras", () => {
+  assert.match(job(read(".github/workflows/ci.yml"), "source-and-node"), /node-version: 24/);
+  const install = /^install_apt\(\) \{[\s\S]*?^\}/m.exec(read("scripts/ci/container-entrypoint.sh"));
+  assert.ok(install, "local apt CI dependency function must exist");
+  // Run the real function with command stubs: no installer, apt or network
+  // operation executes, and a spaced repository path verifies argument quoting.
+  const output = execFileSync("bash", ["-c", `
+set -euo pipefail
+REPO_DIR='/ci repository'
+bash() { printf 'bootstrap\\n%s\\n%s\\n%s\\n' "$NODEJS_MAJOR" "$#" "$1"; }
+apt-get() { printf 'apt\\n%s\\n' "$DEBIAN_FRONTEND"; printf '%s\\n' "$@"; }
+${install[0]}
+install_apt
+`], { encoding: "utf8" });
+  assert.deepEqual(output.trim().split("\n"), [
+    "bootstrap", "24", "1", "/ci repository/scripts/install-deps.sh",
+    "apt", "noninteractive", "install", "-y", "--no-install-recommends",
+    "dbus", "ripgrep", "sudo",
+  ]);
 });
 
 test("official Linux validation runs fully on every pull request but not hourly", () => {

@@ -22,7 +22,8 @@ Usage: ./scripts/ci-local.sh [target...]
 Targets:
   pr                         Run the standard pull-request suite: core, deb, rpm, pacman
   all                        Run pr plus install-deps, nix, and upstream
-  core                       Run shell, Rust, Node patcher, and smoke tests
+  core                       Run shell, Node patcher, and smoke tests
+                             Run Rust tests when Cargo is available
   deb                        Build and inspect the Debian package
   rpm                        Build and inspect the RPM package
   pacman                     Build and inspect the pacman package

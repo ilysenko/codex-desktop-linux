@@ -8,10 +8,9 @@ PACKAGE_VERSION="${CI_PACKAGE_VERSION:-2026.08.12.000000+local}"
 die() { echo "[ci:${CI_JOB}][ERROR] $*" >&2; exit 1; }
 
 install_apt() {
-    apt-get update -qq
+    NODEJS_MAJOR=24 bash "$REPO_DIR/scripts/install-deps.sh"
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        bash ca-certificates curl dbus dpkg-dev g++ gcc git gnupg make nodejs npm \
-        pkg-config python3 ripgrep rpm rpm2cpio sudo tar unzip util-linux xz-utils
+        dbus ripgrep sudo
 }
 
 install_fedora() {
