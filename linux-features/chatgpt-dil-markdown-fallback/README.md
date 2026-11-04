@@ -21,15 +21,32 @@ The feature is disabled by default. Add `chatgpt-dil-markdown-fallback` to
 The build fails if the unique upstream renderer contracts have changed.
 The Markdown view is resolved from the unique rspack module exporting the
 named `ChatGptMarkdown` component; minified export letters are not used. The
-reply chunk must already require that module from a sibling renderer, so it is
+registration must target the factory's own exports parameter, with the named
+component in the direct getter record or optional value record. Nested calls,
+unrelated objects and same-named properties outside that record do not count.
+The reply chunk must already require that module from a sibling renderer, so it is
 loaded together with the reply. The module is required only when a failure is
 rendered; if it cannot be resolved, the upstream error message is kept.
+
+An existing patch is accepted only when the complete version 1 helper is at the
+reply factory's own scope and its injected reference, JSX and original failure
+flow match. Nested helpers, orphan calls and damaged helper bodies are rejected.
+Every physical copy of the reply module is validated before writing; mixed
+pristine/applied copies are rejected, and an interrupted write restores the
+original bytes.
 
 ## Validation
 
 ```sh
 node --test linux-features/chatgpt-dil-markdown-fallback/test.js
+# Include the current official module, executable failure seam and descriptor checks:
+CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
+  node --test linux-features/chatgpt-dil-markdown-fallback/test.js
 ```
+
+The signed-source checks use independent copies of the relevant official
+assets. They execute the actual injected helper and failure expression with
+the current factory require and native JSX bindings; they do not launch the app.
 
 Build against the signed official package with this feature alone. Open a mobile
 conversation, block the DIL runner and verify that the saved answer renders as

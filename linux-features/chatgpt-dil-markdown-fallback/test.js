@@ -6,33 +6,33 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { createHash } = require("node:crypto");
+const { rspackModuleFactories, findRspackRequireBinding } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const {
   fallbackSource,
   applyDilMarkdownFallback,
   findMarkdownChunk,
   findMarkdownModule,
   patchDilMarkdownFallback,
+  descriptors,
 } = require("./patch.js");
 
-// Reduced rspack chunks shaped like the current signed stable Linux webview:
-// the interactive reply chunk loads the unique async chunk that exports the
-// native Markdown module.
-const MARKDOWN_CHUNK = 168420;
+// Reduced rspack chunk shaped like the signed stable Linux 26.1029 webview:
+// the interactive reply module and a sibling renderer that requires the
+// native Markdown module (`N=n("UePh")` … `N.ChatGptMarkdown`).
 const REPLY = 'URlo(e,t,n){let a;n.d(t,{DilResponse:()=>nS});var r=n("ABep"),tG=n("Fail"),aJ=n("Prog");' +
   "function nS(e){let {experiment:x,assistantMessageId:y,reference:t,source:n,onAutoSafeUrls:u,dilComponents:a,loadPublicComponents:l,surface:s}=e;" +
   "let aN=n.preparing,st=n.source_message_status,q=n.error;return(0,r.jsx)(n.runtime,{" +
   "dil:aJ.prepareDil(t.model_dil_v2.code)," +
   "errorFallback:aN?null:(0,r.jsx)(tG.X,{stage:q?.stage,errorClass:q?.errorClass}),diagnostics:!1})}}";
-const ASYNC_MARKDOWN = `WT9T(e,t,n){function o(){return n.e(${MARKDOWN_CHUNK}).then(n.bind(n,"UePh"))}n.d(t,{o:()=>o})}`;
-const SYNC_MARKDOWN = 'WT9T(e,t,n){var N=n("UePh");function o(e){return N.ChatGptMarkdown}n.d(t,{o:()=>o})}';
+const SIBLING = 'WT9T(e,t,n){var a=n("ABep"),N=n("UePh");function o(e){return(0,a.jsx)(N.ChatGptMarkdown,{children:e})}n.d(t,{o:()=>o})}';
 const EXPORTER = 'UePh(e,t,n){n.d(t,{ChatGptMarkdown:()=>e_});function e_(e){return e}}';
 const chunk = (id, ...modules) => `export const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];` +
   `export const __webpack_modules__={${modules.join(",")}};`;
-const asyncChunk = (id, ...modules) => `export const __rspack_esm_ids=[${id}];` +
-  `export const __webpack_modules__={${modules.join(",")}};`;
-const REPLY_CHUNK = chunk(62056, ASYNC_MARKDOWN, REPLY);
+const REPLY_CHUNK = chunk(62056, SIBLING, REPLY);
 
 const jsx = { jsx: (type, props) => ({ type, props }) };
+const MARKER_FOR_TEST = "function codexLinuxDilMarkdownFallback(";
 
 function fallback(resolve = () => ({ ChatGptMarkdown: "Markdown" })) {
   const context = vm.createContext({ n: resolve });
@@ -83,7 +83,7 @@ test("saved fallback never remains streaming, including interrupted and partial 
 });
 
 test("patch targets only the failure branch at module scope and is idempotent", () => {
-  const patched = applyDilMarkdownFallback(REPLY_CHUNK, "UePh", MARKDOWN_CHUNK);
+  const patched = applyDilMarkdownFallback(REPLY_CHUNK, "UePh");
   assert.ok(patched.includes('URlo(e,t,n){function codexLinuxDilMarkdownFallback(codexLinuxDilProps){'));
   assert.ok(patched.includes('try{codexLinuxView=n("UePh").ChatGptMarkdown}catch{}'));
   assert.ok(patched.includes(
@@ -92,37 +92,54 @@ test("patch targets only the failure branch at module scope and is idempotent", 
   ));
   assert.ok(patched.includes("dil:aJ.prepareDil(t.model_dil_v2.code)"));
   assert.ok(patched.endsWith(REPLY_CHUNK.slice(REPLY_CHUNK.indexOf(",diagnostics:!1"))));
-  assert.equal(applyDilMarkdownFallback(patched, "UePh", MARKDOWN_CHUNK), patched);
+  assert.equal(applyDilMarkdownFallback(patched, "UePh"), patched);
   const renamed = REPLY_CHUNK.replaceAll("(0,r.jsx)", () => "(0,$$.jsx)").replace("var r=", () => "var $$=");
-  assert.ok(applyDilMarkdownFallback(renamed, "UePh", MARKDOWN_CHUNK).includes(
+  assert.ok(applyDilMarkdownFallback(renamed, "UePh").includes(
     "errorFallback:aN?null:(0,$$.jsx)(codexLinuxDilMarkdownFallback,{reference:t,jsx:$$,",
   ));
   for (const source of [
     REPLY_CHUNK.replace("errorFallback:", "fallback:"),
-    REPLY_CHUNK.replace("onAutoSafeUrls:u", "onAutoSafeUrlsDrift:u"),
-    chunk(1, ASYNC_MARKDOWN, REPLY, REPLY.replace("URlo", "URlp")),
+    chunk(1, SIBLING, REPLY, REPLY.replace("URlo", "URlp")),
     REPLY_CHUNK.replace("export const __webpack_modules__=", "export const modules="),
   ]) {
-    assert.throws(() => applyDilMarkdownFallback(source, "UePh", MARKDOWN_CHUNK), /contract changed/);
+    assert.throws(() => applyDilMarkdownFallback(source, "UePh"), /contract changed/);
   }
-  assert.throws(() => applyDilMarkdownFallback(chunk(1, REPLY), "UePh", MARKDOWN_CHUNK), /not loaded with the interactive reply chunk/);
-  assert.throws(() => applyDilMarkdownFallback(REPLY_CHUNK, "UePh", MARKDOWN_CHUNK + 1), /not loaded with the interactive reply chunk/);
+  assert.throws(() => applyDilMarkdownFallback(chunk(1, REPLY), "UePh"), /not loaded with the interactive reply chunk/);
+  assert.throws(() => applyDilMarkdownFallback(REPLY_CHUNK, "Other"), /not loaded with the interactive reply chunk/);
   assert.throws(() => applyDilMarkdownFallback(REPLY_CHUNK, '"bad"'), /Invalid/);
-  assert.throws(() => applyDilMarkdownFallback(patched.replace("jsx)(codexLinuxDilMarkdownFallback,{", "jsx)(Other,{"), "UePh", MARKDOWN_CHUNK), /Incomplete/);
+  assert.throws(() => applyDilMarkdownFallback(patched.replace("jsx)(codexLinuxDilMarkdownFallback,{", "jsx)(Other,{"), "UePh"), /Incomplete/);
 });
 
-test("sync-only obsolete Markdown layout is rejected", () => {
-  const obsolete = chunk(62056, SYNC_MARKDOWN, REPLY);
-  assert.throws(
-    () => applyDilMarkdownFallback(obsolete, "UePh", MARKDOWN_CHUNK),
-    /Markdown async chunk is not loaded/,
-  );
-  const obsoletePatched = applyDilMarkdownFallback(REPLY_CHUNK, "UePh", MARKDOWN_CHUNK)
-    .replace(ASYNC_MARKDOWN, SYNC_MARKDOWN);
-  assert.throws(
-    () => applyDilMarkdownFallback(obsoletePatched, "UePh", MARKDOWN_CHUNK),
-    /Incomplete ChatGPT DIL Markdown fallback patch/,
-  );
+test("applied state proves the complete version-one helper and its reply dataflow", () => {
+  const patched = applyDilMarkdownFallback(REPLY_CHUNK, "UePh");
+  const helper = fallbackSource("n", "UePh");
+  const withoutHelper = patched.replace(helper, "");
+  const owner = "function nS(e){let {experiment:x,assistantMessageId:y,reference:t,source:n,onAutoSafeUrls:u,dilComponents:a,loadPublicComponents:l,surface:s}=e;";
+  const damaged = [
+    patched.replace("1!==codexLinuxDil?.fallbackMarkdownVersion", "2!==codexLinuxDil?.fallbackMarkdownVersion"),
+    patched.replace("codexLinuxDilProps.reference?.model_dil_v2", "codexLinuxDilProps.otherReference?.model_dil_v2"),
+    patched.replace("codexLinuxMarkdown.trim().length", "codexLinuxMarkdown.length"),
+    patched.replace('codexLinuxView=n("UePh")', 'codexLinuxView=other("UePh")'),
+    patched.replace("isStreaming:!1", "isStreaming:!0"),
+    patched.replace("children:codexLinuxMarkdown", "children:codexLinuxDil.code"),
+    patched.replace("return codexLinuxDilProps.failure", "return null"),
+    patched.replace("{reference:t,jsx:r,", "{reference:a,jsx:r,"),
+    patched.replace("{reference:t,jsx:r,", "{reference:t,jsx:a,"),
+    patched.replace("(0,r.jsx)(codexLinuxDilMarkdownFallback,", "(0,other.jsx)(codexLinuxDilMarkdownFallback,"),
+    patched.replace("failure:(0,r.jsx)", "failure:(0,other.jsx)"),
+    patched.replace(helper, helper + helper),
+    withoutHelper.replace(owner, owner + helper),
+    withoutHelper.replace("WT9T(e,t,n){", "WT9T(e,t,n){" + helper),
+    helper + withoutHelper,
+    patched.replace(helper, "{" + helper + "}"),
+    patched.replace("let a;", "let a;codexLinuxDilMarkdownFallback({});"),
+    "/* codexLinuxDilMarkdownFallback */" + REPLY_CHUNK,
+  ];
+  for (const source of damaged) {
+    assert.doesNotThrow(() => new vm.Script(source.replaceAll("export const ", "const ")));
+    assert.throws(() => applyDilMarkdownFallback(source, "UePh"), /Incomplete/);
+  }
+  assert.equal(applyDilMarkdownFallback(patched, "UePh"), patched);
 });
 
 test("runner startup failure reaches the patched fallback; success and preparation stay unchanged", async () => {
@@ -172,7 +189,7 @@ test("runner startup failure reaches the patched fallback; success and preparati
     return {result, markdownViews};
   }
 
-  const patched = applyDilMarkdownFallback(REPLY_CHUNK, "UePh", MARKDOWN_CHUNK);
+  const patched = applyDilMarkdownFallback(REPLY_CHUNK, "UePh");
   assert.equal((await render(REPLY_CHUNK, {fails:true})).result.type, "Failure");
   const failed = await render(patched, {fails:true});
   assert.equal(failed.result.props.children.type, "Markdown");
@@ -199,24 +216,15 @@ function withAssets(t, files) {
 test("module discovery is fail closed and writes only after all contracts match", t => {
   const replyName = "async/62056.3f2d3d25bb.js";
   const { root, read } = withAssets(t, { [replyName]: REPLY_CHUNK });
-  assert.throws(() => patchDilMarkdownFallback(root), /found 1, 0, and 0/);
+  assert.throws(() => patchDilMarkdownFallback(root), /found 1 and 0/);
   assert.equal(read(replyName), REPLY_CHUNK);
-  fs.writeFileSync(path.join(root, "webview/assets/async/168420.0210291773.js"), asyncChunk(MARKDOWN_CHUNK, EXPORTER));
+  fs.writeFileSync(path.join(root, "webview/assets/async/168420.0210291773.js"), chunk(168420, EXPORTER));
+  // A duplicate copy of the same exporter module in another chunk is the same module.
+  fs.writeFileSync(path.join(root, "webview/assets/async/168421.0210291773.js"), chunk(168421, EXPORTER));
   assert.equal(patchDilMarkdownFallback(root).changed, true);
-  assert.equal(read(replyName), applyDilMarkdownFallback(REPLY_CHUNK, "UePh", MARKDOWN_CHUNK));
-  assert.equal(read("async/168420.0210291773.js"), asyncChunk(MARKDOWN_CHUNK, EXPORTER));
+  assert.equal(read(replyName), applyDilMarkdownFallback(REPLY_CHUNK, "UePh"));
+  assert.equal(read("async/168420.0210291773.js"), chunk(168420, EXPORTER));
   assert.equal(patchDilMarkdownFallback(root).changed, false);
-});
-
-test("duplicate Markdown exporter chunks are rejected before any reply write", t => {
-  const replyName = "async/62056.3f2d3d25bb.js";
-  const { root, read } = withAssets(t, {
-    [replyName]: REPLY_CHUNK,
-    "async/168420.0210291773.js": asyncChunk(MARKDOWN_CHUNK, EXPORTER),
-    "async/168421.0210291773.js": asyncChunk(MARKDOWN_CHUNK + 1, EXPORTER),
-  });
-  assert.throws(() => patchDilMarkdownFallback(root), /found 1, 1, and 2/);
-  assert.equal(read(replyName), REPLY_CHUNK);
 });
 
 test("exporters without the named export or with competing ids are rejected before any reply write", t => {
@@ -224,16 +232,87 @@ test("exporters without the named export or with competing ids are rejected befo
   const { root, read } = withAssets(t, { [replyName]: REPLY_CHUNK });
   const exporter = path.join(root, "webview/assets/async/168420.0210291773.js");
   for (const [source, expected] of [
-    [asyncChunk(1, 'UePh(e,t,n){n.d(t,{ChatGptMarkdownOther:()=>e_})}'), /found 1, 0, and 0/],
-    [asyncChunk(1, 'UePh(e,t,n){const x={ChatGptMarkdown:e_};n.d(t,{x:()=>x})}'), /found 1, 0, and 0/],
-    [asyncChunk(1, 'UePh(e,t,n){let x="ChatGptMarkdown:()=>e_"}'), /found 1, 0, and 0/],
-    [asyncChunk(1, EXPORTER, EXPORTER.replace("UePh", "Othr")), /found 1, 2, and 0/],
-    [asyncChunk(1, EXPORTER.replace("UePh", "Othr")), /not loaded with the interactive reply chunk/],
+    [chunk(1, 'UePh(e,t,n){n.d(t,{ChatGptMarkdownOther:()=>e_})}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){const x={ChatGptMarkdown:e_};n.d(t,{x:()=>x})}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){let x="ChatGptMarkdown:()=>e_"}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){n.d(otherExports,{ChatGptMarkdown:()=>e_});function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){other.d(t,{ChatGptMarkdown:()=>e_});function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){n.d(t,{Other:()=>e_}),({ChatGptMarkdown:e_});function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){n.d(t,{Nested:{Other:e_,ChatGptMarkdown:e_,Tail:e_}});function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){function unused(){n.d(t,{ChatGptMarkdown:()=>e_})}function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){let unused=()=>n.d(t,{ChatGptMarkdown:()=>e_});function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){let unused={register(){n.d(t,{ChatGptMarkdown:()=>e_})}};function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){let text=";n.d(t,{ChatGptMarkdown:()=>e_})";function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){/*;n.d(t,{ChatGptMarkdown:()=>e_})*/function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, 'UePh(e,t,n){for(let i=0;n.d(t,{ChatGptMarkdown:()=>e_});i++){}function e_(e){return e}}'), /found 1 and 0/],
+    [chunk(1, EXPORTER, EXPORTER.replace("UePh", "Othr")), /found 1 and 2/],
+    [chunk(1, EXPORTER.replace("UePh", "Othr")), /not loaded with the interactive reply chunk/],
   ]) {
     fs.writeFileSync(exporter, source);
     assert.throws(() => patchDilMarkdownFallback(root), expected);
     assert.equal(read(replyName), REPLY_CHUNK);
   }
+});
+
+test("native Markdown discovery accepts its own getter or third value export record", t => {
+  for (const body of [
+    'n.d(t,{ChatGptMarkdown:()=>e_});',
+    'n.d(t,{Other:()=>e_},{ChatGptMarkdown:e_});',
+    'n.d(t,{ChatGptMarkdown:()=>e_},{Other:e_});',
+    'n.d(t,{ChatGptMarkdown:()=>e_}),({ChatGptMarkdown:e_});',
+    'function prior(){}n.d(t,{ChatGptMarkdown:()=>e_});',
+  ]) {
+    const { root } = withAssets(t, { "async/markdown.js": chunk(1, `UePh(e,t,n){${body}function e_(e){return e}}`) });
+    assert.deepEqual(findMarkdownModule(root), ["UePh"]);
+  }
+});
+
+test("the loaded Markdown edge must be a unique factory-owned require binding", () => {
+  for (const sibling of [
+    SIBLING.replace('N=n("UePh")', 'N=other("UePh")'),
+    SIBLING.replace('N=n("UePh")', 'N=missing').replace('function o(', 'function decoy(){var N=n("UePh");return N.ChatGptMarkdown}function o('),
+    SIBLING.replace('N=n("UePh")', 'N=missing').replace('function o(', '/*var N=n("UePh");N.ChatGptMarkdown;*/function o('),
+    SIBLING.replace('N=n("UePh")', 'N=missing').replace('function o(', 'let decoy=\'N=n("UePh");N.ChatGptMarkdown\';function o('),
+    SIBLING.replace('N=n("UePh")', 'N=n("UePh"),N=n("UePh")'),
+    SIBLING.replace("WT9T(e,t,n)", "WT9T(e,t,other)"),
+  ]) {
+    assert.throws(() => applyDilMarkdownFallback(chunk(1, sibling, REPLY), "UePh"), /not loaded/);
+  }
+});
+
+test("reply replicas reject mixed, damaged and competing identities before any write", t => {
+  const patched = applyDilMarkdownFallback(REPLY_CHUNK, "UePh");
+  for (const [second, expected] of [
+    [patched, /Partially applied/],
+    [patched.replace("1!==codexLinuxDil?.fallbackMarkdownVersion", "2!==codexLinuxDil?.fallbackMarkdownVersion"), /Incomplete/],
+    [REPLY_CHUNK.replace("source_message_status", "changed_status"), /contract changed/],
+    [REPLY_CHUNK.replace("URlo(e,t,n)", "Other(e,t,n)"), /multiple.*identities/],
+  ]) {
+    const { root, read } = withAssets(t, { "async/a.js": REPLY_CHUNK, "async/b.js": second, "async/markdown.js": chunk(2, EXPORTER) });
+    assert.throws(() => patchDilMarkdownFallback(root), expected);
+    assert.equal(read("async/a.js"), REPLY_CHUNK);
+    assert.equal(read("async/b.js"), second);
+  }
+});
+
+test("replica writes are verified, rolled back on interruption and idempotent", t => {
+  const { root, read } = withAssets(t, { "async/a.js": REPLY_CHUNK, "async/b.js": REPLY_CHUNK, "async/markdown.js": chunk(2, EXPORTER) });
+  let writes = 0;
+  assert.throws(() => patchDilMarkdownFallback(root, {
+    writeFileSync(...args) {
+      fs.writeFileSync(...args);
+      if (++writes === 2) throw new Error("interrupted second replica");
+    },
+  }), /interrupted second replica/);
+  assert.equal(read("async/a.js"), REPLY_CHUNK);
+  assert.equal(read("async/b.js"), REPLY_CHUNK);
+  const result = patchDilMarkdownFallback(root);
+  assert.equal(result.changed, true);
+  assert.equal(result.matched, 2);
+  assert.equal(read("async/a.js"), applyDilMarkdownFallback(REPLY_CHUNK, "UePh"));
+  assert.equal(read("async/b.js"), read("async/a.js"));
+  assert.equal(read("async/markdown.js"), chunk(2, EXPORTER));
+  assert.equal(patchDilMarkdownFallback(root).changed, false);
 });
 
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
@@ -250,4 +329,82 @@ test("the signed official webview exposes one patchable reply and Markdown modul
   }).filter(Boolean);
   assert.equal(patched.length, 1);
   assert.equal(applyDilMarkdownFallback(patched[0], markdown[0], markdownChunks[0]), patched[0]);
+});
+
+test("actual signed failure seam executes with its factory require, native JSX and original failure", { skip: signedApp == null }, () => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const [markdownId] = findMarkdownModule(signedApp);
+  const source = findWebviewAssetsContaining(signedApp, ["model_dil_v2", "source_message_status", ".prepareDil(", "errorFallback:"])
+    .map(name => fs.readFileSync(path.join(signedApp, "webview/assets", name), "utf8"))
+    .find(value => { try { applyDilMarkdownFallback(value, markdownId); return true; } catch { return false; } });
+  assert.ok(source);
+  const patched = applyDilMarkdownFallback(source, markdownId);
+  const owner = [...rspackModuleFactories(patched, "actual")].find(module => module.moduleSource.startsWith(MARKER_FOR_TEST));
+  assert.ok(owner);
+  const requireName = owner.params[2];
+  const reference = owner.moduleSource.match(/function [\w$]+\(\{assistantMessageId:[\w$]+,reference:([\w$]+),source:([\w$]+),/);
+  const seam = owner.moduleSource.match(/errorFallback:([\w$]+)\?null:\(0,([\w$]+)\.jsx\)\(codexLinuxDilMarkdownFallback,\{reference:([\w$]+),jsx:[\w$]+,failure:\(0,[\w$]+\.jsx\)\(([\w$]+)\.([\w$]+),\{stage:([\w$]+)\?\.stage,errorClass:[\w$]+\?\.errorClass\}\)\}\),diagnostics:/);
+  assert.ok(reference && seam);
+  assert.equal(reference[1], seam[3]);
+  assert.equal(reference[2], requireName, "current source parameter shadows the factory require");
+  const jsxBinding = findRspackRequireBinding(owner, seam[2]);
+  assert.ok(jsxBinding);
+  const helper = owner.moduleSource.slice(0, fallbackSource(requireName, markdownId).length);
+  const expression = seam[0].slice("errorFallback:".length, -",diagnostics:".length);
+  const make = vm.runInNewContext(`(function(${requireName}){${helper}let ${seam[2]}=${requireName}(${JSON.stringify(jsxBinding.moduleId)});` +
+    `return function(${reference[1]},${reference[2]},${seam[1]},${seam[6]},${seam[4]}){return ${expression}}})`);
+  function render(payload, { preparing = false, fails = true, available = true } = {}) {
+    const required = [];
+    const actual = make(id => {
+      if (id === jsxBinding.moduleId) return jsx;
+      required.push(id);
+      if (!available) throw new Error("Markdown registration unavailable");
+      assert.equal(id, markdownId);
+      return { ChatGptMarkdown: "NativeMarkdown" };
+    });
+    const error = { stage: "frame_timeout", errorClass: "runner_unavailable" };
+    const tree = actual({ model_dil_v2: payload }, { notCallable: true }, preparing, error, { [seam[5]]: "NativeFailure" });
+    const result = !fails ? { type: "Interactive" } : typeof tree?.type === "function" ? tree.type(tree.props) : tree;
+    return { result, required };
+  }
+  const payload = { code: "DO_NOT_EXECUTE()", fallbackMarkdownVersion: 1, fallbackMarkdown: "答复\n\n| A |\n| - |\n| B |\n\n```js\nconst x=1;\n```\n[link](https://example.com)" };
+  const valid = render(payload);
+  assert.deepEqual(valid.required, [markdownId]);
+  assert.equal(valid.result.props.children.type, "NativeMarkdown");
+  assert.equal(valid.result.props.children.props.children, payload.fallbackMarkdown);
+  assert.equal(valid.result.props.children.props.isStreaming, false);
+  assert.doesNotMatch(JSON.stringify(valid.result), /DO_NOT_EXECUTE/);
+  for (const value of [undefined, {}, { ...payload, fallbackMarkdownVersion: 2 }, { ...payload, fallbackMarkdown: " \n" }]) {
+    const invalid = render(value);
+    assert.equal(invalid.result.type, "NativeFailure");
+    assert.deepEqual({ ...invalid.result.props }, { stage: "frame_timeout", errorClass: "runner_unavailable" });
+    assert.deepEqual(invalid.required, []);
+  }
+  assert.equal(render(payload, { available: false }).result.type, "NativeFailure");
+  assert.equal(render(payload, { preparing: true }).result, null);
+  const success = render(payload, { fails: false });
+  assert.equal(success.result.type, "Interactive");
+  assert.deepEqual(success.required, []);
+});
+
+test("production descriptor patches independent actual owner copies and preserves official inputs", { skip: signedApp == null }, t => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const names = [...new Set([
+    ...findWebviewAssetsContaining(signedApp, ["model_dil_v2", "source_message_status", ".prepareDil(", "errorFallback:"]),
+    ...findWebviewAssetsContaining(signedApp, ["ChatGptMarkdown:"]),
+  ])];
+  const files = Object.fromEntries(names.map(name => [name, fs.readFileSync(path.join(signedApp, "webview/assets", name), "utf8")]));
+  const originals = new Map(names.map(name => [name, createHash("sha256").update(files[name]).digest("hex")]));
+  const { root, read } = withAssets(t, files);
+  assert.equal(descriptors[0].apply(root).changed, true);
+  assert.equal(descriptors[0].apply(root).changed, false);
+  let changed = 0;
+  for (const name of names) {
+    if (read(name) !== files[name]) {
+      changed++;
+      assert.doesNotThrow(() => new vm.Script(read(name).replaceAll("export const ", "const ")));
+    }
+    assert.equal(createHash("sha256").update(fs.readFileSync(path.join(signedApp, "webview/assets", name))).digest("hex"), originals.get(name));
+  }
+  assert.equal(changed, 1);
 });
