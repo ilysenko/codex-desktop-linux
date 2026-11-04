@@ -8,8 +8,9 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const { applyWebviewAssetPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
+const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 const {
-  MODE_MESSAGE_ID, RUNTIME_MARKER, applyCustomFontInputPatch,
+  ASSET_NEEDLES, MODE_MESSAGE_ID, RUNTIME_MARKER, applyCustomFontInputPatch,
   customFontInputEnabled, descriptors, fontPickerContract,
 } = require("./patches/custom-font-input.js");
 
@@ -39,7 +40,7 @@ function createRenderer(source, options = {}) {
   const makeElement = (type, props) => ({ type, props });
   const context = {
     Symbol,
-    Ja: { c: (size) => {
+    r: { c: (size) => {
       if (cacheSize == null) {
         cacheSize = size;
         cache.push(...Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
@@ -47,23 +48,30 @@ function createRenderer(source, options = {}) {
       assert.equal(size, cacheSize);
       return cache;
     } },
-    Ya: { useState: (initial) => {
+    m: { useState: (initial) => {
       const index = stateIndex++;
       if (index >= states.length) states[index] = initial;
       return [states[index], (value) => { states[index] = value; }];
     } },
-    L: () => ({ data, isPending: false }), Wa: {},
-    Y: { jsx: makeElement, jsxs: makeElement, Fragment: "Fragment" },
-    N: "Translation", J: { chromeThemeSystemFont: { id: "system-font" }, chromeThemeRegularFontStyle: { id: "regular" } },
-    I: { Input: "Input", Item: "Item", CheckboxItem: "CheckboxItem", Section: "Section", Separator: "Separator" },
-    Kn: "Button", cn: "Menu", Zt: "Selected", g: "Spinner",
-    Va: () => null, Ha: (value) => value?.split(",")[0].trim() || null,
-    ki: (value) => value, Ai: () => {},
+    g: { Ul: () => ({ data, isPending: false }) }, tr: {},
+    n: { jsx: makeElement, jsxs: makeElement, Fragment: "Fragment" },
+    x: { A: "Translation" },
+    eV: { chromeThemeSystemFont: { id: "system-font" }, chromeThemeRegularFontStyle: { id: "regular" } },
+    J: {
+      Ab: "Menu",
+      ms: { Input: "Input", Item: "Item", CheckboxItem: "CheckboxItem", Section: "Section", Separator: "Separator" },
+    },
+    eH: { vg: "Button" }, l: { G: "Selected" }, es: { y: "Spinner" },
+    ts: {
+      getFirstCssFontFamilyName: (value) => value?.split(",")[0].trim().replace(/^"|"$/g, "") || null,
+      escapeThemeFontCssString: (value) => value,
+    },
+    ta: { _: () => {} },
   };
   for (const [from, to] of Object.entries(rename)) {
     if (Object.hasOwn(context, from)) context[to] = context[from];
   }
-  const functions = vm.runInNewContext(`${source}; ({picker:${rename.Ka ?? "Ka"},merge:CVs,css:gOs})`, context);
+  const functions = vm.runInNewContext(`${source}; ({picker:${rename.ti ?? "ti"},merge:B,css:K})`, context);
   let theme = {
     accent: "#123456", semanticColors: { skill: "#123456" },
     fonts: { ui: null, code: null, content: null },
@@ -206,11 +214,26 @@ test("unavailable font enumeration retains automatic manual input and disables o
 });
 
 test("font input patch captures compiler aliases rather than requiring fixed minified symbols", () => {
-  const rename = { Ka: "FontSelector", Ja: "MemoRuntime", Ya: "ReactRuntime", Y: "JsxRuntime", I: "MenuRuntime", N: "MessageRuntime" };
-  let renamed = fixture;
-  for (const [from, to] of Object.entries(rename)) renamed = renamed.replace(new RegExp(`\\b${from}\\b`, "g"), to);
+  const rename = {
+    ti: "FontSelector", r: "MemoRuntime", m: "ReactRuntime", n: "JsxRuntime", J: "MenuRuntime", x: "MessageRuntime",
+  };
+  const renamed = fixture
+    .replace("function ti(", `function ${rename.ti}(`)
+    .replaceAll("(0,r.c)", `(0,${rename.r}.c)`)
+    .replaceAll("(0,m.useState)", `(0,${rename.m}.useState)`)
+    .replaceAll("(0,n.jsx)", `(0,${rename.n}.jsx)`)
+    .replaceAll("(0,n.jsxs)", `(0,${rename.n}.jsxs)`)
+    .replaceAll("n.Fragment", `${rename.n}.Fragment`)
+    .replaceAll("J.ms.", `${rename.J}.ms.`)
+    .replaceAll("J.Ab,", `${rename.J}.Ab,`)
+    .replaceAll("(x.A,", `(${rename.x}.A,`);
+  for (const alias of ["(0,r.c)", "(0,m.useState)", "(0,n.jsx)", "J.ms.", "(x.A,"]) {
+    assert.equal(renamed.includes(alias), false, alias);
+  }
   const patched = applyCustomFontInputPatch(renamed, enabledContext);
   assert.equal(fontPickerContract(patched)?.state, "applied");
+  assert.ok(patched.includes(`(0,${rename.n}.jsx)(${rename.J}.ms.CheckboxItem,`));
+  assert.ok(patched.includes(`[codexLinuxManualFontInput,setCodexLinuxManualFontInput]=(0,${rename.m}.useState)(!1)`));
   const renderer = createRenderer(patched, { rename });
   renderer.open();
   assert(renderer.switchMode().some((node) => node.type === "Input"));
@@ -220,11 +243,12 @@ test("font input patch rejects missing, duplicate, and partially patched contrac
   const broken = [
     "unrelated source",
     fixture + fixture,
-    fixture.replace("f==null||f.length===0", "f==null"),
+    fixture.replace("_=null==w||0===w.length", "_=null==w"),
     fixture.replace(".c)(42)", ".c)(43)"),
-    fixture.replace("t[15]=C}else", "t[15]=C,t[42]=true}else"),
+    fixture.replace("o[15]=s}else", "o[15]=s,o[42]=!0}else"),
     fixture + `/*${RUNTIME_MARKER}*/`,
-    applyCustomFontInputPatch(fixture, enabledContext).replace("indicator:`switch`", "indicator:`checkmark`"),
+    applyCustomFontInputPatch(fixture, enabledContext).replace('indicator:"switch"', 'indicator:"checkmark"'),
+    fixture.replace('defaultMessage:"Use custom font value"', "defaultMessage:`Use custom font value`"),
   ];
   const previous = console.warn;
   const warnings = [];
@@ -236,14 +260,17 @@ test("font input patch rejects missing, duplicate, and partially patched contrac
 });
 
 test("font input descriptor discovers semantic contracts and rejects ambiguous asset candidates", () => {
+  assert.equal(descriptors[0].pattern, undefined);
+  assert.deepEqual(descriptors[0].assetNeedles, ASSET_NEEDLES);
   for (const count of [1, 2]) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "custom-font-input-"));
     try {
       const assets = path.join(root, "webview/assets");
-      fs.mkdirSync(assets, { recursive: true });
-      const targets = Array.from({ length: count }, (_, index) => path.join(assets, `renamed-settings-${index}.js`));
+      fs.mkdirSync(path.join(assets, "async"), { recursive: true });
+      const targets = Array.from({ length: count }, (_, index) =>
+        path.join(assets, "async", `57286${index}.36a6c86221.js`));
       for (const target of targets) fs.writeFileSync(target, fixture);
-      fs.writeFileSync(path.join(assets, "unrelated.js"), "unrelated source");
+      fs.writeFileSync(path.join(assets, "async", "24191.7b05d5cf83.js"), "unrelated source");
       const report = createPatchReport();
       applyWebviewAssetPatchDescriptors(root, normalizePatchDescriptors(descriptors), enabledContext, report);
       for (const target of targets) {
@@ -257,12 +284,13 @@ test("font input descriptor discovers semantic contracts and rejects ambiguous a
 test("font input switch applies to the current signed official font picker", {
   skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null,
 }, () => {
-  const assets = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, "webview/assets");
-  const candidates = fs.readdirSync(assets).filter((name) => name.endsWith(".js"))
-    .map((name) => fs.readFileSync(path.join(assets, name), "utf8"))
-    .filter(descriptors[0].assetMatch);
+  const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const candidates = findWebviewAssetsContaining(root, ASSET_NEEDLES)
+    .map((name) => fs.readFileSync(path.join(root, "webview/assets", name), "utf8"))
+    .filter((source) => descriptors[0].assetMatch(source));
   assert.equal(candidates.length, 1);
   const [source] = candidates;
+  assert.equal(fontPickerContract(source)?.state, "current");
   assert.equal(applyCustomFontInputPatch(source), source);
   const patched = applyCustomFontInputPatch(source, enabledContext);
   assert.notEqual(patched, source);

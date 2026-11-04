@@ -17,6 +17,20 @@ import tools.
 See [Linux Chronicle / Skysight](../../docs/linux-chronicle-skysight.md) for the
 capture lifecycle, privacy boundaries, runtime paths, and OCR configuration.
 
+## How it is wired
+
+The main-process patch points the upstream Chronicle recorder controller at the
+Linux `codex-record-replay-linux skysight` backend while leaving the macOS-only
+Chronicle settings service gated. It also adds a module-scope bridge registry
+(`chronicle-permissions`, sidecar state, and the
+`linux-record-replay-skysight-*` controls). The desktop main process no longer
+serves `vscode://codex/<method>` fetches from a handler map, so the bridge is
+routed from the desktop fetch wrapper's request entry: a webview `fetch`
+message for `vscode://codex/<bridge method>` is answered with a
+`fetch-response` through the inline view-message sender. Unknown methods fall
+through to the upstream handling. Record & Replay registers its own methods in
+the same registry.
+
 ## Catalog subfeatures
 
 The community feature catalog lists these user-facing capabilities separately:

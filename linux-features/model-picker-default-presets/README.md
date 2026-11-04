@@ -94,17 +94,31 @@ rebuild. Each upstream update is patched against semantic catalog and picker
 contracts; drift or ambiguous matches fail closed and are reported instead of
 partially changing the app.
 
+The official webview is an rspack build whose application code lives in
+lazily loaded `webview/assets/async/` chunks, so every descriptor finds its
+chunk by stable content strings and then by its semantic contract, never by
+file name. The catalog normalizer, picker slider, local resolver, and local
+composer are each patched in exactly one chunk. Upstream inlines the
+model-settings hook into every composer surface, so the existing-chat
+selection patch is applied to each copy and warns about any copy that drifted.
+
 The local resolver contract follows the current signed stable package's
-`removeXHigh` filter and preset loop. An enabled feature's descriptor mismatch
+`removeXHigh` filter and preset loop. The local composer takes its slider
+config from either of two ChatGPT-gated upstream sources; the configured list
+replaces whichever one is active. An enabled feature's descriptor mismatch
 rejects the build/update candidate and preserves the working installation.
 The composer context requires the current separate host-ID binding; the retired
 host-object context shape is rejected.
-The official-bundle CI audit includes populated presets so all six
-descriptors are checked, including the upstream Default-selection
-compatibility audit and the local composer resolver.
+The official-bundle CI audit includes populated presets so all seven
+descriptors are checked, including the upstream Default-option compatibility
+audit (the merged picker's Default option must use the catalog slider settings
+exclusively) and the upstream reset-effect audit.
 
 ## Test
 
 ```bash
 node --test linux-features/model-picker-default-presets/test.js
 ```
+
+Set `CODEX_SIGNED_EXTRACTED_APP` to an extracted official `app.asar` to also
+check every descriptor against the signed rspack chunks.

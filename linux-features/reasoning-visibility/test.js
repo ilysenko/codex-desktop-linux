@@ -8,15 +8,18 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { descriptors } = require("./patch.js");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
-const { patchUniqueAssetFile } = require("../../scripts/patches/lib/assets.js");
+const { findWebviewAssetsContaining, patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
+const { patchBreaksJavaScriptSyntax } = require("../../scripts/patches/lib/javascript-syntax.js");
 const { STORAGE_KEY, RUNTIME, reasoningVisibilitySnapshot } = require("./runtime.js");
-const { MESSAGE_IDS, translations, settingsContract, settingComponent, applySettingsPatch } = require("./settings.js");
+const { MESSAGE_IDS, translations, settingsContract, settingComponent, catalogPatches, patchSettingsSource, applySettingsPatch } = require("./settings.js");
 
-const standaloneSource = 'function classify(e,{includeGeneratedImages:n=!1}={}){switch(e.type){case`exec`:return wrap(e,`groupable`);case`generated-image`:return n?wrap(e,`standalone`):null;case`worktree-init`:return wrap(e,`standalone`);case`reasoning`:case`automation-update`:return null}}function wrap(e,t){return{item:e,grouping:t}}';
-const persistentSource = 'function persistent({unit:e,hasFollowingFinalAnswer:t}){if(e.kind!==`standalone`)return!1;let a=e.item.item;return a.type===`user-input-response`?!a.completed:a.type===`assistant-message`&&a.important?!0:a.type===`user-message`&&!t}const partition={collapsibleUnits:[],persistentUnits:[]};';
-const transcriptSource = 'function transcript(items,n){let i=[],a=[],s=()=>{a.length&&(i.push({type:`agent-activity`,items:a,collapseWhenPossible:!0}),a=[])};for(let o of items){let l=o.type===`reasoning`?null:{grouping:o.grouping};l?.grouping===`standalone`||n?.has(o)===!0?(s(),i.push({type:`activity-item`,key:`transcript-activity-item-${o.id}`,item:o})):a.push(o)}s();return i}';
-const summariesSource = 'function options(client,mode){return{reasoningSummaryOverride:client.getDefaultFeatureOverride(`concurrent_reasoning_summaries`)===!0||mode?`detailed`:null,getRequestModel:e=>e,getRequestCollaborationMode(e){return e}}}function resolve(options,config,turn){let summary=`none`;options.reasoningSummaryOverride!=null&&(summary=options.reasoningSummaryOverride);summary=config.model_reasoning_summary??summary;turn.summary!==void 0&&(summary=turn.summary);return summary}';
-const expandedSource = 'function reasoning(e){let{item:n}=e,l=!n.completed,f=n.content,[h,g]=(0,React.useState)(!1),_=!l&&!!f,v=n.content;let y=v,b=l?!!y:h,x=l?y:f,disclosure={expanded:h,onToggle:()=>{g(toggle)}},scroll={items:[{key:`reasoning-markdown`,node:x}],autoScrollToBottom:l,viewState:`expanded`};return{visible:b,disclosure,scroll}}function toggle(e){return!e}';
+// Current signed rspack/SWC shapes: double-quoted strings, literal-first
+// comparisons and the transcript key as the only template literal.
+const standaloneSource = 'function classify(e,{includeGeneratedImages:n=!1}={}){switch(e.type){case"exec":return wrap(e,"groupable");case"generated-image":return n?wrap(e,"standalone"):null;case"worktree-init":return wrap(e,"standalone");case"reasoning":case"automation-update":case"todo-list":return null}}function wrap(e,t){return{item:e,grouping:t}}';
+const persistentSource = 'function persistent({unit:e,hasFollowingFinalAnswer:t}){if("standalone"!==e.kind)return!1;let a=e.item.item;return"user-input-response"===a.type?!a.completed:"assistant-message"===a.type&&a.important?!0:"user-message"===a.type&&!t}const partition={collapsibleUnits:[],persistentUnits:[]};';
+const transcriptSource = 'function transcript(items,n){let i=[],a=[],s=()=>{a.length&&(i.push({type:"agent-activity",items:a,collapseWhenPossible:!0}),a=[])};for(let o of items){let l="reasoning"===o.type?null:{grouping:o.grouping};if(l?.grouping==="standalone"||n?.has(o)===!0){s(),i.push({type:"activity-item",key:`transcript-activity-item-${o.id}`,item:o});continue}a.push(o)}s();return i}';
+const summariesSource = 'function options(client,mode){return{reasoningSummaryOverride:!0===client.getDefaultFeatureOverride("concurrent_reasoning_summaries")||mode?"detailed":null,getRequestModel:e=>e,getRequestCollaborationMode(e){return e}}}function resolve(options,config,turn){let summary="none";null!=options.reasoningSummaryOverride&&(summary=options.reasoningSummaryOverride);summary=config.model_reasoning_summary??summary;void 0!==turn.summary&&(summary=turn.summary);return summary}';
+const expandedSource = 'function reasoning(e){let{item:n}=e,l=!n.completed,f=n.content,[h,g]=(0,React.useState)(!1),_=!l&&!!f;let v=n.content;let y=v,b=l?!!y:h,x=l?y:f,disclosure={expanded:h,onToggle:()=>{g(toggle)}},scroll={items:[{key:"reasoning-markdown",node:x}],autoScrollToBottom:l,viewState:"expanded"};return{visible:b,disclosure,scroll}}function toggle(e){return!e}';
 const sources = [standaloneSource, persistentSource, transcriptSource, summariesSource, expandedSource];
 const preference = (enabled = true) => ({ localStorage: { getItem: () => enabled ? "1" : null } });
 
@@ -58,7 +61,7 @@ test("reasoning becomes standalone while tools, images and hidden events retain 
     assert.equal(classify(item).item, item);
     assert.equal(classify(item).grouping, "standalone");
   }
-  for (const type of ["exec", "generated-image", "automation-update", "worktree-init"]) {
+  for (const type of ["exec", "generated-image", "automation-update", "todo-list", "worktree-init"]) {
     for (const includeGeneratedImages of [false, true]) {
       const item = { type }, options = { includeGeneratedImages };
       assert.equal(JSON.stringify(classify(item, options)), JSON.stringify(original(item, options)));
@@ -151,28 +154,34 @@ test("incomplete native disclosure is preserved instead of patching a neighborin
 });
 
 test("a marker with an inconsistent transcript item is not accepted as patched", () => {
-  const corrupted = patched(2).replace('o.type===`reasoning`||/*community-reasoning-visibility-transcript*/',
-    'other.type===`reasoning`||/*community-reasoning-visibility-transcript*/');
+  const corrupted = patched(2).replace('"reasoning"===o.type||/*community-reasoning-visibility-transcript*/',
+    '"reasoning"===other.type||/*community-reasoning-visibility-transcript*/');
+  assert.notEqual(corrupted, patched(2));
   const result = warnings(() => descriptors[2].apply(corrupted));
   assert.equal(result.value, corrupted);
   assert.equal(result.messages.length, 1);
 });
 
-test("semantic asset selection accepts renamed chunks and refuses ambiguous files", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "reasoning-assets-"));
-  try {
-    const assets = path.join(root, "webview/assets");
-    fs.mkdirSync(assets, { recursive: true });
-    for (const [index, descriptor] of descriptors.slice(0, 5).entries()) {
-      fs.writeFileSync(path.join(assets, "renamed-chunk.js"), sources[index]);
-      const apply = () => patchUniqueAssetFile(root, descriptor.pattern, descriptor.assetMatch, descriptor.apply, "missing", "ambiguous");
-      assert.equal(apply().changed, 1);
-      assert.equal(apply().changed, 0);
-      fs.writeFileSync(path.join(assets, "duplicate.js"), sources[index]);
-      assert.equal(warnings(apply).value.changed, 0);
-      fs.rmSync(path.join(assets, "duplicate.js"));
-    }
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+test("content-addressed selection patches every chunk copy and reports needle-only drift", () => {
+  for (const [index, descriptor] of descriptors.slice(0, 5).entries()) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "reasoning-assets-"));
+    try {
+      const assets = path.join(root, "webview/assets/async");
+      fs.mkdirSync(assets, { recursive: true });
+      const apply = () => warnings(() => patchAssetFiles(root, null, descriptor.apply, "missing",
+        findWebviewAssetsContaining(root, descriptor.assetNeedles)));
+      fs.writeFileSync(path.join(assets, "298814.3fa7f076e4.js"), sources[index]);
+      assert.equal(apply().value.changed, 1, descriptor.id);
+      assert.deepEqual(apply(), { value: { matched: 1, changed: 0, changedAssets: [] }, messages: [] }, descriptor.id);
+      // rspack can duplicate one module into several async chunks.
+      fs.writeFileSync(path.join(assets, "899308.3f1db3f4cb.js"), sources[index]);
+      assert.deepEqual(apply().value.changedAssets, ["async/899308.3f1db3f4cb.js"], descriptor.id);
+      fs.writeFileSync(path.join(assets, "100.0000000000.js"), descriptor.assetNeedles.join(";"));
+      const drift = apply();
+      assert.equal(drift.value.changed, 0, descriptor.id);
+      assert.equal(drift.messages.length, 1, descriptor.id);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
 });
 
 test("disabled preference restores upstream classification, grouping and summary requests", () => {
@@ -218,14 +227,35 @@ test("invalid or inaccessible storage safely leaves the feature off", () => {
   assert.equal(reasoningVisibilitySnapshot({ get localStorage() { throw Error("denied"); } }), false);
 });
 
+// Current signed shape: the General settings module factory declares React,
+// JSX, the row, switch, platform and locale hooks as factory-scope imports.
 function settingsFixture() {
-  return 'function menu(e){let i=intlHook(),{platform:p}=platformHook(),v=useSetting(keys.macMenuBarEnabled);if(p!==`macOS`)return null;let label=i.formatMessage({id:`settings.general.macMenuBar.ariaLabel`});let c=(0,j.jsx)(Toggle,{checked:v,onChange:change,ariaLabel:label});return(0,j.jsx)(Row,{label:title,description:description,control:c})}' +
-    'function another(){let[e,t]=(0,React.useState)(!1)}var React=reactFactory();' +
-    'var page=(0,j.jsx)(menu,{appName:appName});/*settings.general.macMenuBar.description*/';
+  return 'export const __rspack_esm_id=572868;export const __rspack_esm_ids=[572868];export const __webpack_modules__={G3wX(e,t,a){a.d(t,{GeneralSettings:()=>page});' +
+    'var n=a("ABep"),r=a("QosV"),m=a("zd8w"),P=a("AWNZ"),N=a("F0xz"),ed=a("ed00"),b=a("bb00"),F=a("RxZZ"),f=a("ff00");' +
+    'function menu(e){let c=(0,r.c)(15),{appName:d}=e,h=(0,b.A)(),{platform:p}=(0,ed.V)(),v=(0,F.iK)(f.U6S.macMenuBarEnabled);if("macOS"!==p)return null;' +
+    'let label=h.formatMessage({id:"settings.general.macMenuBar.ariaLabel"},{appName:d});let o=(0,n.jsx)(N.l,{checked:v,onChange:change,ariaLabel:label});' +
+    'return(0,n.jsx)(P.ic,{label:label,description:d,control:o})}function change(){}function another(){let[e,t]=(0,m.useState)(!1)}' +
+    'function page(){return(0,n.jsxs)(n.Fragment,{children:[(0,n.jsx)(menu,{appName:"ChatGPT"}),(0,n.jsx)(N.l,{}),(0,n.jsx)(menu,{appName:f.C})]})}' +
+    '/*settings.general.macMenuBar.description*/},ABep(e,t,a){e.exports={}}};';
 }
 
-function catalogFixture() {
-  return 'var messages={"settings.general.macMenuBar.label":"Existing","unrelated":"Unchanged"};export{messages as default};';
+const catalogKey = (locale) => `K${locale.replace(/-/g, "_")}`;
+const catalogChunk = (locale) => 100000 + Object.keys(translations).indexOf(locale);
+
+function catalogFixture(locale) {
+  return `export const __rspack_esm_id=${catalogChunk(locale)};export const __webpack_modules__={${catalogKey(locale)}(e){e.exports=JSON.parse('{"settings.general.macMenuBar.label":"Existing","unrelated":"Unchanged","quoted":"l\\'accès \\\\"x\\\\""}')}};`;
+}
+
+function loaderFixture(locales) {
+  const entries = locales.map((locale) => `"../locales/${locale}.json":function(){return i.e(${catalogChunk(locale)}).then(i.t.bind(i,"${catalogKey(locale)}",19))}`);
+  return `export const __webpack_modules__={Lc1(e,t,i){let o={${entries.join(",")}}}};`;
+}
+
+async function catalogMessages(source, locale) {
+  const { __webpack_modules__: modules } = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+  const module = {};
+  modules[catalogKey(locale)](module);
+  return module.exports;
 }
 
 function settingsHarness({ locale = "en", localStorage = storage(), platform = "linux" } = {}) {
@@ -237,9 +267,9 @@ function settingsHarness({ locale = "en", localStorage = storage(), platform = "
     return [values[current], (next) => { values[current] = typeof next === "function" ? next(values[current]) : next; }];
   }, useEffect(callback) { callback(); } };
   const context = {
-    localStorage, reactFactory: () => React, platformHook: () => ({ platform }),
-    intlHook: () => ({ formatMessage: ({ id, defaultMessage }) => translations[locale]?.[MESSAGE_IDS.indexOf(id)] ?? defaultMessage }),
-    Row: "row", Toggle: "toggle", j: { jsx: (type, props) => ({ type, props }) },
+    localStorage, m: React, ed: { V: () => ({ platform }) },
+    b: { A: () => ({ formatMessage: ({ id, defaultMessage }) => translations[locale]?.[MESSAGE_IDS.indexOf(id)] ?? defaultMessage }) },
+    P: { ic: "row" }, N: { l: "toggle" }, n: { jsx: (type, props) => ({ type, props }) },
     window: { addEventListener: (name, callback) => events.set(name, callback), removeEventListener: (name) => events.delete(name) },
   };
   const render = vm.runInNewContext(settingComponent(settingsContract(settingsFixture())) + ';codexLinuxReasoningVisibilitySetting', context);
@@ -290,62 +320,107 @@ test("setting is Linux-only and reflects preference changes from another window"
 function settingsTree(t, locales = ["pl-PL", "es-419"]) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "reasoning-settings-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const assets = path.join(root, "webview/assets");
+  const assets = path.join(root, "webview/assets/async");
   fs.mkdirSync(assets, { recursive: true });
-  fs.writeFileSync(path.join(assets, "renamed-settings.js"), settingsFixture());
-  for (const locale of locales) fs.writeFileSync(path.join(assets, `${locale}-current.js`), catalogFixture());
-  return { root, assets };
+  fs.writeFileSync(path.join(assets, "572868.36a6c86221.js"), settingsFixture());
+  fs.writeFileSync(path.join(assets, "496175.cf5ad221c1.js"), loaderFixture(locales));
+  const catalog = (locale) => path.join(assets, `${catalogChunk(locale)}.0123456789.js`);
+  for (const locale of locales) fs.writeFileSync(catalog(locale), catalogFixture(locale));
+  return { root, assets, catalog, settingsPath: path.join(assets, "572868.36a6c86221.js") };
 }
 
 test("native row and all 64 locale catalogs patch idempotently while existing messages stay unchanged", async (t) => {
   const locales = Object.keys(translations).filter((locale) => locale !== "en");
-  const { root, assets } = settingsTree(t, locales);
+  const { root, catalog, settingsPath } = settingsTree(t, locales);
   assert.deepEqual(applySettingsPatch(root), { changed: true });
   assert.deepEqual(applySettingsPatch(root), { changed: false });
+  const settings = fs.readFileSync(settingsPath, "utf8");
+  assert.equal(settings.split("(0,n.jsx)(codexLinuxReasoningVisibilitySetting,{}),(0,n.jsx)(menu,{appName:").length, 3);
+  assert.match(settings, /return\(0,n\.jsx\)\(P\.ic,\{label:label,description:d,control:o\}\)\}function codexLinuxReasoningVisibilitySetting\(\)\{let React=m,\{platform\}=\(0,ed\.V\)\(\)/);
+  await import(`data:text/javascript,${encodeURIComponent(settings)}`);
   for (const locale of locales) {
-    const source = fs.readFileSync(path.join(assets, `${locale}-current.js`), "utf8");
-    const { default: messages } = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+    const messages = await catalogMessages(fs.readFileSync(catalog(locale), "utf8"), locale);
     assert.equal(messages.unrelated, "Unchanged");
+    assert.equal(messages.quoted, 'l\'accès "x"');
     assert.equal(messages["settings.general.macMenuBar.label"], "Existing");
-    assert.equal(Object.keys(messages).length, 5);
+    assert.equal(Object.keys(messages).length, 6);
     for (const [index, id] of MESSAGE_IDS.entries()) assert.equal(messages[id], translations[locale][index], locale);
   }
 });
 
 test("missing translations or a partial catalog fail before writing settings or any catalog", (t) => {
-  const { root, assets } = settingsTree(t);
-  const settingsPath = path.join(assets, "renamed-settings.js"), originalSettings = fs.readFileSync(settingsPath, "utf8");
-  const catalogPath = path.join(assets, "pl-PL-current.js"), originalCatalog = fs.readFileSync(catalogPath, "utf8");
-  fs.writeFileSync(path.join(assets, "zz-current.js"), catalogFixture());
+  const { root, assets, catalog, settingsPath } = settingsTree(t);
+  const originalSettings = fs.readFileSync(settingsPath, "utf8");
+  const catalogPath = catalog("pl-PL"), originalCatalog = fs.readFileSync(catalogPath, "utf8");
+  const loaderPath = path.join(assets, "496175.cf5ad221c1.js");
+  fs.writeFileSync(loaderPath, loaderFixture(["pl-PL", "es-419", "zz"]));
+  fs.writeFileSync(catalog("zz"), catalogFixture("zz"));
   assert.throws(() => applySettingsPatch(root), /missing translations for zz/);
   assert.equal(fs.readFileSync(settingsPath, "utf8"), originalSettings);
   assert.equal(fs.readFileSync(catalogPath, "utf8"), originalCatalog);
-  fs.rmSync(path.join(assets, "zz-current.js"));
-  const partial = catalogFixture().replace('{"settings.general', '{"settings.general.reasoningVisibility.label":"Partial","settings.general');
+  fs.writeFileSync(loaderPath, loaderFixture(["pl-PL", "es-419"]));
+  const partial = originalCatalog.replace(`{"settings.general`, `{"settings.general.reasoningVisibility.label":"Partial","settings.general`);
   fs.writeFileSync(catalogPath, partial);
   assert.throws(() => applySettingsPatch(root), /incomplete or inconsistent/);
   assert.equal(fs.readFileSync(settingsPath, "utf8"), originalSettings);
   assert.equal(fs.readFileSync(catalogPath, "utf8"), partial);
+  fs.writeFileSync(catalogPath, originalCatalog);
+  fs.rmSync(catalog("es-419"));
+  assert.throws(() => applySettingsPatch(root), /es-419 translation catalog missing or ambiguous/);
+  assert.equal(fs.readFileSync(settingsPath, "utf8"), originalSettings);
 });
 
-test("settings contract drift and duplicate assets fail closed", (t) => {
-  const { root, assets } = settingsTree(t);
-  const target = path.join(assets, "renamed-settings.js");
-  fs.writeFileSync(target, settingsFixture().replace("onChange:change", "onChange:()=>change()"));
+test("settings contract drift, foreign module aliases and duplicate assets fail closed", (t) => {
+  const { root, assets, catalog, settingsPath } = settingsTree(t);
+  fs.writeFileSync(settingsPath, settingsFixture().replace("onChange:change", "onChange:()=>change()"));
   assert.throws(() => applySettingsPatch(root), /native General setting contract/);
-  assert.equal(fs.readFileSync(path.join(assets, "pl-PL-current.js"), "utf8"), catalogFixture());
-  fs.writeFileSync(target, settingsFixture());
-  fs.writeFileSync(path.join(assets, "duplicate.js"), settingsFixture());
+  assert.equal(fs.readFileSync(catalog("pl-PL"), "utf8"), catalogFixture("pl-PL"));
+  // React must be imported by the owner's own module factory.
+  fs.writeFileSync(settingsPath, settingsFixture().replace('m=a("zd8w"),', ""));
+  assert.throws(() => applySettingsPatch(root), /native General setting contract/);
+  fs.writeFileSync(settingsPath, settingsFixture());
+  fs.writeFileSync(path.join(assets, "1.0000000000.js"), settingsFixture());
   assert.throws(() => applySettingsPatch(root), /asset missing or ambiguous/);
 });
 
-test("General setting and catalogs compose idempotently with the optional tray settings", (t) => {
-  const { root, assets } = settingsTree(t);
-  fs.writeFileSync(path.join(assets, "request.js"),
-    'async function post(...e){let[t,n]=e,{params:r,select:i,signal:a,source:o,responsePriority:s}=n??{};return raw(t,r,i,a,o,s)}async function raw(e){return client.post(`vscode://codex/${e}`)}export{post as fetchRequest};');
-  const tray = require("../start-minimized-to-tray/patch.js").applySettingsPatch;
-  assert.deepEqual(tray(root), { changed: true });
+const tray = require("../start-minimized-to-tray/patch.js");
+test("General setting and catalogs compose idempotently with the optional tray settings", {
+  skip: tray.settingsContract(settingsFixture()) == null && "start-minimized-to-tray does not recognize the rspack settings module",
+}, (t) => {
+  const { root } = settingsTree(t);
+  assert.deepEqual(tray.applySettingsPatch(root), { changed: true });
   assert.deepEqual(applySettingsPatch(root), { changed: true });
-  assert.deepEqual(tray(root), { changed: false });
+  assert.deepEqual(tray.applySettingsPatch(root), { changed: false });
   assert.deepEqual(applySettingsPatch(root), { changed: false });
+});
+
+const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
+test("official signed webview contracts patch every copy once and stay valid JavaScript", { skip: !signedApp }, () => {
+  for (const descriptor of descriptors.slice(0, 5)) {
+    const names = findWebviewAssetsContaining(signedApp, descriptor.assetNeedles);
+    assert.ok(names.length >= 1, descriptor.id);
+    for (const name of names) {
+      const source = fs.readFileSync(path.join(signedApp, "webview/assets", name), "utf8");
+      const result = warnings(() => descriptor.apply(source));
+      assert.deepEqual(result.messages, [], `${descriptor.id} ${name}`);
+      assert.notEqual(result.value, source, `${descriptor.id} ${name}`);
+      assert.equal(descriptor.apply(result.value), result.value, `${descriptor.id} ${name}`);
+      assert.equal(patchBreaksJavaScriptSyntax(source, result.value), false, `${descriptor.id} ${name}`);
+    }
+  }
+});
+
+test("official signed General settings module and all locale catalogs satisfy the contract", { skip: !signedApp }, () => {
+  const { listWebviewScriptAssets } = require("../../scripts/patches/lib/assets.js");
+  const assetsDir = path.join(signedApp, "webview/assets");
+  const [settingsName, ...extraSettings] = findWebviewAssetsContaining(signedApp, ["settings.general.macMenuBar.description", ".macMenuBarEnabled"]);
+  assert.deepEqual(extraSettings, []);
+  const source = fs.readFileSync(path.join(assetsDir, settingsName), "utf8");
+  assert.equal(settingsContract(source).renders.length, 2);
+  const patchedSettings = patchSettingsSource(source);
+  assert.equal(patchSettingsSource(patchedSettings), patchedSettings);
+  const [loaderName, ...extraLoaders] = findWebviewAssetsContaining(signedApp, ['"../locales/pl-PL.json":function(){return ']);
+  assert.deepEqual(extraLoaders, []);
+  const catalogs = catalogPatches(assetsDir, listWebviewScriptAssets(signedApp), fs.readFileSync(path.join(assetsDir, loaderName), "utf8"));
+  assert.equal(catalogs.length, 64);
 });

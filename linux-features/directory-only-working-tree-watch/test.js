@@ -136,10 +136,10 @@ const CURRENT_PARCEL_HELPER =
   "r.t.bind(r,93861,23)),e,t).start()}";
 const CURRENT_GIT_ROUTE_PREFIX =
   'case"git":{let s=getIgnoreSource(),e=new Que(s,e=>{let t=e.getPid();if(null==t)return;notify(e)});' +
-  "return{git:{watchIgnoreSources:s?void 0:" +
-  "{getEnvironment:async()=>(function(){let e=process.env.HOME;" +
+  "return{git:{getWatchIgnoreSources:s?void 0:" +
+  "()=>({getEnvironment:async()=>(function(){let e=process.env.HOME;" +
   'return{defaultExcludesFile:null==e?null:`${e}/.config/git/ignore`,globalConfigFiles:[]}})(),' +
-  "getWatchTargets:Bee}," +
+  "getWatchTargets:Bee,pruneIgnoredDirectories:!0})," +
   "createExecutionHost:h=>{if(h.id===e.id&&!isRemote(h))return e;" +
   'if(null==n)throw Error("Git hosts require a main RPC connection");' +
   "return new nde(n,h)},startMetadataWatch:(t,n)=>t.isLocal?" +
@@ -340,8 +340,8 @@ test("correlates minified aliases instead of pinning their spellings", () => {
     "await Promise.resolve().then(load.t.bind(load,93861,23)),root,settings).start()}";
   const gitRoutePrefix =
     "case\"git\":{let ignoreSource=getIgnoreSource(),localHost=new LocalHost(ignoreSource,event=>{notify(event)});return{git:{" +
-    "watchIgnoreSources:ignoreSource?void 0:{getEnvironment:async()=>(function(){return readIgnoreEnvironment()})()," +
-    "getWatchTargets:getWatchTargets},createExecutionHost:executionOptions=>{" +
+    "getWatchIgnoreSources:ignoreSource?void 0:()=>({getEnvironment:async()=>(function(){return readIgnoreEnvironment()})()," +
+    "getWatchTargets:getWatchTargets,pruneIgnoredDirectories:!0}),createExecutionHost:executionOptions=>{" +
     "if(executionOptions.id===localHost.id&&!isRemote(executionOptions))return localHost;" +
     "if(null==mainConnection)" +
     "throw Error(\"Git hosts require a main RPC connection\");" +

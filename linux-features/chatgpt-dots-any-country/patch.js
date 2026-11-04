@@ -9,7 +9,7 @@ const CONTRACTS = Object.freeze({
   }],
   appShared: [{
     pattern: new RegExp(
-      `${IDENT}\\.query\\.getData\\(${IDENT},(?<account>${IDENT})\\)\\?\\.accounts\\[\\k<account>\\]` +
+      `${IDENT}\\.query\\.getData\\(${IDENT}(?:\\.${IDENT})?,(?<account>${IDENT})\\)\\?\\.accounts\\[\\k<account>\\]` +
         `\\?\\.account\\.tbo_config\\?\\.tbo_available!==!0`,
       "gu",
     ),
@@ -79,7 +79,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_900,
     ciPolicy: "optional",
-    pattern: /^[^.]+\.js$/,
+    assetNeedles: ["tbo_available==null"],
     assetMatch: (source) => matchesContract(source, CONTRACTS.landingRoute),
     missingDescription: "ChatGPT Dots landing route bundle",
     skipDescription: "ChatGPT Dots landing route patch",
@@ -90,7 +90,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_901,
     ciPolicy: "optional",
-    pattern: /^[^.]+\.js$/,
+    assetNeedles: ["tbo_available===!0", "tbo_available!==!0", ".query.getData("],
     assetMatch: (source) => matchesContract(source, CONTRACTS.appShared),
     missingDescription: "ChatGPT Dots capability bundle",
     skipDescription: "ChatGPT Dots capability patch",
@@ -101,7 +101,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_902,
     ciPolicy: "optional",
-    pattern: /^[^.]+\.js$/,
+    assetNeedles: ["tbo_available!==!0"],
     assetMatch: (source) => matchesContract(source, CONTRACTS.personalization),
     missingDescription: "ChatGPT Dots personalization bundle",
     skipDescription: "ChatGPT Dots personalization patch",

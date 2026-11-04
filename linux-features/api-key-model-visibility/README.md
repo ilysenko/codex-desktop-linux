@@ -30,6 +30,9 @@ Then rebuild the app:
 ## Behavior
 
 - API-key hosts show every `model/list` entry whose `hidden` field is false.
+- Upstream's API-key access-program check still applies first: a model that
+  is restricted to non-standard `cyber` access programs stays hidden unless
+  the host supports them.
 - ChatGPT, Copilot, and Amazon Bedrock hosts keep the upstream filtering rules.
 - Models that the CLI marks as hidden remain hidden.
 - The feature does not grant model access. The configured provider must accept

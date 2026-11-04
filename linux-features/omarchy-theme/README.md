@@ -11,7 +11,9 @@ The feature:
   `~/.config/omarchy/current/theme/codex-desktop.css` when needed;
 - publishes the generated file URI through a launcher hook;
 - injects a guarded renderer stylesheet loader that refreshes the CSS every five
-  seconds and when the window regains focus.
+  seconds and when the window regains focus. The loader is appended to the
+  rspack runtime entry chunk that `webview/index.html` boots (identified by its
+  content, not its numbered name); the detached-window entry is left unchanged.
 
 It never edits Omarchy source under `~/.local/share/omarchy/`.
 

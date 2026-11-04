@@ -82,9 +82,16 @@ function mainBundlePatch(descriptor) {
 
 function webviewAssetPatch(descriptor) {
   const pattern = descriptor?.assetPattern ?? descriptor?.pattern;
+  const needles = descriptor?.assetNeedles;
   const id = descriptorId(descriptor ?? {});
-  if (pattern == null) {
-    throw new Error(`Webview asset patch '${id ?? "unknown"}' must define assetPattern or pattern`);
+  if (needles != null && (
+    !Array.isArray(needles) || needles.length === 0 ||
+    needles.some((needle) => typeof needle !== "string" || needle.length === 0)
+  )) {
+    throw new Error(`Webview asset patch '${id ?? "unknown"}' assetNeedles must be non-empty strings`);
+  }
+  if (pattern == null && needles == null) {
+    throw new Error(`Webview asset patch '${id ?? "unknown"}' must define assetNeedles, assetPattern or pattern`);
   }
   if (descriptor.assetMatch != null && typeof descriptor.assetMatch !== "function") {
     throw new Error(`Webview asset patch '${id ?? "unknown"}' assetMatch must be a function`);

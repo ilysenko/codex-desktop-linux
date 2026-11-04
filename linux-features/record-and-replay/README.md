@@ -88,7 +88,11 @@ Minimum report data:
 
 ## Bridge
 
-The feature adds allowlisted bridge methods:
+The feature registers allowlisted bridge methods in the Chronicle / Skysight
+bridge registry; the webview reaches them with `fetch` messages for
+`vscode://codex/<method>`, which the Chronicle route in the desktop fetch
+wrapper answers. The `linux-record-replay-skysight-*` methods come from
+Chronicle / Skysight itself:
 
 - `linux-record-replay-doctor`
 - `linux-record-replay-status`
@@ -103,6 +107,7 @@ The feature adds allowlisted bridge methods:
 - `linux-record-replay-start`
 - `linux-record-replay-mark`
 - `linux-record-replay-speech-context`
+- `linux-record-replay-speech-context-active`
 - `linux-record-replay-browser-trace`
 - `linux-record-replay-desktop-snapshot`
 - `linux-record-replay-stop`

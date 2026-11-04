@@ -7,12 +7,12 @@ const RAW_SETTER = "codexLinuxSetPersistentStatusPanelOpenState";
 
 function patchedPersistentStatusPanelCandidates(source) {
   const identifier = "([A-Za-z_$][\\w$]*)";
-  const storageLiteral = `\`${STORAGE_KEY}\``;
+  const storageLiteral = JSON.stringify(STORAGE_KEY);
   const pattern = new RegExp(
     `\\[${identifier},${RAW_SETTER}\\]=\\(0,${identifier}\\.useState\\)` +
-      `\\(\\(\\)=>\\{try\\{return localStorage\\.getItem\\(${storageLiteral}\\)===\`1\`\\}` +
+      `\\(\\(\\)=>\\{try\\{return"1"===localStorage\\.getItem\\(${storageLiteral}\\)\\}` +
       `catch\\{return!1\\}\\}\\),${identifier}=e=>\\{try\\{e\\?localStorage\\.setItem\\(` +
-      `${storageLiteral},\`1\`\\):localStorage\\.removeItem\\(${storageLiteral}\\)\\}` +
+      `${storageLiteral},"1"\\):localStorage\\.removeItem\\(${storageLiteral}\\)\\}` +
       `catch\\{\\}${RAW_SETTER}\\(e\\)\\}`,
     "gu",
   );
@@ -105,9 +105,10 @@ function applyPersistentStatusPanelPatch(source) {
 
   const candidate = candidates[0];
   const [stateNeedle, isOpen, setIsOpen, reactModule] = candidate;
+  const key = JSON.stringify(STORAGE_KEY);
   const replacement =
-    `[${isOpen},${RAW_SETTER}]=(0,${reactModule}.useState)(()=>{try{return localStorage.getItem(\`${STORAGE_KEY}\`)===\`1\`}catch{return!1}}),` +
-    `${setIsOpen}=e=>{try{e?localStorage.setItem(\`${STORAGE_KEY}\`,\`1\`):localStorage.removeItem(\`${STORAGE_KEY}\`)}catch{}${RAW_SETTER}(e)}`;
+    `[${isOpen},${RAW_SETTER}]=(0,${reactModule}.useState)(()=>{try{return"1"===localStorage.getItem(${key})}catch{return!1}}),` +
+    `${setIsOpen}=e=>{try{e?localStorage.setItem(${key},"1"):localStorage.removeItem(${key})}catch{}${RAW_SETTER}(e)}`;
   return source.slice(0, candidate.index) + replacement +
     source.slice(candidate.index + stateNeedle.length);
 }
@@ -118,7 +119,9 @@ const patches = [
     phase: "webview-asset",
     order: 20_800,
     ciPolicy: "optional",
-    pattern: /^[A-Za-z0-9_-]+\.js$/,
+    // rspack webview chunks have content-hashed numeric names; the status
+    // slash-command message and the lifted menu prop identify the owner.
+    assetNeedles: ["composer.statusSlashCommand.description", "setIsStatusMenuOpen:"],
     assetMatch: matchesPersistentStatusPanelContract,
     missingDescription: "composer status panel bundle",
     skipDescription: "persistent status panel patch",

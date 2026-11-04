@@ -33,7 +33,7 @@ const {
 const {
   DEFAULT_PROJECT_NAME_STYLE,
   PROJECT_ROW_ATTRIBUTE,
-  PROJECTS_SIDEBAR_ASSET_PATTERN,
+  SIDEBAR_PROJECT_NAME_MARKERS,
   PROJECT_NAME_SELECTOR,
   RUNTIME_MARKER,
   STYLE_ID,
@@ -43,8 +43,9 @@ const {
 } = require("./patches/sidebar-project-name.js");
 const {
   ENGLISH_REASONING_LABELS,
-  ZH_CN_LOCALE_ASSET_PATTERN,
   applyEnglishReasoningLabels,
+  applyEnglishReasoningLabelsToApp,
+  descriptors: reasoningLabelDescriptors,
 } = require("./patches/reasoning-effort-labels.js");
 const {
   DEFAULT_MAX_UI_FONT_SIZE,
@@ -61,13 +62,11 @@ const {
 
 function projectBundleFixture() {
   return [
-    `var actionAttributes={sidebarProjectLabel:\`data-app-action-sidebar-project-label\`,sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
-    "var selectors={sidebarProjectRow:`[${actionAttributes.sidebarProjectRow}]`};",
-    "var actions={sidebarProjectRow:({collapsed:e,label:t,projectId:n})=>({collapsed:e,label:t,projectId:n})};",
-    "function marquee(e){return(0,Iy.jsx)(`span`,{...e,\"data-marquee-text\":!0})}",
-    "function projectRow(){let p=actions.sidebarProjectRow({collapsed:r,label:c,projectId:l});",
-    "let E=(0,Iy.jsx)(Marquee,{className:`select-none`,animateOnGroupHover:!0,children:c});",
-    "return(0,Iy.jsx)(FolderRow,{...p,label:E})}",
+    "export const __rspack_esm_id=24191;export const __rspack_esm_ids=[24191];export const __webpack_modules__={",
+    `aaaa(e,t,n){n.d(t,{IX:()=>i,rW:()=>s});let r={sidebarProjectLabel:"data-app-action-sidebar-project-label",sidebarProjectRow:"${PROJECT_ROW_ATTRIBUTE}"},`,
+    "i={sidebarProjectRow:`[${r.sidebarProjectRow}]`},",
+    "s={sidebarProjectRow:({collapsed:e,label:t,projectId:n})=>({[r.sidebarProjectLabel]:t,collapsed:e,projectId:n})}},",
+    'bbbb(e,t,n){function l(e){return(0,r.jsx)("span",{...e,"data-marquee-text":!0,draggable:!1})}}};',
   ].join("");
 }
 
@@ -144,24 +143,47 @@ function simplifiedChineseLocaleFixture() {
     "composer.mode.local.reasoning.max.label": "最高",
     "composer.mode.local.reasoning.ultra.label": "极高",
   };
-  return Object.entries(labels)
-    .map(([key, value]) => `"${key}":\`${value}\``)
+  const members = Object.entries(labels)
+    .map(([key, value]) => `"${key}":"${value}"`)
     .join(",");
+  return "export const __rspack_esm_id=216360;export const __rspack_esm_ids=[216360];" +
+    `export const __webpack_modules__={wrpI(e){e.exports=JSON.parse('{"/+SIoK":"升级至 Plus",${members},"zaMBO4":"升级"}')}};`;
 }
 
+function localeLoaderFixture(entries) {
+  return "export const __rspack_esm_id=496175;export const __rspack_esm_ids=[496175];" +
+    "export const __webpack_modules__={abcd(e,t,i){let n={" +
+    entries.map(([locale, chunk, moduleId]) =>
+      `"../locales/${locale}.json":function(){return i.e(${chunk}).then(i.t.bind(i,"${moduleId}",19))}`).join(",") +
+    "}}};";
+}
+
+function writeLocaleApp(root, { loaders = [["zh-CN", 216360, "wrpI"], ["zh-TW", 645427, "nQdE"]], zhCn } = {}) {
+  const assetsDir = path.join(root, "webview", "assets");
+  fs.mkdirSync(path.join(assetsDir, "async"), { recursive: true });
+  fs.writeFileSync(path.join(assetsDir, "348410.09aab3f377.js"), "export const entry=1;");
+  fs.writeFileSync(path.join(assetsDir, "async", "496175.cf5ad221c1.js"), localeLoaderFixture(loaders));
+  fs.writeFileSync(path.join(assetsDir, "async", "216360.9384026cfb.js"), zhCn ?? simplifiedChineseLocaleFixture());
+  const zhTw = simplifiedChineseLocaleFixture().replaceAll("216360", "645427").replace("wrpI(", "nQdE(")
+    .replace('"composer.mode.local.reasoning.none.label":"无"', '"composer.mode.local.reasoning.none.label":"無"');
+  fs.writeFileSync(path.join(assetsDir, "async", "645427.7a4cbb5155.js"), zhTw);
+  return assetsDir;
+}
+
+// Official 26.1029.61003 rspack webview settings registry: the shared limits
+// object is consumed by both settings schemas and re-exported to the UI.
 function uiFontSizeBundleFixture() {
   return [
-    "var Wu,Gu,Input,Aje=setup(()=>{",
-    "Wu={sans:{min:11,max:16},code:{min:8,max:24}},",
-    "Gu={sansFontSize:setting({default:14,schema:number().min(Wu.sans.min).max(Wu.sans.max)})},",
-    "Input=input({min:Wu.sans.min,max:Wu.sans.max})",
-    "});",
-    "function fontSizeState(){return {input:Input,limits:Wu,setting:Gu.sansFontSize}}",
+    "export const __rspack_esm_id=976185;export const __rspack_esm_ids=[976185];export const __webpack_modules__={",
+    'segj(e,t,n){var r=n("ASxG"),l=n("y2Fs");let c={sans:{min:11,max:16},code:{min:8,max:24}},u={',
+    'sansFontSize:(0,l.IZ)({agentAccess:"read-write",default:14,description:"Base UI font size",key:"sansFontSize",schema:r.number().min(c.sans.min).max(c.sans.max)}),',
+    'codeFontSize:(0,l.IZ)({agentAccess:"read-write",default:12,description:"Code font size",key:"codeFontSize",schema:r.number().min(c.code.min).max(c.code.max)})',
+    "};n.d(t,{Y:()=>c,u:()=>u})}};",
   ].join("");
 }
 
-// Official 26.1027.30824 rspack main-process entry and worker shape: the
-// registry is inlined as module-local constants consumed by both schemas.
+// Official rspack main-process entry, worker and webview settings-chunk shape:
+// the registry is inlined as module-local constants consumed by both schemas.
 function uiFontSizeMainProcessFixture() {
   return [
     "function settingsRegistry(o,setting){",
@@ -218,22 +240,23 @@ function createUiFontSizeExtractedApp() {
   const buildDir = path.join(extractedDir, ".vite", "build");
   const webviewDir = path.join(extractedDir, "webview", "assets");
   fs.mkdirSync(buildDir, { recursive: true });
-  fs.mkdirSync(webviewDir, { recursive: true });
+  fs.mkdirSync(path.join(webviewDir, "async"), { recursive: true });
   const targets = [
     path.join(buildDir, "early-bootstrap.js"),
     path.join(buildDir, "worker.js"),
-    path.join(webviewDir, "app-shared-fixture.js"),
-    path.join(webviewDir, "display-worker-fixture.js"),
+    path.join(webviewDir, "async", "545104.c407c1f749.js"),
+    path.join(webviewDir, "async", "976185.66c52a7f23.js"),
   ];
   for (const [index, target] of targets.entries()) {
     fs.writeFileSync(
       target,
-      index < 2 ? uiFontSizeMainProcessFixture() : uiFontSizeBundleFixture(),
+      index < 3 ? uiFontSizeMainProcessFixture() : uiFontSizeBundleFixture(),
     );
   }
   fs.writeFileSync(path.join(buildDir, "early-bootstrap-916-0123456789abcdef.js"), "console.log('chunk');");
   fs.writeFileSync(path.join(buildDir, "unrelated.js"), "console.log('unrelated');");
-  fs.writeFileSync(path.join(webviewDir, "src-unrelated.js"), "console.log('unrelated');");
+  fs.writeFileSync(path.join(webviewDir, "782259.0123456789.js"), "console.log('entry');");
+  fs.writeFileSync(path.join(webviewDir, "async", "24191.7b05d5cf83.js"), "console.log('unrelated');");
   return { extractedDir, targets };
 }
 
@@ -295,7 +318,11 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
           "webview-asset",
           "optional",
         ],
-        ["feature:ui-tweaks:reasoning-effort-labels-english", "webview-asset", "optional"],
+        [
+          "feature:ui-tweaks:reasoning-effort-labels-english",
+          "extracted-app:post-webview",
+          "optional",
+        ],
         ["feature:ui-tweaks:appearance-dock-icon-main-process", "main-bundle", "optional"],
         ["feature:ui-tweaks:appearance-dock-icon-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-main-process", "main-bundle", "optional"],
@@ -330,34 +357,31 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
 test("UI font size tweak raises the shared input and schema maximum", () => {
   const source = uiFontSizeBundleFixture();
   const patched = applyUiFontSizePatch(source, uiFontSizeContext());
-  const state = Function(
-    "setup",
-    "setting",
-    "number",
-    "input",
-    `${patched};return fontSizeState();`,
-  )(
-    (callback) => callback(),
-    (value) => value,
-    () => ({
-      min(value) {
-        this.minValue = value;
-        return this;
-      },
-      max(value) {
-        this.maxValue = value;
-        return this;
-      },
-    }),
-    (value) => value,
-  );
+  const modules = Function(`${patched.replaceAll("export const ", "const ")};return __webpack_modules__;`)();
+  const exports = {};
+  const schema = () => ({
+    min(value) {
+      this.minValue = value;
+      return this;
+    },
+    max(value) {
+      this.maxValue = value;
+      return this;
+    },
+  });
+  const requireModule = (id) => ({ ASxG: { number: schema }, y2Fs: { IZ: (value) => value } })[id];
+  requireModule.d = (target, getters) => {
+    for (const [name, get] of Object.entries(getters)) Object.defineProperty(target, name, { get });
+  };
+  modules.segj({}, exports, requireModule);
+  const state = { limits: exports.Y, setting: exports.u.sansFontSize };
 
   assert.deepEqual(state.limits, {
     sans: { min: 11, max: DEFAULT_MAX_UI_FONT_SIZE },
     code: { min: 8, max: 24 },
   });
-  assert.equal(state.input.max, DEFAULT_MAX_UI_FONT_SIZE);
   assert.equal(state.setting.schema.maxValue, DEFAULT_MAX_UI_FONT_SIZE);
+  assert.equal(exports.u.codeFontSize.schema.maxValue, 24);
   assert.match(patched, new RegExp(UI_FONT_SIZE_RUNTIME_MARKER));
   assert.equal((patched.match(new RegExp(UI_FONT_SIZE_RUNTIME_MARKER, "g")) ?? []).length, 1);
   assert.equal(applyUiFontSizePatch(patched, uiFontSizeContext()), patched);
@@ -374,7 +398,7 @@ test("UI font size tweak atomically patches all four current runtime registries"
     assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
     for (const [index, target] of targets.entries()) {
       const source = fs.readFileSync(target, "utf8");
-      assert.match(source, index < 2 ? /rZ=32\/\*/ : /sans:\{min:11,max:32\/\*/);
+      assert.match(source, index < 3 ? /rZ=32\/\*/ : /sans:\{min:11,max:32\/\*/);
       assert.match(source, new RegExp(UI_FONT_SIZE_RUNTIME_MARKER));
     }
     const registry = evaluateMainProcessFontSizeRegistry(fs.readFileSync(targets[0], "utf8"));
@@ -441,6 +465,40 @@ test("UI font size app patch rejects missing, duplicate, and mixed registries by
       fs.rmSync(fixture.extractedDir, { recursive: true, force: true });
     }
   }
+});
+
+test("UI font size discovery finds the signed official main and rspack webview registries", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
+}, () => {
+  const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const discovery = findUiFontSizeBundles(root);
+  assert.equal(discovery.reason, null);
+  assert.equal(discovery.candidates.length, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+  const relative = discovery.candidates.map(({ filePath }) => path.relative(root, filePath));
+  assert.equal(relative.filter((name) => name.startsWith(path.join(".vite", "build"))).length, 2);
+  assert.equal(relative.filter((name) => name.startsWith(path.join("webview", "assets", "async"))).length, 2);
+  for (const { source, state } of discovery.candidates) {
+    assert.equal(state, "current");
+    const patched = applyUiFontSizePatch(source, uiFontSizeContext({ max: 32 }));
+    assert.equal(fontSizeLimitContract(patched), "applied");
+    assert.equal(applyUiFontSizePatch(patched, uiFontSizeContext({ max: 32 })), patched);
+  }
+});
+
+test("sidebar project descriptor needles select one signed official chunk", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
+}, () => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const descriptor = patches.find((patch) => patch.id === "sidebar-project-name-style");
+  const candidates = findWebviewAssetsContaining(root, descriptor.assetNeedles);
+  assert.equal(candidates.length, 1);
+  const source = fs.readFileSync(path.join(root, "webview", "assets", candidates[0]), "utf8");
+  assert.equal(descriptor.assetMatch(source), true);
+  const patched = descriptor.apply(source, {});
+  assert.notEqual(patched, source);
+  assert.ok(patched.includes(RUNTIME_MARKER));
+  assert.equal(descriptor.apply(patched, {}), patched);
 });
 
 test("UI font size tweak is disabled by default and accepts a custom maximum", () => {
@@ -770,17 +828,85 @@ test("reasoning effort labels stay in English in the Simplified Chinese locale",
     false,
   );
   for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
-    assert.match(patched, new RegExp(`"${key.replaceAll(".", "\\.")}":\\\`${label}\\\``));
+    assert.ok(patched.includes(`"${key}":"${label}"`), key);
+  }
+  assert.ok(patched.includes(`JSON.parse('{"/+SIoK":"升级至 Plus",`));
+  assert.equal(applyEnglishReasoningLabels(patched), patched);
+});
+
+test("reasoning effort descriptor follows the zh-CN locale loader to its rspack chunk", () => {
+  const [descriptor] = reasoningLabelDescriptors;
+  assert.equal(descriptor.phase, "extracted-app:post-webview");
+  assert.equal(descriptor.pattern, undefined);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ui-tweaks-zh-cn-"));
+  try {
+    const assetsDir = writeLocaleApp(root);
+    const zhTwBefore = fs.readFileSync(path.join(assetsDir, "async", "645427.7a4cbb5155.js"), "utf8");
+    const result = descriptor.apply(root, {});
+    assert.deepEqual(result, {
+      matched: 1,
+      changed: 1,
+      targets: [path.join("webview", "assets", "async", "216360.9384026cfb.js")],
+    });
+    const patched = fs.readFileSync(path.join(assetsDir, "async", "216360.9384026cfb.js"), "utf8");
+    for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
+      assert.ok(patched.includes(`"${key}":"${label}"`), key);
+    }
+    assert.equal(fs.readFileSync(path.join(assetsDir, "async", "645427.7a4cbb5155.js"), "utf8"), zhTwBefore);
+    assert.deepEqual(descriptor.apply(root, {}).changed, 0);
+    assert.equal(fs.readFileSync(path.join(assetsDir, "async", "216360.9384026cfb.js"), "utf8"), patched);
+    assert.equal(descriptor.enabled({
+      feature: { settings: { tweaks: { reasoning: { keepEffortLabelsEnglish: { enabled: false } } } } },
+    }), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reasoning effort descriptor rejects missing, duplicate and mismatched locale contracts", () => {
+  const cases = [
+    ["no loader", { loaders: [["zh-TW", 645427, "nQdE"]] }, /Expected one Simplified Chinese locale loader, found 0/],
+    ["duplicate loader", { loaders: [["zh-CN", 216360, "wrpI"], ["zh-CN", 216360, "wrpI"]] },
+      /Expected one Simplified Chinese locale loader, found 2/],
+    ["missing chunk", { loaders: [["zh-CN", 216361, "wrpI"]] }, /Expected one Simplified Chinese locale chunk 216361/],
+    ["wrong module", { loaders: [["zh-CN", 216360, "zzzz"]] }, /Expected one Simplified Chinese locale catalog/],
+    ["drifted label", { zhCn: simplifiedChineseLocaleFixture().replace(".ultra.label", ".ultra.missing") },
+      /composer\.mode\.local\.reasoning\.ultra\.label/],
+  ];
+  for (const [name, options, expected] of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ui-tweaks-zh-cn-"));
+    try {
+      const assetsDir = writeLocaleApp(root, options);
+      const before = fs.readFileSync(path.join(assetsDir, "async", "216360.9384026cfb.js"), "utf8");
+      const { value, warnings } = withCapturedWarns(() => applyEnglishReasoningLabelsToApp(root, {}));
+      assert.equal(value.changed, 0, name);
+      assert.equal(warnings.length, 1, name);
+      assert.match(warnings[0], expected, name);
+      assert.equal(fs.readFileSync(path.join(assetsDir, "async", "216360.9384026cfb.js"), "utf8"), before, name);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("reasoning effort labels apply to the signed official Simplified Chinese locale", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
+}, () => {
+  const { findZhCnLocaleAsset } = require("./patches/reasoning-effort-labels.js");
+  const locale = findZhCnLocaleAsset(process.env.CODEX_SIGNED_EXTRACTED_APP);
+  assert.ok(locale.source.includes('"composer.mode.local.reasoning.none.label":"无"'));
+  const patched = applyEnglishReasoningLabels(locale.source, { warnOnMissingMarkers: true });
+  assert.notEqual(patched, locale.source);
+  for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
+    assert.ok(patched.includes(`"${key}":"${label}"`), key);
   }
   assert.equal(applyEnglishReasoningLabels(patched), patched);
-  assert.match("zh-CN-BPHwMaw8.js", ZH_CN_LOCALE_ASSET_PATTERN);
-  assert.doesNotMatch("zh-TW-rBlCyjlT.js", ZH_CN_LOCALE_ASSET_PATTERN);
 });
 
 test("reasoning effort label drift warns and leaves the asset unchanged", () => {
   const source = simplifiedChineseLocaleFixture().replace(
-    '"composer.mode.local.reasoning.ultra.label":`极高`',
-    '"composer.mode.local.reasoning.ultra.missing":`极高`',
+    '"composer.mode.local.reasoning.ultra.label":"极高"',
+    '"composer.mode.local.reasoning.ultra.missing":"极高"',
   );
   const { value, warnings } = withCapturedWarns(() =>
     applyEnglishReasoningLabels(source, { warnOnMissingMarkers: true }),
@@ -793,15 +919,15 @@ test("reasoning effort label drift warns and leaves the asset unchanged", () => 
 
 test("mixed upstream reasoning effort labels translate the remaining labels atomically", () => {
   const source = simplifiedChineseLocaleFixture().replace(
-    '"composer.mode.local.reasoning.medium.label":`中`',
-    '"composer.mode.local.reasoning.medium.label":`Medium`',
+    '"composer.mode.local.reasoning.medium.label":"中"',
+    '"composer.mode.local.reasoning.medium.label":"Medium"',
   );
   const { value, warnings } = withCapturedWarns(() =>
     applyEnglishReasoningLabels(source, { warnOnMissingMarkers: true }),
   );
 
   for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
-    assert.match(value, new RegExp(`"${key.replaceAll(".", "\\.")}":\\\`${label}\\\``));
+    assert.ok(value.includes(`"${key}":"${label}"`), key);
   }
   assert.deepEqual(warnings, []);
   assert.equal(applyEnglishReasoningLabels(value), value);
@@ -826,23 +952,23 @@ test("English reasoning effort labels can be disabled", () => {
   assert.equal(applyEnglishReasoningLabels(source, context), source);
 });
 
-test("sidebar project descriptor targets only the current project sidebar asset", () => {
-  assert.match("app-shared-BTphDPeq.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
-  assert.match("app-initial-BTphDPeq.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
-  assert.match(
-    "app-initial~app-main~page-kMhXWEru.js",
-    PROJECTS_SIDEBAR_ASSET_PATTERN,
+test("sidebar project descriptor discovers the rspack chunk by semantic needles", () => {
+  const descriptor = patches.find((patch) => patch.id === "sidebar-project-name-style");
+  assert.equal(descriptor.pattern, undefined);
+  assert.deepEqual(descriptor.assetNeedles, SIDEBAR_PROJECT_NAME_MARKERS);
+  assert.ok(descriptor.assetNeedles.every((needle) => projectBundleFixture().includes(needle)));
+  assert.equal(descriptor.assetMatch(projectBundleFixture()), true);
+  assert.equal(
+    descriptor.assetMatch(projectBundleFixture().replace(`sidebarProjectRow:"${PROJECT_ROW_ATTRIBUTE}"`, "")),
+    false,
   );
-  assert.match(
-    "app-initial~app-main~automations-page-BcHjEK7e.js",
-    PROJECTS_SIDEBAR_ASSET_PATTERN,
+  assert.equal(
+    descriptor.assetMatch(projectBundleFixture().replace(
+      `sidebarProjectRow:"${PROJECT_ROW_ATTRIBUTE}"`,
+      `sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\``,
+    )),
+    false,
   );
-  assert.match("projects-index-page-TFjtVwC4.js", PROJECTS_SIDEBAR_ASSET_PATTERN);
-  assert.match(
-    "app-initial~app-main~remote-conversation-page~projects-index-page-By2_tGIM.js",
-    PROJECTS_SIDEBAR_ASSET_PATTERN,
-  );
-  assert.doesNotMatch("app-initial-BTphDPeq.css", PROJECTS_SIDEBAR_ASSET_PATTERN);
 });
 
 test("patch injects sidebar project-name stylesheet runtime once", () => {
@@ -1017,7 +1143,7 @@ test("patch skips unrelated assets", () => {
 
 test("drift warning returns source unchanged", () => {
   const source = [
-    `var actionAttributes={sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
+    `let r={sidebarProjectRow:"${PROJECT_ROW_ATTRIBUTE}"};`,
     "function row(){return actions.sidebarProjectRow({collapsed:r,label:c,projectId:l})}",
   ].join("");
 

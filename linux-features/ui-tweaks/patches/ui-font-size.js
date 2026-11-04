@@ -166,6 +166,8 @@ function applyUiFontSizePatch(source, context = {}) {
   }
 }
 
+// The rspack webview keeps its app code in lazily loaded webview/assets/async
+// chunks, so every webview script asset is scanned, not only the entries.
 function fontSizeBundlePaths(extractedDir) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
@@ -177,11 +179,12 @@ function fontSizeBundlePaths(extractedDir) {
         .map((entry) => path.join(buildDir, entry.name)),
     );
   }
-  if (fs.existsSync(webviewAssetsDir)) {
+  for (const directory of [webviewAssetsDir, path.join(webviewAssetsDir, "async")]) {
+    if (!fs.existsSync(directory)) continue;
     paths.push(
-      ...fs.readdirSync(webviewAssetsDir, { withFileTypes: true })
+      ...fs.readdirSync(directory, { withFileTypes: true })
         .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
-        .map((entry) => path.join(webviewAssetsDir, entry.name)),
+        .map((entry) => path.join(directory, entry.name)),
     );
   }
   return paths.sort();

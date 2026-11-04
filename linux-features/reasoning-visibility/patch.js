@@ -12,7 +12,9 @@ const enabledPattern = escape(enabled);
 
 // Each contract accepts exactly the upstream form or our complete replacement.
 // Markers alone are never evidence of a successfully patched contract.
-function recipe(id, pattern, replacement, anchor, validate = () => true) {
+// rspack can copy one module into several async chunks, so every chunk that
+// carries all needles is patched and each one must hold the complete contract.
+function recipe(id, pattern, replacement, assetNeedles, validate = () => true) {
   const regex = new RegExp(pattern, "g");
   const matches = (source) => [...source.matchAll(regex)].filter((match) => validate(match.groups));
   const apply = (source) => {
@@ -30,8 +32,7 @@ function recipe(id, pattern, replacement, anchor, validate = () => true) {
     phase: "webview-asset",
     order: 20_745,
     ciPolicy: "optional",
-    pattern: /^[A-Za-z0-9_-]+\.js$/,
-    assetMatch: (source) => anchor(source) && matches(source).length > 0,
+    assetNeedles,
     missingDescription: `reasoning visibility ${id} contract`,
     apply,
   };
@@ -39,37 +40,38 @@ function recipe(id, pattern, replacement, anchor, validate = () => true) {
 
 const standalone = recipe(
   "standalone",
-  String.raw`(?<prefix>case\`worktree-init\`:return (?<wrap>${ident})\((?<item>${ident}),\`standalone\`\);case\`reasoning\`:)(?:return ${enabledPattern}\?\k<wrap>\(\k<item>,\`standalone\`\):null${escape(marker("standalone"))};)?(?<suffix>case\`automation-update\`:)`,
-  ({ prefix, wrap, item, suffix }) => `${prefix}return ${enabled}?${wrap}(${item},\`standalone\`):null${marker("standalone")};${suffix}`,
-  (source) => source.includes("includeGeneratedImages:") && source.includes("case`worktree-init`:"),
+  String.raw`(?<prefix>case"worktree-init":return (?<wrap>${ident})\((?<item>${ident}),"standalone"\);case"reasoning":)(?:if\(${enabledPattern}\)return \k<wrap>\(\k<item>,"standalone"\);${escape(marker("standalone"))})?(?<suffix>case"[\w-]+":)`,
+  ({ prefix, wrap, item, suffix }) => `${prefix}if(${enabled})return ${wrap}(${item},"standalone");${marker("standalone")}${suffix}`,
+  ['case"worktree-init":return ', '"standalone");case"reasoning":'],
 );
 
 const persistent = recipe(
   "persistent",
-  String.raw`(?<prefix>if\((?<unit>${ident})\.kind!==\`standalone\`\)return!1;let (?<item>${ident})=\k<unit>\.item\.item;return )(?:${enabledPattern}&&\k<item>\.type===\`reasoning\`\?!0:${escape(marker("persistent"))})?(?<suffix>\k<item>\.type===\`user-input-response\`\?!\k<item>\.completed:)`,
-  ({ prefix, item, suffix }) => `${prefix}${enabled}&&${item}.type===\`reasoning\`?!0:${marker("persistent")}${suffix}`,
-  (source) => source.includes("collapsibleUnits:") && source.includes("persistentUnits:"),
+  String.raw`(?<prefix>if\("standalone"!==(?<unit>${ident})\.kind\)return!1;let (?<item>${ident})=\k<unit>\.item\.item;return)(?: ${enabledPattern}&&"reasoning"===\k<item>\.type\?!0:${escape(marker("persistent"))})?(?<suffix>"user-input-response"===\k<item>\.type\?!\k<item>\.completed:)`,
+  ({ prefix, item, suffix }) => `${prefix} ${enabled}&&"reasoning"===${item}.type?!0:${marker("persistent")}${suffix}`,
+  ["collapsibleUnits:", "persistentUnits:"],
 );
 
 // The transcript projection has its own explicit reasoning grouping exception,
-// compiled as `…;classified?.grouping===`standalone`||persistent?.has(item)===!0?(flush(),output.push(…)):…`.
+// compiled as `if(classified?.grouping==="standalone"||persistent?.has(item)===!0){flush(),output.push(…)`.
 const transcript = recipe(
   "transcript",
-  String.raw`(?<prefix>;)(?:${enabledPattern}&&(?<item>${ident})\.type===\`reasoning\`\|\|${escape(marker("transcript"))})?(?<rest>(?<classified>${ident})\?\.grouping===\`standalone\`\|\|(?<persistent>${ident})\?\.has\((?<current>${ident})\)===!0\?\((?<flush>${ident})\(\),(?<output>${ident})\.push\(\{type:\`activity-item\`,key:\`transcript-activity-item-)(?=\$\{)`,
-  ({ prefix, rest, current }) => `${prefix}${enabled}&&${current}.type===\`reasoning\`||${marker("transcript")}${rest}`,
-  (source) => source.includes("transcript-activity-item-") && source.includes("collapseWhenPossible:"),
+  String.raw`(?<prefix>if\()(?:${enabledPattern}&&"reasoning"===(?<item>${ident})\.type\|\|${escape(marker("transcript"))})?(?<rest>(?<classified>${ident})\?\.grouping==="standalone"\|\|(?<persistent>${ident})\?\.has\((?<current>${ident})\)===!0\)\{(?<flush>${ident})\(\),(?<output>${ident})\.push\(\{type:"activity-item",key:\`transcript-activity-item-)(?=\$\{)`,
+  ({ prefix, rest, current }) => `${prefix}${enabled}&&"reasoning"===${current}.type||${marker("transcript")}${rest}`,
+  ["transcript-activity-item-", "collapseWhenPossible:"],
   ({ item, current }) => item == null || item === current,
 );
 
+const upstreamSummary = String.raw`!0===${ident}\.getDefaultFeatureOverride\("concurrent_reasoning_summaries"\)\|\|${ident}\?"detailed":null`;
 const summaries = recipe(
   "request-summaries",
-  String.raw`reasoningSummaryOverride:(?:(?<upstream>${ident}\.getDefaultFeatureOverride\(\`concurrent_reasoning_summaries\`\)===!0\|\|${ident}\?\`detailed\`:null)|${enabledPattern}\?\`detailed\`:\((?<fallback>${ident}\.getDefaultFeatureOverride\(\`concurrent_reasoning_summaries\`\)===!0\|\|${ident}\?\`detailed\`:null)\)${escape(marker("request-summaries"))})(?<suffix>,getRequestModel:(?<model>${ident})=>\k<model>,getRequestCollaborationMode\()`,
-  ({ upstream, fallback, suffix }) => `reasoningSummaryOverride:${enabled}?\`detailed\`:(${upstream ?? fallback})${marker("request-summaries")}${suffix}`,
-  (source) => (source.includes("concurrent_reasoning_summaries") || source.includes(marker("request-summaries"))) && source.includes("getRequestCollaborationMode("),
+  String.raw`reasoningSummaryOverride:(?:(?<upstream>${upstreamSummary})|${enabledPattern}\?"detailed":\((?<fallback>${upstreamSummary})\)${escape(marker("request-summaries"))})(?<suffix>,getRequestModel:(?<model>${ident})=>\k<model>,getRequestCollaborationMode\()`,
+  ({ upstream, fallback, suffix }) => `reasoningSummaryOverride:${enabled}?"detailed":(${upstream ?? fallback})${marker("request-summaries")}${suffix}`,
+  ["concurrent_reasoning_summaries", "getRequestCollaborationMode("],
 );
 
 function reasoningComponent(source) {
-  const keys = [...source.matchAll(/key:`reasoning-markdown`/g)];
+  const keys = [...source.matchAll(/key:"reasoning-markdown"/g)];
   if (keys.length !== 1) return null;
   const headers = [...source.slice(0, keys[0].index).matchAll(new RegExp(String.raw`function ${ident}\(${ident}\)\{`, "g"))];
   const header = headers.at(-1);
@@ -79,7 +81,7 @@ function reasoningComponent(source) {
   const text = source.slice(header.index, end + 1);
   // Bind this state to the completed reasoning body and native disclosure.
   const pattern = new RegExp(
-    String.raw`\[(?<state>${ident}),(?<setter>${ident})\]=\(0,(?<react>${ident})\.useState\)\((?:!1|${enabledPattern}${escape(marker("expanded"))})\),(?<disclosure>${ident})=!(?<stream>${ident})&&!!(?<body>${ident}),`, "g",
+    String.raw`\[(?<state>${ident}),(?<setter>${ident})\]=\(0,(?<react>${ident})\.useState\)\((?:!1|${enabledPattern}${escape(marker("expanded"))})\),(?<disclosure>${ident})=!(?<stream>${ident})&&!!(?<body>${ident})[,;]`, "g",
   );
   const states = [...text.matchAll(pattern)];
   if (states.length !== 1) return null;
@@ -110,8 +112,7 @@ module.exports = {
     phase: "webview-asset",
     order: 20_746,
     ciPolicy: "optional",
-    pattern: /^[A-Za-z0-9_-]+\.js$/,
-    assetMatch: (source) => source.includes("key:`reasoning-markdown`"),
+    assetNeedles: ['key:"reasoning-markdown"'],
     missingDescription: "reasoning markdown disclosure component",
     apply: applyExpandedPatch,
   }, settingsDescriptor],

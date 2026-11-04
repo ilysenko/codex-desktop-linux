@@ -19,8 +19,11 @@ interrupted or partial replies. New saved text can still update normally.
 The feature is disabled by default. Add `chatgpt-dil-markdown-fallback` to
 `linux-features/features.json` and rebuild. Remove the ID and rebuild to disable.
 The build fails if the unique upstream renderer contracts have changed.
-The Markdown view is imported from the unique module exporting the named
-`ChatGptMarkdown` component; minified export letters are not used.
+The Markdown view is resolved from the unique rspack module exporting the
+named `ChatGptMarkdown` component; minified export letters are not used. The
+reply chunk must already require that module from a sibling renderer, so it is
+loaded together with the reply. The module is required only when a failure is
+rendered; if it cannot be resolved, the upstream error message is kept.
 
 ## Validation
 

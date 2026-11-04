@@ -1,9 +1,11 @@
 "use strict";
 
 const IDENT = "[A-Za-z_$][\\w$]*";
-const CHROME_MAPPING_ASSET_PATTERN = /^app-shared-[A-Za-z0-9_-]+\.js$/;
-const CURRENT_CHROME_MAPPING = "case`win32`:case`linux`:return`application-menu`";
-const PATCHED_CHROME_MAPPING = "case`win32`:return`application-menu`;case`linux`:return`native`";
+// The rspack webview owns the chrome mapping in one lazily loaded async chunk;
+// select it by the mapping's own strings rather than by chunk name.
+const CHROME_MAPPING_ASSET_NEEDLES = ['"application-menu"', "codexWindowChrome"];
+const CURRENT_CHROME_MAPPING = 'case"win32":case"linux":return"application-menu"';
+const PATCHED_CHROME_MAPPING = 'case"win32":return"application-menu";case"linux":return"native"';
 
 // The rspack main-process chunks use literal-first comparisons, double-quoted
 // strings, and early returns inside the window-options switch.
@@ -150,7 +152,7 @@ function applyFramelessTitlebarWebviewPatch(source) {
 }
 
 module.exports = {
-  CHROME_MAPPING_ASSET_PATTERN,
+  CHROME_MAPPING_ASSET_NEEDLES,
   descriptors: [
     {
       id: "main-process",
@@ -164,7 +166,7 @@ module.exports = {
       phase: "webview-asset",
       order: 20_730,
       ciPolicy: "optional",
-      pattern: CHROME_MAPPING_ASSET_PATTERN,
+      assetNeedles: CHROME_MAPPING_ASSET_NEEDLES,
       assetMatch: (source) => framelessTitlebarWebviewContract(source) !== "drifted",
       missingDescription: "official Linux chrome-mapping bundle",
       skipDescription: "frameless titlebar webview chrome patch",

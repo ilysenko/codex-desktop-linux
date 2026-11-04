@@ -1,12 +1,23 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   findMatchingBrace,
 } = require("../../scripts/patches/lib/minified-js.js");
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
+// rspack references imported bindings as member chains such as `x.It`.
+const JS_MEMBER = `${JS_IDENT}(?:\\.${JS_IDENT})*`;
+// rspack CSS modules emit `.Name-hash` class names and `name-hash` keyframes.
+const CSS_HASH = "[A-Za-z0-9_-]+";
 
 const SIDEBAR_STYLE =
-  "{animationName:`none`,animationTimeline:`auto`,\"--bottom-fade\":`calc(var(--spacing) * 10)`}";
+  '{animationName:"none",animationTimeline:"auto","--bottom-fade":"calc(var(--spacing) * 10)"}';
+
+const SIDEBAR_ASSET_NEEDLES = [".sidebarScroll,className:", "vertical-scroll-fade-mask", "[contain:layout_paint]"];
+const TAB_ASSET_NEEDLES = ["animateLayout:", 'dragActivator:"tab"', "isWorkspaceHome"];
+const MARKDOWN_STYLESHEET_NEEDLES = ["[data-markdown-animated]", ".FadeListDecoration-", ".ImageEnter-"];
+const WEBVIEW_STYLESHEET_DIRECTORIES = ["", "async"];
 const SIDEBAR_WARNING =
   "WARN: Could not uniquely identify the main sidebar scroll container — skipping Linux sidebar scroll performance patch";
 const TAB_WARNING =
@@ -15,14 +26,25 @@ const MARKDOWN_WARNING =
   "WARN: Could not uniquely identify the streaming Markdown animation contract — skipping Linux Markdown animation performance patch";
 
 function markdownRules(source) {
-  const unpatched =
-    /(\._MarkdownRoot_([A-Za-z0-9]+)_\d+\[data-markdown-animated\] :is\(\._FadeIn_\2_\d+,\._HorizontalRule_\2_\d+,\._ListItem_\2_\d+,\._TableRow_\2_\d+,\._Blockquote_\2_\d+\))\{opacity:1;animation:_fade-in_\2_\d+ ([^{};]+) both;animation-delay:var\(--fade-delay,0s\)\}(\._MarkdownRoot_\2_\d+\[data-markdown-animated\] \._FadeListDecoration_\2_\d+::marker)\{animation:_fade-in-marker_\2_\d+ \3 forwards;animation-delay:var\(--fade-delay,0s\)\}/gu;
-  const patched =
-    /(\._MarkdownRoot_([A-Za-z0-9]+)_\d+\[data-markdown-animated\] :is\(\._FadeIn_\2_\d+,\._HorizontalRule_\2_\d+,\._ListItem_\2_\d+,\._TableRow_\2_\d+,\._Blockquote_\2_\d+\))\{opacity:1;animation:none\}(\._MarkdownRoot_\2_\d+\[data-markdown-animated\] \._FadeListDecoration_\2_\d+::marker)\{animation:none\}/gu;
+  const root = (group) => `\\.MarkdownRoot-${group}\\[data-markdown-animated\\]`;
+  const fadeTargets =
+    `:is\\(\\.FadeIn-${CSS_HASH},\\.HorizontalRule-${CSS_HASH},\\.ListItem-${CSS_HASH},\\.TableRow-${CSS_HASH},\\.Blockquote-${CSS_HASH}\\)`;
+  const unpatched = new RegExp(
+    `(${root(`(${CSS_HASH})`)} ${fadeTargets})\\{opacity:1;animation:fade-in-${CSS_HASH} ([^{};]+) both;animation-delay:var\\(--fade-delay,0s\\)\\}` +
+      `(${root("\\2")} \\.FadeListDecoration-${CSS_HASH}::marker)\\{animation:fade-in-marker-${CSS_HASH} \\3 forwards;animation-delay:var\\(--fade-delay,0s\\)\\}`,
+    "gu",
+  );
+  const patched = new RegExp(
+    `(${root(`(${CSS_HASH})`)} ${fadeTargets})\\{opacity:1;animation:none\\}` +
+      `(${root("\\2")} \\.FadeListDecoration-${CSS_HASH}::marker)\\{animation:none\\}`,
+    "gu",
+  );
+  const imageRule = (rootHash) =>
+    `${root(rootHash)} \\.ImageEnter-${CSS_HASH}\\{transform-origin:50%;animation:\\.18s ease-out both image-enter-${CSS_HASH}\\}`;
   const candidates = [];
   for (const match of source.matchAll(unpatched)) {
     const tail = source.slice(match.index + match[0].length, match.index + match[0].length + 1000);
-    const image = tail.match(new RegExp(`^([\\s\\S]*?)(\\._MarkdownRoot_${match[2]}_\\d+\\[data-markdown-animated\\] \\._ImageEnter_${match[2]}_\\d+\\{transform-origin:50%;animation:\\.18s ease-out both _image-enter_${match[2]}_\\d+\\})`, "u"));
+    const image = tail.match(new RegExp(`^([\\s\\S]*?)(${imageRule(match[2])})`, "u"));
     if (image == null) continue;
     candidates.push({
       start: match.index,
@@ -33,7 +55,7 @@ function markdownRules(source) {
   }
   for (const match of source.matchAll(patched)) {
     const tail = source.slice(match.index + match[0].length, match.index + match[0].length + 1000);
-    const image = tail.match(new RegExp(`^[\\s\\S]*?\\._MarkdownRoot_${match[2]}_\\d+\\[data-markdown-animated\\] \\._ImageEnter_${match[2]}_\\d+\\{transform-origin:50%;animation:\\.18s ease-out both _image-enter_${match[2]}_\\d+\\}`, "u"));
+    const image = tail.match(new RegExp(`^[\\s\\S]*?${imageRule(match[2])}`, "u"));
     if (image != null) candidates.push({ start: match.index, end: match.index + match[0].length + image[0].length, patched: true, replacement: match[0] + image[0] });
   }
   return candidates;
@@ -51,22 +73,63 @@ function applyLinuxMarkdownAnimationPerformancePatch(source) {
       ? source
       : source.slice(0, candidate.start) + candidate.replacement + source.slice(candidate.end);
   }
-  if (source.includes("data-markdown-animated") && source.includes("_FadeListDecoration_")) {
+  if (MARKDOWN_STYLESHEET_NEEDLES.every((needle) => source.includes(needle))) {
     console.warn(MARKDOWN_WARNING);
   }
   return source;
+}
+
+function listWebviewStylesheets(extractedDir) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  const names = [];
+  for (const directory of WEBVIEW_STYLESHEET_DIRECTORIES) {
+    const dir = path.join(assetsDir, directory);
+    if (!fs.existsSync(dir)) continue;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith(".css")) {
+        names.push(directory === "" ? entry.name : `${directory}/${entry.name}`);
+      }
+    }
+  }
+  return names.sort();
+}
+
+// rspack duplicates a CSS module into every async stylesheet of the chunk
+// groups that use it, so the Markdown rules occur once in each of several
+// CSS files. The webview-asset phase indexes scripts only; this workaround
+// discovers the stylesheets itself and patches all of them or none.
+function applyLinuxMarkdownAnimationStylesheetPatch(extractedDir) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  const owners = listWebviewStylesheets(extractedDir)
+    .map((assetName) => ({ assetName, source: fs.readFileSync(path.join(assetsDir, assetName), "utf8") }))
+    .filter(({ source }) => MARKDOWN_STYLESHEET_NEEDLES.every((needle) => source.includes(needle)));
+  const drifted = owners.filter(({ source }) => !matchesLinuxMarkdownAnimationPerformanceContract(source));
+  if (owners.length === 0 || drifted.length > 0) {
+    console.warn(
+      `WARN: Could not identify the streaming Markdown animation stylesheets in ${assetsDir} ` +
+        `(${owners.length} found, ${drifted.length} drifted${drifted.length ? `: ${drifted.map(({ assetName }) => assetName).join(", ")}` : ""}) — skipping Markdown animation performance workaround`,
+    );
+    return { changed: false, assetNames: [] };
+  }
+  const writes = owners
+    .map(({ assetName, source }) => ({ assetName, source, patched: applyLinuxMarkdownAnimationPerformancePatch(source) }))
+    .filter(({ source, patched }) => patched !== source);
+  for (const { assetName, patched } of writes) {
+    fs.writeFileSync(path.join(assetsDir, assetName), patched, "utf8");
+  }
+  return { changed: writes.length > 0, assetNames: writes.map(({ assetName }) => assetName) };
 }
 
 function layoutAnimationFlags(source) {
   const currentPattern = new RegExp(
     `animateLayout:(?<expression>!(${JS_IDENT})\\.isWorkspaceHome&&(${JS_IDENT})\\.animateLayout),` +
       `animateExit:!\\2\\.isWorkspaceHome&&\\3\\.animateExit,closeButtonTabIndex:-1,` +
-      "controller:" + JS_IDENT + ",dragActivator:`tab`,tab:\\2",
+      `controller:${JS_MEMBER},dragActivator:"tab",tab:\\2`,
     "gu",
   );
   const patchedPattern = new RegExp(
     `animateLayout:(?<expression>!1),animateExit:!(${JS_IDENT})\\.isWorkspaceHome&&(${JS_IDENT})\\.animateExit,` +
-      "closeButtonTabIndex:-1,controller:" + JS_IDENT + ",dragActivator:`tab`,tab:\\2",
+      `closeButtonTabIndex:-1,controller:${JS_MEMBER},dragActivator:"tab",tab:\\2`,
     "gu",
   );
   return [...source.matchAll(currentPattern), ...source.matchAll(patchedPattern)].map((match) => ({
@@ -89,14 +152,14 @@ function applyLinuxAppShellTabLayoutPerformancePatch(source) {
       ? source
       : source.slice(0, flag.start) + "!1" + source.slice(flag.end);
   }
-  if (source.includes("animateLayout:") && source.includes("dragActivator:`tab`")) {
+  if (TAB_ASSET_NEEDLES.every((needle) => source.includes(needle))) {
     console.warn(TAB_WARNING);
   }
   return source;
 }
 
 function sidebarContainers(source) {
-  const anchors = /\{\.\.\.[A-Za-z_$][\w$]*\.sidebarScroll,className:/gu;
+  const anchors = new RegExp(`\\{\\.\\.\\.${JS_MEMBER}\\.sidebarScroll,className:`, "gu");
   const containers = [];
   for (const anchor of source.matchAll(anchors)) {
     const tail = source.slice(anchor.index, anchor.index + 4000);
@@ -129,15 +192,19 @@ function applyLinuxSidebarScrollPerformancePatch(source) {
   }
   if (containers.some(({ styleComplete }) => !styleComplete)) {
     console.warn("WARN: Found incomplete Linux sidebar scroll performance patch — skipping");
-  } else if (source.includes(".sidebarScroll") && source.includes("vertical-scroll-fade-mask") && source.includes("[contain:layout_paint]")) {
+  } else if (SIDEBAR_ASSET_NEEDLES.every((needle) => source.includes(needle))) {
     console.warn(SIDEBAR_WARNING);
   }
   return source;
 }
 
 module.exports = {
+  MARKDOWN_STYLESHEET_NEEDLES,
+  SIDEBAR_ASSET_NEEDLES,
+  TAB_ASSET_NEEDLES,
   applyLinuxAppShellTabLayoutPerformancePatch,
   applyLinuxMarkdownAnimationPerformancePatch,
+  applyLinuxMarkdownAnimationStylesheetPatch,
   applyLinuxSidebarScrollPerformancePatch,
   matchesLinuxAppShellTabLayoutPerformanceContract,
   matchesLinuxMarkdownAnimationPerformanceContract,

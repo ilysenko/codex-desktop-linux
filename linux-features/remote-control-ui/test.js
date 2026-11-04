@@ -89,34 +89,39 @@ test("remote-control UI feature exposes optional webview asset descriptors when 
   });
 });
 
+// rspack/SWC fixtures: jotai atoms read the Statsig gate through their getter,
+// strings are double-quoted and comparisons are literal-first.
+const REMOTE_CONNECTIONS_SOURCE =
+  'let d=(0,r.un)(s.u,({get:e})=>{let t=e(i.Dc),{data:n}=e(a.I2,t),r=e(l.JW,"4114442250");if(!0===n?.config["features.remote_connections"])return!0;let s=n?.config.features;return null==s||"object"!=typeof s||Array.isArray(s)?r:Object.getOwnPropertyDescriptor(s,"remote_connections")?.value===!0||r});' +
+  'let m=(0,r.un)(l.u,({get:e})=>{let t=e(a.Dc),n=e(s.I2,t);if(e(p.JW,"4114442250"))return"enabled";if(n.isLoading)return"loading";return"disabled"});';
+const REMOTE_CONTROL_CONNECTIONS_SOURCE =
+  "function r({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}";
+const EXPERIMENTAL_FEATURES_SOURCE =
+  'v6J2(e,t,n){var s=n("DBCl"),i=n("TjCl"),a=n("b6Vw");function r(e){return"beta"===e.stage&&e.name!==i.j&&"multi_agent"!==e.name&&"plugins"!==e.name&&"plugin"!==e.name&&"remote_control"!==e.name&&!e.name.startsWith("realtime_")&&e.name!==a.c&&e.name!==s.R1o}n.d(t,{R:()=>r})}';
+
+function rspackChunk(id, modules) {
+  return `export const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];export const __webpack_modules__={${modules}};`;
+}
+
 test("remote-control UI feature patches are idempotent and fail soft", () => {
   const remoteConnectionsPatch = featurePatches.find((patch) => patch.id === "remote-connections-visibility");
   const remoteControlConnectionsPatch = featurePatches.find((patch) => patch.id === "remote-control-connections-visibility");
   const experimentalFeaturesPatch = featurePatches.find((patch) => patch.id === "experimental-features");
-  const remoteConnectionsSource =
-    "function c(){let e=(0,s.c)(3),{data:n}=t(a,r(i)),c=o(`4114442250`);if(n?.config[`features.remote_connections`]===!0)return!0;let l=n?.config.features;if(typeof l!=`object`||!l||Array.isArray(l))return c;let u;return e[0]!==l||e[1]!==c?(u=Object.getOwnPropertyDescriptor(l,`remote_connections`)?.value===!0||c,e[0]=l,e[1]=c,e[2]=u):u=e[2],u}";
-  const atomRemoteConnectionsSource =
-    "function s(e){if(e(c,`4114442250`))return`enabled`;return`disabled`}";
-  const currentRemoteConnectionsSource =
-    "function d(){let e=(0,u.c)(3),{data:i}=n(s,r(t)),a=c(`4114442250`);if(i?.config[`features.remote_connections`]===!0)return!0;let o=i?.config.features;if(typeof o!=`object`||!o||Array.isArray(o))return a;let l;return e[0]!==o||e[1]!==a?(l=Object.getOwnPropertyDescriptor(o,`remote_connections`)?.value===!0||a,e[0]=o,e[1]=a,e[2]=l):l=e[2],l}";
-  const currentRemoteControlConnectionsSource =
-    "function a({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}";
-  const experimentalFeaturesSource =
-    "var Z=`remote_control`;function Ie(e){return e.stage===`beta`?e.name!==`memories`&&e.name!==`multi_agent`&&e.name!==`plugins`&&e.name!==`plugin`&&e.name!==`remote_control`&&!e.name.startsWith(`realtime_`)&&e.name!==`chronicle`&&e.name!==`workspace_dependencies`:!1}";
 
-  const firstPatched = remoteConnectionsPatch.apply(remoteConnectionsSource, {});
-  assert.match(firstPatched, /navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.equal(remoteConnectionsPatch.apply(firstPatched, {}), firstPatched);
+  const remoteConnectionsPatched = remoteConnectionsPatch.apply(REMOTE_CONNECTIONS_SOURCE, {});
+  assert.match(remoteConnectionsPatched, /r=\(e\(l\.JW,"4114442250"\)\|\|navigator\.userAgent\.includes\(`Linux`\)\);/);
+  assert.match(remoteConnectionsPatched, /if\(\(e\(p\.JW,"4114442250"\)\|\|navigator\.userAgent\.includes\(`Linux`\)\)\)return"enabled"/);
+  assert.equal(remoteConnectionsPatch.apply(remoteConnectionsPatched, {}), remoteConnectionsPatched);
+  const atoms = new Function("navigator", "r", "s", "i", "a", "l", "p",
+    `${remoteConnectionsPatched.replaceAll("let ", "var ")};return{d,m}`);
+  const get = (gate) => (atom) => atom === "gate" ? gate : atom === "config" ? { data: { config: {} }, isLoading: false } : null;
+  const result = atoms({ userAgent: "X11; Linux x86_64" }, { un: (_scope, read) => read }, { u: 0, I2: "config" },
+    { Dc: "host" }, { I2: "config", Dc: "host" }, { JW: "gate", u: 0 }, { JW: "gate" });
+  const linuxGet = (atom, _arg) => get(false)(atom);
+  assert.equal(result.d({ get: linuxGet }), true);
+  assert.equal(result.m({ get: linuxGet }), "enabled");
 
-  const currentRemoteConnectionsPatched = remoteConnectionsPatch.apply(currentRemoteConnectionsSource, {});
-  assert.match(currentRemoteConnectionsPatched, /c\(`4114442250`\)\|\|navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.equal(remoteConnectionsPatch.apply(currentRemoteConnectionsPatched, {}), currentRemoteConnectionsPatched);
-
-  const atomRemoteConnectionsPatched = remoteConnectionsPatch.apply(atomRemoteConnectionsSource, {});
-  assert.match(atomRemoteConnectionsPatched, /e\(c,`4114442250`\)\|\|navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.equal(remoteConnectionsPatch.apply(atomRemoteConnectionsPatched, {}), atomRemoteConnectionsPatched);
-
-  const currentRemoteControlConnectionsPatched = remoteControlConnectionsPatch.apply(currentRemoteControlConnectionsSource, {});
+  const currentRemoteControlConnectionsPatched = remoteControlConnectionsPatch.apply(REMOTE_CONTROL_CONNECTIONS_SOURCE, {});
   assert.match(currentRemoteControlConnectionsPatched, /\(t\|\|navigator\.userAgent\.includes\(`Linux`\)\)&&\(e\?\.available\?\?!0\)/);
   const { value: remoteControlPatchedAgain, warnings: remoteControlPatchedAgainWarnings } = captureWarns(() =>
     remoteControlConnectionsPatch.apply(currentRemoteControlConnectionsPatched, {}),
@@ -128,76 +133,51 @@ test("remote-control UI feature patches are idempotent and fail soft", () => {
     "remoteControlConnectionsState",
     "slingshotEnabled",
     "navigator",
-    `${currentRemoteControlConnectionsPatched};return a({remoteControlConnectionsState,slingshotEnabled})`,
+    `${currentRemoteControlConnectionsPatched};return r({remoteControlConnectionsState,slingshotEnabled})`,
   );
   const linuxNavigator = { userAgent: "Linux" };
   assert.equal(currentGate({ available: false, accessRequired: false }, false, linuxNavigator), false);
   assert.equal(currentGate({ available: true, accessRequired: true }, false, linuxNavigator), false);
   assert.equal(currentGate({ available: true, accessRequired: false }, false, linuxNavigator), true);
 
-  const filtered = experimentalFeaturesPatch.apply(experimentalFeaturesSource, {});
-  assert.doesNotMatch(filtered, /e\.name!==`remote_control`/);
+  const filtered = experimentalFeaturesPatch.apply(EXPERIMENTAL_FEATURES_SOURCE, {});
+  assert.doesNotMatch(filtered, /remote_control/);
+  assert.match(filtered, /"plugin"!==e\.name&&!e\.name\.startsWith\("realtime_"\)/);
   const { value: filteredAgain, warnings: filteredAgainWarnings } = captureWarns(() =>
     experimentalFeaturesPatch.apply(filtered, {}),
   );
   assert.equal(filteredAgain, filtered);
   assert.deepEqual(filteredAgainWarnings, []);
+  const visible = new Function(`${filtered.replace(/^v6J2\(e,t,n\)\{var s=n\("DBCl"\),i=n\("TjCl"\),a=n\("b6Vw"\);/, "var s={R1o:'x'},i={j:'y'},a={c:'z'};").replace(/n\.d\(t,\{R:\(\)=>r\}\)\}$/, "")};return r`)();
+  assert.equal(visible({ stage: "beta", name: "remote_control" }), true);
+  assert.equal(visible({ stage: "beta", name: "multi_agent" }), false);
 
-  const { value, warnings } = captureWarns(() => remoteConnectionsPatch.apply("real codex bundle", {}));
-  assert.equal(value, "real codex bundle");
-  assert.match(warnings.join("\n"), /Could not find remote connections Statsig gate/);
-
-  const unrelatedLinuxGate = "const unrelated=flag||navigator.userAgent.includes(`Linux`);const gate=get(\"4114442250\")";
-  const { value: driftedValue, warnings: driftedWarnings } = captureWarns(() =>
-    remoteConnectionsPatch.apply(unrelatedLinuxGate, {}),
-  );
-  assert.equal(driftedValue, unrelatedLinuxGate);
-  assert.match(driftedWarnings.join("\n"), /Could not find remote connections Statsig gate/);
-
-  const unrelatedRemoteControlLinuxGate =
-    "const unrelated=(flag||navigator.userAgent.includes(`Linux`))&&other;function RD(){return enabled&&state?.available}";
-  const { value: remoteControlDriftedValue, warnings: remoteControlDriftedWarnings } = captureWarns(() =>
-    remoteControlConnectionsPatch.apply(unrelatedRemoteControlLinuxGate, {}),
-  );
-  assert.equal(remoteControlDriftedValue, unrelatedRemoteControlLinuxGate);
-  assert.match(
-    remoteControlDriftedWarnings.join("\n"),
-    /Could not find remote control connections visibility gate/,
-  );
+  for (const [patch, drifted, message] of [
+    [remoteConnectionsPatch, "real codex bundle", /Could not find remote connections Statsig gate/],
+    [remoteConnectionsPatch, 'const unrelated=flag||navigator.userAgent.includes(`Linux`);const gate=get("4114442250")', /Could not find remote connections Statsig gate/],
+    [remoteControlConnectionsPatch, "const unrelated=(flag||navigator.userAgent.includes(`Linux`))&&other;function RD(){return enabled&&state?.available}", /Could not find remote control connections visibility gate/],
+    [experimentalFeaturesPatch, EXPERIMENTAL_FEATURES_SOURCE.replaceAll('"', "`"), /Could not find remote_control experimental feature filter/],
+    [experimentalFeaturesPatch, EXPERIMENTAL_FEATURES_SOURCE + EXPERIMENTAL_FEATURES_SOURCE, /Could not find remote_control experimental feature filter/],
+  ]) {
+    const { value, warnings } = captureWarns(() => patch.apply(drifted, {}));
+    assert.equal(value, drifted);
+    assert.match(warnings.join("\n"), message);
+  }
 });
 
-test("remote-control UI descriptors match the current app chunks", () => {
-  const remoteConnectionsPatch = featurePatches.find((patch) => patch.id === "remote-connections-visibility");
-  const remoteControlConnectionsPatch = featurePatches.find((patch) => patch.id === "remote-control-connections-visibility");
-  const experimentalFeaturesPatch = featurePatches.find((patch) => patch.id === "experimental-features");
-
-  assert.ok(
-    remoteConnectionsPatch.pattern.test("app-initial-BTphDPeq.js"),
-  );
-  assert.equal(
-    remoteConnectionsPatch.pattern.test(
-      "app-initial~app-main~hotkey-window-new-thread-page~hotkey-window-home-page~composer-utility-bar-D9zyQF1n.js",
-    ),
-    false,
-  );
-
-  assert.equal(
-    remoteControlConnectionsPatch.pattern.test("app-primary-40386834d0f6.js"),
-    true,
-  );
-  assert.equal(
-    remoteControlConnectionsPatch.pattern.test(
-      "remote-control-connections-visibility-current.js",
-    ),
-    true,
-  );
-  assert.equal(remoteControlConnectionsPatch.pattern.test("remote-control-connections-visibility.js.map"), false);
-
-  assert.ok(experimentalFeaturesPatch.pattern.test("settings-route-state-BwIfDYxh.js"));
-  assert.equal(
-    experimentalFeaturesPatch.pattern.test("experimental-features-queries-old.js"),
-    false,
-  );
+test("remote-control UI descriptors find rspack chunks by content", () => {
+  for (const patch of featurePatches) {
+    assert.equal(patch.pattern, undefined, patch.id);
+    assert.equal(patch.assetPattern, undefined, patch.id);
+    assert.equal(patch.assetMatch, undefined, `${patch.id} patches every chunk copy of its module`);
+    assert.ok(patch.assetNeedles.length > 0, patch.id);
+  }
+  const needles = Object.fromEntries(featurePatches.map((patch) => [patch.id, patch.assetNeedles]));
+  const has = (id, source) => needles[id].every((needle) => source.includes(needle));
+  assert.equal(has("remote-connections-visibility", REMOTE_CONNECTIONS_SOURCE), true);
+  assert.equal(has("remote-control-connections-visibility", REMOTE_CONTROL_CONNECTIONS_SOURCE), true);
+  assert.equal(has("experimental-features", EXPERIMENTAL_FEATURES_SOURCE), true);
+  assert.equal(has("experimental-features", featurePatches[2].apply(EXPERIMENTAL_FEATURES_SOURCE, {})), true);
 });
 
 test("remote-control visibility edits only its unique destructured owner", () => {
@@ -223,14 +203,13 @@ test("remote-control visibility rejects duplicate and partial owners byte-identi
     const result = captureWarns(() => patch.apply(source, {}));
     assert.equal(result.value, source);
     assert.match(result.warnings.join("\n"), /Could not find remote control connections visibility gate/);
-    assert.equal(patch.assetMatch(source), false);
   }
 });
 
 test("remote-control visibility validates the earlier remote-mobile owner before marking it", () => {
   const patch = featurePatches.find((candidate) => candidate.id === "remote-control-connections-visibility");
   const mobile =
-    "function a({remoteControlConnectionsState:e,slingshotEnabled:t}){let n=typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`);/*codexLinuxRemoteControlVisibilityEnabled*/return(n||t)&&(n||(e?.available??!0))&&e?.accessRequired!==!0}";
+    "function a({remoteControlConnectionsState:e,slingshotEnabled:n}){let codexLinuxRemoteControlOnLinux=typeof navigator!=`undefined`&&navigator.userAgent.includes(`Linux`);/*codexLinuxRemoteControlVisibilityEnabled*/return(codexLinuxRemoteControlOnLinux||n)&&(codexLinuxRemoteControlOnLinux||(e?.available??!0))&&e?.accessRequired!==!0}";
   const patched = patch.apply(mobile, {});
 
   assert.match(patched, /codexLinuxRemoteControlVisibilityEnabled\*\/\/\*codexLinuxRemoteControlUiVisibilityEnabled/u);
@@ -239,35 +218,30 @@ test("remote-control visibility validates the earlier remote-mobile owner before
   const ambiguous = mobile + mobile;
   const result = captureWarns(() => patch.apply(ambiguous, {}));
   assert.equal(result.value, ambiguous);
-  assert.equal(patch.assetMatch(ambiguous), false);
+  assert.match(result.warnings.join("\n"), /Could not find remote control connections visibility gate/);
 });
 
-test("remote-control UI feature patches matching webview assets and records patch report entries", () => {
+test("remote-control UI feature patches every rspack chunk copy and records patch report entries", () => {
   withTempFeatureConfig(["remote-control-ui"], (root) => {
     withLinuxFeatureRootEnv(root, () => {
       const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-control-feature-app-"));
       try {
         const buildDir = path.join(tempApp, ".vite", "build");
         const assetsDir = path.join(tempApp, "webview", "assets");
+        fs.mkdirSync(path.join(assetsDir, "async"), { recursive: true });
         fs.mkdirSync(buildDir, { recursive: true });
-        fs.mkdirSync(assetsDir, { recursive: true });
         fs.writeFileSync(path.join(buildDir, "main.js"), "console.log('main bundle');");
         fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
 
-        const appInitialAsset = "app-initial-current.js";
-        fs.writeFileSync(
-          path.join(assetsDir, appInitialAsset),
-          "function Twt(){let e=(0,kwt.c)(3),{data:t}=Vr(y4,Br(B2)),n=BN(`4114442250`);if(t?.config[`features.remote_connections`]===!0)return!0;let r=t?.config.features;if(typeof r!=`object`||!r||Array.isArray(r))return n;let i;return e[0]!==r||e[1]!==n?(i=Object.getOwnPropertyDescriptor(r,`remote_connections`)?.value===!0||n,e[0]=r,e[1]=n,e[2]=i):i=e[2],i}function D8(e){return e(RN,`4114442250`)?`enabled`:`disabled`}",
-        );
-        const visibilityAsset = "remote-control-connections-visibility-current.js";
-        fs.writeFileSync(
-          path.join(assetsDir, visibilityAsset),
-          "function a({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}",
-        );
-        fs.writeFileSync(
-          path.join(assetsDir, "settings-route-state-BwIfDYxh.js"),
-          "var Z=`remote_control`;function Ie(e){return e.stage===`beta`?e.name!==`memories`&&e.name!==`multi_agent`&&e.name!==`plugins`&&e.name!==`plugin`&&e.name!==`remote_control`&&!e.name.startsWith(`realtime_`)&&e.name!==`chronicle`&&e.name!==`workspace_dependencies`:!1}",
-        );
+        const chunks = {
+          "async/24191.7b05d5cf83.js": rspackChunk(24191, `PIwo(e,t,n){${REMOTE_CONNECTIONS_SOURCE}}`),
+          "async/435221.eac941d988.js": rspackChunk(435221, `uodG(e,t,n){${REMOTE_CONTROL_CONNECTIONS_SOURCE}n.d(t,{Zi:()=>r})}`),
+          "async/446738.83dee6513b.js": rspackChunk(446738, `uodG(e,s,t){${REMOTE_CONTROL_CONNECTIONS_SOURCE.replace("slingshotEnabled:t}){return t&&", "slingshotEnabled:s}){return s&&")}t.d(s,{Zi:()=>r})}`),
+          "async/208689.77fb5123f8.js": rspackChunk(208689, EXPERIMENTAL_FEATURES_SOURCE),
+          "async/968499.fa029184f4.js": rspackChunk(968499, EXPERIMENTAL_FEATURES_SOURCE),
+          "async/1.decoy.js": rspackChunk(1, 'abcd(e,t,n){let x="remoteControlConnectionsState:"}'),
+        };
+        for (const [name, source] of Object.entries(chunks)) fs.writeFileSync(path.join(assetsDir, name), source);
 
         const report = createPatchReport();
         const { warnings } = captureWarns(() => patchExtractedApp(tempApp, { report }));
@@ -276,24 +250,15 @@ test("remote-control UI feature patches matching webview assets and records patc
           warnings.join("\n"),
         );
 
-        assert.match(
-          fs.readFileSync(
-            path.join(assetsDir, visibilityAsset),
-            "utf8",
-          ),
-          /navigator\.userAgent\.includes\(`Linux`\)/,
-        );
-        assert.match(
-          fs.readFileSync(
-            path.join(assetsDir, appInitialAsset),
-            "utf8",
-          ),
-          /navigator\.userAgent\.includes\(`Linux`\)/,
-        );
-        assert.doesNotMatch(
-          fs.readFileSync(path.join(assetsDir, "settings-route-state-BwIfDYxh.js"), "utf8"),
-          /e\.name!==`remote_control`/,
-        );
+        const read = (name) => fs.readFileSync(path.join(assetsDir, name), "utf8");
+        assert.equal(read("async/24191.7b05d5cf83.js").split("||navigator.userAgent.includes(`Linux`)").length - 1, 2);
+        for (const name of ["async/435221.eac941d988.js", "async/446738.83dee6513b.js"]) {
+          assert.match(read(name), /\|\|navigator\.userAgent\.includes\(`Linux`\)\)&&\(e\?\.available/);
+        }
+        for (const name of ["async/208689.77fb5123f8.js", "async/968499.fa029184f4.js"]) {
+          assert.doesNotMatch(read(name), /remote_control/);
+        }
+        assert.equal(read("async/1.decoy.js"), chunks["async/1.decoy.js"]);
         assert.deepEqual(
           report.patches
             .filter((patch) => patch.featureId === "remote-control-ui")
@@ -309,4 +274,20 @@ test("remote-control UI feature patches matching webview assets and records patc
       }
     });
   });
+});
+
+const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
+test("signed webview chunks satisfy every remote-control UI contract", { skip: !signedApp }, () => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  for (const patch of featurePatches) {
+    const names = findWebviewAssetsContaining(signedApp, patch.assetNeedles);
+    assert.ok(names.length > 0, patch.id);
+    for (const name of names) {
+      const source = fs.readFileSync(path.join(signedApp, "webview", "assets", name), "utf8");
+      const { value: patched, warnings } = captureWarns(() => patch.apply(source, {}));
+      assert.deepEqual(warnings, [], `${patch.id} ${name}`);
+      assert.notEqual(patched, source, `${patch.id} ${name}`);
+      assert.equal(patch.apply(patched, {}), patched, `${patch.id} ${name}`);
+    }
+  }
 });

@@ -8,8 +8,9 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
+const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 const {
-  CHROME_MAPPING_ASSET_PATTERN,
+  CHROME_MAPPING_ASSET_NEEDLES,
   applyFramelessTitlebarMainPatch,
   applyFramelessTitlebarWebviewPatch,
   descriptors,
@@ -82,7 +83,7 @@ function evaluateMainFixture(source, platform, appearance) {
 }
 
 function officialWebviewFixture() {
-  return "function h3e(e,t){if(e!==`electron`)return`native`;switch(t){case`win32`:case`linux`:return`application-menu`;case`darwin`:case`unknown`:return`native`}}";
+  return 'function h3e(e,t){if("electron"!==e)return"native";switch(t){case"win32":case"linux":return"application-menu";case"darwin":case"unknown":return"native"}}function r(){return"application-menu"===document.documentElement.dataset.codexWindowChrome}';
 }
 
 test("frameless-titlebar is disabled by default and exposes standalone descriptors", () => {
@@ -218,8 +219,8 @@ test("webview patch remaps Linux chrome and is idempotent", () => {
   assert.notEqual(patched, source);
   assert.equal(framelessTitlebarWebviewContract(patched), "patched");
   assert.equal(applyFramelessTitlebarWebviewPatch(patched), patched);
-  assert.match(patched, /case`linux`:return`native`/);
-  assert.doesNotMatch(patched, /case`win32`:case`linux`:return`application-menu`/);
+  assert.match(patched, /case"linux":return"native"/);
+  assert.doesNotMatch(patched, /case"win32":case"linux":return"application-menu"/);
 });
 
 test("webview patch preserves Windows, macOS, and browser chrome behavior", () => {
@@ -246,8 +247,8 @@ test("webview patch rejects incomplete, duplicate, and mixed contracts byte-iden
   const current = officialWebviewFixture();
   const patched = applyFramelessTitlebarWebviewPatch(current);
   const sources = [
-    current.replace("case`win32`:case`linux`:return`application-menu`", "case`win32`:return`application-menu`"),
-    patched.replace("case`linux`:return`native`", "case`linux`:return`application-menu`"),
+    current.replace('case"win32":case"linux":return"application-menu"', 'case"win32":return"application-menu"'),
+    patched.replace('case"linux":return"native"', 'case"linux":return"application-menu"'),
     current + current,
     patched + patched,
     current + patched,
@@ -269,10 +270,11 @@ test("unrecognized webview contracts warn instead of reporting false already-app
   assert.match(result.warnings.join("\n"), /current frameless-titlebar webview contract/);
 });
 
-test("webview descriptor selects the current shared chrome mapping across hash changes", () => {
+test("webview descriptor selects the current chrome mapping chunk by content", () => {
   const descriptor = descriptors.find(({ id }) => id === "webview-chrome-mapping");
-  assert.match("app-shared-HashNext1.js", CHROME_MAPPING_ASSET_PATTERN);
-  assert.doesNotMatch("connect-app-host-HashNext1.js", CHROME_MAPPING_ASSET_PATTERN);
+  assert.equal(descriptor.pattern, undefined);
+  assert.deepEqual(descriptor.assetNeedles, CHROME_MAPPING_ASSET_NEEDLES);
+  for (const needle of CHROME_MAPPING_ASSET_NEEDLES) assert.ok(officialWebviewFixture().includes(needle), needle);
   assert.equal(descriptor.assetMatch(officialWebviewFixture()), true);
   assert.equal(descriptor.assetMatch(applyFramelessTitlebarWebviewPatch(officialWebviewFixture())), true);
   assert.equal(descriptor.assetMatch("export{chrome}"), false);
@@ -302,8 +304,7 @@ test(
     assert.equal(owners.length, 1);
 
     const assetsDir = path.join(root, "webview", "assets");
-    const assets = fs.readdirSync(assetsDir)
-      .filter((name) => CHROME_MAPPING_ASSET_PATTERN.test(name))
+    const assets = findWebviewAssetsContaining(root, CHROME_MAPPING_ASSET_NEEDLES)
       .filter((name) => framelessTitlebarWebviewContract(fs.readFileSync(path.join(assetsDir, name), "utf8")) === "current");
     assert.equal(assets.length, 1);
   },

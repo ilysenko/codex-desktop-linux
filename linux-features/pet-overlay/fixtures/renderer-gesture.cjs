@@ -14,12 +14,14 @@ module.exports = function rendererGesture({ native = true, complete = async () =
   }
   let serial = 0;
   const context = {
-    Ii: { current: null }, Element, HTMLElement, Je: false, De: false, fe: false, We: null,
-    Er() {}, qi() {}, A: () => clicks.push(true), U: {}, I: {},
+    rA: { current: null }, Element, HTMLElement, iI: false, ir: false, a2: false, iM: null,
+    oo() {}, rN() {}, aC: () => clicks.push(true), iF() {}, rM() {}, r1() {},
+    o: { CodexAvatarOverlayAction: {}, CodexAvatarOverlaySource: {}, CodexMiniQuickChatOpenMethod: {} },
+    tQ: { v: { debug() {} } },
     crypto: { randomUUID: () => `aaaaaaaa-aaaa-aaaa-aaaa-${String(++serial).padStart(12, "0")}` },
     console: { warn: (...args) => warnings.push(args) },
-    Ct: { dispatchMessage(type, payload) { messages.push({ type, payload }); dispatch(type, payload); } },
-    w: { avatarOverlay: { codexPetOverlayCompleteDrag: (...args) => { calls.push(args); return complete(...args); } } },
+    G: { O1: { dispatchMessage(type, payload) { messages.push({ type, payload }); dispatch(type, payload); } } },
+    tW: { appServices: { avatarOverlay: { codexPetOverlayCompleteDrag: (...args) => { calls.push(args); return complete(...args); } } } },
   };
   const patched = applyPetOverlayGestureRendererPatch(fixture);
   assert.equal(applyPetOverlayGestureRendererPatch(patched), patched);
@@ -29,5 +31,5 @@ module.exports = function rendererGesture({ native = true, complete = async () =
   const event = { button: 0, pointerId: 1, target: element, currentTarget: element, preventDefault() {},
     clientX: 74, clientY: 74, screenX: 100, screenY: 100, timeStamp: 0, altKey: false };
   return { context, event, messages, calls, warnings, clicks,
-    down: () => context.ga(event), up: released => context.ma({ ...event, timeStamp: 500 }, released ?? true) };
+    down: () => context.eC(event), up: released => context.rU({ ...event, timeStamp: 500 }, released ?? true) };
 };

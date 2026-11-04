@@ -10,7 +10,10 @@ const test = require("node:test");
 const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
-const { patchUniqueAssetFile } = require("../../scripts/patches/lib/assets.js");
+const {
+  findWebviewAssetsContaining,
+  patchUniqueAssetFile,
+} = require("../../scripts/patches/lib/assets.js");
 const {
   STORAGE_KEY,
   applyPersistentStatusPanelPatch,
@@ -18,11 +21,25 @@ const {
   matchesPersistentStatusPanelContract,
 } = require("./patch.js");
 
-const currentComposerSource =
-  "function nW(e){let t=(0,iW.c)(26),{conversationId:n,threadId:r,rateLimit:i,onOpenChange:a}=e,o=Wr(),[s,c]=(0,aW.useState)(!1),{activeMode:l}=vm(n),u=l?.settings.model??null,d=Pn(Bc,n),f;t[0]===d?f=t[1]:(f=nR(d),t[0]=d,t[1]=f);let y,b;t[10]===a?(y=t[11],b=t[12]):(y=async()=>{c(!0),a?.(!0)},b=[a],t[10]=a,t[11]=y,t[12]=b);let v=o.formatMessage({id:`composer.statusSlashCommand.description`,defaultMessage:`Show task id, context usage, and rate limits`,description:`Description for the status slash command`}),x={id:`status`,title:`Status`,description:v,requiresEmptyComposer:!1,Icon:rE,onSelect:y,dependencies:b};if(CS(x),!s)return null;let S;t[18]===a?S=t[19]:(S=()=>{c(!1),a?.(!1)},t[18]=a,t[19]=S);return FU({threadId:r,onClose:S})}";
+// Rspack/SWC shape: module factories inside `__webpack_modules__`, double-quoted
+// strings and member-call React hooks.
+const rspackChunk = (factoryBody) =>
+  "export const __rspack_esm_id=589850;export const __rspack_esm_ids=[589850];" +
+  `export const __webpack_modules__={Ab12(e,t,n){var g=n("zd8w");${factoryBody}}};`;
 
-const liftedStatusStateComposerSource =
-  "function nW(){let[yt,bt]=(0,R3.useState)(!1),v=o.formatMessage({id:`composer.statusSlashCommand.description`});return jsx(Menu,{setIsStatusMenuOpen:bt,content:jsx(StatusPanel,{onClose:()=>bt(!1)}),open:yt,description:v})}";
+const currentComposerSource = rspackChunk(
+  'function nW(e){let t=(0,iW.c)(26),{conversationId:n,threadId:r,rateLimit:i,onOpenChange:a}=e,o=Wr(),[s,c]=(0,g.useState)(!1),{activeMode:l}=vm(n),u=l?.settings.model??null,d=Pn(Bc,n),f;t[0]===d?f=t[1]:(f=nR(d),t[0]=d,t[1]=f);let y,b;t[10]===a?(y=t[11],b=t[12]):(y=async()=>{c(!0),a?.(!0)},b=[a],t[10]=a,t[11]=y,t[12]=b);let v=o.formatMessage({id:"composer.statusSlashCommand.description",defaultMessage:"Show chat ID, context usage, and rate limits",description:"Description for the status slash command"}),x={id:"status",title:"Status",description:v,requiresEmptyComposer:!1,Icon:rE,onSelect:y,dependencies:b};if(CS(x),!s)return null;let S;t[18]===a?S=t[19]:(S=()=>{c(!1),a?.(!1)},t[18]=a,t[19]=S);return FU({threadId:r,onClose:S})}',
+);
+
+const liftedStatusStateComposerSource = rspackChunk(
+  'function nW(){let ia=(0,iW.c)(9),[db,dx]=(0,g.useState)(!1),dy=(0,u._U)(uA.t,s5),v=o.formatMessage({id:"composer.statusSlashCommand.description"});return ia[0]!==db?(0,o.jsx)(Menu,{setIsStatusMenuOpen:dx,content:db?(0,o.jsx)(StatusPanel,{conversationId:s5,onClose:()=>dx(!1)}):null,open:db,description:v,pending:dy}):null}',
+);
+
+const STORAGE_LITERAL = JSON.stringify(STORAGE_KEY);
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const GET_PATTERN = new RegExp(`"1"===localStorage\\.getItem\\(${escapeRegExp(STORAGE_LITERAL)}\\)`);
+const SET_PATTERN = new RegExp(`localStorage\\.setItem\\(${escapeRegExp(STORAGE_LITERAL)},"1"\\)`);
+const REMOVE_PATTERN = new RegExp(`localStorage\\.removeItem\\(${escapeRegExp(STORAGE_LITERAL)}\\)`);
 
 function captureWarns(fn) {
   const originalWarn = console.warn;
@@ -87,9 +104,9 @@ test("status panel preference follows the current lifted menu state", () => {
   const patched = applyPersistentStatusPanelPatch(liftedStatusStateComposerSource);
 
   assert.notEqual(patched, liftedStatusStateComposerSource);
-  assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
-  assert.match(patched, new RegExp(`localStorage\\.setItem\\(\\\`${STORAGE_KEY}\\\`,\\\`1\\\`\\)`));
-  assert.match(patched, new RegExp(`localStorage\\.removeItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
+  assert.match(patched, GET_PATTERN);
+  assert.match(patched, SET_PATTERN);
+  assert.match(patched, REMOVE_PATTERN);
   assert.equal(applyPersistentStatusPanelPatch(patched), patched);
 });
 
@@ -101,15 +118,15 @@ test("status state remains correlated across the current large composer function
   const patched = applyPersistentStatusPanelPatch(source);
 
   assert.notEqual(patched, source);
-  assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
+  assert.match(patched, GET_PATTERN);
   assert.equal(applyPersistentStatusPanelPatch(patched), patched);
 });
 
 test("same-alias status consumers in adjacent functions do not cross owner boundaries", () => {
   const source =
-    "function stateOwner(){let[yt,bt]=(0,R3.useState)(!1),v=o.formatMessage({id:`composer.statusSlashCommand.description`});return yt}" +
-    "function menuOwner(){return jsx(Menu,{setIsStatusMenuOpen:bt})}" +
-    "function panelOwner(){return jsx(StatusPanel,{onClose:()=>bt(!1)})}";
+    'function stateOwner(){let[yt,bt]=(0,g.useState)(!1),v=o.formatMessage({id:"composer.statusSlashCommand.description"});return yt}' +
+    "function menuOwner(){return(0,o.jsx)(Menu,{setIsStatusMenuOpen:bt})}" +
+    "function panelOwner(){return(0,o.jsx)(StatusPanel,{onClose:()=>bt(!1)})}";
 
   const { value: patched, warnings } = captureWarns(() =>
     applyPersistentStatusPanelPatch(source),
@@ -121,36 +138,45 @@ test("same-alias status consumers in adjacent functions do not cross owner bound
   ]);
 });
 
-test("descriptor locates and patches the current semantic composer status bundle", () => {
+test("descriptor locates the rspack composer chunk by content needles", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "persistent-status-panel-assets-"));
   try {
     const assetsDir = path.join(tempDir, "webview", "assets");
-    const assetPath = path.join(
-      assetsDir,
-      "composer-content-a0bff570446b.js",
-    );
-    fs.mkdirSync(assetsDir, { recursive: true });
+    const assetName = "async/589850.1c7db979c6.js";
+    const assetPath = path.join(assetsDir, assetName);
+    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
     fs.writeFileSync(assetPath, liftedStatusStateComposerSource);
+    // Locale chunks carry the message id but not the lifted menu prop.
+    fs.writeFileSync(
+      path.join(assetsDir, "async", "127249.5ba5cd61c0.js"),
+      '{"composer.statusSlashCommand.description":"Status"}',
+    );
+    fs.writeFileSync(path.join(assetsDir, "158624.372d9fdf73.js"), "const unrelated=true");
 
-    fs.writeFileSync(path.join(assetsDir, "app-primary-other.js"), "const unrelated=true");
+    const [descriptor] = descriptors;
+    assert.equal(descriptor.pattern, undefined);
+    const candidates = findWebviewAssetsContaining(tempDir, descriptor.assetNeedles);
+    assert.deepEqual(candidates, [assetName]);
     const result = patchUniqueAssetFile(
       tempDir,
-      descriptors[0].pattern,
-      descriptors[0].assetMatch,
-      descriptors[0].apply,
+      null,
+      descriptor.assetMatch,
+      descriptor.apply,
       "missing",
       "ambiguous",
+      candidates,
     );
     const patched = fs.readFileSync(assetPath, "utf8");
 
     assert.deepEqual(result, {
       matched: 1,
       changed: 1,
-      assetName: "composer-content-a0bff570446b.js",
+      assetName,
+      changedAssets: [assetName],
     });
-    assert.match(patched, new RegExp(`localStorage\\.getItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
-    assert.match(patched, new RegExp(`localStorage\\.setItem\\(\\\`${STORAGE_KEY}\\\`,\\\`1\\\`\\)`));
-    assert.match(patched, new RegExp(`localStorage\\.removeItem\\(\\\`${STORAGE_KEY}\\\`\\)`));
+    assert.match(patched, GET_PATTERN);
+    assert.match(patched, SET_PATTERN);
+    assert.match(patched, REMOVE_PATTERN);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -172,7 +198,7 @@ test("partial, duplicate, and unrelated persistent markers fail closed byte-iden
     complete + complete,
     liftedStatusStateComposerSource.replace(
       "function nW(){",
-      `function unrelated(){return \`${STORAGE_KEY}\`}function nW(){`,
+      `function unrelated(){return ${STORAGE_LITERAL}}function nW(){`,
     ),
   ];
 
@@ -190,7 +216,7 @@ test("partial, duplicate, and unrelated persistent markers fail closed byte-iden
 
 test("ambiguous lifted status state owners are unchanged", () => {
   const ambiguousSource = liftedStatusStateComposerSource +
-    liftedStatusStateComposerSource.replaceAll("yt", "xt").replaceAll("bt", "ct");
+    liftedStatusStateComposerSource.replaceAll("db", "xt").replaceAll("dx", "ct");
 
   const { value: patched, warnings } = captureWarns(() =>
     applyPersistentStatusPanelPatch(ambiguousSource),
@@ -204,8 +230,8 @@ test("ambiguous lifted status state owners are unchanged", () => {
 
 test("composer bundle with changed status state shape is unchanged", () => {
   const changedStateSource = currentComposerSource.replace(
-    "{conversationId:n,threadId:r,rateLimit:i,onOpenChange:a}=e,o=Wr(),[s,c]=(0,aW.useState)(!1),",
-    "{threadId:r,conversationId:n,rateLimit:i,onOpenChange:a}=e,o=Wr(),[s,c]=aW.useState(!1),",
+    "{conversationId:n,threadId:r,rateLimit:i,onOpenChange:a}=e,o=Wr(),[s,c]=(0,g.useState)(!1),",
+    "{threadId:r,conversationId:n,rateLimit:i,onOpenChange:a}=e,o=Wr(),[s,c]=g.useState(!1),",
   );
 
   const { value: patched, warnings } = captureWarns(() =>
@@ -227,4 +253,19 @@ test("target bundle without status marker is unchanged and warns", () => {
   assert.deepEqual(warnings, [
     "WARN: Could not find Codex status panel bundle marker - skipping persistent status panel patch",
   ]);
+});
+
+test("signed official webview has exactly one patchable composer status owner", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
+}, () => {
+  const appDir = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const [descriptor] = descriptors;
+  const matches = findWebviewAssetsContaining(appDir, descriptor.assetNeedles)
+    .map((assetName) => fs.readFileSync(path.join(appDir, "webview", "assets", assetName), "utf8"))
+    .filter((source) => descriptor.assetMatch(source));
+  assert.equal(matches.length, 1);
+  const patched = applyPersistentStatusPanelPatch(matches[0]);
+  assert.notEqual(patched, matches[0]);
+  assert.match(patched, GET_PATTERN);
+  assert.equal(applyPersistentStatusPanelPatch(patched), patched);
 });

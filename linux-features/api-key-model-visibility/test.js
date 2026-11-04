@@ -27,13 +27,13 @@ function applyPatchTwice(patchFn, source) {
 }
 
 function modelVisibilityHelperFixture() {
-  return "function ati({additionalAvailableModels:e,authMethod:t,availableModels:n,isCustomModelProvider:r,model:i,useHiddenModels:a}){return e?.has(i.model)===!0||i.model!==`codex-auto-review`&&(a&&!r&&t!==`amazonBedrock`?n.has(i.model):!i.hidden)}";
+  // Current upstream rspack/SWC shape: an anonymous predicate inlined into the
+  // catalog filter.
+  return 'function({additionalAvailableModels:e,apiKeyDaybreakSupported:t,authMethod:n,availableModels:r,hasConfiguredModelCatalog:i,isCustomModelProvider:a,model:s,useHiddenModels:o}){let l=s.availableAccessPrograms?.cyber;return("apikey"!==n||!!t||null==l||!(l.length>0)||!!l.includes("standard"))&&(e?.has(s.model)===!0||"codex-auto-review"!==s.model&&(i&&!s.hidden||(o&&!a&&"amazonBedrock"!==n?r.has(s.model)||"apikey"===n&&t&&!s.hidden&&l?.some(e=>"standard"!==e)===!0:!s.hidden)))}';
 }
 
-function modelCatalogFixture() {
-  // Current upstream shape (refactored): catalog filter delegates per-model
-  // visibility to a q$r-style helper that owns the allowlist gate.
-  return "function iti({additionalAvailableModels:e,authMethod:t,availableModels:n,defaultModel:r,enabledReasoningEfforts:i,includeUltraReasoningEffort:a,isCustomModelProvider:o=!1,models:s,useHiddenModels:c}){let l=[],u=null;return s.forEach(r=>{if(ati({additionalAvailableModels:e,authMethod:t,availableModels:n,isCustomModelProvider:o,model:r,useHiddenModels:c})){l.push(r),r.isDefault&&(u=r)}}),u??=l.find(e=>e.model===r)??null,{models:l,defaultModel:u}}" + modelVisibilityHelperFixture();
+function modelCatalogFixture(helper = modelVisibilityHelperFixture()) {
+  return "function iti({additionalAvailableModels:e,apiKeyDaybreakSupported:t=!1,authMethod:n,availableModels:a,defaultModel:s,enabledReasoningEfforts:o,hasConfiguredModelCatalog:l,includeUltraReasoningEffort:u,isCustomModelProvider:d=!1,models:c,useHiddenModels:p}){let h=[],f=null;return c.forEach(i=>{if(" + helper + "({additionalAvailableModels:e,apiKeyDaybreakSupported:t,authMethod:n,availableModels:a,hasConfiguredModelCatalog:l,isCustomModelProvider:d,model:i,useHiddenModels:p})){h.push(i),i.isDefault&&(f=i)}}),null==f&&(f=h.find(e=>e.model===s)??null),{models:h,defaultModel:f}}";
 }
 
 function evaluateCatalog(
@@ -106,21 +106,28 @@ test("api-key-model-visibility stays disabled until listed in features.json", ()
   });
 });
 
-test("descriptor is optional and targets app main webview chunks", () => {
+test("descriptor is optional and finds the model allowlist chunk by content", () => {
   assert.deepEqual(
     descriptors.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
     [["api-key-model-visibility-ui", "webview-asset", "optional"]],
   );
-  assert.equal(descriptors[0].pattern.test("app-initial~app-main~onboarding-page-abc.js"), false);
-  assert.equal(descriptors[0].pattern.test("app-initial-CKNQDTeE.js"), true);
-  assert.equal(descriptors[0].pattern.test("settings-page-abc.js"), false);
+  assert.equal(descriptors[0].pattern, undefined);
+  assert.equal(descriptors[0].assetPattern, undefined);
+  assert.deepEqual(descriptors[0].assetNeedles, [
+    "useHiddenModels",
+    "codex-auto-review",
+    "availableAccessPrograms",
+  ]);
+  for (const needle of descriptors[0].assetNeedles) {
+    assert.equal(modelCatalogFixture().includes(needle), true, needle);
+  }
 });
 
 test("API-key hosts use visible CLI models instead of the desktop allowlist", () => {
   const patched = applyPatchTwice(applyApiKeyModelVisibilityPatch, modelCatalogFixture());
   const catalog = evaluateCatalog(patched, "apikey");
 
-  assert.match(patched, /!==`apikey`\/\*codexLinuxApiKeyModelVisibility\*\//);
+  assert.match(patched, /"amazonBedrock"!==n&&"apikey"!==n\/\*codexLinuxApiKeyModelVisibility\*\//);
   assert.deepEqual(modelNames(catalog), [
     "gpt-5.6-sol",
     "gpt-5.6-terra",
@@ -172,30 +179,48 @@ test("ChatGPT and existing no-allowlist paths keep their upstream behavior", () 
 test("drifted model visibility helpers fail soft and stay byte-identical", () => {
   const helper = modelVisibilityHelperFixture();
   const driftedHelpers = [
-    "function ati({additionalAvailableModels:e,authMethod:t,availableModels:n,isCustomModelProvider:r,model:i,useHiddenModels:a}){return a&&t!==`amazonBedrock`;}",
-    "function ati({additionalAvailableModels:e,authMethod:t,availableModels:n,isCustomModelProvider:r,model:i,useHiddenModels:a}){return a&&t!==`amazonBedrock`,n.has(i.model)}",
-    helper.replace(
-      "?n.has(i.model):!i.hidden",
-      "?featureGate&&n.has(i.model):!i.hidden",
-    ),
-    helper.replace(
-      "?n.has(i.model):!i.hidden",
-      "?n.has(i.model):featureGate&&!i.hidden",
-    ),
+    helper.replace('"amazonBedrock"!==n?', '"amazonBedrock"!==n&&featureGate?'),
+    helper.replace("?r.has(s.model)", "?featureGate&&r.has(s.model)"),
+    helper.replace(":!s.hidden)))}", ":featureGate&&!s.hidden)))}"),
+    helper.replace("i&&!s.hidden||", ""),
+    helper.replace("useHiddenModels:o}", "useHiddenModels:o,extra:x}"),
   ];
 
-  for (const source of driftedHelpers) {
-    assert.equal(applyApiKeyModelVisibilityPatch(source), source);
+  for (const drifted of driftedHelpers) {
+    const source = modelCatalogFixture(drifted);
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (message) => warnings.push(message);
+    try {
+      assert.equal(applyApiKeyModelVisibilityPatch(source), source);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.equal(warnings.length, 1, drifted);
+    assert.match(warnings[0], /Could not find desktop model allowlist gate/);
   }
+});
+
+test("duplicate allowlist gates are rejected as ambiguous", () => {
+  const source = modelCatalogFixture() + modelCatalogFixture().replace("function iti(", "function itj(");
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (message) => warnings.push(message);
+  try {
+    assert.equal(applyApiKeyModelVisibilityPatch(source), source);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.match(warnings.join("\n"), /ambiguous/);
 });
 
 test("enabled descriptor patches a matching extracted webview asset", () => {
   withFeatureConfig(["api-key-model-visibility"], (featuresRoot) => {
     withTempDir((extractedDir) => {
       const assetsDir = path.join(extractedDir, "webview", "assets");
-      const assetPath = path.join(assetsDir, "app-initial-CKNQDTeE.js");
-      fs.mkdirSync(assetsDir, { recursive: true });
-      fs.writeFileSync(assetPath, modelCatalogFixture());
+      const assetPath = path.join(assetsDir, "async", "24191.7b05d5cf83.js");
+      fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+      fs.writeFileSync(assetPath, `export const __webpack_modules__={a(e,t,r){${modelCatalogFixture()}}};`);
 
       const normalized = normalizePatchDescriptors(
         loadLinuxFeaturePatchDescriptors({ featuresRoot }),
@@ -205,4 +230,22 @@ test("enabled descriptor patches a matching extracted webview asset", () => {
       assert.match(fs.readFileSync(assetPath, "utf8"), /codexLinuxApiKeyModelVisibility/);
     });
   });
+});
+
+const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
+test("official signed webview patches exactly one chunk", { skip: !signedApp }, () => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const { spawnSync } = require("node:child_process");
+  const assets = findWebviewAssetsContaining(signedApp, descriptors[0].assetNeedles);
+  assert.equal(assets.length, 1);
+  const source = fs.readFileSync(path.join(signedApp, "webview", "assets", assets[0]), "utf8");
+  const patched = applyApiKeyModelVisibilityPatch(source);
+  assert.notEqual(patched, source);
+  assert.equal(patched.split("codexLinuxApiKeyModelVisibility").length, 2);
+  assert.equal(applyApiKeyModelVisibilityPatch(patched), patched);
+  const check = spawnSync(process.execPath, ["--input-type=module", "--check"], {
+    input: patched,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  assert.equal(check.status, 0, String(check.stderr));
 });
