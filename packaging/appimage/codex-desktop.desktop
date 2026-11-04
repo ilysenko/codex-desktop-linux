@@ -12,3 +12,8 @@ StartupNotify=true
 StartupWMClass=codex-desktop
 X-GNOME-WMClass=codex-desktop
 X-AppImage-Version=__VERSION__
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=AppRun --codex-community-new-window

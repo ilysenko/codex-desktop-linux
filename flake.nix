@@ -594,14 +594,9 @@
                 "$out/lib/udev/rules.d/70-codex-micro.rules"
               ''}
               mkdir -p "$out/share/applications"
-              awk '
-                /^\[Desktop Action CheckForUpdates\]$/ { skip = 1; next }
-                /^\[Desktop Action InstallReadyUpdate\]$/ { skip = 1; next }
-                /^\[/ { skip = 0 }
-                skip { next }
-                /^Actions=/ { next }
-                { print }
-              ' "$source_dir/packaging/linux/codex-desktop.desktop" \
+              node "$source_dir/packaging/linux/render-desktop-actions.js" \
+                "$app/.codex-linux/patch-report.json" 0 \
+                < "$source_dir/packaging/linux/codex-desktop.desktop" \
                 > "$out/share/applications/codex-desktop.desktop"
               substituteInPlace "$out/share/applications/codex-desktop.desktop" \
                 --replace-fail "/usr/bin/codex-desktop" "$out/bin/codex-desktop" \
@@ -1184,6 +1179,19 @@
           touch "$out"
         '';
         checks.modules = import ./nix/modules-test.nix { inherit pkgs self system; };
+        checks.desktop-new-window =
+          let package = codexDesktop.override { linuxFeatureIds = [ "desktop-new-window" ]; };
+          in pkgs.runCommand "desktop-new-window-check" {
+            nativeBuildInputs = [ pkgs.desktop-file-utils ];
+          } ''
+            desktop=${package}/share/applications/codex-desktop.desktop
+            desktop-file-validate "$desktop"
+            grep -Fx 'Actions=new-window;' "$desktop"
+            grep -Fx '[Desktop Action new-window]' "$desktop"
+            grep -Fx "Exec=env BAMF_DESKTOP_FILE_HINT=$desktop CHROME_DESKTOP=codex-desktop.desktop ${package}/bin/codex-desktop --codex-community-new-window" "$desktop"
+            ! grep -Eq '^\[Desktop Action (CheckForUpdates|InstallReadyUpdate)\]$' "$desktop"
+            touch "$out"
+          '';
         checks.helper-workspace-source =
           pkgs.runCommand "helper-workspace-source-check" { } ''
             test -f ${helperWorkspaceSource}/Cargo.lock

@@ -1,0 +1,10 @@
+{
+  "id": "desktop-new-window",
+  "title": "New Window desktop action",
+  "description": "Open a fresh ChatGPT Community window from the desktop launcher.",
+  "defaultEnabled": false,
+  "gentoo": { "supported": true },
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
