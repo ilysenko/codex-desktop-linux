@@ -51,10 +51,16 @@ const CONTRACTS = Object.freeze({
   }],
   personalization: [{
     pattern: new RegExp(
-      `${IDENT}\\?\\.accounts\\[${IDENT}\\]\\?\\.account\\.tbo_config\\?\\.tbo_available!==!0`,
+      `(?<prefix>"chatgpt"!==${IDENT}\\|\\|null==(?<account>${IDENT})\\|\\|null==${IDENT}\\|\\|)` +
+        `${IDENT}\\?\\.accounts\\[\\k<account>\\]\\?\\.account\\.tbo_config\\?\\.tbo_available!==!0`,
       "gu",
     ),
-    replacement: "!1",
+    patchedPattern: new RegExp(
+      `"chatgpt"!==${IDENT}\\|\\|null==${IDENT}\\|\\|null==${IDENT}\\|\\|!1/\\*codexDotsPersonalization\\*/`,
+      "gu",
+    ),
+    marker: "codexDotsPersonalization",
+    replacement: (...args) => `${args.at(-1).prefix}!1/*codexDotsPersonalization*/`,
     expected: 2,
   }],
 });
@@ -63,17 +69,11 @@ function contractState(source, replacements) {
   const matches = replacements.map((contract) => [
     ...source.matchAll(new RegExp(contract.pattern.source, contract.pattern.flags)),
   ]);
-  // Marked contracts prove their complete applied state. Unmarked contracts
-  // retain their existing matching behavior until they opt into that metadata.
-  if (replacements.every(contract => contract.marker == null && contract.patchedPattern == null)) {
-    if (matches.every(found => found.length === 0)) return "patched";
-    return matches.every((found,index) => found.length === replacements[index].expected) ? "pristine" : "invalid";
-  }
   if (replacements.some(contract => contract.marker == null || contract.patchedPattern == null)) return "invalid";
-  const patched = replacements.map((contract) => contract.patchedPattern == null ? [] : [
+  const patched = replacements.map((contract) => [
     ...source.matchAll(new RegExp(contract.patchedPattern.source, contract.patchedPattern.flags)),
   ]);
-  const markers = replacements.map((contract) => contract.marker == null ? 0 : source.split(contract.marker).length - 1);
+  const markers = replacements.map((contract) => source.split(contract.marker).length - 1);
   const valid = (contract, found) => contract.validate == null || contract.validate(source, found);
   if (matches.every((found) => found.length === 0) &&
       patched.every((found, index) => found.length === replacements[index].expected &&
@@ -110,8 +110,10 @@ function applyDotsPersonalizationPatch(source) {
 }
 
 function matchesContract(source, contracts) {
-  const state = contractState(source, contracts);
-  return state === "pristine" || state === "patched" && contracts.every(contract => contract.marker != null && contract.patchedPattern != null);
+  if (!source.includes("tbo_config") && !contracts.some(({marker}) => marker != null && source.includes(marker))) {
+    return false;
+  }
+  return contractState(source, contracts) !== "invalid";
 }
 
 const descriptors = [
@@ -142,7 +144,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_902,
     ciPolicy: "optional",
-    assetNeedles: ["tbo_available!==!0"],
+    assetNeedles: ["settings.userRules.unavailable", "settings.userRules.accountLoadError"],
     assetMatch: (source) => matchesContract(source, CONTRACTS.personalization),
     missingDescription: "ChatGPT Dots personalization bundle",
     skipDescription: "ChatGPT Dots personalization patch",
