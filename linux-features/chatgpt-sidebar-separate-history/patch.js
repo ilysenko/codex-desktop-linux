@@ -70,11 +70,24 @@ function contract(source) {
   if (!binding.test(source.slice(selectorModule.start, selectorModule.end))) return null;
 
   const body = source.slice(storageModule.start, storageModule.end);
-  const exported = [...body.matchAll(new RegExp(
-    String.raw`[{,]${escapeRegExp(exportName)}:(?:\(\)=>)?(?<atom>${IDENT})(?=[,}])`, "g",
+  const exportsParam = storageModule.params[1];
+  const producerRequire = storageModule.params[2];
+  if (exportsParam == null || producerRequire == null) return null;
+  const records = [...body.matchAll(new RegExp(
+    String.raw`(?<![\w$.])${escapeRegExp(producerRequire)}\.d\(${escapeRegExp(exportsParam)},\{(?<getters>[^{}]*)\}(?:,\{(?<values>[^{}]*)\})?\)`, "g",
   ))];
-  if (exported.length !== 1) return null;
-  const { atom } = exported[0].groups;
+  if (records.length !== 1) return null;
+  const bindings = new Map();
+  for (const record of [records[0].groups.getters, records[0].groups.values ?? ""]) {
+    if (record === "") continue;
+    for (const entry of record.split(",")) {
+      const binding = entry.match(new RegExp(String.raw`^(?<name>${IDENT}):(?:\(\)=>)?(?<atom>${IDENT})$`));
+      if (binding == null || bindings.has(binding.groups.name)) return null;
+      bindings.set(binding.groups.name, binding.groups.atom);
+    }
+  }
+  if (!bindings.has(exportName)) return null;
+  const atom = bindings.get(exportName);
   const { persist } = storage[0].groups;
   const initializers = [...body.matchAll(new RegExp(
     String.raw`(?<![\w$.])${escapeRegExp(atom)}=\(0,${IDENT}\.${IDENT}\)\(${IDENT}\.${IDENT},"all"\)`, "g",

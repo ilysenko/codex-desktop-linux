@@ -128,6 +128,25 @@ test("missing, ambiguous, drifted, and partly patched contracts fail closed", ()
   } finally { console.warn = original; }
 });
 
+test("the preference atom must belong to the actual producer export record", () => {
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    for (const source of [
+      CURRENT.replace('n.d(t,{},{MT:g,uM:R,vv:O,xx:S})', 'const decoy={MT:g,uM:R,vv:O,xx:S}'),
+      CURRENT.replace('n.d(t,{},{MT:g,uM:R,vv:O,xx:S})', 'n.d(other,{},{MT:g,uM:R,vv:O,xx:S})'),
+      CURRENT.replace('n.d(t,{},{MT:g,uM:R,vv:O,xx:S})', 'other.d(t,{},{MT:g,uM:R,vv:O,xx:S})'),
+      CURRENT.replace('uM:R', 'uM:R,uM:S'),
+    ]) {
+      assert.equal(matchesSidebarHistoryContract(source), false);
+      assert.equal(applySidebarHistoryPatch(source), source);
+    }
+    const getters = CURRENT.replace('n.d(t,{},{MT:g,uM:R,vv:O,xx:S})', 'n.d(t,{MT:()=>g,uM:()=>R,vv:()=>O,xx:()=>S})');
+    assert.equal(matchesSidebarHistoryContract(getters), true);
+    assert.notEqual(applySidebarHistoryPatch(getters), getters);
+  } finally { console.warn = warn; }
+});
+
 test("feature is opt-in and the descriptor selects one semantic rspack chunk", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "separate-chatgpt-sidebar-"));
   const previous = process.env.CODEX_LINUX_FEATURES_CONFIG;
