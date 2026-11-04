@@ -458,10 +458,10 @@ replacement uses the cached capture size and takes no new screenshot. If it
 fails, the action is not sent and is not replayed through another backend. A
 matching device clamps an off-screen coordinate to the desktop edge, and the
 click or scroll result says where it landed. uinput clicks and scrolls carry
-that clamp note instead of the off-screen warning the portal and ydotool routes
-add.
-KWin element clicks keep both notes and append the KWin coordinate mapping.
-An untargeted scroll whose portal could not start falls back to ydotool; if
+that clamp note instead of the off-screen warning the portal, ydotool and X11
+xdotool routes add. A KWin element click keeps the note of its route, the
+uinput clamp note or the portal off-screen warning, and appends the KWin
+coordinate mapping. An untargeted scroll whose portal could not start falls back to ydotool; if
 that fails too, the result reports the ydotool error followed by the portal
 error, which may be a denied consent.
 
