@@ -287,12 +287,14 @@ are omitted until output scaling can be verified.
 
 The i3 backend lists and focuses windows through `i3-msg`, or `swaymsg` when
 i3 is not installed, over the i3 or Sway IPC socket. The socket is the first
-live one of `I3SOCK` and `SWAYSOCK`, then the newest i3 socket, then the newest
-`sway-ipc.*.sock` in `XDG_RUNTIME_DIR`. On Sway it covers native Wayland and
-Xwayland windows, with pids from the tree. Sway reports bounds in layout
-coordinates; when every active output has the same scale they are scaled to
-capture pixels (never below 1, as grim captures) with edges rounded outward,
-and with mixed scales they are left out, so window crops are refused. X11
+of `I3SOCK` and `SWAYSOCK` that names a socket file, then the newest i3
+socket, then the newest `sway-ipc.*.sock` in `XDG_RUNTIME_DIR`. On Sway it
+covers native Wayland and Xwayland windows, with pids from the tree. Sway
+reports bounds in layout coordinates; when every active output has the same
+scale they are scaled to capture pixels (never below 1, as grim captures)
+with edges rounded outward. With mixed scales, or when the outputs cannot be
+read, bounds are left out, so window crops and window-relative clicks are
+refused. X11
 windows keep their X11 id; a native Wayland window gets 2^32 plus its Sway
 container id, so the two never collide. On i3, pids come from the optional
 `xprop`; without it the window reports no pid, and an element action on it

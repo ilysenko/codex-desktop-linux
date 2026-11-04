@@ -875,10 +875,11 @@ function x11AppshotCaptureFixture({ backend = "x11", initiallyFocused = false, f
     require(name) {
       assert.equal(name, "node:child_process");
       return { execFile(program, args, _options, callback) {
-        const id = backend === "i3" ? Number(args[0].match(/0x[0-9a-f]+/)[0]) : Number(args[2]);
+        // i3 and Sway take the decimal X11 id; Sway rejects the hex form.
+        const id = backend === "i3" ? Number(args[0].match(/^\[id=(\d+)\] focus$/)[1]) : Number(args[2]);
         assert.equal(program, backend === "i3" ? "i3-msg" : "wmctrl");
         assert.deepEqual(Array.from(args), backend === "i3"
-          ? [`[id="0x${id.toString(16)}"] focus`] : ["-i", "-a", `0x${id.toString(16)}`]);
+          ? [`[id=${id}] focus`] : ["-i", "-a", `0x${id.toString(16)}`]);
         activations.push(id);
         if (failure === "activation-command" && id === external.window_id) {
           callback(new Error("activation failed"), "", "");
@@ -894,6 +895,7 @@ function x11AppshotCaptureFixture({ backend = "x11", initiallyFocused = false, f
     },
   });
   vm.runInContext(patched.slice(patched.lastIndexOf(";function codexLinuxAppshotRequire")), context);
+  context.codexLinuxAppshotI3Program = () => "i3-msg";
   context.codexLinuxAppshotBackendJson = async () => ({
     backend, windows: [structuredClone(desktop), structuredClone(external)],
   });
@@ -932,6 +934,42 @@ for (const backend of ["x11", "i3"]) {
     assert.equal(fixture.updates.at(-1).type, "completed");
   });
 }
+
+test("AppShots focuses i3 and Sway windows the way the i3 backend reports them", async () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const calls = [];
+  const context = vm.createContext({
+    Buffer, console: { warn() {} }, setTimeout,
+    process: { env: {}, pid: 101, platform: "linux" },
+    require(name) {
+      assert.equal(name, "node:child_process");
+      return { execFile(program, args, _options, callback) {
+        calls.push([program, ...args]);
+        callback(null, '[{"success":true}]', "");
+      } };
+    },
+  });
+  vm.runInContext(patched.slice(patched.lastIndexOf(";function codexLinuxAppshotRequire")), context);
+
+  // swaymsg only when i3-msg is missing, as the backend's ipc_program does.
+  for (const [installed, expected] of [
+    [["i3-msg", "swaymsg"], "i3-msg"],
+    [["swaymsg"], "swaymsg"],
+    [["i3-msg"], "i3-msg"],
+    [[], "i3-msg"],
+  ]) {
+    context.codexLinuxAppshotExecutablePath = (names) =>
+      names.find((name) => installed.includes(name)) ?? null;
+    assert.equal(context.codexLinuxAppshotI3Program(), expected);
+  }
+
+  // X11 windows take their decimal id; a native Wayland window on Sway is
+  // 2^32 plus its container id and is focused by con_id.
+  context.codexLinuxAppshotI3Program = () => "swaymsg";
+  assert.equal(await context.codexLinuxAppshotFocusWindow({ window_id: 0x200 }, "i3"), true);
+  assert.equal(await context.codexLinuxAppshotFocusWindow({ window_id: 2 ** 32 + 7 }, "i3"), true);
+  assert.deepEqual(calls, [["swaymsg", "[id=512] focus"], ["swaymsg", "[con_id=7] focus"]]);
+});
 
 for (const failure of ["activation-command", "activation-ignored", "target-changed", "focus-changed", "bounds-changed", "restore-ignored"]) {
   test(`AppShots delivers no X11 attachment on ${failure}`, async () => {
@@ -1117,6 +1155,16 @@ test("AppShots prefers direct X11 window capture before root screenshot fallback
       backend: "wayland",
       window_id: 0x200,
     })[0].source,
+    "grim",
+  );
+  // An X11 window under i3 or Xwayland keeps the direct capture; a native
+  // Wayland window on Sway (2^32 plus its container id) has no X11 id.
+  assert.deepEqual(
+    Array.from(context.codexLinuxAppshotScreenshotCommands({ backend: "i3", window_id: 0x200 })[0].args),
+    ["-window", "0x200"],
+  );
+  assert.equal(
+    context.codexLinuxAppshotScreenshotCommands({ backend: "i3", window_id: 2 ** 32 + 7 })[0].source,
     "grim",
   );
 });
