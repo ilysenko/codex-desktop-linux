@@ -240,8 +240,16 @@ generated-source selector each live in a numbered async webview chunk, and the
 main-process eligibility check lives in an `early-bootstrap-*` chunk. Chunk
 names identify nothing, so each descriptor locates its chunk by content needles
 (the rollout gate id, the feature-sync IPC message, the generated-suggestion
-props) and then requires exactly one chunk to satisfy its full semantic
-contract, so an unrelated chunk is never selected.
+props) and then requires one complete semantic owner. The normal Home page
+integration discovers one Rspack module identity and validates all physical
+copies before writing, including copies that have lost their discovery needles;
+unrelated modules remain untouched.
+
+For normal Home, that owner must be the exported route's mounted page chain.
+Its rollout hook, account predicate, navigation callback and lazy content
+provider are resolved through the native Rspack imports. The content provider
+keeps the runtime status gate and passes the current host, project and callback
+to the native suggestion component; card-to-composer actions remain upstream.
 
 This tweak is independently disabled by default:
 

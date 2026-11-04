@@ -49,11 +49,7 @@ function settingsFixture() {
 }
 
 function appPageFixture() {
-  return [
-    'function home(){let Ne=(0,eD.Zj)("2425897452"),Pe=(0,eD.Zj)("1857002365"),',
-    "He=I?.email??v;oS[96]!==_?(ez=(0,c.ML4)({authMethod:_,email:He,plan:je}),oS[96]=_,oS[99]=ez):ez=oS[99];",
-    "let Ue=ez,We=Ne&&Ue,lM=null!=oF;return(0,n.jsx)(eI.FU,{generatedSuggestionsEnabled:We,projectRoot:qe})}",
-  ].join("");
+  return require("./fixtures/suggested-prompts-app-page.js").chunk();
 }
 
 function featureSyncFixture() {
@@ -160,12 +156,12 @@ test("app page patch enables Home generation and desktop availability gates atom
   assert.notEqual(patched, source);
   assert.equal((patched.match(new RegExp(RUNTIME_MARKER, "g")) || []).length, 1);
   assert.equal((patched.match(new RegExp(APP_PAGE_ELIGIBILITY_MARKER, "g")) || []).length, 1);
-  assert.equal((patched.match(/\(0,eD\.Zj\)\("2425897452"\)/g) || []).length, 1);
+  assert.equal((patched.match(/\(0,hooks\.gate\)\("2425897452"\)/g) || []).length, 1);
   assert.match(
     patched,
-    /We=Ne&&\(Ue\|\|function codexLinuxUiTweaksSuggestedPromptsAppPageEligible\(\)\{return!0\}\(\)\)/,
+    /enabled=rollout&&\(eligible\|\|function codexLinuxUiTweaksSuggestedPromptsAppPageEligible\(\)\{return!0\}\(\)\)/,
   );
-  assert.match(patched, /generatedSuggestionsEnabled:We/);
+  assert.match(patched, /generatedSuggestionsEnabled:enabled/);
   assert.equal(applySuggestedPromptsAppPagePatch(patched), patched);
 });
 
