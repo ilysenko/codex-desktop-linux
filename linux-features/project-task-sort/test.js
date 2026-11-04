@@ -7,6 +7,8 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 
 const {
   loadLinuxFeaturePatchDescriptors,
@@ -119,6 +121,7 @@ test("explicit, pending, legacy, invalid, and non-local timestamps retain upstre
   };
 
   assert.equal(timestamp({ ...local, summary: { ...local.summary, createdAt: 123 } }, "created_at"), 123);
+  assert.equal(timestamp({ ...local, summary: { ...local.summary, createdAt: 0 } }, "created_at"), 0);
   assert.equal(timestamp({ ...local, summary: null }, "created_at"), 900);
   assert.equal(timestamp({ ...local, key: "local:legacy-id" }, "created_at"), 400);
   assert.equal(
@@ -205,4 +208,32 @@ test("descriptor locates one semantic rspack chunk and rejects missing or ambigu
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("current signed sort owner runs stable Created ordering and normal descriptor twice", { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, t => {
+  const assets=path.join(process.env.CODEX_SIGNED_EXTRACTED_APP,"webview/assets");
+  const owners=findWebviewAssetsContaining(process.env.CODEX_SIGNED_EXTRACTED_APP,descriptors[0].assetNeedles).filter(name=>matchesProjectTaskSortContract(fs.readFileSync(path.join(assets,name),"utf8")));
+  assert.equal(owners.length,1);
+  const source=fs.readFileSync(path.join(assets,owners[0]),"utf8"),patched=applyProjectTaskSortPatch(source);
+  function sorter(text) {
+    const found=[];
+    for(const match of text.matchAll(/function ([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\{return\{threadIds:/g)) {
+      const end=findMatchingBrace(text,match.index+match[0].indexOf("{")),body=text.slice(match.index,end+1);
+      if(body.includes("timestamp:function"))found.push({name:match[1],body});
+    }
+    assert.equal(found.length,1);
+    const {name,body}=found[0];
+    const dedup=body.match(/return\{threadIds:([A-Za-z_$][\w$]*)\(/)[1];
+    const key=body.match(/=>null==([A-Za-z_$][\w$]*)\(/)[1];
+    return vm.runInNewContext(body+`;${name}`,{[dedup]:values=>values,[key]:task=>task.key});
+  }
+  const tasks=[{key:"older",kind:"local",summary:{recencyAt:800,createdAt:100}},
+    {key:"local:019f0000-0000-7000-8000-000000000002",kind:"local",summary:{recencyAt:100}},
+    {key:"remote",kind:"remote",task:{created_at:20,updated_at:40}},
+    {key:"tie",kind:"local",summary:{createdAt:100,recencyAt:100}}];
+  assert.deepEqual(Array.from(sorter(patched)(tasks,"created_at").threadIds,task=>task.key),[tasks[1].key,"remote","older","tie"]);
+  assert.equal(JSON.stringify(sorter(patched)(tasks,"updated_at")),JSON.stringify(sorter(source)(tasks,"updated_at")));
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"task-sort-signed-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const file=path.join(dir,"webview/assets",owners[0]);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,source);
+  for(const expected of ["applied","already-applied"]){const report=createPatchReport();applyWebviewAssetPatchDescriptors(dir,descriptors,{},report);assert.equal(report.patches[0].status,expected);}
+  assert.equal(fs.readFileSync(path.join(assets,owners[0]),"utf8"),source);
 });
