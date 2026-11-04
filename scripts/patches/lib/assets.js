@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { findMatchingBrace } = require("./minified-js.js");
-const { patchBreaksJavaScriptSyntax } = require("./javascript-syntax.js");
+const { commitAssetEdits } = require("./asset-edits.js");
 
 function readDirectoryNames(dir) {
   if (!fs.existsSync(dir)) {
@@ -36,46 +36,38 @@ function regexpTest(filenamePattern, name) {
   return filenamePattern.test(name);
 }
 
-const JAVASCRIPT_ASSET_PATTERN = /\.(?:c|m)?js$/;
-
-function rejectsSyntaxBreak(assetName, original, patched) {
-  if (!JAVASCRIPT_ASSET_PATTERN.test(assetName) || !patchBreaksJavaScriptSyntax(original, patched)) {
-    return false;
-  }
-  console.warn(
-    `WARN: Patched webview asset ${assetName} no longer parses as JavaScript — keeping the original asset`,
-  );
-  return true;
-}
-
 // The official webview is an rspack build: entry chunks live in
-// webview/assets and lazily loaded chunks in webview/assets/async, all with
-// numeric content-hashed names. Asset names below are relative to
+// webview/assets and lazily loaded chunks in webview/assets/async. Other
+// nested assets are retained by the recursive inventory. Names are relative to
 // webview/assets (for example "async/24191.7b05d5cf83.js").
-const WEBVIEW_SCRIPT_DIRECTORIES = ["", "async"];
-
-function listWebviewAssets(extractedDir) {
-  const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
-  const names = [];
-  for (const directory of WEBVIEW_SCRIPT_DIRECTORIES) {
-    for (const entry of readDirectoryEntries(path.join(webviewAssetsDir, directory))) {
-      if (entry.isFile()) {
-        names.push(directory === "" ? entry.name : `${directory}/${entry.name}`);
+function listWebviewAssetFiles(webviewAssetsDir, filenamePattern = /./) {
+  if (!fs.existsSync(webviewAssetsDir)) return [];
+  const assets = [];
+  function visit(relativeDirectory) {
+    const directory = path.join(webviewAssetsDir, relativeDirectory);
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const relativePath = relativeDirectory === ""
+        ? entry.name
+        : `${relativeDirectory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        visit(relativePath);
+      } else if (entry.isFile() && (
+        regexpTest(filenamePattern, relativePath) || regexpTest(filenamePattern, entry.name)
+      )) {
+        assets.push(relativePath);
       }
     }
   }
-  return names.sort();
+  visit("");
+  return assets.sort();
+}
+
+function listWebviewAssets(extractedDir) {
+  return listWebviewAssetFiles(path.join(extractedDir, "webview", "assets"));
 }
 
 function listWebviewScriptAssets(extractedDir) {
   return listWebviewAssets(extractedDir).filter((name) => /\.js$/.test(name));
-}
-
-function readDirectoryEntries(dir) {
-  if (!fs.existsSync(dir)) {
-    return [];
-  }
-  return fs.readdirSync(dir, { withFileTypes: true });
 }
 
 // Returns the webview script assets whose source contains every needle.
@@ -100,83 +92,45 @@ function selectAssetCandidates(extractedDir, filenamePattern, candidates) {
 }
 
 function patchAssetFiles(extractedDir, filenamePattern, patchFn, missingWarnMessage, candidates = null) {
-  const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
-  if (!fs.existsSync(webviewAssetsDir)) {
-    console.warn(
-      `WARN: Could not find webview assets directory in ${webviewAssetsDir} — skipping asset patch`,
-    );
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  if (!fs.existsSync(assetsDir)) {
+    console.warn(`WARN: Could not find webview assets directory in ${assetsDir} — skipping asset patch`);
     return { matched: 0, changed: 0, changedAssets: [] };
   }
-
   const selected = selectAssetCandidates(extractedDir, filenamePattern, candidates);
   if (selected.length === 0) {
     console.warn(missingWarnMessage);
     return { matched: 0, changed: 0, changedAssets: [] };
   }
-
-  const pendingWrites = [];
-  for (const candidate of selected) {
-    const filePath = path.join(webviewAssetsDir, candidate);
-    const currentSource = fs.readFileSync(filePath, "utf8");
-    const patchedSource = patchFn(currentSource);
-    if (patchedSource !== currentSource) {
-      if (rejectsSyntaxBreak(candidate, currentSource, patchedSource)) {
-        return { matched: selected.length, changed: 0, changedAssets: [] };
-      }
-      pendingWrites.push({ candidate, filePath, patchedSource });
-    }
+  const edits = [];
+  for (const assetName of selected) {
+    const source = readWebviewAsset(assetsDir, assetName);
+    const patchedSource = patchFn(source);
+    if (patchedSource !== source) edits.push({ assetName, source, patchedSource });
   }
-  for (const { filePath, patchedSource } of pendingWrites) {
-    fs.writeFileSync(filePath, patchedSource, "utf8");
-  }
-
-  return {
-    matched: selected.length,
-    changed: pendingWrites.length,
-    changedAssets: pendingWrites.map(({ candidate }) => candidate),
-  };
+  return { matched: selected.length, ...commitAssetEdits(assetsDir, edits) };
 }
 
-function patchUniqueAssetFile(
-  extractedDir,
-  filenamePattern,
-  assetMatch,
-  patchFn,
-  missingWarnMessage,
-  ambiguousWarnMessage,
-  candidates = null,
-) {
-  const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
-  if (!fs.existsSync(webviewAssetsDir)) {
-    console.warn(
-      `WARN: Could not find webview assets directory in ${webviewAssetsDir} — skipping asset patch`,
-    );
+function patchUniqueAssetFile(extractedDir, filenamePattern, assetMatch, patchFn,
+  missingWarnMessage, ambiguousWarnMessage, candidates = null) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  if (!fs.existsSync(assetsDir)) {
+    console.warn(`WARN: Could not find webview assets directory in ${assetsDir} — skipping asset patch`);
     return { matched: 0, changed: 0, assetName: null, changedAssets: [] };
   }
-
-  const matches = selectAssetCandidates(extractedDir, filenamePattern, candidates)
-    .map((assetName) => ({
-      assetName,
-      source: fs.readFileSync(path.join(webviewAssetsDir, assetName), "utf8"),
-    }))
-    .filter(({ assetName, source }) => assetMatch(source, assetName));
-
-  if (matches.length === 0) {
-    console.warn(missingWarnMessage);
-    return { matched: 0, changed: 0, assetName: null, changedAssets: [] };
+  const matches = [];
+  for (const assetName of selectAssetCandidates(extractedDir, filenamePattern, candidates)) {
+    const source = readWebviewAsset(assetsDir, assetName);
+    if (assetMatch(source, assetName)) matches.push({ assetName, source });
   }
   if (matches.length !== 1) {
-    console.warn(`${ambiguousWarnMessage}: ${matches.map(({ assetName }) => assetName).join(", ")}`);
+    console.warn(matches.length === 0 ? missingWarnMessage :
+      `${ambiguousWarnMessage}: ${matches.map(match => match.assetName).join(", ")}`);
     return { matched: matches.length, changed: 0, assetName: null, changedAssets: [] };
   }
-
   const [{ assetName, source }] = matches;
-  const patchedSource = patchFn(source);
-  if (patchedSource === source || rejectsSyntaxBreak(assetName, source, patchedSource)) {
-    return { matched: 1, changed: 0, assetName, changedAssets: [] };
-  }
-  fs.writeFileSync(path.join(webviewAssetsDir, assetName), patchedSource, "utf8");
-  return { matched: 1, changed: 1, assetName, changedAssets: [assetName] };
+  return { matched: 1, ...commitAssetEdits(assetsDir,
+    [{ assetName, source, patchedSource: patchFn(source) }]), assetName };
 }
 
 function readWebviewAsset(webviewAssetsDir, assetName) {
@@ -301,6 +255,9 @@ function findImportedAsset(webviewAssetsDir, importerAsset, description) {
 }
 
 module.exports = {
+  listWebviewAssetFiles,
+  // Explicit assetsDir batch API retained for replayed feature consumers.
+  patchWebviewAssets: commitAssetEdits,
   findWebviewAssetsContaining,
   listWebviewAssets,
   listWebviewScriptAssets,

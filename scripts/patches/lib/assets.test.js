@@ -6,7 +6,11 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { patchAssetFiles, patchUniqueAssetFile } = require("./assets.js");
+const { findMainProcessChunks, listWebviewAssets, listWebviewAssetFiles, patchAssetFiles, patchUniqueAssetFile, patchWebviewAssets } = require("./assets.js");
+const { commitAssetEdits } = require("./asset-edits.js");
+const { webviewAssetPatch } = require("../descriptor.js");
+const { applyWebviewAssetPatchDescriptors } = require("../engine.js");
+const { createPatchReport } = require("../../lib/patch-report.js");
 const { javascriptSourceParses } = require("./javascript-syntax.js");
 
 function withAssets(files, callback) {
@@ -14,6 +18,7 @@ function withAssets(files, callback) {
   const assets = path.join(root, "webview", "assets");
   fs.mkdirSync(assets, { recursive: true });
   for (const [name, source] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(assets, name)), { recursive: true });
     fs.writeFileSync(path.join(assets, name), source);
   }
   const warnings = [];
@@ -22,6 +27,7 @@ function withAssets(files, callback) {
   try {
     return callback({
       root,
+      assets,
       read: (name) => fs.readFileSync(path.join(assets, name), "utf8"),
       warnings,
     });
@@ -120,5 +126,105 @@ test("findCodexRequestWebviewAsset resolves the rspack request module, export an
       rspackChunk(2, CODEX_REQUEST_MODULE.replace("M8aW", "Q9zz").replace("Xb:()=>s,", "")),
     );
     assert.equal(findCodexRequestWebviewAsset(assets).moduleId, "M8aW");
+  });
+});
+
+const RSPACK_OWNER = 'export const __rspack_esm_id=1;export const __webpack_modules__={owner(e,t,n){let p={available:!1,label:"Linux",nested(){return{value:"}"}}};n.d(t,{},{default:p})}};';
+
+test("extractedDir inventory and explicit assetsDir inventory recurse without flattening names", () => {
+  withAssets({
+    "z.js": MODULE,
+    "async/100163.hash.js": RSPACK_OWNER,
+    "async/nested/100163.hash.js": RSPACK_OWNER,
+    "workers/worker.js": "self.onmessage=()=>{};",
+    "async/z.css": ".z{}",
+    "a.js": MODULE,
+  }, ({ root, assets }) => {
+    assert.deepEqual(listWebviewAssets(root), [
+      "a.js", "async/100163.hash.js", "async/nested/100163.hash.js",
+      "async/z.css", "workers/worker.js", "z.js",
+    ]);
+    assert.deepEqual(listWebviewAssetFiles(assets, /^100163\..*\.js$/g), [
+      "async/100163.hash.js", "async/nested/100163.hash.js",
+    ]);
+    assert.deepEqual(listWebviewAssetFiles(path.join(assets, "missing")), []);
+    assert.equal(patchWebviewAssets, commitAssetEdits);
+  });
+});
+
+test("normal unique-owner patch distinguishes missing and ambiguous nested owners", () => {
+  withAssets({ "async/one.js": RSPACK_OWNER, "async/two.js": MODULE }, ({ root, read, warnings }) => {
+    const missing = patchUniqueAssetFile(root, /\.js$/, () => false, source => source + "//changed", "missing", "ambiguous");
+    assert.deepEqual(missing, { matched: 0, changed: 0, assetName: null, changedAssets: [] });
+    assert.deepEqual(warnings, ["missing"]);
+    const ambiguous = patchUniqueAssetFile(root, /\.js$/, () => true, source => source + "//changed", "missing", "ambiguous");
+    assert.deepEqual(ambiguous, { matched: 2, changed: 0, assetName: null, changedAssets: [] });
+    assert.equal(read("async/one.js"), RSPACK_OWNER);
+    assert.equal(read("async/two.js"), MODULE);
+  });
+});
+
+test("recursive Rspack owner edits execute and publish only committed changedAssets", () => {
+  withAssets({ "async/one.js": RSPACK_OWNER }, ({ root, read }) => {
+    const apply = () => patchUniqueAssetFile(root, /\.js$/, source => source.includes('label:"Linux"'),
+      source => source.replace("available:!1", "available:!0"), "missing", "ambiguous");
+    assert.deepEqual(apply(), { matched: 1, changed: 1, assetName: "async/one.js", changedAssets: ["async/one.js"] });
+    const source = read("async/one.js");
+    const exports = {};
+    const requireModule = Object.assign(() => {}, { d(target, _getters, values) { Object.assign(target, values); } });
+    new Function(source.replaceAll("export const ", "const ") + ";return __webpack_modules__.owner;")()({}, exports, requireModule);
+    assert.equal(exports.default.available, true);
+    assert.equal(exports.default.nested().value, "}");
+    assert.deepEqual(apply(), { matched: 1, changed: 0, assetName: "async/one.js", changedAssets: [] });
+    assert.equal(read("async/one.js"), source);
+  });
+});
+
+test("provided candidates allow null patterns and explicit empty candidates stay empty", () => {
+  withAssets({ "entry.js": MODULE, "async/other.js": MODULE }, ({ root, read }) => {
+    assert.deepEqual(patchAssetFiles(root, null, source => source.replace("return 1", "return 2"), "missing", ["entry.js"]), {
+      matched: 1, changed: 1, changedAssets: ["entry.js"],
+    });
+    let called = false;
+    assert.deepEqual(patchAssetFiles(root, null, () => { called = true; return ""; }, "missing", []), {
+      matched: 0, changed: 0, changedAssets: [],
+    });
+    assert.equal(called, false);
+    assert.deepEqual(patchUniqueAssetFile(root, null, () => true, source => source.replace("return 1", "return 3"),
+      "missing", "ambiguous", ["async/other.js"]), {
+      matched: 1, changed: 1, assetName: "async/other.js", changedAssets: ["async/other.js"],
+    });
+    assert.equal(read("entry.js"), MODULE.replace("return 1", "return 2"));
+  });
+});
+
+test("needle index refresh observes added and removed needles after transactional commits", () => {
+  withAssets({ "async/entry.js": 'const value="alpha";' }, ({ root, read }) => {
+    let staleCalled = false;
+    const descriptors = [
+      webviewAssetPatch({ id: "alpha-to-beta", assetNeedles: ["alpha"], apply: source => source.replace("alpha", "beta") }),
+      webviewAssetPatch({ id: "removed-alpha", assetNeedles: ["alpha"], apply: source => { staleCalled = true; return source; } }),
+      webviewAssetPatch({ id: "beta-to-done", assetNeedles: ["beta"], apply: source => source.replace("beta", "done") }),
+    ];
+    const report = createPatchReport();
+    applyWebviewAssetPatchDescriptors(root, descriptors, {}, report);
+    assert.deepEqual(report.patches.map(patch => patch.status), ["applied", "skipped-optional", "applied"]);
+    assert.equal(staleCalled, false);
+    assert.equal(read("async/entry.js"), 'const value="done";');
+  });
+});
+
+test("renderer recursion ignores symlinks and keeps main and worker lookup separate", () => {
+  withAssets({ "async/one.js": RSPACK_OWNER }, ({ root, assets }) => {
+    const buildDir = path.join(root, ".vite/build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    for (const name of ["early-bootstrap.js", "early-bootstrap-4-a1b2.js", "git-worker.js"])
+      fs.writeFileSync(path.join(buildDir, name), MODULE);
+    fs.symlinkSync(buildDir, path.join(assets, "outside"), "dir");
+    assert.deepEqual(listWebviewAssets(root), ["async/one.js"]);
+    assert.deepEqual(findMainProcessChunks(root), {
+      buildDir, chunks: ["early-bootstrap-4-a1b2.js", "early-bootstrap.js"],
+    });
+    assert.equal(fs.readFileSync(path.join(buildDir, "git-worker.js"), "utf8"), MODULE);
   });
 });
