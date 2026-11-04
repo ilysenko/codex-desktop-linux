@@ -246,24 +246,15 @@ function findCodexRequestWebviewAsset(webviewAssetsDir) {
   throw new Error(`Could not find Codex request API asset in ${webviewAssetsDir}`);
 }
 
-function findImportedAsset(webviewAssetsDir, importerAsset, description) {
-  const importedAsset = readWebviewAsset(webviewAssetsDir, importerAsset).match(/from"\.\/([^"]+)"/)?.[1];
-  if (!importedAsset || !fs.existsSync(path.join(webviewAssetsDir, importedAsset))) {
-    throw new Error(`Could not find ${description} imported by ${importerAsset}`);
-  }
-  return importedAsset;
-}
-
 module.exports = {
   listWebviewAssetFiles,
-  // Explicit assetsDir batch API retained for replayed feature consumers.
+  // Assets-directory batch API for feature-local transactional edits.
   patchWebviewAssets: commitAssetEdits,
   findWebviewAssetsContaining,
   listWebviewAssets,
   listWebviewScriptAssets,
   findCodexRequestWebviewAsset,
   findIconAsset,
-  findImportedAsset,
   MAIN_PROCESS_CHUNK_PATTERN,
   findMainProcessChunks,
   findRequiredWebviewAsset,
