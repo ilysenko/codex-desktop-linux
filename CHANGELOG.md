@@ -11,11 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   and focus windows through `zwlr_foreign_toplevel_manager_v1` on wlroots
   compositors without a dedicated backend, and send `press_key` chords
   through `wtype` where no RemoteDesktop portal exists. Hyprland background
-  input releases a key left down by a failed batch. Same-pid windows,
-  post-action trees and decorated window titles close gaps in the element
+  input releases a key left down by a failed batch and refuses modifier-only
+  chords. Same-pid windows and post-action trees close gaps in the element
   ownership check, and an unraised window crop of an unfocused target is
-  refused. `CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD` keeps working for the
-  new chord route.
+  refused. A compositor title that decorates the frame name (a Chromium
+  profile suffix) narrows the tree to that frame. When the window listing is
+  unavailable, `perform_action` and `set_value` with a window target and a
+  `pid` check ownership by the pid instead of refusing.
+  `CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD` keeps working for the new chord
+  route, and Hyprland background mode also reads
+  `CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND`.
 - Synchronize the embedded Computer Use backend to standalone v0.7.35.
   Accessibility trees use the compact node encoding by default, with
   `verbose: true` for the full encoding. `get_app_state` takes
@@ -30,7 +35,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Refuse an unfocused targeted `get_app_state` screenshot before capturing
   anything, instead of grabbing the desktop and raising a portal prompt only
   to discard the image.
-- Hyprland background mode: with `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`,
+- Hyprland background mode: with `CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND=1`
+  (standalone alias `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`),
   targeted keyboard input goes through `send_key_state` on the control
   socket without focusing the window, and unfocused targets are captured
   with `grim -T`, including windows on hidden workspaces. Keys never appear

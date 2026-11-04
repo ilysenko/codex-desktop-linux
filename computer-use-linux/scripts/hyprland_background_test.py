@@ -4,7 +4,7 @@
 
 Drives the real MCP server against a fixture hyprctl that logs every request
 a fixture Hyprland socket and a fixture grim that log every request and
-capture, on a private D-Bus session. With COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1,
+capture, on a private D-Bus session. With CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND=1,
 type_text and press_key must reach the target through send_key_state over the
 socket (never in a process's argv), show on the indicator, never dispatch a
 focus change, and a
@@ -127,10 +127,10 @@ class BackgroundModeTests(unittest.TestCase):
             XDG_CACHE_HOME=str(self.root/'cache'), XDG_CONFIG_HOME=str(self.root/'config'),
             CU_DISABLE_ABS_POINTER='1', COMPUTER_USE_LINUX_INDICATOR='0',
             CODEX_COMPUTER_USE_SCREENSHOT_BACKEND='gnome-screenshot',
-            COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND='1',
+            CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND='1',
             PATH=str(self.root)+':/usr/bin:/bin')
         for name in ('DISPLAY', 'WAYLAND_DISPLAY', 'AT_SPI_BUS_ADDRESS', 'NIRI_SOCKET',
-                     'SWAYSOCK', 'I3SOCK'):
+                     'SWAYSOCK', 'I3SOCK', 'COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND'):
             self.env.pop(name, None)
         for name in ('systemctl', 'gdbus', 'xdotool', 'wtype', 'xrandr', 'ydotool', 'ydotoold',
                      'kscreen-doctor', 'swaymsg', 'i3-msg', 'niri'):
@@ -310,11 +310,19 @@ class BackgroundModeTests(unittest.TestCase):
         self.assertEqual(self.focus_dispatches(), [])
 
     def test_opt_out_keeps_focus_then_type(self):
-        self.env.pop('COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND')
+        self.env.pop('CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND')
         proc = self.server()
         self.call(proc, 'type_text', dict(window_id=TARGET, text='abc'))
         self.assertEqual(self.batches(), [])
         self.assertTrue(self.focus_dispatches(), self.requests())
+
+    def test_standalone_name_is_an_alias(self):
+        self.env.pop('CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND')
+        self.env['COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND'] = '1'
+        proc = self.server()
+        _, text = self.call(proc, 'type_text', dict(window_id=TARGET, text='abc'))
+        self.assertIn('send_key_state', text)
+        self.assertEqual(self.focus_dispatches(), [])
 
 
 if __name__ == '__main__':

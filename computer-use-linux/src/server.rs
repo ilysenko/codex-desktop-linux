@@ -5763,7 +5763,8 @@ impl ComputerUseLinux {
     }
 
     /// Hyprland background capture: when opted in with
-    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` and the target is an
+    /// `CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND=1` (or the standalone
+    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`) and the target is an
     /// unfocused Hyprland window, capture just that window with `grim -T`
     /// instead of raising it or grabbing the desktop through the portal.
     /// Returns `None` to fall through to the regular capture path. The note
@@ -5816,7 +5817,8 @@ impl ComputerUseLinux {
     }
 
     /// Hyprland background input: when opted in with
-    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` and the call names a
+    /// `CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND=1` (or the standalone
+    /// `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`) and the call names a
     /// target window, keys go to that window through `send_key_state` without
     /// focusing it, so the user's focus, cursor and workspace stay put.
     /// Returns `None` to fall through to the focus-then-type path.

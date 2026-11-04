@@ -11,7 +11,8 @@
 
 use std::env;
 
-pub const BACKGROUND_ENV: &str = "COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND";
+pub const BACKGROUND_ENV: &str = "CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND";
+pub const BACKGROUND_ENV_STANDALONE: &str = "COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND";
 
 /// One key press: Hyprland modifier mask (e.g. `"CTRL SHIFT"`, or empty) and
 /// an xkb key name on the unshifted level of a US layout.
@@ -31,9 +32,12 @@ impl KeyPress {
 }
 
 /// Opt-in for Hyprland background mode: targeted keyboard input and
-/// window capture that never focus or raise the target.
+/// window capture that never focus or raise the target. The standalone
+/// name is an alias.
 pub fn background_enabled() -> bool {
-    env::var(BACKGROUND_ENV).ok().as_deref() == Some("1")
+    [BACKGROUND_ENV, BACKGROUND_ENV_STANDALONE]
+        .iter()
+        .any(|key| env::var(key).ok().as_deref() == Some("1"))
 }
 
 /// Maps literal text to key presses. Errors name the first unsupported

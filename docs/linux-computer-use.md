@@ -45,7 +45,7 @@ The embedded backend tracks Computer Use 0.7.36. WebKitGTK AT-SPI socket childre
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
-On Hyprland, `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` lets targeted `type_text`, `press_key`, `get_app_state` and `screenshot` work on a window without focusing it, including one on a hidden workspace: keys go through `send_key_state` on the control socket (never in a process's arguments) and the window is captured alone with `grim -T`. The indicator shows the input, masked unless the target field is confirmed non-secret. Text must be printable US-layout ASCII, tab or newline, and the active keymap must be US; anything else is refused before anything is sent. An unfocused Chromium ignores browser accelerators. When a batch stops between a key's down and up events, or its outcome is unknown, the backend sends a release that waits at most a second, and the error says whether the release went through.
+On Hyprland, `CODEX_COMPUTER_USE_HYPRLAND_BACKGROUND=1` (standalone alias `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`) lets targeted `type_text`, `press_key`, `get_app_state` and `screenshot` work on a window without focusing it, including one on a hidden workspace: keys go through `send_key_state` on the control socket (never in a process's arguments) and the window is captured alone with `grim -T`. The indicator shows the input, masked unless the target field is confirmed non-secret. Text must be printable US-layout ASCII, tab or newline, and the active keymap must be US; anything else is refused before anything is sent, and so is a modifier-only chord such as `Ctrl+Shift`. An unfocused Chromium ignores browser accelerators. When a batch stops between a key's down and up events, or its outcome is unknown, the backend sends a release that waits at most a second, and the error says whether the release went through.
 
 MCP discovery probes are supported before initialization, including metadata-bearing discovery requests. Agent activity appears through the native GNOME indicator or the Wayland overlay helper. Captures hide the indicator before reading the screen. Portal captures clean new Pictures files and preserve existing images. Set `CODEX_COMPUTER_USE_INDICATOR=0` to disable action indicators; capture exclusion remains active. GNOME extension version 3 supports Shell 45 through 51. Existing Shell sessions need a logout and login to load refreshed extension files.
 
@@ -105,7 +105,10 @@ exactly; a larger value is refused with a prompt to re-run `list_windows`.
 `perform_action`, `set_value`, and Hyprland background `type_text` and
 `press_key` do not raise the target, so they refuse `screenshot_after:
 "window"` for an unfocused window; use `"screen"` or the `screenshot` tool. On
-tiling layouts this also refuses a visible window beside the focused one. On GNOME
+tiling layouts this also refuses a visible window beside the focused one.
+When the window listing is unavailable, as on GNOME without the Codex Shell
+extension, `perform_action` and `set_value` with a window target and a `pid`
+check ownership by the pid; without a `pid` they refuse. On GNOME
 Wayland with a scaled monitor, portal pointer input multiplies the stream point
 by the monitor scale, matching mutter's logical layout mode. After targeted
 typing, focus feedback reports an incomplete search or an app without an AT-SPI
@@ -120,11 +123,13 @@ Caps Lock and Control are swapped. Letters and digits retain physical US
 keycodes so shortcuts also work under non-Latin layouts. KDE Plasma retains
 physical keycodes for all portal chords. Without ydotool, when the session bus
 answers that no RemoteDesktop portal exists (wlroots compositors with
-`xdg-desktop-portal-wlr`), chords go through `wtype`. The portal stays
+`xdg-desktop-portal-wlr`), chords go through `wtype` if it is installed and
+the desktop is not GNOME, KDE or COSMIC. The portal stays
 preferred when it exists, when a portal keyboard session is already active, or
 with `CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD=1` (standalone alias
-`COMPUTER_USE_LINUX_FORCE_PORTAL_KEYBOARD=1`). A failed or denied portal
-request is never replayed through `wtype`.
+`COMPUTER_USE_LINUX_FORCE_PORTAL_KEYBOARD=1`); the `*_FORCE_YDOTOOL_KEYBOARD=1`
+and `*_FORCE_XDOTOOL_KEYBOARD=1` names also skip `wtype`. A failed or denied
+portal request is never replayed through `wtype`.
 
 On X11, `type_text` keeps xdotool's 12 ms per-character delay so XTEST events
 stay ordered. `CODEX_COMPUTER_USE_XDOTOOL_TYPE_DELAY_MS` overrides it; the
