@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.37. The
+  i3 backend also serves Sway: it lists native Wayland windows with pids from
+  the tree, and focuses Xwayland windows by their decimal X11 id, which Sway
+  requires. A native Wayland window's `window_id` is 2^32 plus its Sway
+  container id, so it never collides with an X11 id. A window counts as hidden
+  only while it sits in the scratchpad, so a shown Sway scratchpad window can
+  be cropped and a hidden i3 one is marked hidden. An element action with an
+  exact window target is refused when the cached tree was narrowed to one
+  window but recorded none, or recorded one another window backend listed.
+  The lockfile moves off the yanked async-executor 1.14.0.
 - Synchronize the embedded Computer Use backend to standalone v0.7.36. List
   and focus windows through `zwlr_foreign_toplevel_manager_v1` on wlroots
   compositors without a dedicated backend, and send `press_key` chords

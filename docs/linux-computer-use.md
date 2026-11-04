@@ -19,7 +19,7 @@ It supports:
 - app listing and accessibility trees through AT-SPI
 - screenshots through GNOME Shell DBus, the Codex GNOME Shell extension, or XDG Desktop Portal
 - window listing and focusing on GNOME, KWin/Plasma 5 and 6, Hyprland, Niri,
-  COSMIC, i3, labwc with Selkies IPC, other wlroots compositors through
+  COSMIC, i3 and Sway, labwc with Selkies IPC, other wlroots compositors through
   wlr-foreign-toplevel-management, and generic X11/EWMH window managers; GNOME
   extension and X11 windows can also be moved and resized
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
@@ -41,7 +41,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.36. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.37. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -98,7 +98,9 @@ Element-targeted `click`, `scroll`, `perform_action` and `set_value` refuse an
 `element_index` or `element_identifier` from another app or window and ask for
 a snapshot of the target. When the snapshot was narrowed to one window of an
 app that shares a pid across windows (Chromium), a target that names a
-different window of that app is refused too. A post-action tree records the
+different window of that app is refused too. A narrowed snapshot that recorded
+no window, or one another window backend listed, cannot show which window it
+holds, so an exact window target is refused. A post-action tree records the
 window it was taken for, so its indices pass the check on that window.
 `window_id` values are integers up to 2^53-1, which JavaScript clients carry
 exactly; a larger value is refused with a prompt to re-run `list_windows`.
@@ -281,6 +283,14 @@ other wlroots compositors without a dedicated backend (phoc, river-classic) use
 Activation requires a unique app-id/title match. Window IDs include the title,
 fit JavaScript integers, and require a fresh list after title changes. Bounds
 are omitted until output scaling can be verified.
+
+The i3 backend lists and focuses windows through `i3-msg` over the i3 or Sway
+IPC socket. On Sway it covers native Wayland and Xwayland windows, with pids
+from the tree. X11 windows keep their X11 id; a native Wayland window gets 2^32
+plus its Sway container id, so the two never collide. On i3, pids come from the
+optional `xprop`; without it the window reports no pid, and an element action
+on it needs a snapshot taken for that window. A window counts as hidden while
+it sits in the scratchpad.
 
 The Wayland RemoteDesktop portal asks for consent on every new process by
 default. Set `CODEX_COMPUTER_USE_PERSIST_REMOTE_DESKTOP=1` (standalone alias
