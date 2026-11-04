@@ -4,6 +4,7 @@ const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js"
 const { withRuntime } = require("./runtime.js");
 const { settingsDescriptor } = require("./settings.js");
 const { persistentDescriptor: persistent } = require("./persistent.js");
+const { requestSummariesDescriptor: summaries } = require("./request-summaries.js");
 
 const ident = String.raw`[A-Za-z_$][\w$]*`;
 const marker = (id) => `/*community-reasoning-visibility-${id}*/`;
@@ -54,14 +55,6 @@ const transcript = recipe(
   ({ prefix, rest, current }) => `${prefix}${enabled}&&"reasoning"===${current}.type||${marker("transcript")}${rest}`,
   ["transcript-activity-item-", "collapseWhenPossible:"],
   ({ item, current }) => item == null || item === current,
-);
-
-const upstreamSummary = String.raw`!0===${ident}\.getDefaultFeatureOverride\("concurrent_reasoning_summaries"\)\|\|${ident}\?"detailed":null`;
-const summaries = recipe(
-  "request-summaries",
-  String.raw`reasoningSummaryOverride:(?:(?<upstream>${upstreamSummary})|${enabledPattern}\?"detailed":\((?<fallback>${upstreamSummary})\)${escape(marker("request-summaries"))})(?<suffix>,getRequestModel:(?<model>${ident})=>\k<model>,getRequestCollaborationMode\()`,
-  ({ upstream, fallback, suffix }) => `reasoningSummaryOverride:${enabled}?"detailed":(${upstream ?? fallback})${marker("request-summaries")}${suffix}`,
-  ["concurrent_reasoning_summaries", "getRequestCollaborationMode("],
 );
 
 function reasoningComponent(source) {
