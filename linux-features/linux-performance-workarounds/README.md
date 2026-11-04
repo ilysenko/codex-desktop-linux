@@ -12,6 +12,13 @@ workspace-home state, `closeButtonTabIndex: -1`, its controller,
 `dragActivator: "tab"`, and the same tab object. Missing, duplicate, mixed,
 partial, or drifted owners fail closed and remain byte-identical.
 
+The official webview is an rspack build, so the workarounds select their
+targets by content rather than by chunk name. The sidebar and tab workarounds
+each require exactly one coherent owner among the script chunks. rspack copies
+the streaming Markdown CSS module into every async stylesheet of the chunk
+groups that use it; the Markdown workaround therefore rewrites every copy of
+the fade rules, and leaves all stylesheets untouched if any copy has drifted.
+
 Enable it in `linux-features/features.json` only for a reproduced regression:
 
 ```json

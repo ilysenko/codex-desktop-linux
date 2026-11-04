@@ -272,28 +272,68 @@ jobs:
           const fs = require("node:fs");
           const path = require("node:path");
           const assets = process.argv[2];
-          function requireUniqueAsset(pattern, description) {
-            const matches = fs.readdirSync(assets, { withFileTypes: true })
-              .filter((entry) => entry.isFile() && pattern.test(entry.name))
-              .map((entry) => entry.name);
-            if (matches.length !== 1) {
-              throw new Error(`expected exactly one ${description} asset, found ${matches.length}: ${matches.join(", ")}`);
-            }
-            return matches[0];
-          }
-          const authedName = requireUniqueAsset(/^authed-route-[A-Za-z0-9_-]+\.js$/, "authenticated route");
-          const primaryName = requireUniqueAsset(/^app-primary-[A-Za-z0-9_-]+\.js$/, "primary application");
-          const authed = fs.readFileSync(path.join(assets, authedName), "utf8");
-          const primary = fs.readFileSync(path.join(assets, primaryName), "utf8");
-          if (!authed.includes(`./${primaryName}`)) {
-            throw new Error(`${authedName} no longer imports ${primaryName}`);
-          }
-          const authedFingerprint = authedName.slice("authed-route-".length, -".js".length);
-          for (const reverseMarker of [authedName, "authed-route", authedFingerprint]) {
-            if (primary.includes(reverseMarker)) {
-              throw new Error(`${primaryName} restored the retired reverse dependency via ${reverseMarker}`);
+          // The rspack webview keeps entry chunks in assets/ and lazy chunks in
+          // assets/async/. A static ESM import cycle between them blocks renderer
+          // startup, which is the upstream regression this step guards against.
+          const files = [];
+          for (const directory of ["", "async"]) {
+            const dir = path.join(assets, directory);
+            if (!fs.existsSync(dir)) continue;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              if (entry.isFile() && entry.name.endsWith(".js")) files.push(path.posix.join(directory, entry.name));
             }
           }
+          if (!files.some((name) => name.startsWith("async/"))) {
+            throw new Error("expected rspack async webview chunks in webview/assets/async");
+          }
+          const staticImport = /(?:\bfrom|\bimport)\s*"(\.\.?\/[^"]+\.js)"/g;
+          const graph = new Map();
+          let edgeCount = 0;
+          for (const name of files) {
+            const source = fs.readFileSync(path.join(assets, name), "utf8");
+            const targets = [];
+            for (const match of source.matchAll(staticImport)) {
+              const target = path.posix.normalize(path.posix.join(path.posix.dirname(name), match[1]));
+              if (!fs.existsSync(path.join(assets, target))) {
+                throw new Error(`${name} statically imports missing ${match[1]}`);
+              }
+              targets.push(target);
+            }
+            edgeCount += targets.length;
+            graph.set(name, targets);
+          }
+          if (edgeCount === 0) {
+            throw new Error("found no static imports between webview chunks; the import scan is stale");
+          }
+          const done = new Set();
+          const active = new Set();
+          for (const root of graph.keys()) {
+            if (done.has(root)) continue;
+            const stack = [[root, 0]];
+            active.add(root);
+            while (stack.length > 0) {
+              const frame = stack[stack.length - 1];
+              const [name, index] = frame;
+              const targets = graph.get(name) ?? [];
+              if (index === targets.length) {
+                stack.pop();
+                active.delete(name);
+                done.add(name);
+                continue;
+              }
+              frame[1] += 1;
+              const target = targets[index];
+              if (active.has(target)) {
+                const cycle = stack.map(([entry]) => entry);
+                throw new Error(`webview chunks restored a static import cycle: ${cycle.slice(cycle.indexOf(target)).concat(target).join(" -> ")}`);
+              }
+              if (!done.has(target)) {
+                active.add(target);
+                stack.push([target, 0]);
+              }
+            }
+          }
+          console.log(`webview static import graph is acyclic: ${files.length} chunks, ${edgeCount} imports`);
           NODE
       - name: Validate the Nix ELF contract against the official payload
         env:

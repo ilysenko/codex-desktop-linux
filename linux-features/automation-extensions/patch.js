@@ -1,26 +1,37 @@
 "use strict";
 
-const { extractedAppPatch, webviewAssetPatch } = require("../../scripts/patches/descriptor.js");
-const { patchAutomationScheduleAssets } = require("../../scripts/patches/impl/automation-schedule.js");
+const { webviewAssetPatch } = require("../../scripts/patches/descriptor.js");
 const {
+  AUTOMATION_SCHEDULE_ASSET_NEEDLES,
+  applyAutomationScheduleMultiTimePatch,
+  matchesAutomationScheduleContract,
+} = require("../../scripts/patches/impl/automation-schedule.js");
+const {
+  AUTOMATION_UPDATE_EAGER_TOOL_ASSET_NEEDLES,
   applyAutomationUpdateEagerToolPatch,
   matchesAutomationUpdateEagerToolContract,
 } = require("./eager-update.js");
 
+// Both owners live in rspack webview chunks with content-hashed names, so
+// they are located by stable content needles plus a unique semantic contract.
 module.exports = [
-  extractedAppPatch({
+  webviewAssetPatch({
     id: "multi-time-rrule",
-    phase: "extracted-app:pre-webview",
+    phase: "webview-asset",
     order: 20_100,
     ciPolicy: "optional",
-    apply: patchAutomationScheduleAssets,
+    assetNeedles: AUTOMATION_SCHEDULE_ASSET_NEEDLES,
+    assetMatch: matchesAutomationScheduleContract,
+    missingDescription: "automation schedule bundle",
+    skipDescription: "RRULE multi-time patch",
+    apply: applyAutomationScheduleMultiTimePatch,
   }),
   webviewAssetPatch({
     id: "eager-automation-update",
     phase: "webview-asset",
     order: 20_110,
     ciPolicy: "optional",
-    pattern: /^[A-Za-z0-9_-]+\.js$/,
+    assetNeedles: AUTOMATION_UPDATE_EAGER_TOOL_ASSET_NEEDLES,
     assetMatch: matchesAutomationUpdateEagerToolContract,
     missingDescription: "dynamic Codex app tools bundle",
     skipDescription: "automation_update eager dynamic tool patch",

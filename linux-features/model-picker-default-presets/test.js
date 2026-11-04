@@ -35,6 +35,7 @@ const {
   sliderAssetMatch,
   sliderPatchContract,
   upstreamDefaultSelectionAssetMatch,
+  upstreamDefaultSelectionContract,
   upstreamResetEffectAssetMatch,
   upstreamResetEffectContract,
 } = require("./patch.js");
@@ -53,9 +54,9 @@ function catalogFixture(name = "FOr") {
     `function ${name}(e){`,
     "let d=e.slider_settings.flatMap(e=>e),",
     "f=e.defaultThinkingEffortByModelSlug,p=e.defaultModelSlug,S=[],",
-    "w=(e.internalOptions??[]).flatMap(e=>e.thinkingEfforts==null?[e]:",
+    "w=(e.internalOptions??[]).flatMap(e=>null==e.thinkingEfforts?[e]:",
     "e.thinkingEfforts.map(t=>{let n=t.label;return{slug:e.slug,thinkingEffort:t.effort,title:n}}));",
-    "return S.length>0&&S.push(`fast`),{categories:e.categories,modelConfigBySlug:e.modelConfigBySlug,",
+    'return S.length>0&&S.push("fast"),{categories:e.categories,modelConfigBySlug:e.modelConfigBySlug,',
     "defaultThinkingEffortByModelSlug:f,defaultModelSlug:p,",
     "internalOptions:w,options:e.options.map(e=>{let t=e;return{...t}}),sliderSettings:d,",
     "versionOptions:e.versionOptions,workspaceModelPolicy:e.workspaceModelPolicy}}",
@@ -63,60 +64,87 @@ function catalogFixture(name = "FOr") {
     "...e?.versionOptions?.flatMap(e=>e.options)??[]],",
     "r=t.thinkingEffort??e?.defaultThinkingEffortByModelSlug?.[t.slug]??null,",
     "i=n.find(e=>e.slug===t.slug&&(e.thinkingEffort??null)===r);",
-    "return i!=null||t.thinkingEffort!=null?i:n.find(e=>e.slug===t.slug)}",
-    "function Next(){}",
-  ].join("");
-}
-
-// Since 26.1027.51404 the selection resolver calls a helper for the list.
-function splitResolverCatalogFixture() {
-  const resolverStart = catalogFixture().indexOf("function ZL(");
-  return [
-    catalogFixture().slice(0, resolverStart),
-    "function qDt(e){return[...e?.options??[],...e?.internalOptions??[],",
-    "...e?.versionOptions?.flatMap(e=>e.options)??[]]}",
-    "function ZL(e,t){let n=qDt(e),",
-    "r=t.thinkingEffort??e?.defaultThinkingEffortByModelSlug?.[t.slug]??null,",
-    "i=n.find(e=>e.slug===t.slug&&(e.thinkingEffort??null)===r);",
-    "return i!=null||t.thinkingEffort!=null?i:n.find(e=>e.slug===t.slug)}",
+    "return null!=i||null!=t.thinkingEffort?i:n.find(e=>e.slug===t.slug)}",
     "function Next(){}",
   ].join("");
 }
 
 // Regex literals with quotes and braces around the catalog functions, as in
 // the 26.1027.51404 bundle where a quote-only scanner corrupted the asset.
-function regexWrappedCatalogFixture(fixture = splitResolverCatalogFixture()) {
+function regexWrappedCatalogFixture(fixture = catalogFixture()) {
   return [
     "const t=e=>e;",
     "function yT(e){let n=e.trim();",
     "n=n.replace(/^[`\"'\\u201c\\u201d\\u2018\\u2019]+|[`\"'\\u201c\\u201d\\u2018\\u2019]+$/g,``);",
     "return n}",
-    "function isQuote(e){return e===`\"`}",
+    'function isQuote(e){return"\\""===e}',
     fixture,
     "function Pan(){return(Pan=t((()=>{Nan=/[\\t\\n!-,./:-@[-`\\f{-}$\\x80-\\uFFFF]/g})))()}",
     "var Nan;export{Pan,isQuote,yT};",
   ].join("");
 }
 
-function powerSelectionResolverFixture(name = "Picker") {
+// rspack registers each module factory in one `__webpack_modules__` object.
+function rspackChunk(modules) {
   return [
-    `function ${name}(e,t,n,{enabledReasoningEfforts:r,fallbackModelLabel:i,isTppConversation:a=!1,useMergedPicker:o=!1,modelLimits:s,selectionMode:c=\`default\`,showModelPrefix:l=!1,unavailableModelSlugs:u=new Set}={}){`,
-    "let p=(!(a||o)||c===`model`)&&t!=null?t:e?.options??t??[],",
-    "m=p.flatMap(({slug:e,thinkingEffort:t})=>[{modelSlug:e,thinkingEffort:t??null}]),",
-    'h=e?.sliderSettings?.filter(({modelSlug:e})=>(a||o)&&c==="default"||p.some(({slug:t})=>t===e))??[],',
-    'g=((a||o)&&c==="default"&&h.length>0?h:[...m,...h]).filter(({modelSlug:e})=>!u?.has(e));',
-    "return{isTppConversation:a,selectionMode:c,powerSettings:g}}",
+    "export const __rspack_esm_id=1;export const __rspack_esm_ids=[1];",
+    "export const __webpack_modules__={",
+    Object.entries(modules).map(([id, body]) => `${id}(e,t,n){${body}}`).join(","),
+    "};",
   ].join("");
+}
+
+// Evaluates one factory of an rspack chunk fixture and returns its exports.
+function rspackModuleExports(source, id, globals = {}) {
+  const modules = vm.runInNewContext(
+    `${source.replaceAll("export const ", "const ")};__webpack_modules__`,
+    globals,
+  );
+  const exports = {};
+  const require = () => ({});
+  require.n = (module) => () => module;
+  require.d = (target, definitions) => {
+    for (const [name, getter] of Object.entries(definitions)) {
+      Object.defineProperty(target, name, { enumerable: true, get: getter });
+    }
+  };
+  modules[id]({}, exports, require);
+  return exports;
+}
+
+function defaultOptionBuilderModule(name = "o") {
+  return [
+    `function ${name}(e,{isTppConversation:t=!1,includeSyntheticDefault:n=!1,paidModelFallbackEnabled:r=!1}){`,
+    "let i=e?.versionOptions?.find(({slugs:t,options:n})=>t.includes(e.defaultModelSlug)&&n.length>0)?.options??e?.options??[],",
+    "s=e?.sliderSettings?.length?e.sliderSettings:d(i,t);",
+    "return{defaultOption:n||r?{...c(e,i,s),isDefault:!0}:void 0,",
+    "versionOptions:e?.versionOptions?.map(n=>({...r?c(e,n.options,s):l(e,n.options,{isTppConversation:t}),version:n}))??[]}}",
+    "function l(e,t,{isTppConversation:n=!1}={}){",
+    "let r=e?.sliderSettings?.filter(({modelSlug:e})=>t.some(({slug:t})=>t===e))??[];",
+    "return c(e,t,[...d(t,n),...r])}",
+    "function d(e,t){return e.flatMap(({slug:e,thinkingEffort:n})=>t&&null==n?[]:[{modelSlug:e,thinkingEffort:n??null}])}",
+    "function c(e,t,n){let r=n.flatMap(({modelSlug:n,thinkingEffort:r})=>t.find(e=>e.slug===n&&(e.thinkingEffort??null)===r)??[]);",
+    "return{isDefault:!1,options:[...t,...r],powerSettings:n}}",
+    `n.d(t,{nX:()=>${name}})`,
+  ].join("");
+}
+
+function defaultOptionBuilderFixture(module = defaultOptionBuilderModule()) {
+  return rspackChunk({
+    // Another factory reuses the minified builder name for unrelated code.
+    Aaaa: 'function c(e,t,n){return"unrelated"}n.d(t,{c:()=>c})',
+    TuVM: module,
+  });
 }
 
 function upstreamResetEffectFixture(name = "ResetPowerPicker", memoized = false) {
   const effect =
-    "E=()=>{i||(C?x!=null&&S!=null&&b.current!==S&&(b.current=S,T(x)):b.current=null)}";
+    "E=()=>{if(!i){if(!C){b.current=null;return}null!=x&&null!=S&&b.current!==S&&(b.current=S,T(x))}}";
   return [
     `function ${name}(e){`,
     "let{canRenderPowerPickerSurface:n,fallbackPowerSelection:r,isModelSettingsLoading:i,menuView:a,onReset:o,powerSelectionsWithXHigh:s,resetContextKey:c,selectedPowerSelectionWithXHigh:l,showXHighInSimplePicker:u}=e,",
-    "h=n&&s.length>0,v=resolveFallback({canInitializePowerPicker:h,fallbackPowerSelection:r,menuView:a,selectedPowerSelection:l,showXHighInSimplePicker:u});",
-    "let y=v,b=(0,React.useRef)(null),x=y?.id??null,S=x==null?null:`${c}:${x}`,C=!u&&h&&a===`simple`,w;",
+    "h=n&&s.length>0,v=(0,Picker.resolveFallback)({canInitializePowerPicker:h,fallbackPowerSelection:r,menuView:a,selectedPowerSelection:l,showXHighInSimplePicker:u});",
+    'let y=v,b=(0,React.useRef)(null),x=y?.id??null,S=null==x?null:`${c}:${x}`,C=!u&&h&&"simple"===a,w;',
     "w=e=>{y?.id===e&&o(y)};let T=(0,React.useEffectEvent)(w),E;",
     memoized
       ? `cache[0]!==C||cache[4]!==i?(${effect},cache[0]=C,cache[4]=i,cache[1]=E):E=cache[1];`
@@ -143,7 +171,7 @@ function localComposerResolverFixture(name = "LocalPower") {
   return [
     `function ${name}(e,{removeXHigh:t=false,sliderModelsConfig:n,stripGptPrefix:r=true}={}){`,
     "if(n!=null){let i=MapModels(e,{stripGptPrefix:r});for(let a of n.presets){",
-    "let n=a.filter(({reasoning_effort:e})=>!t||e!==`xhigh`).flatMap(({model:e,reasoning_effort:t})=>{let n=i.find(n=>n.model===e&&n.reasoningEffort===t);return n==null?[]:[n]}),o=unique(resolve(n,e,r),({id:e})=>e);",
+    'let n=a.filter(({reasoning_effort:e})=>!t||"xhigh"!==e).flatMap(({model:e,reasoning_effort:t})=>{let n=i.find(n=>n.model===e&&n.reasoningEffort===t);return null==n?[]:[n]}),o=unique(resolve(n,e,r),({id:e})=>e);',
     "if(o.length>=3)return o}}let i=fallbackA(e);if(i.length>=3)return i;",
     "let a=fallbackB(e);return a.length>=3?a:[]}",
     "function Next(){}",
@@ -155,12 +183,12 @@ function localComposerFixture(name = "LocalComposer") {
     `function ${name}(available,serverConfig,conversationId,manualSelection){`,
     "let host={hostId:`local`,cwd:`/repo`},hostId=host.hostId;",
     "modelsForPicker(available);let{setDefaultModelAndReasoningEffort:setDefault}=selection,draftSelection=null;",
-    "let He=available.find(Wqr),Ue=Power(available,{includeUltraInSlider:true,sliderModelsConfig:serverConfig,stripGptPrefix:true}),",
-    "Ge=Ue,Ke=zae(Ge,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
+    "let He=available.find(Wqr),Ue=Power(available,{includeUltraInSlider:true,sliderModelsConfig:hosted?hostedConfig:serverConfig,stripGptPrefix:true}),",
+    "Ge=Ue,Ke=(0,Picker.zae)(Ge,null==He?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "picker({resetContextKey:JSON.stringify([conversationId,hostId,host.cwd])});",
-    "composer.mode.local.model.custom;async function choose(e,t){let n=normalize(e);await(draftSelection==null?select(n,t):draftSelection.setModelAndReasoningEffort(n,t))}",
+    "composer.mode.local.model.custom;async function choose(e,t){let n=normalize(e);await (null==draftSelection?select(n,t):draftSelection.setModelAndReasoningEffort(n,t))}",
     "function normalize(e){return e}let selected=manualSelection?choose(`gpt-5.6-sol`,`high`):null;",
-    "let reset=zae(Ue,He==null?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
+    "let reset=(0,Picker.zae)(Ue,null==He?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "render({onSelectDefault:reset});",
     "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
     "function Next(){}",
@@ -170,12 +198,13 @@ function localComposerFixture(name = "LocalComposer") {
 function existingChatStateFixture(stateName = "q8a") {
   return [
     `function ${stateName}(e,t,n){`,
-    "let store=e,host={authMethod:t??`chatgpt`},isChatGptAuth=host?.authMethod===`chatgpt`,",
-    "target=n??[`conversation`,`thread`],hasManagedNewThreadSettings=false,",
+    'let store=e,host={authMethod:t??"chatgpt"},isChatGptAuth=host?.authMethod==="chatgpt",',
+    'target=n??["conversation","thread"],hasManagedNewThreadSettings=!1,',
     "setModelAndReasoningEffortForNextTurn=()=>true,",
-    "error=Error(`No conversation available for next-turn model update`),",
-    "de=async(t,n,r)=>{let i=target,o={model:t,reasoningEffort:n,serviceTier:r?.serviceTier};",
-    "store.set($1,i,o),await Promise.resolve(!0).finally(()=>{store.get($1,i)===o&&store.set($1,i,null)});return o};",
+    'error=Error("No conversation available for next-turn model update"),',
+    "de=async(t,n,r)=>{let i=target,o={model:t,reasoningEffort:n,serviceTier:r?.threadSettings.serviceTier};",
+    "void 0!==o.serviceTier&&store.set(I.pu,{conversationId:i},null),",
+    "store.set(I.EX,i,o),await (async()=>!0)().finally(()=>{store.get(I.EX,i)===o&&store.set(I.EX,i,null)});return o};",
     "return{hasManagedNewThreadSettings:hasManagedNewThreadSettings,",
     "setModelAndReasoningEffortForNextTurn:setModelAndReasoningEffortForNextTurn,",
     "setModelAndReasoningEffort:de,error}}",
@@ -223,6 +252,7 @@ function catalog(overrides = {}) {
       {
         id: "version",
         options: [{ slug: "version-model", thinkingEffort: "xhigh" }],
+        slugs: ["version-model"],
       },
     ],
     workspaceModelPolicy: { newThreadPrecedence: "prefer_policy" },
@@ -379,46 +409,10 @@ test("catalog patch has one semantic target, is executable, and is idempotent", 
   );
 });
 
-test("catalog patch targets the 26.1027.51404 option-list helper", () => {
-  const presets = context([
-    { model: "gpt-6-astra", effort: "medium", default: true },
-    { model: "gpt-5.6-sol", effort: "high" },
-  ]);
-  const source = splitResolverCatalogFixture();
-  assert.equal(catalogPatchContract(source), "current");
-  const patched = applyCatalogPatch(source, presets);
-  assert.equal(catalogPatchContract(patched), "applied");
-  assert.ok(patched.includes(
-    "...e?.versionOptions?.flatMap(e=>e.options)??[],...e?.codexLinuxDefaultPresetOptions??[]]}" +
-      "function ZL(e,t){let n=qDt(e),",
-  ));
-  assert.equal(applyCatalogPatch(patched, presets), patched);
-  const result = plain(evaluate(patched, "FOr(input)", { input: catalog({ slider_settings: [] }) }));
-  assert.equal(
-    plain(evaluate(patched, "ZL(result,{slug:'gpt-5.6-sol',thinkingEffort:'extended'})", {
-      result,
-    })).thinkingEffort,
-    "extended",
-  );
-});
-
-test("catalog patch leaves a shared option-list helper alone", () => {
-  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
-  for (const user of ["function Other(e){return qDt(e).length}", "export{qDt as shared};"]) {
-    const source = `${splitResolverCatalogFixture()}${user}`;
-    assert.equal(catalogPatchContract(source), "drifted");
-    const { result, warnings } = withCapturedWarnings(() => applyCatalogPatch(source, presets));
-    assert.equal(result, source);
-    assert.equal(warnings.length, 1);
-  }
-  const aliased = `${splitResolverCatalogFixture()}export{Other as qDt};function Other(){}`;
-  assert.equal(catalogPatchContract(aliased), "current");
-});
-
 test("catalog patch keeps a bundle with quote-bearing regex literals parseable (#1659)", () => {
   const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
-  for (const fixture of [catalogFixture(), splitResolverCatalogFixture()]) {
-    const source = regexWrappedCatalogFixture(fixture);
+  {
+    const source = regexWrappedCatalogFixture();
     assert.equal(javascriptSourceParses(source), true);
     assert.equal(catalogPatchContract(source), "current");
     const patched = applyCatalogPatch(source, presets);
@@ -430,16 +424,15 @@ test("catalog patch keeps a bundle with quote-bearing regex literals parseable (
   }
 });
 
-test("catalog patch rejects an option list that encloses the normalizer", () => {
+test("catalog patch rejects a selection resolver that encloses the normalizer", () => {
   const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
   const resolverStart = catalogFixture().indexOf("function ZL(");
   const source = [
-    "function Outer(e){",
+    "function Outer(e,t){",
     catalogFixture().slice(0, resolverStart),
-    "return[...e?.options??[],...e?.internalOptions??[],...e?.versionOptions?.flatMap(e=>e.options)??[]]}",
-    "function ZL(e,t){let n=Outer(e),",
+    "let n=[...e?.options??[],...e?.internalOptions??[],...e?.versionOptions?.flatMap(e=>e.options)??[]],",
     "r=t.thinkingEffort??e?.defaultThinkingEffortByModelSlug?.[t.slug]??null;",
-    "return t.thinkingEffort!=null?n:r}",
+    "return n.find(e=>e.slug===t.slug&&(e.thinkingEffort??null)===r)}",
   ].join("");
   assert.equal(catalogPatchContract(source), "drifted");
   const { result, warnings } = withCapturedWarnings(() => applyCatalogPatch(source, presets));
@@ -503,42 +496,54 @@ test("slider minimum makes two entries a slider while one stays fixed", () => {
   );
 });
 
-test("upstream merged-picker replacement uses configured Default presets but owns explicit selection", () => {
+test("upstream Default option uses configured presets while version options keep their models", () => {
   const presets = context([
     { model: "gpt-6-astra", effort: "medium", default: true },
     { model: "gpt-5.6-sol", effort: "high" },
   ]);
-  const source = catalogFixture() + powerSelectionResolverFixture("FOrPicker") + sliderFixture();
-  const patched = applySliderMinimumPatch(applyCatalogPatch(source, presets), presets);
-  assert.equal(sliderPatchContract(patched), "applied");
-  const result = plain(evaluate(patched, `(()=>{
-    const merged=FOr(input),explicit=[{slug:"manual-model",thinkingEffort:"extended"}];
-    return {
-      defaults:FOrPicker(merged,explicit,{slug:"manual-model"},{useMergedPicker:true,selectionMode:"default"}).powerSettings,
-      explicit:FOrPicker(merged,explicit,{slug:"manual-model"},{useMergedPicker:true,selectionMode:"model"}).powerSettings
-    }})()`, { input: catalog({ slider_settings: [] }) }));
-  assert.deepEqual(result.defaults, [
+  const catalogSource = applyCatalogPatch(catalogFixture(), presets);
+  const merged = evaluate(catalogSource, "FOr(input)", { input: catalog({ slider_settings: [] }) });
+  const { nX: buildPickerOptions } = rspackModuleExports(defaultOptionBuilderFixture(), "TuVM");
+  const defaults = buildPickerOptions(merged, { includeSyntheticDefault: true });
+  assert.deepEqual(plain(defaults.defaultOption.powerSettings), [
     { modelSlug: "gpt-6-astra", thinkingEffort: "standard" },
     { modelSlug: "gpt-5.6-sol", thinkingEffort: "extended" },
   ]);
-  assert.deepEqual(result.explicit, [
-    { modelSlug: "manual-model", thinkingEffort: "extended" },
+  assert.deepEqual(plain(defaults.versionOptions[0].powerSettings), [
+    { modelSlug: "version-model", thinkingEffort: "xhigh" },
   ]);
 });
 
 test("upstream Default-selection compatibility audit fails closed on missing and ambiguous replacements", () => {
   const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
-  const fixture = powerSelectionResolverFixture();
-  assert.equal(upstreamDefaultSelectionAssetMatch(fixture, "fixture.js", presets), true);
-  assert.equal(upstreamDefaultSelectionAssetMatch(
-    fixture.replace("useMergedPicker:o=!1", "mergedPicker:o=!1"), "fixture.js", presets,
-  ), false);
-  assert.equal(upstreamDefaultSelectionAssetMatch(
-    fixture.replace('(a||o)&&c==="default"||', 'a&&c==="default"||'), "fixture.js", presets,
-  ), false);
-  assert.equal(upstreamDefaultSelectionAssetMatch(
-    fixture + powerSelectionResolverFixture("DuplicatePicker"), "fixture.js", presets,
-  ), false);
+  const fixture = defaultOptionBuilderFixture();
+  assert.equal(javascriptSourceParses(fixture), true);
+  assert.equal(upstreamDefaultSelectionContract(fixture), "current");
+  assert.equal(upstreamDefaultSelectionAssetMatch(fixture, "async/1.js", presets), true);
+  assert.equal(
+    upstreamDefaultSelectionAssetMatch(fixture, "async/1.js", {
+      feature: { manifest: { presets: [] }, settings: {} },
+    }),
+    false,
+  );
+  const module = defaultOptionBuilderModule();
+  for (const drifted of [
+    "function unrelated(){}",
+    `${defaultOptionBuilderModule()}${defaultOptionBuilderModule("p")}`,
+    module.replace("includeSyntheticDefault:", "includeDefault:"),
+    module.replace(
+      "s=e?.sliderSettings?.length?e.sliderSettings:d(i,t)",
+      "s=[...d(i,t),...e?.sliderSettings??[]]",
+    ),
+    module.replace("{...c(e,i,s),isDefault:!0}", "{...c(e,i,d(i,t)),isDefault:!0}"),
+    module.replace("powerSettings:n}}", "powerSettings:r}}"),
+  ]) {
+    const source = defaultOptionBuilderFixture(drifted);
+    assert.equal(upstreamDefaultSelectionContract(source), "drifted");
+    assert.equal(upstreamDefaultSelectionAssetMatch(source, "async/1.js", presets), false);
+  }
+  // Without the rspack module registry the builder cannot be scoped.
+  assert.equal(upstreamDefaultSelectionContract(module), "drifted");
 });
 
 test("upstream reset effect is reset-context scoped and selects the resolved fallback pair", () => {
@@ -581,7 +586,9 @@ test("upstream reset effect is reset-context scoped and selects the resolved fal
         selectedPowerSelectionWithXHigh: null,
         showXHighInSimplePicker: false,
       },
-      resolveFallback: ({ fallbackPowerSelection }) => fallbackPowerSelection,
+      Picker: {
+        resolveFallback: ({ fallbackPowerSelection }) => fallbackPowerSelection,
+      },
     });
     for (const effect of effects) effect();
   };
@@ -611,39 +618,39 @@ test("upstream reset-effect compatibility audit fails closed on missing, ambiguo
     fixture.replace("resetContextKey:c,", "resetKey:c,"),
     fixture.replace("`${c}:${x}`", "`${x}`"),
     fixture.replace("o(y)", "o(e)"),
-    fixture.replace("C=!u&&h&&a===`simple`", "C=!1"),
-    fixture.replace("C=!u&&h&&a===`simple`", "C=globalThis.unrelated"),
+    fixture.replace('C=!u&&h&&"simple"===a', "C=!1"),
+    fixture.replace('C=!u&&h&&"simple"===a', "C=globalThis.unrelated"),
     fixture.replace(
-      "C=!u&&h&&a===`simple`,w;",
-      "C=!u&&h&&a===`simple`;C=!1;let w;",
+      'C=!u&&h&&"simple"===a,w;',
+      'C=!u&&h&&"simple"===a;C=!1;let w;',
     ),
     fixture.replace(
-      "C=!u&&h&&a===`simple`,w;",
-      "C=!u&&h&&a===`simple`;C=globalThis.unrelated;let w;",
+      'C=!u&&h&&"simple"===a,w;',
+      'C=!u&&h&&"simple"===a;C=globalThis.unrelated;let w;',
     ),
     fixture.replace(
-      "C=!u&&h&&a===`simple`,w;",
-      "C=!u&&h&&a===`simple`;[C]=[!1];let w;",
+      'C=!u&&h&&"simple"===a,w;',
+      'C=!u&&h&&"simple"===a;[C]=[!1];let w;',
     ),
     fixture.replace(
-      "C=!u&&h&&a===`simple`,w;",
-      "C=!u&&h&&a===`simple`;({C}={C:!1});let w;",
+      'C=!u&&h&&"simple"===a,w;',
+      'C=!u&&h&&"simple"===a;({C}={C:!1});let w;',
     ),
     fixture.replace(
-      "C=!u&&h&&a===`simple`,w;",
-      "C=!u&&h&&a===`simple`;for(C of [!1]);let w;",
+      'C=!u&&h&&"simple"===a,w;',
+      'C=!u&&h&&"simple"===a;for(C of [!1]);let w;',
     ),
     fixture.replace(
-      "C=!u&&h&&a===`simple`,w;",
-      "C=!u&&h&&a===`simple`;C/*comment*/=!1;let w;",
+      'C=!u&&h&&"simple"===a,w;',
+      'C=!u&&h&&"simple"===a;C/*comment*/=!1;let w;',
     ),
     fixture.replace(
-      "C=!u&&h&&a===`simple`,w;",
-      "C=!u&&h&&a===`simple`;\\u0043=!1;let w;",
+      'C=!u&&h&&"simple"===a,w;',
+      'C=!u&&h&&"simple"===a;\\u0043=!1;let w;',
     ),
     fixture.replace(
-      "C=!u&&h&&a===`simple`,w;",
-      "C=!u&&h&&a===`simple`,Q=!u&&h&&a===`simple`,w;",
+      'C=!u&&h&&"simple"===a,w;',
+      'C=!u&&h&&"simple"===a,Q=!u&&h&&"simple"===a,w;',
     ),
     fixture.replace(
       "return(0,React.useEffect)(E,D),s}",
@@ -795,14 +802,16 @@ test("local composer uses configured pairs and lowers only its config threshold"
     1,
   );
   assert.match(patchedComposer, /gpt-5\.6-sol:medium/);
-  assert.match(
-    patchedComposer,
-    /sliderModelsConfig:serverConfig==null\?serverConfig:codexLinuxLocalDefaultPresetConfig/,
-  );
+  assert.ok(patchedComposer.includes(
+    "sliderModelsConfig:(hosted?hostedConfig:serverConfig)==null?" +
+      "(hosted?hostedConfig:serverConfig):codexLinuxLocalDefaultPresetConfig",
+  ));
   const runComposer = ({
     available,
     conversationId = null,
     hookState = { refs: [] },
+    hosted = false,
+    hostedConfig = null,
     serverConfig = {},
     manualSelection = false,
   }) => {
@@ -824,6 +833,8 @@ test("local composer uses configured pairs and lowers only its config threshold"
       composer: { mode: { local: { model: { custom: null } } } },
       conversationId,
       draft: null,
+      hosted,
+      hostedConfig,
       manualSelection,
       modelsForPicker() {},
       picker() {},
@@ -831,8 +842,10 @@ test("local composer uses configured pairs and lowers only its config threshold"
       selection: { setDefaultModelAndReasoningEffort() {} },
       serverConfig,
       Wqr: ({ isDefault }) => isDefault === true,
-      zae: (selections, id) =>
-        selections.find((selection) => selection.id === id) ?? selections[0],
+      Picker: {
+        zae: (selections, id) =>
+          selections.find((selection) => selection.id === id) ?? selections[0],
+      },
       Power: (models, { sliderModelsConfig }) => {
         if (sliderModelsConfig == null) return models;
         const availableIds = new Set(models.map(({ id }) => id));
@@ -873,6 +886,21 @@ test("local composer uses configured pairs and lowers only its config threshold"
   assert.equal(unavailableDefault.result.fallback.id, "gpt-5.6-sol:high");
   assert.equal(unavailableDefault.result.reset.id, "gpt-5.6-sol:high");
   assert.deepEqual(unavailableDefault.selections, []);
+
+  const hostedConfigured = runComposer({
+    available: [
+      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
+      { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
+    ],
+    hosted: true,
+    hostedConfig: {},
+    serverConfig: null,
+  });
+  assert.equal(hostedConfigured.result.fallback.id, "gpt-5.6-sol:medium");
+  assert.deepEqual(
+    hostedConfigured.result.powerSelections.map(({ id }) => id),
+    ["gpt-5.6-sol:medium", "gpt-5.6-sol:high"],
+  );
 
   const configuredDefault = runComposer({
     available: [
@@ -1000,7 +1028,7 @@ test("existing chats retain configured optimistic selections until another selec
     },
   };
   const globals = {
-    $1: "pending",
+    I: { EX: "pending", pu: "service-tier" },
     store,
   };
   const configured = await evaluate(
@@ -1081,11 +1109,11 @@ test("local composer patches fail closed on drift, duplicate, and partial states
   }
 
   const driftedComposer = localComposerFixture().replace(
-    /let reset=zae\([^;]+;/u,
+    /let reset=\(0,Picker\.zae\)\([^;]+;/u,
     "let reset=null;",
   );
   const decoy =
-    "function Decoy(y,z){let x=zae(y,z==null?void 0:`${z.model}:${z.defaultReasoningEffort}`);return x}";
+    "function Decoy(y,z){let x=(0,Picker.zae)(y,null==z?void 0:`${z.model}:${z.defaultReasoningEffort}`);return x}";
   const driftedWithDecoy = driftedComposer + decoy;
   const { result, warnings } = withCapturedWarnings(() =>
     applyLocalComposerConfigPatch(driftedWithDecoy, presets),
@@ -1183,4 +1211,62 @@ test("invalid user settings stop an enabled feature build", () => {
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
+});
+
+const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
+test("official rspack webview chunks satisfy every descriptor contract", {
+  skip: signedApp == null,
+}, () => {
+  const { listWebviewScriptAssets } = require("../../scripts/patches/lib/assets.js");
+  const { descriptors } = require("./patch.js");
+  const [scenario] = require("./feature.json").officialBundleAuditScenarios;
+  const assetsDir = path.join(signedApp, "webview", "assets");
+  const configured = context(scenario.settings.presets);
+  const passthrough = { feature: { manifest: { presets: [] }, settings: {} } };
+  const allNeedles = [...new Set(descriptors.flatMap(({ assetNeedles }) => assetNeedles))];
+  const sources = new Map();
+  for (const assetName of listWebviewScriptAssets(signedApp)) {
+    const source = fs.readFileSync(path.join(assetsDir, assetName), "utf8");
+    if (allNeedles.some((needle) => source.includes(needle))) sources.set(assetName, source);
+  }
+  const patched = new Map();
+  for (const descriptor of descriptors) {
+    for (const featureContext of [configured, passthrough]) {
+      if (descriptor.enabled?.(featureContext) === false) continue;
+      const candidates = [...sources.keys()].filter((assetName) =>
+        descriptor.assetNeedles.every((needle) => sources.get(assetName).includes(needle))
+      );
+      assert.ok(candidates.length > 0, `${descriptor.id} has no needle candidates`);
+      const targets = descriptor.assetMatch == null
+        ? candidates
+        : candidates.filter((assetName) =>
+          descriptor.assetMatch(patched.get(assetName) ?? sources.get(assetName), assetName, featureContext)
+        );
+      assert.ok(
+        descriptor.assetMatch == null ? targets.length > 0 : targets.length === 1,
+        `${descriptor.id} matched ${targets.length} official chunks`,
+      );
+      for (const assetName of targets) {
+        const source = patched.get(assetName) ?? sources.get(assetName);
+        const { result, warnings } = withCapturedWarnings(() =>
+          descriptor.apply(source, featureContext)
+        );
+        assert.deepEqual(warnings, [], `${descriptor.id} warned on ${assetName}`);
+        assert.equal(descriptor.apply(result, featureContext), result);
+        if (featureContext === configured && result !== source) {
+          assert.equal(javascriptSourceParses(result), true, `${descriptor.id} broke ${assetName}`);
+          patched.set(assetName, result);
+        }
+      }
+    }
+  }
+  // Catalog, slider, local resolver, local composer, and six inlined
+  // model-settings copies (one per composer surface) are patched.
+  assert.equal(patched.size, 10);
+  // The reset-effect audit still holds on the slider-patched picker.
+  const resetDescriptor = descriptors.find(({ id }) => id.endsWith("upstream-reset-effect"));
+  assert.equal(
+    [...patched.values()].filter((source) => resetDescriptor.assetMatch(source, "", configured)).length,
+    1,
+  );
 });

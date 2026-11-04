@@ -151,11 +151,11 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-client-revocation-recovery` | `outbound-control` | Clears revoked client material before re-enrollment. |
 | `linux-remote-mobile-app-server-remote-control` | `mobile-host` | Starts a native Desktop-owned app-server or proxies Desktop RPCs to a declarative owner. |
 | `linux-remote-control-load-gate` | `outbound-control` | Allows remote-control environments to load in Connections. |
-| `linux-remote-control-feature-sync` | `shared-boundary` | Enables `remote_control` only for the local host and excludes Remote SSH hosts. |
+| `linux-remote-control-feature-sync` | `shared-boundary` | Enables `remote_control` in the main-process experimental feature sync only for the local app server and excludes Remote SSH, WSL, and cloud hosts. |
 | `linux-remote-control-visibility` | `outbound-control` | Exposes remote-control Connections UI when the server permits it. |
 | `linux-remote-control-copy` | `shared-boundary` | Rewrites Linux copy shared by host setup and outbound Connections. |
 | `linux-remote-control-settings-ux` | `shared-boundary` | Adapts the shared Connections copy and outbound-control visibility without reviving the retired upstream SSH installer. |
-| `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state only after the last external controller is removed. |
+| `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state (the `codex-mobile-has-connected-device` application state) only after the last external controller is removed. |
 | `linux-remote-connections-refresh` | `shared-boundary` | Refreshes the shared Connections list without starting or enabling any host runtime. |
 | `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Prevents inherited or rollout-forced reasoning summaries from polluting this host's mobile transcript. |
 | `linux-remote-mobile-conversation-hydration` | `mobile-host` | Extends upstream's hydration queue to recover unknown local conversations from ordered turn and item notifications. |
@@ -166,6 +166,14 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-enablement-bridge` | `shared-boundary` | Enables the current outbound remote-connections service on Linux without changing its service-owned auto-connect choices. |
 | `linux-remote-control-auto-connect-contract` | `outbound-control` | Validates the unique upstream service and settings caller that preserve an explicit auto-connect choice. |
 | `linux-remote-mobile-active-status` | `mobile-host` | Derives mobile active state from the local thread runtime. |
+
+The official webview is an rspack build whose app code lives in lazily loaded
+`webview/assets/async/<id>.<hash>.js` chunks. Webview descriptors select their
+chunks by stable strings (Statsig gate ids, RPC methods, log messages, i18n
+ids), never by file name. Modules that rspack duplicates into several chunks
+(the visibility owner and the host toggle request) are patched in every copy.
+Injected helpers are declared inside the owning module factory and reach other
+modules only through that module's own import bindings.
 
 The current upstream Connections bundle explicitly returns no action for
 `install-codex`. The settings descriptor preserves that contract; it does not

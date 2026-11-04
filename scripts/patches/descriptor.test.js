@@ -84,7 +84,7 @@ test("descriptor factories validate the fresh descriptor contract", () => {
 
   assert.throws(
     () => webviewAssetPatch({ id: "missing-pattern", apply: (source) => source }),
-    /must define assetPattern or pattern/,
+    /must define assetNeedles, assetPattern or pattern/,
   );
   assert.throws(
     () => webviewAssetPatch({
@@ -240,4 +240,47 @@ test("main-process chunk misses are not printed once the descriptor applies", ()
     console.warn = originalWarn;
   }
   assert.deepEqual(printed, []);
+});
+
+test("webview descriptors find rspack async chunks by content needles", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { applyWebviewAssetPatchDescriptors } = require("./engine.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "webview-needles-"));
+  try {
+    const assets = path.join(root, "webview", "assets");
+    fs.mkdirSync(path.join(assets, "async"), { recursive: true });
+    fs.writeFileSync(path.join(assets, "158624.372d9fdf73.js"), "entry ANCHOR_A");
+    fs.writeFileSync(path.join(assets, "async", "24191.7b05d5cf83.js"), "lazy ANCHOR_A ANCHOR_B");
+    fs.writeFileSync(path.join(assets, "async", "24192.7b05d5cf83.js"), "lazy ANCHOR_B");
+    const report = createPatchReport();
+    applyWebviewAssetPatchDescriptors(root, normalizePatchDescriptors([
+      webviewAssetPatch({
+        id: "needles",
+        assetNeedles: ["ANCHOR_A", "ANCHOR_B"],
+        apply: (source) => source.replace("lazy", "patched"),
+      }),
+      webviewAssetPatch({
+        id: "unique",
+        assetNeedles: ["ANCHOR_B"],
+        assetMatch: (source, assetName) => assetName.startsWith("async/") && !source.includes("ANCHOR_A"),
+        apply: (source) => source.replace("lazy", "unique"),
+      }),
+    ]), {}, report);
+    assert.equal(fs.readFileSync(path.join(assets, "async", "24191.7b05d5cf83.js"), "utf8"), "patched ANCHOR_A ANCHOR_B");
+    assert.equal(fs.readFileSync(path.join(assets, "async", "24192.7b05d5cf83.js"), "utf8"), "unique ANCHOR_B");
+    assert.equal(fs.readFileSync(path.join(assets, "158624.372d9fdf73.js"), "utf8"), "entry ANCHOR_A");
+    assert.deepEqual(report.patches.map(({ status }) => status), ["applied", "applied"]);
+    assert.equal(report.patches[1].assetName, "async/24192.7b05d5cf83.js");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("webview descriptors reject empty content needles", () => {
+  assert.throws(
+    () => webviewAssetPatch({ id: "bad", assetNeedles: [""], apply: (source) => source }),
+    /assetNeedles must be non-empty strings/,
+  );
 });

@@ -58,14 +58,23 @@ The feature is disabled in committed defaults.
 
 ```bash
 node --test linux-features/reasoning-visibility/test.js
+# Also check the contracts against an extracted signed app.asar:
+CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
+  node --test linux-features/reasoning-visibility/test.js
 ```
 
 Six semantic ASAR contracts cover activity classification, collapsed-turn
 persistence, transcript projection, summary requests, the native disclosure,
 and the General setting with translations.
-They capture local identifiers instead of relying on chunk hashes. Missing,
-ambiguous, or incomplete contracts are left untouched and reported; the build
-gate refuses promotion when an enabled feature cannot apply completely.
+The official webview is an rspack build, so chunks are found by distinctive
+content, never by file name, chunk id, or module id. When rspack copies a module
+into several lazily loaded chunks, every copy is patched. The General setting
+row is declared inside the module factory that owns the native menu-bar setting
+and reuses only that factory's imports. Translations are added to the 64 locale
+JSON modules named by the upstream locale loader map.
+Contracts capture local identifiers. Missing, ambiguous, or incomplete
+contracts are left untouched and reported; the build gate refuses promotion
+when an enabled feature cannot apply completely.
 The native markdown renderer, scrolling behavior, and manual toggle are reused.
 
 After rebuilding, enable the setting and restart the application.

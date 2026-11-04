@@ -1,6 +1,10 @@
 "use strict";
 
 const NATIVE_TRACE_MARKER = "codex-linux-selected-text-more-details:native-trace";
+const NATIVE_TRACE_HELPER_MARKER = "codex-linux-selected-text-more-details:native-trace-helper";
+// The Quick Chat runtime lives in another rspack module; it publishes its
+// trace registry under this global symbol when that module evaluates.
+const REGISTRY = 'globalThis[Symbol.for("codex-linux.selected-text-more-details")]';
 const IDENT = "[A-Za-z_$][\\w$]*";
 const TRACE = "codexLinuxQuickChatNativeTrace";
 const WRAP = "codexLinuxQuickChatTraceCallback";
@@ -53,11 +57,12 @@ function properties(source) {
   return result;
 }
 
-function patchNativeSenderTrace(dispatch) {
+// `wrap` marks each inserted text so the caller can restore upstream bytes.
+function patchNativeSenderTrace(dispatch, wrap = (text) => text) {
   const { findMatchingBrace } = require("../../../scripts/patches/lib/minified-js.js");
   const source = dispatch.source;
-  const header = unique(source, `^async function ${dispatch.name.replace(/\$/gu, "\\$")}\\((${IDENT}),(${IDENT})\\)\\{`, "native sender header");
-  const call = unique(source, `let (${IDENT})=await (${IDENT})\\.get\\(${IDENT}\\)\\.startCompletionStream\\(\\{`, "native completion stream call");
+  const header = unique(source, `^(?:async )?function ${dispatch.name.replace(/\$/gu, "\\$")}\\((${IDENT}),(${IDENT})\\)\\{`, "native sender header");
+  const call = unique(source, `let (${IDENT})=await (${IDENT})\\.get\\(${IDENT}(?:\\.${IDENT})?\\)\\.startCompletionStream\\(\\{`, "native completion stream call");
   if (call[2] !== header[1]) throw new Error("Native stream scope changed");
   const optionsStart = call.index + call[0].lastIndexOf("{");
   const optionsEnd = findMatchingBrace(source, optionsStart);
@@ -69,24 +74,25 @@ function patchNativeSenderTrace(dispatch) {
   }
   const marked = source.includes(NATIVE_TRACE_MARKER);
   const pending = unique(options, `inFlightPrepared:(${IDENT})\\.inFlightPrepared`, "native prepared cache")[1];
-  const setup = `/*${NATIVE_TRACE_MARKER}*/const ${TRACE}=codexLinuxQuickChatTraceFor(${header[1]},${header[2]}.conversationId);${TRACE}?.event("native-sender-entered");`;
-  const creating = `${TRACE}?.event("native-stream-create",{cacheStatus:${pending}.cacheStatus,prepareState:${pending}.clientPrepareState,preparePending:${pending}.inFlightPrepared!=null});`;
+  const setup = wrap(`/*${NATIVE_TRACE_MARKER}*/const ${TRACE}=${REGISTRY}?.traceFor?.(${header[1]},${header[2]}.conversationId);${TRACE}?.event("native-sender-entered");`);
+  const creating = wrap(`${TRACE}?.event("native-stream-create",{cacheStatus:${pending}.cacheStatus,prepareState:${pending}.clientPrepareState,preparePending:${pending}.inFlightPrepared!=null});`);
   const edits = [];
   for (const [key, phase] of Object.entries(CALLBACKS)) {
     const field = fields.get(key);
     if (field == null) throw new Error(`Missing native ${key} callback`);
-    const prefix = `${WRAP}(${TRACE},${JSON.stringify(phase)},`;
+    const prefix = wrap(`${WRAP}(${TRACE},${JSON.stringify(phase)},`);
+    const suffix = wrap(")");
     if (marked) {
-      if (!field.value.startsWith(prefix) || !field.value.endsWith(")")) throw new Error(`Incomplete native ${key} trace`);
+      if (!field.value.startsWith(prefix) || !field.value.endsWith(suffix)) throw new Error(`Incomplete native ${key} trace`);
     } else {
       edits.push({ start: optionsStart + field.start, end: optionsStart + field.end,
-        value: prefix + field.value + ")" });
+        value: prefix + field.value + suffix });
     }
   }
   const messages = [...source.matchAll(new RegExp(`(${IDENT})\\.onModelMessage\\((${IDENT}(?:\\.${IDENT})*)\\)`, "gu"))];
   if (messages.length !== 2) throw new Error("Native model-message hooks changed");
   for (const match of messages) {
-    const wrapped = `(${TRACE}?.modelMessage(${match[2]}),${match[0]})`;
+    const wrapped = `${wrap(`(${TRACE}?.modelMessage(${match[2]}),`)}${match[0]}${wrap(")")}`;
     if (marked) {
       if (!source.includes(wrapped)) throw new Error("Incomplete native model-message trace");
     } else edits.push({ start: match.index, end: match.index + match[0].length, value: wrapped });
@@ -147,11 +153,15 @@ function codexLinuxQuickChatCreateTrace(logger) {
     }catch{}
   }};
 }
-function codexLinuxQuickChatTraceCallback(trace,phase,callback) {
-  if(trace==null)return callback;
-  return function(...args){trace.callback(phase,args[0]);return typeof callback==="function"?Reflect.apply(callback,this,args):void 0;};
-}
 `;
 }
 
-module.exports = { NATIVE_TRACE_MARKER, patchNativeSenderTrace, traceRuntimeSource };
+// Appended to the native sender's module: the wrapper must be visible there.
+function nativeTraceHelperSource() {
+  return `\n/*${NATIVE_TRACE_HELPER_MARKER}*/function ${WRAP}(trace,phase,callback){` +
+    "if(trace==null)return callback;" +
+    "return function(...args){trace.callback(phase,args[0]);return typeof callback===\"function\"?Reflect.apply(callback,this,args):void 0;};}\n";
+}
+
+module.exports = { NATIVE_TRACE_MARKER, NATIVE_TRACE_HELPER_MARKER, nativeTraceHelperSource, patchNativeSenderTrace,
+  traceRuntimeSource };

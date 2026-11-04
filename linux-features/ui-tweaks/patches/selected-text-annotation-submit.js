@@ -34,6 +34,10 @@ function helpers() {
   return require("../../../scripts/patches/lib/minified-js.js");
 }
 
+function assetHelpers() {
+  return require("../../../scripts/patches/lib/assets.js");
+}
+
 function uniqueMatch(source, pattern, label) {
   const matches = [...source.matchAll(new RegExp(pattern, "gu"))];
   if (matches.length !== 1) throw new Error(`Expected one ${label}, found ${matches.length}`);
@@ -47,8 +51,8 @@ function occurrenceCount(source, text) {
 function shortcutContract(source) {
   const { escapeRegExp, findMatchingBrace } = helpers();
   const commandAnchor = uniqueMatch(source,
-    `(?<command>${IDENT})===\\x60focusPageBlockControls\\x60\\|\\|` +
-      `\\k<command>===\\x60copyPageLink\\x60\\|\\|\\k<command>===\\x60clearAllUnreads\\x60`,
+    `"focusPageBlockControls"===(?<command>${IDENT})\\|\\|` +
+      `"copyPageLink"===\\k<command>\\|\\|"clearAllUnreads"===\\k<command>(?![\\w$])`,
     "app shortcut editable-scope anchor");
   const start = source.lastIndexOf("function ", commandAnchor.index);
   const header = new RegExp(`^function ${IDENT}\\(${IDENT}\\)\\{`, "u").exec(source.slice(start));
@@ -69,7 +73,7 @@ function shortcutContract(source) {
       `if\\(\\k<event>\\.target instanceof Element&&\\k<event>\\.target,\\k<event>\\.defaultPrevented\\)return;`,
     "app shortcut keydown handler");
   const event = handler.groups.event;
-  uniqueMatch(body, `${IDENT}\\(${escapeRegExp(command)},${escapeRegExp(event)}\\)\\)*&&\\(?` +
+  uniqueMatch(body, `\\(0,${IDENT}\\.${IDENT}\\)\\(${escapeRegExp(command)},${escapeRegExp(event)}\\)\\)*&&\\(?` +
     `${escapeRegExp(event)}\\.preventDefault\\(\\)`, "app command dispatch");
   uniqueMatch(body, `onKeyDown:${escapeRegExp(handler.groups.handler)}(?=[,}])`, "registered shortcut handler");
   const injection = `/*${HANDLER_MARKER}*/if(${GUARD_NAME}(${command},${event}))return;`;
@@ -97,56 +101,123 @@ function patchSource(source) {
   return result;
 }
 
-function validateNativeEditor(assets, names) {
-  const readUnique = (pattern, anchor) => {
-    const matches = names.filter((name) => pattern.test(name))
-      .map((name) => ({ name, source: fs.readFileSync(path.join(assets, name), "utf8") }))
-      .filter(({ source }) => source.includes(anchor));
-    if (matches.length !== 1) throw new Error(`Expected one ${anchor} asset, found ${matches.length}`);
-    return matches[0];
-  };
-  const editor = readUnique(/^annotation-editor-[A-Za-z0-9_-]+\.js$/u, "selectedTextAnnotationEditor.noteAriaLabel");
-  const card = readUnique(/^annotation-comment-editor-card-[A-Za-z0-9_-]+\.js$/u, "onKeyDownCapture:");
-  if (!editor.source.includes('"data-selected-text-annotation-editor":!0') ||
-      !editor.source.includes("onDirectSubmit:") ||
-      !["\"", "`"].some((quote) => editor.source.includes(`from${quote}./${card.name}${quote}`))) {
-    throw new Error("Native annotation editor scope or direct-submit linkage drifted");
+const SHORTCUT_NEEDLES = ['"clearAllUnreads"', "allowWithinEditable:"];
+const EDITOR_SCOPE = '"data-selected-text-annotation-editor":!0';
+const EDITOR_NEEDLES = [EDITOR_SCOPE, "selectedTextAnnotationEditor.noteAriaLabel", "onDirectSubmit:"];
+const CARD_NEEDLES = ["onKeyDownCapture:", ".nativeEvent.isComposing)return;"];
+const MODULE_TABLE = "export const __webpack_modules__={";
+
+// Splits an rspack chunk into its module factories. Each entry is
+// `<id>(<module>,<exports>,<require>){...}` in the chunk's module table.
+function webpackModules(source) {
+  const { findMatchingBrace } = helpers();
+  const table = source.indexOf(MODULE_TABLE);
+  if (table < 0 || table !== source.lastIndexOf(MODULE_TABLE)) return null;
+  const header = new RegExp(`(?:"((?:[^"\\\\]|\\\\.)+)"|([\\w$]+))\\((${IDENT}(?:,${IDENT})*)?\\)\\{`, "uy");
+  const modules = [];
+  let index = table + MODULE_TABLE.length;
+  while (source[index] !== "}") {
+    header.lastIndex = index;
+    const match = header.exec(source);
+    if (match == null) return null;
+    const open = index + match[0].length - 1;
+    const close = findMatchingBrace(source, open);
+    if (close < 0) return null;
+    modules.push({ id: match[1] ?? match[2], params: (match[3] ?? "").split(","), body: source.slice(index, close + 1) });
+    index = close + 1;
+    if (source[index] === ",") index += 1;
+    else if (source[index] !== "}") return null;
   }
-  const keydown = uniqueMatch(card.source,
-    `(?<handler>${IDENT})=(?<event>${IDENT})=>\\{if\\(` +
-      `\\k<event>\\.defaultPrevented\\|\\|\\k<event>\\.nativeEvent\\.isComposing\\)return;`,
-    "native annotation keydown handler");
+  return modules;
+}
+
+function modulesContaining(chunks, needles, label) {
+  const found = [];
+  for (const chunk of chunks) {
+    const modules = webpackModules(chunk.source);
+    if (modules == null) throw new Error(`Could not read the ${label} chunk module table`);
+    found.push(...modules.filter((module) => needles.every((needle) => module.body.includes(needle))));
+  }
+  return found;
+}
+
+// rspack modules reach each other only through their factory's require
+// parameter, so the editor -> card linkage is checked semantically: the
+// editor renders `<binding>.<export>` with onDirectSubmit, the binding is
+// required from the card module, and that card module exports the component
+// whose capture handler owns the native Ctrl+Enter direct-submit path.
+function validateNativeEditor(editorChunks, cardChunks) {
   const { escapeRegExp, findMatchingBrace } = helpers();
-  const openingBrace = keydown.index + `${keydown.groups.handler}=${keydown.groups.event}=>`.length;
-  const closingBrace = findMatchingBrace(card.source, openingBrace);
-  const body = card.source.slice(openingBrace, closingBrace + 1);
-  const event = escapeRegExp(keydown.groups.event);
-  uniqueMatch(body, `${event}\\.key===\\x60Enter\\x60&&!${event}\\.altKey&&!${event}\\.shiftKey&&` +
-    `\\(${event}\\.metaKey\\|\\|${event}\\.ctrlKey\\)`, "native annotation Ctrl+Enter path");
-  uniqueMatch(card.source, `onKeyDownCapture:${escapeRegExp(keydown.groups.handler)}(?=[,}])`,
-    "registered native annotation keydown handler");
+  const editors = modulesContaining(editorChunks, EDITOR_NEEDLES, "annotation editor");
+  if (editors.length !== 1) throw new Error(`Expected one native annotation editor module, found ${editors.length}`);
+  const editor = editors[0];
+  const requireParam = editor.params[2];
+  if (requireParam == null) throw new Error("Native annotation editor module has no require parameter");
+  const render = uniqueMatch(editor.body,
+    `\\(0,${IDENT}\\.jsxs?\\)\\((?<binding>${IDENT})\\.(?<exported>[\\w$]+),\\{[^{}]*?onDirectSubmit:`,
+    "native annotation card render");
+  const linkage = uniqueMatch(editor.body,
+    `(?<![\\w$.])${escapeRegExp(render.groups.binding)}=${escapeRegExp(requireParam)}\\("(?<id>[^"\\\\]+)"\\)`,
+    "native annotation card require");
+  const cardId = linkage.groups.id;
+  const cards = cardChunks.flatMap(({ source }) => {
+    const modules = webpackModules(source);
+    if (modules == null) throw new Error("Could not read the annotation card chunk module table");
+    return modules.filter((module) => module.id === cardId);
+  });
+  if (cards.length === 0) throw new Error("Native annotation card module is missing");
+  for (const card of cards) {
+    const [, exportsParam, cardRequire] = card.params;
+    if (exportsParam == null || cardRequire == null) throw new Error("Native annotation card module signature drifted");
+    uniqueMatch(card.body, `${escapeRegExp(cardRequire)}\\.d\\(${escapeRegExp(exportsParam)},\\{[^{}]*?` +
+      `(?<![\\w$])${escapeRegExp(render.groups.exported)}:\\(\\)=>`, "native annotation card export");
+    const keydown = uniqueMatch(card.body,
+      `onKeyDownCapture:(?<event>${IDENT})=>\\{if\\(` +
+        `\\k<event>\\.defaultPrevented\\|\\|\\k<event>\\.nativeEvent\\.isComposing\\)return;`,
+      "native annotation keydown handler");
+    const openingBrace = keydown.index + `onKeyDownCapture:${keydown.groups.event}=>`.length;
+    const closingBrace = findMatchingBrace(card.body, openingBrace);
+    if (closingBrace < 0) throw new Error("Native annotation keydown handler body drifted");
+    const body = card.body.slice(openingBrace, closingBrace + 1);
+    const event = escapeRegExp(keydown.groups.event);
+    uniqueMatch(body, `"Enter"===${event}\\.key&&!${event}\\.altKey&&!${event}\\.shiftKey&&` +
+      `\\(${event}\\.metaKey\\|\\|${event}\\.ctrlKey\\)`, "native annotation Ctrl+Enter path");
+    if (!body.includes('"direct"')) throw new Error("Native annotation direct-submit path drifted");
+  }
+}
+
+// Reads every webview script asset once (entry and async rspack chunks) and
+// keeps only the chunks that can hold the shortcut owner, the annotation
+// editor, or the annotation card.
+function discoverAnnotationSubmitAssets(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const owners = [];
+  const editors = [];
+  const cards = [];
+  for (const name of assetHelpers().listWebviewScriptAssets(extractedDir)) {
+    const source = fs.readFileSync(path.join(assets, name), "utf8");
+    const has = (needles) => needles.every((needle) => source.includes(needle));
+    if (has(SHORTCUT_NEEDLES)) {
+      try {
+        shortcutContract(source);
+        owners.push({ name, source });
+      } catch {
+        // Other command tables mention the same strings without owning the handler.
+      }
+    }
+    if (has(EDITOR_NEEDLES)) editors.push({ name, source });
+    if (has(CARD_NEEDLES)) cards.push({ name, source });
+  }
+  return { assets, owners, editors, cards };
 }
 
 function applyAnnotationSubmit(extractedDir, context = {}) {
   if (!enabled(context)) return { matched: 0, changed: 0 };
   try {
-    const assets = path.join(extractedDir, "webview", "assets");
-    const names = fs.readdirSync(assets);
-    const candidates = names
-      .filter((name) => /^[A-Za-z0-9_-]+\.js$/u.test(name))
-      .map((name) => ({ name, source: fs.readFileSync(path.join(assets, name), "utf8") }))
-      .filter(({ source }) => {
-        if (!source.includes("clearAllUnreads") || !source.includes("allowWithinEditable:")) return false;
-        try {
-          shortcutContract(source);
-          return true;
-        } catch {
-          return false;
-        }
-      });
-    if (candidates.length !== 1) throw new Error(`Expected one app shortcut asset, found ${candidates.length}`);
-    validateNativeEditor(assets, names);
-    const asset = candidates[0];
+    const { assets, owners, editors, cards } = discoverAnnotationSubmitAssets(extractedDir);
+    if (owners.length !== 1) throw new Error(`Expected one app shortcut asset, found ${owners.length}`);
+    validateNativeEditor(editors, cards);
+    const asset = owners[0];
     const result = patchSource(asset.source);
     const changed = result !== asset.source;
     if (changed) fs.writeFileSync(path.join(assets, asset.name), result);
@@ -161,6 +232,7 @@ function applyAnnotationSubmit(extractedDir, context = {}) {
 module.exports = {
   RUNTIME_MARKER, HANDLER_MARKER, GUARD_NAME, enabled, runtimeSource,
   codexLinuxResponseAnnotationOwnsSubmitShortcut, shortcutContract, patchSource, applyAnnotationSubmit,
+  discoverAnnotationSubmitAssets, validateNativeEditor, webpackModules,
   descriptors: [{
     id: "selected-text-annotation-submit",
     phase: "extracted-app:post-webview",

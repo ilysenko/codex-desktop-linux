@@ -47,18 +47,24 @@ test("computer-use-linux is opt-in and owns the current Linux descriptors", () =
       "native-settings-visibility",
     ],
   );
+  // rspack chunk names carry no meaning; webview owners are found by content.
+  for (const id of ["ui-availability", "host-platform", "native-settings-visibility"]) {
+    const descriptor = descriptors.find((candidate) => candidate.id === id);
+    assert.equal(descriptor.pattern, undefined, id);
+    assert.ok(descriptor.assetNeedles.length > 0, id);
+  }
   const visibility = descriptors.find(({ id }) => id === "native-settings-visibility");
-  assert.equal(visibility.pattern.test("app-initial-3e128f859aa3.js"), true);
-  assert.equal(visibility.pattern.test("app-primary-72206882651c.js"), true);
-  assert.equal(visibility.assetMatch(
-    "function f(p,h,r){if(h.length===0&&!r)return p;let s=new Set(h);return p.filter(e=>(!r||!x(e.plugin.id))&&!s.has(e.plugin.id))}",
-  ), true);
-  assert.equal(visibility.assetMatch("function unrelated(){return true}"), false);
+  assert.equal(visibility.assetMatch, undefined);
+  assert.deepEqual(visibility.assetNeedles, ['"built by openai"', '"chatgpt official"']);
   const hostPlatform = descriptors.find(({ id }) => id === "host-platform");
-  assert.equal(hostPlatform.pattern.test("app-initial-currentHash.js"), true);
-  assert.equal(hostPlatform.pattern.test("app-shared-oldHash.js"), true);
-  assert.equal(hostPlatform.pattern.test("app-initial-currentHash.css"), false);
+  assert.equal(hostPlatform.assetMatch(hostPlatformFixture()), true);
+  assert.equal(hostPlatform.assetMatch("function unrelated(){return true}"), false);
 });
+
+function hostPlatformFixture(host = '"macOS"===S||"windows"===S', args = "areRequirementsPending:L,areRequiredFeaturesEnabled:M,enabled:T,isBrowserAndComputerUseAllowed:U,isAnyFeatureLoading:x,isComputerUseGateEnabled:b,") {
+  return 'function E(e){let{isLoading:A,platform:S}=(0,_.V)(),t={enabled:!0,featureName:"computer_use",hostId:e};' +
+    `return function({areRequirementsPending:e,isHostCompatiblePlatform:s}){return e?"loading":s?"available":"unsupported-platform"}({${args}isHostCompatiblePlatform:${host},isPlatformLoading:A,windowType:"electron"})}`;
+}
 
 test("computer-use-linux staging consumes release artifacts without invoking Cargo", () => {
   const stage = fs.readFileSync(path.join(__dirname, "stage.sh"), "utf8");
@@ -133,53 +139,49 @@ test("staging extends the hidden unified plugin and invalidates the browser-only
 });
 
 test("current host-platform contract enables Linux without dropping requirement gates", () => {
-  const source = "function owner(){let feature={featureName:`computer_use`},p=`linux`,r=h({areRequirementsPending:a,areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:g(p),isPlatformLoading:i,windowType:`electron`});return r}";
+  const source = hostPlatformFixture();
   const patched = applyLinuxComputerUseHostPlatformPatch(source);
 
   assert.notEqual(patched, source);
-  assert.match(patched, /areRequirementsPending:a/);
-  assert.match(patched, /isBrowserAndComputerUseAllowed:d/);
-  assert.match(patched, /isHostCompatiblePlatform:p===`linux`\|\|g\(p\)/);
+  assert.match(patched, /areRequirementsPending:L/);
+  assert.match(patched, /isBrowserAndComputerUseAllowed:U/);
+  assert.match(patched, /isHostCompatiblePlatform:"linux"===S\|\|"macOS"===S\|\|"windows"===S,/);
   assert.equal(matchesLinuxComputerUseHostPlatformContract(patched), true);
   assert.equal(applyLinuxComputerUseHostPlatformPatch(patched), patched);
+  const run = (code, platform) => new Function("_", "L", "M", "T", "U", "x", "b", `${code};return E()`)(
+    { V: () => ({ isLoading: false, platform }) }, false, true, true, true, false, true,
+  );
+  assert.equal(run(patched, "linux"), "available");
+  assert.equal(run(source, "linux"), "unsupported-platform");
+  assert.equal(run(patched, "freebsd"), "unsupported-platform");
 });
 
-test("retired host-platform contract is rejected byte-identically", () => {
-  const source = "function owner(){let feature={featureName:`computer_use`},p=`linux`,r=h({areRequiredFeaturesEnabled:b,enabled:c,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:g(p),isPlatformLoading:i,windowType:`electron`});return r}";
-
-  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
-  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+test("retired host-platform contracts are rejected byte-identically", () => {
+  for (const source of [
+    // Missing requirement and policy inputs.
+    hostPlatformFixture(undefined, "areRequiredFeaturesEnabled:M,enabled:T,isAnyFeatureLoading:x,isComputerUseGateEnabled:b,"),
+    // Pre-rspack helper call and template-literal shapes.
+    hostPlatformFixture("g(S)"),
+    hostPlatformFixture().replace('windowType:"electron"', "windowType:`electron`"),
+    // Not owned by the computer_use availability hook.
+    hostPlatformFixture().replace('featureName:"computer_use"', 'featureName:"browser_use"'),
+  ]) {
+    assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false, source);
+    assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+  }
 });
 
-test("incomplete patched host-platform contract is rejected byte-identically", () => {
-  const source = "function owner(){let feature={featureName:`computer_use`},p=`linux`,r=h({areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:p===`linux`||g(p),isPlatformLoading:i,windowType:`electron`});return r}";
-
-  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
-  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
-});
-
-test("duplicate patched host-platform contracts are rejected byte-identically", () => {
-  const contract = "p=`linux`,r=h({areRequirementsPending:a,areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:p===`linux`||g(p),isPlatformLoading:i,windowType:`electron`})";
-  const source = `function first(){let feature={featureName:\`computer_use\`},${contract};return r}function second(){let feature={featureName:\`computer_use\`},${contract};return r}`;
-
-  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
-  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
-});
-
-test("mixed pristine and patched host-platform contracts are rejected byte-identically", () => {
-  const pristine = "p=`linux`,r=h({areRequirementsPending:a,areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:g(p),isPlatformLoading:i,windowType:`electron`})";
-  const patched = "q=`linux`,s=j({areRequirementsPending:k,areRequiredFeaturesEnabled:l,enabled:m,isBrowserAndComputerUseAllowed:n,isAnyFeatureLoading:o,isComputerUseGateEnabled:t,isHostCompatiblePlatform:q===`linux`||u(q),isPlatformLoading:v,windowType:`electron`})";
-  const source = `function owner(){let feature={featureName:\`computer_use\`},${pristine},${patched};return[r,s]}`;
-
-  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
-  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
-});
-
-test("malformed patched host-platform variable relationship is rejected byte-identically", () => {
-  const source = "function owner(){let feature={featureName:`computer_use`},p=`linux`,q=`darwin`,r=h({areRequirementsPending:a,areRequiredFeaturesEnabled:b,enabled:c,isBrowserAndComputerUseAllowed:d,isAnyFeatureLoading:e,isComputerUseGateEnabled:f,isHostCompatiblePlatform:p===`linux`||g(q),isPlatformLoading:i,windowType:`electron`});return r}";
-
-  assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false);
-  assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+test("malformed, duplicate, and mixed host-platform contracts are rejected byte-identically", () => {
+  const patched = applyLinuxComputerUseHostPlatformPatch(hostPlatformFixture());
+  for (const source of [
+    hostPlatformFixture('"linux"===S||"macOS"===S||"windows"===P'),
+    hostPlatformFixture('"linux"===S||"macOS"===S'),
+    patched + patched,
+    hostPlatformFixture() + patched,
+  ]) {
+    assert.equal(matchesLinuxComputerUseHostPlatformContract(source), false, source);
+    assert.equal(applyLinuxComputerUseHostPlatformPatch(source), source);
+  }
 });
 
 const nativeRegistration = '{...n.nc.computerUse,autoInstallOptOutKey:(0,n.sc)(n.nc.computerUse.name),isAvailable:({features:e,platform:t})=>("darwin"===t||"win32"===t)&&e.computerUse}';

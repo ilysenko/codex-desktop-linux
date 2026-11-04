@@ -72,3 +72,38 @@ test("every current signed main-process descriptor patches exactly one chunk ide
     assert.equal(changed.length, 1, `${descriptor.id} changed ${changed.join(", ") || "no chunk"}`);
   }
 });
+
+test("every current signed webview descriptor patches its rspack owners idempotently", {
+  skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
+}, () => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const { patchBreaksJavaScriptSyntax } = require("../../scripts/patches/lib/javascript-syntax.js");
+  const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const expectedOwners = {
+    "ui-availability": 1,
+    "host-platform": 1,
+    // The Plugins presentation module is duplicated into several lazy chunks.
+    "native-settings-visibility": null,
+  };
+  for (const descriptor of descriptors.filter(({ phase }) => phase === "webview-asset")) {
+    const owners = findWebviewAssetsContaining(root, descriptor.assetNeedles)
+      .map(assetName => ({
+        assetName,
+        source: fs.readFileSync(path.join(root, "webview", "assets", assetName), "utf8"),
+      }))
+      .filter(({ source }) => descriptor.assetMatch?.(source) ?? true);
+    const expected = expectedOwners[descriptor.id];
+    if (expected == null) assert.ok(owners.length > 1, descriptor.id);
+    else assert.equal(owners.length, expected, descriptor.id);
+    for (const { assetName, source } of owners) {
+      const patched = quietly(() => descriptor.apply(source));
+      assert.notEqual(patched, source, `${descriptor.id} did not change ${assetName}`);
+      assert.equal(descriptor.apply(patched), patched, `${descriptor.id} is not idempotent`);
+      assert.equal(
+        patchBreaksJavaScriptSyntax(source, patched),
+        false,
+        `${descriptor.id} produced invalid JavaScript in ${assetName}`,
+      );
+    }
+  }
+});

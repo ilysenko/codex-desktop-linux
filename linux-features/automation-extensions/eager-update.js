@@ -1,31 +1,46 @@
 "use strict";
 
+// The dynamic Codex app tool catalog marks deferred tools with
+// `deferLoading:!0`. Keep automation_update eager so the model can update an
+// automation without first discovering the tool.
 const IDENT = "[A-Za-z_$][\\w$]*";
-const EAGER = new RegExp(`${IDENT}\\.name!==\\\`automation_update\\\`&&${IDENT}&&\\(!${IDENT}\\.has\\(${IDENT}\\.name\\)\\|\\|${IDENT}\\.includes\\(${IDENT}\\.name\\)\\)`);
+const AUTOMATION_UPDATE_EAGER_TOOL_ASSET_NEEDLES = ["deferLoading:!0", "eagerToolNames:", "deferredToolNames:"];
+const EAGER = new RegExp(
+  `${IDENT}\\.name!=="automation_update"&&${IDENT}&&\\(!${IDENT}\\.has\\(${IDENT}\\.name\\)\\|\\|${IDENT}\\.includes\\(${IDENT}\\.name\\)\\)`,
+  "gu",
+);
 const DYNAMIC = new RegExp(
-  `\\.map\\((${IDENT})=>\\(\\{type:\`function\`,\\.\\.\\.\\1,\\.\\.\\.(` +
+  `\\.map\\((${IDENT})=>\\(\\{type:"function",\\.\\.\\.\\1,\\.\\.\\.(` +
     `${IDENT}&&\\(!${IDENT}\\.has\\(\\1\\.name\\)\\|\\|${IDENT}\\.includes\\(\\1\\.name\\)\\)` +
     `)\\?\\{deferLoading:!0\\}:\\{\\}\\}\\)\\)`,
-  "u",
+  "gu",
 );
 
+function count(source, pattern) {
+  return [...source.matchAll(pattern)].length;
+}
+
 function matchesAutomationUpdateEagerToolContract(source) {
-  return EAGER.test(source) || DYNAMIC.test(source);
+  return count(source, EAGER) + count(source, DYNAMIC) === 1;
 }
 
 function applyAutomationUpdateEagerToolPatch(source) {
-  if (EAGER.test(source)) return source;
-  if (!DYNAMIC.test(source)) {
-    if (source.includes("automation_update") && source.includes("deferLoading:!0")) {
-      console.warn("WARN: Could not find dynamic tools construction point — skipping automation_update eager tool patch");
-    }
+  const eager = count(source, EAGER);
+  const dynamic = count(source, DYNAMIC);
+  if (eager === 1 && dynamic === 0) return source;
+  if (eager !== 0 || dynamic !== 1) {
+    console.warn("WARN: Could not find unique dynamic tools construction point — skipping automation_update eager tool patch");
     return source;
   }
   return source.replace(
     DYNAMIC,
     (_match, tool, deferCondition) =>
-      `.map(${tool}=>({type:\`function\`,...${tool},...${tool}.name!==\`automation_update\`&&${deferCondition}?{deferLoading:!0}:{}}))`,
+      `.map(${tool}=>({type:"function",...${tool},...${tool}.name!=="automation_update"&&${deferCondition}?{deferLoading:!0}:{}}))`,
   );
 }
 
-module.exports = { applyAutomationUpdateEagerToolPatch, matchesAutomationUpdateEagerToolContract };
+module.exports = {
+  AUTOMATION_UPDATE_EAGER_TOOL_ASSET_NEEDLES,
+  applyAutomationUpdateEagerToolPatch,
+  matchesAutomationUpdateEagerToolContract,
+};

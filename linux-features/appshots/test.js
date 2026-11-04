@@ -41,15 +41,22 @@ function captureWarnings(callback) {
 }
 
 function appshotAvailabilityAtomBundleFixture() {
-  return "async function q1o({scope:e,hostId:t,queryClient:n}){return(await n.ensureQueryData({queryKey:Adn({hostId:t}),queryFn:()=>Mdn(e,t)})).requirements?.allowAppshots!==!1}function J1o(e){return e===`macOS`||e===`windows`}";
+  return 'let l=["appshot-hotkey-state"];async function _({scope:e,hostId:t,queryClient:n}){let i=await n.ensureQueryData({queryKey:(0,c.UA)({hostId:t}),queryFn:()=>(0,c.Wr)(e,t)});return i.requirements?.allowAppshots!==!1}function y(e){return"macOS"===e||"windows"===e}';
 }
 
 function appshotMainProcessBundleFixture() {
+  // rspack main-process shape: an `appshotCapture` app service class built
+  // only for macOS and Windows.
   return [
-    "var FO=new Map;",
-    "function HO(e,t){let n=FO.get(e);n!=null&&(n.windowManager.sendInlineMessageForView(n.origin,{requestId:e,type:`computer-use-capture-updated`,update:t}),done(e,n))}",
-    "\"computer-use-frontmost-window\":async({origin:e,signal:t})=>process.platform===`win32`?bridge(e,t):process.platform===`darwin`?Xo():null,",
-    "\"computer-use-start-capture\":async({animationDestination:e,animationPresentationStyle:s,bundleIdentifier:t,origin:n,requestId:r,signal:i})=>{if(process.platform!==`darwin`&&process.platform!==`win32`)return null;let a=GO({backgroundColor:e.backgroundColor,webContents:n});return a}",
+    "var OH=new Map;",
+    'function OG(e,t){let r=OH.get(e);null!=r&&r.windowManager.sendInlineMessageForView(r.origin,{requestId:e,type:"computer-use-capture-updated",update:t})}',
+    "class OZ extends TF{options;abortController=new AbortController;constructor(e){super(),this.options=e}",
+    '[Symbol.dispose](){this.abortController.abort()}async getFrontmostWindow(){return this.abortController.signal.aborted?null:"win32"===process.platform?bridge(this.options.origin):oI()}',
+    "async start({animationDestination:e,animationPresentationStyle:t,bundleIdentifier:r,requestId:n}){let{origin:i,settings:s,windowManager:a,requestComputerUseCaptureWorker:o,subscribeComputerUseCaptureWorkerEvent:l,windowsCaptureNativeBridge:c}=this.options;if(this.abortController.signal.aborted)return null;",
+    'return"win32"===process.platform?OK({bundleIdentifier:r,origin:i,requestId:n,windowManager:a}):null==o||null==l?null:Oz({bundleIdentifier:r,origin:i,requestId:n,windowManager:a})}}',
+    "function services(e,g){return{",
+    'appshotCapture:"darwin"===process.platform&&null!=this.options.requestComputerUseWorker&&null!=this.options.subscribeComputerUseCaptureWorkerEvent||"win32"===process.platform&&null!=this.options.windowsCaptureNativeBridge?new OZ({origin:e,windowManager:g}):void 0',
+    "}}",
   ].join("");
 }
 
@@ -170,16 +177,11 @@ test("appshots availability descriptor matches the current bundle", () => {
     (descriptor) => descriptor.id === "linux-appshots-availability",
   );
 
-  assert.equal(descriptor.pattern.test("appshot-availability-BoK-Z77O.js"), false);
-  assert.equal(
-    descriptor.pattern.test(
-      "app-initial~app-main~page-CMpPiY3-.js",
-    ),
-    false,
-  );
-  assert.ok(
-    descriptor.pattern.test("app-initial-BTphDPeq.js"),
-  );
+  assert.equal(descriptor.pattern, undefined);
+  assert.deepEqual(descriptor.assetNeedles, ["allowAppshots", "appshot-hotkey-state"]);
+  for (const needle of descriptor.assetNeedles) {
+    assert.ok(appshotAvailabilityAtomBundleFixture().includes(needle));
+  }
   assert.equal(descriptor.assetMatch(appshotAvailabilityAtomBundleFixture()), true);
   assert.equal(descriptor.assetMatch("function unrelated(){return `windows`}"), false);
 });
@@ -317,15 +319,60 @@ test("enables AppShots availability atom on Linux", () => {
 
   assert.match(
     patched,
-    /e===`linux`\/\*codexLinuxAppshotsPlatformAvailable\*\/\|\|e===`macOS`/,
+    /"linux"===e\/\*codexLinuxAppshotsPlatformAvailable\*\/\|\|"macOS"===e\|\|"windows"===e\}/,
   );
-  assert.match(patched, /e===`windows`/);
   assert.equal(matchesLinuxAppshotAvailabilityContract(patched), true);
+  assert.doesNotThrow(() => new Function(patched));
+  const legacy = "requirements?.allowAppshots!==!1}function J(e){return e===`macOS`||e===`windows`}";
+  assert.equal(matchesLinuxAppshotAvailabilityContract(legacy), false);
+  assert.equal(applyLinuxAppshotAvailabilityPatch(legacy), legacy);
+});
+
+test(
+  "signed upstream webview exposes one AppShots availability owner",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+    const descriptor = descriptors.find(
+      (descriptor) => descriptor.id === "linux-appshots-availability",
+    );
+    const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
+    const owners = findWebviewAssetsContaining(root, descriptor.assetNeedles)
+      .filter((assetName) => descriptor.assetMatch(
+        fs.readFileSync(path.join(root, "webview", "assets", assetName), "utf8"),
+      ));
+    assert.equal(owners.length, 1);
+    const source = fs.readFileSync(path.join(root, "webview", "assets", owners[0]), "utf8");
+    const patched = applyLinuxAppshotAvailabilityPatch(source);
+    assert.notEqual(patched, source);
+    assert.equal(patched.split("codexLinuxAppshotsPlatformAvailable").length - 1, 1);
 });
 
 test("rejects the obsolete raw renderer message sender shape", () => {
   const obsolete = "var F=`codex_desktop:message-for-view`;function nS(e,t){e.send(F,t)}";
   assert.equal(applyLinuxAppshotMainProcessPatch(obsolete), obsolete);
+});
+
+test("AppShots capture service patch fails closed and warns on drift", () => {
+  const current = appshotMainProcessBundleFixture();
+  const retiredIpc = [
+    'function HO(e,t){e.windowManager.sendInlineMessageForView(e.origin,{requestId:t,type:"computer-use-capture-updated"})}',
+    '"computer-use-frontmost-window":async({origin:e,signal:t})=>process.platform===`win32`?bridge(e,t):null,',
+  ].join("");
+  const patched = applyLinuxAppshotMainProcessPatch(current);
+  for (const source of [
+    retiredIpc,
+    current.replace("appshotCapture:", "appshotCaptureService:"),
+    current.replace('aborted?null:"win32"', 'aborted?null:"darwin"'),
+    current.replace("windowManager:a,", "windowManager:a,windowManager:b,"),
+    current + current,
+    patched.replace('"linux"===process.platform||"darwin"', '"darwin"'),
+  ]) {
+    const warnings = captureWarnings(() => {
+      assert.equal(applyLinuxAppshotMainProcessPatch(source), source);
+    });
+    assert.ok(warnings.some((warning) => /AppShots capture service/.test(warning)), source);
+  }
 });
 
 test("routes AppShots capture through the self-contained Linux feature", () => {
@@ -336,12 +383,14 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
 
   assert.match(
     patched,
-    /process\.platform===`linux`\?codexLinuxAppshotFrontmostWindow\(\):process\.platform===`win32`/,
+    /aborted\?null:"linux"===process\.platform\?codexLinuxAppshotFrontmostWindow\(\):"win32"===process\.platform/,
   );
   assert.match(
     patched,
-    /if\(process\.platform===`linux`\)return codexLinuxAppshotStartCapture\(\{origin:n,requestId:r,bundleIdentifier:t,windowManager:this\.windowManager\}\);/,
+    /aborted\)return null;if\("linux"===process\.platform\)return codexLinuxAppshotStartCapture\(\{origin:i,requestId:n,bundleIdentifier:r,windowManager:a\}\);/,
   );
+  assert.match(patched, /appshotCapture:"linux"===process\.platform\|\|"darwin"===process\.platform/);
+  assert.doesNotThrow(() => new Function("TF", "bridge", "oI", "OK", "Oz", "require", patched));
   assert.match(patched, /function codexLinuxAppshotBackendPath/);
   assert.match(patched, /codexLinuxAppshotBackendJson\(\[`windows`\],5000\)/);
   assert.match(patched, /codexLinuxAppshotBackendJson\(\[`state`,e\],10000\)/);
@@ -1442,3 +1491,25 @@ test("AppShots hotkey patch fails closed for missing, partial, duplicate, and am
     ]);
   }
 });
+
+test(
+  "signed upstream main process exposes exactly one AppShots capture service chunk",
+  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
+  () => {
+    const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
+    const mainProcess = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
+    const changed = [];
+    for (const name of mainProcess.chunks) {
+      const source = fs.readFileSync(path.join(mainProcess.buildDir, name), "utf8");
+      let patched;
+      captureWarnings(() => {
+        patched = applyLinuxAppshotMainProcessPatch(source);
+      });
+      if (patched === source) continue;
+      changed.push(name);
+      assert.equal(applyLinuxAppshotMainProcessPatch(patched), patched);
+      assert.doesNotThrow(() => new vm.Script(patched));
+    }
+    assert.equal(changed.length, 1, changed.join(", "));
+  },
+);

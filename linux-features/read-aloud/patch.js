@@ -1,15 +1,6 @@
 "use strict";
 
-const fs = require("node:fs");
-const path = require("node:path");
-
-const {
-  linuxSettingsKeys,
-} = require("../../scripts/patches/lib/settings-keys.js");
-const {
-  findMatchingBrace,
-  requireName,
-} = require("../../scripts/patches/lib/minified-js.js");
+const { requireName } = require("../../scripts/patches/lib/minified-js.js");
 
 const SETTINGS_KEY = "codex-linux-read-aloud-enabled";
 const KOKORO_MODEL_KEY = "codex-linux-read-aloud-kokoro-model";
@@ -22,16 +13,9 @@ const KOKORO_VOICES_URL =
   "https://huggingface.co/zijuncheng/kokoro_model_v1.0/resolve/main/voices-v1.0.bin";
 const HELPER_MARKER = "codexLinuxReadAloudClick";
 const SETUP_MARKER = "codexLinuxReadAloudSetup";
+const SETTINGS_MOUNT_MARKER = "codexLinuxReadAloudMountSettings";
 const HANDLER_NAME = "linux-read-aloud";
-const RUNTIME_VERSION = "kokoro-explicit-v5";
-const READ_ALOUD_SETTINGS_SLUG = "read-aloud-settings";
-const CURRENT_SETTINGS_BLOCK_MARKER = "codexLinuxReadAloudSettingsAliasesV2";
-const GENERAL_SETTINGS_ROW_CALL = "(0,$.jsx)(codexLinuxReadAloudSettingsRow,{})";
-const GENERAL_SETTINGS_CHILDREN = "children:[S,C,w,T,D,O,k,A,j,M,N,P,L]";
-const GENERAL_SETTINGS_CHILDREN_WITH_ROW =
-  `children:[S,C,w,T,${GENERAL_SETTINGS_ROW_CALL},D,O,k,A,j,M,N,P,L]`;
-const GENERAL_SETTINGS_CHILDREN_WITH_OLD_ROW =
-  `children:[S,C,w,T,D,O,k,${GENERAL_SETTINGS_ROW_CALL},A,j,M,N,P,L]`;
+const RUNTIME_VERSION = "kokoro-explicit-v6";
 const ASSISTANT_RENDER_SHARED_PROPS = [
   "item",
   "alwaysShowActions",
@@ -76,55 +60,55 @@ function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
 }
 
-const GLOBAL_STATE_GET_HANDLER = '"get-global-state":async';
-const GLOBAL_STATE_SET_HANDLER = '"set-global-state":async';
-const CURRENT_HANDLER_OWNER = '"set-remote-wsl-connections-enabled":';
-const GLOBAL_STATE_ALLOWLIST_MARKER = "/*codex-linux-global-state-allowlist*/";
-const GLOBAL_STATE_ALLOWED_CLAUSE =
-  `${JSON.stringify([SETTINGS_KEY, KOKORO_SPEED_KEY])}.includes(k)||`;
-
-function globalStateHandlers() {
-  const allowed = `${GLOBAL_STATE_ALLOWLIST_MARKER}${GLOBAL_STATE_ALLOWED_CLAUSE}!1`;
-  return (
-    `"get-global-state":async({key,params}={})=>{let k=key??params?.key;if(!(${allowed}))throw Error(\`Unsupported global-state key\`);return{value:this.globalState.get(k)}},` +
-    `"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;if(!(${allowed}))throw Error(\`Unsupported global-state key\`);this.globalState.set(k,v);return{success:!0}},`
-  );
-}
+// Since 26.1029 the desktop main process no longer serves `vscode://codex/<method>`
+// webview fetches from a handler map: the authenticated fetch wrapper only keeps
+// the dictation route and throws for everything else. Read aloud routes its own
+// single URL in that same request entry point and answers through the same
+// inline view-message sender the dictation route uses. Other Linux routes
+// (chronicle-skysight) may already sit in front of the dictation route as
+// `/*codex-linux-<id>-route*/` statements; the entry tolerates them.
+const FETCH_ROUTE_URL = `vscode://codex/${HANDLER_NAME}`;
+const FETCH_ROUTE_MARKER = "/*codex-linux-read-aloud-route*/";
+const FETCH_ROUTE_HELPER = "function codexLinuxReadAloudFetch(";
+const VIEW_RESPONSE_SENDER = "this.options.chunkedMessageSender.sendInlineMessageForView(";
+const FETCH_REQUEST_ENTRY =
+  /async handleRequest\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{(?=(?:\/\*codex-linux-[a-z-]+-route\*\/[^\n]{0,4000}?)?if\("\/codex\/dictation-stream-connect-info"===\2\.url\)return void await this\.handleDictationStreamConnectInfoRequest\(\1,\2\))/g;
+const DICTATION_RESPONSE_METHOD = /async handleDictationStreamConnectInfoRequest\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*\)\{/g;
 
 function count(source, needle) {
   return source.split(needle).length - 1;
 }
 
-function ensureGlobalStateHandlers(source) {
-  const getCount = count(source, GLOBAL_STATE_GET_HANDLER);
-  const setCount = count(source, GLOBAL_STATE_SET_HANDLER);
-  if (getCount === 1 && setCount === 1) {
-    const markerCount = count(source, GLOBAL_STATE_ALLOWLIST_MARKER);
-    const allowedCount = count(source, GLOBAL_STATE_ALLOWED_CLAUSE);
-    if (markerCount !== 2 || (allowedCount !== 0 && allowedCount !== 2)) return null;
-    return allowedCount === 2
-      ? source
-      : source.split(GLOBAL_STATE_ALLOWLIST_MARKER).join(GLOBAL_STATE_ALLOWLIST_MARKER + GLOBAL_STATE_ALLOWED_CLAUSE);
-  }
-  if (getCount !== 0 || setCount !== 0) return null;
-  const currentOwners = count(source, CURRENT_HANDLER_OWNER);
-  if (currentOwners !== 1) return null;
-  return source.replace(CURRENT_HANDLER_OWNER, globalStateHandlers() + CURRENT_HANDLER_OWNER);
+function findFetchRequestEntry(source) {
+  const entries = Array.from(source.matchAll(FETCH_REQUEST_ENTRY));
+  const responders = Array.from(source.matchAll(DICTATION_RESPONSE_METHOD));
+  if (entries.length !== 1 || responders.length !== 1) return null;
+  // The dictation responder must answer through the inline view-message sender;
+  // that is the channel the webview fetch client listens to for responses.
+  const responderStart = responders[0].index;
+  const responderBody = source.slice(responderStart, responderStart + 1500);
+  if (!responderBody.includes(`${VIEW_RESPONSE_SENDER}${responders[0][1]},{type:"fetch-response"`)) return null;
+  const match = entries[0];
+  return { insertAt: match.index + match[0].length, webContentsVar: match[1], requestVar: match[2] };
+}
+
+function fetchRouteSource(webContentsVar, requestVar) {
+  return `${FETCH_ROUTE_MARKER}if(${JSON.stringify(FETCH_ROUTE_URL)}===${requestVar}?.url)return void await codexLinuxReadAloudFetch(${requestVar},codexLinuxReadAloudMessage=>${VIEW_RESPONSE_SENDER}${webContentsVar},codexLinuxReadAloudMessage));`;
 }
 
 function applyMainBundlePatch(source) {
-  const originalSource = source;
-  source = ensureGlobalStateHandlers(source);
-  if (source == null) {
-    warn("Could not find unique global-state handler owner", "read aloud main-bundle patch");
-    return originalSource;
+  const routeCount = count(source, FETCH_ROUTE_MARKER);
+  const helperCount = count(source, FETCH_ROUTE_HELPER);
+  if (routeCount === 1 && helperCount === 1) {
+    return source;
   }
-  const installedHandlerCount = count(source, `"${HANDLER_NAME}":async`);
-  if (installedHandlerCount > 1) {
-    warn("Found duplicate read aloud handlers", "read aloud main-bundle patch");
-    return originalSource;
+  if (routeCount !== 0 || helperCount !== 0) {
+    warn("Found a partial or duplicate read aloud fetch route", "read aloud main-bundle patch");
+    return source;
   }
-  if (installedHandlerCount === 1) {
+  const entry = findFetchRequestEntry(source);
+  if (entry == null) {
+    warn("Could not find unique desktop fetch request entry", "read aloud main-bundle patch");
     return source;
   }
 
@@ -178,17 +162,20 @@ function applyMainBundlePatch(source) {
     `function codexLinuxReadAloudKokoro(e){let t=codexLinuxReadAloudKokoroMissing(),n=codexLinuxReadAloudLanguage(e),r={en:[\`bm_george\`,\`en-us\`],zh:[\`zf_xiaobei\`,\`cmn\`],ja:[\`jf_alpha\`,\`ja\`],es:[\`ef_dora\`,\`es\`],fr:[\`ff_siwis\`,\`fr-fr\`],hi:[\`hf_alpha\`,\`hi\`],it:[\`if_sara\`,\`it\`],pt:[\`pf_dora\`,\`pt-br\`]};if(t.length)return{spoken:!1,reason:\`kokoro-unavailable\`,missing:t,language:n};let o=process.env.CODEX_LINUX_READ_ALOUD_KOKORO_LANGUAGE_VOICE?.trim()||process.env.CODEX_LINUX_READ_ALOUD_KOKORO_VOICE?.trim(),s=process.env.CODEX_LINUX_READ_ALOUD_KOKORO_LANG?.trim();if(!r[n]&&!o&&!s)return{spoken:!1,reason:\`native-language\`,language:n};let v=r[n]||r.en,i=o||v[0];s=s||v[1];let a=codexLinuxReadAloudKokoroSpeed(),l={CODEX_LINUX_READ_ALOUD_KOKORO_PYTHON:codexLinuxReadAloudKokoroPython(),CODEX_LINUX_READ_ALOUD_KOKORO_MODEL:codexLinuxReadAloudKokoroModel(),CODEX_LINUX_READ_ALOUD_KOKORO_VOICES:codexLinuxReadAloudKokoroVoices(),CODEX_LINUX_READ_ALOUD_KOKORO_VOICE:i,CODEX_LINUX_READ_ALOUD_KOKORO_LANG:s,CODEX_LINUX_READ_ALOUD_KOKORO_SPEED:String(a)};return codexLinuxReadAloudSpawnStdin(codexLinuxReadAloudKokoroRunner(),[],e,l)?{spoken:!0,engine:\`kokoro\`,voice:i,lang:s,language:n,speed:a}:{spoken:!1,reason:\`kokoro-spawn-failed\`,language:n}}`,
     `function codexLinuxReadAloudPiper(text,modelPath){let piperBin=process.env.CODEX_LINUX_READ_ALOUD_PIPER_BIN?.trim()||\`piper\`;if(!modelPath||!${fsVar}.existsSync(modelPath)||!codexLinuxReadAloudCommandExists(piperBin)||!codexLinuxReadAloudCommandExists(\`aplay\`))return!1;try{codexLinuxReadAloudStop();let piperOptions={stdio:[\`pipe\`,\`pipe\`,\`ignore\`],windowsHide:!0,detached:!0,env:{...process.env,...codexLinuxReadAloudAudioEnv()}},piper=${childProcessVar}.spawn(piperBin,[\`--model\`,modelPath,\`--output-raw\`],piperOptions),aplay=${childProcessVar}.spawn(\`aplay\`,[\`-q\`,\`-r\`,\`22050\`,\`-c\`,\`1\`,\`-f\`,\`S16_LE\`,\`-t\`,\`raw\`],{stdio:[\`pipe\`,\`ignore\`,\`ignore\`],windowsHide:!0,detached:!0,env:{...process.env,...codexLinuxReadAloudAudioEnv()}});codexLinuxReadAloudProc=piper,piper.on?.(\`exit\`,()=>{codexLinuxReadAloudProc===piper&&(codexLinuxReadAloudProc=null)}),piper.stdout?.pipe(aplay.stdin),piper.stdin?.end(text),piper.unref?.(),aplay.unref?.();return!0}catch{return!1}}`,
     `function codexLinuxReadAloudSpeak(input,options={}){if(process.platform!==\`linux\`)return codexLinuxReadAloudReport({spoken:!1,reason:\`not-linux\`});if(options?.requireEnabled!==!1&&!codexLinuxReadAloudEnabled())return codexLinuxReadAloudReport({spoken:!1,reason:\`disabled\`});let text=codexLinuxReadAloudCleanText(input);if(!text)return codexLinuxReadAloudReport({spoken:!1,reason:\`empty\`});let customCommand=process.env.CODEX_LINUX_READ_ALOUD_COMMAND?.trim();if(customCommand&&codexLinuxReadAloudSpawnStdin(customCommand,[],text))return codexLinuxReadAloudReport({spoken:!0,engine:\`custom\`});let engine=(process.env.CODEX_LINUX_READ_ALOUD_ENGINE?.trim()||\`kokoro\`).toLowerCase(),language=codexLinuxReadAloudLanguage(text),piperModel=process.env.CODEX_LINUX_READ_ALOUD_PIPER_MODEL?.trim();if(engine===\`piper\`)return codexLinuxReadAloudReport(codexLinuxReadAloudPiper(text,piperModel)?{spoken:!0,engine:\`piper\`,language}:{spoken:!1,reason:\`piper-unavailable\`,language});let kokoroResult=codexLinuxReadAloudKokoro(text);if(kokoroResult.spoken)return codexLinuxReadAloudReport(kokoroResult);if(!codexLinuxReadAloudNativeFallbackEnabled())return codexLinuxReadAloudReport(kokoroResult);if(codexLinuxReadAloudPiper(text,piperModel))return codexLinuxReadAloudReport({spoken:!0,engine:\`piper\`,language});let voice=process.env.CODEX_LINUX_READ_ALOUD_VOICE?.trim(),rate=process.env.CODEX_LINUX_READ_ALOUD_RATE?.trim()||\`-10\`,voiceType=process.env.CODEX_LINUX_READ_ALOUD_VOICE_TYPE?.trim(),nativeLanguage=codexLinuxReadAloudNativeLanguage(language);try{codexLinuxReadAloudCommandExists(\`spd-say\`)&&${childProcessVar}.spawn(\`spd-say\`,[\`-C\`],{stdio:\`ignore\`,windowsHide:!0,env:{...process.env,...codexLinuxReadAloudAudioEnv()}}).unref?.()}catch{}let spdArgs=[\`-r\`,rate,...(voiceType?[\`-t\`,voiceType]:[]),...(voice?[\`-y\`,voice]:[]),\`-l\`,nativeLanguage,\`--\`,text];if(codexLinuxReadAloudSpawn(\`spd-say\`,spdArgs))return codexLinuxReadAloudReport({spoken:!0,engine:\`spd-say\`,language});let espeakVoice=voice||(language===\`en\`?\`en-us\`:nativeLanguage);return codexLinuxReadAloudReport(codexLinuxReadAloudSpawn(\`espeak-ng\`,[\`-v\`,espeakVoice,\`-s\`,process.env.CODEX_LINUX_READ_ALOUD_ESPEAK_RATE?.trim()||\`165\`,\`--\`,text])?{spoken:!0,engine:\`espeak-ng\`,language}:kokoroResult)}`,
-    `function codexLinuxReadAloudHandle(e={}){return e.action===\`config\`?codexLinuxReadAloudConfig():e.action===\`setup\`?codexLinuxReadAloudSetup(e):e.action===\`stop\`?codexLinuxReadAloudStop():e.action===\`speak\`&&e.source===\`button\`?codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1}):codexLinuxReadAloudReport({spoken:!1,reason:\`not-explicit\`})}`,
+    `function codexLinuxReadAloudSettingKey(e){if(e!==${JSON.stringify(SETTINGS_KEY)}&&e!==${JSON.stringify(KOKORO_SPEED_KEY)})throw Error(\`Unsupported read aloud setting\`);return e}`,
+    `function codexLinuxReadAloudGetSetting(e){let t=codexLinuxReadAloudSettingKey(e),n=codexLinuxReadAloudSettings()[t];return{value:t===${JSON.stringify(KOKORO_SPEED_KEY)}?codexLinuxReadAloudClampSpeed(n??1.05):n===!0}}`,
+    `function codexLinuxReadAloudSetSetting(e,t){let n=codexLinuxReadAloudSettingKey(e),r=codexLinuxReadAloudSettings();r[n]=n===${JSON.stringify(KOKORO_SPEED_KEY)}?codexLinuxReadAloudClampSpeed(t):t===!0;codexLinuxReadAloudWriteSettings(r);return{success:!0,value:r[n]}}`,
+    `function codexLinuxReadAloudHandle(e={}){return e.action===\`config\`?codexLinuxReadAloudConfig():e.action===\`get-setting\`?codexLinuxReadAloudGetSetting(e.key):e.action===\`set-setting\`?codexLinuxReadAloudSetSetting(e.key,e.value):e.action===\`setup\`?codexLinuxReadAloudSetup(e):e.action===\`stop\`?codexLinuxReadAloudStop():e.action===\`speak\`&&e.source===\`button\`?codexLinuxReadAloudSpeak(e.text,{requireEnabled:!1}):codexLinuxReadAloudReport({spoken:!1,reason:\`not-explicit\`})}`,
+    `async function codexLinuxReadAloudFetch(e,t){let n=e?.requestId;try{let r;try{r=typeof e?.body===\`string\`&&e.body.length>0?JSON.parse(e.body):e?.body??{}}catch{throw Error(\`Invalid read aloud request\`)}let i=await codexLinuxReadAloudHandle(r&&typeof r===\`object\`?r:{});t({type:\`fetch-response\`,responseType:\`success\`,requestId:n,status:200,headers:{"content-type":\`application/json\`},bodyJsonString:JSON.stringify(i??null)})}catch(r){t({type:\`fetch-response\`,responseType:\`error\`,requestId:n,status:500,error:r instanceof Error?r.message:String(r)})}}`,
   ].join("");
 
-  const handler = `"${HANDLER_NAME}":async(e)=>codexLinuxReadAloudHandle(e),`;
-  const withHandler = source.replace(GLOBAL_STATE_GET_HANDLER, handler + GLOBAL_STATE_GET_HANDLER);
-  const helperInsertAt = withHandler.startsWith(`"use strict";`)
+  const routed = `${source.slice(0, entry.insertAt)}${fetchRouteSource(entry.webContentsVar, entry.requestVar)}${source.slice(entry.insertAt)}`;
+  const helperInsertAt = routed.startsWith(`"use strict";`)
     ? `"use strict";`.length
-    : withHandler.startsWith(`'use strict';`)
+    : routed.startsWith(`'use strict';`)
       ? `'use strict';`.length
       : 0;
-  return withHandler.slice(0, helperInsertAt) + helper + withHandler.slice(helperInsertAt);
+  return routed.slice(0, helperInsertAt) + helper + routed.slice(helperInsertAt);
 }
 
 function readAloudRuntimeSource() {
@@ -212,8 +199,19 @@ function readAloudRuntimeSource() {
     `async function click(item,copyText,conversationId,button){try{button?.blur?.();if(globalThis.codexLinuxConversationIsSpeaking?.()){globalThis.codexLinuxConversationStopSpeaking?.();resetButton(button);return}if(button?.dataset.codexLinuxReadAloudState==="speaking"){stopSpeech();return}let text=clean(copyText||item?.content||"");if(text.length<2)return;setButton(button,"loading","Starting voice");let result=await post({action:"speak",source:"button",text}).then(e=>e.body).catch(()=>({spoken:!1,reason:"request-failed"}));log("[linux-read-aloud] click",{conversationId:conversationId||null,textLength:text.length,spoken:result?.spoken===!0,engine:result?.engine||null,reason:result?.reason||null,missing:Array.isArray(result?.missing)?result.missing.join(","):null});if(result?.spoken){currentButton=button;setButton(button,"speaking");currentSpeakTimer=setTimeout(()=>resetButton(button),estimateMs(text));return}flash(button,failureLabel(result))}catch{flash(button,"No voice available")}}`,
     `function setupLabel(result){let reason=result?.reason;if(reason==="cancelled")return"Cancelled";if(reason==="missing-files")return"Folder is missing model files";if(reason==="python-unavailable")return"Python 3.10-3.13 required";if(reason==="voice-unavailable")return"Voice backend missing";return result?.ok?"Voice ready":"Setup failed"}`,
     `async function setup(mode,button){let original=button?.dataset.codexLinuxReadAloudOriginalLabel||button?.textContent||"";if(button&&!button.dataset.codexLinuxReadAloudOriginalLabel)button.dataset.codexLinuxReadAloudOriginalLabel=original;try{button&&(button.disabled=!0,button.textContent=mode==="download"?"Downloading...":"Choosing...");let result=await post({action:"setup",mode},mode==="download"?9e5:6e4).then(e=>e.body).catch(()=>({ok:!1,reason:"request-failed"}));button&&(button.textContent=setupLabel(result));setTimeout(()=>{button&&(button.textContent=original,button.disabled=!1)},1800);return result}catch{button&&(button.textContent="Setup failed",setTimeout(()=>{button.textContent=original,button.disabled=!1},1800))}}`,
-    `function installStyle(){if(document.getElementById("codex-linux-read-aloud-style"))return;let e=document.createElement("style");e.id="codex-linux-read-aloud-style";e.textContent=".codex-linux-read-aloud-row{display:flex;align-items:center;margin-top:4px}.codex-linux-read-aloud-button{width:28px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--token-border);background:transparent;color:var(--text-secondary,var(--token-description-foreground));border-radius:6px;padding:0;cursor:pointer}.codex-linux-read-aloud-icon{width:15px;height:15px}.codex-linux-read-aloud-button:hover{background:var(--token-list-hover-background,rgba(127,127,127,.12));color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-button:disabled{opacity:.65;cursor:default}.codex-linux-read-aloud-button[data-codex-linux-read-aloud-state=speaking]{background:var(--token-list-hover-background,rgba(127,127,127,.14));color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-button[data-codex-linux-read-aloud-state=error]{color:var(--token-error-foreground,#c00);border-color:currentColor}";document.head.appendChild(e)}`,
-    `installStyle();globalThis.${HELPER_MARKER}=click;globalThis.${SETUP_MARKER}=setup;globalThis.codexLinuxReadAloudGetSetting=key=>hostPost("get-global-state",{params:{key}}).then(e=>e.body?.value);globalThis.codexLinuxReadAloudSetSetting=(key,value)=>hostPost("set-global-state",{params:{key,value}}).then(e=>e.body);})();`,
+    `function installStyle(){if(document.getElementById("codex-linux-read-aloud-style"))return;let e=document.createElement("style");e.id="codex-linux-read-aloud-style";e.textContent=".codex-linux-read-aloud-row{display:flex;align-items:center;margin-top:4px}.codex-linux-read-aloud-button{width:28px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--token-border);background:transparent;color:var(--text-secondary,var(--token-description-foreground));border-radius:6px;padding:0;cursor:pointer}.codex-linux-read-aloud-icon{width:15px;height:15px}.codex-linux-read-aloud-button:hover{background:var(--token-list-hover-background,rgba(127,127,127,.12));color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-button:disabled{opacity:.65;cursor:default}.codex-linux-read-aloud-button[data-codex-linux-read-aloud-state=speaking]{background:var(--token-list-hover-background,rgba(127,127,127,.14));color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-button[data-codex-linux-read-aloud-state=error]{color:var(--token-error-foreground,#c00);border-color:currentColor}.codex-linux-read-aloud-settings{display:flex;flex-direction:column;gap:8px;margin-top:24px}.codex-linux-read-aloud-settings-title{font-size:15px;font-weight:500;color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-settings-group{display:flex;flex-direction:column;border:1px solid var(--token-border);border-radius:10px}.codex-linux-read-aloud-settings-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px}.codex-linux-read-aloud-settings-row+.codex-linux-read-aloud-settings-row{border-top:1px solid var(--token-border)}.codex-linux-read-aloud-settings-row[hidden],.codex-linux-read-aloud-settings-controls[hidden],.codex-linux-read-aloud-settings-error[hidden]{display:none}.codex-linux-read-aloud-settings-text{display:flex;flex-direction:column;gap:2px;min-width:0}.codex-linux-read-aloud-settings-label{font-size:14px;color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-settings-description{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-secondary,var(--token-description-foreground))}.codex-linux-read-aloud-settings-error{color:var(--token-error-foreground,#c00)}.codex-linux-read-aloud-settings-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}.codex-linux-read-aloud-settings-button{border:1px solid var(--token-border);border-radius:6px;padding:4px 8px;font-size:13px;background:transparent;color:var(--text-primary,var(--token-foreground));cursor:pointer}.codex-linux-read-aloud-settings-button:disabled{opacity:.6;cursor:default}.codex-linux-read-aloud-settings-help{display:inline-flex;width:26px;height:26px;align-items:center;justify-content:center;border:1px solid var(--token-border);border-radius:999px;font-size:13px;color:var(--text-secondary,var(--token-description-foreground));user-select:none}.codex-linux-read-aloud-settings-range{width:144px}.codex-linux-read-aloud-settings-value{width:48px;text-align:right;font-size:13px;color:var(--text-secondary,var(--token-description-foreground))}.codex-linux-read-aloud-switch{position:relative;width:34px;height:20px;flex:none;border:0;border-radius:999px;padding:0;background:var(--token-border,rgba(127,127,127,.35));cursor:pointer;transition:background .15s}.codex-linux-read-aloud-switch:after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}.codex-linux-read-aloud-switch[aria-checked=true]{background:var(--text-primary,var(--token-foreground,#0a84ff))}.codex-linux-read-aloud-switch[aria-checked=true]:after{transform:translateX(14px)}.codex-linux-read-aloud-switch:disabled{opacity:.6;cursor:default}";document.head.appendChild(e)}`,
+    `function getSetting(key){return post({action:"get-setting",key}).then(e=>e.body?.value)}`,
+    `function setSetting(key,value){return post({action:"set-setting",key,value}).then(e=>{if(e.body?.success!==!0)throw Error("Could not save setting");return e.body})}`,
+    `function pace(value){let number=Number(value);return Number.isFinite(number)?Math.min(1.4,Math.max(.7,Math.round(number*20)/20)):1.05}`,
+    `function node(tag,props={},children=[]){let element=document.createElement(tag);for(let[key,value]of Object.entries(props))key==="className"?element.className=value:key==="text"?element.textContent=value:element.setAttribute(key,value);for(let child of children)child&&element.appendChild(child);return element}`,
+    `function settingsRow(label,description,controls){return node("div",{className:"codex-linux-read-aloud-settings-row"},[node("div",{className:"codex-linux-read-aloud-settings-text"},[node("div",{className:"codex-linux-read-aloud-settings-label",text:label}),description]),node("div",{className:"codex-linux-read-aloud-settings-controls"},controls)])}`,
+    `function mountSettings(root){if(!root||root.dataset?.codexLinuxReadAloudMounted===VERSION)return;root.dataset.codexLinuxReadAloudMounted=VERSION;let state={enabled:!1,speed:1.05,loading:!0,error:null},confirmed={enabled:!1,speed:1.05},writes={enabled:0,speed:0},queues={enabled:Promise.resolve(),speed:Promise.resolve()},keys={enabled:${JSON.stringify(SETTINGS_KEY)},speed:${JSON.stringify(KOKORO_SPEED_KEY)}},help="Choose folder expects kokoro-v1.0.onnx and voices-v1.0.bin. Download voice creates a managed Python runtime and downloads the Kokoro files from Hugging Face.",toggle=node("button",{type:"button",role:"switch",className:"codex-linux-read-aloud-switch","aria-label":"Read aloud responses","aria-checked":"false"}),choose=node("button",{type:"button",className:"codex-linux-read-aloud-settings-button",text:"Choose folder"}),download=node("button",{type:"button",className:"codex-linux-read-aloud-settings-button",text:"Download voice"}),setupControls=node("div",{className:"codex-linux-read-aloud-settings-controls"},[choose,download,node("span",{className:"codex-linux-read-aloud-settings-help",title:help,"aria-label":help,text:"?"})]),range=node("input",{type:"range",min:"0.7",max:"1.4",step:"0.05",value:"1.05","aria-label":"Speech pace",className:"codex-linux-read-aloud-settings-range"}),rangeValue=node("span",{className:"codex-linux-read-aloud-settings-value",text:"1.05x"}),error=node("div",{className:"codex-linux-read-aloud-settings-error",role:"status"}),paceRow=settingsRow("Speech pace",node("div",{className:"codex-linux-read-aloud-settings-description",text:"Adjust the read aloud speed."}),[range,rangeValue]);`,
+    `function render(){toggle.setAttribute("aria-checked",String(state.enabled===!0));toggle.disabled=state.loading;setupControls.hidden=!state.enabled;paceRow.hidden=!state.enabled;range.value=String(state.speed);range.disabled=state.loading;rangeValue.textContent=state.speed.toFixed(2)+"x";error.textContent=state.error??"";error.hidden=!state.error}`,
+    `function write(kind,value){let ticket=++writes[kind],request=()=>setSetting(keys[kind],value);state[kind]=value;state.error=null;render();queues[kind]=queues[kind].then(request,request);return queues[kind].then(()=>{confirmed[kind]=value;ticket===writes[kind]&&(state[kind]=value,state.error=null,render())},reason=>{ticket===writes[kind]&&(state[kind]=confirmed[kind],state.error=reason instanceof Error?reason.message:String(reason),render())})}`,
+    `toggle.addEventListener("click",()=>{state.loading||write("enabled",!state.enabled)});range.addEventListener("input",event=>{rangeValue.textContent=pace(event.currentTarget.value).toFixed(2)+"x"});range.addEventListener("change",event=>{write("speed",pace(event.currentTarget.value))});choose.addEventListener("click",event=>setup("choose-folder",event.currentTarget));download.addEventListener("click",event=>setup("download",event.currentTarget));`,
+    `root.replaceChildren(node("section",{className:"codex-linux-read-aloud-settings","aria-label":"Read Aloud"},[node("div",{className:"codex-linux-read-aloud-settings-title",text:"Read Aloud"}),node("div",{className:"codex-linux-read-aloud-settings-group"},[settingsRow("Read aloud responses",node("div",{className:"codex-linux-read-aloud-settings-description"},[node("span",{text:"Show a read aloud button under assistant responses. If the Kokoro voice files are missing, choose a local folder or download them."}),error]),[toggle,setupControls]),paceRow])]));render();`,
+    `let load=Promise.allSettled([getSetting(keys.enabled),getSetting(keys.speed)]).then(([enabled,speed])=>{enabled.status==="fulfilled"&&(state.enabled=confirmed.enabled=enabled.value===!0);speed.status==="fulfilled"&&(state.speed=confirmed.speed=pace(speed.value??1.05));let failure=enabled.status==="rejected"?enabled.reason:speed.status==="rejected"?speed.reason:null;state.error=failure==null?null:failure instanceof Error?failure.message:String(failure)}).finally(()=>{state.loading=!1;render()});return{load,write,state}}`,
+    `installStyle();globalThis.${HELPER_MARKER}=click;globalThis.${SETUP_MARKER}=setup;globalThis.${SETTINGS_MOUNT_MARKER}=mountSettings;globalThis.codexLinuxReadAloudGetSetting=getSetting;globalThis.codexLinuxReadAloudSetSetting=setSetting;})();`,
   ].join("");
 }
 
@@ -248,7 +246,7 @@ function countOccurrences(source, needle) {
 
 function inspectAssistantRenderContract(source) {
   const jsxCallPattern =
-    /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{(?=[^{}]*\bitem:)(?=[^{}]*\bassistantCopyText:)(?=[^{}]*\bconversationId:)([^{}]*)\}\)/g;
+    /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?),\{(?=[^{}]*\bitem:)(?=[^{}]*\bassistantCopyText:)(?=[^{}]*\bconversationId:)([^{}]*)\}\)/g;
   const readProp = (props, name) =>
     new RegExp(`(?:^|,)${name}:([A-Za-z_$][\\w$]*)`).exec(props)?.[1] ?? null;
   const candidates = Array.from(source.matchAll(jsxCallPattern), (match) => {
@@ -333,620 +331,18 @@ function applyAssistantRenderPatch(source) {
   return patched;
 }
 
-function applySettingsPatch(source) {
-  return source
-    .replace(`,readAloud:${JSON.stringify(SETTINGS_KEY)}`, "")
-    .replace(
-      ',$.jsx(LinuxToggle,{settingKey:KEYS.readAloud,label:"Read aloud responses",description:"Show a Read aloud button on assistant responses.",defaultValue:!1})',
-      "",
-    );
-}
+// The webview runtime is appended to the rspack runtime entry chunks: the
+// chunks that own the chunked host-message decoder and export the webpack
+// require function. The main window and detached windows each load one.
+const RUNTIME_ENTRY_NEEDLES = ["codex-host-chunked-message-v1", "as __webpack_require__}"];
+const RUNTIME_ENTRY_EXPORT = /export\{[A-Za-z_$][\w$]* as __webpack_require__\}/;
 
-function linuxDesktopReadAloudSettingsSource() {
-  return [
-    `function codexLinuxReadAloudPaceValue(e){let t=Number(e);return Number.isFinite(t)?Math.min(1.4,Math.max(.7,Math.round(t*20)/20)):1.05}`,
-    `class LinuxReadAloudSettings extends React.Component{`,
-    `constructor(e){super(e),this._alive=!1,this._enabledWrite=0,this._speedWrite=0,this._enabledConfirmed=!1,this._speedConfirmed=1.05,this._enabledQueue=Promise.resolve(),this._speedQueue=Promise.resolve(),this.state={enabled:!1,speed:1.05,isLoading:!0,error:null},this.load=this.load.bind(this),this.updateEnabled=this.updateEnabled.bind(this),this.updateSpeed=this.updateSpeed.bind(this)}`,
-    `componentDidMount(){this._alive=!0,this.load()}`,
-    `componentWillUnmount(){this._alive=!1}`,
-    `load(){this.setState({isLoading:!0}),Promise.allSettled([__post("get-global-state",{params:{key:KEYS.readAloud}}),__post("get-global-state",{params:{key:KEYS.readAloudSpeed}})]).then(([e,t])=>{if(!this._alive)return;let n=e.status==="fulfilled",r=t.status==="fulfilled",i=n?e.value?.value===!0:this.state.enabled,a=r?codexLinuxReadAloudPaceValue(t.value?.value??1.05):this.state.speed,o=e.status==="rejected"?e.reason:t.status==="rejected"?t.reason:null;n&&(this._enabledConfirmed=i),r&&(this._speedConfirmed=a),this.setState({enabled:i,speed:a,error:o==null?null:o instanceof Error?o.message:String(o)})}).finally(()=>{this._alive&&this.setState({isLoading:!1})})}`,
-    `updateEnabled(e){let t=codexLinuxChecked(e),n=++this._enabledWrite,r=()=>__post("set-global-state",{params:{key:KEYS.readAloud,value:t}});this.setState({enabled:t,error:null}),this._enabledQueue=this._enabledQueue.then(r,r),this._enabledQueue.then(()=>{this._enabledConfirmed=t,this._alive&&n===this._enabledWrite&&this.setState({enabled:t,error:null})},e=>{this._alive&&n===this._enabledWrite&&this.setState({enabled:this._enabledConfirmed,error:e instanceof Error?e.message:String(e)})})}`,
-    `updateSpeed(e){let t=codexLinuxReadAloudPaceValue(e?.currentTarget?.value??e),n=++this._speedWrite,r=()=>__post("set-global-state",{params:{key:KEYS.readAloudSpeed,value:t}});this.setState({speed:t,error:null}),this._speedQueue=this._speedQueue.then(r,r),this._speedQueue.then(()=>{this._speedConfirmed=t,this._alive&&n===this._speedWrite&&this.setState({speed:t,error:null})},e=>{this._alive&&n===this._speedWrite&&this.setState({speed:this._speedConfirmed,error:e instanceof Error?e.message:String(e)})})}`,
-    `render(){let{enabled:e,speed:t,isLoading:n,error:r}=this.state,i="rounded-md border border-token-border px-2 py-1 text-sm text-token-text-primary hover:bg-token-surface-secondary disabled:opacity-60",a=r?$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("span",{children:"Show a read aloud button under assistant responses."}),$.jsx("span",{className:"text-token-error-foreground",children:r})]}):"Show a read aloud button under assistant responses.",o=r?$.jsxs("div",{className:"flex flex-col gap-1",children:[$.jsx("span",{children:"Adjust the read aloud speed."}),$.jsx("span",{className:"text-token-error-foreground",children:r})]}):"Adjust the read aloud speed.";return $.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Read Aloud"}),$.jsx(SettingsSection.Content,{children:$.jsxs(SettingsGroup,{children:[$.jsx(SettingsRow,{label:"Read aloud responses",description:a,control:$.jsxs("div",{className:"flex flex-wrap items-center justify-end gap-2",children:[$.jsx(Toggle,{checked:e,disabled:n,onChange:this.updateEnabled,ariaLabel:"Read aloud responses"}),e?$.jsxs("div",{className:"flex flex-wrap items-center justify-end gap-2",children:[$.jsx("button",{type:"button",className:i,onClick:e=>globalThis.${SETUP_MARKER}?.("choose-folder",e.currentTarget),children:"Choose folder"}),$.jsx("button",{type:"button",className:i,onClick:e=>globalThis.${SETUP_MARKER}?.("download",e.currentTarget),children:"Download voice"}),$.jsx("span",{className:"inline-flex h-7 w-7 select-none items-center justify-center rounded-full border border-token-border text-sm text-token-text-secondary",title:"Choose folder expects kokoro-v1.0.onnx and voices-v1.0.bin. Download voice creates a managed Python runtime and downloads the Kokoro files from Hugging Face.","aria-label":"Choose folder expects kokoro-v1.0.onnx and voices-v1.0.bin. Download voice creates a managed Python runtime and downloads the Kokoro files from Hugging Face.",children:"?"})]}):null]})}),e?$.jsx(SettingsRow,{label:"Speech pace",description:o,control:$.jsxs("div",{className:"flex items-center justify-end gap-2",children:[$.jsx("input",{type:"range",min:.7,max:1.4,step:.05,value:t,disabled:n,onChange:this.updateSpeed,"aria-label":"Speech pace",className:"h-2 w-36 accent-token-text-primary"}),$.jsx("span",{className:"w-12 text-right text-sm text-token-text-secondary",children:\`\${t.toFixed(2)}x\`})]})}):null]})})]})}}`,
-  ].join("");
-}
-
-function replaceLinuxDesktopReadAloudSettings(source) {
-  const classMarker = "class LinuxReadAloudSettings extends React.Component";
-  const classStart = source.indexOf(classMarker);
-  const paceStart = source.lastIndexOf("function codexLinuxReadAloudPaceValue(", classStart);
-  const classOpen = source.indexOf("{", classStart + classMarker.length);
-  if (classStart === -1 || paceStart === -1 || classOpen === -1) {
-    return null;
-  }
-  const classEnd = findMatchingBrace(source, classOpen);
-  if (classEnd === -1 || !source.startsWith("function LinuxDesktopSettings(){", classEnd + 1)) {
-    return null;
-  }
-  return `${source.slice(0, paceStart)}${linuxDesktopReadAloudSettingsSource()}${source.slice(classEnd + 1)}`;
-}
-
-function applyLinuxDesktopSettingsPatch(source) {
-  if (!source.includes("function LinuxDesktopSettings(){")) {
+function applyRuntimeEntryPatch(source) {
+  if (!RUNTIME_ENTRY_EXPORT.test(source) || !source.includes(RUNTIME_ENTRY_NEEDLES[0])) {
+    console.warn("WARN: Could not find rspack webview runtime entry contract - skipping read aloud webview runtime patch");
     return source;
   }
-
-  const buildSectionNeedle =
-    '$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Build"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxBuildInfoPanel,{})})})]})';
-  if (!source.includes("$.jsx(LinuxReadAloudSettings,{})") && !source.includes(buildSectionNeedle)) {
-    warn("Could not find Linux desktop Build section", "read aloud Linux desktop settings patch");
-    return source;
-  }
-
-  let patched = source;
-  const hasReadAloudSettings = patched.includes(
-    "class LinuxReadAloudSettings extends React.Component",
-  );
-  if (hasReadAloudSettings) {
-    const refreshed = replaceLinuxDesktopReadAloudSettings(patched);
-    if (refreshed == null) {
-      warn("Could not refresh existing Linux read aloud settings", "read aloud Linux desktop settings patch");
-      return source;
-    }
-    patched = refreshed;
-  }
-  if (!patched.includes(`readAloud:${JSON.stringify(SETTINGS_KEY)}`)) {
-    const keyNeedle = `autoUpdateOnExit:${JSON.stringify(linuxSettingsKeys.autoUpdateOnExit)}`;
-    const keyBoundary = `${keyNeedle}};function codexLinuxChecked`;
-    if (!patched.includes(keyBoundary)) {
-      warn("Could not find current Linux desktop settings key boundary", "read aloud Linux desktop settings patch");
-      return source;
-    }
-    patched = patched.replace(
-      keyBoundary,
-      `${keyNeedle},readAloud:${JSON.stringify(SETTINGS_KEY)},readAloudSpeed:${JSON.stringify(KOKORO_SPEED_KEY)}};function codexLinuxChecked`,
-    );
-  }
-
-  if (!hasReadAloudSettings) {
-    patched = patched.replace(
-      "function LinuxDesktopSettings(){",
-      `${linuxDesktopReadAloudSettingsSource()}function LinuxDesktopSettings(){`,
-    );
-  }
-
-  if (!patched.includes("$.jsx(LinuxReadAloudSettings,{})")) {
-    patched = patched.replace(buildSectionNeedle, `$.jsx(LinuxReadAloudSettings,{}),${buildSectionNeedle}`);
-  }
-
-  return patched;
-}
-
-function generalSettingsReadAloudRowSource() {
-  return `function codexLinuxReadAloudPaceValue(e){let t=Number(e);return Number.isFinite(t)?Math.min(1.4,Math.max(.7,Math.round(t*20)/20)):1.05}function codexLinuxReadAloudSettingsRow(){let e=w(C),t=N(),{data:n,isLoading:r}=L(${JSON.stringify(SETTINGS_KEY)}),{data:i,isLoading:a}=L(${JSON.stringify(KOKORO_SPEED_KEY)}),o=n===!0,s=codexLinuxReadAloudPaceValue(i),c=(0,$.jsx)(F,{id:\`settings.general.readAloud.label\`,defaultMessage:\`Read aloud responses\`,description:\`Label for Linux read aloud setting\`}),l=(0,$.jsx)(F,{id:\`settings.general.readAloud.description\`,defaultMessage:\`Show a read aloud button under assistant responses. If the Kokoro voice files are missing, choose a local folder or download them.\`,description:\`Description for Linux read aloud setting\`}),u=(0,$.jsx)(F,{id:\`settings.general.readAloud.pace.label\`,defaultMessage:\`Speech pace\`,description:\`Label for Linux read aloud pace setting\`}),d=(0,$.jsx)(F,{id:\`settings.general.readAloud.pace.description\`,defaultMessage:\`Adjust the read aloud speed\`,description:\`Description for Linux read aloud pace setting\`}),f=n=>{P(e,${JSON.stringify(SETTINGS_KEY)},n)},p=t.formatMessage({id:\`settings.general.readAloud.label\`,defaultMessage:\`Read aloud responses\`,description:\`Label for Linux read aloud setting\`}),m=t.formatMessage({id:\`settings.general.readAloud.chooseFolder\`,defaultMessage:\`Choose folder\`,description:\`Button label for choosing an existing Kokoro model folder\`}),h=t.formatMessage({id:\`settings.general.readAloud.downloadVoice\`,defaultMessage:\`Download voice\`,description:\`Button label for downloading the Kokoro voice model\`}),g=t.formatMessage({id:\`settings.general.readAloud.pace.label\`,defaultMessage:\`Speech pace\`,description:\`Label for Linux read aloud pace setting\`}),x=t.formatMessage({id:\`settings.general.readAloud.help\`,defaultMessage:\`Choose folder expects kokoro-v1.0.onnx and voices-v1.0.bin. Download voice creates a managed Python runtime and downloads the Kokoro files from Hugging Face.\`,description:\`Help text for Linux read aloud setup actions\`}),_=n=>{P(e,${JSON.stringify(KOKORO_SPEED_KEY)},codexLinuxReadAloudPaceValue(n.currentTarget.value))},v=\`rounded-md border border-token-border px-2 py-1 text-sm text-token-text-primary hover:bg-token-surface-secondary disabled:opacity-60\`,y=\`h-2 w-36 accent-token-text-primary\`,b=(0,$.jsxs)(\`div\`,{className:\`flex items-center justify-end gap-2\`,children:[(0,$.jsx)(\`input\`,{type:\`range\`,min:.7,max:1.4,step:.05,value:s,disabled:a,onChange:_,"aria-label":g,className:y}),(0,$.jsx)(\`span\`,{className:\`w-12 text-right text-sm text-token-text-secondary\`,children:\`\${s.toFixed(2)}x\`})]});return(0,$.jsxs)($.Fragment,{children:[(0,$.jsx)(J,{label:c,description:l,control:(0,$.jsxs)(\`div\`,{className:\`flex flex-wrap items-center justify-end gap-2\`,children:[(0,$.jsx)(q,{checked:o,disabled:r,onChange:f,ariaLabel:p}),o?(0,$.jsxs)(\`div\`,{className:\`flex flex-wrap items-center justify-end gap-2\`,children:[(0,$.jsx)(\`button\`,{type:\`button\`,className:v,onClick:e=>globalThis.${SETUP_MARKER}?.(\`choose-folder\`,e.currentTarget),children:m}),(0,$.jsx)(\`button\`,{type:\`button\`,className:v,onClick:e=>globalThis.${SETUP_MARKER}?.(\`download\`,e.currentTarget),children:h}),(0,$.jsx)(\`span\`,{className:\`inline-flex h-7 w-7 select-none items-center justify-center rounded-full border border-token-border text-sm text-token-text-secondary\`,title:x,"aria-label":x,children:\`?\`})]}):null]})}),o?(0,$.jsx)(J,{label:u,description:d,control:b}):null]})}`;
-}
-
-function generalSettingsReadAloudPageSource() {
-  return `function codexLinuxReadAloudSettingsPage(){return(0,$.jsx)(pt,{title:(0,$.jsx)(F,{id:\`settings.readAloud.title\`,defaultMessage:\`Read Aloud\`,description:\`Title for Linux read aloud settings section\`}),subtitle:(0,$.jsx)(F,{id:\`settings.readAloud.subtitle\`,defaultMessage:\`Listen to assistant responses with a local Kokoro voice.\`,description:\`Subtitle for Linux read aloud settings section\`}),children:(0,$.jsx)(K,{electron:!0,children:(0,$.jsxs)(Y,{children:[(0,$.jsx)(Y.Header,{title:(0,$.jsx)(F,{id:\`settings.readAloud.voice.title\`,defaultMessage:\`Voice\`,description:\`Title for Linux read aloud voice settings group\`})}),(0,$.jsx)(Y.Content,{children:(0,$.jsx)(ht,{children:(0,$.jsx)(codexLinuxReadAloudSettingsRow,{})})})]})})})}`;
-}
-
-function generalSettingsReadAloudBlockSource() {
-  return `${generalSettingsReadAloudRowSource()}${generalSettingsReadAloudPageSource()}`;
-}
-
-function importAlias(source, assetPrefix, exportName) {
-  const escapedPrefix = assetPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`import\\{([^}]*)\\}from"\\.\\/${escapedPrefix}-[^"]+\\.js";`));
-  if (match == null) {
-    return null;
-  }
-  for (const part of match[1].split(",")) {
-    const trimmed = part.trim();
-    const aliased = trimmed.match(/^([A-Za-z_$][\w$]*) as ([A-Za-z_$][\w$]*)$/);
-    if (aliased != null && aliased[1] === exportName) {
-      return aliased[2];
-    }
-    if (trimmed === exportName) {
-      return exportName;
-    }
-  }
-  return null;
-}
-
-function detectJsxAlias(source) {
-  const jsxFactory = importAlias(source, "jsx-runtime", "t");
-  if (jsxFactory != null) {
-    const match = source.match(new RegExp(`\\b([A-Za-z_$][\\w$]*)=${jsxFactory}\\(\\)`));
-    if (match != null) {
-      return match[1];
-    }
-  }
-  return "$";
-}
-
-function detectReactAlias(source) {
-  const reactFactory = importAlias(source, "jsx-runtime", "n");
-  if (reactFactory != null) {
-    const match = source.match(new RegExp(`\\b([A-Za-z_$][\\w$]*)=[A-Za-z_$][\\w$]*\\(${reactFactory}\\(\\),1\\)`));
-    if (match != null) {
-      return match[1];
-    }
-  }
-  const currentRuntime = source.match(/\b([A-Za-z_$][\w$]*)=t\(f\(\),1\)/);
-  return currentRuntime?.[1] ?? "X";
-}
-
-function settingsRowAlias(source) {
-  return importAlias(source, "settings-row", "r") ?? importAlias(source, "settings-row", "n") ?? "J";
-}
-
-function formatHookAlias(source) {
-  return importAlias(source, "lib", "l") ?? importAlias(source, "lib", "c") ?? "N";
-}
-
-function formattedMessageAlias(source) {
-  return importAlias(source, "lib", "s") ?? importAlias(source, "lib", "o") ?? "P";
-}
-
-function currentSettingsAliasesNeedRefresh(source) {
-  const jsx = detectJsxAlias(source);
-  const settingsRow = settingsRowAlias(source);
-  const formatHook = formatHookAlias(source);
-  const formattedMessage = formattedMessageAlias(source);
-  return !(
-    source.includes(`(0,${jsx}.jsx)(${settingsRow},{label:l,`) &&
-    source.includes(`c=${formatHook}();`) &&
-    source.includes("codexLinuxReadAloudChooseFolderLabel=c.formatMessage") &&
-    source.includes(`(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.general.readAloud.label\``) &&
-    source.includes(`(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.readAloud.title\``)
-  );
-}
-
-function currentGeneralSettingsReadAloudBlockSource(source) {
-  const jsx = detectJsxAlias(source);
-  const react = detectReactAlias(source);
-  const settingsPage = importAlias(source, "settings-content-layout", "t") ?? "St";
-  const settingsRow = settingsRowAlias(source);
-  const toggle = importAlias(source, "toggle", "t") ?? "G";
-  const formatHook = formatHookAlias(source);
-  const formattedMessage = formattedMessageAlias(source);
-  const postGlobalState = importAlias(source, "vscode-api", "n") ?? "k";
-
-  return `/*${CURRENT_SETTINGS_BLOCK_MARKER}*/function codexLinuxReadAloudPaceValue(e){let t=Number(e);return Number.isFinite(t)?Math.min(1.4,Math.max(.7,Math.round(t*20)/20)):1.05}function codexLinuxReadAloudSettingsRow(){let[e,t]=(0,${react}.useState)(!1),[n,r]=(0,${react}.useState)(1.05),[i,a]=(0,${react}.useState)(!0),[o,s]=(0,${react}.useState)(null),c=${formatHook}();(0,${react}.useEffect)(()=>{let e=!0;return a(!0),Promise.all([${postGlobalState}(\`get-global-state\`,{params:{key:${JSON.stringify(SETTINGS_KEY)}}}),${postGlobalState}(\`get-global-state\`,{params:{key:${JSON.stringify(KOKORO_SPEED_KEY)}}})]).then(([n,i])=>{e&&(t(n?.value===!0),r(codexLinuxReadAloudPaceValue(i?.value??1.05)),s(null))}).catch(t=>{e&&s(t instanceof Error?t.message:String(t))}).finally(()=>{e&&a(!1)}),()=>{e=!1}},[]);let l=(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.general.readAloud.label\`,defaultMessage:\`Read aloud responses\`,description:\`Label for Linux read aloud setting\`}),u=(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.general.readAloud.description\`,defaultMessage:\`Show a read aloud button under assistant responses. If the Kokoro voice files are missing, choose a local folder or download them.\`,description:\`Description for Linux read aloud setting\`}),d=(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.general.readAloud.pace.label\`,defaultMessage:\`Speech pace\`,description:\`Label for Linux read aloud pace setting\`}),f=(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.general.readAloud.pace.description\`,defaultMessage:\`Adjust the read aloud speed\`,description:\`Description for Linux read aloud pace setting\`}),codexLinuxReadAloudToggleLabel=c.formatMessage({id:\`settings.general.readAloud.label\`,defaultMessage:\`Read aloud responses\`,description:\`Label for Linux read aloud setting\`}),codexLinuxReadAloudChooseFolderLabel=c.formatMessage({id:\`settings.general.readAloud.chooseFolder\`,defaultMessage:\`Choose folder\`,description:\`Button label for choosing an existing Kokoro model folder\`}),codexLinuxReadAloudDownloadVoiceLabel=c.formatMessage({id:\`settings.general.readAloud.downloadVoice\`,defaultMessage:\`Download voice\`,description:\`Button label for downloading the Kokoro voice model\`}),codexLinuxReadAloudPaceLabel=c.formatMessage({id:\`settings.general.readAloud.pace.label\`,defaultMessage:\`Speech pace\`,description:\`Label for Linux read aloud pace setting\`}),codexLinuxReadAloudHelpLabel=c.formatMessage({id:\`settings.general.readAloud.help\`,defaultMessage:\`Choose folder expects kokoro-v1.0.onnx and voices-v1.0.bin. Download voice creates a managed Python runtime and downloads the Kokoro files from Hugging Face.\`,description:\`Help text for Linux read aloud setup actions\`}),v=e=>{let n=e;t(n),s(null),${postGlobalState}(\`set-global-state\`,{params:{key:${JSON.stringify(SETTINGS_KEY)},value:n}}).catch(e=>{t(!n),s(e instanceof Error?e.message:String(e))})},y=e=>{let t=codexLinuxReadAloudPaceValue(e.currentTarget.value);r(t),s(null),${postGlobalState}(\`set-global-state\`,{params:{key:${JSON.stringify(KOKORO_SPEED_KEY)},value:t}}).catch(e=>{s(e instanceof Error?e.message:String(e))})},b=\`rounded-md border border-token-border px-2 py-1 text-sm text-token-text-primary hover:bg-token-surface-secondary disabled:opacity-60\`,x=(0,${jsx}.jsxs)(\`div\`,{className:\`flex items-center justify-end gap-2\`,children:[(0,${jsx}.jsx)(\`input\`,{type:\`range\`,min:.7,max:1.4,step:.05,value:n,disabled:i,onChange:y,"aria-label":codexLinuxReadAloudPaceLabel,className:\`h-2 w-36 accent-token-text-primary\`}),(0,${jsx}.jsx)(\`span\`,{className:\`w-12 text-right text-sm text-token-text-secondary\`,children:\`\${n.toFixed(2)}x\`})]}),C=o?(0,${jsx}.jsx)(\`div\`,{className:\`text-sm text-token-text-secondary\`,children:o}):null;return(0,${jsx}.jsxs)(${jsx}.Fragment,{children:[(0,${jsx}.jsx)(${settingsRow},{label:l,description:(0,${jsx}.jsxs)(${jsx}.Fragment,{children:[u,C]}),control:(0,${jsx}.jsxs)(\`div\`,{className:\`flex flex-wrap items-center justify-end gap-2\`,children:[(0,${jsx}.jsx)(${toggle},{checked:e===!0,disabled:i,onChange:v,ariaLabel:codexLinuxReadAloudToggleLabel}),e?(0,${jsx}.jsxs)(\`div\`,{className:\`flex flex-wrap items-center justify-end gap-2\`,children:[(0,${jsx}.jsx)(\`button\`,{type:\`button\`,className:b,onClick:e=>globalThis.${SETUP_MARKER}?.(\`choose-folder\`,e.currentTarget),children:codexLinuxReadAloudChooseFolderLabel}),(0,${jsx}.jsx)(\`button\`,{type:\`button\`,className:b,onClick:e=>globalThis.${SETUP_MARKER}?.(\`download\`,e.currentTarget),children:codexLinuxReadAloudDownloadVoiceLabel}),(0,${jsx}.jsx)(\`span\`,{className:\`inline-flex h-7 w-7 select-none items-center justify-center rounded-full border border-token-border text-sm text-token-text-secondary\`,title:codexLinuxReadAloudHelpLabel,"aria-label":codexLinuxReadAloudHelpLabel,children:\`?\`})]}):null]})}),e?(0,${jsx}.jsx)(${settingsRow},{label:d,description:f,control:x}):null]})}function codexLinuxReadAloudSettingsPage(){return(0,${jsx}.jsx)(${settingsPage},{title:(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.readAloud.title\`,defaultMessage:\`Read Aloud\`,description:\`Title for Linux read aloud settings section\`}),subtitle:(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.readAloud.subtitle\`,defaultMessage:\`Listen to assistant responses with a local Kokoro voice.\`,description:\`Subtitle for Linux read aloud settings section\`}),children:(0,${jsx}.jsx)(\`div\`,{className:\`max-w-3xl\`,children:(0,${jsx}.jsx)(codexLinuxReadAloudSettingsRow,{})})})}`;
-}
-
-function officialGeneralSettingsReadAloudBlockSource(source) {
-  const jsx = source.match(/function [A-Za-z_$][\w$]*\(\)\{[^{}]{0,200}\(0,([A-Za-z_$][\w$]*)\.jsx\)\(/)?.[1] ?? "$";
-  const react = detectReactAlias(source);
-  const settingsPage = source.match(/function [A-Za-z_$][\w$]*\(\)\{[^{}]{0,200}\.jsx\)\(([A-Za-z_$][\w$]*),\{title:/)?.[1] ?? "dt";
-  const settingsRow = source.match(/\.jsx\)\(([A-Za-z_$][\w$]*),\{label:[A-Za-z_$]/)?.[1] ?? "R";
-  const toggle = source.match(/\.jsx\)\(([A-Za-z_$][\w$]*),\{checked:[^{}]{0,200}onChange:/)?.[1] ?? "He";
-  const formattedMessage = source.match(/\.jsx\)\(([A-Za-z_$][\w$]*),\{id:`settings\./)?.[1] ?? "W";
-  return `/*${CURRENT_SETTINGS_BLOCK_MARKER}*/function codexLinuxReadAloudPaceValue(e){let t=Number(e);return Number.isFinite(t)?Math.min(1.4,Math.max(.7,Math.round(t*20)/20)):1.05}function codexLinuxReadAloudSettingsRow(){let[e,t]=(0,${react}.useState)(!1),[n,r]=(0,${react}.useState)(1.05),[i,a]=(0,${react}.useState)(!0),[o,s]=(0,${react}.useState)(null);(0,${react}.useEffect)(()=>{let e=!0;return a(!0),Promise.all([globalThis.codexLinuxReadAloudGetSetting?.(${JSON.stringify(SETTINGS_KEY)}),globalThis.codexLinuxReadAloudGetSetting?.(${JSON.stringify(KOKORO_SPEED_KEY)})]).then(([n,i])=>{e&&(t(n===!0),r(codexLinuxReadAloudPaceValue(i??1.05)),s(null))}).catch(t=>{e&&s(t instanceof Error?t.message:String(t))}).finally(()=>{e&&a(!1)}),()=>{e=!1}},[]);let l=(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.general.readAloud.label\`,defaultMessage:\`Read aloud responses\`,description:\`Label for Linux read aloud setting\`}),u=(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.general.readAloud.description\`,defaultMessage:\`Show a read aloud button under assistant responses.\`,description:\`Description for Linux read aloud setting\`}),d=e=>{let n=e;t(n),s(null),Promise.resolve(globalThis.codexLinuxReadAloudSetSetting?.(${JSON.stringify(SETTINGS_KEY)},n)).catch(e=>{t(!n),s(e instanceof Error?e.message:String(e))})},f=e=>{let t=codexLinuxReadAloudPaceValue(e.currentTarget.value);r(t),s(null),Promise.resolve(globalThis.codexLinuxReadAloudSetSetting?.(${JSON.stringify(KOKORO_SPEED_KEY)},t)).catch(e=>{s(e instanceof Error?e.message:String(e))})},p=\`rounded-md border border-token-border px-2 py-1 text-sm text-token-text-primary hover:bg-token-surface-secondary disabled:opacity-60\`,m=o?(0,${jsx}.jsx)(\`div\`,{className:\`text-sm text-token-text-secondary\`,children:o}):null;return(0,${jsx}.jsxs)(${jsx}.Fragment,{children:[(0,${jsx}.jsx)(${settingsRow},{label:l,description:(0,${jsx}.jsxs)(${jsx}.Fragment,{children:[u,m]}),control:(0,${jsx}.jsxs)(\`div\`,{className:\`flex flex-wrap items-center justify-end gap-2\`,children:[(0,${jsx}.jsx)(${toggle},{checked:e===!0,disabled:i,onChange:d,ariaLabel:\`Read aloud responses\`}),e?(0,${jsx}.jsxs)(\`div\`,{className:\`flex flex-wrap items-center justify-end gap-2\`,children:[(0,${jsx}.jsx)(\`button\`,{type:\`button\`,className:p,onClick:e=>globalThis.${SETUP_MARKER}?.(\`choose-folder\`,e.currentTarget),children:\`Choose folder\`}),(0,${jsx}.jsx)(\`button\`,{type:\`button\`,className:p,onClick:e=>globalThis.${SETUP_MARKER}?.(\`download\`,e.currentTarget),children:\`Download voice\`})]}):null]})}),e?(0,${jsx}.jsx)(${settingsRow},{label:\`Speech pace\`,description:\`Adjust the read aloud speed\`,control:(0,${jsx}.jsxs)(\`div\`,{className:\`flex items-center justify-end gap-2\`,children:[(0,${jsx}.jsx)(\`input\`,{type:\`range\`,min:.7,max:1.4,step:.05,value:n,disabled:i,onChange:f,"aria-label":\`Speech pace\`,className:\`h-2 w-36 accent-token-text-primary\`}),(0,${jsx}.jsx)(\`span\`,{className:\`w-12 text-right text-sm text-token-text-secondary\`,children:\`\${n.toFixed(2)}x\`})]})}):null]})}function codexLinuxReadAloudSettingsPage(){return(0,${jsx}.jsx)(${settingsPage},{title:(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.readAloud.title\`,defaultMessage:\`Read Aloud\`,description:\`Title for Linux read aloud settings section\`}),subtitle:(0,${jsx}.jsx)(${formattedMessage},{id:\`settings.readAloud.subtitle\`,defaultMessage:\`Listen to assistant responses with a local Kokoro voice.\`,description:\`Subtitle for Linux read aloud settings section\`}),children:(0,${jsx}.jsx)(\`div\`,{className:\`max-w-3xl\`,children:(0,${jsx}.jsx)(codexLinuxReadAloudSettingsRow,{})})})}`;
-}
-
-function exportedGeneralSettingsFunctionName(source) {
-  const exportMatch = source.match(/export\{([^}]*)\};/);
-  if (exportMatch == null) {
-    return null;
-  }
-  const officialSettingsPage = source.match(
-    /function ([A-Za-z_$][\w$]*)\(\)\{[\s\S]{0,500}?slug:`general-settings`/,
-  )?.[1];
-  if (
-    officialSettingsPage != null &&
-    exportMatch[1].split(",").some((entry) =>
-      entry.trim() === `${officialSettingsPage} as i`)
-  ) {
-    return officialSettingsPage;
-  }
-  for (const exportEntry of exportMatch[1].split(",")) {
-    const match = exportEntry.trim().match(/^([A-Za-z_$][\w$]*) as r$/);
-    if (match != null) {
-      return match[1];
-    }
-  }
-  return null;
-}
-
-function replaceExistingGeneralSettingsReadAloudRow(source, functionName, blockSource) {
-  const rowStart = source.indexOf("function codexLinuxReadAloudSettingsRow(){");
-  if (rowStart === -1) {
-    return source;
-  }
-  const paceStart = source.indexOf("function codexLinuxReadAloudPaceValue(");
-  let start = paceStart !== -1 && paceStart < rowStart ? paceStart : rowStart;
-  const end = source.indexOf(`function ${functionName}(){`, rowStart);
-  if (end === -1) {
-    return source;
-  }
-  const marker = `/*${CURRENT_SETTINGS_BLOCK_MARKER}*/`;
-  const markerStart = source.lastIndexOf(marker, start);
-  if (markerStart !== -1 && source.slice(markerStart + marker.length, start).trim() === "") {
-    start = markerStart;
-  }
-  return `${source.slice(0, start)}${blockSource}${source.slice(end)}`;
-}
-
-function removeGeneralSettingsRowPlacement(source) {
-  return source
-    .replace(GENERAL_SETTINGS_CHILDREN_WITH_ROW, GENERAL_SETTINGS_CHILDREN)
-    .replace(GENERAL_SETTINGS_CHILDREN_WITH_OLD_ROW, GENERAL_SETTINGS_CHILDREN);
-}
-
-function applyGeneralSettingsPatch(source) {
-  const functionName = exportedGeneralSettingsFunctionName(source) ?? (source.includes("function Gn(){") ? "Gn" : null);
-  if (functionName == null) {
-    return source;
-  }
-  const functionNeedle = `function ${functionName}(){`;
-  if (!source.includes(functionNeedle)) {
-    return source;
-  }
-  const officialLinuxBundle = functionName !== "Gn" && source.includes(`slug:\`general-settings\``);
-  const blockSource = officialLinuxBundle
-    ? officialGeneralSettingsReadAloudBlockSource(source)
-    : functionName === "Gn"
-    ? generalSettingsReadAloudBlockSource()
-    : currentGeneralSettingsReadAloudBlockSource(source);
-  let patched = source;
-  if (patched.includes(SETTINGS_KEY)) {
-    const needsCurrentAliasRefresh =
-      functionName !== "Gn" &&
-      patched.includes("function codexLinuxReadAloudSettingsPage") &&
-      !patched.includes(CURRENT_SETTINGS_BLOCK_MARKER);
-    const needsCurrentSettingsAliasRefresh =
-      functionName !== "Gn" &&
-      patched.includes(CURRENT_SETTINGS_BLOCK_MARKER) &&
-      currentSettingsAliasesNeedRefresh(patched);
-    if (
-      needsCurrentAliasRefresh ||
-      needsCurrentSettingsAliasRefresh ||
-      !patched.includes(KOKORO_SPEED_KEY) ||
-      !patched.includes("settings.general.readAloud.chooseFolder") ||
-      !patched.includes("settings.general.readAloud.help") ||
-      !patched.includes("function codexLinuxReadAloudSettingsPage")
-    ) {
-      patched = replaceExistingGeneralSettingsReadAloudRow(patched, functionName, blockSource);
-    }
-  } else {
-    patched = patched.replace(functionNeedle, `${blockSource}${functionNeedle}`);
-  }
-  if (officialLinuxBundle) {
-    const bodyStart = patched.indexOf("function ", patched.indexOf(functionNeedle) + functionNeedle.length);
-    const bodyEnd = bodyStart === -1 ? -1 : patched.indexOf("function ", bodyStart + 9);
-    if (bodyStart !== -1 && bodyEnd !== -1) {
-      const body = patched.slice(bodyStart, bodyEnd);
-      const jsx = detectJsxAlias(patched);
-      const rowAnchor = new RegExp(
-        `,\\(0,${jsx.replace(/[$]/g, "\\$")}\\.jsx\\)\\([A-Za-z_$][\\w$]*,\\{\\}\\),(?=[A-Za-z_$][\\w$]*&&[A-Za-z_$][\\w$]*\\?)`,
-      );
-      if (!body.includes("codexLinuxReadAloudSettingsRow,{})") && rowAnchor.test(body)) {
-        const updatedBody = body.replace(
-          rowAnchor,
-          (anchor) => `,(0,${jsx}.jsx)(codexLinuxReadAloudSettingsRow,{})${anchor}`,
-        );
-        patched = `${patched.slice(0, bodyStart)}${updatedBody}${patched.slice(bodyEnd)}`;
-      }
-    }
-  }
-  return ensureReadAloudRuntime(applyGeneralSettingsExportPatch(removeGeneralSettingsRowPlacement(patched)));
-}
-
-function applyGeneralSettingsExportPatch(source) {
-  if (source.includes("codexLinuxReadAloudSettingsPage as ReadAloudSettings")) {
-    return source;
-  }
-  const currentExport = "export{Yn as i,Jn as n,Gn as r,fr as t};";
-  const patchedExport = "export{Yn as i,Jn as n,Gn as r,fr as t,codexLinuxReadAloudSettingsPage as ReadAloudSettings};";
-  if (source.includes(currentExport)) {
-    return source.replace(currentExport, patchedExport);
-  }
-  const exportPattern = /export\{([^}]*)\};/;
-  if (exportPattern.test(source)) {
-    return source.replace(exportPattern, (_match, exports) =>
-      exports.includes("codexLinuxReadAloudSettingsPage as ReadAloudSettings")
-        ? _match
-        : `export{${exports},codexLinuxReadAloudSettingsPage as ReadAloudSettings};`,
-    );
-  }
-  return source;
-}
-
-function applyGeneralSettingsWrapperPatch(source) {
-  if (!source.includes("GeneralSettings") || !source.includes("general-settings-")) {
-    return source;
-  }
-  const wrapperSource = (generalAlias, readAloudAlias, innerAsset) =>
-    `import{r as ${generalAlias},ReadAloudSettings as ${readAloudAlias}}from"${innerAsset}";export{${generalAlias} as GeneralSettings,${readAloudAlias} as ReadAloudSettings};`;
-  const correctWrapperPattern =
-    /import\{r as ([A-Za-z_$][\w$]*),ReadAloudSettings as ([A-Za-z_$][\w$]*)\}from"(\.\/general-settings-[^"]+\.js)";export\{\1 as GeneralSettings,\2 as ReadAloudSettings\};/;
-  if (correctWrapperPattern.test(source)) {
-    return source;
-  }
-  const wrapperRegex =
-    /import\{r as ([A-Za-z_$][\w$]*)\}from"(\.\/general-settings-[^"]+\.js)";/;
-  const wrapperMatch = source.match(wrapperRegex);
-  if (wrapperMatch == null) {
-    return source;
-  }
-  const [, generalAlias, innerAsset] = wrapperMatch;
-  const readAloudAlias = "codexLinuxReadAloudSettings";
-  const exportRegex = new RegExp(
-    `export\\{${generalAlias} as GeneralSettings(?:,${generalAlias} as ReadAloudSettings)?\\};`,
-  );
-  if (!exportRegex.test(source)) {
-    return source;
-  }
-  return source
-    .replace(wrapperRegex, `import{r as ${generalAlias},ReadAloudSettings as ${readAloudAlias}}from"${innerAsset}";`)
-    .replace(exportRegex, `export{${generalAlias} as GeneralSettings,${readAloudAlias} as ReadAloudSettings};`);
-}
-
-function applySettingsSectionsNavPatch(source) {
-  if (source.includes(`slug:\`${READ_ALOUD_SETTINGS_SLUG}\``)) {
-    return source;
-  }
-  const slugNeedle = "{slug:`computer-use`},{slug:`mcp-settings`}";
-  if (source.includes(slugNeedle)) {
-    return source.replace(
-      slugNeedle,
-      `{slug:\`computer-use\`},{slug:\`${READ_ALOUD_SETTINGS_SLUG}\`},{slug:\`mcp-settings\`}`,
-    );
-  }
-  return source;
-}
-
-function applySettingsSharedNavPatch(source) {
-  let patched = source;
-  if (!patched.includes("settings.nav.read-aloud-settings")) {
-    const navNeedle =
-      '"computer-use":{id:`settings.nav.computer-use`,defaultMessage:`Computer use`,description:`Title for computer use settings section`},';
-    const navPatch =
-      `${navNeedle}"read-aloud-settings":{id:\`settings.nav.read-aloud-settings\`,defaultMessage:\`Read Aloud\`,description:\`Title for Read Aloud settings section\`},`;
-    patched = patched.replace(navNeedle, navPatch);
-  }
-  if (!patched.includes("settings.section.read-aloud-settings")) {
-    const sectionNeedle = "case`browser-use`:{";
-    const sectionPatch =
-      "case`read-aloud-settings`:{return (0,d.jsx)(r,{id:`settings.section.read-aloud-settings`,defaultMessage:`Read Aloud`,description:`Title for Read Aloud settings section`})}case`browser-use`:{";
-    patched = patched.replace(sectionNeedle, sectionPatch);
-  }
-  return patched;
-}
-
-function detectSettingsPageJsxRuntime(source) {
-  const iconMatch = source.match(
-    /(?:var |let |const |[,;(])([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*=>\(0,([A-Za-z_$][\w$]*)\.jsxs\)\(\`svg\`,/,
-  );
-  return iconMatch?.[2] ?? "Z";
-}
-
-function readAloudSettingsNavIconExpression(jsxVar = "Z", fallbackIcon = null) {
-  const customIcon = `(0,${jsxVar}.jsxs)(\`svg\`,{width:16,height:16,viewBox:\`0 0 16 16\`,fill:\`none\`,xmlns:\`http://www.w3.org/2000/svg\`,...e,children:[(0,${jsxVar}.jsx)(\`path\`,{d:\`M7.25 3.25 4.35 5.7H2.75A1.25 1.25 0 0 0 1.5 6.95v2.1c0 .69.56 1.25 1.25 1.25h1.6l2.9 2.45c.5.42 1.25.06 1.25-.59V3.84c0-.65-.75-1.01-1.25-.59Z\`,fill:\`currentColor\`}),(0,${jsxVar}.jsx)(\`path\`,{d:\`M10.25 6.1a2.7 2.7 0 0 1 0 3.8\`,stroke:\`currentColor\`,strokeWidth:1.2,strokeLinecap:\`round\`}),(0,${jsxVar}.jsx)(\`path\`,{d:\`M12.25 4.45a5.05 5.05 0 0 1 0 7.1\`,stroke:\`currentColor\`,strokeWidth:1.2,strokeLinecap:\`round\`})]})`;
-  if (fallbackIcon == null) {
-    return `(e=>${customIcon})`;
-  }
-  return `(e=>{try{return ${customIcon}}catch(t){return ${fallbackIcon}(e)}})`;
-}
-
-function hasReadAloudSettingsIconDeclaration(source) {
-  return /(?:^|[;\n])\s*(?:var|let|const)\s+codexLinuxReadAloudSettingsIcon(?:[=,;])/.test(source);
-}
-
-function declareLegacyReadAloudSettingsIconIfNeeded(source) {
-  if (
-    !source.includes("codexLinuxReadAloudSettingsIcon=e=>") ||
-    hasReadAloudSettingsIconDeclaration(source)
-  ) {
-    return source;
-  }
-  let insertionIndex = 0;
-  while (source.startsWith("import", insertionIndex)) {
-    const statementEnd = source.indexOf(";", insertionIndex);
-    if (statementEnd === -1) {
-      break;
-    }
-    insertionIndex = statementEnd + 1;
-  }
-  return `${source.slice(0, insertionIndex)}var codexLinuxReadAloudSettingsIcon;${source.slice(insertionIndex)}`;
-}
-
-function applySettingsPageNavPatch(source) {
-  let patched = declareLegacyReadAloudSettingsIconIfNeeded(source);
-  const jsxVar = detectSettingsPageJsxRuntime(patched);
-  const staleReadAloudIconRegex =
-    /("computer-use":([A-Za-z_$][\w$]*),"read-aloud-settings":)(codexLinuxReadAloudSettingsIcon|[A-Za-z_$][\w$]*)(,"local-environments")/;
-  if (staleReadAloudIconRegex.test(patched)) {
-    patched = patched.replace(
-      staleReadAloudIconRegex,
-      (_match, prefix, computerUseIcon, _staleIcon, suffix) =>
-        `${prefix}${readAloudSettingsNavIconExpression(jsxVar, computerUseIcon)}${suffix}`,
-    );
-  } else if (!patched.includes(`"read-aloud-settings":`)) {
-    const iconMapRegex =
-      /("browser-use":[A-Za-z_$][\w$]*,"computer-use":([A-Za-z_$][\w$]*),)(?!"read-aloud-settings":)/;
-    if (iconMapRegex.test(patched)) {
-      patched = patched.replace(
-        iconMapRegex,
-        (_match, prefix, computerUseIcon) =>
-          `${prefix}"read-aloud-settings":${readAloudSettingsNavIconExpression(
-            jsxVar,
-            computerUseIcon,
-          )},`,
-      );
-    } else {
-      patched = patched.replace(
-        `"computer-use":oe,"local-environments"`,
-        `"computer-use":oe,"read-aloud-settings":${readAloudSettingsNavIconExpression(
-          jsxVar,
-          "oe",
-        )},"local-environments"`,
-      );
-      patched = patched.replace(
-        `"computer-use":oe,"read-aloud-settings":G,"local-environments"`,
-        `"computer-use":oe,"read-aloud-settings":${readAloudSettingsNavIconExpression(
-          jsxVar,
-          "oe",
-        )},"local-environments"`,
-      );
-    }
-  }
-  if (!patched.includes("`computer-use`,`read-aloud-settings`,`data-controls`")) {
-    patched = patched.replace(
-      "`browser-use`,`computer-use`,`data-controls`",
-      "`browser-use`,`computer-use`,`read-aloud-settings`,`data-controls`",
-    );
-  }
-  if (!patched.includes("`computer-use`,`read-aloud-settings`,`local-environments`")) {
-    patched = patched.replace(
-      "`browser-use`,`computer-use`,`local-environments`",
-      "`browser-use`,`computer-use`,`read-aloud-settings`,`local-environments`",
-    );
-  }
-  if (!patched.includes("case`read-aloud-settings`:return!0;case`computer-use`")) {
-    const staleVisibilityRegex =
-      /case`read-aloud-settings`:return[^;]+;(case`computer-use`:return\s*[A-Za-z_$][\w$]*;)/;
-    const currentVisibilityRegex = /(case`computer-use`:return\s*[A-Za-z_$][\w$]*;)/;
-    if (staleVisibilityRegex.test(patched)) {
-      patched = patched.replace(staleVisibilityRegex, "case`read-aloud-settings`:return!0;$1");
-    } else {
-      patched = patched.replace(
-        currentVisibilityRegex,
-        "case`read-aloud-settings`:return!0;$1",
-      );
-    }
-  }
-  if (!/case`read-aloud-settings`:[A-Za-z_$][\w$]*=!1;break bb0;case`computer-use`/.test(patched)) {
-    const currentLoadingCaseRegex =
-      /case`computer-use`:([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.isLoading\|\|([A-Za-z_$][\w$]*)\.isLoading;break bb0;/;
-    if (currentLoadingCaseRegex.test(patched)) {
-      patched = patched.replace(
-        currentLoadingCaseRegex,
-        "case`read-aloud-settings`:$1=!1;break bb0;case`computer-use`:$1=$2.isLoading||$3.isLoading;break bb0;",
-      );
-    } else {
-      patched = patched.replace(
-        "case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
-        "case`read-aloud-settings`:z=!1;break bb0;case`computer-use`:z=k.isLoading||m.isLoading;break bb0;",
-      );
-    }
-  }
-  return patched;
-}
-
-function applyAppMainRoutePatch(source) {
-  if (source.includes(`"${READ_ALOUD_SETTINGS_SLUG}":`)) {
-    return source;
-  }
-  const generalRouteStart = source.indexOf('"general-settings":');
-  if (generalRouteStart === -1) {
-    return source;
-  }
-  const nextRouteStart = source.indexOf(',"keyboard-shortcuts":', generalRouteStart);
-  if (nextRouteStart === -1) {
-    return source;
-  }
-  const generalRoute = source.slice(generalRouteStart, nextRouteStart);
-  const readAloudRoute = generalRoute
-    .replace('"general-settings":', `"${READ_ALOUD_SETTINGS_SLUG}":`)
-    .replace(/e=>\(\{default:e\.GeneralSettings\}\)/, "e=>({default:e.ReadAloudSettings})");
-  if (readAloudRoute === generalRoute || !readAloudRoute.includes("ReadAloudSettings")) {
-    return source;
-  }
-  return `${source.slice(0, generalRouteStart)}${readAloudRoute},${source.slice(generalRouteStart)}`;
-}
-
-function patchMatchingAssets(assetsDir, pattern, apply) {
-  let matched = false;
-  let changed = 0;
-  for (const candidate of fs.readdirSync(assetsDir).filter((name) => pattern.test(name)).sort()) {
-    const assetPath = path.join(assetsDir, candidate);
-    const source = fs.readFileSync(assetPath, "utf8");
-    const patched = apply(source);
-    if (patched === source) {
-      continue;
-    }
-    fs.writeFileSync(assetPath, patched, "utf8");
-    matched = true;
-    changed += 1;
-  }
-  return { matched, changed };
-}
-
-function applySettingsAssetPatch(extractedDir) {
-  let matched = false;
-  let changed = 0;
-  const keybindsAssetPath = path.join(extractedDir, "webview", "assets", "keybinds-settings-linux.js");
-  if (fs.existsSync(keybindsAssetPath)) {
-    const source = fs.readFileSync(keybindsAssetPath, "utf8");
-    const patched = applySettingsPatch(source);
-    matched = true;
-    if (patched !== source) {
-      fs.writeFileSync(keybindsAssetPath, patched, "utf8");
-      changed += 1;
-    }
-  }
-
-  const assetsDir = path.join(extractedDir, "webview", "assets");
-  if (!fs.existsSync(assetsDir)) {
-    return { matched, changed, reason: "webview assets directory not found" };
-  }
-
-  const linuxDesktopAssetPath = path.join(assetsDir, "linux-desktop-settings-linux.js");
-  if (fs.existsSync(linuxDesktopAssetPath)) {
-    const source = fs.readFileSync(linuxDesktopAssetPath, "utf8");
-    const patched = applyLinuxDesktopSettingsPatch(source);
-    if (patched !== source) {
-      fs.writeFileSync(linuxDesktopAssetPath, patched, "utf8");
-      changed += 1;
-      matched = true;
-    } else if (source.includes(SETTINGS_KEY) || source.includes("LinuxReadAloudSettings")) {
-      matched = true;
-    }
-  }
-
-  const generalCandidates = fs
-    .readdirSync(assetsDir)
-    .filter((name) => /^general-settings-.*\.js$/.test(name))
-    .sort();
-  for (const candidate of generalCandidates) {
-    const assetPath = path.join(assetsDir, candidate);
-    const source = fs.readFileSync(assetPath, "utf8");
-    let patched = applyGeneralSettingsPatch(source);
-    patched = applyGeneralSettingsWrapperPatch(patched);
-    if (patched !== source) {
-      fs.writeFileSync(assetPath, patched, "utf8");
-      changed += 1;
-      matched = true;
-    } else if (source.includes(SETTINGS_KEY) || source.includes("ReadAloudSettings")) {
-      matched = true;
-    }
-  }
-
-  for (const assetPatch of [
-    [/^settings-sections-.*\.js$/, applySettingsSectionsNavPatch],
-    [/^settings-shared-.*\.js$/, applySettingsSharedNavPatch],
-    [/^settings-page-.*\.js$/, applySettingsPageNavPatch],
-    [/^app-main-.*\.js$/, applyAppMainRoutePatch],
-  ]) {
-    const result = patchMatchingAssets(assetsDir, assetPatch[0], assetPatch[1]);
-    matched = matched || result.matched;
-    changed += result.changed;
-  }
-
-  return matched
-    ? { matched: true, changed }
-    : { matched: false, changed: 0, reason: "settings asset insertion point not found" };
-}
-
-function applyWebviewPatch(source) {
-  const contract = inspectAssistantRenderContract(source);
-  const assistantPatched = applyAssistantRenderPatch(source);
-  if (assistantPatched === source && contract.state !== "patched") {
-    return source;
-  }
-  return applyIndexRuntimePatch(assistantPatched);
+  return ensureReadAloudRuntime(source);
 }
 
 function applyAssistantAssetPatch(source) {
@@ -963,20 +359,80 @@ function matchesAssistantRuntimeContract(source) {
   return primaryThreadPartition && inspectAssistantRenderContract(source).state !== "invalid";
 }
 
+// Settings: the official General settings page wraps its content in a page
+// component titled by the `general-settings` slug. Read aloud adds one host
+// element between the page content and the trailing extras; the runtime owns
+// that element's DOM so the injected JSX references nothing but the module's
+// own JSX runtime.
+const GENERAL_SETTINGS_PAGE_NEEDLES = ['slug:"general-settings"', '"settings.general.groupTitle"'];
+const SETTINGS_MOUNT_CLASS = "codex-linux-read-aloud-settings-mount";
+const GENERAL_SETTINGS_PAGE_TITLE =
+  /\(0,([A-Za-z_$][\w$]*)\.jsx\)\([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?,\{slug:"general-settings"\}\)/g;
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function settingsMountSource(jsxVar) {
+  return `(0,${jsxVar}.jsx)("div",{className:${JSON.stringify(SETTINGS_MOUNT_CLASS)},ref:codexLinuxReadAloudSettingsRoot=>{codexLinuxReadAloudSettingsRoot&&globalThis.${SETTINGS_MOUNT_MARKER}?.(codexLinuxReadAloudSettingsRoot)}})`;
+}
+
+function inspectGeneralSettingsPage(source) {
+  const pages = [];
+  for (const title of source.matchAll(GENERAL_SETTINGS_PAGE_TITLE)) {
+    const jsx = title[1];
+    const bodyStart = title.index + title[0].length;
+    const nextFunction = source.indexOf("function ", bodyStart);
+    const body = source.slice(bodyStart, nextFunction === -1 ? source.length : nextFunction);
+    const mount = escapeRegExp(settingsMountSource(jsx));
+    // Other Linux settings features may lead the page children with their
+    // own self-contained marked components, such as
+    // `(0,n.jsx)(codexLinuxCommunityFeaturesInGuiSettings,{})`.
+    const linuxChildren = `(?:\\(0,${escapeRegExp(jsx)}\\.jsx\\)\\(codexLinux[A-Za-z]+,\\{\\}\\),)*`;
+    const pageCall = new RegExp(
+      `\\(0,${escapeRegExp(jsx)}\\.jsxs\\)\\([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?,\\{title:[A-Za-z_$][\\w$]*,children:\\[(${linuxChildren})([A-Za-z_$][\\w$]*),(${mount},)?([A-Za-z_$][\\w$]*)\\]\\}\\)`,
+      "g",
+    );
+    for (const call of body.matchAll(pageCall)) {
+      const children = call[0].indexOf("children:[") + "children:[".length;
+      pages.push({
+        jsx,
+        patched: call[3] != null,
+        insertAt: bodyStart + call.index + children + call[1].length + call[2].length + 1,
+      });
+    }
+  }
+  const mountCount = countOccurrences(source, SETTINGS_MOUNT_CLASS);
+  if (pages.length !== 1) return { state: "invalid", pages };
+  const [page] = pages;
+  if (page.patched && mountCount === 1) return { state: "patched", page };
+  if (!page.patched && mountCount === 0) return { state: "unpatched", page };
+  return { state: "invalid", pages };
+}
+
+function matchesGeneralSettingsPageContract(source) {
+  return inspectGeneralSettingsPage(source).state !== "invalid";
+}
+
+function applyGeneralSettingsPatch(source) {
+  const contract = inspectGeneralSettingsPage(source);
+  if (contract.state === "patched") return source;
+  if (contract.state !== "unpatched") {
+    warn("Could not find unique General settings page contract", "read aloud settings patch");
+    return source;
+  }
+  const { insertAt, jsx } = contract.page;
+  return `${source.slice(0, insertAt)}${settingsMountSource(jsx)},${source.slice(insertAt)}`;
+}
+
 module.exports = {
-  applyAppMainRoutePatch,
-  applyGeneralSettingsPatch,
-  applyGeneralSettingsWrapperPatch,
   applyAssistantRenderPatch,
-  matchesAssistantRuntimeContract,
+  applyGeneralSettingsPatch,
   applyIndexRuntimePatch,
   applyMainBundlePatch,
-  applySettingsAssetPatch,
-  applySettingsPageNavPatch,
-  applyLinuxDesktopSettingsPatch,
-  applySettingsPatch,
-  applySettingsSectionsNavPatch,
-  applySettingsSharedNavPatch,
+  applyRuntimeEntryPatch,
+  matchesAssistantRuntimeContract,
+  matchesGeneralSettingsPageContract,
   descriptors: [
     {
       id: "main-handler",
@@ -990,17 +446,17 @@ module.exports = {
       phase: "webview-asset",
       order: 20610,
       ciPolicy: "optional",
-      pattern: /^app-initial-[A-Za-z0-9_-]+\.js$/,
-      missingDescription: "official app-initial runtime bundle",
+      assetNeedles: RUNTIME_ENTRY_NEEDLES,
+      missingDescription: "rspack webview runtime entry",
       skipDescription: "read aloud webview runtime patch",
-      apply: applyIndexRuntimePatch,
+      apply: applyRuntimeEntryPatch,
     },
     {
       id: "assistant-runtime",
       phase: "webview-asset",
       order: 20620,
       ciPolicy: "optional",
-      pattern: /^[A-Za-z0-9_-]+\.js$/,
+      assetNeedles: ["collapsibleUnits:", "persistentUnits:", "assistantCopyText:"],
       assetMatch: matchesAssistantRuntimeContract,
       missingDescription: "current primary thread assistant bundle",
       skipDescription: "read aloud assistant runtime patch",
@@ -1008,18 +464,14 @@ module.exports = {
     },
     {
       id: "settings-toggle",
-      phase: "extracted-app:post-webview",
+      phase: "webview-asset",
       order: 20640,
       ciPolicy: "optional",
-      apply: applySettingsAssetPatch,
-      status: (result, warnings) => ({
-        status: result?.changed
-          ? "applied"
-          : result?.matched
-            ? "already-applied"
-            : "skipped-optional",
-        reason: result?.reason ?? warnings[0] ?? null,
-      }),
+      assetNeedles: GENERAL_SETTINGS_PAGE_NEEDLES,
+      assetMatch: matchesGeneralSettingsPageContract,
+      missingDescription: "General settings page bundle",
+      skipDescription: "read aloud settings patch",
+      apply: applyGeneralSettingsPatch,
     },
   ],
 };

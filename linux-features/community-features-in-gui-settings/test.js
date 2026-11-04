@@ -7,7 +7,10 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { spawnSync } = require("node:child_process");
-const { UI, descriptors, settingsContract, settingComponent, applySettingsPatch } = require("./patch.js");
+const {
+  UI, GENERAL_SETTINGS_NEEDLES, descriptors, settingsContract, settingComponent, applySettingsPatch,
+} = require("./patch.js");
+const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 const { buildFeatureTree, renderCommunityFeaturesInGuiSettings } = require("./runtime.js");
 const { loadLocaleResources, createTranslator } = require("./i18n.js");
 const { CATALOG_ASSET, CATALOG_NAME, SNAPSHOT_NAME, buildCatalog, validateCatalog,
@@ -35,12 +38,42 @@ function manifest(root, id, extra = {}) {
   return dir;
 }
 
-function settingsFixture() {
-  return 'function menu(e){let i=intlHook(),{platform:p}=platformHook(),v=useSetting(keys.macMenuBarEnabled);if(p!==`macOS`)return null;let label=i.formatMessage({id:`settings.general.macMenuBar.ariaLabel`});let c=(0,j.jsx)(Toggle,{checked:v,onChange:change,ariaLabel:label});return(0,j.jsx)(Row,{label:title,description:description,control:c})}' +
-    'function another(){let[e,t]=(0,React.useState)(!1)}var React=reactFactory();' +
-    'function general(){let header=(0,j.jsx)(Section.Header,{title:(0,j.jsx)(Message,{id:`settings.general.groupTitle`,defaultMessage:`General`})});return(0,j.jsxs)(Section,{children:[header,(0,j.jsx)(Section.Content,{children:(0,j.jsxs)(Stack,{children:[(0,j.jsx)(menu,{appName:appName})]})})]})}' +
-    'function generalPage(){let n=(0,j.jsx)(general,{}),title=(0,j.jsx)(PageTitle,{slug:`general-settings`}),i=(0,j.jsx)(Other,{});return(0,j.jsxs)(Page,{title:title,children:[n,i]})}var page=generalPage();/*settings.general.macMenuBar.description*/' +
-    'function licenses(){let label=`settings.openSourceLicenses.view`;return(0,j.jsx)(Button,{color:`secondary`,size:`toolbar`,onClick:show,children:label})}';
+// Rspack/SWC shape of the official General settings chunk: one module factory
+// imports its dependencies through the webpack require param, has two General
+// layouts that both render the macOS menu row, and a page with the
+// `general-settings` slug.
+const SETTINGS_MODULE =
+  'a.d(t,{GeneralSettings:()=>generalPage});var j=a("ABep"),r=a("QosV"),Ui=a("AWNZ"),msg=a("oyxz"),intlMod=a("Wf1j"),keys=a("DBCl"),settings=a("RxZZ");' +
+  'function menu(e){let{appName:d}=e,i=(0,intlMod.A)(),{platform:p}=(0,platMod.V)(),v=(0,settings.iK)(keys.U6S.macMenuBarEnabled);if("macOS"!==p)return null;let description=(0,j.jsx)(msg.A,{id:"settings.general.macMenuBar.description",values:{appName:d}}),label=i.formatMessage({id:"settings.general.macMenuBar.ariaLabel"}),c=(0,j.jsx)(Toggle,{checked:v,onChange:change,ariaLabel:label});return(0,j.jsx)(Ui.ic,{label:title,description:description,control:c})}' +
+  'var React=a("zd8w");function another(){let[e,t]=(0,React.useState)(!1)}' +
+  'var Sec=a("BSnr"),Stk=a("ZEx5"),pageMod=a("eG01"),platMod=a("ed01");' +
+  'function generalA(){let header=(0,j.jsx)(Sec.X.Header,{title:(0,j.jsx)(msg.A,{id:"settings.general.groupTitle",defaultMessage:"General"})});return(0,j.jsxs)(Sec.X,{children:[header,(0,j.jsx)(Sec.X.Content,{children:(0,j.jsxs)(Stk.t,{children:[(0,j.jsx)(menu,{appName:"ChatGPT"})]})})]})}' +
+  'function generalB(){let header=(0,j.jsx)(Sec.X.Header,{title:(0,j.jsx)(msg.A,{id:"settings.general.groupTitle",defaultMessage:"General"})});return(0,j.jsxs)(Sec.X,{children:[header,(0,j.jsx)(Sec.X.Content,{children:(0,j.jsxs)(Stk.t,{children:[(0,j.jsx)(menu,{appName:v.C})]})})]})}' +
+  'function generalPage(e){let n=e?.classic?(0,j.jsx)(generalB,{}):(0,j.jsx)(generalA,{}),title=(0,j.jsx)(pageMod.s,{slug:"general-settings"}),i=(0,j.jsx)(Other,{});return(0,j.jsxs)(pageMod.P,{title:title,children:[n,i]})}' +
+  'var Btn=a("ygO2");function licenses(){let label=(0,j.jsx)(msg.A,{id:"settings.openSourceLicenses.view"});return(0,j.jsx)(Ui.ic,{label:x,control:(0,j.jsx)(Btn.$,{color:"secondary",size:"toolbar",onClick:show,children:label})})}';
+
+function settingsFixture(moduleSource = SETTINGS_MODULE) {
+  return '/*! LICENSE: 572868.36a6c86221.js.LICENSE.txt */\n' +
+    'export const __rspack_esm_id=572868;export const __rspack_esm_ids=[572868];export const __webpack_modules__={' +
+    'i4Z1(e,t,a){var s=a("ABep");t.A=e=>(0,s.jsx)("svg",{...e})},' +
+    `G3wX(e,t,a){${moduleSource}}` +
+    '};\n//# sourceMappingURL=572868.36a6c86221.js.map';
+}
+
+// Evaluates the settings module factory with stub dependencies and returns its
+// exports plus the module-scope functions reached through them.
+function loadSettingsModule(source, modules, globals = {}) {
+  const start = source.indexOf("__webpack_modules__=") + "__webpack_modules__=".length;
+  const names = Object.keys(globals);
+  const factories = new Function(...names, `return ${source.slice(start, source.lastIndexOf("};") + 1)}`)(
+    ...names.map((name) => globals[name]),
+  );
+  const exports = {};
+  const require = Object.assign((id) => modules[id] ?? {}, {
+    d: (target, getters) => Object.entries(getters).forEach(([key, get]) => Object.defineProperty(target, key, { get })),
+  });
+  factories.G3wX({}, exports, require);
+  return exports;
 }
 
 function fixture(t) {
@@ -53,7 +86,8 @@ function fixture(t) {
   manifest(path.join(root, "local"), "private");
   const assets = path.join(dir, "app/webview/assets");
   fs.mkdirSync(assets, { recursive: true });
-  const target = path.join(assets, "renamed-general.js");
+  fs.mkdirSync(path.join(assets, "async"));
+  const target = path.join(assets, "async", "572868.36a6c86221.js");
   fs.writeFileSync(target, settingsFixture());
   const context = { feature: { dir: featureDir }, featurePatchOptions: { featuresRoot: root }, enabledFeatureIds: ["alpha", "community-features-in-gui-settings"] };
   return { dir, root, featureDir, assets, target, app: path.join(dir, "app"), context };
@@ -500,31 +534,46 @@ test("public subfeature metadata survives enabled-only update builders and never
   }
 });
 
-test("semantic settings injection is self-contained, idempotent and leaves other assets unchanged", (t) => {
+const jsxStub = (type, props) => ({ type, props });
+const stubModules = (overrides = {}) => ({
+  ABep: { jsx: jsxStub, jsxs: jsxStub, Fragment: "fragment" },
+  zd8w: { Fragment: "fragment", createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useId: () => "tree-panel", useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}] },
+  AWNZ: { ic: "native-row" }, ygO2: { $: "native-button" }, BSnr: { X: { Header: "native-header", Content: "native-content" } },
+  ZEx5: { t: "native-stack" }, eG01: { P: "page", s: "page-title" }, oyxz: { A: "message" },
+  Wf1j: { A: () => ({ locale: "zh-CN", formatMessage: () => "label" }) }, ed01: { V: () => ({ platform: "linux" }) },
+  ...overrides,
+});
+const settingsGlobals = { Other: "other", v: { C: "ChatGPT" }, Toggle: "toggle", change: null, title: "title", x: "x", show: null };
+
+test("semantic settings injection is module-scoped, self-contained, idempotent and leaves other assets unchanged", (t) => {
   const f = fixture(t);
-  fs.writeFileSync(path.join(f.assets, "unrelated.js"), "unchanged");
+  fs.writeFileSync(path.join(f.assets, "async", "unrelated.js"), "unchanged");
   assert.equal(applySettingsPatch(f.app, f.context).changed, true);
   const patched = fs.readFileSync(f.target, "utf8");
-  assert.ok(patched.includes(`function ${UI}()`));
+  assert.ok(patched.includes(`;function ${UI}(){`));
   assert.ok(patched.includes(`children:[(0,j.jsx)(${UI},{}),n,i]`));
-  assert.ok(patched.includes('children:[(0,j.jsx)(menu,{appName:appName})]'));
-  const jsx = (type, props) => ({ type, props });
-  const page = vm.runInNewContext(patched + ';page', {
-    j: { jsx, jsxs: jsx, Fragment: "fragment" }, appName: "ChatGPT Community", reactFactory: () => ({}),
-    Page: "page", PageTitle: "page-title", Other: "other",
-  });
-  assert.equal(page.props.children.length, 3);
-  assert.equal(page.props.children[0].type.name, UI);
-  assert.equal(page.props.children[1].type.name, "general");
-  assert.equal(page.props.children[2].type, "other");
-  const general = vm.runInNewContext(patched + ';general()', {
-    j: { jsx, jsxs: jsx }, appName: "ChatGPT Community", reactFactory: () => ({}),
-    Page: "page", PageTitle: "page-title", Other: "other", Section: { Header: "header", Content: "content" },
-    Message: "message", Stack: "stack",
-  });
-  assert.equal(general.props.children[0].type, "header");
-  assert.equal(general.props.children[1].props.children.props.children[0].type.name, "menu");
-  assert.equal(fs.readFileSync(path.join(f.assets, "unrelated.js"), "utf8"), "unchanged");
+  assert.ok(patched.includes('children:[(0,j.jsx)(menu,{appName:"ChatGPT"})]'));
+  // The component is declared inside the settings module factory, not after
+  // the chunk's ESM exports where module imports are out of scope.
+  assert.ok(patched.indexOf(`function ${UI}(){`) < patched.indexOf("};\n//# sourceMappingURL"));
+  assert.ok(patched.indexOf(`function ${UI}(){`) > patched.indexOf("G3wX("));
+  for (const classic of [false, true]) {
+    const modules = stubModules();
+    const exports = loadSettingsModule(patched, modules, settingsGlobals);
+    const page = exports.GeneralSettings({ classic });
+    assert.equal(page.props.children.length, 3);
+    assert.equal(page.props.children[0].type.name, UI);
+    assert.equal(page.props.children[1].type.name, classic ? "generalB" : "generalA");
+    assert.equal(page.props.children[2].type, "other");
+    const general = page.props.children[1].type();
+    assert.equal(general.props.children[0].props.title.props.id, "settings.general.groupTitle");
+    assert.equal(general.props.children[1].props.children.props.children[0].type.name, "menu");
+    const community = page.props.children[0].type();
+    assert.equal(community.type, modules.BSnr.X);
+    assert.equal(community.children[0].props.title, "社区功能");
+  }
+  assert.equal(fs.readFileSync(path.join(f.assets, "async", "unrelated.js"), "utf8"), "unchanged");
   assert.equal(applySettingsPatch(f.app, f.context).changed, false);
   assert.equal(fs.readFileSync(f.target, "utf8"), patched);
   const component = settingComponent(settingsContract(settingsFixture()), buildCatalog(f.context));
@@ -533,26 +582,31 @@ test("semantic settings injection is self-contained, idempotent and leaves other
 
 test("missing or ambiguous anchors fail before changing settings or writing a catalog", (t) => {
   const cases = [
-    (s) => s.replace(".macMenuBarEnabled", ".changedPreference"),
+    (s) => s.replace("U6S.macMenuBarEnabled", "U6S.changedPreference"),
     (s) => s.replace("settings.openSourceLicenses.view", "changed.action"),
-    (s) => s + 'var duplicate=(0,j.jsx)(menu,{appName:other});',
-    (s) => s.replace("size:`toolbar`", "size:`changed`"),
-    (s) => s.replace('title:title,children:[n,i]', 'title:title,children:n'),
-    (s) => s.replace('settings.general.groupTitle', 'settings.general.changedGroup'),
-    (s) => s.replace('slug:`general-settings`', 'slug:`different-page`'),
-    (s) => s.replace('Section.Content', 'Changed.Content'),
-    (s) => s + 'function duplicatePage(){let title=(0,j.jsx)(PageTitle,{slug:`general-settings`})}',
-    (s) => s.replace('return(0,j.jsx)(Button,', 'var duplicate=(0,j.jsx)(Button,{color:`secondary`,size:`toolbar`,onClick:show,children:label});return(0,j.jsx)(Button,'),
+    (s) => s.replace('size:"toolbar"', 'size:"changed"'),
+    (s) => s.replace("title:title,children:[n,i]", "title:title,children:n"),
+    (s) => s.replaceAll("settings.general.groupTitle", "settings.general.changedGroup"),
+    (s) => s.replace('slug:"general-settings"', 'slug:"different-page"'),
+    (s) => s.replaceAll("Sec.X.Content", "Changed.Content"),
+    (s) => s.replace("(0,j.jsx)(generalB,{})", "(0,j.jsx)(OtherLayout,{})"),
+    (s) => s.replace("function licenses(){", 'function duplicatePage(){let title=(0,j.jsx)(pageMod.s,{slug:"general-settings"})}function licenses(){'),
+    (s) => s.replace("return(0,j.jsx)(Ui.ic,{label:x,", 'var duplicate=(0,j.jsx)(Btn.$,{color:"secondary",size:"toolbar",onClick:show,children:label});return(0,j.jsx)(Ui.ic,{label:x,'),
+    // Captured primitives must be module-level imports of the same factory.
+    (s) => s.replace('Btn=a("ygO2")', 'Btn={$:"local"}'),
+    (s) => s.replace("var React=a(\"zd8w\");", "var React=globalThis.React;"),
+    // Two different React bindings are ambiguous.
+    (s) => s.replace("function another(){", 'var R2=a("r2");function third(){(0,R2.useState)(1)}function another(){'),
   ];
   for (const change of cases) {
-    const f = fixture(t), source = change(settingsFixture());
+    const f = fixture(t), source = settingsFixture(change(SETTINGS_MODULE));
     fs.writeFileSync(f.target, source);
     assert.throws(() => applySettingsPatch(f.app, f.context), /(?:asset|contract) missing or ambiguous/);
     assert.equal(fs.readFileSync(f.target, "utf8"), source);
     assert.equal(fs.existsSync(path.join(f.app, CATALOG_ASSET)), false);
   }
   const f = fixture(t);
-  fs.writeFileSync(path.join(f.assets, "duplicate.js"), settingsFixture());
+  fs.writeFileSync(path.join(f.assets, "async", "999.duplicate.js"), settingsFixture());
   assert.throws(() => applySettingsPatch(f.app, f.context), /asset missing or ambiguous/);
   assert.equal(fs.readFileSync(f.target, "utf8"), settingsFixture());
 });
@@ -568,17 +622,114 @@ test("incomplete patches and a changed candidate selection are rejected without 
   assert.equal(fs.existsSync(path.join(f.app, CATALOG_ASSET)), false);
 });
 
-test("other General rows remain in place and an existing patch moved into the inner group is rejected", (t) => {
+test("other General rows and page children remain in place and a moved patch is rejected", (t) => {
   const f = fixture(t);
-  fs.writeFileSync(f.target, settingsFixture().replace('children:[(0,j.jsx)(menu,', 'children:[(0,j.jsx)(OtherSetting,{}),(0,j.jsx)(menu,'));
+  const readAloudMount = '(0,j.jsx)("div",{className:"codex-linux-read-aloud-settings-mount"})';
+  fs.writeFileSync(f.target, settingsFixture(SETTINGS_MODULE
+    .replace('children:[(0,j.jsx)(menu,{appName:"ChatGPT"})', 'children:[(0,j.jsx)(OtherSetting,{}),(0,j.jsx)(menu,{appName:"ChatGPT"})')
+    .replace("children:[n,i]", `children:[n,${readAloudMount},i]`)));
   applySettingsPatch(f.app, f.context);
   const patched = fs.readFileSync(f.target, "utf8");
   assert.ok(patched.includes('children:[(0,j.jsx)(OtherSetting,{}),(0,j.jsx)(menu,'));
-  const moved = patched.replace(`children:[(0,j.jsx)(${UI},{}),n,i]`, 'children:[n,i]')
-    .replace('children:[(0,j.jsx)(OtherSetting,{}),', `children:[(0,j.jsx)(${UI},{}),(0,j.jsx)(OtherSetting,{}),`);
+  assert.ok(patched.includes(`children:[(0,j.jsx)(${UI},{}),n,${readAloudMount},i]`));
+  const moved = patched.replace(`children:[(0,j.jsx)(${UI},{}),n,`, "children:[n,")
+    .replace("children:[(0,j.jsx)(OtherSetting,{}),", `children:[(0,j.jsx)(${UI},{}),(0,j.jsx)(OtherSetting,{}),`);
   fs.writeFileSync(f.target, moved);
   assert.throws(() => applySettingsPatch(f.app, f.context), /inconsistent/);
   assert.equal(fs.readFileSync(f.target, "utf8"), moved);
+});
+
+test("marked helpers inlined into General layouts by other Linux features compose in either order", (t) => {
+  // ui-tweaks shape: a marked IIFE inlined into a native General layout ahead
+  // of the menu row, so the nearest `function ` keyword is not the layout.
+  const helper = "let codexLinuxFixtureEnabled=(function codexLinuxUiTweaksSuggestedPromptsEnabled(){return!0}());";
+  const addHelper = (source) => source.includes(helper) ? source : source.replace("function generalA(){", `function generalA(){${helper}`);
+  for (const helperFirst of [true, false]) {
+    const f = fixture(t);
+    if (helperFirst) fs.writeFileSync(f.target, addHelper(fs.readFileSync(f.target, "utf8")));
+    assert.equal(applySettingsPatch(f.app, f.context).changed, true);
+    if (!helperFirst) fs.writeFileSync(f.target, addHelper(fs.readFileSync(f.target, "utf8")));
+    const patched = fs.readFileSync(f.target, "utf8");
+    assert.equal(applySettingsPatch(f.app, f.context).changed, false);
+    assert.equal(fs.readFileSync(f.target, "utf8"), patched);
+    assert.ok(patched.includes(`children:[(0,j.jsx)(${UI},{}),n,i]`));
+    assert.equal(patched.split(helper).length, 2);
+  }
+  // An unmarked function wrapping the menu row is still a drifted layout.
+  const f = fixture(t), source = settingsFixture(SETTINGS_MODULE.replace(
+    '(0,j.jsx)(menu,{appName:"ChatGPT"})', '(function wrap(){return(0,j.jsx)(menu,{appName:"ChatGPT"})}())'));
+  fs.writeFileSync(f.target, source);
+  assert.throws(() => applySettingsPatch(f.app, f.context), /contract missing or ambiguous/);
+  assert.equal(fs.readFileSync(f.target, "utf8"), source);
+});
+
+test("signed General settings chunk composes every Linux settings insertion in both orders", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
+}, (t) => {
+  const appDir = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const [name] = findWebviewAssetsContaining(appDir, GENERAL_SETTINGS_NEEDLES);
+  const original = fs.readFileSync(path.join(appDir, "webview", "assets", name), "utf8");
+  const featuresRoot = path.resolve(__dirname, "..");
+  const uiTweaks = { feature: { manifest: require("../ui-tweaks/feature.json"), settings: { tweaks: {
+    appearance: { customFontInput: { enabled: true }, dockIcon: { enabled: true } }, home: { suggestedPrompts: { enabled: true } } } } } };
+  const webview = (descriptors, id) => {
+    const descriptor = descriptors.find((entry) => entry.id === id);
+    assert.ok(descriptor, id);
+    return (app) => {
+      const target = path.join(app, "webview", "assets", name);
+      fs.writeFileSync(target, descriptor.apply(fs.readFileSync(target, "utf8"), uiTweaks));
+    };
+  };
+  const steps = [
+    webview(require("../read-aloud/patch.js").descriptors, "settings-toggle"),
+    webview(require("../ui-tweaks/patch.js").descriptors, "appearance-dock-icon-settings-row"),
+    webview(require("../ui-tweaks/patch.js").descriptors, "appearance-custom-font-input"),
+    webview(require("../ui-tweaks/patch.js").descriptors, "home-suggested-prompts-settings-row"),
+    (app) => require("../start-minimized-to-tray/patch.js").applySettingsPatch(app),
+    (app) => require("../reasoning-visibility/settings.js").applySettingsPatch(app),
+    (app) => applySettingsPatch(app, { feature: { dir: __dirname }, featurePatchOptions: { featuresRoot },
+      enabledFeatureIds: ["community-features-in-gui-settings"] }),
+  ];
+  const markers = [`function ${UI}(`, "function codexLinuxStartMinimizedSetting(", "function codexLinuxReasoningVisibilitySetting(",
+    "codex-linux-read-aloud-settings-mount", "codexLinuxManualFontInput", "codexLinuxUiTweaksSuggestedPromptsEnabled"];
+  for (const order of [steps, [...steps].reverse()]) {
+    // Only the settings chunk is copied; one synthetic locale catalog satisfies
+    // the translation steps of the start-minimized and reasoning rows.
+    const app = path.join(temporary(t), "app"), asyncDir = path.join(app, "webview", "assets", "async");
+    fs.mkdirSync(asyncDir, { recursive: true });
+    fs.writeFileSync(path.join(app, "webview", "assets", name), original);
+    fs.writeFileSync(path.join(asyncDir, "900001.loader.js"),
+      'export const __webpack_modules__={ld(e,t,r){var m={"../locales/de-DE.json":function(){return r.e(900002).then(r.t.bind(r,"deCatalog",19))}}}};');
+    fs.writeFileSync(path.join(asyncDir, "900002.catalog.js"),
+      `export const __webpack_modules__={deCatalog(e){e.exports=JSON.parse('{"settings.general.macMenuBar.label":"Menüleiste"}')}};`);
+    const warnings = [], originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      for (const step of order) step(app);
+      const patched = fs.readFileSync(path.join(app, "webview", "assets", name), "utf8");
+      for (const step of order) step(app);
+      assert.equal(fs.readFileSync(path.join(app, "webview", "assets", name), "utf8"), patched);
+      for (const marker of markers) assert.ok(patched.includes(marker), marker);
+      assert.match(patched, /return"macOS"!==([\w$]+)&&"linux"!==\1/);
+      assert.equal(patched.split(`(0,n.jsx)(${UI},{})`).length, 2);
+      const check = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: patched, encoding: "utf8" });
+      assert.equal(check.status, 0, check.stderr);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.deepEqual(warnings.filter((warning) => !/catalog|metadata/i.test(warning)), []);
+  }
+});
+
+test("signed official General settings chunk exposes one module-scoped contract", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
+}, () => {
+  const appDir = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const candidates = findWebviewAssetsContaining(appDir, GENERAL_SETTINGS_NEEDLES);
+  assert.equal(candidates.length, 1);
+  const contract = settingsContract(fs.readFileSync(path.join(appDir, "webview", "assets", candidates[0]), "utf8"));
+  assert.ok(contract);
+  assert.ok([contract.row, contract.button, contract.section, contract.stack].every((reference) => /^[\w$]+\.[\w$]+$/.test(reference)));
 });
 
 function uiHarness(catalog, locale = "zh-CN", platform = "linux", resources = loadLocaleResources()) {
@@ -734,13 +885,14 @@ test("equivalent display names use stable ID tie-breakers at every level without
 
 test("the embedded renderer carries its graph helper without depending on another renderer global", (t) => {
   const catalog = buildCatalog(fixture(t).context);
-  const component = settingComponent(settingsContract(settingsFixture()), catalog);
+  const contract = settingsContract(settingsFixture());
+  const component = settingComponent(contract, catalog);
   const jsx = (type, props, ...children) => ({ type, props: props ?? {}, children });
   const result = vm.runInNewContext(component + `;${UI}()`, {
-    reactFactory: () => ({ Fragment: "fragment", createElement: jsx, useId: () => "tree-panel",
-      useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}] }),
-    platformHook: () => ({ platform: "linux" }), intlHook: () => ({ locale: "zh-CN" }), Row: "row", Button: "button",
-    Section: { Header: "native-header", Content: "native-content" }, Stack: "native-stack",
+    React: { Fragment: "fragment", createElement: jsx, useId: () => "tree-panel",
+      useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}] },
+    platMod: { V: () => ({ platform: "linux" }) }, intlMod: { A: () => ({ locale: "zh-CN" }) }, Ui: { ic: "row" },
+    Btn: { $: "button" }, Sec: { X: { Header: "native-header", Content: "native-content" } }, Stk: { t: "native-stack" },
   });
   assert.equal(result.children[0].props.title, "社区功能");
 });

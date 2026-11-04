@@ -21,6 +21,7 @@ const {
   linuxTargetSummary,
 } = require("../lib/linux-target-context.js");
 const {
+  listWebviewScriptAssets,
   patchAssetFiles,
   patchUniqueAssetFile,
 } = require("./lib/assets.js");
@@ -476,8 +477,44 @@ function recordAssetDescriptorPatch(report, descriptor, patchResult, warnings, c
   );
 }
 
+// Indexes which webview script assets contain each needle, reading every
+// asset once per patch run instead of once per descriptor. Files rewritten
+// by a descriptor are re-indexed before the next descriptor runs.
+function createWebviewNeedleIndex(extractedDir, needles) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  const unique = [...new Set(needles)];
+  const hits = new Map(unique.map((needle) => [needle, new Set()]));
+  const indexAsset = (assetName) => {
+    const source = fs.readFileSync(path.join(assetsDir, assetName), "utf8");
+    for (const needle of unique) {
+      if (source.includes(needle)) hits.get(needle).add(assetName);
+      else hits.get(needle).delete(assetName);
+    }
+  };
+  if (unique.length > 0) {
+    for (const assetName of listWebviewScriptAssets(extractedDir)) indexAsset(assetName);
+  }
+  return {
+    candidates(descriptorNeedles) {
+      const [first, ...rest] = descriptorNeedles;
+      return [...hits.get(first)].filter((assetName) => rest.every((needle) => hits.get(needle).has(assetName)));
+    },
+    refresh(assetNames) {
+      if (unique.length === 0) return;
+      for (const assetName of assetNames ?? []) indexAsset(assetName);
+    },
+  };
+}
+
 function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, report) {
-  for (const descriptor of descriptors.filter((patch) => patch.phase === PHASE_WEBVIEW_ASSET)) {
+  const webviewDescriptors = descriptors.filter((patch) => patch.phase === PHASE_WEBVIEW_ASSET);
+  const active = webviewDescriptors.filter((descriptor) =>
+    descriptorAppliesTo(descriptor, context) && descriptorEnabled(descriptor, context));
+  const index = createWebviewNeedleIndex(
+    extractedDir,
+    active.flatMap((descriptor) => descriptor.assetNeedles ?? []),
+  );
+  for (const descriptor of webviewDescriptors) {
     if (!descriptorAppliesTo(descriptor, context)) {
       recordDescriptorPatch(report, descriptor, PATCH_STATUS_SKIPPED_TARGET, null, context);
       continue;
@@ -487,10 +524,15 @@ function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, r
       continue;
     }
 
-    const pattern = descriptor.assetPattern ?? descriptor.pattern;
-    if (pattern == null) {
-      throw new Error(`Webview asset patch '${descriptor.id}' must define assetPattern or pattern`);
+    const pattern = descriptor.assetPattern ?? descriptor.pattern ?? null;
+    const needles = descriptor.assetNeedles ?? null;
+    if (pattern == null && needles == null) {
+      throw new Error(`Webview asset patch '${descriptor.id}' must define assetNeedles, assetPattern or pattern`);
     }
+    const candidates = needles == null
+      ? null
+      : index.candidates(needles).filter((assetName) =>
+        pattern == null || patternMatchesAsset(pattern, assetName));
     const missingWarning = descriptor.missingWarning ??
       defaultWebviewMissingWarning(extractedDir, descriptor);
     const ambiguousWarning = descriptor.ambiguousWarning ??
@@ -498,7 +540,13 @@ function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, r
     const { value: result, warnings, error, strategies } = runDescriptorApply(
       descriptor,
       () => descriptor.assetMatch == null
-        ? patchAssetFiles(extractedDir, pattern, (source) => descriptor.apply(source, context), missingWarning)
+        ? patchAssetFiles(
+          extractedDir,
+          pattern,
+          (source) => descriptor.apply(source, context),
+          missingWarning,
+          candidates,
+        )
         : patchUniqueAssetFile(
           extractedDir,
           pattern,
@@ -506,9 +554,11 @@ function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, r
           (source) => descriptor.apply(source, context),
           missingWarning,
           ambiguousWarning,
+          candidates,
         ),
-      { matched: 0, changed: 0, assetName: null },
+      { matched: 0, changed: 0, assetName: null, changedAssets: [] },
     );
+    index.refresh(result?.changedAssets);
     context.reportWarnings = warnings;
     if (error != null) {
       warnings.push(`WARN: ${describePatchError(descriptor, error)}`);
@@ -520,6 +570,11 @@ function applyWebviewAssetPatchDescriptors(extractedDir, descriptors, context, r
     }
     delete context.reportWarnings;
   }
+}
+
+function patternMatchesAsset(pattern, assetName) {
+  pattern.lastIndex = 0;
+  return pattern.test(assetName.slice(assetName.lastIndexOf("/") + 1));
 }
 
 function applyExtractedAppPatchDescriptors(extractedDir, descriptors, context, report, phase) {

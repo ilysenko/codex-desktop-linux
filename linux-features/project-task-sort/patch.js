@@ -1,18 +1,21 @@
 "use strict";
 
 const identifier = String.raw`[A-Za-z_$][\w$]*`;
+// The timestamp selector is compiled inline into the project task sorter:
+// `timestamp:function(task,mode){switch(task.kind){case"local":…;case"remote":…}}(task,mode)`.
 const comparatorPattern = new RegExp(
-  String.raw`function (${identifier})\((${identifier}),(${identifier})\)\{switch\(\2\.kind\)\{case\`local\`:return ([^;]+);case\`remote\`:return\(\(\3===\`updated_at\`\?\2\.task\.updated_at\?\?\2\.task\.created_at:\2\.task\.created_at\?\?\2\.task\.updated_at\)\?\?0\)\*1e3\}\}`,
+  String.raw`function(?: ${identifier})?\((${identifier}),(${identifier})\)\{switch\(\1\.kind\)\{case"local":((?:(?!case"|switch\(|function\b)[^]){0,800}?);case"remote":return\(\("updated_at"===\2\?\1\.task\.updated_at\?\?\1\.task\.created_at:\1\.task\.created_at\?\?\1\.task\.updated_at\)\?\?0\)\*1e3\}\}`,
   "g",
 );
 
 function currentLocalTimestamp(task, mode) {
-  return `${task}.summary==null?${task}.at:${mode}===\`updated_at\`?${task}.summary.recencyAt??${task}.summary.updatedAt:${task}.summary.createdAt`;
+  return `if(null==${task}.summary)return ${task}.at;` +
+    `return"updated_at"===${mode}?${task}.summary.recencyAt??${task}.summary.updatedAt:${task}.summary.createdAt`;
 }
 
 function patchedLocalTimestamp(task, mode) {
   return currentLocalTimestamp(task, mode) +
-    `??(/^local:[\\da-f]{8}-[\\da-f]{4}-7[\\da-f]{3}-[89ab][\\da-f]{3}-[\\da-f]{12}$/i.test(${task}.key)?Number.parseInt(${task}.key.slice(6).replaceAll(\`-\`,\`\`).slice(0,12),16):${task}.summary.recencyAt??${task}.summary.updatedAt)`;
+    `??(/^local:[\\da-f]{8}-[\\da-f]{4}-7[\\da-f]{3}-[89ab][\\da-f]{3}-[\\da-f]{12}$/i.test(${task}.key)?Number.parseInt(${task}.key.slice(6).replaceAll("-","").slice(0,12),16):${task}.summary.recencyAt??${task}.summary.updatedAt)`;
 }
 
 function comparatorContracts(source) {
@@ -21,7 +24,7 @@ function comparatorContracts(source) {
   const patched = [];
   for (const match of source.matchAll(new RegExp(comparatorPattern.source, comparatorPattern.flags))) {
     candidates.push(match);
-    const [, , task, mode, localTimestamp] = match;
+    const [, task, mode, localTimestamp] = match;
     if (localTimestamp === currentLocalTimestamp(task, mode)) current.push(match);
     if (localTimestamp === patchedLocalTimestamp(task, mode)) patched.push(match);
   }
@@ -43,8 +46,8 @@ function applyProjectTaskSortPatch(source) {
   }
 
   const match = current[0];
-  const task = match[2];
-  const mode = match[3];
+  const task = match[1];
+  const mode = match[2];
   const patchedComparator = match[0].replace(
     currentLocalTimestamp(task, mode),
     patchedLocalTimestamp(task, mode),
@@ -63,7 +66,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_900,
     ciPolicy: "optional",
-    pattern: /^[A-Za-z0-9_-]+\.js$/,
+    assetNeedles: ['case"remote":return(("updated_at"===', 'case"local":if(null=='],
     assetMatch: matchesProjectTaskSortContract,
     missingDescription: "unique project task timestamp comparator",
     skipDescription: "project task creation timestamp feature patch",

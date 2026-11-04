@@ -11,27 +11,32 @@ const vm = require("node:vm");
 const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
-const { patchUniqueAssetFile } = require("../../scripts/patches/lib/assets.js");
+const { applyWebviewAssetPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
+const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const {
   applyProjectGroupLastUpdatedSortPatch,
   descriptors,
 } = require("./patch.js");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
-const currentProjectSource = [
-  "function U6i(e,t){let n=new Set(e.map(e=>e.projectId)),r=(t??[]).filter(e=>n.has(e)),i=new Set(r);return[...e.map(e=>e.projectId).filter(e=>!i.has(e)),...r]}",
-  "function G6i(e,t){let n=U6i(e,t),r=new Map(n.map((e,t)=>[e,t]));return[...e].sort((e,t)=>(r.get(e.projectId)??2**53-1)-(r.get(t.projectId)??2**53-1))}",
-  "function p5o({groups:e,projectOrder:t}){return G6i(e,t)}",
-  "const prioritySortId=`sidebarElectron.sortMenu.priority`;",
-  "const updatedSortId=`sidebarElectron.sortMenu.updated`;",
-  "const manualSortId=`sidebarElectron.sortMenu.manual`;",
-  "let{chatSortMode:j,projectSortMode:M}=t(xH),N=p5o({groups:fon({groups:D,items:f}),projectOrder:jm(t,_u.PROJECT_ORDER)}),chats=chatSorter({explicitChatThreadKeys:mirror,getRecencyAt:recency,items:f,projectGroups:D,projectlessThreadIds:new Set(ids??[])});",
+// Current signed 26.1029.61003 shape: both sidebar sorters are compiled as
+// inline function expressions in the same declaration list.
+const projectOrderFunction = "function(e,t){let n=new Set(e.map(e=>e.projectId)),r=(t??[]).filter(e=>n.has(e)),i=new Set(r),o=[...e.map(e=>e.projectId).filter(e=>!i.has(e)),...r],s=new Map(o.map((e,t)=>[e,t]));return[...e].sort((e,t)=>(s.get(e.projectId)??2**53-1)-(s.get(t.projectId)??2**53-1))}";
+const sidebarSource = (sorter) => [
+  "let{chatSortMode:X,projectSortMode:Q}=t(f.by),Z=new Map,J=e=>recency(e),",
+  "{pinnedGroups:el,unpinnedGroups:eu}=(0,y.Cy)(ea,er),ed=q({groups:el,items:V}),",
+  sorter,
+  ",ep=function({explicitChatThreadKeys:e,getRecencyAt:t,items:n,projectGroups:r,projectlessThreadIds:i}){let o=new Set(r.flatMap(e=>e.threadKeys));return n.filter(e=>!o.has(e.key)).map(e=>e.key)}",
+  "({explicitChatThreadKeys:es,getRecencyAt:J,items:V,projectGroups:ea,projectlessThreadIds:new Set(en??[])});",
 ].join("");
-
-const officialLinuxProjectSource = [
-  "function A6i(e,t){return e}",
-  "function O8o({groups:e,projectOrder:t}){return A6i(e,t)}",
-  "let{chatSortMode:j,projectSortMode:M}=t(IH),N=O8o({groups:fon({groups:D,items:f}),projectOrder:Dm(t,yu.PROJECT_ORDER)}),chats=chatSorter({explicitChatThreadKeys:mirror,getRecencyAt:recency,items:f,projectGroups:D,projectlessThreadIds:new Set(ids??[])});",
-].join("");
+const currentProjectSource = sidebarSource(
+  "ec=function({groups:e,projectOrder:t}){return(0,a.n)(e,t)}({groups:q({groups:eu,items:V}),projectOrder:(0,o.F6)(t,i.Q2Y.PROJECT_ORDER)})",
+);
+const officialLinuxProjectSource = sidebarSource(
+  "ec=function({groups:e,projectOrder:t}){return A6i(e,t)}({groups:q({groups:eu,items:V}),projectOrder:(0,o.F6)(t,i.Q2Y.PROJECT_ORDER)})",
+);
+const chunk = (body) => "export const __rspack_esm_id=24191;export const __rspack_esm_ids=[24191];" +
+  `export const __webpack_modules__={uSdb(e,t,n){var a=n("PORD");function U(e,t){${body}return ec}n.d(t,{U:()=>U})}};`;
 
 function captureWarns(fn) {
   const originalWarn = console.warn;
@@ -73,11 +78,11 @@ function withFeatureConfig(enabled, fn) {
   }
 }
 
+// Evaluates the (patched) inline project-group sorter function expression.
 function evaluateGroupSorter(source) {
-  const context = {};
-  const sorterSource = source.slice(0, source.indexOf("const prioritySortId"));
-  vm.runInNewContext(`${sorterSource};globalThis.sortProjectGroups=p5o`, context);
-  return context.sortProjectGroups;
+  const start = source.indexOf("ec=function(") + "ec=".length;
+  const close = findMatchingBrace(source, source.indexOf("{", source.indexOf(")", start)));
+  return vm.runInNewContext(`var a={n:${projectOrderFunction}};(${source.slice(start, close + 1)})`);
 }
 
 test("feature is disabled until selected", () => {
@@ -172,8 +177,8 @@ test("current sidebar references use upstream recency without task objects", () 
 
 test("missing or mismatched recency contract fails closed", () => {
   for (const source of [
-    currentProjectSource.replace("getRecencyAt:recency", "unknown:recency"),
-    currentProjectSource.replace("getRecencyAt:recency,items:f", "getRecencyAt:recency,items:other"),
+    currentProjectSource.replace("getRecencyAt:J", "unknown:J"),
+    currentProjectSource.replace("getRecencyAt:J,items:V", "getRecencyAt:J,items:other"),
   ]) {
     const { value, warnings } = captureWarns(() => applyProjectGroupLastUpdatedSortPatch(source));
     assert.equal(value, source);
@@ -185,7 +190,7 @@ test("patch passes the selected project sort mode into the group sorter", () => 
   const patched = applyPatchTwice(currentProjectSource);
   assert.ok(
     patched.includes(
-      "projectOrder:jm(t,_u.PROJECT_ORDER),getRecencyAt:recency,sortMode:M",
+      "projectOrder:(0,o.F6)(t,i.Q2Y.PROJECT_ORDER),getRecencyAt:J,sortMode:Q})",
     ),
   );
 });
@@ -195,18 +200,18 @@ test("patch matches the current official project sorter semantically", () => {
 
   assert.match(
     patched,
-    /function O8o\(\{groups:e,getRecencyAt:t,projectOrder:n,sortMode:codexLinuxProjectSortMode\}\)/,
+    /ec=function\(\{groups:e,getRecencyAt:t,projectOrder:n,sortMode:codexLinuxProjectSortMode\}\)\{if\(codexLinuxProjectSortMode!=="updated_at"\)return A6i\(e,n\);/,
   );
   assert.match(
     patched,
-    /O8o\(\{groups:fon\(\{groups:D,items:f\}\),projectOrder:Dm\(t,yu\.PROJECT_ORDER\),getRecencyAt:recency,sortMode:M\}\)/,
+    /\}\(\{groups:q\(\{groups:eu,items:V\}\),projectOrder:\(0,o\.F6\)\(t,i\.Q2Y\.PROJECT_ORDER\),getRecencyAt:J,sortMode:Q\}\),ep=function/,
   );
 });
 
 test("drift leaves the asset byte-identical", () => {
   const source = currentProjectSource.replace(
-    "function p5o({groups:e,projectOrder:t})",
-    "function p5o({groups:e,projectOrder:t,unknown:o})",
+    "ec=function({groups:e,projectOrder:t})",
+    "ec=function({groups:e,projectOrder:t,unknown:o})",
   );
   const { value, warnings } = captureWarns(() =>
     applyProjectGroupLastUpdatedSortPatch(source),
@@ -219,7 +224,7 @@ test("drift leaves the asset byte-identical", () => {
 
 test("missing current call site leaves the asset byte-identical", () => {
   const source = currentProjectSource.replace(
-    "projectOrder:jm(t,_u.PROJECT_ORDER)",
+    "projectOrder:(0,o.F6)(t,i.Q2Y.PROJECT_ORDER)",
     "projectOrder:unknownProjectOrder",
   );
   const { value, warnings } = captureWarns(() =>
@@ -248,10 +253,10 @@ test("already patched sorter rejects a changed body, getter, or selected mode", 
   const patched = applyPatchTwice(currentProjectSource);
   for (const source of [
     patched.replace("Math.max(e,t(n)??0)", "Math.min(e,t(n)??0)"),
-    patched.replace("projectOrder:jm(t,_u.PROJECT_ORDER),getRecencyAt:recency", "projectOrder:jm(t,_u.PROJECT_ORDER),getRecencyAt:other"),
-    patched.replace("getRecencyAt:recency,sortMode:M", "getRecencyAt:recency,sortMode:j"),
-    patched.replace("getRecencyAt:recency,items:f", "getRecencyAt:other,items:f"),
-    patched.replace("getRecencyAt:recency,items:f", "getRecencyAt:recency,items:other"),
+    patched.replace("PROJECT_ORDER),getRecencyAt:J", "PROJECT_ORDER),getRecencyAt:other"),
+    patched.replace("getRecencyAt:J,sortMode:Q", "getRecencyAt:J,sortMode:X"),
+    patched.replace("getRecencyAt:J,items:V", "getRecencyAt:other,items:V"),
+    patched.replace("getRecencyAt:J,items:V", "getRecencyAt:J,items:other"),
   ]) {
     const { value, warnings } = captureWarns(() => applyProjectGroupLastUpdatedSortPatch(source));
     assert.equal(value, source);
@@ -261,12 +266,13 @@ test("already patched sorter rejects a changed body, getter, or selected mode", 
 
 test("partial helper or call-site patches are rejected without modifying bytes", () => {
   const patched = applyPatchTwice(currentProjectSource);
-  const oldHelper = "function p5o({groups:e,projectOrder:t}){return G6i(e,t)}";
-  const newHelper = patched.slice(patched.indexOf("function p5o("), patched.indexOf("const prioritySortId"));
+  const oldHelper = "function({groups:e,projectOrder:t}){return(0,a.n)(e,t)}";
+  const newHelper = patched.slice(patched.indexOf("ec=function(") + 3, patched.indexOf("}({groups:q(") + 1);
   for (const source of [
     currentProjectSource.replace(oldHelper, newHelper),
     patched.replace(newHelper, oldHelper),
-    currentProjectSource.replace("{chatSortMode:j,projectSortMode:M}", "{unrelated:j,projectSortMode:M}"),
+    currentProjectSource.replace("{chatSortMode:X,projectSortMode:Q}", "{unrelated:X,projectSortMode:Q}"),
+    currentProjectSource.replace("ec=function({groups:e,projectOrder:t}){return(0,a.n)(e,t)}", "ec=function({groups:e,projectOrder:t}){return(0,n.n)(e,t)}"),
   ]) {
     const { value, warnings } = captureWarns(() => applyProjectGroupLastUpdatedSortPatch(source));
     assert.equal(value, source);
@@ -274,26 +280,42 @@ test("partial helper or call-site patches are rejected without modifying bytes",
   }
 });
 
-test("descriptor selects the unique sidebar contract independently of chunk name", t => {
+test("descriptor selects the unique sidebar chunk independently of chunk name", t => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "project-group-last-updated-sort-assets-"));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
-  const assetsDir = path.join(tempDir, "webview", "assets");
-  const assetPath = path.join(assetsDir, "renamed-sidebar.js");
-  const unrelated = path.join(assetsDir, "app-initial-unrelated.js");
+  const assetsDir = path.join(tempDir, "webview", "assets", "async");
+  const assetPath = path.join(assetsDir, "24191.7b05d5cf83.js");
+  const unrelated = path.join(assetsDir, "1.0000000000.js");
   fs.mkdirSync(assetsDir, { recursive: true });
-  fs.writeFileSync(assetPath, currentProjectSource);
-  fs.writeFileSync(unrelated, "function unrelated(){}");
-  const patch = () => patchUniqueAssetFile(tempDir, descriptors[0].pattern,
-    descriptors[0].assetMatch, descriptors[0].apply, "missing", "ambiguous");
-  assert.deepEqual(patch(), { matched: 1, changed: 1, assetName: "renamed-sidebar.js" });
-  assert.deepEqual(patch(), { matched: 1, changed: 0, assetName: "renamed-sidebar.js" });
-  assert.equal(fs.readFileSync(unrelated, "utf8"), "function unrelated(){}");
+  fs.writeFileSync(assetPath, chunk(currentProjectSource));
+  fs.writeFileSync(unrelated, chunk("let ec=null;"));
+  const patch = () => {
+    const report = createPatchReport();
+    const { warnings } = captureWarns(() =>
+      applyWebviewAssetPatchDescriptors(tempDir, normalizePatchDescriptors(descriptors), {}, report));
+    return { entry: report.patches[0], warnings };
+  };
+  assert.equal(patch().entry.status, "applied");
+  assert.equal(fs.readFileSync(assetPath, "utf8"), chunk(applyProjectGroupLastUpdatedSortPatch(currentProjectSource)));
+  assert.equal(patch().entry.status, "already-applied");
+  assert.equal(fs.readFileSync(unrelated, "utf8"), chunk("let ec=null;"));
 
-  fs.writeFileSync(path.join(assetsDir, "duplicate.js"), currentProjectSource);
-  const before = fs.readFileSync(assetPath, "utf8");
-  const { value, warnings } = captureWarns(patch);
-  assert.deepEqual(value, { matched: 2, changed: 0, assetName: null });
+  fs.writeFileSync(assetPath, chunk(currentProjectSource));
+  fs.writeFileSync(path.join(assetsDir, "2.0000000000.js"), chunk(currentProjectSource));
+  const { entry, warnings } = patch();
+  assert.notEqual(entry.status, "applied");
   assert.equal(warnings.length, 1);
-  assert.equal(fs.readFileSync(assetPath, "utf8"), before);
-  assert.equal(fs.readFileSync(path.join(assetsDir, "duplicate.js"), "utf8"), currentProjectSource);
+  assert.equal(fs.readFileSync(assetPath, "utf8"), chunk(currentProjectSource));
+  assert.equal(fs.readFileSync(path.join(assetsDir, "2.0000000000.js"), "utf8"), chunk(currentProjectSource));
+});
+
+const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
+test("the signed official webview has one patchable project-group sorter", { skip: signedApp == null }, () => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const sources = findWebviewAssetsContaining(signedApp, descriptors[0].assetNeedles)
+    .map((name) => fs.readFileSync(path.join(signedApp, "webview", "assets", name), "utf8"))
+    .filter(descriptors[0].assetMatch);
+  assert.equal(sources.length, 1);
+  const patched = applyPatchTwice(sources[0]);
+  assert.notEqual(patched, sources[0]);
 });

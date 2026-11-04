@@ -77,9 +77,16 @@ decision, and tray readiness without logging arguments or profile contents.
 Targets the current signed stable official Linux bundle on amd64 and arm64,
 using the same JavaScript patch for X11 and Wayland. Desktop-shell behavior
 still needs session-specific runtime verification. The preferences are saved
-through the existing global-state API under
+in the active app profile's global state under
 `codex-linux-start-minimized-to-tray` and
-`codex-linux-start-minimized-to-tray-only-on-boot` in the active app profile.
+`codex-linux-start-minimized-to-tray-only-on-boot`. The official main process
+no longer serves generic `vscode://codex/` webview requests, so the feature
+answers one owned request URL in the upstream view-message handler, before its
+fetch forwarding, and accepts only these two keys. The settings rows are
+declared inside the rspack module that owns the native General menu-bar row,
+reuse its row, switch, locale and platform bindings, and send their requests
+through the upstream view-message bridge. The row labels and descriptions are
+added to every locale catalog named by the webview's locale loader.
 They are shared with other launches using that profile;
 `community-profile-isolation` gives the Community app a separate profile.
 
@@ -119,7 +126,7 @@ the window stays hidden. Quit fully and launch from the regular shortcut;
 verify that the window opens even with **Start minimized to tray** also enabled.
 
 The current startup contracts and settings patch build against signed stable
-`26.1007.21434`. Tests exercise upstream background guards and interactive
+`26.1029.61003`. Tests exercise upstream background guards and interactive
 activation alongside the feature preferences.
 
 The login-only extension previously built with this feature enabled alone on

@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { findCodexRequestWebviewAsset } = require("../../scripts/patches/lib/assets.js");
+const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
 const SETTINGS_KEY = "codex-linux-start-minimized-to-tray";
@@ -15,35 +15,90 @@ const LABEL_TRANSLATIONS = require("./labels.json");
 const DESCRIPTION_IDS = ["settings.general.startMinimizedToTray.description", "settings.general.startMinimizedToTrayOnlyOnBoot.description"];
 const DESCRIPTION_TRANSLATIONS = require("./descriptions.json");
 const ID = "[A-Za-z_$][\\w$]*";
-const GLOBAL_STATE_GET_HANDLER = '"get-global-state":async';
-const GLOBAL_STATE_SET_HANDLER = '"set-global-state":async';
-const CURRENT_HANDLER_OWNER = '"set-remote-wsl-connections-enabled":';
-const GLOBAL_STATE_ALLOWLIST_MARKER = "/*codex-linux-global-state-allowlist*/";
-const GLOBAL_STATE_ALLOWED_CLAUSE =
-  `${JSON.stringify([SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY])}.includes(k)||`;
+// Since 26.1029 the desktop main process no longer serves `vscode://codex/<method>`
+// webview fetches from a handler map. The view-message handler forwards every
+// "fetch" message to the authenticated fetch wrapper, which only keeps the
+// dictation route. This feature answers its own single URL in that view-message
+// handler, before the wrapper, using the handler's profile global state and its
+// inline view-message sender (the channel the webview fetch client listens to).
+const ROUTE_URL = "vscode://codex/codex-linux-start-minimized-to-tray";
+const ROUTE_MARKER = "/*codex-linux-start-minimized-to-tray-route*/";
+const FETCH_FORWARD = new RegExp(`await this\\.fetchWrapper\\.handleRequest\\((${ID}),(${ID})\\);break;case"cancel-fetch":`, "g");
+const FETCH_CASE = 'case"fetch":';
+const VIEW_HANDLER_FIELDS = ["fetchWrapper;", "globalState;", "chunkedMessageSender;"];
 
-function globalStateHandlers() {
-  const allowed = `${GLOBAL_STATE_ALLOWLIST_MARKER}${GLOBAL_STATE_ALLOWED_CLAUSE}!1`;
-  return (
-    `"get-global-state":async({key,params}={})=>{let k=key??params?.key;if(!(${allowed}))throw Error(\`Unsupported global-state key\`);return{value:this.globalState.get(k)}},` +
-    `"set-global-state":async({key,value,params}={})=>{let k=key??params?.key,v=value??params?.value;if(!(${allowed}))throw Error(\`Unsupported global-state key\`);this.globalState.set(k,v);return{success:!0}},`
-  );
+// Answers one webview fetch for the two owned preference keys.
+function codexLinuxStartMinimizedRoute(request, globalState, respond) {
+  const requestId = request?.requestId;
+  try {
+    let body;
+    try {
+      body = typeof request?.body === "string" && request.body.length > 0 ? JSON.parse(request.body) : request?.body ?? {};
+    } catch {
+      throw Error("Invalid start minimized to tray request");
+    }
+    const key = body?.key;
+    if (key !== "codex-linux-start-minimized-to-tray" && key !== "codex-linux-start-minimized-to-tray-only-on-boot") {
+      throw Error("Unsupported start minimized to tray preference");
+    }
+    let result;
+    if (body.action === "get") {
+      result = { value: globalState.get(key) };
+    } else if (body.action === "set") {
+      globalState.set(key, body.value === true);
+      result = { success: true };
+    } else {
+      throw Error("Unsupported start minimized to tray action");
+    }
+    respond({ type: "fetch-response", responseType: "success", requestId, status: 200,
+      headers: { "content-type": "application/json" }, bodyJsonString: JSON.stringify(result) });
+  } catch (error) {
+    respond({ type: "fetch-response", responseType: "error", requestId, status: 500,
+      error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
-function globalStateHandlerPlan(source) {
-  const count = needle => source.split(needle).length - 1;
-  const getCount = count(GLOBAL_STATE_GET_HANDLER);
-  const setCount = count(GLOBAL_STATE_SET_HANDLER);
-  if (getCount === 1 && setCount === 1) {
-    const markerCount = count(GLOBAL_STATE_ALLOWLIST_MARKER);
-    const allowedCount = count(GLOBAL_STATE_ALLOWED_CLAUSE);
-    if (markerCount !== 2 || (allowedCount !== 0 && allowedCount !== 2)) return null;
-    return patched => allowedCount === 2
-      ? patched
-      : patched.split(GLOBAL_STATE_ALLOWLIST_MARKER).join(GLOBAL_STATE_ALLOWLIST_MARKER + GLOBAL_STATE_ALLOWED_CLAUSE);
+function routeSource(webContents, request) {
+  return `${ROUTE_MARKER}if(${JSON.stringify(ROUTE_URL)}===${request}?.url){codexLinuxStartMinimizedRoute(${request},this.globalState,codexLinuxStartMinimizedResponse=>this.chunkedMessageSender.sendInlineMessageForView(${webContents},codexLinuxStartMinimizedResponse));break}`;
+}
+
+// The "fetch" case belongs to exactly one view-message handler class: the one
+// declaring the fetch wrapper, profile global state and inline view-message
+// sender. Look it up by its declaration rather than the nearest "class "
+// keyword, because other Linux features inject helpers (some with their own
+// classes) into the handler's methods.
+const CLASS_OPEN = new RegExp(`class ${ID}(?: extends ${ID}(?:\\.${ID})*)?\\{`, "g");
+function viewHandlerOwnsIndex(source, caseIndex, endIndex) {
+  const owners = [...source.slice(0, caseIndex).matchAll(CLASS_OPEN)]
+    .map((match) => match.index + match[0].length - 1)
+    .filter((open) => {
+      const fields = source.slice(open, open + 1000).split(/[(=]/, 1)[0];
+      return VIEW_HANDLER_FIELDS.every((field) => fields.includes(field));
+    });
+  return owners.length === 1 && findMatchingBrace(source, owners[0]) >= endIndex;
+}
+
+// Other Linux features may route their own URLs in the same "fetch" case
+// before this one; they are tolerated only as complete codex-linux routes.
+function fetchRoutePlan(source) {
+  const forwards = [...source.matchAll(FETCH_FORWARD)];
+  if (forwards.length !== 1) return null;
+  const forward = forwards[0];
+  const [, webContents, request] = forward;
+  const caseIndex = source.lastIndexOf(FETCH_CASE, forward.index);
+  const between = source.slice(caseIndex + FETCH_CASE.length, forward.index);
+  if (caseIndex === -1 || (between.length > 0 && !between.startsWith("/*codex-linux-"))) return null;
+  if (caseIndex === -1 || !viewHandlerOwnsIndex(source, caseIndex, forward.index)) return null;
+  const route = routeSource(webContents, request);
+  const routeCount = source.split(ROUTE_MARKER).length - 1;
+  if (routeCount === 1) {
+    return source.slice(forward.index - route.length, forward.index) === route ? (patched) => patched : null;
   }
-  if (getCount !== 0 || setCount !== 0 || count(CURRENT_HANDLER_OWNER) !== 1) return null;
-  return patched => patched.replace(CURRENT_HANDLER_OWNER, globalStateHandlers() + CURRENT_HANDLER_OWNER);
+  if (routeCount !== 0) return null;
+  return (patched) => {
+    const index = patched.indexOf(forward[0]);
+    return patched.slice(0, index) + route + patched.slice(index);
+  };
 }
 
 // systemd's XDG generator uses app-<escaped desktop ID>@autostart.service.
@@ -150,6 +205,7 @@ function hasCompleteMainPatch(source, state, startup) {
   const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}if\\(!(${ID})&&\\(!codexLinuxStartMinimizedRequested\\|\\|${escapeRegExp(first[2])}\\.getPrimaryWindow\\(\\)==null\\)\\)return null;${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   if (!activations || !trayActivation || !unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{\\(${ID}\\|\\|codexLinuxStartMinimizedRequested\\)&&${escapeRegExp(activations[1])}\\(\\);return\\}`, "g"))) return false;
   return [
+    codexLinuxStartMinimizedRoute.toString(),
     codexLinuxStartMinimizedTrayReady.toString(),
     codexLinuxStartMinimizedAutostart.toString(),
     codexLinuxStartMinimizedPreference.toString(),
@@ -162,9 +218,9 @@ function hasCompleteMainPatch(source, state, startup) {
 }
 
 function applyMainPatch(source) {
-  const installGlobalStateHandlers = globalStateHandlerPlan(source);
-  if (!installGlobalStateHandlers) {
-    console.warn("WARN: Start minimized to tray global-state handler owner missing or ambiguous");
+  const installFetchRoute = fetchRoutePlan(source);
+  if (!installFetchRoute) {
+    console.warn("WARN: Start minimized to tray fetch route owner missing or ambiguous");
     return source;
   }
   const state = unique(source, new RegExp(`let (${ID})=await \\(0,${ID}\\.${ID}\\)\\(\\{moduleDir:__dirname\\}\\),`, "g"));
@@ -176,11 +232,12 @@ function applyMainPatch(source) {
   const first = firstWindowContract(source, launchBackground);
   const background = backgroundContract(source, first);
   if (source.includes(`function ${MAIN_MARKER}(`)) {
-    if (!background || !state || !startup || !hasCompleteMainPatch(source, state, startup)) {
+    if (!background || !state || !startup || !hasCompleteMainPatch(source, state, startup) ||
+        source.split(ROUTE_MARKER).length !== 2) {
       console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
       return source;
     }
-    return installGlobalStateHandlers(source);
+    return source;
   }
   if (source.includes("codexLinuxStartMinimized")) {
     console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
@@ -247,101 +304,178 @@ function applyMainPatch(source) {
   patched = patched.replace(interactive[0], interactive[0].replace("=>{", `=>{${clearHidden}`));
   // rspack chunks are CommonJS files; these helpers become chunk-scoped
   // declarations visible to the startup module factory below them.
-  return installGlobalStateHandlers(`${codexLinuxStartMinimizedAutostart.toString()}\n${codexLinuxStartMinimizedPreference.toString()}\n${codexLinuxStartMinimizedTrayReady.toString()}\n${patched}`);
+  return installFetchRoute(`${codexLinuxStartMinimizedRoute.toString()}\n${codexLinuxStartMinimizedAutostart.toString()}\n${codexLinuxStartMinimizedPreference.toString()}\n${codexLinuxStartMinimizedTrayReady.toString()}\n${patched}`);
+}
+
+const MEMBER = `${ID}(?:\\.${ID})*`;
+const SETTINGS_ASSET_NEEDLES = ['"settings.general.macMenuBar.ariaLabel"', ".macMenuBarEnabled"];
+const LOCALE_LOADER_NEEDLES = ['"../locales/', ".json\":function(){return "];
+const MAC_MENU_BAR_LABEL = '"settings.general.macMenuBar.label"';
+const POST_FUNCTION = "codexLinuxStartMinimizedPost";
+
+// rspack chunks hold `__webpack_modules__={id(module,exports,require){...},...}`.
+// Injected settings code must live inside the owning module factory, whose
+// imported bindings are factory-local variables.
+function webpackModuleFactories(source) {
+  const marker = "__webpack_modules__={";
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex === -1 || source.indexOf(marker, markerIndex + 1) !== -1) return null;
+  const factories = [];
+  const head = new RegExp(`(?:"[^"\\\\]+"|${ID})\\((${ID})(?:,(${ID}))?(?:,(${ID}))?\\)\\{`, "y");
+  let index = markerIndex + marker.length;
+  while (source[index] !== "}") {
+    head.lastIndex = index;
+    const match = head.exec(source);
+    if (!match) return null;
+    const open = index + match[0].length - 1;
+    const end = findMatchingBrace(source, open);
+    if (end === -1) return null;
+    factories.push({ start: index, open, end, requireName: match[3] ?? null });
+    index = end + 1;
+    if (source[index] === ",") index += 1;
+  }
+  return factories;
+}
+
+function factoryImports(factory, source, name) {
+  if (factory.requireName == null) return false;
+  const body = source.slice(factory.open, factory.end);
+  return new RegExp(`(?:var |,)${escapeRegExp(name)}=${escapeRegExp(factory.requireName)}\\("`).test(body) ||
+    new RegExp(`(?:^|[;{}])function ${escapeRegExp(name)}\\(`).test(body.slice(1));
 }
 
 function settingsContract(source) {
-  const owner = unique(source, new RegExp(`function (${ID})\\((${ID})\\)\\{.{0,300}?\\{platform:(${ID})\\}=(${ID})\\(\\),(${ID})=(${ID})\\((${ID})\\.macMenuBarEnabled\\);if\\(\\3!==\`macOS\`\\)return null;`, "g"));
-  if (!owner) return null;
-  const end = findMatchingBrace(source, source.indexOf("{", owner.index));
-  const body = source.slice(owner.index, end + 1);
-  const row = unique(body, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${ID}),\\{label:${ID},description:${ID},control:${ID}\\}`, "g"));
-  const toggle = unique(body, new RegExp(`\\(0,${ID}\\.jsx\\)\\((${ID}),\\{checked:${ID},onChange:${ID},ariaLabel:${ID}\\}`, "g"));
-  const reactUse = source.match(new RegExp(`\\(0,(${ID})\\.useState\\)\\(`));
-  const react = reactUse && source.match(new RegExp(`${escapeRegExp(reactUse[1])}=(${ID})\\(\\)`));
-  const render = unique(source, new RegExp(`\\(0,(${ID})\\.jsx\\)\\(${escapeRegExp(owner[1])},\\{appName:${ID}\\}\\)`, "g"));
-  const intlUse = unique(body, new RegExp(`(${ID})\\.formatMessage\\(\\{id:\`settings\\.general\\.macMenuBar\\.ariaLabel\``, "g"));
-  const intl = intlUse && unique(body, new RegExp(`\\b${escapeRegExp(intlUse[1])}=(${ID})\\(\\)`, "g"));
-  if (!row || !toggle || !react || !render || !intl || row[1] !== render[1]) return null;
-  return { owner, row: row[2], toggle: toggle[1], reactFactory: react[1], platformHook: owner[4], jsx: row[1], intlHook: intl[1], render };
+  const owner = unique(source, new RegExp(`function (${ID})\\((${ID})\\)\\{let [^;]*?\\{platform:(${ID})\\}=\\(0,(${MEMBER})\\)\\(\\),(${ID})=\\(0,${MEMBER}\\)\\(${MEMBER}\\.macMenuBarEnabled\\);if\\("macOS"!==\\3\\)return null;`, "g"));
+  const factories = owner && webpackModuleFactories(source);
+  const factory = factories?.find(({ open, end }) => open < owner.index && end > owner.index);
+  if (!factory) return null;
+  const ownerEnd = findMatchingBrace(source, source.indexOf("{", owner.index));
+  if (ownerEnd === -1 || !/[;{}]/.test(source[owner.index - 1])) return null;
+  const body = source.slice(owner.index, ownerEnd + 1);
+  const row = unique(body, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${MEMBER}),\\{label:${ID},description:${ID},control:${ID}\\}\\)`, "g"));
+  const toggle = unique(body, new RegExp(`\\(0,${ID}\\.jsx\\)\\((${MEMBER}),\\{checked:${ID},onChange:${ID},ariaLabel:${ID}\\}\\)`, "g"));
+  const intlUse = unique(body, new RegExp(`(${ID})\\.formatMessage\\(\\{id:"settings\\.general\\.macMenuBar\\.ariaLabel"`, "g"));
+  const intl = intlUse && unique(body, new RegExp(`(?<![\\w$.])${escapeRegExp(intlUse[1])}=\\(0,(${MEMBER})\\)\\(\\)`, "g"));
+  const factorySource = source.slice(factory.open, factory.end + 1);
+  const reactUses = [...factorySource.matchAll(new RegExp(`\\(0,(${ID})\\.use(?:State|Effect)\\)\\(`, "g"))].map((match) => match[1]);
+  const react = reactUses.length > 0 && reactUses.every((name) => name === reactUses[0]) ? reactUses[0] : null;
+  if (!row || !toggle || !intl || !react) return null;
+  const jsx = row[1];
+  const renderPattern = new RegExp(`\\(0,${escapeRegExp(jsx)}\\.jsx\\)\\(${escapeRegExp(owner[1])},\\{appName:[^{}]*\\}\\)(?=[,\\]])`, "g");
+  const renders = [...factorySource.matchAll(renderPattern)].map((match) => ({ index: factory.open + match.index, text: match[0] }));
+  const bindings = [jsx, react, row[2], toggle[1], owner[4], intl[1]].map((name) => name.split(".")[0]);
+  if (renders.length === 0 || renders.some(({ index }) => index > owner.index && index < ownerEnd) ||
+      !bindings.every((name) => factoryImports(factory, source, name))) {
+    return null;
+  }
+  return { ownerEnd, factoryEnd: factory.end, renders, row: row[2], toggle: toggle[1], react, platformHook: owner[4], jsx, intlHook: intl[1] };
 }
 
-function settingComponent({ row, toggle, reactFactory, platformHook, jsx, intlHook }, bootOnly = false) {
+// Self-contained webview client for this feature's main-process route. It
+// mirrors the upstream view-message transport and response channel.
+function settingsPostSource() {
+  return `function ${POST_FUNCTION}(codexLinuxBody){let codexLinuxState=globalThis.codexLinuxStartMinimizedRequests;if(codexLinuxState==null){codexLinuxState={sequence:0,pending:new Map};globalThis.codexLinuxStartMinimizedRequests=codexLinuxState;window.addEventListener("message",codexLinuxEvent=>{let codexLinuxData=codexLinuxEvent?.data;if(codexLinuxData==null||"object"!=typeof codexLinuxData||"fetch-response"!==codexLinuxData.type)return;let codexLinuxEntry=codexLinuxState.pending.get(codexLinuxData.requestId);if(codexLinuxEntry==null)return;codexLinuxState.pending.delete(codexLinuxData.requestId);clearTimeout(codexLinuxEntry.timer);if("success"===codexLinuxData.responseType){let codexLinuxParsed=null;try{codexLinuxParsed=codexLinuxData.bodyJsonString?JSON.parse(codexLinuxData.bodyJsonString):null}catch{}codexLinuxEntry.resolve(codexLinuxParsed)}else codexLinuxEntry.reject(Error(codexLinuxData.error||"Could not reach the startup preference service"))})}let codexLinuxRequestId="codex-linux-start-minimized-"+Date.now()+"-"+ ++codexLinuxState.sequence;return new Promise((codexLinuxResolve,codexLinuxReject)=>{let codexLinuxTimer=setTimeout(()=>{codexLinuxState.pending.delete(codexLinuxRequestId);codexLinuxReject(Error("Timed out reading the startup preference"))},1e4);codexLinuxState.pending.set(codexLinuxRequestId,{resolve:codexLinuxResolve,reject:codexLinuxReject,timer:codexLinuxTimer});let codexLinuxPayload={type:"fetch",requestId:codexLinuxRequestId,method:"POST",url:${JSON.stringify(ROUTE_URL)},body:JSON.stringify(codexLinuxBody)},codexLinuxBridge=window.electronBridge,codexLinuxMessage=new CustomEvent("codex-message-from-view",{detail:codexLinuxPayload});if(codexLinuxBridge?.sendMessageFromView){codexLinuxMessage.__codexForwardedViaBridge=!0;codexLinuxBridge.sendMessageFromView(codexLinuxPayload).catch(()=>{})}window.dispatchEvent(codexLinuxMessage)})}`;
+}
+
+function settingComponent({ row, toggle, react, platformHook, jsx, intlHook }, bootOnly = false) {
   const key = bootOnly ? BOOT_ONLY_SETTINGS_KEY : SETTINGS_KEY;
   const marker = bootOnly ? BOOT_ONLY_UI_MARKER : UI_MARKER;
   const label = bootOnly ? "Start minimized to tray only on boot" : "Start minimized to tray";
   const description = bootOnly
     ? "Hide the main window only when started automatically at login. Manual launches open normally. Takes priority over Start minimized to tray; does not enable autostart."
     : "Start with the main window hidden in the system tray. Applies after quitting and restarting the app, unless the boot-only option is enabled.";
-  return `function ${marker}(){let React=${reactFactory}(),{platform}= ${platformHook}(),[enabled,setEnabled]=React.useState(!1),[pending,setPending]=React.useState(!0),[error,setError]=React.useState(null),intl=${intlHook}(),label=intl.formatMessage({id:${JSON.stringify(LABEL_IDS[Number(bootOnly)])},defaultMessage:${JSON.stringify(label)}}),description=intl.formatMessage({id:${JSON.stringify(DESCRIPTION_IDS[Number(bootOnly)])},defaultMessage:${JSON.stringify(description)}});React.useEffect(()=>{let alive=!0;return codexLinuxStartMinimizedPost(\`get-global-state\`,{params:{key:${JSON.stringify(key)}}}).then(e=>{if(alive)setEnabled(e?.value===!0)}).catch(e=>{if(alive)setError(String(e))}).finally(()=>{if(alive)setPending(!1)}),()=>{alive=!1}},[]);if(platform!==\`linux\`)return null;let change=async value=>{setPending(!0);setError(null);try{let result=await codexLinuxStartMinimizedPost(\`set-global-state\`,{params:{key:${JSON.stringify(key)},value:value===!0}});if(result?.success!==!0)throw Error(\`Could not save startup preference\`);setEnabled(value===!0)}catch(e){setError(String(e))}finally{setPending(!1)}};return(0,${jsx}.jsx)(${row},{label,description:error??description,control:(0,${jsx}.jsx)(${toggle},{checked:enabled,disabled:pending,onChange:change,ariaLabel:label})})}`;
+  return `function ${marker}(){let{platform:codexLinuxPlatform}=(0,${platformHook})(),[codexLinuxEnabled,codexLinuxSetEnabled]=(0,${react}.useState)(!1),[codexLinuxPending,codexLinuxSetPending]=(0,${react}.useState)(!0),[codexLinuxError,codexLinuxSetError]=(0,${react}.useState)(null),codexLinuxIntl=(0,${intlHook})(),codexLinuxLabel=codexLinuxIntl.formatMessage({id:${JSON.stringify(LABEL_IDS[Number(bootOnly)])},defaultMessage:${JSON.stringify(label)}}),codexLinuxDescription=codexLinuxIntl.formatMessage({id:${JSON.stringify(DESCRIPTION_IDS[Number(bootOnly)])},defaultMessage:${JSON.stringify(description)}});(0,${react}.useEffect)(()=>{let codexLinuxAlive=!0;return ${POST_FUNCTION}({action:"get",key:${JSON.stringify(key)}}).then(codexLinuxResult=>{if(codexLinuxAlive)codexLinuxSetEnabled(codexLinuxResult?.value===!0)}).catch(codexLinuxProblem=>{if(codexLinuxAlive)codexLinuxSetError(String(codexLinuxProblem))}).finally(()=>{if(codexLinuxAlive)codexLinuxSetPending(!1)}),()=>{codexLinuxAlive=!1}},[]);if("linux"!==codexLinuxPlatform)return null;let codexLinuxChange=async codexLinuxValue=>{codexLinuxSetPending(!0);codexLinuxSetError(null);try{let codexLinuxResult=await ${POST_FUNCTION}({action:"set",key:${JSON.stringify(key)},value:codexLinuxValue===!0});if(codexLinuxResult?.success!==!0)throw Error("Could not save startup preference");codexLinuxSetEnabled(codexLinuxValue===!0)}catch(codexLinuxProblem){codexLinuxSetError(String(codexLinuxProblem))}finally{codexLinuxSetPending(!1)}};return(0,${jsx}.jsx)(${row},{label:codexLinuxLabel,description:codexLinuxError??codexLinuxDescription,control:(0,${jsx}.jsx)(${toggle},{checked:codexLinuxEnabled,disabled:codexLinuxPending,onChange:codexLinuxChange,ariaLabel:codexLinuxLabel})})}`;
 }
 
-function labelCatalogPatches(assetsDir) {
+function escapeSingleQuotedJson(text) {
+  return text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+// The locale loader maps "../locales/<locale>.json" to a numbered async chunk
+// and the module inside it; each catalog module is `e.exports=JSON.parse('...')`.
+function labelCatalogPatches(extractedDir) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  const loaders = findWebviewAssetsContaining(extractedDir, LOCALE_LOADER_NEEDLES);
+  if (loaders.length !== 1) throw Error("Start minimized to tray locale loader missing or ambiguous");
+  const loader = fs.readFileSync(path.join(assetsDir, loaders[0]), "utf8");
+  const entries = [...loader.matchAll(new RegExp(`"\\.\\./locales/([A-Za-z]{2}(?:-(?:[A-Za-z]{2,4}|\\d{3}))?)\\.json":function\\(\\)\\{return (${ID})\\.e\\((\\d+)\\)\\.then\\(\\2\\.t\\.bind\\(\\2,"([^"\\\\]+)",\\d+\\)\\)\\}`, "g"))]
+    .map(([, locale, , chunk, moduleId]) => ({ locale, chunk, moduleId }));
+  if (entries.length === 0 || entries.length !== loader.split('"../locales/').length - 1) {
+    throw Error("Start minimized to tray locale loader contract missing or ambiguous");
+  }
+  const asyncNames = fs.readdirSync(path.join(assetsDir, "async"));
   const patches = [];
-  for (const name of fs.readdirSync(assetsDir)) {
-    const locale = name.match(/^([a-z]{2}(?:-(?:[A-Za-z]{2,4}|\d{3}))?)-[\w-]+\.js$/)?.[1];
-    if (!locale) continue;
-    const target = path.join(assetsDir, name);
+  for (const { locale, chunk, moduleId } of entries) {
+    const files = asyncNames.filter((name) => name.startsWith(`${chunk}.`) && name.endsWith(".js"));
+    if (files.length !== 1) throw Error(`Start minimized to tray ${locale} label catalog chunk missing or ambiguous`);
+    const target = path.join(assetsDir, "async", files[0]);
     const source = fs.readFileSync(target, "utf8");
-    if (!source.includes('"settings.general.macMenuBar.label"')) continue;
+    if (!source.includes(MAC_MENU_BAR_LABEL)) continue;
     const labels = LABEL_TRANSLATIONS[locale];
     if (!labels) throw Error(`Start minimized to tray label translations missing for ${locale}`);
     const descriptions = DESCRIPTION_TRANSLATIONS[locale];
     if (!descriptions) throw Error(`Start minimized to tray description translations missing for ${locale}`);
-    const exports = unique(source, /export\{([^}]+)\}/g);
-    const alias = exports && unique(exports[1], new RegExp(`(?:^|,)(${ID}) as default(?=,|$)`, "g"))?.[1];
-    const dictionary = alias && unique(source, new RegExp(`\\b${escapeRegExp(alias)}=\\{`, "g"));
-    const open = dictionary && dictionary.index + dictionary[0].length - 1;
-    const end = open != null ? findMatchingBrace(source, open) : -1;
-    if (!dictionary || !source.slice(open, end + 1).includes('"settings.general.macMenuBar.label"')) {
-      throw Error(`Start minimized to tray ${locale} label catalog contract missing or ambiguous`);
-    }
+    const id = escapeRegExp(moduleId);
+    const catalog = unique(source, new RegExp(`(?:"${id}"|(?<![\\w$."])${id})\\((${ID})\\)\\{\\1\\.exports=JSON\\.parse\\('\\{`, "g"));
+    if (!catalog) throw Error(`Start minimized to tray ${locale} label catalog contract missing or ambiguous`);
+    const open = catalog.index + catalog[0].length;
     const ids = [...LABEL_IDS, ...DESCRIPTION_IDS];
     const messages = [...labels, ...descriptions];
-    const entries = ids.map((id, index) => `${JSON.stringify(id)}:${JSON.stringify(messages[index])},`).join("");
-    if (ids.some(id => source.includes(JSON.stringify(id)))) {
-      if (source.slice(open + 1, open + 1 + entries.length) !== entries ||
-          ids.some(id => source.split(JSON.stringify(id)).length !== 2)) {
+    const inserted = escapeSingleQuotedJson(
+      ids.map((messageId, index) => `${JSON.stringify(messageId)}:${JSON.stringify(messages[index])},`).join(""),
+    );
+    if (ids.some((messageId) => source.includes(JSON.stringify(messageId)))) {
+      if (source.slice(open, open + inserted.length) !== inserted ||
+          ids.some((messageId) => source.split(JSON.stringify(messageId)).length !== 2)) {
         throw Error(`Start minimized to tray ${locale} patched label catalog contract missing or ambiguous`);
       }
       continue;
     }
-    patches.push({ target, source: source.slice(0, open + 1) + entries + source.slice(open + 1) });
+    patches.push({ target, source: source.slice(0, open) + inserted + source.slice(open) });
   }
   return patches;
 }
 
 function applySettingsPatch(extractedDir) {
-  const assetsDir = path.join(extractedDir, "webview/assets");
-  const candidates = fs.readdirSync(assetsDir).filter((name) => name.endsWith(".js"))
-    .map((name) => ({ name, source: fs.readFileSync(path.join(assetsDir, name), "utf8") }))
-    .filter(({ source }) => source.includes("settings.general.macMenuBar.description") && source.includes(".macMenuBarEnabled"));
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  const candidates = findWebviewAssetsContaining(extractedDir, SETTINGS_ASSET_NEEDLES);
   if (candidates.length !== 1) throw Error("Start minimized to tray General settings asset missing or ambiguous");
-  const [{ name, source }] = candidates;
+  const target = path.join(assetsDir, candidates[0]);
+  const source = fs.readFileSync(target, "utf8");
   const contract = settingsContract(source);
   if (!contract) throw Error("Start minimized to tray General settings contract missing or ambiguous");
-  const request = findCodexRequestWebviewAsset(assetsDir);
-  const requestImport = `import{${request.exportName} as codexLinuxStartMinimizedPost}from\"./${request.assetName}\";\n`;
-  const render = `${contract.render[0]},(0,${contract.jsx}.jsx)(${UI_MARKER},{}),(0,${contract.jsx}.jsx)(${BOOT_ONLY_UI_MARKER},{})`;
-  const component = `${settingComponent(contract)}\n${settingComponent(contract, true)}`;
+  const injected = `${settingsPostSource()}${settingComponent(contract)}${settingComponent(contract, true)}`;
+  const rendered = `,(0,${contract.jsx}.jsx)(${UI_MARKER},{}),(0,${contract.jsx}.jsx)(${BOOT_ONLY_UI_MARKER},{})`;
   // Validate every affected catalog before writing settings or translations.
-  const catalogs = labelCatalogPatches(assetsDir);
+  const catalogs = labelCatalogPatches(extractedDir);
   let patched = source;
   if (source.includes(`function ${UI_MARKER}(`)) {
-    if (source.split(component).length !== 2 || source.split(requestImport).length !== 2 ||
-        source.split(render).length !== 2) {
+    // Other Linux settings features may declare their own rows in the same
+    // factory, so the declarations need not stay adjacent to the owner.
+    const injectedIndex = source.indexOf(injected);
+    if (source.split(injected).length !== 2 || injectedIndex <= contract.ownerEnd || injectedIndex > contract.factoryEnd ||
+        source.split(rendered).length - 1 !== contract.renders.length ||
+        contract.renders.some(({ index, text }) => source.slice(index + text.length, index + text.length + rendered.length) !== rendered)) {
       throw Error("Start minimized to tray patched General settings contract missing or ambiguous");
     }
   } else {
-    patched = requestImport + source.replace(contract.render[0], render) + `\n${component}\n`;
+    if (source.includes("codexLinuxStartMinimized")) {
+      throw Error("Start minimized to tray patched General settings contract missing or ambiguous");
+    }
+    const edits = [
+      { index: contract.ownerEnd + 1, text: injected },
+      ...contract.renders.map(({ index, text }) => ({ index: index + text.length, text: rendered })),
+    ].sort((left, right) => right.index - left.index);
+    for (const edit of edits) patched = patched.slice(0, edit.index) + edit.text + patched.slice(edit.index);
   }
-  if (patched !== source) fs.writeFileSync(path.join(assetsDir, name), patched);
+  if (patched !== source) fs.writeFileSync(target, patched);
   for (const catalog of catalogs) fs.writeFileSync(catalog.target, catalog.source);
   return { changed: patched !== source || catalogs.length > 0 };
 }
 
 module.exports = {
-  SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY, applyMainPatch, applySettingsPatch, settingsContract, settingComponent,
+  SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY, ROUTE_URL, applyMainPatch, applySettingsPatch, settingsContract, settingComponent,
+  settingsPostSource, codexLinuxStartMinimizedRoute,
   codexLinuxStartMinimizedTrayReady, codexLinuxStartMinimizedAutostart, codexLinuxStartMinimizedPreference,
   LABEL_IDS, LABEL_TRANSLATIONS, DESCRIPTION_IDS, DESCRIPTION_TRANSLATIONS,
   descriptors: [

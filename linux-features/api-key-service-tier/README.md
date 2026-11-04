@@ -56,6 +56,16 @@ provider explicitly documents such a model alias.
   use upstream account requirements for official Fast mode and do not receive
   synthetic API-key service-tier access or metadata.
 
+## Implementation
+
+The rspack webview has no stable chunk names, so each patch finds its owner by
+content: the speed-mode access hook (copied into every chunk that renders a
+speed control; every copy is patched), the model catalog filter that marks
+API-key models, the service-tier resolver, and the active-model speed option
+list. The synthetic Fast helper is declared inside the same webpack module as
+each function that calls it. A missing or drifted owner leaves its chunk
+unchanged and reports a warning.
+
 ## Risks
 
 The provider must accept and implement the `serviceTier` request setting. A

@@ -20,7 +20,12 @@ coverage.
 The current signed OpenAI Desktop package has a Linux-specific Parcel
 working-tree path. That path calls `@parcel/watcher` directly instead of
 the local `startFileWatch()` method this feature intercepts. The current route
-also forwards the caller's Git-ignore paths. When this feature
+also forwards the caller's Git-ignore paths; the current Git dependency exposes
+its ignore sources lazily (`getWatchIgnoreSources`) with
+`pruneIgnoredDirectories` enabled, so the repo watcher restarts the
+working-tree session when its pruned directory set changes. Every restart
+re-enters this feature's adapter, which recomputes its own Git exclusions;
+the forwarded paths are used only by the preserved Parcel fallback. When this feature
 is selected, its current-package patch reroutes that one local recursive
 working-tree request through `startFileWatch()`, where the exact recursive
 working-tree contract enters Watchbound. Remote watches and non-working-tree

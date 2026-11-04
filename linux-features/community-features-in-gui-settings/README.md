@@ -258,7 +258,16 @@ permissions still follow each feature's README.
 
 ```bash
 node --test linux-features/community-features-in-gui-settings/test.js
+CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
+  node --test linux-features/community-features-in-gui-settings/test.js
 ```
+
+The official webview is an rspack build. The patch finds the General settings
+chunk by its macOS menu-bar message and preference key, then resolves the native
+row, button, section, stack, React and locale/platform hooks inside that chunk's
+settings module factory. Every captured primitive must be a module-level import
+of the same factory; the section component is declared inside that factory and
+rendered first in the `general-settings` page for both upstream General layouts.
 
 The adjacent tests cover semantic settings integration, ambiguous/missing
 anchors, idempotence and incomplete patches, catalog snapshots, dependency

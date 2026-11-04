@@ -184,6 +184,27 @@ competing with the floating viewer.
 The feature only patches the Electron bridge and the Settings webview bundles;
 conversation and composer webview assets stay untouched.
 
+Since the official 26.1029 release the main process no longer serves webview
+`vscode://codex/<method>` requests from a handler map. The bridge therefore
+adds one marked route (`/*codex-linux-agent-workspace-route*/`) at the start
+of the view-message handler's `fetch` case. It answers only its own
+`linux-agent-workspace*` methods (including the allowlisted
+`linux-agent-workspace-get-global-state` / `-set-global-state` for the command
+and permission-file keys) with the same `fetch-response` message the upstream
+dictation route uses, and forwards everything else unchanged. It composes with
+the other marked Linux fetch routes in any patch order.
+
+The webview is an rspack build, so the settings page is a separate
+`webview/assets/agent-workspaces-linux.js` ES module that exports
+`createAgentWorkspacesSettings({React, post})`. The settings route loader,
+injected into the upstream lazy route map, imports it and passes React and the
+Codex request function through the route module's webpack require after
+loading the request module's chunk. Navigation label, section title, order,
+group, visibility, host policy, preload allowlist, icon and section catalog are
+added to every duplicated rspack module copy that owns them; any missing,
+ambiguous or partially patched contract skips the whole settings patch before
+writing anything.
+
 The dedicated Settings page owns local start approvals: pressing
 **Start** first runs a dry-run preview and renders an **Approve hidden
 workspace** card with the request, profile, purpose, setup/startup choices, and
@@ -207,6 +228,8 @@ Run the feature tests with:
 
 ```bash
 node --test linux-features/agent-workspace/test.js
+CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
+  node --test linux-features/agent-workspace/test.js
 ```
 
 ## Catalog subfeatures

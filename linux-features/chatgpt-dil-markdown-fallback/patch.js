@@ -2,89 +2,175 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 
 const MARKER = "function codexLinuxDilMarkdownFallback(";
 const IDENT = "[A-Za-z_$][\\w$]*";
-const MODULE_PATH = `(?:"[./A-Za-z0-9_-]+\\.js"|'[./A-Za-z0-9_-]+\\.js')`;
-const MARKDOWN_WRAPPER = new RegExp(
-  `^(?:\\s*import\\s*(?:${MODULE_PATH}|\\{[\\w$,\\s]+\\}\\s*from\\s*${MODULE_PATH})\\s*;)*\\s*` +
-  `(?:${IDENT}\\s*\\(\\s*\\)\\s*;\\s*)*export\\s*\\{([\\w$,\\s]+)\\}\\s*;?\\s*` +
-  `(?:\\/\\/# sourceMappingURL=[^\\r\\n]*)?\\s*$`,
-);
+const MODULE_ID = /^[A-Za-z0-9_$]+$/;
+const MODULES_MARKER = "export const __webpack_modules__={";
+const RESPONSE_NEEDLES = ["model_dil_v2", "source_message_status", ".prepareDil(", "errorFallback:"];
+const MARKDOWN_EXPORT_NEEDLE = "ChatGptMarkdown:";
 
-function fallbackSource(jsx, failure, markdown = "codexLinuxDilMarkdownView") {
-  return `${MARKER}{reference:e}){` +
-    "let p=e?.model_dil_v2,m=p?.fallbackMarkdown;" +
-    "if(p?.fallbackMarkdownVersion!==1||typeof m!==`string`||m.trim().length===0)" +
-    `return(0,${jsx}.jsx)(${failure},{});` +
-    `return(0,${jsx}.jsx)(\`div\`,{\"data-dil-markdown-fallback\":\`\`,` +
-    `children:(0,${jsx}.jsx)(${markdown},{` +
-    "isStreaming:false," +
-    "textStyle:{kind:`assistant-message`},children:m})})}";
+// Lists the module factories of one rspack chunk
+// (`export const __webpack_modules__={id(e,t,n){…},…}`), or null.
+function chunkModules(source) {
+  const start = source.indexOf(MODULES_MARKER);
+  if (start < 0) return null;
+  const header = /([A-Za-z0-9_$]+|"[^"\\]*")\(([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*)*)?\)\{/y;
+  const modules = [];
+  let index = start + MODULES_MARKER.length;
+  while (source[index] !== "}") {
+    header.lastIndex = index;
+    const match = header.exec(source);
+    if (match == null) return null;
+    const bodyStart = index + match[0].length;
+    const close = findMatchingBrace(source, bodyStart - 1);
+    if (close < 0) return null;
+    modules.push({
+      id: match[1].replace(/^"|"$/g, ""),
+      params: match[2]?.split(",") ?? [],
+      start: index,
+      bodyStart,
+      end: close + 1,
+    });
+    index = close + 1;
+    if (source[index] === ",") index += 1;
+  }
+  return modules;
 }
 
-function applyDilMarkdownFallback(source, markdownFile) {
-  if (!/^[A-Za-z0-9_-]+\.js$/.test(markdownFile)) {
-    throw new Error("Invalid native ChatGPT Markdown module name");
-  }
-  const patched = source.includes(MARKER);
-  if (patched) {
-    if (source.includes("errorFallback:") &&
-        source.includes("jsx)(codexLinuxDilMarkdownFallback,{reference:") &&
-        source.includes("ChatGptMarkdown as codexLinuxDilMarkdownView")) return source;
-    throw new Error("Incomplete ChatGPT DIL Markdown fallback patch");
-  }
+function moduleAt(modules, index) {
+  return modules.find((module) => module.start <= index && index < module.end) ?? null;
+}
+
+// The fallback is declared at the top of the reply module's factory, so the
+// factory's own require parameter resolves the native Markdown module. The
+// JSX runtime and the original failure element are passed in from the reply.
+// The Markdown module is resolved only when a failure is rendered; any
+// resolution problem keeps the original upstream failure.
+function fallbackSource(requireName, markdownModule) {
+  if (!MODULE_ID.test(markdownModule)) throw new Error("Invalid native ChatGPT Markdown module id");
+  return `${MARKER}codexLinuxDilProps){` +
+    "let codexLinuxDil=codexLinuxDilProps.reference?.model_dil_v2," +
+    "codexLinuxMarkdown=codexLinuxDil?.fallbackMarkdown,codexLinuxView;" +
+    "if(1!==codexLinuxDil?.fallbackMarkdownVersion||\"string\"!=typeof codexLinuxMarkdown||" +
+    "0===codexLinuxMarkdown.trim().length)return codexLinuxDilProps.failure;" +
+    `try{codexLinuxView=${requireName}("${markdownModule}").ChatGptMarkdown}catch{}` +
+    "if(null==codexLinuxView)return codexLinuxDilProps.failure;" +
+    "let codexLinuxJsx=codexLinuxDilProps.jsx.jsx;" +
+    "return codexLinuxJsx(\"div\",{\"data-dil-markdown-fallback\":\"\"," +
+    "children:codexLinuxJsx(codexLinuxView,{isStreaming:!1,textStyle:{kind:\"assistant-message\"}," +
+    "children:codexLinuxMarkdown})})}";
+}
+
+function replyContract(source) {
+  const modules = chunkModules(source);
+  if (modules == null) return null;
+  const fallbacks = [...source.matchAll(new RegExp(
+    `errorFallback:(${IDENT})\\?null:\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}(?:\\.${IDENT})?),\\{([^{}]{0,200})\\}\\),diagnostics:`, "g",
+  ))];
   const owners = [...source.matchAll(new RegExp(
     `function ${IDENT}\\(\\{assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},`, "g",
   ))];
-  const fallbacks = [...source.matchAll(new RegExp(
-    `errorFallback:(${IDENT})\\?null:\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}),\\{[^{}]{0,200}\\}\\),diagnostics:`, "g",
-  ))];
-  if (owners.length !== 1 || fallbacks.length !== 1 ||
-      !source.includes("model_dil_v2") || !source.includes("source_message_status") ||
-      !source.includes(".prepareDil(")) {
-    throw new Error("ChatGPT interactive reply fallback contract changed");
+  if (fallbacks.length !== 1 || owners.length !== 1) return null;
+  const [fallback] = fallbacks;
+  const [owner] = owners;
+  const module = moduleAt(modules, owner.index);
+  const requireName = module?.params[2];
+  if (requireName == null || moduleAt(modules, fallback.index) !== module) return null;
+  // The failure branch must belong to the reply renderer itself.
+  const ownerBodyStart = source.indexOf("{", owner.index + owner[0].length);
+  const ownerEnd = findMatchingBrace(source, ownerBodyStart);
+  if (ownerEnd < 0 || fallback.index < ownerBodyStart || fallback.index > ownerEnd) return null;
+  const ownerSource = source.slice(owner.index, ownerEnd);
+  if (!RESPONSE_NEEDLES.every((needle) => ownerSource.includes(needle))) return null;
+  const [, preparing, jsx, failure, failureProps] = fallback;
+  return { module, requireName, fallback, preparing, jsx, failure, failureProps, reference: owner[1] };
+}
+
+// The current reply chunk also requires the native Markdown module from a
+// sibling renderer (`N=require("id")` … `N.ChatGptMarkdown`), which proves that
+// the module is loaded with this chunk.
+function chunkRequiresMarkdownModule(source, markdownModule) {
+  const modules = chunkModules(source) ?? [];
+  return modules.some((module) => {
+    const requireName = module.params[2];
+    if (requireName == null) return false;
+    const body = source.slice(module.start, module.end);
+    const binding = body.match(new RegExp(
+      `(?<![\\w$.])(${IDENT})=${escapeRegExp(requireName)}\\("${escapeRegExp(markdownModule)}"\\)`,
+    ));
+    return binding != null && body.includes(`${binding[1]}.ChatGptMarkdown`);
+  });
+}
+
+function applyDilMarkdownFallback(source, markdownModule) {
+  if (!MODULE_ID.test(markdownModule)) throw new Error("Invalid native ChatGPT Markdown module id");
+  const markerCount = source.split(MARKER).length - 1;
+  if (markerCount > 0) {
+    const patchedFallbacks = source.split("jsx)(codexLinuxDilMarkdownFallback,{reference:").length - 1;
+    if (markerCount === 1 && patchedFallbacks === 1 && source.includes(`("${markdownModule}").ChatGptMarkdown`)) {
+      return source;
+    }
+    throw new Error("Incomplete ChatGPT DIL Markdown fallback patch");
   }
-  const [, preparing, jsx, failure] = fallbacks[0];
-  const reference = owners[0][1];
-  const replacement = `errorFallback:${preparing}?null:(0,${jsx}.jsx)(codexLinuxDilMarkdownFallback,{reference:${reference}}),diagnostics:`;
-  const importSource = `import{ChatGptMarkdown as codexLinuxDilMarkdownView}from"./${markdownFile}";`;
-  return importSource + fallbackSource(jsx, failure) + source.replace(fallbacks[0][0], () => replacement);
+  const contract = replyContract(source);
+  if (contract == null) throw new Error("ChatGPT interactive reply fallback contract changed");
+  if (!chunkRequiresMarkdownModule(source, markdownModule)) {
+    throw new Error("Native ChatGPT Markdown module is not loaded with the interactive reply chunk");
+  }
+  const { module, requireName, fallback, preparing, jsx, failure, failureProps, reference } = contract;
+  const replacement = `errorFallback:${preparing}?null:(0,${jsx}.jsx)(codexLinuxDilMarkdownFallback,` +
+    `{reference:${reference},jsx:${jsx},failure:(0,${jsx}.jsx)(${failure},{${failureProps}})}),diagnostics:`;
+  return source.slice(0, module.bodyStart) + fallbackSource(requireName, markdownModule) +
+    source.slice(module.bodyStart, fallback.index) + replacement +
+    source.slice(fallback.index + fallback[0].length);
+}
+
+// Finds the unique module exporting the named ChatGptMarkdown component.
+function findMarkdownModule(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const ids = new Set();
+  for (const assetName of findWebviewAssetsContaining(extractedDir, [MARKDOWN_EXPORT_NEEDLE])) {
+    const source = fs.readFileSync(path.join(assets, assetName), "utf8");
+    const modules = chunkModules(source);
+    if (modules == null) continue;
+    for (const entry of source.matchAll(new RegExp(`[{,]ChatGptMarkdown:(?:\\(\\)=>)?${IDENT}(?=[,}])`, "g"))) {
+      const module = moduleAt(modules, entry.index);
+      const requireName = module?.params[2];
+      if (requireName == null) continue;
+      // The entry must be part of the factory's export definition call.
+      const before = source.slice(module.bodyStart, entry.index);
+      const exportCall = before.lastIndexOf(`${requireName}.d(`);
+      if (exportCall < 0 || /[;]/.test(before.slice(exportCall).replace(/"[^"]*"/g, ""))) continue;
+      ids.add(module.id);
+    }
+  }
+  return [...ids];
 }
 
 function patchDilMarkdownFallback(extractedDir) {
   const assets = path.join(extractedDir, "webview", "assets");
-  const modules = fs.readdirSync(assets).filter(file => file.endsWith(".js")).map(file => ({
+  const responses = findWebviewAssetsContaining(extractedDir, RESPONSE_NEEDLES).map((file) => ({
     file,
     source: fs.readFileSync(path.join(assets, file), "utf8"),
-  }));
-  const responses = modules.filter(({ source }) =>
-    source.includes("model_dil_v2") && source.includes("source_message_status") &&
-    source.includes(".prepareDil(") && source.includes("errorFallback:"));
-  // The public wrapper initializes the native view and exports its stable name.
-  // The implementation chunk's single-letter exports are not a safe contract.
-  const markdown = modules.filter(({ source }) => {
-    const exports = source.match(/\bexport\s*\{([^{}]*)\}\s*;?\s*(?:\/\/# sourceMappingURL=[^\r\n]*)?\s*$/)?.[1];
-    return exports != null && exports.split(",").some(entry =>
-      new RegExp(`^(?:${IDENT}\\s+as\\s+)?ChatGptMarkdown$`).test(entry.trim()));
-  });
-  if (responses.length !== 1 || markdown.length !== 1) {
-    throw new Error(`Expected one interactive reply and one native Markdown module; found ${responses.length} and ${markdown.length}`);
+  })).filter(({ source }) => source.includes(MARKER) || replyContract(source) != null);
+  const markdown = findMarkdownModule(extractedDir);
+  if (responses.length === 0 || markdown.length !== 1) {
+    throw new Error(`Expected interactive reply modules and one native Markdown module; found ${responses.length} and ${markdown.length}`);
   }
-  // Validate the whole unique entry so comments or string examples cannot
-  // qualify, and competing named exports are rejected even in larger modules.
-  if (!MARKDOWN_WRAPPER.test(markdown[0].source)) {
-    throw new Error("Native ChatGPT Markdown wrapper contract changed");
-  }
-  const output = applyDilMarkdownFallback(responses[0].source, markdown[0].file);
-  if (output === responses[0].source) return { changed: false };
-  fs.writeFileSync(path.join(assets, responses[0].file), output, "utf8");
-  return { changed: true };
+  // Validate every copy of the reply module before writing any of them.
+  const outputs = responses.map(({ file, source }) => ({ file, source, output: applyDilMarkdownFallback(source, markdown[0]) }));
+  const changed = outputs.filter(({ source, output }) => output !== source);
+  for (const { file, output } of changed) fs.writeFileSync(path.join(assets, file), output, "utf8");
+  return { changed: changed.length > 0 };
 }
 
 module.exports = {
   fallbackSource,
   applyDilMarkdownFallback,
+  findMarkdownModule,
   patchDilMarkdownFallback,
   descriptors: [{
     id: "chatgpt-dil-markdown-fallback",

@@ -1,11 +1,14 @@
 "use strict";
 
-const APP_RUNTIME_ASSET_PATTERN = /^app-runtime-[A-Za-z0-9_-]+\.js$/;
-const APP_PAGE_ASSET_PATTERN = /^app-primary-[A-Za-z0-9_-]+\.js$/;
-const WORK_PAGE_ASSET_PATTERN = /^page-[A-Za-z0-9_-]+\.js$/;
-const GENERAL_SETTINGS_ASSET_PATTERN = /^general-settings-[A-Za-z0-9_-]+\.js$/;
-const HOME_CONTENT_ASSET_PATTERN = /^home-ambient-suggestions-content-[A-Za-z0-9_-]+\.js$/;
 const FEATURE_GATE_ID = "2425897452";
+const FEATURE_GATE_NEEDLE = `"${FEATURE_GATE_ID}"`;
+// The official webview is an rspack build whose app code lives in numbered
+// async chunks, so each contract is located by stable content needles.
+const FEATURE_SYNC_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "electron-desktop-features-changed"]);
+const APP_PAGE_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "generatedSuggestionsEnabled:"]);
+const WORK_PAGE_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "generatedSuggestionsEnabled:", "mode:\"work\""]);
+const GENERAL_SETTINGS_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "planAtLogin"]);
+const HOME_CONTENT_ASSET_NEEDLES = Object.freeze(["\"curated\"===", "shouldUseCuratedNewChatPageSuggestions:"]);
 const RUNTIME_MARKER = "codexLinuxUiTweaksSuggestedPromptsEnabled";
 const FEATURE_SYNC_MARKER = "codexLinuxUiTweaksSuggestedPromptsFeatureSync";
 const APP_PAGE_ELIGIBILITY_MARKER = "codexLinuxUiTweaksSuggestedPromptsAppPageEligible";
@@ -27,28 +30,30 @@ function suggestedPromptsEnabled(context) {
   return suggestedPromptsConfig(context).enabled === true;
 }
 
+// rspack/SWC renderer: the rollout hook is a module-member call such as
+// `(0,er.Zj)("2425897452")`.
 function gateAssignmentPattern() {
-  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`2425897452`\)/gu;
+  return /([A-Za-z_$][\w$]*)=(\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\("2425897452"\)/gu;
 }
 
 function featureSyncPattern() {
-  return /ambientSuggestions:([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\.status===`enabled`/gu;
+  return /ambientSuggestions:([A-Za-z_$][\w$]*)&&"enabled"===([A-Za-z_$][\w$]*)\.status/gu;
 }
 
 function appPageEligibilityPattern() {
-  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)(?=,[\s\S]{0,500}?generatedSuggestionsEnabled:\1)/gu;
+  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)(?=[,;][\s\S]{0,500}?generatedSuggestionsEnabled:\1[,}])/gu;
 }
 
 function patchedAppPageEligibilityPattern() {
-  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\|\|function codexLinuxUiTweaksSuggestedPromptsAppPageEligible\(\)\{return!0\}\(\)\)(?=,[\s\S]{0,500}?generatedSuggestionsEnabled:\1)/gu;
+  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\|\|function codexLinuxUiTweaksSuggestedPromptsAppPageEligible\(\)\{return!0\}\(\)\)(?=[,;][\s\S]{0,500}?generatedSuggestionsEnabled:\1[,}])/gu;
 }
 
 function workPageEligibilityPattern() {
-  return /generatedSuggestionsEnabled:([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\}\)/gu;
+  return /generatedSuggestionsEnabled:([A-Za-z_$][\w$]*)&&(\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\}\)/gu;
 }
 
 function patchedWorkPageEligibilityPattern() {
-  return /generatedSuggestionsEnabled:([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsWorkPageEligible\(\)\{return!0\}\(\)\)/gu;
+  return /generatedSuggestionsEnabled:([A-Za-z_$][\w$]*)&&\((\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsWorkPageEligible\(\)\{return!0\}\(\)\)/gu;
 }
 
 // rspack/SWC main process: literal-first null checks and a module-member
@@ -62,19 +67,19 @@ function patchedMainEligibilityPattern() {
 }
 
 function settingsEligibilityPattern() {
-  return /if\(!([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:\3\?\.plan\?\?([A-Za-z_$][\w$]*)\}\)\)return null;/gu;
+  return /if\(!(\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:\3\?\.plan\?\?([A-Za-z_$][\w$]*)\}\)\)return null;/gu;
 }
 
 function patchedSettingsEligibilityPattern() {
-  return /if\(!\(([A-Za-z_$][\w$]*)\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\?\.plan\?\?([A-Za-z_$][\w$]*)\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsSettingsEligible\(\)\{return!0\}\(\)\)\)return null;/gu;
+  return /if\(!\((\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(\{authMethod:([A-Za-z_$][\w$]*),email:([A-Za-z_$][\w$]*)\?\.email\?\?([A-Za-z_$][\w$]*),plan:([A-Za-z_$][\w$]*)\?\.plan\?\?([A-Za-z_$][\w$]*)\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsSettingsEligible\(\)\{return!0\}\(\)\)\)return null;/gu;
 }
 
 function homeContentSourcePattern() {
-  return /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`curated`(?=,[\s\S]{0,400}?canUsePersonalizedSuggestions:[A-Za-z_$][\w$]*,generatedSuggestionsEnabled:[A-Za-z_$][\w$]*,hasGeneratedSuggestionsReadSettled:[A-Za-z_$][\w$]*,shouldUseCuratedNewChatPageSuggestions:\1\})/gu;
+  return /([A-Za-z_$][\w$]*)="curated"===([A-Za-z_$][\w$]*)(?=[,;][\s\S]{0,400}?canUsePersonalizedSuggestions:[A-Za-z_$][\w$]*,generatedSuggestionsEnabled:[A-Za-z_$][\w$]*,hasGeneratedSuggestionsReadSettled:[A-Za-z_$][\w$]*,shouldUseCuratedNewChatPageSuggestions:\1\})/gu;
 }
 
 function patchedHomeContentSourcePattern() {
-  return /([A-Za-z_$][\w$]*)=\(([A-Za-z_$][\w$]*)===`curated`,function codexLinuxSuggestedPromptsGeneratedSource\(\)\{return!1\}\(\)\)(?=,[\s\S]{0,400}?canUsePersonalizedSuggestions:[A-Za-z_$][\w$]*,generatedSuggestionsEnabled:[A-Za-z_$][\w$]*,hasGeneratedSuggestionsReadSettled:[A-Za-z_$][\w$]*,shouldUseCuratedNewChatPageSuggestions:\1\})/gu;
+  return /([A-Za-z_$][\w$]*)=\("curated"===([A-Za-z_$][\w$]*),function codexLinuxSuggestedPromptsGeneratedSource\(\)\{return!1\}\(\)\)(?=[,;][\s\S]{0,400}?canUsePersonalizedSuggestions:[A-Za-z_$][\w$]*,generatedSuggestionsEnabled:[A-Za-z_$][\w$]*,hasGeneratedSuggestionsReadSettled:[A-Za-z_$][\w$]*,shouldUseCuratedNewChatPageSuggestions:\1\})/gu;
 }
 
 function matchCount(source, pattern) {
@@ -95,9 +100,9 @@ function completeMarkerCount(source, marker) {
 
 function patchedGateAssignmentPattern(marker) {
   return new RegExp(
-    "([A-Za-z_$][\\w$]*)=\\(([A-Za-z_$][\\w$]*)\\(`" +
+    "([A-Za-z_$][\\w$]*)=\\((\\(0,[A-Za-z_$][\\w$]*\\.[A-Za-z_$][\\w$]*\\))\\(\"" +
       FEATURE_GATE_ID +
-      "`\\),function " +
+      "\"\\),function " +
       marker +
       "\\(\\)\\{return!0\\}\\(\\)\\)",
     "gu",
@@ -280,7 +285,7 @@ function replaceRolloutGate(source, marker) {
   return source.replace(
     gateAssignmentPattern(),
     (_match, targetName, gateName) =>
-      `${targetName}=(${gateName}(\`${FEATURE_GATE_ID}\`),function ${marker}(){return!0}())`,
+      `${targetName}=(${gateName}("${FEATURE_GATE_ID}"),function ${marker}(){return!0}())`,
   );
 }
 
@@ -408,8 +413,8 @@ function applySuggestedPromptsHomeContentPatch(source) {
 
     return source.replace(
       homeContentSourcePattern(),
-      (_match, sourceFlag, debugOverride) =>
-        `${sourceFlag}=(${debugOverride}===\`curated\`,function ${HOME_CONTENT_SOURCE_MARKER}(){return!1}())`,
+      (_match, sourceFlag, suggestionSource) =>
+        `${sourceFlag}=("curated"===${suggestionSource},function ${HOME_CONTENT_SOURCE_MARKER}(){return!1}())`,
     );
   } catch (error) {
     console.warn(
@@ -458,7 +463,7 @@ const descriptors = [
     order: 20_975,
     ciPolicy: "optional",
     enabled: suggestedPromptsEnabled,
-    pattern: APP_RUNTIME_ASSET_PATTERN,
+    assetNeedles: FEATURE_SYNC_ASSET_NEEDLES,
     assetMatch: (source) => suggestedPromptsFeatureSyncContract(source) !== "drifted",
     missingDescription: "current Suggested Prompts feature-sync bundle",
     skipDescription: "ui-tweaks Suggested Prompts feature-sync patch",
@@ -470,7 +475,7 @@ const descriptors = [
     order: 20_980,
     ciPolicy: "optional",
     enabled: suggestedPromptsEnabled,
-    pattern: APP_PAGE_ASSET_PATTERN,
+    assetNeedles: APP_PAGE_ASSET_NEEDLES,
     assetMatch: (source) => suggestedPromptsAppPageContract(source) !== "drifted",
     missingDescription: "current Suggested Prompts app page bundle",
     skipDescription: "ui-tweaks Suggested Prompts app page patch",
@@ -482,7 +487,7 @@ const descriptors = [
     order: 20_985,
     ciPolicy: "optional",
     enabled: suggestedPromptsEnabled,
-    pattern: WORK_PAGE_ASSET_PATTERN,
+    assetNeedles: WORK_PAGE_ASSET_NEEDLES,
     assetMatch: (source) => suggestedPromptsWorkPageContract(source) !== "drifted",
     missingDescription: "current Suggested Prompts Work Home bundle",
     skipDescription: "ui-tweaks Suggested Prompts Work Home patch",
@@ -494,7 +499,7 @@ const descriptors = [
     order: 20_990,
     ciPolicy: "optional",
     enabled: suggestedPromptsEnabled,
-    pattern: GENERAL_SETTINGS_ASSET_PATTERN,
+    assetNeedles: GENERAL_SETTINGS_ASSET_NEEDLES,
     assetMatch: (source) => suggestedPromptsSettingsContract(source) !== "drifted",
     missingDescription: "current Suggested Prompts General settings bundle",
     skipDescription: "ui-tweaks Suggested Prompts settings row patch",
@@ -506,7 +511,7 @@ const descriptors = [
     order: 21_000,
     ciPolicy: "optional",
     enabled: suggestedPromptsEnabled,
-    pattern: HOME_CONTENT_ASSET_PATTERN,
+    assetNeedles: HOME_CONTENT_ASSET_NEEDLES,
     assetMatch: (source) => suggestedPromptsHomeContentContract(source) !== "drifted",
     missingDescription: "current Suggested Prompts Home content bundle",
     skipDescription: "ui-tweaks Suggested Prompts generated-source patch",
@@ -515,18 +520,24 @@ const descriptors = [
 ];
 
 module.exports = {
-  APP_RUNTIME_ASSET_PATTERN,
-  APP_PAGE_ASSET_PATTERN,
+  APP_PAGE_ASSET_NEEDLES,
   APP_PAGE_ELIGIBILITY_MARKER,
+  FEATURE_SYNC_ASSET_NEEDLES,
   FEATURE_SYNC_MARKER,
-  GENERAL_SETTINGS_ASSET_PATTERN,
-  HOME_CONTENT_ASSET_PATTERN,
+  GENERAL_SETTINGS_ASSET_NEEDLES,
+  HOME_CONTENT_ASSET_NEEDLES,
   HOME_CONTENT_SOURCE_MARKER,
   MAIN_ELIGIBILITY_MARKER,
   RUNTIME_MARKER,
   SETTINGS_ELIGIBILITY_MARKER,
-  WORK_PAGE_ASSET_PATTERN,
+  WORK_PAGE_ASSET_NEEDLES,
   WORK_PAGE_ELIGIBILITY_MARKER,
+  suggestedPromptsAppPageContract,
+  suggestedPromptsFeatureSyncContract,
+  suggestedPromptsHomeContentContract,
+  suggestedPromptsMainContract,
+  suggestedPromptsSettingsContract,
+  suggestedPromptsWorkPageContract,
   applySuggestedPromptsFeatureSyncPatch,
   applySuggestedPromptsAppPagePatch,
   applySuggestedPromptsHomeContentPatch,

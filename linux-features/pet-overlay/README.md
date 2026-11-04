@@ -199,6 +199,12 @@ click action. Release cancels a matching queued gesture before it can start afte
 a placement or previous-release acknowledgement. With `lockPosition: true`,
 ordinary mascot clicks retain their handling while position stays pinned.
 
+The official webview is an rspack build that loads the Mini page from a
+numbered async chunk. The renderer gesture and hidden Quick Chat focus patches
+select that chunk by the strings their contracts own (the Mini drag messages,
+`setQuickChatStashed(null)`, and `completeQuickChatFocus`), and each requires
+its anchors exactly once before changing anything.
+
 Control proximity uses the renderer's existing mascot and control rectangles,
 KWin's cursor position and the actual window origin. Only near/far changes cross
 D-Bus, including when layout or window geometry changes. Transparent gaps remain

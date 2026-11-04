@@ -1,18 +1,20 @@
 "use strict";
 
 const DEFAULT_PROJECT_NAME_STYLE = "font-weight: 700 !important;";
-const PROJECTS_SIDEBAR_ASSET_PATTERN = /^[^.]+\.js$/;
 const PROJECT_ROW_ATTRIBUTE = "data-app-action-sidebar-project-row";
 const PROJECT_NAME_SELECTOR = `[${PROJECT_ROW_ATTRIBUTE}] [data-marquee-text]`;
 const STYLE_ID = "codex-linux-ui-tweaks-sidebar-project-name-style";
 const RUNTIME_MARKER = "codexLinuxUiTweaksSidebarProjectNameStyleRuntime";
 const UNSAFE_PROJECT_NAME_STYLE_PATTERN = /[{}@<>]|\r|\n|\/\*|\*\/|\burl\s*\(/i;
 
+// The rspack build keeps the app-action attribute registry, its selectors,
+// its row-attribute builder and the shared marquee label in one chunk.
 const SIDEBAR_PROJECT_NAME_MARKERS = [
-  `sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\``,
+  `sidebarProjectRow:"${PROJECT_ROW_ATTRIBUTE}"`,
   "sidebarProjectRow:`[${",
   "sidebarProjectRow:({collapsed:",
   "sidebarProjectLabel:",
+  '"data-marquee-text":!0',
 ];
 
 function warn(message) {
@@ -118,7 +120,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_790,
     ciPolicy: "optional",
-    pattern: PROJECTS_SIDEBAR_ASSET_PATTERN,
+    assetNeedles: SIDEBAR_PROJECT_NAME_MARKERS,
     missingDescription: "projects sidebar bundle",
     skipDescription: "ui-tweaks sidebar project name style patch",
     assetMatch: looksLikeSidebarProjectBundle,
@@ -130,7 +132,7 @@ const descriptors = [
 module.exports = {
   DEFAULT_PROJECT_NAME_STYLE,
   PROJECT_ROW_ATTRIBUTE,
-  PROJECTS_SIDEBAR_ASSET_PATTERN,
+  SIDEBAR_PROJECT_NAME_MARKERS,
   PROJECT_NAME_SELECTOR,
   RUNTIME_MARKER,
   STYLE_ID,

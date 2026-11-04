@@ -2,17 +2,25 @@
 
 const marker = "/*preferred-editor-file-links*/";
 // Match the unique compiled file-reference dispatch, not minified aliases or
-// filenames. Upstream compiles the click branches into one ternary chain:
-// `…:panel&&!browser&&!modified?open({…}):…`.
-const anchor = /:([$\w]+)&&!([$\w]+)&&!([$\w]+)\?([$\w]+)\(\{(scope:[$\w]+,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:[$\w]+,path:([$\w]+),line:[$\w]+,column:[$\w]+,cwd:[$\w]+,hostConfig:[$\w]+,hostId:[$\w]+,endLine:[$\w]+,isPreview:[$\w]+,openInSidePanel:[$\w]+,onOpenTargetResolved:[$\w]+)\}\):/g;
+// filenames. Upstream compiles the click branches into one conditional chain
+// whose last branch opens the internal side panel:
+// `…:!panel||browser||modified?!modified||preview(path)&&panel?open({…,modifiedClick:modified,openInSidePanel:panel,…}):copy():open({…side panel…})`.
+const I = "[$\\w]+";
+const anchor = new RegExp(
+  String.raw`:!(${I})\|\|(${I})\|\|(${I})\?!\3\|\|\(0,${I}\.${I}\)\((${I})\)&&\1\?(\(0,${I}\.openWorkspaceFile\))` +
+    String.raw`\(\{[^()]*?modifiedClick:\3,openInSidePanel:\1,onOpenTargetResolved:${I}\}\):${I}\(\):\5` +
+    String.raw`\(\{(scope:${I},activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:${I},path:\4,line:${I},column:${I},cwd:${I},hostConfig:${I},hostId:${I},endLine:${I},isPreview:${I},openInSidePanel:\1,onOpenTargetResolved:${I})\}\)`,
+  "g",
+);
 const sourcePath = /(?:\.(?:rs|py|pyi|js|jsx|ts|tsx|mjs|cjs|c|h|cc|cpp|hpp|go|java|kt|swift|rb|php|lua|sh|bash|fish|zsh|nix|toml|json|jsonc|ya?ml|xml|ini|conf|cfg|md|mdx|txt|log|lock|sql|css|scss|sass|less|vue|svelte|cmake|proto|graphql|gql)|(?:^|\/)(?:Dockerfile|Containerfile|Makefile|Justfile|README|LICENSE|\.gitignore|\.env))$/i;
 
 function applyPreferredEditorFileLinks(source) {
   const matches = [...source.matchAll(anchor)];
   if (matches.length !== 1) return drift(source);
   const [match] = matches;
-  const [, , browserClick, modifiedClick, dispatch, originalArgs, path] = match;
-  // Insert a new ternary branch directly before the side-panel branch.
+  const [, , browserClick, modifiedClick, path, dispatch, originalArgs] = match;
+  // Insert a new conditional branch directly before the upstream branch that
+  // chooses between external/modified opening and the internal side panel.
   const index = match.index + 1;
   // With no explicit target, upstream resolves the current per-project/global
   // preference, available applications, remote host and editor launch command.
@@ -40,8 +48,7 @@ module.exports = {
     phase: "webview-asset",
     order: 21000,
     ciPolicy: "optional",
-    pattern: /\.js$/,
-    assetMatch: source => source.includes("activatePresentationAnnotationOnboarding:!0") && source.includes("data-file-reference"),
+    assetNeedles: ["activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:", "openWorkspaceFile"],
     missingDescription: "plain file-reference click handler",
     skipDescription: "source file links using the preferred editor",
     apply: applyPreferredEditorFileLinks,

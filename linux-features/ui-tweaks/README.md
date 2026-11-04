@@ -75,6 +75,10 @@ existing and newly registered windows, the official Linux tray, and a managed
 user-local desktop entry. The ChatGPT choice uses `icon-chatgpt.png` from the
 signed official Linux package. The alternate choice uses the existing ChatGPT
 Community package icon; retired macOS DMG icon resources are not imported.
+The Appearance row's visibility gate is a small webview module that the
+official rspack build duplicates into several async chunks; every chunk that
+carries the gate is patched, and a candidate chunk without the exact gate is
+left unchanged with a warning.
 
 Staging validates the official package's `chatgpt.desktop` identity before it
 copies the ChatGPT icon. Missing or changed package resources reject the
@@ -125,11 +129,13 @@ cleanup, by design.
 
 Raises the official app's hard-coded UI font-size maximum from 16 px. The same
 upstream limit feeds both the numeric input and the persisted-setting schema.
-That registry is compiled into two renderer assets (as a limits object) and into
-the main-process `early-bootstrap.js` entry and `worker.js` (as module-local
-constants bound to the `sansFontSize`/`codeFontSize` schemas), so the patch
-requires and updates all four copies atomically instead of bypassing only the
-visible control. Code font sizing is unchanged.
+That registry is compiled into two rspack async webview chunks (one as a limits
+object, one as module-local constants) and into the main-process
+`early-bootstrap.js` entry and `worker.js` (as module-local constants bound to
+the `sansFontSize`/`codeFontSize` schemas). Webview chunk names identify
+nothing, so every webview script, including `webview/assets/async/`, is scanned
+by content. The patch requires and updates all four copies atomically instead
+of bypassing only the visible control. Code font sizing is unchanged.
 
 This tweak is independently disabled by default. Its default extended maximum
 is 24 px and can be configured from 17 through 64 px:
@@ -211,9 +217,10 @@ gitignored feature config, then rebuild:
 Only the font-picker renderer is patched. No font assets, font enumeration
 helper, theme schema, or global CSS override is added. Upstream applies the
 complete font stack through its UI, code, and content CSS variables and appends
-its existing defaults. The patch locates the picker by semantic markers and
-rejects missing, duplicated, or changed contracts instead of changing an
-unrelated platform gate.
+its existing defaults. The patch selects the one webview chunk carrying the
+custom-font-value message and the `selectedThemeFontFace` prop, scopes itself to
+the whole picker component, and rejects missing, duplicated, or changed
+contracts instead of changing an unrelated platform gate.
 
 ### `home.suggestedPrompts`
 
@@ -227,12 +234,14 @@ functions for diagnostics, then honors the explicit Linux opt-in. It also keeps
 the upstream setting as the user's runtime on/off control after the feature is
 built into the app.
 
-The current official package keeps the renderer feature-sync bridge in
-`app-runtime`, normal Home in `app-primary`, and Work Home in its `page` bundle.
-The main-process eligibility check lives in an rspack `early-bootstrap-*`
-chunk.
-Each bundle has its own semantic contract so a future filename hash change does
-not silently select an unrelated asset.
+The current official package is an rspack build: the renderer feature-sync
+bridge, normal Home, Work Home, the General Settings row, and the Home
+generated-source selector each live in a numbered async webview chunk, and the
+main-process eligibility check lives in an `early-bootstrap-*` chunk. Chunk
+names identify nothing, so each descriptor locates its chunk by content needles
+(the rollout gate id, the feature-sync IPC message, the generated-suggestion
+props) and then requires exactly one chunk to satisfy its full semantic
+contract, so an unrelated chunk is never selected.
 
 This tweak is independently disabled by default:
 
@@ -271,6 +280,12 @@ settings. Enabled efforts such as Max therefore appear without maintaining a
 separate hard-coded effort list. This tweak is disabled by default and must be
 enabled explicitly.
 
+The current official package redesigned the composer picker: its webview no
+longer contains the `composer-model-picker-menu-view-v1`/`-v2` simple and
+advanced view state or the Power slider's `includeUltraInSlider` effort list
+that this tweak rewrites. When enabled it therefore warns and leaves the
+upstream picker unchanged until it is ported to the new picker.
+
 Config keys:
 
 - `enabled`: `true` applies the tweak, `false` keeps the feature enabled but
@@ -282,7 +297,11 @@ Leaves the current reasoning effort values as `None`, `Minimal`, `Medium`,
 `High`, `XHigh`, `Max`, and `Ultra` in the Simplified Chinese locale. The
 surrounding picker title and usage warning remain translated. This avoids
 collapsing distinct upstream values such as `XHigh` and `Ultra` into the same
-Chinese label.
+Chinese label. The Simplified Chinese catalog is an rspack async chunk with a
+numeric name, so the patch follows the webview's lazy
+`"../locales/zh-CN.json"` loader entry to its chunk and catalog module and
+patches only that catalog. A missing or duplicated loader, chunk, catalog, or
+label warns and leaves every locale unchanged.
 
 Config keys:
 
@@ -291,7 +310,10 @@ Config keys:
 
 ### `sidebar.projectName`
 
-Styles project names in the left sidebar project list.
+Styles project names in the left sidebar project list. A small stylesheet
+installer is appended to the rspack webview chunk that holds the sidebar
+app-action attribute registry and the shared marquee label; the chunk is
+located by those semantic markers, not by its name.
 
 Tracked default in `feature.json`:
 
@@ -349,7 +371,9 @@ This tweak is independently disabled by default:
 
 The action remains subject to upstream Quick Chat account availability and
 submission guards. Account initialization must complete before the action is
-available. Signing out or changing accounts during context preparation cancels
+available; availability is evaluated each time the selection menu renders, so a
+selection made while Quick Chat is still loading omits the action until the
+next selection. Signing out or changing accounts during context preparation cancels
 submission. Requests from this action share a queue across Codex chats in the
 same app context and wait for an existing Quick Chat reply or native submission/
 stop operation before replacing its session or sending. The action holds the
@@ -357,7 +381,7 @@ native submission lock through response acceptance and releases it on failure;
 a failed request leaves subsequent selections
 usable. The action waits for the native sender to receive a successful streaming
 response before marking a new Quick Chat as a conversation. A failure while
-preparing or opening the request reaches the selection-menu error toast. An
+preparing or opening the request is logged to the renderer console. An
 explicit new selection can retry; the tweak does not resend failed requests
 automatically. The existing annotation and Codex
 side-chat actions remain available. Ordinary ChatGPT reply menus are unchanged.
@@ -366,6 +390,16 @@ selection receives a renderer-local numeric `traceNo`, so overlapping requests
 can be correlated without recording conversation or account IDs. The native
 sender is instrumented only while dispatching this action; ordinary ChatGPT
 requests keep their original callbacks.
+
+The official renderer is an rspack build. The Quick Chat runtime is appended to
+the Quick Chat module, reaches the ChatGPT sender, model, status, and submission
+lock modules through that module's own require function, and publishes itself
+under `Symbol.for("codex-linux.selected-text-more-details")` when the module
+evaluates. The selection overlay reads that registry; until it exists, the menu
+keeps its upstream actions without More details. rspack duplicates the overlay
+module into several lazy chunks, and every copy is patched. All inserted code
+is wrapped in marker comments, so an already patched asset is verified by
+restoring the upstream bytes and re-applying the patch.
 
 | Log stage or timing type | What it measures |
 | --- | --- |
@@ -396,6 +430,11 @@ official Codex selection menu.
 
 After selecting text, Ctrl+Enter sends the active annotation editor's text
 without being intercepted by the regular composer.
+
+The patch finds the app shortcut owner by content across the rspack webview
+chunks and validates that the native annotation editor still renders the card
+module whose capture handler owns the Ctrl+Enter direct-submit path. If either
+contract drifts, it warns and leaves the official bundle unchanged.
 
 This tweak is independently disabled by default:
 
@@ -448,7 +487,7 @@ and leaves every target unchanged when any copy is missing, mixed, drifted, or
 ambiguous.
 The selected-text More details tweak validates the renderer and ChatGPT runtime
 contracts together. If either side is missing, ambiguous, changed, or only
-partially patched, it warns and leaves both assets unchanged; acceptance rejects
+partially patched, it warns and leaves every asset unchanged; acceptance rejects
 that enabled candidate.
 
 ## Adding Tweaks

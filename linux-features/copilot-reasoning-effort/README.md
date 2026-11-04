@@ -31,6 +31,12 @@ feature to the generated app.
 - The current dropdown and slash-command owners keep the reasoning effort
   controls and `/reasoning` command enabled when the normal model and effort
   prerequisites are present.
+- Every copy of the upstream model settings hook (rspack copies it into each
+  composer surface chunk) is checked, without edits, to still persist the
+  selection through the upstream model settings service.
+
+The rspack webview has no stable chunk names, so each owner is found by content
+(message ids, settings keys and model-list strings), not by file name.
 
 ## Validation
 

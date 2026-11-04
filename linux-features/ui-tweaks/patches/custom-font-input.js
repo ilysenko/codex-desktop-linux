@@ -9,6 +9,8 @@ const MANUAL_SETTER = "setCodexLinuxManualFontInput";
 // dependency slot so toggling a mode invalidates the cached menu children.
 const UPSTREAM_CACHE_SIZE = 42;
 const IDENT = "[A-Za-z_$][\\w$]*";
+const MEMBER = `${IDENT}(?:\\.${IDENT})*`;
+const ASSET_NEEDLES = Object.freeze([CUSTOM_VALUE_MESSAGE_ID, "selectedThemeFontFace:"]);
 
 function escaped(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -25,23 +27,44 @@ function customFontInputEnabled(context = {}) {
   return (settings?.enabled ?? defaults?.enabled) === true;
 }
 
+function findMatchingBrace(source, openIndex) {
+  // Disabled isolated feature copies do not need the ASAR engine helpers.
+  return require("../../../scripts/patches/lib/minified-js.js").findMatchingBrace(source, openIndex);
+}
+
+// The picker is the component whose props destructure selectedThemeFontFace and
+// whose manual-entry menu item carries the custom-font-value message. SWC
+// inlines helper functions into it, so its range is the whole function body.
+function pickerRange(source) {
+  const anchor = source.indexOf(CUSTOM_VALUE_MESSAGE_ID);
+  const props = source.lastIndexOf("selectedThemeFontFace:", anchor);
+  if (props < 0) return null;
+  const start = source.lastIndexOf("function ", props);
+  if (start < 0) return null;
+  const header = new RegExp(`^function ${IDENT}\\(${IDENT}\\)\\{`).exec(source.slice(start, props));
+  if (header == null) return null;
+  const close = findMatchingBrace(source, start + header[0].length - 1);
+  if (close < anchor) return null;
+  return { start, end: close + 1 };
+}
+
 function fontPickerContract(source) {
   if (typeof source !== "string" || !source.includes(CUSTOM_VALUE_MESSAGE_ID)) return null;
   if (source.split(CUSTOM_VALUE_MESSAGE_ID).length !== 2) return null;
   const markerCount = source.split(RUNTIME_MARKER).length - 1;
   if (markerCount > 1) return null;
-  const anchor = source.indexOf(CUSTOM_VALUE_MESSAGE_ID);
-  const start = source.lastIndexOf("function ", anchor);
-  const end = source.indexOf("function ", anchor + CUSTOM_VALUE_MESSAGE_ID.length);
-  if (start < 0 || end < 0) return null;
+  const range = pickerRange(source);
+  if (range == null) return null;
+  const { start, end } = range;
   const body = source.slice(start, end);
   if (!body.includes("selectedThemeFontFace:") || !body.includes("monospaceOnly:")) return null;
+  if (markerCount === 1 && !body.includes(RUNTIME_MARKER)) return null;
 
   const cache = uniqueMatch(body, new RegExp(
-    `let (?<cache>${IDENT})=\\(0,${IDENT}\\.c\\)\\((?<size>\\d+)\\)`, "g",
+    `(?<cache>${IDENT})=\\(0,${IDENT}\\.c\\)\\((?<size>\\d+)\\)`, "g",
   ));
   const hooks = uniqueMatch(body, new RegExp(
-    `\\[${IDENT},${IDENT}\\]=\\(0,(?<react>${IDENT})\\.useState\\)\\(${IDENT}\\?\\?\`\`\\),` +
+    `\\[${IDENT},${IDENT}\\]=\\(0,(?<react>${IDENT})\\.useState\\)\\(${IDENT}\\?\\?""\\),` +
     `\\[${IDENT},${IDENT}\\]=\\(0,\\k<react>\\.useState\\)\\(!1\\),` +
     `\\[${IDENT},${IDENT}\\]=\\(0,\\k<react>\\.useState\\)\\(!1\\)`, "g",
   ));
@@ -50,9 +73,9 @@ function fontPickerContract(source) {
     `if\\((?<unavailable>${IDENT})(?<manual>\\|\\|${MANUAL_STATE})?\\)\\{`, "g",
   ));
   const label = uniqueMatch(body, new RegExp(
-    `\\(0,(?<jsx>${IDENT})\\.jsx\\)\\((?<message>${IDENT}),` +
-    `\\{id:\`${escaped(CUSTOM_VALUE_MESSAGE_ID)}\`,defaultMessage:\`[^\`]*\`,` +
-    `description:\`[^\`]*\`\\}\\)`, "g",
+    `\\(0,(?<jsx>${IDENT})\\.jsx\\)\\((?<message>${MEMBER}),` +
+    `\\{id:"${escaped(CUSTOM_VALUE_MESSAGE_ID)}",defaultMessage:"[^"]*",` +
+    `description:"[^"]*"\\}\\)`, "g",
   ));
   if (!cache || !hooks || !gate || !label) return null;
   const { cache: memo, size } = cache.groups;
@@ -63,7 +86,7 @@ function fontPickerContract(source) {
     `${escaped(options)}=(?<families>${IDENT})\\?\\.filter\\(`, "g",
   ));
   const separator = uniqueMatch(body, new RegExp(
-    `\\(0,${escaped(jsx)}\\.jsx\\)\\((?<menu>${IDENT})\\.Separator,\\{\\}\\),` +
+    `\\(0,${escaped(jsx)}\\.jsx\\)\\((?<menu>${MEMBER})\\.Separator,\\{\\}\\),` +
     `${escaped(options)}\\]`, "g",
   ));
   const dependency = uniqueMatch(body, new RegExp(`if\\(${escaped(memo)}\\[1\\]!==`, "g"));
@@ -72,18 +95,19 @@ function fontPickerContract(source) {
     `(?:,${escaped(memo)}\\[${UPSTREAM_CACHE_SIZE}\\]=${MANUAL_STATE})?\\}else`, "g",
   ));
   if (!list || !separator || !commit) return null;
-  if (!body.includes(`${unavailable}=${list.groups.families}==null||${list.groups.families}.length===0`)) {
+  const families = list.groups.families;
+  if (!body.includes(`${unavailable}=null==${families}||0===${families}.length`)) {
     return null;
   }
 
   const stateHook = `,[${MANUAL_STATE},${MANUAL_SETTER}]=(0,${hooks.groups.react}.useState)(!1)/*${RUNTIME_MARKER}*/`;
   const modeControl =
     `(0,${jsx}.jsx)(${separator.groups.menu}.CheckboxItem,{` +
-    `checked:${unavailable}||${MANUAL_STATE},disabled:${unavailable},indicator:\`switch\`,closeOnSelect:!1,` +
+    `checked:${unavailable}||${MANUAL_STATE},disabled:${unavailable},indicator:"switch",closeOnSelect:!1,` +
     `onSelect:()=>{${unavailable}||${MANUAL_SETTER}(!${MANUAL_STATE})},` +
-    `children:(0,${jsx}.jsx)(${message},{id:\`${MODE_MESSAGE_ID}\`,` +
-    `defaultMessage:\`Enter font stack manually\`,` +
-    `description:\`Switch between installed fonts and a manually entered CSS font family or fallback list\`})}),`;
+    `children:(0,${jsx}.jsx)(${message},{id:"${MODE_MESSAGE_ID}",` +
+    `defaultMessage:"Enter font stack manually",` +
+    `description:"Switch between installed fonts and a manually entered CSS font family or fallback list"})}),`;
   const modeDependency = `if(${memo}[${UPSTREAM_CACHE_SIZE}]!==${MANUAL_STATE}||${memo}[1]!==`;
   const modeCommit = `${memo}[${UPSTREAM_CACHE_SIZE}]=${MANUAL_STATE}`;
 
@@ -130,6 +154,7 @@ module.exports = {
   MODE_MESSAGE_ID,
   RUNTIME_MARKER,
   applyCustomFontInputPatch,
+  ASSET_NEEDLES,
   customFontInputEnabled,
   fontPickerContract,
   descriptors: [{
@@ -137,8 +162,8 @@ module.exports = {
     phase: "webview-asset",
     order: 20_960,
     ciPolicy: "optional",
-    pattern: /\.js$/,
-    assetMatch: (source) => source.includes(CUSTOM_VALUE_MESSAGE_ID) && source.includes("selectedThemeFontFace:"),
+    assetNeedles: ASSET_NEEDLES,
+    assetMatch: (source) => ASSET_NEEDLES.every((needle) => source.includes(needle)),
     missingDescription: "official font picker bundle",
     skipDescription: "custom font input mode switch",
     enabled: customFontInputEnabled,
