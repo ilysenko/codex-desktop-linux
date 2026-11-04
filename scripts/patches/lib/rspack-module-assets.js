@@ -1,13 +1,14 @@
 "use strict";
 
 const fs = require("node:fs");
+const { Script } = require("node:vm");
 const path = require("node:path");
 const { escapeRegExp, findMatchingBrace } = require("./minified-js.js");
 const { listWebviewAssetFiles, patchWebviewAssets } = require("./assets.js");
 
 const ID = "[A-Za-z_$][\\w$]*";
 const KEY = `(?:"(?:\\\\.|[^"\\\\])*"|${ID}|\\d+)`;
-const FACTORY = new RegExp(`(?<key>${KEY})\\s*\\(\\s*(?:${ID}(?:\\s*,\\s*${ID}){0,2})?\\s*\\)\\s*\\{`, "y");
+const FACTORY = new RegExp(`(?<key>${KEY})\\s*\\(\\s*(?<params>${ID}(?:\\s*,\\s*${ID}){0,2})?\\s*\\)\\s*\\{`, "y");
 
 function skipWhitespace(source, index) {
   while (index < source.length && /\s/.test(source[index])) index += 1;
@@ -37,12 +38,85 @@ function* rspackModuleFactories(source, assetName) {
     const start = FACTORY.lastIndex;
     const end = findMatchingBrace(source, start - 1);
     if (end < start) throw new Error(`Unterminated Rspack module ${moduleId} in ${assetName}`);
-    yield { assetName, source, moduleId, moduleSource: source.slice(start, end), start, end };
+    const params = header.groups.params?.split(/\s*,\s*/u) ?? [];
+    yield { assetName, source, moduleId, moduleSource: source.slice(start, end), start, end, params };
     cursor = skipWhitespace(source, end + 1);
     if (source[cursor] === "}") return;
     if (source[cursor] !== ",") throw new Error(`Invalid Rspack module separator in ${assetName} at ${cursor}`);
     cursor += 1;
   }
+}
+
+// Skip complete non-import initializers in a mixed variable declaration.
+// Native modules can place a require after an SVG/JSX arrow function in the
+// same var list. Compilation only checks syntax; no upstream code is run.
+function declaratorEnd(source, start) {
+  for (let end = start; end < source.length; end += 1) {
+    if (source[end] !== "," && source[end] !== ";") continue;
+    const prefix = source.slice(start, end);
+    if (findMatchingBrace("{" + prefix + "}", 0) !== prefix.length + 1) continue;
+    try { new Script("var " + prefix + ";"); }
+    catch { continue; }
+    return end;
+  }
+  return -1;
+}
+
+const requireBindingCache = new WeakMap();
+
+// Resolve only a unique static require initializer declared at the factory's
+// own scope. A same-spelled alias in an inner function, string, or comment is
+// not the module binding reused by an injected factory-level helper.
+function findRspackRequireBinding(module, localName) {
+  if (typeof module?.moduleSource !== "string" || !Array.isArray(module.params) ||
+      typeof localName !== "string" || !new RegExp(`^${ID}$`, "u").test(localName)) {
+    throw new TypeError("Expected a Rspack factory snapshot and local binding identifier");
+  }
+  const requireName = module.params[2];
+  if (requireName == null) return null;
+  const body = module.moduleSource;
+  let cached = requireBindingCache.get(module);
+  if (cached?.body !== body || cached.requireName !== requireName) {
+    const bindings = new Map();
+    // A function/class declaration needs no semicolon before the next var.
+    const declarations = /(?:^|[;}])\s*(?:var|let|const)\s+/gu;
+    const initializer = new RegExp(
+      `(?<local>${ID})\\s*=\\s*${escapeRegExp(requireName)}\\s*\\(\\s*` +
+        `(?:(?<quoted>"(?:\\\\.|[^"\\\\])*")|(?<numeric>\\d+))\\s*\\)\\s*(?=[,;])`, "uy",
+    );
+    const declaredName = new RegExp(`^\\s*(?<name>${ID})(?=\\s*(?:=|$))`, "u");
+    for (const declaration of body.matchAll(declarations)) {
+      const prefixEnd = declaration.index + (declaration[0].startsWith("}") ? 1 : 0);
+      const prefix = body.slice(0, prefixEnd);
+      if (findMatchingBrace("{" + prefix + "}", 0) !== prefix.length + 1) continue;
+      let cursor = declaration.index + declaration[0].length;
+      while (true) {
+        const end = declaratorEnd(body, cursor);
+        if (end === -1) break;
+        const declared = declaredName.exec(body.slice(cursor, end))?.groups.name;
+        initializer.lastIndex = cursor;
+        const match = initializer.exec(body);
+        if (declared != null) {
+          const binding = match != null && initializer.lastIndex === end ? {
+            localName: declared, requireName,
+            moduleId: match.groups.quoted == null ? match.groups.numeric : JSON.parse(match.groups.quoted),
+            start: match.index, end: initializer.lastIndex,
+          } : null;
+          bindings.set(declared, bindings.has(declared) ? null : binding);
+        }
+        cursor = end;
+        if (body[cursor] !== ",") break;
+        cursor += 1;
+        while (/\s/u.test(body[cursor] ?? "") && cursor < body.length) cursor += 1;
+      }
+    }
+    cached = { body, requireName, bindings };
+    requireBindingCache.set(module, cached);
+  }
+  // The factory loader itself cannot be a redeclared local initializer.
+  if (cached.bindings.has(requireName)) return null;
+  const binding = cached.bindings.get(localName);
+  return binding == null ? null : { ...binding, start: module.start + binding.start, end: module.start + binding.end };
 }
 
 function* moduleAssets(assetsDir, { pattern, sourceMatch }) {
@@ -122,4 +196,4 @@ function patchRspackModuleCopies(assetsDir, copies, patchModule, options = {}) {
   };
 }
 
-module.exports = { findUniqueRspackModuleCopies, patchRspackModuleCopies, rspackModuleFactories };
+module.exports = { findUniqueRspackModuleCopies, patchRspackModuleCopies, rspackModuleFactories, findRspackRequireBinding };
