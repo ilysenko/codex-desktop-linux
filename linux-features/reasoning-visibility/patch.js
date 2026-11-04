@@ -5,6 +5,7 @@ const { withRuntime } = require("./runtime.js");
 const { settingsDescriptor } = require("./settings.js");
 const { persistentDescriptor: persistent } = require("./persistent.js");
 const { requestSummariesDescriptor: summaries } = require("./request-summaries.js");
+const { standaloneDescriptor: standalone, applyStandalonePatch } = require("./standalone.js");
 
 const ident = String.raw`[A-Za-z_$][\w$]*`;
 const marker = (id) => `/*community-reasoning-visibility-${id}*/`;
@@ -39,13 +40,6 @@ function recipe(id, pattern, replacement, assetNeedles, validate = () => true) {
     apply,
   };
 }
-
-const standalone = recipe(
-  "standalone",
-  String.raw`(?<prefix>case"worktree-init":return (?<wrap>${ident})\((?<item>${ident}),"standalone"\);case"reasoning":)(?:if\(${enabledPattern}\)return \k<wrap>\(\k<item>,"standalone"\);${escape(marker("standalone"))})?(?<suffix>case"[\w-]+":)`,
-  ({ prefix, wrap, item, suffix }) => `${prefix}if(${enabled})return ${wrap}(${item},"standalone");${marker("standalone")}${suffix}`,
-  ['case"worktree-init":return ', '"standalone");case"reasoning":'],
-);
 
 // The transcript projection has its own explicit reasoning grouping exception,
 // compiled as `if(classified?.grouping==="standalone"||persistent?.has(item)===!0){flush(),output.push(…)`.
@@ -93,6 +87,7 @@ function applyExpandedPatch(source) {
 }
 
 module.exports = {
+  applyStandalonePatch,
   reasoningComponent,
   descriptors: [standalone, persistent, transcript, summaries, {
     id: "expanded",

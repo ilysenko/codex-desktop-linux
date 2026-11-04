@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
-const { descriptors } = require("./patch.js");
+const { descriptors, applyStandalonePatch } = require("./patch.js");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const { findWebviewAssetsContaining, patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
 const { patchBreaksJavaScriptSyntax } = require("../../scripts/patches/lib/javascript-syntax.js");
@@ -29,10 +29,12 @@ function warnings(fn) {
   try { return { value: fn(), messages }; } finally { console.warn = saved; }
 }
 
+const sourceApply = index => index === 0 ? applyStandalonePatch : descriptors[index].apply;
+
 function patched(index, source = sources[index]) {
-  const result = descriptors[index].apply(source);
+  const result = sourceApply(index)(source);
   assert.notEqual(result, source);
-  const repeated = warnings(() => descriptors[index].apply(result));
+  const repeated = warnings(() => sourceApply(index)(result));
   assert.equal(repeated.value, result);
   assert.deepEqual(repeated.messages, []);
   new vm.Script(result);
@@ -137,7 +139,7 @@ test("all contracts tolerate fresh minified identifiers and fail closed on missi
     const renamed = source.replace(/\be\b/g, "inputArg").replace(/\bn\b/g, "optionsArg").replace(/\bh\b/g, "$expanded");
     patched(index, renamed);
     for (const invalid of ["const unrelated=1;", source + source, patched(index) + source]) {
-      const result = warnings(() => descriptors[index].apply(invalid));
+      const result = warnings(() => sourceApply(index)(invalid));
       assert.equal(result.value, invalid);
       assert.equal(result.messages.length, 1);
     }
@@ -164,6 +166,7 @@ test("a marker with an inconsistent transcript item is not accepted as patched",
 
 test("content-addressed selection patches every chunk copy and reports needle-only drift", () => {
   for (const [index, descriptor] of descriptors.slice(0, 5).entries()) {
+    if (descriptor.phase !== "webview-asset") continue;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reasoning-assets-"));
     try {
       const assets = path.join(root, "webview/assets/async");
@@ -396,7 +399,7 @@ test("General setting and catalogs compose idempotently with the optional tray s
 
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
 test("official signed webview contracts patch every copy once and stay valid JavaScript", { skip: !signedApp }, () => {
-  for (const descriptor of descriptors.slice(0, 5)) {
+  for (const descriptor of descriptors.slice(0, 5).filter(d => d.phase === "webview-asset")) {
     const names = findWebviewAssetsContaining(signedApp, descriptor.assetNeedles);
     assert.ok(names.length >= 1, descriptor.id);
     for (const name of names) {
