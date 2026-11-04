@@ -19,8 +19,9 @@ It supports:
 - app listing and accessibility trees through AT-SPI
 - screenshots through GNOME Shell DBus, the Codex GNOME Shell extension, or XDG Desktop Portal
 - window listing and focusing on GNOME, KWin/Plasma 5 and 6, Hyprland, Niri,
-  COSMIC, i3, labwc with Selkies IPC, and generic X11/EWMH window managers; GNOME extension and X11
-  windows can also be moved and resized
+  COSMIC, i3, labwc with Selkies IPC, other wlroots compositors through
+  wlr-foreign-toplevel-management, and generic X11/EWMH window managers; GNOME
+  extension and X11 windows can also be moved and resized
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, `xdotool` on X11, or `ydotool`
 - pointer-direction feedback for the built-in V2 pet after successful click,
@@ -44,7 +45,7 @@ The embedded backend tracks Computer Use 0.7.36. WebKitGTK AT-SPI socket childre
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
-On Hyprland, `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` lets targeted `type_text`, `press_key`, `get_app_state` and `screenshot` work on a window without focusing it, including one on a hidden workspace: keys go through `send_key_state` on the control socket (never in a process's arguments) and the window is captured alone with `grim -T`. The indicator shows the input, masked unless the target field is confirmed non-secret. Text must be printable US-layout ASCII, tab or newline, and the active keymap must be US; anything else is refused before anything is sent. An unfocused Chromium ignores browser accelerators.
+On Hyprland, `COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1` lets targeted `type_text`, `press_key`, `get_app_state` and `screenshot` work on a window without focusing it, including one on a hidden workspace: keys go through `send_key_state` on the control socket (never in a process's arguments) and the window is captured alone with `grim -T`. The indicator shows the input, masked unless the target field is confirmed non-secret. Text must be printable US-layout ASCII, tab or newline, and the active keymap must be US; anything else is refused before anything is sent. An unfocused Chromium ignores browser accelerators. When a batch stops between a key's down and up events, or its outcome is unknown, the backend sends a release that waits at most a second, and the error says whether the release went through.
 
 MCP discovery probes are supported before initialization, including metadata-bearing discovery requests. Agent activity appears through the native GNOME indicator or the Wayland overlay helper. Captures hide the indicator before reading the screen. Portal captures clean new Pictures files and preserve existing images. Set `CODEX_COMPUTER_USE_INDICATOR=0` to disable action indicators; capture exclusion remains active. GNOME extension version 3 supports Shell 45 through 51. Existing Shell sessions need a logout and login to load refreshed extension files.
 
@@ -95,9 +96,16 @@ missing or failed resolution reports the X11 route as unavailable.
 
 Element-targeted `click`, `scroll`, `perform_action` and `set_value` refuse an
 `element_index` or `element_identifier` from another app or window and ask for
-a snapshot of the target. `window_id` values are integers up to 2^53-1, which
-JavaScript clients carry exactly; a larger value is refused with a prompt to
-re-run `list_windows`. On GNOME
+a snapshot of the target. When the snapshot was narrowed to one window of an
+app that shares a pid across windows (Chromium), a target that names a
+different window of that app is refused too. A post-action tree records the
+window it was taken for, so its indices pass the check on that window.
+`window_id` values are integers up to 2^53-1, which JavaScript clients carry
+exactly; a larger value is refused with a prompt to re-run `list_windows`.
+`perform_action`, `set_value`, and Hyprland background `type_text` and
+`press_key` do not raise the target, so they refuse `screenshot_after:
+"window"` for an unfocused window; use `"screen"` or the `screenshot` tool. On
+tiling layouts this also refuses a visible window beside the focused one. On GNOME
 Wayland with a scaled monitor, portal pointer input multiplies the stream point
 by the monitor scale, matching mutter's logical layout mode. After targeted
 typing, focus feedback reports an incomplete search or an app without an AT-SPI
@@ -110,7 +118,13 @@ On Wayland, portal `press_key` sends modifiers and named keys as keysyms
 resolved by the compositor's active keymap, so Ctrl shortcuts still work when
 Caps Lock and Control are swapped. Letters and digits retain physical US
 keycodes so shortcuts also work under non-Latin layouts. KDE Plasma retains
-physical keycodes for all portal chords.
+physical keycodes for all portal chords. Without ydotool, when the session bus
+answers that no RemoteDesktop portal exists (wlroots compositors with
+`xdg-desktop-portal-wlr`), chords go through `wtype`. The portal stays
+preferred when it exists, when a portal keyboard session is already active, or
+with `CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD=1` (standalone alias
+`COMPUTER_USE_LINUX_FORCE_PORTAL_KEYBOARD=1`). A failed or denied portal
+request is never replayed through `wtype`.
 
 On X11, `type_text` keeps xdotool's 12 ms per-character delay so XTEST events
 stay ordered. `CODEX_COMPUTER_USE_XDOTOOL_TYPE_DELAY_MS` overrides it; the
@@ -131,7 +145,9 @@ with an action, editable text or a value, plus headings, status and live
 regions, windows and dialogs, with the same `element_index` values as the full
 tree. A `title` or `window_id` target narrows an app with several windows under
 one AT-SPI root (Chromium) to that window's subtree, keeping its popups and
-dialogs.
+dialogs. A compositor title that decorates the frame name, such as
+`PlanetScale - Chromium (Profile 1)` for the frame `PlanetScale - Chromium`,
+narrows to that frame.
 
 Scope `get_app_state` with `app_name_or_bundle_identifier` or a window target
 (`window_id`, `pid`, `app_id`, `wm_class`, `title`). Without one it returns the
@@ -253,11 +269,13 @@ shared monitor across gaps. Press or motion failures attempt release, and a
 partially dispatched gesture is not replayed. Native X11 input stays on `DISPLAY`
 and does not initialize uinput.
 
-labwc window listing requires the Selkies IPC patch and its `labwc.sock`; stock
-labwc does not expose that socket. The IPC and Wayland sockets must belong to
-the same compositor. Activation requires a unique app-id/title match. Window IDs
-include the title, fit JavaScript integers, and require a fresh list after title
-changes. Bounds are omitted until output scaling can be verified.
+labwc window listing uses the Selkies IPC patch's `labwc.sock` when it exists.
+The IPC and Wayland sockets must belong to the same compositor. Stock labwc and
+other wlroots compositors without a dedicated backend (phoc, river-classic) use
+`zwlr_foreign_toplevel_manager_v1` instead, which reports no pids or bounds.
+Activation requires a unique app-id/title match. Window IDs include the title,
+fit JavaScript integers, and require a fresh list after title changes. Bounds
+are omitted until output scaling can be verified.
 
 The Wayland RemoteDesktop portal asks for consent on every new process by
 default. Set `CODEX_COMPUTER_USE_PERSIST_REMOTE_DESKTOP=1` (standalone alias
