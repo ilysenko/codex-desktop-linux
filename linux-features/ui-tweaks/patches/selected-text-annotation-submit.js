@@ -7,6 +7,8 @@ const RUNTIME_MARKER = "codex-linux-selected-text-annotation-submit:runtime";
 const HANDLER_MARKER = "codex-linux-selected-text-annotation-submit:handler";
 const GUARD_NAME = "codexLinuxResponseAnnotationOwnsSubmitShortcut";
 const IDENT = "[A-Za-z_$][\\w$]*";
+const COMMAND_ANCHOR = `"focusPageBlockControls"===(?<command>${IDENT})\\|\\|` +
+      `"copyPageLink"===\\k<command>\\|\\|"clearAllUnreads"===\\k<command>(?![\\w$])`;
 
 function enabled(context = {}) {
   const defaults = context.feature?.manifest?.tweaks?.selection?.annotationSubmit;
@@ -50,10 +52,7 @@ function occurrenceCount(source, text) {
 
 function shortcutContract(source) {
   const { escapeRegExp, findMatchingBrace } = helpers();
-  const commandAnchor = uniqueMatch(source,
-    `"focusPageBlockControls"===(?<command>${IDENT})\\|\\|` +
-      `"copyPageLink"===\\k<command>\\|\\|"clearAllUnreads"===\\k<command>(?![\\w$])`,
-    "app shortcut editable-scope anchor");
+  const commandAnchor = uniqueMatch(source, COMMAND_ANCHOR, "app shortcut editable-scope anchor");
   const start = source.lastIndexOf("function ", commandAnchor.index);
   const header = new RegExp(`^function ${IDENT}\\(${IDENT}\\)\\{`, "u").exec(source.slice(start));
   if (start < 0 || header == null) throw new Error("App shortcut function header drifted");
@@ -73,8 +72,12 @@ function shortcutContract(source) {
       `if\\(\\k<event>\\.target instanceof Element&&\\k<event>\\.target,\\k<event>\\.defaultPrevented\\)return;`,
     "app shortcut keydown handler");
   const event = handler.groups.event;
-  uniqueMatch(body, `\\(0,${IDENT}\\.${IDENT}\\)\\(${escapeRegExp(command)},${escapeRegExp(event)}\\)\\)*&&\\(?` +
-    `${escapeRegExp(event)}\\.preventDefault\\(\\)`, "app command dispatch");
+  const handlerOpening = handler.index + `${handler.groups.handler}=${event}=>`.length;
+  const handlerClosing = findMatchingBrace(body, handlerOpening);
+  if (handlerClosing < handlerOpening) throw new Error("App shortcut keydown body drifted");
+  const handlerBody = body.slice(handlerOpening, handlerClosing + 1);
+  uniqueMatch(handlerBody, `\\(0,${IDENT}\\.${IDENT}\\)\\(${escapeRegExp(command)},${escapeRegExp(event)}\\)\\)*&&\\(?` +
+    `${escapeRegExp(event)}\\.preventDefault\\(\\)`, "registered app handler command dispatch");
   uniqueMatch(body, `onKeyDown:${escapeRegExp(handler.groups.handler)}(?=[,}])`, "registered shortcut handler");
   const injection = `/*${HANDLER_MARKER}*/if(${GUARD_NAME}(${command},${event}))return;`;
   const runtime = runtimeSource();
@@ -146,6 +149,30 @@ function modulesContaining(chunks, needles, label) {
 // editor renders `<binding>.<export>` with onDirectSubmit, the binding is
 // required from the card module, and that card module exports the component
 // whose capture handler owns the native Ctrl+Enter direct-submit path.
+function nativeFunction(source, name) {
+  const { escapeRegExp, findMatchingBrace } = helpers();
+  const header = uniqueMatch(source, `function ${escapeRegExp(name)}\\((?<params>[^)]*)\\)\\{`, "native function declaration");
+  const open = header.index + header[0].length - 1;
+  const end = findMatchingBrace(source, open);
+  if (end < open) throw new Error("Native function boundary drifted");
+  return { name, params: header.groups.params, source: source.slice(header.index, end + 1), start: header.index, end };
+}
+
+function nativeProps(fn) {
+  const { escapeRegExp } = helpers();
+  const props = fn.params.startsWith("{") ? fn.params.slice(1,-1) :
+    uniqueMatch(fn.source, `\\{(?<props>[^{}]*onDirectSubmit:[^{}]*)\\}=${escapeRegExp(fn.params)}(?=[,;])`, "native callback props").groups.props;
+  const callback = key => uniqueMatch(props, `(?:^|,)${key}:(?<callback>${IDENT})(?=,|$)`, "native submit prop").groups.callback;
+  return {direct:callback("onDirectSubmit"),saved:callback("onSubmit")};
+}
+
+function nativeFunctionOwner(source,index) {
+  return [...source.matchAll(new RegExp(`function (?<name>${IDENT})\\([^)]*\\)\\{`, "gu"))]
+    .filter(match => match.index < index)
+    .map(match => nativeFunction(source,match.groups.name))
+    .filter(fn => fn.end > index).at(-1);
+}
+
 function validateNativeEditor(editorChunks, cardChunks) {
   const { escapeRegExp, findMatchingBrace } = helpers();
   const editors = modulesContaining(editorChunks, EDITOR_NEEDLES, "annotation editor");
@@ -156,6 +183,20 @@ function validateNativeEditor(editorChunks, cardChunks) {
   const render = uniqueMatch(editor.body,
     `\\(0,${IDENT}\\.jsxs?\\)\\((?<binding>${IDENT})\\.(?<exported>[\\w$]+),\\{[^{}]*?onDirectSubmit:`,
     "native annotation card render");
+  const editorOwner = nativeFunctionOwner(editor.body,render.index);
+  if (editorOwner == null) throw new Error("Native selected-text editor function owner drifted");
+  const editorExport = uniqueMatch(editor.body,
+    `${escapeRegExp(requireParam)}\\.d\\(${escapeRegExp(editor.params[1])},\\{[^{}]*?SelectedTextAnnotationEditor:\\(\\)=>(?<component>${IDENT})(?=[,}])`, "selected-text editor export");
+  if (editorExport.groups.component !== editorOwner.name) throw new Error("Selected-text editor export owner drifted");
+  const editorCallbacks = nativeProps(editorOwner);
+  const editorPropsOpen = render.index + render[0].lastIndexOf("{");
+  const editorPropsEnd = findMatchingBrace(editor.body,editorPropsOpen);
+  const editorProps = editor.body.slice(editorPropsOpen,editorPropsEnd+1);
+  const directBridge = uniqueMatch(editorProps, `onDirectSubmit:(?<callback>${IDENT})(?=[,}])`, "selected-text editor direct callback").groups.callback;
+  uniqueMatch(editorOwner.source,
+    `${escapeRegExp(directBridge)}=(?<request>${IDENT})=>\\{let\\{body:(?<body>${IDENT})\\}=\\k<request>;` +
+    `(?<busy>${IDENT})\\.current\\|\\|\\(\\k<busy>\\.current=!0,\\(async\\(\\)=>${escapeRegExp(editorCallbacks.direct)}\\(\\k<body>\\)\\)\\(\\)\\.finally\\(\\(\\)=>\\{\\k<busy>\\.current=!1\\}\\)\\)\\}`,
+    "selected-text editor direct-submit bridge");
   const linkage = uniqueMatch(editor.body,
     `(?<![\\w$.])${escapeRegExp(render.groups.binding)}=${escapeRegExp(requireParam)}\\("(?<id>[^"\\\\]+)"\\)`,
     "native annotation card require");
@@ -166,23 +207,48 @@ function validateNativeEditor(editorChunks, cardChunks) {
     return modules.filter((module) => module.id === cardId);
   });
   if (cards.length === 0) throw new Error("Native annotation card module is missing");
-  for (const card of cards) {
-    const [, exportsParam, cardRequire] = card.params;
+  for (const cardMetadata of cards) {
+    const [, exportsParam, cardRequire] = cardMetadata.params;
     if (exportsParam == null || cardRequire == null) throw new Error("Native annotation card module signature drifted");
-    uniqueMatch(card.body, `${escapeRegExp(cardRequire)}\\.d\\(${escapeRegExp(exportsParam)},\\{[^{}]*?` +
-      `(?<![\\w$])${escapeRegExp(render.groups.exported)}:\\(\\)=>`, "native annotation card export");
-    const keydown = uniqueMatch(card.body,
-      `onKeyDownCapture:(?<event>${IDENT})=>\\{if\\(` +
-        `\\k<event>\\.defaultPrevented\\|\\|\\k<event>\\.nativeEvent\\.isComposing\\)return;`,
+    const card = cardMetadata.body;
+    const exported = uniqueMatch(card, `${escapeRegExp(cardRequire)}\\.d\\(${escapeRegExp(exportsParam)},\\{[^{}]*?` +
+      `(?<![\\w$])${escapeRegExp(render.groups.exported)}:\\(\\)=>(?<component>${IDENT})(?=[,}])`, "native annotation card export");
+    const wrapper = nativeFunction(card, exported.groups.component);
+    const keydown = uniqueMatch(card,
+      `onKeyDownCapture:(?<event>${IDENT})=>\\{if\\(\\k<event>\\.defaultPrevented\\|\\|\\k<event>\\.nativeEvent\\.isComposing\\)return;`,
       "native annotation keydown handler");
+    const inner = nativeFunctionOwner(card,keydown.index);
+    if (inner == null) throw new Error("Native annotation handler function owner drifted");
+    const callbacks = nativeProps(inner), forwarded = nativeProps(wrapper);
+    const renderInner = uniqueMatch(wrapper.source, `\\(0,${IDENT}\\.jsx\\)\\(${escapeRegExp(inner.name)},\\{`, "native card wrapper forwarding");
+    const propsOpen = renderInner.index + renderInner[0].length - 1;
+    const propsEnd = findMatchingBrace(wrapper.source,propsOpen);
+    const forwardedProps = wrapper.source.slice(propsOpen,propsEnd+1);
+    for (const [key,value] of [["onDirectSubmit",forwarded.direct],["onSubmit",forwarded.saved]]) {
+      uniqueMatch(forwardedProps, `${key}:${escapeRegExp(value)}(?=[,}])`, "native card forwarded callback");
+    }
     const openingBrace = keydown.index + `onKeyDownCapture:${keydown.groups.event}=>`.length;
-    const closingBrace = findMatchingBrace(card.body, openingBrace);
-    if (closingBrace < 0) throw new Error("Native annotation keydown handler body drifted");
-    const body = card.body.slice(openingBrace, closingBrace + 1);
+    const closingBrace = findMatchingBrace(card,openingBrace);
+    const body = card.slice(openingBrace,closingBrace+1);
     const event = escapeRegExp(keydown.groups.event);
-    uniqueMatch(body, `"Enter"===${event}\\.key&&!${event}\\.altKey&&!${event}\\.shiftKey&&` +
-      `\\(${event}\\.metaKey\\|\\|${event}\\.ctrlKey\\)`, "native annotation Ctrl+Enter path");
-    if (!body.includes('"direct"')) throw new Error("Native annotation direct-submit path drifted");
+    uniqueMatch(body, `"Enter"===${event}\\.key&&!${event}\\.altKey&&!${event}\\.shiftKey&&\\(${event}\\.metaKey\\|\\|${event}\\.ctrlKey\\)`, "native annotation Ctrl+Enter path");
+    uniqueMatch(body, `if\\(${event}\\.preventDefault\\(\\),${event}\\.stopPropagation\\(\\),${event}\\.repeat\\)return;`, "native repeat guard");
+    const router = uniqueMatch(body,
+      `null!=(?<editing>${IDENT})&&(?<allowed>${IDENT})&&${IDENT}\\?(?<submit>${IDENT})\\("direct","keyboard"\\):` +
+      `null==\\k<editing>&&\\k<allowed>\\?\\k<submit>\\(${IDENT},"keyboard"\\):\\k<submit>\\("saved","keyboard"\\)`, "native direct/saved keyboard routing");
+    const path = uniqueMatch(body, `(?<path>${IDENT})=${event}\\.nativeEvent\\.composedPath\\(\\)`, "native keyboard composed path").groups.path;
+    const editorBinding = uniqueMatch(body, `${escapeRegExp(path)}\\.includes\\((?<editor>${IDENT})\\.view\\.dom\\)`, "native keyboard editor binding").groups.editor;
+    const submitFunction = nativeFunction(inner.source,router.groups.submit);
+    const parameters = new RegExp(`^(?<mode>${IDENT}),(?<source>${IDENT})="button"$`).exec(submitFunction.params);
+    if (parameters == null) throw new Error("Native submission parameters drifted");
+    const submit = submitFunction.source;
+    const validation = uniqueMatch(submit,
+      `(?<result>${IDENT})=\\(0,${IDENT}\\.${IDENT}\\)\\(\\{submitMode:(?<mode>${escapeRegExp(parameters.groups.mode)}),` +
+      `submitSource:${escapeRegExp(parameters.groups.source)},commentText:${escapeRegExp(editorBinding)}\\.getText\\(\\),`, "native current-text submission validator");
+    uniqueMatch(submit, `case"noop":return;`, "native empty/invalid submission guard");
+    uniqueMatch(submit,
+      `case"submit":"direct"===${escapeRegExp(validation.groups.mode)}\\?${escapeRegExp(callbacks.direct)}\\(${escapeRegExp(validation.groups.result)}\\.payload\\):` +
+      `${escapeRegExp(callbacks.saved)}\\(${escapeRegExp(validation.groups.result)}\\.payload\\)`, "native validated callback routing");
   }
 }
 
@@ -197,13 +263,10 @@ function discoverAnnotationSubmitAssets(extractedDir) {
   for (const name of assetHelpers().listWebviewScriptAssets(extractedDir)) {
     const source = fs.readFileSync(path.join(assets, name), "utf8");
     const has = (needles) => needles.every((needle) => source.includes(needle));
-    if (has(SHORTCUT_NEEDLES)) {
-      try {
-        shortcutContract(source);
-        owners.push({ name, source });
-      } catch {
-        // Other command tables mention the same strings without owning the handler.
-      }
+    if ((has(SHORTCUT_NEEDLES) && new RegExp(COMMAND_ANCHOR,"u").test(source)) ||
+        source.includes(HANDLER_MARKER) || source.includes(RUNTIME_MARKER)) {
+      shortcutContract(source);
+      owners.push({ name, source });
     }
     if (has(EDITOR_NEEDLES)) editors.push({ name, source });
     if (has(CARD_NEEDLES)) cards.push({ name, source });
@@ -217,17 +280,13 @@ function applyAnnotationSubmit(extractedDir, context = {}) {
     const { assets, owners, editors, cards } = discoverAnnotationSubmitAssets(extractedDir);
     if (owners.length === 0) throw new Error("Expected at least one app shortcut asset, found 0");
     validateNativeEditor(editors, cards);
-    const patched = owners.map((asset) => ({ asset, result: patchSource(asset.source) }));
-    const targets = patched.map(({ asset }) => path.join("webview", "assets", asset.name));
-    for (const { asset, result } of patched) {
-      if (result !== asset.source) fs.writeFileSync(path.join(assets, asset.name), result);
-    }
-    return {
-      matched: owners.length,
-      changed: patched.filter(({ asset, result }) => result !== asset.source).length,
-      targets,
-    };
+    const asset = owners[0];
+    const result = patchSource(asset.source);
+    const { commitAssetEdits } = require("../../../scripts/patches/lib/asset-edits.js");
+    const committed = commitAssetEdits(assets,[{assetName:asset.name,source:asset.source,patchedSource:result}]);
+    return { matched: 1, changed: committed.changed, targets: [path.join("webview", "assets", asset.name)] };
   } catch (error) {
+    if (error?.code === "PATCH_INTEGRITY_FAILURE") throw error;
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`WARN: Could not restore selected-text annotation submit: ${reason} - skipping ui-tweaks patch`);
     return { matched: 0, changed: 0, reason };
