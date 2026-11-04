@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.41. When a
+  later screenshot reports a different desktop size, the next click,
+  coordinate scroll or drag replaces the uinput absolute pointer with one
+  sized to that screenshot, as KWin element clicks already did. A device
+  sized for an earlier desktop scaled every point to the wrong place. With a
+  matching device, an off-screen coordinate is clamped to the desktop edge and
+  the click or scroll result says where it landed. If the replacement fails,
+  the action is not sent and the result says why. KWin element clicks keep
+  the uinput clamp note and the portal off-screen warning, with the KWin
+  mapping appended. An untargeted scroll whose portal could not start and
+  whose ydotool fallback then failed reports both errors.
 - Synchronize the embedded Computer Use backend to standalone v0.7.40.
   v0.7.39 changed only the standalone npm wrapper and crates.io packaging, so
   it brings no crate source change here. Standalone synced back the generic

@@ -41,7 +41,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.40. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.41. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -449,6 +449,21 @@ query after the 1 s transition allowance, so a slow backend such as Hyprland is
 not cut off, while queries that keep reporting another window fail after about
 1 s instead of 11 s. A failed uinput move before a scroll drops the device, so
 the next action builds a fresh one.
+
+Since the v0.7.41 sync, the uinput absolute pointer follows the latest
+screenshot. When a later capture reports a different desktop size, the next
+click, coordinate scroll or drag replaces the device with one sized to that
+capture; a device sized for an earlier desktop would scale every point. The
+replacement uses the cached capture size and takes no new screenshot. If it
+fails, the action is not sent and is not replayed through another backend. A
+matching device clamps an off-screen coordinate to the desktop edge, and the
+click or scroll result says where it landed. uinput clicks and scrolls carry
+that clamp note instead of the off-screen warning the portal and ydotool routes
+add.
+KWin element clicks keep both notes and append the KWin coordinate mapping.
+An untargeted scroll whose portal could not start falls back to ydotool; if
+that fails too, the result reports the ydotool error followed by the portal
+error, which may be a denied consent.
 
 On COSMIC Wayland, pointer input uses per-monitor portal streams instead of
 uinput absolute coordinates. EIS input waits for its devices to resume. Portal
