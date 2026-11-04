@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+require("./suggested-prompts-feature-sync.test.js");
 
 const {
   APP_PAGE_ELIGIBILITY_MARKER,
@@ -54,8 +55,12 @@ function appPageFixture() {
 
 function featureSyncFixture() {
   return [
-    'function sync(){let u=(0,ed.Zj)("2425897452"),m=(0,ed.Zj)("2716206584");',
-    't0.O1.dispatchMessage("electron-desktop-features-changed",{ambientSuggestions:u&&"enabled"===m.status,appshotsEnabled:m})}',
+    'export const __webpack_modules__={FeatureSync(e,t,n){var ed=n("gates"),React=n("react"),t0=n("bus"),',
+    'store=n("store"),availability=n("availability"),jsx=n("jsx");',
+    'function sync(){let u=(0,ed.Zj)("2425897452"),m=(0,store.Ul)(availability.state);',
+    'return(0,React.useEffect)(()=>{t0.O1.dispatchMessage("electron-desktop-features-changed",',
+    '{ambientSuggestions:u&&"enabled"===m.status,appshotsEnabled:!0})},[u,m.status]),null}',
+    'function mount(){return(0,jsx.jsx)(sync,{})}n.d(t,{render:()=>mount})}};',
   ].join("");
 }
 

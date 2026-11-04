@@ -262,6 +262,13 @@ the destination mode and the native content action then fills and focuses the
 composer. A card without the native auto-send flag fills and focuses without sending. The upstream
 account, draft, document and hint checks remain in place across preparation.
 
+The feature-sync patch additionally binds the rollout read, runtime status and
+IPC value to the same mounted native component and effect dependencies. It
+resolves imports through that Rspack factory's own loader and updates every
+physical copy of the module in one verified transaction. A gate in another
+scope, a changed binding, or a mixed/incomplete copy set leaves all copies
+unchanged.
+
 This tweak is independently disabled by default:
 
 ```json

@@ -1,16 +1,19 @@
 "use strict";
 
+const {
+  FEATURE_SYNC_MARKER, FEATURE_SYNC_ASSET_NEEDLES, suggestedPromptsFeatureSyncContract,
+  applySuggestedPromptsFeatureSyncPatch, applySuggestedPromptsFeatureSyncAssets,
+} = require("./suggested-prompts-feature-sync.js");
+
 const FEATURE_GATE_ID = "2425897452";
 const FEATURE_GATE_NEEDLE = `"${FEATURE_GATE_ID}"`;
 // The official webview is an rspack build whose app code lives in numbered
 // async chunks, so each contract is located by stable content needles.
-const FEATURE_SYNC_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "electron-desktop-features-changed"]);
 const APP_PAGE_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "generatedSuggestionsEnabled:"]);
 const WORK_PAGE_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "generatedSuggestionsEnabled:", "mode:\"work\""]);
 const GENERAL_SETTINGS_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "planAtLogin"]);
 const HOME_CONTENT_ASSET_NEEDLES = Object.freeze(["\"curated\"===", "shouldUseCuratedNewChatPageSuggestions:"]);
 const RUNTIME_MARKER = "codexLinuxUiTweaksSuggestedPromptsEnabled";
-const FEATURE_SYNC_MARKER = "codexLinuxUiTweaksSuggestedPromptsFeatureSync";
 const APP_PAGE_ELIGIBILITY_MARKER = "codexLinuxUiTweaksSuggestedPromptsAppPageEligible";
 const WORK_PAGE_ELIGIBILITY_MARKER = "codexLinuxUiTweaksSuggestedPromptsWorkPageEligible";
 const HOME_CONTENT_SOURCE_MARKER = "codexLinuxSuggestedPromptsGeneratedSource";
@@ -34,10 +37,6 @@ function suggestedPromptsEnabled(context) {
 // `(0,er.Zj)("2425897452")`.
 function gateAssignmentPattern() {
   return /([A-Za-z_$][\w$]*)=(\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\("2425897452"\)/gu;
-}
-
-function featureSyncPattern() {
-  return /ambientSuggestions:([A-Za-z_$][\w$]*)&&"enabled"===([A-Za-z_$][\w$]*)\.status/gu;
 }
 
 function workPageEligibilityPattern() {
@@ -107,38 +106,6 @@ function warn(target) {
 
 function completePatchedGateCount(source, marker) {
   return matchCount(source, patchedGateAssignmentPattern(marker));
-}
-
-function suggestedPromptsFeatureSyncContract(source) {
-  if (typeof source !== "string") {
-    return "drifted";
-  }
-  const cleanRollouts = [...source.matchAll(gateAssignmentPattern())];
-  const featureSync = [...source.matchAll(featureSyncPattern())];
-  const patchedRollouts = [...source.matchAll(patchedGateAssignmentPattern(FEATURE_SYNC_MARKER))];
-  const markerCount = markerOccurrenceCount(source, FEATURE_SYNC_MARKER);
-  const completeMarkers = completeMarkerCount(source, FEATURE_SYNC_MARKER);
-  if (
-    markerCount === 0 &&
-    completeMarkers === 0 &&
-    cleanRollouts.length === 1 &&
-    featureSync.length === 1 &&
-    featureSync[0][1] === cleanRollouts[0][1]
-  ) {
-    return "current";
-  }
-  if (
-    markerCount === 1 &&
-    completeMarkers === 1 &&
-    cleanRollouts.length === 0 &&
-    patchedRollouts.length === 1 &&
-    featureSync.length === 1 &&
-    featureSync[0][1] === patchedRollouts[0][1] &&
-    completePatchedGateCount(source, FEATURE_SYNC_MARKER) === 1
-  ) {
-    return "patched";
-  }
-  return "drifted";
 }
 
 function appPageState(source, info) {
@@ -262,26 +229,6 @@ function replaceRolloutGate(source, marker) {
     (_match, targetName, gateName) =>
       `${targetName}=(${gateName}("${FEATURE_GATE_ID}"),function ${marker}(){return!0}())`,
   );
-}
-
-function applySuggestedPromptsFeatureSyncPatch(source) {
-  try {
-    const contract = suggestedPromptsFeatureSyncContract(source);
-    if (contract === "patched") {
-      return source;
-    }
-    if (contract !== "current") {
-      warn("feature sync");
-      return source;
-    }
-
-    return replaceRolloutGate(source, FEATURE_SYNC_MARKER);
-  } catch (error) {
-    console.warn(
-      `WARN: Unexpected Suggested Prompts feature sync patch error: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return source;
-  }
 }
 
 function applySuggestedPromptsAppPagePatch(source,snapshot) {
@@ -435,7 +382,7 @@ const descriptors = [
   },
   {
     id: "home-suggested-prompts-feature-sync",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20_975,
     ciPolicy: "optional",
     enabled: suggestedPromptsEnabled,
@@ -443,7 +390,7 @@ const descriptors = [
     assetMatch: (source) => suggestedPromptsFeatureSyncContract(source) !== "drifted",
     missingDescription: "current Suggested Prompts feature-sync bundle",
     skipDescription: "ui-tweaks Suggested Prompts feature-sync patch",
-    apply: applySuggestedPromptsFeatureSyncPatch,
+    apply: applySuggestedPromptsFeatureSyncAssets,
   },
   {
     id: "home-suggested-prompts-app-page",

@@ -331,7 +331,7 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:appearance-dock-icon-main-process", "extracted-app:pre-webview", "optional"],
         ["feature:ui-tweaks:appearance-dock-icon-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-main-process", "main-bundle", "optional"],
-        ["feature:ui-tweaks:home-suggested-prompts-feature-sync", "webview-asset", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-feature-sync", "extracted-app:pre-webview", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-app-page", "extracted-app:pre-webview", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-work-page", "extracted-app:pre-webview", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
