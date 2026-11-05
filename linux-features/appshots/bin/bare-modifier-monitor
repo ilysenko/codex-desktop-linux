@@ -112,6 +112,21 @@ if [ -z "${DISPLAY:-}" ] || ! command -v xinput >/dev/null 2>&1; then
     exit 1
 fi
 
+# xinput test-xi2 fails at once when the X server is unreachable or has no
+# XInput 2, but how soon that exit shows depends on load, so the check after
+# starting the stream below can miss it. xinput --version opens the display
+# and reads the server's XInput version, the same preconditions, and its exit
+# is awaited here.
+xinput_version_output="$(xinput --version 2>/dev/null)" || xinput_version_output=""
+server_xi_version="${xinput_version_output##*XI version on server: }"
+case "$server_xi_version" in
+    [2-9].*|[1-9][0-9]*.*) ;;
+    *)
+        echo "permission-denied"
+        exit 1
+        ;;
+esac
+
 xmodmap_output="$(xmodmap -pke 2>/dev/null || true)"
 IFS=$'\t' read -r key_symbols fallback_codes < <(select_keys "$key")
 key_codes="$(find_keycodes "$key_symbols" "$fallback_codes")"

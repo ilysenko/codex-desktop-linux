@@ -237,9 +237,10 @@ test("stages the Linux bare modifier monitor helper and Wayland portal hook", ()
 // directory in TMPDIR and execs its command, so nothing removes the directory.
 const LEAKY_STDBUF = '#!/bin/sh\nmktemp -d "${TMPDIR:-/tmp}/.tmpXXXXXX" >/dev/null || exit 125\nshift\nexec "$@"\n';
 
-// A stdbuf that only execs, like GNU stdbuf, for a test where a slower start
-// would race the monitor's startup check.
-const PLAIN_STDBUF = '#!/bin/sh\nshift\nexec "$@"\n';
+// What xinput --version prints for an X server with XInput 2.4; the monitor
+// checks it before it starts the event stream.
+const XINPUT_VERSION_OK =
+  'if [ "$1" = --version ]; then printf \'%s\\n\' \'xinput version 1.6.4\' \'XI version on server: 2.4\'; exit 0; fi';
 
 // What the bare modifier monitor's stdbuf run leaves in TMPDIR.
 function stdbufLeftovers(dir) {
@@ -263,6 +264,7 @@ test("bare modifier monitor emits one transition from one XInput2 stream", () =>
     path.join(binDir, "xinput"),
     [
       "#!/bin/sh",
+      XINPUT_VERSION_OK,
       "[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2",
       "printf '%s\\n' \\",
       "  'EVENT type 13 (RawKeyPress)' '    detail: 50' \\",
@@ -309,13 +311,9 @@ test("bare modifier monitor fails before ready when XInput2 exits during startup
     "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
     { mode: 0o755 },
   );
-  // The monitor still makes, and must remove, its own stdbuf directory.
-  fs.writeFileSync(path.join(binDir, "stdbuf"), PLAIN_STDBUF, { mode: 0o755 });
-  fs.writeFileSync(
-    path.join(binDir, "xinput"),
-    "#!/bin/sh\n[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2\nexit 2\n",
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+  // Every xinput command fails, as when the X server is unreachable.
+  fs.writeFileSync(path.join(binDir, "xinput"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
   try {
     const result = spawnSync(helper, ["--key", "DoubleShift", "--immediate"], {
@@ -337,6 +335,63 @@ test("bare modifier monitor fails before ready when XInput2 exits during startup
   }
 });
 
+// The preflight waits for xinput's own answer, so a slow start under load
+// cannot turn a failure into ready. The old 0.1 s check printed ready here.
+for (const [name, xinput, expected] of [
+  ["fails closed for a slow xinput that cannot reach the X server", "#!/bin/sh\nsleep 0.3\nexit 1\n", "permission-denied\n"],
+  [
+    "fails closed when the X server has no XInput 2",
+    "#!/bin/sh\n[ \"$1\" = --version ] && printf '%s\\n' 'xinput version 1.6.4' 'XI version on server: 1.5' && exit 0\nexec sleep 30\n",
+    "permission-denied\n",
+  ],
+]) {
+  test(`bare modifier monitor ${name}`, (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-preflight-"));
+    t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+    const binDir = path.join(tempDir, "bin");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(
+      path.join(binDir, "xmodmap"),
+      "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+    fs.writeFileSync(path.join(binDir, "xinput"), xinput, { mode: 0o755 });
+    const result = spawnSync(path.join(__dirname, "bin", "bare-modifier-monitor"), ["--key", "DoubleShift"], {
+      encoding: "utf8",
+      env: { ...process.env, DISPLAY: ":99", PATH: `${binDir}:${process.env.PATH}`, TMPDIR: tempDir },
+      timeout: 5_000,
+    });
+    assert.notEqual(result.status, 0, result.stderr);
+    assert.equal(result.stdout, expected);
+    assert.deepEqual(stdbufLeftovers(tempDir), []);
+  });
+}
+
+// After a good preflight, a stream that still dies at once is caught by the
+// short check when the monitor sees it in time, else it ends after ready.
+// Either way the monitor removes its stdbuf directory.
+test("bare modifier monitor removes its stdbuf directory when the stream dies after the preflight", (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-stream-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const binDir = path.join(tempDir, "bin");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "xmodmap"),
+    "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+  fs.writeFileSync(path.join(binDir, "xinput"), `#!/bin/sh\n${XINPUT_VERSION_OK}\nexit 2\n`, { mode: 0o755 });
+  const result = spawnSync(path.join(__dirname, "bin", "bare-modifier-monitor"), ["--key", "DoubleShift"], {
+    encoding: "utf8",
+    env: { ...process.env, DISPLAY: ":99", PATH: `${binDir}:${process.env.PATH}`, TMPDIR: tempDir },
+    timeout: 5_000,
+  });
+  assert.ok(["permission-denied\n", "ready\n"].includes(result.stdout), result.stdout);
+  assert.deepEqual(stdbufLeftovers(tempDir), []);
+});
+
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
   test(`bare modifier monitor removes its stdbuf directory on ${signal}`, { timeout: 15_000 }, async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-signal-"));
@@ -351,7 +406,7 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
     fs.writeFileSync(
       path.join(binDir, "xinput"),
-      "#!/bin/sh\n[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2\nexec sleep 30\n",
+      `#!/bin/sh\n${XINPUT_VERSION_OK}\n[ "$1 $2" = "test-xi2 --root" ] || exit 2\nexec sleep 30\n`,
       { mode: 0o755 },
     );
 
