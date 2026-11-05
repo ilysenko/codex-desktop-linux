@@ -1,6 +1,16 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+const { Script } = require("node:vm");
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { findMainProcessChunks, patchWebviewAssets } = require("../../scripts/patches/lib/assets.js");
+const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
+const {
+  inspectChronicleBridge,
+  BRIDGE_HANDLERS_NAME: CHRONICLE_BRIDGE_HANDLERS_NAME,
+  BRIDGE_HANDLERS_END_MARKER: CHRONICLE_BRIDGE_HANDLERS_END_MARKER,
+} = require("../chronicle-skysight/patch.js");
 
 const RECORD_REPLAY_PLUGIN_NAME = "record-and-replay";
 const HUD_RUNTIME_VERSION = 6;
@@ -181,12 +191,12 @@ function recordReplayBridgeSource({ fsVar }) {
     `"linux-record-replay-mark":async({sessionDir:e,note:t}={})=>{let n=codexLinuxRecordReplayString(e),r=codexLinuxRecordReplayString(t);if(!n||!r)return{ok:!1,action:"record.mark",message:"sessionDir and note are required"};return codexLinuxRecordReplayRun(["record","mark","--session-dir",n,"--note",r],15000)}`,
     `"linux-record-replay-speech-context":async({sessionDir:e,transcript:t,source:n}={})=>{let r=codexLinuxRecordReplayString(e),a=codexLinuxRecordReplayString(t);if(!r||!a)return{ok:!1,action:"record.speech",message:"sessionDir and transcript are required"};let o=["record","speech","--session-dir",r,"--text",a];n&&o.push("--source",String(n));return codexLinuxRecordReplayRun(o,15000)}`,
     recordReplayActiveSpeechContextBridgeHandler(),
-    `"linux-record-replay-browser-trace":async({sessionDir:e,trace:t,traceJson:n,url:r,title:a,source:o}={})=>{let s=codexLinuxRecordReplayString(e),i=codexLinuxRecordReplayString(n);if(!s)return{ok:!1,action:"record.browser-trace",message:"sessionDir is required"};if(!i&&t!==void 0)i=JSON.stringify(t);if(!i)return{ok:!1,action:"record.browser-trace",message:"trace or traceJson is required"};let c=codexLinuxRecordReplayWriteTempJson(i),l=["record","browser-trace","--session-dir",s,"--trace-file",c];r&&l.push("--url",String(r));a&&l.push("--title",String(a));o&&l.push("--source",String(o));try{return await codexLinuxRecordReplayRun(l,30000)}finally{try{${fsVar}.unlinkSync(c)}catch{}}}`,
+    `"linux-record-replay-browser-trace":async({sessionDir:e,trace:t,traceJson:n,url:r,title:a,source:o}={})=>{let s=codexLinuxRecordReplayString(e),i=codexLinuxRecordReplayString(n);if(!s)return{ok:!1,action:"record.browser-trace",message:"sessionDir is required"};if(!i&&t!==void 0)i=JSON.stringify(t);if(!i)return{ok:!1,action:"record.browser-trace",message:"trace or traceJson is required"};let c=codexLinuxRecordReplayWriteTempJson(i);try{let l=["record","browser-trace","--session-dir",s,"--trace-file",c];r&&l.push("--url",String(r));a&&l.push("--title",String(a));o&&l.push("--source",String(o));return await codexLinuxRecordReplayRun(l,30000)}finally{try{${fsVar}.unlinkSync(c)}catch{}}}`,
     `"linux-record-replay-desktop-snapshot":async({sessionDir:e,source:t}={})=>{let n=codexLinuxRecordReplayString(e);if(!n)return{ok:!1,action:"record.desktop-snapshot",message:"sessionDir is required"};let r=["record","desktop-snapshot","--session-dir",n];t&&r.push("--source",String(t));return codexLinuxRecordReplayRun(r,15000)}`,
     `"linux-record-replay-stop":async({sessionDir:e}={})=>{let t=codexLinuxRecordReplayString(e);if(!t)return{ok:!1,action:"record.stop",message:"sessionDir is required"};return codexLinuxRecordReplayRun(["record","stop","--session-dir",t],15000)}`,
-    `"linux-record-replay-stop-active":async()=>{let e=await codexLinuxRecordReplayRun(["status"],5000),t=e?.json?.session_dir;if(!e?.ok||e?.json?.state!==\`active\`||!t)return{ok:!1,action:"record.stop-active",message:"No active Record & Replay session"};return codexLinuxRecordReplayRun(["record","stop","--session-dir",String(t)],15000)}`,
+    `"linux-record-replay-stop-active":async()=>{let e=await codexLinuxRecordReplayRun(["status"],5000),t=codexLinuxRecordReplayActiveSessionDir(e);if(t==null)return{ok:!1,action:"record.stop-active",message:"No active Record & Replay session",status:e};return codexLinuxRecordReplayRun(["record","stop","--session-dir",String(t)],15000)}`,
     `"linux-record-replay-cancel":async({sessionDir:e,discarded:t}={})=>{let n=codexLinuxRecordReplayString(e);if(!n)return{ok:!1,action:"record.cancel",message:"sessionDir is required"};let r=["record","cancel","--session-dir",n];t&&r.push("--discarded");return codexLinuxRecordReplayRun(r,15000)}`,
-    `"linux-record-replay-cancel-active":async({discarded:e}={})=>{let t=await codexLinuxRecordReplayRun(["status"],5000),n=t?.json?.session_dir;if(!t?.ok||t?.json?.state!==\`active\`||!n)return{ok:!1,action:"record.cancel-active",message:"No active Record & Replay session"};let r=["record","cancel","--session-dir",String(n)];e&&r.push("--discarded");return codexLinuxRecordReplayRun(r,15000)}`,
+    `"linux-record-replay-cancel-active":async({discarded:e}={})=>{let t=await codexLinuxRecordReplayRun(["status"],5000),n=codexLinuxRecordReplayActiveSessionDir(t);if(n==null)return{ok:!1,action:"record.cancel-active",message:"No active Record & Replay session",status:t};let r=["record","cancel","--session-dir",String(n)];e&&r.push("--discarded");return codexLinuxRecordReplayRun(r,15000)}`,
     `"linux-record-replay-bundle":async({bundle:e}={})=>{let t=codexLinuxRecordReplayString(e);if(!t)return{ok:!1,action:"bundle.validate",message:"bundle is required"};return codexLinuxRecordReplayRun(["bundle","validate","--bundle",t],15000)}`,
     `"linux-record-replay-draft-skill":async({bundle:e}={})=>{let t=codexLinuxRecordReplayString(e);if(!t)return{ok:!1,action:"bundle.draft-prompt",message:"bundle is required"};return codexLinuxRecordReplayRun(["bundle","draft-prompt","--bundle",t],30000)}`,
     `"linux-record-replay-import-skill":async({source:e,dryRun:t,allowUnsupported:n}={})=>{let r=codexLinuxRecordReplayString(e);if(!r)return{ok:!1,action:"skill.import",message:"source is required"};let a=["skill","import","--source",r];t&&a.push("--dry-run");n&&a.push("--allow-unsupported");return codexLinuxRecordReplayRun(a,30000)}`,
@@ -195,68 +205,133 @@ function recordReplayBridgeSource({ fsVar }) {
 }
 
 function recordReplayActiveSpeechContextBridgeHandler() {
-  return `"linux-record-replay-speech-context-active":async({transcript:e,source:t}={})=>{let n=codexLinuxRecordReplayString(e);if(!n)return{ok:!1,action:"record.speech-active",message:"transcript is required"};let r=await codexLinuxRecordReplayRun(["status"],5000),a=r?.json?.session_dir;if(!r?.ok||r?.json?.state!==\`active\`||!a)return{ok:!1,action:"record.speech-active",message:"No active Record & Replay session",status:r};let o=["record","speech","--session-dir",String(a),"--text",n];t&&o.push("--source",String(t));return codexLinuxRecordReplayRun(o,15000)}`;
+  return `"linux-record-replay-speech-context-active":async({transcript:e,source:t}={})=>{let n=codexLinuxRecordReplayString(e);if(!n)return{ok:!1,action:"record.speech-active",message:"transcript is required"};let r=await codexLinuxRecordReplayRun(["status"],5000),a=codexLinuxRecordReplayActiveSessionDir(r);if(a==null)return{ok:!1,action:"record.speech-active",message:"No active Record & Replay session",status:r};let o=["record","speech","--session-dir",String(a),"--text",n];t&&o.push("--source",String(t));return codexLinuxRecordReplayRun(o,15000)}`;
 }
 
 function recordReplayHelperSource({ fsVar, pathVar }) {
-  return `function codexLinuxRecordReplayWriteTempJson(e){let t=process.env.XDG_RUNTIME_DIR||process.env.TMPDIR||"/tmp",n=${pathVar}.join(t,"codex-record-replay-traces-"+(process.getuid?process.getuid():process.pid));${fsVar}.mkdirSync(n,{recursive:true,mode:448});try{if(${fsVar}.lstatSync(n).isSymbolicLink())throw Error("trace directory is a symlink");${fsVar}.chmodSync(n,448)}catch(r){throw r}let r=${pathVar}.join(n,"trace-"+Date.now()+"-"+process.pid+"-"+Math.random().toString(36).slice(2)+".json");${fsVar}.writeFileSync(r,String(e),{mode:384});return r}`;
+  return `function codexLinuxRecordReplayActiveSessionDir(e){let t=e?.json;return e?.ok===!0&&t!=null&&typeof t==="object"&&!Array.isArray(t)&&t.ok===!0&&t.state==="active"&&typeof t.session_dir==="string"&&t.session_dir.trim().length>0?t.session_dir:null}\nfunction codexLinuxRecordReplayWriteTempJson(e){let t=process.env.XDG_RUNTIME_DIR||process.env.TMPDIR||"/tmp",n=${pathVar}.join(t,"codex-record-replay-traces-"+(process.getuid?process.getuid():process.pid));${fsVar}.mkdirSync(n,{recursive:true,mode:448});try{if(${fsVar}.lstatSync(n).isSymbolicLink())throw Error("trace directory is a symlink");${fsVar}.chmodSync(n,448)}catch(r){throw r}let r=${pathVar}.join(n,"trace-"+Date.now()+"-"+process.pid+"-"+Math.random().toString(36).slice(2)+".json");let a=${fsVar}.openSync(r,"wx",384);try{${fsVar}.writeFileSync(a,String(e));${fsVar}.closeSync(a);return r}catch(e){try{${fsVar}.closeSync(a)}catch{}try{${fsVar}.unlinkSync(r)}catch{}throw e}}`;
 }
 
-// chronicle-skysight (a required feature) owns the module-scope Linux bridge
-// handler registry and the desktop fetch route that serves it. Record & Replay
-// registers its handlers right after that registry declaration.
-const CHRONICLE_BRIDGE_HANDLERS_NAME = "codexLinuxChronicleBridgeHandlers";
-const CHRONICLE_BRIDGE_HANDLERS_END_MARKER = "/*codex-linux-chronicle-bridge-handlers-end*/";
+// Chronicle owns the real outer registry and native wrapper route. Its complete
+// inspection is the authority for both the insertion slot and applied state.
 const RECORD_REPLAY_BRIDGE_END_MARKER = "/*codex-linux-record-replay-bridge-end*/";
+const RECORD_REPLAY_HELPERS = ["codexLinuxRecordReplayActiveSessionDir", "codexLinuxRecordReplayWriteTempJson"];
 
 function recordReplayMainBridgeRegistration() {
-  return `${CHRONICLE_BRIDGE_HANDLERS_END_MARKER}\n${recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}\nObject.assign(${CHRONICLE_BRIDGE_HANDLERS_NAME},{${recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}});${RECORD_REPLAY_BRIDGE_END_MARKER}`;
+  return `\n${recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}\nObject.assign(${CHRONICLE_BRIDGE_HANDLERS_NAME},{${recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS)}});${RECORD_REPLAY_BRIDGE_END_MARKER}`;
 }
 
-function hasChronicleBridgeDependency(source) {
-  return countOccurrences(source, CHRONICLE_BRIDGE_HANDLERS_END_MARKER) === 1
-    && countOccurrences(source, `const ${CHRONICLE_BRIDGE_HANDLERS_NAME}={`) === 1
-    && countOccurrences(source, "/*codex-linux-chronicle-skysight-route*/") === 1
-    && source.includes("function codexLinuxRecordReplayRun(");
+function codeAt(source, index) {
+  return findMatchingBrace("{" + source.slice(0, index) + "}".repeat(index + 2), 0) >= index + 1;
 }
-
-function hasCompleteRecordReplayMainBridgePatch(source) {
-  const helperPayload = recordReplayHelperSource(RECORD_REPLAY_MODULE_EXPRESSIONS);
-  const bridgePayload = recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS);
-  return hasChronicleBridgeDependency(source)
-    && countOccurrences(source, recordReplayMainBridgeRegistration()) === 1
-    && countOccurrences(source, helperPayload) === 1
-    && countOccurrences(source, bridgePayload) === 1
-    && countOccurrences(source, RECORD_REPLAY_BRIDGE_END_MARKER) === 1;
+function rootAt(source, index) {
+  return findMatchingBrace("{" + source.slice(0, index) + "}", 0) === index + 1;
+}
+function ownBinding(source, name) {
+  try { new Script(`async function probe(){${source}\n;let ${name};}`); return false; }
+  catch { return true; }
+}
+function hasEscapedReservedIdentifier(source, names = [...RECORD_REPLAY_HELPERS, "Date", "Math"]) {
+  const reserved = new Set(names);
+  for (const token of source.matchAll(/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu)) {
+    if (!token[0].includes("\\u")) continue;
+    const decoded = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)));
+    if (reserved.has(decoded) && codeAt(source, token.index)) return true;
+  }
+  return false;
+}
+function unsafeTempIntrinsic(source, name) {
+  if (ownBinding(source, name)) return true;
+  const writes = new RegExp(`(?<![\\w$.])(?:${name}\\s*(?:\\+\\+|--|(?:\\?\\?|\\|\\||&&|[+*/%&|^\\-])?=(?!=|>))|(?:\\+\\+|--)${name}\\b)`, "gu");
+  if ([...source.matchAll(writes)].some(match => codeAt(source, match.index))) return true;
+  // A literal expression can replace a read, but cannot replace an assignment
+  // target. Probe only potential pattern leaves; ordinary Date.now/Math.random
+  // reads never need an extra whole-bundle parse. The second form allows an
+  // object-literal shorthand read while still rejecting a shorthand target.
+  for (const match of source.matchAll(new RegExp(`(?<![\\w$.])${name}(?![\\w$])`, "gu"))) {
+    const end = match.index + name.length;
+    if (!/^\s*(?:[,}\]]|of\b|in\b)/u.test(source.slice(end)) || !codeAt(source, match.index)) continue;
+    const parses = replacement => { try { new Script(source.slice(0, match.index) + replacement + source.slice(end)); return true; } catch { return false; } };
+    if (!parses("(0)") && !parses(`${name}:(0)`)) return true;
+  }
+  return false;
 }
 
 function hasAnyRecordReplayMainBridgeArtifact(source) {
-  return source.includes("codexLinuxRecordReplayWriteTempJson")
-    || source.includes('"linux-record-replay-start"')
-    || source.includes(RECORD_REPLAY_BRIDGE_END_MARKER);
+  return RECORD_REPLAY_HELPERS.some(name => source.includes(name))
+    || hasEscapedReservedIdentifier(source, RECORD_REPLAY_HELPERS)
+    || source.includes(RECORD_REPLAY_BRIDGE_END_MARKER)
+    || [...recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS).matchAll(/"([^"]+)":async/gu)]
+      .some(match => source.includes(match[1]));
+}
+
+function inspectRecordReplayMainBridge(source) {
+  const drifted = reason => ({ state: "drifted", reason });
+  if (typeof source !== "string") return drifted("Expected source text");
+  try {
+    const dependency = inspectChronicleBridge(source);
+    if (dependency.state !== "patched" || countOccurrences(source, CHRONICLE_BRIDGE_HANDLERS_END_MARKER) !== 1) return drifted("Chronicle / Skysight dependency bridge is missing");
+    if (hasEscapedReservedIdentifier(source) || ["Date", "Math"].some(name => unsafeTempIntrinsic(source, name))) return drifted("Shadowed Record & Replay temp-file intrinsic");
+    if (!hasAnyRecordReplayMainBridgeArtifact(source)) return { state: "current", dependency, graph: dependency.graph };
+    const registration = recordReplayMainBridgeRegistration(), start = dependency.registry.extensionAt, end = start + registration.length;
+    if (source.slice(start, end) !== registration || countOccurrences(source, registration) !== 1 || countOccurrences(source, RECORD_REPLAY_BRIDGE_END_MARKER) !== 1) return drifted("Incomplete Record & Replay main bridge patch");
+    const callStart = start + registration.indexOf("Object.assign("), callEnd = end - RECORD_REPLAY_BRIDGE_END_MARKER.length;
+    const methods = [...recordReplayBridgeSource(RECORD_REPLAY_MODULE_EXPRESSIONS).matchAll(/"([^"]+)":async/gu)].map(match => match[1]);
+    const extension = dependency.registry.extensions.find(entry => entry.start === callStart && entry.end === callEnd);
+    if (!extension || JSON.stringify(extension.methods) !== JSON.stringify(methods)) return drifted("Record & Replay registry extension has no authority");
+    for (const name of RECORD_REPLAY_HELPERS) {
+      const references = [...source.matchAll(new RegExp(`(?<![\\w$])${name}(?![\\w$])`, "gu"))].filter(match => codeAt(source, match.index));
+      if (references.some(match => match.index < start || match.index >= end)) return drifted("Reserved Record & Replay helper reference outside registration");
+      const declaration = source.indexOf(`function ${name}(`, start);
+      if (declaration < start || declaration >= end || !rootAt(source, declaration)) return drifted("Record & Replay helper is not an outer declaration");
+    }
+    return { state: "patched", dependency, graph: dependency.graph, registration: { start, end }, extension };
+  } catch { return drifted("Invalid Record & Replay source structure"); }
 }
 
 function applyRecordReplayMainBridgePatch(currentSource) {
-  const patchName = "Record & Replay main bridge patch";
-  if (hasAnyRecordReplayMainBridgeArtifact(currentSource)) {
-    if (!hasCompleteRecordReplayMainBridgePatch(currentSource)) {
-      warn("Found incomplete Record & Replay main bridge patch", patchName);
-    }
+  const inspection = inspectRecordReplayMainBridge(currentSource);
+  if (inspection.state === "patched") return currentSource;
+  if (inspection.state !== "current") {
+    warn(inspection.reason, "Record & Replay main bridge patch");
     return currentSource;
   }
-  if (!hasChronicleBridgeDependency(currentSource)) {
-    warn("Chronicle / Skysight dependency bridge is missing", patchName);
+  const at = inspection.dependency.registry.extensionAt;
+  const patched = currentSource.slice(0, at) + recordReplayMainBridgeRegistration() + currentSource.slice(at);
+  if (inspectRecordReplayMainBridge(patched).state !== "patched") {
+    warn("Record & Replay bridge registration changed while patching", "Record & Replay main bridge patch");
     return currentSource;
   }
-  const patchedSource = currentSource.replace(
-    CHRONICLE_BRIDGE_HANDLERS_END_MARKER,
-    () => recordReplayMainBridgeRegistration(),
-  );
-  if (!hasCompleteRecordReplayMainBridgePatch(patchedSource)) {
-    warn("Record & Replay bridge registration changed while patching", patchName);
-    return currentSource;
-  }
-  return patchedSource;
+  return patched;
+}
+
+function applyRecordReplayToExtractedApp(extractedDir) {
+  const reject = reason => {
+    warn(reason, "Record & Replay main bridge patch");
+    return { matched: 0, changed: 0, changedAssets: [], reason };
+  };
+  const inventory = findMainProcessChunks(extractedDir);
+  if (!inventory) return reject("Missing main-process inventory");
+  const records = inventory.chunks.map(assetName => {
+    const source = fs.readFileSync(path.join(inventory.buildDir, assetName), "utf8");
+    return { assetName, source, graph: inspectMainRequestSites(source) };
+  });
+  const owners = records.filter(record => record.graph.ok);
+  if (owners.length !== 1) return reject("Missing or ambiguous native request owner cohort");
+  const owner = owners[0], identity = owner.graph.scope?.factoryId;
+  if (identity == null) return reject("Native request factory identity is unavailable");
+  const cohort = records.filter(record => record.graph.factoryIds?.includes(identity)
+    || hasAnyRecordReplayMainBridgeArtifact(record.source)
+    || record.source.includes("codexLinuxChronicle")
+    || record.source.includes("codexLinuxRecordReplay")
+    || record.source.includes(CHRONICLE_BRIDGE_HANDLERS_END_MARKER));
+  if (cohort.length !== 1 || cohort[0] !== owner) return reject("Duplicate, partial or mixed Record & Replay owner cohort");
+  const inspection = inspectRecordReplayMainBridge(owner.source);
+  if (inspection.state === "drifted") return reject(inspection.reason);
+  if (inspection.state === "patched") return { matched: 1, changed: 0, changedAssets: [] };
+  const patchedSource = applyRecordReplayMainBridgePatch(owner.source);
+  if (inspectRecordReplayMainBridge(patchedSource).state !== "patched") return reject("Record & Replay bridge poststate is incomplete");
+  return { matched: 1, ...patchWebviewAssets(inventory.buildDir, [{ assetName: owner.assetName, source: owner.source, patchedSource }]) };
 }
 
 function recordReplayHudRuntimeSource() {
@@ -467,9 +542,9 @@ const descriptors = [
   },
   {
     id: "linux-record-replay-main-bridge",
-    phase: "main-bundle",
+    phase: "extracted-app:pre-webview",
     order: 152,
-    apply: applyRecordReplayMainBridgePatch,
+    apply: applyRecordReplayToExtractedApp,
   },
   {
     id: "record-replay-hud",
@@ -514,6 +589,9 @@ module.exports = {
   applyRecordReplayPluginGatePatch,
   applyRecordReplayHudPatch,
   applyRecordReplayMainBridgePatch,
+  applyRecordReplayToExtractedApp,
+  inspectRecordReplayMainBridge,
+  recordReplayMainBridgeRegistration,
   descriptors,
   recordReplayBridgeSource,
   recordReplayHudRuntimeSource,

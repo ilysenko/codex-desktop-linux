@@ -70,22 +70,10 @@ function retiredChronicleControllerFixture() {
   ].join("");
 }
 
-// Current rspack/SWC minifier shape (double quotes, Yoda comparisons, class declarations).
-function currentChronicleControllerFixture() {
-  return [
-    "var Base={TF:class{}};",
-    "let Empty={state:\"stopped\",eventStreamRootPath:null,currentSegmentEventsPath:null,currentSegmentMetadataPath:null,suppressedEventsPath:null,startedAtMs:null,endedAtMs:null};",
-    "class Hse{dependencies;cachedStatus=Empty;desiredState=\"stopped\";pendingOperation=Promise.resolve();finishPendingPauseResume=null;pendingStatus=null;constructor(e){this.dependencies=e}getCachedStatus(){return this.cachedStatus}shouldReconcileAfterServiceRespawn(){return\"running\"===this.desiredState}status(){return null==this.pendingStatus&&(this.pendingStatus=this.request(\"skysightStatus\").then(e=>(\"stopped\"===e.state&&this.finishPendingPauseResume?.(e),e)).finally(()=>{this.pendingStatus=null})),this.pendingStatus}enable(){return this.desiredState=\"running\",this.runSerialized(()=>this.withFailedEnableRollback(async()=>(await this.dependencies.archiveLegacyChronicleSkill(),this.dependencies.reconcileComputerHistoryPluginInstallation(!0),this.request(\"skysightStart\")))).catch(e=>{throw\"running\"===this.desiredState&&(this.desiredState=\"stopped\"),e})}reconcileEnabled(){return this.desiredState=\"running\",this.runSerialized(()=>this.withFailedEnableRollback(async()=>{await this.dependencies.archiveLegacyChronicleSkill(),this.dependencies.reconcileComputerHistoryPluginInstallation(!0);let e=await this.status();return\"stopped\"!==e.state?(\"running\"===this.desiredState&&(this.desiredState=e.state),e):this.request(\"skysightStart\")}))}disable(){let e=this.desiredState;return this.desiredState=\"stopped\",this.runSerialized(async()=>{let e=\"stopped\"===this.cachedStatus.state?this.cachedStatus:await this.stopRecorder();return this.dependencies.reconcileComputerHistoryPluginInstallation(!1),e}).catch(t=>{throw\"stopped\"===this.desiredState&&(this.desiredState=e),t})}stop(){return this.desiredState=\"stopped\",this.runSerialized(()=>this.stopRecorder())}pause(e){let t=this.desiredState,r=null==e?\"paused\":\"running\";return this.desiredState=r,this.runSerialized(()=>this.requestPauseResume(\"skysightPause\",e)).catch(e=>{throw this.desiredState===r&&(this.desiredState=t),e})}resume(){let e=this.desiredState;return this.desiredState=\"running\",this.runSerialized(async()=>{let e=await this.status();return\"stopped\"===e.state?this.request(\"skysightStart\"):\"running\"===e.state?e:this.requestPauseResume(\"skysightResume\")}).catch(t=>{throw\"running\"===this.desiredState&&(this.desiredState=e),t})}getSettings(){return this.dependencies.request({method:\"skysightGetSettings\",params:{}})}updateSettings(e){return this.dependencies.request({method:\"skysightUpdateSettings\",params:{settings:e}})}clearHistory(e,t){return this.dependencies.request({method:\"skysightClearHistory\",params:{interval:t,scope:e}}).then(e=>(this.cachedStatus=e,e))}requestPauseResume(e,t){return new Promise((r,n)=>{this.finishPendingPauseResume=r,(\"skysightPause\"===e?this.dependencies.request({method:e,params:null==t?{}:{duration:t}}):this.dependencies.request({method:e,params:{}})).then(r,n)}).then(e=>(this.cachedStatus=e,e)).finally(()=>{this.finishPendingPauseResume=null})}request(e){return this.dependencies.request({method:e,params:{}}).then(e=>(this.cachedStatus=e,e))}async withFailedEnableRollback(e){try{return await e()}catch(e){try{await this.stopRecorder()}catch(t){throw AggregateError([e,t],\"Failed to enable Chronicle and stop the recorder during rollback\")}throw e}}async stopRecorder(){let e=await this.request(\"skysightStop\");if(\"stopped\"!==e.state||null!=e.currentSegmentEventsPath||null!=e.currentSegmentMetadataPath)throw Error(\"Chronicle stopped but did not close its current segment\");return e}runSerialized(e){let t=this.pendingOperation.then(e,e);return this.pendingOperation=t.then(()=>{},()=>{}),t}}",
-    "class $O extends Base.TF{appServerConnection;getController;isEligible;loadApplications;loadApplicationsByBundleIdentifier;history;constructor(e,t,r,n,i,s){super(),this.appServerConnection=e,this.getController=t,this.isEligible=r,this.loadApplications=n,this.loadApplicationsByBundleIdentifier=i,this.history=s}async getState(){let e=this.#tt(),[t,r]=await Promise.all([this.appServerConnection.isChronicleFeatureConfigured(),e.status()]);return this.#tr(t,r.state)}async retryActivation(){this.#tn();try{await this.appServerConnection.reconcileSkysightChronicle()}catch{}return this.getState()}async setEnabled(e){if(!e)return this.#ti();try{let e=await this.appServerConnection.enableSkysightChronicle();return await this.#ts(!0),this.#tr(!0,e.state)}catch(e){if(\"pending\"===e)return await this.#ts(!0),{enabled:!0,recorderState:\"stopped\",activationState:\"waiting_for_permissions\"};throw e}}async pause(){let e=await this.#tt().pause();return this.#tr(!0,e.state)}async resume(){this.#tn();let e=await this.appServerConnection.resumeChronicle();return this.#tr(e.enabled,e.running?\"running\":\"stopped\")}async getSettings(){return this.#tt().getSettings()}async updateSettings(e){return this.#tt().updateSettings(e)}async listApplications(){return this.#tn(),this.loadApplications()}async resolveApplications(e){return this.#tn(),this.loadApplicationsByBundleIdentifier(e)}async listHistory(){return this.#tn(),this.history.list()}async listHistorySuggestions(){return this.#tn(),this.history.listSuggestions()}async listHistorySummaryIntervals({sinceMs:e}){return this.#tn(),this.history.listSummaryIntervals(e)}async clearHistory(e,t){await this.#tt().clearHistory(e,t)}async #ti(){return this.#tt().disable()}#tr(e,t){return{enabled:e,recorderState:t}}async #ts(e){await this.appServerConnection.sendAppServerRequest(\"config/value/write\",{keyPath:\"chronicle\",value:e})}#tn(){if(!this.isEligible())throw Error(\"Chronicle is not available\")}#tt(){this.#tn();let e=this.getController();if(null==e)throw Error(\"Chronicle is unavailable\");return e}}",
-    "function Cr(){return{skysight:false}}let N=\"darwin\"===process.platform,xe;",
-    "var Ce={requestComputerUseWorker(e){return globalThis.worker(e)}},Xe={reconcileComputerHistoryPluginInstallation(e){return globalThis.reconcileComputerHistoryPluginInstallation(e)}},U={broadcastQueryCacheInvalidation(){}},V={codexHome:\"/tmp\"};async function archive(e){return globalThis.archiveLegacyChronicleSkill(e)}",
-    "N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{null!=await archive({codexHome:V.codexHome,reason:\"skysight_gate_enabled\"})&&U.broadcastQueryCacheInvalidation([\"skills\"])}}));",
-    "var appOptions={getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null};",
-    "var connection={enableSkysightChronicle:()=>xe.enable(),resumeChronicle:()=>xe.resume()};",
-    "class Host{constructor(){this.options=appOptions;let i=connection;this.services={chronicle:\"darwin\"===process.platform&&null!=this.options.getSkysightRecorderController?new $O(i,this.options.getSkysightRecorderController,()=>Cr().skysight,()=>globalThis.applications,e=>globalThis.resolvedApplications,{list:()=>globalThis.history,listSuggestions:()=>globalThis.historySuggestions,listSummaryIntervals:e=>[e]}):void 0}}}var host=new Host;",
-    FETCH_WRAPPER_FIXTURE,
-  ].join("");
-}
+const { currentChronicleMainFixture: currentChronicleControllerFixture,
+  evaluateChronicleFixture } = require("./fixtures/main-bridge.js");
+require("./main-contract.test.js");
+require("./main-runtime.test.js");
 
 function captureWarns(fn) {
   const warnings = [];
@@ -301,7 +289,7 @@ test("record-and-replay bridge patch is idempotent and uses execFile", () => {
   assert.match(patched, /"linux-record-replay-doctor":async/);
   assert.match(
     patched,
-    /const codexLinuxChronicleBridgeHandlers=\{[^\n]*\};\/\*codex-linux-chronicle-bridge-handlers-end\*\/\nfunction codexLinuxRecordReplayWriteTempJson\([^\n]*\nObject\.assign\(codexLinuxChronicleBridgeHandlers,\{"linux-record-replay-doctor":async/,
+    /const codexLinuxChronicleBridgeHandlers=\{[^\n]*\};\/\*codex-linux-chronicle-bridge-handlers-end\*\/\nfunction codexLinuxRecordReplayActiveSessionDir\([^\n]*\nfunction codexLinuxRecordReplayWriteTempJson\([^\n]*\nObject\.assign\(codexLinuxChronicleBridgeHandlers,\{"linux-record-replay-doctor":async/,
   );
   assert.match(patched, /"chronicle-permissions":async/);
   assert.match(patched, /chronicleSidecarPresent/);
@@ -380,7 +368,7 @@ test("record-and-replay bridge handlers are served through the Chronicle fetch r
         return {
           execFile(_bin, args, _options, callback) {
             calls.push(args);
-            callback(null, JSON.stringify({ state: "active", session_dir: "/tmp/session" }), "");
+            callback(null, JSON.stringify({ ok: true, state: "active", session_dir: "/tmp/session" }), "");
           },
         };
       }
@@ -389,7 +377,7 @@ test("record-and-replay bridge handlers are served through the Chronicle fetch r
       throw new Error(`unexpected require: ${id}`);
     },
   };
-  vm.runInNewContext(`${patched};globalThis.fetchWrapper=fetchWrapper;`, context);
+  evaluateChronicleFixture(patched, context);
   await context.globalThis.fetchWrapper.handleRequest("view", {
     requestId: "speech",
     url: "vscode://codex/linux-record-replay-speech-context-active",
@@ -435,7 +423,7 @@ test("record-and-replay rejects incomplete current bridge variants byte-identica
     const { value, warnings } = captureWarns(() => applyRecordReplayMainBridgePatch(drifted));
     assert.equal(value, drifted, name);
     assert.equal(warnings.length, 1, name);
-    assert.match(warnings[0], /incomplete Record & Replay main bridge patch/, name);
+    assert.match(warnings[0], /Record & Replay main bridge patch/, name);
   }
 });
 
@@ -478,7 +466,7 @@ test("record-and-replay Chronicle helpers map Skysight status into upstream side
   };
 
   const state = vm.runInNewContext(
-    `${helperSource};codexLinuxChronicleControlStateFromSkysight({ok:true,json:{state:"running",is_running:true,paused:false}})`,
+    `${helperSource};codexLinuxChronicleControlStateFromSkysight({ok:true,json:{ok:true,state:"running",is_running:true,paused:false}})`,
     context,
   );
   assert.equal(state.enabled, true);
@@ -486,7 +474,7 @@ test("record-and-replay Chronicle helpers map Skysight status into upstream side
   assert.equal(state.state, "running");
 
   const ocrState = vm.runInNewContext(
-    `${helperSource};codexLinuxChronicleControlStateFromSkysight({ok:true,json:{state:"running",is_running:true,ocr_available:true,ocr_status:"completed",ocr_backend:"tesseract-cli",ocr_language:"eng"}})`,
+    `${helperSource};codexLinuxChronicleControlStateFromSkysight({ok:true,json:{ok:true,state:"running",is_running:true,ocr_available:true,ocr_status:"completed",ocr_backend:"tesseract-cli",ocr_language:"eng"}})`,
     context,
   );
   assert.equal(ocrState.chronicleOcrAvailable, true);
@@ -495,7 +483,7 @@ test("record-and-replay Chronicle helpers map Skysight status into upstream side
   assert.equal(ocrState.chronicleOcrLanguage, "eng");
 
   const paused = vm.runInNewContext(
-    `${helperSource};codexLinuxChronicleControlStateFromSkysight({ok:true,json:{state:"paused",is_running:true,paused:true}})`,
+    `${helperSource};codexLinuxChronicleControlStateFromSkysight({ok:true,json:{ok:true,state:"paused",is_running:true,paused:true}})`,
     context,
   );
   assert.equal(paused.enabled, true);
@@ -522,7 +510,7 @@ test("record-and-replay Chronicle permissions probe is side-effect free", async 
     childProcess: {
       execFile(_bin, args, _options, callback) {
         calls.push(args);
-        callback(null, JSON.stringify({ state: "stopped", is_running: false, paused: false }), "");
+        callback(null, JSON.stringify({ ok: true, state: "stopped", is_running: false, paused: false }), "");
       },
     },
     fs,
@@ -552,8 +540,8 @@ test("record-and-replay Chronicle setup probe starts stopped Linux Skysight", as
   });
   const calls = [];
   const responses = [
-    { state: "stopped", is_running: false, paused: false },
-    { state: "running", is_running: true, paused: false },
+    { ok: true, state: "stopped", is_running: false, paused: false },
+    { ok: true, state: "running", is_running: true, paused: false },
   ];
   const context = {
     childProcess: {
@@ -592,8 +580,8 @@ test("record-and-replay Chronicle setup probe enables summary agent when Setting
   });
   const calls = [];
   const responses = [
-    { state: "stopped", is_running: false, paused: false },
-    { state: "running", is_running: true, paused: false, summary_agent_enabled: true },
+    { ok: true, state: "stopped", is_running: false, paused: false },
+    { ok: true, state: "running", is_running: true, paused: false, summary_agent_enabled: true },
   ];
   const context = {
     childProcess: {
@@ -638,6 +626,7 @@ test("record-and-replay Chronicle setup probe does not churn start when summary 
         callback(
           null,
           JSON.stringify({
+            ok: true,
             state: "running",
             is_running: true,
             paused: false,
