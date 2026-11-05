@@ -194,6 +194,18 @@ test("Chronicle source and normal descriptor reject disconnected native bindings
     registryInFunction: patched.replace(registryPart, "function unusedChronicleRegistry(){" + registryPart + "}"),
     selectorChanged: patched.replace("Object.prototype.hasOwnProperty.call(codexLinuxChronicleBridgeHandlers,t)", "Object.prototype.hasOwnProperty.call(otherHandlers,t)"),
     helperReassigned: patched + "\ncodexLinuxChronicleFetch=async()=>{};",
+    escapedRunnerReassigned: patched + String.raw`;codexLinuxRecordReplayRu\u006e=async()=>({ok:true,spoof:true});`,
+    escapedRunnerBraced: patched + String.raw`;codexLinuxRecordReplayR\u{75}n=async()=>({ok:true,spoof:true});`,
+    escapedRegistryAlias: patched + String.raw`;const escapedAlias=codexLinuxChronicleBridgeHandle\u0072s;`,
+    escapedIntrinsicWrite: patched + String.raw`;Obj\u0065ct={assign:()=>{}};`,
+    helperArrayTarget: patched + ';[codexLinuxRecordReplayRun]=[async()=>({ok:true,spoof:true})];',
+    helperObjectTarget: patched + ';({codexLinuxRecordReplayRun}={codexLinuxRecordReplayRun:async()=>({ok:true,spoof:true})});',
+    helperRenamedObjectTarget: patched + ';({runner:codexLinuxRecordReplayRun}={runner:async()=>({ok:true,spoof:true})});',
+    helperParenthesizedTarget: patched + ';(codexLinuxRecordReplayRun)=async()=>({ok:true,spoof:true});',
+    helperNestedWrite: patched + ';function unusedReservedWriter(){[codexLinuxRecordReplayRun]=[async()=>({ok:true,spoof:true})]}',
+    commentedHelperWrite: patched + ';codexLinuxRecordReplayRun/**/=async()=>({ok:true,spoof:true});',
+    commentedArrayTarget: patched + ';[codexLinuxRecordReplayRun/**/]=[async()=>({ok:true,spoof:true})];',
+    commentedParenthesizedTarget: patched + ';(codexLinuxRecordReplayRun/*target*/)=async()=>({ok:true,spoof:true});',
     intrinsicShadowed: "const Array={isArray:()=>false};" + patched,
     nativeFactoryShadow: patched.replace("class RequestWrapper{", "function codexLinuxChronicleFetch(){}class RequestWrapper{"),
     nativeFactoryHelperWrite: patched.replace("class RequestWrapper{", "codexLinuxChronicleFetch=async()=>{};class RequestWrapper{"),
@@ -233,6 +245,32 @@ test("Chronicle production descriptor owns one transactional main inventory in s
   const root = extractedFixture(t, { "early-bootstrap-45-abc.js": currentChronicleMainFixture() });
   assert.equal(productionBridge(root, []), undefined);
 });
+
+test("Chronicle ignores inert escaped-name text and preserves ordinary reserved-name reads", () => {
+  const patched = applyChronicleSkysightMainBridgePatch(currentChronicleMainFixture());
+  const inert = patched + String.raw`;const inertEscapedText="codexLinuxRecordReplayRu\\u006e";/*codexLinuxRecordReplayRu\u006e*/`;
+  assert.equal(chronicleControllerContract(inert), "patched");
+  const reads = patched + ';const reservedReads=[codexLinuxRecordReplayRun,Object,JSON];const reservedObject={codexLinuxRecordReplayRun,Object,JSON};';
+  assert.equal(chronicleControllerContract(reads), "patched");
+  const commentedReads = patched + ';const reservedKey={codexLinuxRecordReplayRun/*key*/:1};const reservedValue=[codexLinuxRecordReplayRun/*read*/];';
+  assert.equal(chronicleControllerContract(commentedReads), "patched");
+});
+
+for (const suffix of ["Run", "String", "Bin", "Parse"]) {
+  test(`Chronicle production descriptor rejects isolated base ${suffix} helper cohort`, t => {
+    for (const alreadyApplied of [false, true]) {
+      const source = currentChronicleMainFixture();
+      const files = {
+        "early-bootstrap-45-abc.js": alreadyApplied ? applyChronicleSkysightMainBridgePatch(source) : source,
+        "early-bootstrap-46-def.js": `function codexLinuxRecordReplay${suffix}(){return false}`,
+      };
+      const root = extractedFixture(t, files);
+      const result = captureWarns(() => productionBridge(root));
+      assert.equal(result.value.status, "skipped-optional");
+      unchangedMainFiles(root, files);
+    }
+  });
+}
 
 for (const scenario of ["missing", "duplicate", "mixed", "same-id-no-needles", "same-id-exponent", "same-id-quoted", "orphan-helper", "partial"]) {
   test(`Chronicle production descriptor rejects ${scenario} cohort without writing`, t => {

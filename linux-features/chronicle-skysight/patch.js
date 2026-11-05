@@ -110,6 +110,40 @@ function ownBinding(body, name, params = "") {
   try { new Script(`async function probe(${params}){${body}\n;let ${name};}`); return false; }
   catch { return true; }
 }
+function hasEscapedReservedIdentifier(source, names) {
+  const reserved = new Set(names);
+  for (const token of source.matchAll(/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu)) {
+    if (!token[0].includes("\\u")) continue;
+    const decoded = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu,
+      (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)));
+    if (reserved.has(decoded) && codeAt(source, token.index)) return true;
+  }
+  return false;
+}
+
+function hasPatternBindingWrite(source, name, canonicalSpans) {
+  const references = source.matchAll(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$])`, "gu"));
+  for (const reference of references) {
+    if (canonicalSpans.some(span => span.start <= reference.index && reference.index < span.end)) continue;
+    if (!codeAt(source, reference.index)) continue;
+    const end = reference.index + name.length;
+    const following = source.slice(end).replace(/^(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))*/u, "");
+    if (/^(?:\(|\.|:|\?\.)/u.test(following)) continue;
+    // A literal expression may replace a read, including a shorthand object
+    // value, but cannot replace a destructuring or parenthesized write target.
+    const parses = replacement => {
+      try {
+        new Script(source.slice(0, reference.index) + replacement + source.slice(end));
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (!parses("(0)") && !parses(`${name}:(0)`)) return true;
+  }
+  return false;
+}
+
 function codeIncludes(body, snippet) {
   let cursor = body.indexOf(snippet);
   while (cursor >= 0) {
@@ -384,14 +418,18 @@ function completeHelperPlan(source, graph) {
   const parts = chronicleMainHelperParts(), spans = parts.map(part => outerHelperSpan(source, part));
   if (spans.some(span => !span)) return null;
   const functionNames = parts.flatMap(part => matchAll(part, /\bfunction ([A-Za-z_$][\w$]*)\(/gu).map(match => match[1]));
+  const intrinsics = ["Object", "JSON", "Promise", "String", "Array", "Error", "require", "process"];
+  if (hasEscapedReservedIdentifier(source, [...functionNames, BRIDGE_HANDLERS_NAME, ...intrinsics])) return null;
   for (const name of functionNames) {
     const definitions = scopedMatches(source, new RegExp(`\\b(?:async )?function ${escapeRegExp(name)}\\(`, "gu"));
-    if (definitions.length !== 1 || !statementAt(source, definitions[0].index) || bindingWrites(source, name, false).length) return null;
+    if (definitions.length !== 1 || !statementAt(source, definitions[0].index) || bindingWrites(source, name, false).length || hasPatternBindingWrite(source, name, spans)) return null;
   }
   const declarations = scopedMatches(source, new RegExp(`(?<![\\w$.])const ${BRIDGE_HANDLERS_NAME}=\\{`, "gu"));
   const registry = one(declarations);
   if (!registry || registry.index !== spans[1].start || bindingWrites(source, BRIDGE_HANDLERS_NAME).length !== 1) return null;
-  for (const intrinsic of ["Object", "JSON", "Promise", "String", "Array", "Error", "require", "process"]) if (ownBinding(source, intrinsic) || bindingWrites(source, intrinsic).length) return null;
+  for (const intrinsic of intrinsics) {
+    if (ownBinding(source, intrinsic) || bindingWrites(source, intrinsic).length) return null;
+  }
   const ownedMethods = matchAll(chronicleSkysightBridgeSource(), /"([^"\n]+)":async/gu).map(match => match[1]);
   const extensions = registryExtensions(source, spans[1], spans[2], ownedMethods);
   if (!extensions) return null;
@@ -487,7 +525,8 @@ function applyChronicleSkysightMainBridgePatch(currentSource) {
 }
 
 function hasChronicleArtifact(source) {
-  return source.includes("codexLinuxChronicle") || source.includes(FETCH_ROUTE_MARKER) || source.includes(BRIDGE_HANDLERS_END_MARKER);
+  return source.includes("codexLinuxChronicle") || source.includes("codexLinuxRecordReplay")
+    || source.includes(FETCH_ROUTE_MARKER) || source.includes(BRIDGE_HANDLERS_END_MARKER);
 }
 
 // Main-bundle descriptors are tried independently against each chunk. This

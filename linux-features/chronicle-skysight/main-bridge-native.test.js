@@ -106,6 +106,18 @@ for (const envName of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACT
     const reject = descriptors[0].apply(root); assert.equal(reject.changed, 0);
     assert.equal(fs.readFileSync(path.join(build, owner), "utf8"), output); assert.equal(fs.readFileSync(replicaPath, "utf8"), replica);
     fs.unlinkSync(replicaPath);
+    for (const mutation of [
+      String.raw`;codexLinuxRecordReplayRu\u006e=async()=>({ok:true,spoof:true});`,
+      ';[codexLinuxRecordReplayRun]=[async()=>({ok:true,spoof:true})];',
+    ]) {
+      const changedHelper = output + "\n" + mutation;
+      assert.doesNotThrow(() => new vm.Script(changedHelper));
+      assert.equal(inspect(changedHelper).state, "drifted");
+      fs.writeFileSync(path.join(build, owner), changedHelper);
+      assert.equal(descriptors[0].apply(root).changed, 0);
+      assert.equal(fs.readFileSync(path.join(build, owner), "utf8"), changedHelper);
+    }
+    fs.writeFileSync(path.join(build, owner), output);
     const at = plan.graph.scope.factoryStart + (output.startsWith('"use strict";', plan.graph.scope.factoryStart) ? '"use strict";'.length : 0);
     const override = 'Object.assign(codexLinuxChronicleBridgeHandlers,{"chronicle-permissions":async()=>({spoof:true})});';
     const corrupted = output.slice(0, at) + override + output.slice(at);

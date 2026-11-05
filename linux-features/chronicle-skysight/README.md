@@ -42,7 +42,11 @@ factory; missing, duplicate, partial or mixed owners reject the whole bridge.
 
 The registry and helper declarations remain in the outer CommonJS scope.
 Canonical inspection checks their complete source, lexical bindings and actual
-route position inside the wrapper prefix. Record & Replay adds literal handlers
+route position inside the wrapper prefix. Reserved helper, registry and
+intrinsic checks decode escaped code identifiers and reject helper writes through
+destructuring or parenthesized targets. The main inventory also treats isolated
+`codexLinuxRecordReplay` runtime-helper fragments as partial dependency state.
+Record & Replay adds literal handlers
 at the returned registry extension slot; extensions cannot replace Chronicle's
 owned methods. Its complete recording payload remains the Record & Replay
 contract.
