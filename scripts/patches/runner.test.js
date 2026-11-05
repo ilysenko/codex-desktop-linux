@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { detectLinuxTargetContext } = require("../lib/linux-target-context.js");
 const {
   createPatchReport,
   enabledFeatureFailuresFromReport,
@@ -16,22 +17,16 @@ const {
   patchExtractedApp,
   requiredPatchNamesForProfile,
 } = require("./runner.js");
+
 const { findMainProcessChunks } = require("./lib/assets.js");
 const {
   findMatchingBrace,
 } = require("./lib/minified-js.js");
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
+const { SHELL_ENVIRONMENT_FIXTURE } = require("./core/shell-env-startup/test-helpers.js");
 
-test("the official Linux baseline needs no core compatibility patch", () => {
-  assert.deepEqual(corePatchDescriptors(), []);
-  assert.deepEqual(allPatchPolicies({ featuresConfigPath: emptyConfig }), []);
-  assert.deepEqual(requiredPatchNamesForProfile("upstream-build", {
-    featuresConfigPath: emptyConfig,
-  }), []);
-});
-
-test("the signed baseline owns approved quit completion and shell startup", {
+test("the signed baseline owns approved quit completion", {
   skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null,
 }, () => {
   const mainProcess = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
@@ -93,28 +88,55 @@ test("the signed baseline owns approved quit completion and shell startup", {
   assert.ok(handlerBody.indexOf(pendingCheck) < handlerBody.indexOf(localApproval));
   assert.ok(handlerBody.indexOf(localApproval) < handlerBody.indexOf(quittingTransition));
 
-  const shellOwner = uniqueOwner([
-    "main app.whenReady resolved",
-    "shell environment hydrated",
-  ], "upstream shell-startup owner");
-  const readyPattern = new RegExp(
-    `await ${identifier}\\.app\\.whenReady\\(\\),${identifier}\\(` +
-      `"main app\\.whenReady resolved"`,
-    "gu",
+});
+
+function linuxTarget(id, versionId, desktop) {
+  return detectLinuxTargetContext({
+    env: {
+      CODEX_LINUX_TARGET_ID: id,
+      CODEX_LINUX_TARGET_VERSION_ID: versionId,
+      CODEX_LINUX_TARGET_DESKTOP: desktop,
+      CODEX_LINUX_TARGET_PACKAGE_FORMAT: id === "fedora" ? "rpm" : "deb",
+      PATH: "",
+    },
+    osReleaseFields: {},
+    atomic: false,
+  });
+}
+
+const fedoraKde = linuxTarget("fedora", "44", "KDE:Plasma");
+const ubuntuGnome = linuxTarget("ubuntu", "26.04", "ubuntu:GNOME");
+
+test("the official Linux baseline registers required compatibility patches", () => {
+  assert.deepEqual(
+    corePatchDescriptors().map(({ id, ciPolicy, phase }) => ({ id, ciPolicy, phase })),
+    [{
+      id: "shell-env-startup",
+      ciPolicy: "required-upstream",
+      phase: "extracted-app:pre-webview",
+    }],
   );
-  const shellStartPattern = new RegExp(
-    `(?:let|const) ${identifier}=Date\\.now\\(\\),${identifier}=\\(0,` +
-      `${identifier}\\.${identifier}\\)\\(\\),${identifier}=${identifier}=>\\{` +
-      `${identifier}\\("shell environment hydrated"`,
-    "gu",
+  assert.deepEqual(
+    allPatchPolicies({ featuresConfigPath: emptyConfig }),
+    [{
+      name: "shell-env-startup",
+      ciPolicy: "required-upstream",
+      phase: "extracted-app:pre-webview",
+    }],
   );
-  const readyMatches = [...shellOwner.matchAll(readyPattern)];
-  const shellStartMatches = [...shellOwner.matchAll(shellStartPattern)];
-  assert.equal(readyMatches.length, 1, "Expected one awaited main app readiness boundary");
-  assert.equal(shellStartMatches.length, 1, "Expected one shell-environment startup call");
-  assert.ok(
-    shellStartMatches[0].index > readyMatches[0].index,
-    "Shell-environment startup must follow awaited app readiness",
+  assert.deepEqual(
+    requiredPatchNamesForProfile("upstream-build", {
+      featuresConfigPath: emptyConfig,
+      linuxTarget: fedoraKde,
+    }),
+    ["shell-env-startup"],
+  );
+  assert.deepEqual(
+    requiredPatchNamesForProfile("upstream-build", {
+      featuresConfigPath: emptyConfig,
+      linuxTarget: ubuntuGnome,
+    }),
+    ["shell-env-startup"],
   );
 });
 
@@ -130,27 +152,62 @@ test("runner context exposes enabled feature IDs", () => {
   }
 });
 
-test("an empty core registry leaves unmatched application assets unchanged", () => {
+test("the default core registry repairs shell startup without changing other assets", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-baseline-"));
   try {
     const mainDir = path.join(root, ".vite", "build");
     const webviewDir = path.join(root, "webview", "assets");
     fs.mkdirSync(mainDir, { recursive: true });
     fs.mkdirSync(webviewDir, { recursive: true });
-    const webview = path.join(webviewDir, "app-initial-A.js");
     const main = path.join(mainDir, "early-bootstrap.js");
-    fs.writeFileSync(main, "const officialMain=true;\n");
+    const webview = path.join(webviewDir, "app-initial-A.js");
+    fs.writeFileSync(main, "const officialMain=true;");
+    const shell = path.join(mainDir, "early-bootstrap-133-abcd.js");
+    fs.writeFileSync(shell, SHELL_ENVIRONMENT_FIXTURE);
     fs.writeFileSync(webview, "official-webview\n");
-    const mainBefore = fs.readFileSync(main);
-    const webviewBefore = fs.readFileSync(webview);
     const report = createPatchReport();
     patchExtractedApp(root, {
       report,
       featuresConfigPath: emptyConfig,
+      linuxTarget: fedoraKde,
     });
-    assert.deepEqual(fs.readFileSync(main), mainBefore);
-    assert.deepEqual(fs.readFileSync(webview), webviewBefore);
-    assert.deepEqual(report.patches, []);
+    assert.equal(fs.readFileSync(main, "utf8"), "const officialMain=true;");
+    assert.equal(fs.readFileSync(webview, "utf8"), "official-webview\n");
+    assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
+    assert.equal(report.patches.length, 1);
+    assert.equal(report.patches[0].name, "shell-env-startup");
+    assert.equal(report.patches[0].status, "applied");
+    assert.equal(report.patches[0].ciPolicy, "required-upstream");
+    assert.equal(report.patches[0].sourceKind, "core");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("portable artifacts include the shell repair when built on Ubuntu GNOME", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-portable-shell-repair-"));
+  try {
+    const mainDir = path.join(root, ".vite", "build");
+    fs.mkdirSync(mainDir, { recursive: true });
+    const main = path.join(mainDir, "early-bootstrap.js");
+    const shell = path.join(mainDir, "early-bootstrap-133-abcd.js");
+    const shellSource = SHELL_ENVIRONMENT_FIXTURE;
+    fs.writeFileSync(main, "const officialMain=true;");
+    fs.writeFileSync(shell, shellSource);
+    const report = createPatchReport();
+
+    patchExtractedApp(root, {
+      report,
+      featuresConfigPath: emptyConfig,
+      linuxTarget: ubuntuGnome,
+    });
+
+    assert.equal(fs.readFileSync(main, "utf8"), "const officialMain=true;");
+    assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
+    assert.deepEqual(
+      report.patches.map(({ name, status }) => ({ name, status })),
+      [{ name: "shell-env-startup", status: "applied" }],
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -167,7 +224,11 @@ test("missing main bundle records enabled feature drift", (t) => {
 
   const entry = report.patches.find((patch) =>
     patch.name === "feature:frameless-titlebar:main-process");
+  const coreEntry = report.patches.find((patch) =>
+    patch.name === "shell-env-startup");
   assert.ok(entry);
+  assert.ok(coreEntry);
+  assert.equal(coreEntry.status, "failed-required");
   assert.equal(entry.status, "skipped-optional");
   assert.equal(entry.enforceWhenEnabled, true);
   assert.equal(entry.unavailable, true);
@@ -178,6 +239,7 @@ test("missing main bundle records enabled feature drift", (t) => {
 });
 
 test("main-process chunks are the rspack early-bootstrap entry and its numbered chunks", () => {
+  const { findMainProcessChunks } = require("./lib/assets.js");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-rspack-chunks-"));
   try {
     const buildDir = path.join(root, ".vite", "build");
