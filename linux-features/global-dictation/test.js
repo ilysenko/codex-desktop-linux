@@ -388,7 +388,7 @@ test("X11 release watcher exits when the primary key is released while the modif
       `#!${hostBash}`,
       "if [ \"$1\" = list ]; then printf '%s\\n' 'Virtual keyboard id=12 [slave  keyboard (3)]'; exit 0; fi",
       "if [ \"$1\" = query-state ]; then printf '%s\\n' 'key[37]=down' 'key[65]=down'; exit 0; fi",
-      "if [ \"$1\" = test ]; then sleep 0.05; printf '%s\\n' 'key release 65'; sleep 10; exit 0; fi",
+      "if [ \"$1\" = test ]; then sleep 0.05; printf '%s\\n' 'key release 65'; exec sleep 10; fi",
       "exit 2",
     ].join("\n"),
     { mode: 0o755 },
@@ -434,7 +434,7 @@ test("X11 release watcher prefers resolved keycodes over fallback codes", () => 
       `#!${hostBash}`,
       "if [ \"$1\" = list ]; then printf '%s\\n' 'Remapped keyboard id=12 [slave  keyboard (3)]'; exit 0; fi",
       "if [ \"$1\" = query-state ]; then printf '%s\\n' 'key[90]=up' 'key[37]=down' 'key[38]=down'; exit 0; fi",
-      "if [ \"$1\" = test ]; then sleep 10; exit 0; fi",
+      "if [ \"$1\" = test ]; then exec sleep 10; fi",
       "exit 2",
     ].join("\n"),
     { mode: 0o755 },
@@ -469,7 +469,7 @@ test("X11 release watcher resolves Electron punctuation aliases case-insensitive
     accelerator: "Ctrl+Plus",
     xmodmapLines: ["keycode 37 = Control_L", "keycode 21 = equal plus"],
     queryStateLines: ["key[37]=down", "key[21]=down"],
-    testLines: ["sleep 0.05", "printf '%s\\n' 'key release 21'", "sleep 10"],
+    testLines: ["sleep 0.05", "printf '%s\\n' 'key release 21'", "exec sleep 10"],
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -481,7 +481,7 @@ test("X11 release watcher resolves media and numpad aliases", () => {
     accelerator: "Ctrl+VolumeUp",
     xmodmapLines: ["keycode 37 = Control_L", "keycode 123 = XF86AudioRaiseVolume"],
     queryStateLines: ["key[37]=down", "key[123]=down"],
-    testLines: ["sleep 0.05", "printf '%s\\n' 'key release 123'", "sleep 10"],
+    testLines: ["sleep 0.05", "printf '%s\\n' 'key release 123'", "exec sleep 10"],
   });
   assert.equal(media.status, 0, media.stderr);
   assert.equal(media.signal, null);
@@ -490,7 +490,7 @@ test("X11 release watcher resolves media and numpad aliases", () => {
     accelerator: "Ctrl+NumAdd",
     xmodmapLines: ["keycode 37 = Control_L", "keycode 86 = KP_Add"],
     queryStateLines: ["key[37]=down", "key[86]=down"],
-    testLines: ["sleep 0.05", "printf '%s\\n' 'key release 86'", "sleep 10"],
+    testLines: ["sleep 0.05", "printf '%s\\n' 'key release 86'", "exec sleep 10"],
   });
   assert.equal(numpad.status, 0, numpad.stderr);
   assert.equal(numpad.signal, null);

@@ -233,8 +233,14 @@ if command -v stdbuf >/dev/null 2>&1; then
     stdbuf_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-appshots-stdbuf.XXXXXX" 2>/dev/null)" || stdbuf_dir=""
 fi
 coproc APPSHOT_XINPUT { start_xinput; }
-monitor_pid="$APPSHOT_XINPUT_PID"
-event_fd="${APPSHOT_XINPUT[0]}"
+# Bash unsets these variables once the producer exits, which a stream that
+# fails at once can do before the next line runs. That stream already died.
+monitor_pid="${APPSHOT_XINPUT_PID:-}"
+event_fd="${APPSHOT_XINPUT[0]:-}"
+if [ -z "$monitor_pid" ] || [ -z "$event_fd" ]; then
+    echo "permission-denied"
+    exit 1
+fi
 
 sleep 0.1
 if ! kill -0 "$monitor_pid" >/dev/null 2>&1; then
