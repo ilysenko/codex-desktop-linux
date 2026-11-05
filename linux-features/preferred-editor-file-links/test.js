@@ -11,14 +11,15 @@ const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-fe
 const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
-// File-reference dispatch contract as compiled by official Linux 26.1029.61003
+// File-reference dispatch contract as compiled by the latest signed official Linux package
 // (rspack, one conditional chain); upstream minified names are deliberately
 // replaced by descriptive aliases. The branches before it handle file-manager
 // targets and artifact-template skills; the last branch opens the side panel.
-const fixture = "function click(file,modified,browser=false){directory?explicit():null!=template&&!modified&&artifactOpen()?resolved(file,null):" +
-  "!panel||browser||modified?!modified||(0,paths.previewable)(file)&&panel?(0,files.openWorkspaceFile)({scope:scope,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,browserEnabled:browser,endLine:endLine,...panel&&!modified?{isPreview:preview}:{},modifiedClick:modified,openInSidePanel:panel,onOpenTargetResolved:resolved}):fallback():" +
-  "(0,files.openWorkspaceFile)({scope:scope,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,endLine:endLine,isPreview:preview,openInSidePanel:panel,onOpenTargetResolved:resolved})}";
-const chunk = (body) => "export const __rspack_esm_id=391924;export const __rspack_esm_ids=[391924];" +
+const fixture = "function openWithEnvironment(args){return (0,files.openWorkspaceFile)(args)}" +
+  "function click(file,modified,browser=false){directory?explicit():null!=template&&!modified&&artifactOpen()?resolved(file,null):" +
+  "!panel||browser||modified?!modified||(0,paths.previewable)(file)&&panel?openWithEnvironment({scope:scope,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,browserEnabled:browser,endLine:endLine,...panel&&!modified?{isPreview:preview}:{},modifiedClick:modified,openInSidePanel:panel,onOpenTargetResolved:resolved}):fallback():" +
+  "openWithEnvironment({scope:scope,activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:artifact,path:file,line:line,column:column,cwd:cwd,hostConfig:host,hostId:hostId,endLine:endLine,isPreview:preview,openInSidePanel:panel,onOpenTargetResolved:resolved})}";
+const chunk = (body) => "export const __rspack_esm_ids=[391924];" +
   `export const __webpack_modules__={Ab12(e,t,n){${body}}};`;
 
 function harness(source = apply(fixture)) {
@@ -55,28 +56,17 @@ test("source links bypass the panel and preserve the full location without forci
   }
 });
 
-test("the 26.908.61612 resolver fixture follows preference changes between clicks", () => {
-  // Verbatim preference functions from official Linux 26.908.61612 with the
-  // preference-store read stubbed below. This fixture does not validate the
-  // resolver in future bundles; official-code VM acceptance is a separate check.
-  const resolve = vm.runInNewContext("function I0(e,t,n){let r=L0(e,t);return r&&n.has(r)?r:n.values().next().value??null}function L0(e,t){let n=P0(e);return(t?n.perPath?.[t]:void 0)??n.global??null}I0", { P0: value => value });
+test("preferred target and environment resolution stay delegated to the native callback", () => {
   const { calls, context } = harness();
-  const preferences = { global: "zed", perPath: {} };
-  const available = new Set(["zed", "vscode", "cursor"]);
-  const chosen = [];
-  context.open = args => {
-    calls.push(args);
-    chosen.push(args.target ?? resolve(preferences, args.cwd, available));
+  let preferred = "zed", environment = "first";
+  context.openWithEnvironment = args => {
+    calls.push({ ...args, target: args.target ?? preferred, environmentId: environment });
   };
   context.click("/repo/main.rs", false);
-  preferences.global = "vscode";
+  preferred = "vscode"; environment = "second";
   context.click("/repo/main.rs", false);
-  preferences.perPath["/repo"] = "cursor";
-  context.click("/repo/main.rs", false);
-  assert.deepEqual(chosen, ["zed", "vscode", "cursor"]);
-  available.delete("cursor");
-  context.click("/repo/main.rs", false);
-  assert.equal(chosen.at(-1), "zed"); // Existing available-target fallback.
+  assert.deepEqual(calls.map(args => [args.target, args.environmentId]), [["zed", "first"], ["vscode", "second"]]);
+  assert.ok(calls.every(args => args.openInSidePanel === false));
 });
 
 test("previews, modifiers, directories and artifact-template routes remain unchanged", () => {
