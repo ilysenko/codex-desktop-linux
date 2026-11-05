@@ -1,6 +1,7 @@
 "use strict";
 
 const { mainBundlePatch } = require("../../scripts/patches/descriptor.js");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
 const STAGING_PATCH_MARKER = "codex-linux-bundled-marketplace-staging-copy-permissions-v3";
 const EXECUTOR_PATCH_MARKER = "codex-linux-executor-plugin-copy-permissions-v1";
@@ -20,23 +21,18 @@ async function codexLinuxMakeBundledPluginStageNodesWritable(fs,destination){
 }
 `;
 
-function functionContaining(source, index) {
+function functionsContaining(source, index) {
   const prefix = source.slice(0, index);
-  const starts = [...prefix.matchAll(new RegExp(`async function (${IDENT})\\(([^)]*)\\)\\{`, "g"))];
-  const start = starts.at(-1);
-  if (start == null) return null;
-  let depth = 1;
-  let cursor = start.index + start[0].length;
-  for (; cursor < source.length && depth > 0; cursor += 1) {
-    if (source[cursor] === "{") depth += 1;
-    if (source[cursor] === "}") depth -= 1;
-  }
-  return depth === 0 ? {
-    name: start[1],
-    start: start.index,
-    end: cursor,
-    source: source.slice(start.index, cursor),
-  } : null;
+  const starts = [...prefix.matchAll(new RegExp(`async function(?: ${IDENT})?\\([^)]*\\)\\{`, "g"))];
+  return starts.toReversed().flatMap((start) => {
+    const open = start.index + start[0].length - 1;
+    const close = findMatchingBrace(source, open);
+    return close >= index ? [{
+      start: start.index,
+      end: close + 1,
+      source: source.slice(start.index, close + 1),
+    }] : [];
+  });
 }
 
 // rspack reaches node:fs/promises through a compat getter call such as `ek()`.
@@ -49,22 +45,17 @@ function stagingCopyContracts(source) {
   );
   const contracts = [];
   for (const match of source.matchAll(cpPattern)) {
-    const fn = functionContaining(source, match.index);
-    if (
-      fn == null ||
-      !fn.source.includes('"/usr/bin/ditto"') ||
-      !fn.source.includes("copyDirectoryAllowDecryptedDestinationOnEncryptionFailure")
-    ) continue;
-    const callPattern = new RegExp(`await ${escapeRegExp(fn.name)}\\(${IDENT},${IDENT}\\)`, "g");
-    const calls = [...source.matchAll(callPattern)];
-    if (calls.length !== 1 || !/staging-\$\{[^}]*randomUUID/.test(source)) continue;
+    const fn = functionsContaining(source, match.index).find((candidate) =>
+      candidate.source.includes('"/usr/bin/ditto"') &&
+      candidate.source.includes("copyDirectoryAllowDecryptedDestinationOnEncryptionFailure") &&
+      candidate.source.includes('="copy_plugins"') &&
+      candidate.source.includes(".sourceMarketplaceRoot") &&
+      candidate.source.includes(".targetMarketplaceRoot") &&
+      new RegExp(`\.targetMarketplaceRoot\\}\\.staging-\\$\\{\\(0,${IDENT}\\.randomUUID\\)\\(\\)\\}`).test(candidate.source));
+    if (fn == null) continue;
     contracts.push({ match, fn });
   }
   return contracts;
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Main-process descriptors run once per rspack chunk: a chunk without the
@@ -91,9 +82,10 @@ function applyExecutorPluginCopyPermissions(source) {
   const executorCopies = [...source.matchAll(new RegExp(
     `await (${FS_ACCESSOR})\\.cp\\((${IDENT})\\.cwd,(${IDENT}),\\{recursive:!0\\}\\)`, "g",
   ))].filter(match => {
-    const fn = functionContaining(source, match.index);
-    return fn?.source.includes("executorPluginRoot:") &&
-      fn.source.includes("CODEX_APP_TOOLS_CALLER_HOST_ID");
+    const fn = functionsContaining(source, match.index).find((candidate) =>
+      candidate.source.includes("executorPluginRoot:") &&
+      candidate.source.includes("CODEX_APP_TOOLS_CALLER_HOST_ID"));
+    return fn != null;
   });
   if (executorCopies.length === 0) {
     console.warn("WARN: executor plugin copy contract not found - skipping Nix executor permissions patch");

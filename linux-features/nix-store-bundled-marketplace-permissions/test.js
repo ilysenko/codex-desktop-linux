@@ -28,9 +28,8 @@ const {
 const FEATURE_ID = "nix-store-bundled-marketplace-permissions";
 const STAGING_DESCRIPTOR_ID = `feature:${FEATURE_ID}:bundled-marketplace-staging-copy-permissions`;
 const EXECUTOR_DESCRIPTOR_ID = `feature:${FEATURE_ID}:executor-plugin-copy-permissions`;
-const STAGING_FIXTURE = `async function Mne(source,destination){if("darwin"===eq().platform)return void await nG("/usr/bin/ditto",["--noqtn",source,destination]);if("win32"!==eq().platform)return void await ek().cp(source,destination,{recursive:!0,verbatimSymlinks:!0});let{copyDirectoryAllowDecryptedDestinationOnEncryptionFailure:copy}=await r.e(904).then(r.bind(r,87115));await copy({copy:()=>ek().cp(source,destination,{recursive:!0,verbatimSymlinks:!0}),destination,source})}
-async function copyPlugins(source,destination){const staging=\`openai-bundled.staging-\${(0,tb.randomUUID)()}\`;const target=\`\${staging}/plugin\`;await Mne(source,target);return destination}`;
-const EXECUTOR_FIXTURE = `async function executor({executorPluginRoot:destination,resourcesPath:resources}){let config=await lookup(resources);return null==config?null:(await ek().cp(config.cwd,destination,{recursive:!0}),config.env={CODEX_APP_TOOLS_CALLER_HOST_ID:hostId},await ek().writeFile(join(destination,".mcp.json"),"{}","utf8"),destination)}`;
+const STAGING_FIXTURE = `async function copyPlugins(input,marketplace){let staging=\`\${input.targetMarketplaceRoot}.staging-\${(0,tb.randomUUID)()}\`,phase="cleanup_staging_before_write";try{phase="copy_plugins";await Promise.all(marketplace.plugins.map(async plugin=>{let source=resolve(input.sourceMarketplaceRoot,plugin.source.path),destination=resolve(staging,plugin.source.path);await async function(source,destination){if("darwin"===eq().platform)return void await nG("/usr/bin/ditto",["--noqtn",source,destination]);if("win32"!==eq().platform)return void await ek().cp(source,destination,{recursive:!0,verbatimSymlinks:!0});let{copyDirectoryAllowDecryptedDestinationOnEncryptionFailure:copy}=await r.e(904).then(r.bind(r,87115));await copy({copy:()=>ek().cp(source,destination,{recursive:!0,verbatimSymlinks:!0}),destination,source})}(source,destination)}))}finally{phase="cleanup_staging_after_write"}}`;
+const EXECUTOR_FIXTURE = `const copyExecutor=async function({executorPluginRoot:destination,resourcesPath:resources}){let config=await lookup(resources);return null==config?null:(await ek().cp(config.cwd,destination,{recursive:!0}),config.env={CODEX_APP_TOOLS_CALLER_HOST_ID:hostId},await ek().writeFile(join(destination,".mcp.json"),"{}","utf8"),destination)};`;
 const FIXTURE = `${STAGING_FIXTURE}\n${EXECUTOR_FIXTURE}`;
 
 function fakeFs({ cpError = null, chmodError = null, missing = false } = {}) {
@@ -70,10 +69,14 @@ function materialize(source, fsPromises) {
   const context = {
     eq: () => ({ platform: "linux" }),
     ek: () => fsPromises,
+    resolve: (root) => root === "source" ? "source" : "destination",
     tb: { randomUUID: () => "uuid" },
   };
-  vm.runInNewContext(`${source};globalThis.materialize=Mne;`, context);
-  return context.materialize;
+  vm.runInNewContext(`${source};globalThis.materialize=copyPlugins;`, context);
+  return () => context.materialize(
+    { sourceMarketplaceRoot: "source", targetMarketplaceRoot: "target" },
+    { plugins: [{ source: { path: "plugin" } }] },
+  );
 }
 
 function descriptorsFor(enabled) {
@@ -163,13 +166,13 @@ function patchFixture(t, source) {
 
 const stagingContracts = {
   valid: STAGING_FIXTURE,
-  missing: STAGING_FIXTURE.replaceAll("ditto", "other"),
-  duplicate: STAGING_FIXTURE + STAGING_FIXTURE.replaceAll("Mne", "Nne"),
+  missing: STAGING_FIXTURE.replace('="copy_plugins"', '="copy_other"'),
+  duplicate: STAGING_FIXTURE + STAGING_FIXTURE.replaceAll("copyPlugins", "copyPluginsAgain"),
 };
 const executorContracts = {
   valid: EXECUTOR_FIXTURE,
   missing: EXECUTOR_FIXTURE.replace("CODEX_APP_TOOLS_CALLER_HOST_ID", "CHANGED"),
-  duplicate: EXECUTOR_FIXTURE + EXECUTOR_FIXTURE,
+  duplicate: EXECUTOR_FIXTURE + EXECUTOR_FIXTURE.replaceAll("copyExecutor", "copyExecutorAgain"),
 };
 for (const [staging, stagingSource] of Object.entries(stagingContracts)) {
   for (const [executor, executorSource] of Object.entries(executorContracts)) {
@@ -280,9 +283,9 @@ test("executor refresh repairs read-only cache without changing source or symlin
     ek: () => fs.promises, lookup: async () => ({ cwd: source }),
     hostId: "local", join: path.join,
   };
-  vm.runInNewContext(`${applyExecutorPluginCopyPermissions(EXECUTOR_FIXTURE)};globalThis.copyExecutor=executor`, context);
+  vm.runInNewContext(`${applyExecutorPluginCopyPermissions(EXECUTOR_FIXTURE)};globalThis.runCopyExecutor=copyExecutor`, context);
   for (let attempt = 0; attempt < 2; attempt++) {
-    await context.copyExecutor({ executorPluginRoot: destination, resourcesPath: "resources" });
+    await context.runCopyExecutor({ executorPluginRoot: destination, resourcesPath: "resources" });
     assert.equal(fs.readFileSync(path.join(destination, "plugin.json"), "utf8"), "new");
     assert.equal(fs.readFileSync(path.join(destination, ".mcp.json"), "utf8"), "{}");
     assert.ok(fs.statSync(destination).mode & 0o200);
