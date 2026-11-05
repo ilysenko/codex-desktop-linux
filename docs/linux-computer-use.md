@@ -459,9 +459,8 @@ fails, the action is not sent and is not replayed through another backend. A
 matching device clamps an off-screen coordinate to the desktop edge, and the
 click or scroll result says where it landed. uinput clicks and scrolls carry
 that clamp note instead of the off-screen warning the portal, ydotool and X11
-xdotool routes add. A KWin element click keeps the note of its route, the
-uinput clamp note or the portal off-screen warning, and appends the KWin
-coordinate mapping. An untargeted scroll whose portal could not start falls back to ydotool; if
+xdotool routes add. A KWin element click keeps the uinput clamp note and
+appends the KWin coordinate mapping. An untargeted scroll whose portal could not start falls back to ydotool; if
 that fails too, the result reports the ydotool error followed by the portal
 error, which may be a denied consent.
 
@@ -473,10 +472,13 @@ management). It runs xrandr only on X11, since an X client could start
 Xwayland. Each new screenshot resets the layout, and the check takes no
 screenshot. Without a layout that fits the screenshot, only its outer
 rectangle is checked. The warning says what the route did with the point. The
-portal sends nothing. On X11 the server keeps the pointer on the screen, so a
-point off the screenshot lands at an edge. On X11 and the uinput pointer, a
+portal sends nothing. On X11 the X server keeps the pointer on the screen, so
+a point off the screenshot lands at an edge. On X11 and the uinput pointer, a
 point between monitors lands at a monitor edge or on no visible pixel. A
-failed X11 dispatch gets no warning. A drag gets one warning per endpoint,
+failed X11 dispatch gets no warning. A KWin element click gets no off-screen
+or gap warning on either route, since KWin mapped its point onto an output;
+the portal route no longer adds the off-screen warning it had at v0.7.41. A
+drag gets one warning per endpoint,
 naming the start or end coordinate, and a uinput drag carries the clamp note
 for each clamped endpoint. A portal drag with an endpoint off the shared
 monitors still sends nothing, and its error names each endpoint that stopped

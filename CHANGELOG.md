@@ -16,7 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   never starts Xwayland. Without a layout that fits the screenshot, only its
   outer rectangle is checked, as before. Off-screen warnings say what the
   route did with the point: the portal sends nothing, the X server keeps the
-  pointer on the screen, and the uinput device clamps it. A drag gets these
+  pointer on the screen, and the uinput device clamps it. A KWin element
+  click gets no off-screen or gap warning, since KWin mapped its point onto
+  an output; its portal route drops the off-screen warning v0.7.41 kept. A
+  drag gets these
   warnings for each endpoint, a uinput drag says where an off-screen endpoint
   was clamped to, and a portal drag error names each endpoint that stopped it.
   When a stale uinput device cannot be replaced, the result names the route a
