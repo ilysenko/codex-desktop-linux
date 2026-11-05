@@ -9,6 +9,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { makeSocketTempDir } = require("../../scripts/lib/unix-socket-dir.test-helpers.js");
 
 const {
   loadLinuxFeaturePatchDescriptors,
@@ -1139,7 +1140,7 @@ test("AppShots focuses i3 and Sway windows the way the i3 backend reports them",
 test("AppShots finds the i3 or Sway socket in the backend's order", async (t) => {
   const net = require("node:net");
   const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
-  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "as-"));
+  const runtime = makeSocketTempDir("as-", "sway-ipc.1000.42.sock");
   const servers = [];
   t.after(async () => {
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));

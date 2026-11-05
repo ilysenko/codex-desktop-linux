@@ -4,6 +4,10 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { makeSocketTempDir } = require('../../scripts/lib/unix-socket-dir.test-helpers.js');
+
+// bridgeSocketPath refuses a socket path over 100 bytes.
+const BRIDGE_SOCKET_PATH_MAX = 100;
 
 function currentStartTime() {
   const stat = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8');
@@ -34,7 +38,7 @@ function rpc(socket) {
 }
 
 test('host bridge validates requests before launching the unsandboxed backend', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-'));
+  const root = makeSocketTempDir('cu-', 'native.sock');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const socketPath = path.join(root, 'native.sock');
   const backend = path.join(root, 'backend.cjs');
@@ -80,7 +84,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
 });
 
 test('bridge socket path requires a private absolute runtime directory', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-'));
+  const root = makeSocketTempDir('cu-', 'codex-test/computer-use-native.sock', { limit: BRIDGE_SOCKET_PATH_MAX });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.chmodSync(root, 0o700);
   const { bridgeSocketPath } = await import('./host-service.mjs');
@@ -115,7 +119,7 @@ test('launcher hook leaves the app usable when XDG_RUNTIME_DIR is unavailable', 
 });
 
 test('launcher reuses one host authority and only its owner token can stop it', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-'));
+  const root = makeSocketTempDir('cu-', 'runtime/codex-test/computer-use-native.sock', { limit: BRIDGE_SOCKET_PATH_MAX });
   let cleanup;
   t.after(() => {
     try { cleanup?.(); } catch {}
@@ -157,7 +161,7 @@ test('launcher reuses one host authority and only its owner token can stop it', 
 });
 
 test('launcher registers a new owner while the previous launcher exits', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-'));
+  const root = makeSocketTempDir('cu-', 'runtime/codex-test/computer-use-native.sock', { limit: BRIDGE_SOCKET_PATH_MAX });
   let cleanup;
   t.after(() => {
     try { cleanup?.(); } catch {}

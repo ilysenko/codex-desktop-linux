@@ -7,6 +7,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { makeSocketTempDir } = require("../scripts/lib/unix-socket-dir.test-helpers.js");
 
 const templatePath = path.join(__dirname, "start.sh.template");
 const bashPath = childProcess.execFileSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).trim();
@@ -15,6 +16,10 @@ const dirnamePath = childProcess.execFileSync("bash", ["-c", "command -v dirname
 // Launcher tests must never contact the production usage counter. Individual
 // reporting tests opt back in with an isolated fake curl executable.
 process.env.CODEX_LINUX_DISABLE_USAGE_REPORTING = "1";
+
+// Socket fixtures may fall back to the host's runtime dir, which the loop
+// below hides from the launcher.
+const hostRuntimeDir = process.env.XDG_RUNTIME_DIR;
 
 // Ozone backend selection reads the session environment. Tests must not inherit
 // the developer's compositor; the Wayland cases below set these explicitly.
@@ -756,7 +761,7 @@ test("launcher uses the HOME config fallback and ignores non-file flag paths", (
 // XDG_RUNTIME_DIR, and a systemd user manager that exports no Sommelier
 // markers. Tests that need Crostini or GNOME layer their own markers on top.
 function createWaylandSession(t, root, { systemdEnvironment = "", listening = true } = {}) {
-  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-launcher-wayland-"));
+  const runtimeDir = makeSocketTempDir("codex-launcher-wayland-", "wayland-0", { runtimeDir: hostRuntimeDir });
   const socketPath = path.join(runtimeDir, "wayland-0");
   const server = net.createServer();
   server.listen(socketPath);
