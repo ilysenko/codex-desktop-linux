@@ -2,7 +2,7 @@
 
 const IDENT = "[A-Za-z_$][\\w$]*";
 const SHARED_QUERY_STATUS =
-  `(?<prefix>function ${IDENT}\\((?<owner>${IDENT})\\)\\{let (?<account>${IDENT})=` +
+  `(?<prefix>function\\((?<owner>${IDENT})\\)\\{let (?<account>${IDENT})=` +
   `\\k<owner>\\.get\\(${IDENT}\\.chatGptAuthenticatedAccountId\\$\\);if\\(null==\\k<account>\\|\\|` +
   `null==\\k<owner>\\.get\\(${IDENT}\\.${IDENT}\\)\\|\\|` +
   `\\k<owner>\\.queryClient\\.getQueryState\\(\\k<owner>\\.query\\.snapshot\\(` +

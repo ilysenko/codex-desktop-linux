@@ -20,16 +20,16 @@ const {
   descriptors,
 } = require("./patch.js");
 
-// Reduced rspack chunks shaped like the signed stable Linux 26.1029 webview.
-const chunk = (id, body) => `export const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];` +
+// Reduced rspack chunks shaped like the latest signed stable Linux webview.
+const chunk = (id, body) => `export const __rspack_esm_ids=[${id}];` +
   `export const __webpack_modules__={${body}};`;
 const LANDING_ROUTE = 'function route(account,status){if("pending"===status)return"loading";if("error"===status||account?.tbo_config?.tbo_available==null||null==account.structure||null==account.plan_type)return"load-error";if(account.tbo_config.tbo_available){return"enter"}return"unavailable"}';
-const SHARED_FACTORY = "jiwy(e,t,n){var r=n(\"y5DF\"),i=n(\"vw1R\"),a=n(\"ksR2\"),s=n(\"CLax\"),o=n(\"SPnB\"),l=n(\"eFn4\"),u=n(\"svjy\"),d=n(\"OWtl\"),c=n(\"PHON\"),p=n(\"OMIV\"),h=n(\"OHD8\"),f=n(\"Vf6c\");let m=(0,r.un)(d.u,({get:e})=>{let t=e(o.chatGptAuthenticatedAccountId$);if(null!=t&&e(a.nw))return{isLoading:!1,isError:!0,isCapable:!1};if(null==t||null==e(o.o8)){let t=e(o.PO);return{isLoading:t.authLoading||t.accountLoading,isError:!1,isCapable:!1}}let{data:n,status:r}=e(s.sE,t);return{isLoading:\"pending\"===r,isError:\"error\"===r,isCapable:\"success\"===r&&n?.accounts[t]?.account.tbo_config?.tbo_available===!0}}),g=(0,r.un)(d.u,({get:e})=>{let t=e(m),n=e(o.chatGptAuthenticatedAccountId$);if(!t.isError||null==n||e(a.nw))return t;let{data:r,error:i,status:l}=e(s.sE,n);return\"error\"===l&&r?.accounts[n]?.account.tbo_config?.tbo_available===!0&&(0,h.$)(i)?{isLoading:!1,isError:!1,isCapable:!0}:t}),_=(0,r.un)(d.u,({get:e})=>e(m).isCapable),y=(0,r.un)(d.u,({get:e})=>{let t=e(m);return t.isCapable?e(p.JW,(0,c.R)(\"orbit\",\"rbac-enforcement\"))?(0,i.H)({getAccount:()=>e(o.PO),getAccountInfoError:()=>e(l.$S).accountInfoError,permissions:[\"chatgpt.workspace.feature.orbit.local-computer.access\"],getWorkspaceSettings:t=>e(l.Jk,t)}):{isLoading:!1,isError:!1,isCapable:!0}:t}),v=(0,r.un)(d.u,({get:e})=>(0,i.H)({getAccount:()=>e(o.PO),getAccountInfoError:()=>e(l.$S).accountInfoError,permissions:[\"chatgpt.workspace.feature.orbit.slack-teams.access\"],getWorkspaceSettings:t=>e(l.Jk,t)}));function E(e){let t=e.get(o.chatGptAuthenticatedAccountId$);if(null==t||null==e.get(o.o8)||e.queryClient.getQueryState(e.query.snapshot(s.sE,t).queryKey)?.status!==\"success\"||e.query.getData(s.sE,t)?.accounts[t]?.account.tbo_config?.tbo_available!==!0)throw Error(e.get(u.g).formatMessage(f.A.accountUnavailable))}function I(e){e.query.invalidate(s.sE,e.get(o.chatGptAuthenticatedAccountId$))}async function C(e){try{await (0,a.SG)(e)}catch{return}I(e)}n.d(t,{Bu:()=>C,Mo:()=>I,qo:()=>E},{D5:g,Dj:v,PQ:y,VK:_,vA:m})}";
-const PERSONALIZATION_FUNCTIONS = "function $(e){let t,a,s,r,o,l,c,d,p,_=(0,i.c)(29),{children:f}=e,b=(0,g.zy)(),T=(0,g.Zp)(),E=(0,V.Zj)(\"534586353\"),v=(0,V.DR)(\"534586353\"),x=(0,V.Zj)(!1),A=(0,V.DR)(\"534586353\"),{authMethod:C,accountId:M,userId:S,isLoading:G}=(0,j.As)(),{status:O}=(0,u.Ul)(y.kf),P=\"chatgpt\"===C&&null!=M&&null!=S,R=!G&&!v&&E&&!x&&!A&&P;_[0]!==R?(t={enabled:R},_[0]=R,_[1]=t):t=_[1];let{data:L,isPending:w,error:U,refetch:k}=(0,u._U)(N.sE,M,t),H=(0,g.Rr)(b.hash.slice(1));if(\"custom\"!==new URLSearchParams(H.pathname?.startsWith(\"settings/\")?H.search:b.search).get(\"rules\")){let e;return _[2]!==f?(e=(0,n.jsx)(n.Fragment,{children:f}),_[2]=f,_[3]=e):e=_[3],e}_[4]!==b||_[5]!==T?(a=()=>void T(et(b,!1),{replace:!0,state:b.state}),_[4]=b,_[5]=T,_[6]=a):a=_[6];let Y=a;_[7]===Symbol.for(\"react.memo_cache_sentinel\")?(s=(0,n.jsx)(X.U,{}),_[7]=s):s=_[7],_[8]===Symbol.for(\"react.memo_cache_sentinel\")?(r=(0,n.jsx)(\"p\",{className:\"text-sm text-secondary\",role:\"status\",children:(0,n.jsx)(h.A,{id:\"settings.userRules.unavailable\",defaultMessage:\"Custom rules aren’t available for this account\",description:\"Shown when the custom rules settings page is unavailable for the signed-in account\"})}),_[8]=r):r=_[8],_[9]===Symbol.for(\"react.memo_cache_sentinel\")?(o=(0,n.jsx)(h.A,{id:\"settings.userRules.back\",defaultMessage:\"Back\",description:\"Return to Personalization settings\"}),_[9]=o):o=_[9],_[10]!==Y?(l=(0,n.jsxs)(D.P,{title:s,children:[r,(0,n.jsx)(I.$,{onClick:Y,color:\"secondary\",children:o})]}),_[10]=Y,_[11]=l):l=_[11];let B=l;if(G||\"chatgpt\"===C&&!P&&\"loading\"===O||P&&(v||A)||R&&w){let e;return _[12]===Symbol.for(\"react.memo_cache_sentinel\")?(e=(0,n.jsx)(z.M,{section:\"personalization\"}),_[12]=e):e=_[12],e}if(R&&null==L&&null!=U){let e,t,a,i,s;return _[13]===Symbol.for(\"react.memo_cache_sentinel\")?(e=(0,n.jsx)(X.U,{}),_[13]=e):e=_[13],_[14]===Symbol.for(\"react.memo_cache_sentinel\")?(t=(0,n.jsx)(\"p\",{className:\"text-sm text-danger\",role:\"alert\",children:(0,n.jsx)(h.A,{id:\"settings.userRules.accountLoadError\",defaultMessage:\"Couldn’t check custom rules availability\",description:\"Shown when account information needed to check custom rules access could not be loaded\"})}),_[14]=t):t=_[14],_[15]!==k?(a=()=>void k(),_[15]=k,_[16]=a):a=_[16],_[17]===Symbol.for(\"react.memo_cache_sentinel\")?(i=(0,n.jsx)(h.A,{id:\"settings.userRules.retry\",defaultMessage:\"Try again\",description:\"Retry loading the account's custom rules\"}),_[17]=i):i=_[17],_[18]!==a?(s=(0,n.jsxs)(D.P,{title:e,children:[t,(0,n.jsx)(I.$,{onClick:a,color:\"secondary\",children:i})]}),_[18]=a,_[19]=s):s=_[19],s}if(!E||x||\"chatgpt\"!==C||null==M||null==S||L?.accounts[M]?.account.tbo_config?.tbo_available!==!0)return B;_[20]===Symbol.for(\"react.memo_cache_sentinel\")?(c=(0,n.jsx)(z.M,{section:\"personalization\"}),_[20]=c):c=_[20];let F=`${M}:${S}`;return _[21]!==M||_[22]!==Y||_[23]!==F||_[24]!==S?(d=(0,n.jsx)(m.Suspense,{fallback:c,children:(0,n.jsx)(W,{accountId:M,userId:S,onClose:Y},F)}),_[21]=M,_[22]=Y,_[23]=F,_[24]=S,_[25]=d):d=_[25],_[26]!==d||_[27]!==B?(p=(0,n.jsx)(Q,{fallback:B,children:d}),_[26]=d,_[27]=B,_[28]=p):p=_[28],p}function Z(){let e,t,a=(0,i.c)(6),s=(0,V.Zj)(\"534586353\"),r=(0,V.Zj)(!1),o=(0,V.DR)(\"534586353\"),{authMethod:l,accountId:c,userId:d}=(0,j.As)(),m=s&&!r&&!o&&\"chatgpt\"===l&&null!=c&&null!=d;a[0]!==m?(e={enabled:m},a[0]=m,a[1]=e):e=a[1];let{data:h}=(0,u._U)(N.sE,c,e);if(!s||r||o||\"chatgpt\"!==l||null==c||null==d||h?.accounts[c]?.account.tbo_config?.tbo_available!==!0)return null;let p=`${c}:${d}`;return a[2]!==c||a[3]!==p||a[4]!==d?(t=(0,n.jsx)(Q,{children:(0,n.jsx)(J,{accountId:c,userId:d},p)}),a[2]=c,a[3]=p,a[4]=d,a[5]=t):t=a[5],t}";
+const SHARED_FACTORY = "jiwy(e,t,n){var r=n(\"zTeN\"),i=n(\"vw1R\"),a=n(\"ksR2\"),s=n(\"CLax\"),o=n(\"SPnB\"),l=n(\"eFn4\"),u=n(\"svjy\"),d=n(\"OWtl\"),c=n(\"PHON\"),p=n(\"OMIV\"),h=n(\"OHD8\"),f=n(\"Vf6c\");let m=(0,r.un)(d.u,({get:e})=>{let t=e(o.chatGptAuthenticatedAccountId$);if(null!=t&&e(a.nw))return{isLoading:!1,isError:!0,isCapable:!1};if(null==t||null==e(o.o8)){let t=e(o.PO);return{isLoading:t.authLoading||t.accountLoading,isError:!1,isCapable:!1}}let{data:n,status:r}=e(s.sE,t);return{isLoading:\"pending\"===r,isError:\"error\"===r,isCapable:\"success\"===r&&n?.accounts[t]?.account.tbo_config?.tbo_available===!0}}),_=(0,r.un)(d.u,({get:e})=>{let t=e(m),n=e(o.chatGptAuthenticatedAccountId$);if(!t.isError||null==n||e(a.nw))return t;let{data:r,error:i,status:l}=e(s.sE,n);return\"error\"===l&&r?.accounts[n]?.account.tbo_config?.tbo_available===!0&&(0,h.$)(i)?{isLoading:!1,isError:!1,isCapable:!0}:t}),g=(0,r.un)(d.u,({get:e})=>e(m).isCapable);function v(e,t){return e?.features?.includes(\"dot_account_access_policy\")?\"success\"===t&&e.account.tbo_config?.tbo_available===!0:null}let y=(0,r.un)(d.u,({get:e})=>{let t=e(o.chatGptAuthenticatedAccountId$);if(null==t||null==e(o.o8))return null;let{data:n,status:r}=e(s.sE,t);return v(n?.accounts[t],r)}),E=(0,r.un)(d.u,({get:e})=>{let t=e(m);return t.isCapable?e(p.JW,(0,c.R)(\"orbit\",\"rbac-enforcement\"))?(0,i.H)({getAccount:()=>e(o.PO),getAccountInfoError:()=>e(l.$S).accountInfoError,permissions:[\"chatgpt.workspace.feature.orbit.local-computer.access\"],getWorkspaceSettings:t=>e(l.Jk,t)}):{isLoading:!1,isError:!1,isCapable:!0}:t}),I=(0,r.un)(d.u,({get:e})=>(0,i.H)({getAccount:()=>e(o.PO),getAccountInfoError:()=>e(l.$S).accountInfoError,permissions:[\"chatgpt.workspace.feature.orbit.slack-teams.access\"],getWorkspaceSettings:t=>e(l.Jk,t)}));function C(e){e.query.invalidate(s.sE,e.get(o.chatGptAuthenticatedAccountId$))}n.d(t,{},{Bu:async function(e){try{await (0,a.SG)(e)}catch{return}C(e)},D5:_,Dj:I,Mo:C,PQ:E,Tw:y,VK:g,qo:function(e){let t=e.get(o.chatGptAuthenticatedAccountId$);if(null==t||null==e.get(o.o8)||e.queryClient.getQueryState(e.query.snapshot(s.sE,t).queryKey)?.status!==\"success\"||e.query.getData(s.sE,t)?.accounts[t]?.account.tbo_config?.tbo_available!==!0)throw Error(e.get(u.g).formatMessage(f.A.accountUnavailable))},vA:m,wx:function(e,t){let n=e.query.snapshot(s.sE,t);return v(n.getData()?.accounts[t],e.queryClient.getQueryState(n.queryKey)?.status)}})}";
+const PERSONALIZATION_FUNCTIONS = "function $(e){let t,a,s,r,o,l,c,d,p,_=(0,i.c)(29),{children:f}=e,b=(0,g.zy)(),C=(0,g.Zp)(),T=(0,Y.Zj)(\"534586353\"),x=(0,Y.DR)(\"534586353\"),E=(0,Y.Zj)(!1),A=(0,Y.DR)(\"534586353\"),{authMethod:S,accountId:I,userId:L,isLoading:N}=(0,v.As)(),{status:O}=(0,u.Ul)(y.kf),R=\"chatgpt\"===S&&null!=I&&null!=L,j=!N&&!x&&T&&!E&&!A&&R;_[0]!==j?(t={enabled:j},_[0]=j,_[1]=t):t=_[1];let{data:G,isPending:w,error:U,refetch:k}=(0,u._U)(P.sE,I,t),V=(0,g.Rr)(b.hash.slice(1));if(\"custom\"!==new URLSearchParams(V.pathname?.startsWith(\"settings/\")?V.search:b.search).get(\"rules\")){let e;return _[2]!==f?(e=(0,n.jsx)(n.Fragment,{children:f}),_[2]=f,_[3]=e):e=_[3],e}_[4]!==b||_[5]!==C?(a=()=>void C(et(b,!1),{replace:!0,state:b.state}),_[4]=b,_[5]=C,_[6]=a):a=_[6];let F=a;_[7]===Symbol.for(\"react.memo_cache_sentinel\")?(s=(0,n.jsx)(K.U,{}),_[7]=s):s=_[7],_[8]===Symbol.for(\"react.memo_cache_sentinel\")?(r=(0,n.jsx)(\"p\",{className:\"text-sm text-secondary\",role:\"status\",children:(0,n.jsx)(h.A,{id:\"settings.userRules.unavailable\",defaultMessage:\"Custom rules aren’t available for this account\",description:\"Shown when the custom rules settings page is unavailable for the signed-in account\"})}),_[8]=r):r=_[8],_[9]===Symbol.for(\"react.memo_cache_sentinel\")?(o=(0,n.jsx)(h.A,{id:\"settings.userRules.back\",defaultMessage:\"Back\",description:\"Return to Personalization settings\"}),_[9]=o):o=_[9],_[10]!==F?(l=(0,n.jsxs)(D.P,{title:s,children:[r,(0,n.jsx)(M.$,{onClick:F,color:\"secondary\",children:o})]}),_[10]=F,_[11]=l):l=_[11];let H=l;if(N||\"chatgpt\"===S&&!R&&\"loading\"===O||R&&(x||A)||j&&w){let e;return _[12]===Symbol.for(\"react.memo_cache_sentinel\")?(e=(0,n.jsx)(z.M,{section:\"personalization\"}),_[12]=e):e=_[12],e}if(j&&null==G&&null!=U){let e,t,a,i,s;return _[13]===Symbol.for(\"react.memo_cache_sentinel\")?(e=(0,n.jsx)(K.U,{}),_[13]=e):e=_[13],_[14]===Symbol.for(\"react.memo_cache_sentinel\")?(t=(0,n.jsx)(\"p\",{className:\"text-sm text-danger\",role:\"alert\",children:(0,n.jsx)(h.A,{id:\"settings.userRules.accountLoadError\",defaultMessage:\"Couldn’t check custom rules availability\",description:\"Shown when account information needed to check custom rules access could not be loaded\"})}),_[14]=t):t=_[14],_[15]!==k?(a=()=>void k(),_[15]=k,_[16]=a):a=_[16],_[17]===Symbol.for(\"react.memo_cache_sentinel\")?(i=(0,n.jsx)(h.A,{id:\"settings.userRules.retry\",defaultMessage:\"Try again\",description:\"Retry loading the account's custom rules\"}),_[17]=i):i=_[17],_[18]!==a?(s=(0,n.jsxs)(D.P,{title:e,children:[t,(0,n.jsx)(M.$,{onClick:a,color:\"secondary\",children:i})]}),_[18]=a,_[19]=s):s=_[19],s}if(!T||E||\"chatgpt\"!==S||null==I||null==L||G?.accounts[I]?.account.tbo_config?.tbo_available!==!0)return H;_[20]===Symbol.for(\"react.memo_cache_sentinel\")?(c=(0,n.jsx)(z.M,{section:\"personalization\"}),_[20]=c):c=_[20];let B=`${I}:${L}`;return _[21]!==I||_[22]!==F||_[23]!==B||_[24]!==L?(d=(0,n.jsx)(m.Suspense,{fallback:c,children:(0,n.jsx)(W,{accountId:I,userId:L,onClose:F},B)}),_[21]=I,_[22]=F,_[23]=B,_[24]=L,_[25]=d):d=_[25],_[26]!==d||_[27]!==H?(p=(0,n.jsx)(X,{fallback:H,children:d}),_[26]=d,_[27]=H,_[28]=p):p=_[28],p}function Q(){let e,t,a=(0,i.c)(6),s=(0,Y.Zj)(\"534586353\"),r=(0,Y.Zj)(!1),o=(0,Y.DR)(\"534586353\"),{authMethod:l,accountId:c,userId:d}=(0,v.As)(),m=s&&!r&&!o&&\"chatgpt\"===l&&null!=c&&null!=d;a[0]!==m?(e={enabled:m},a[0]=m,a[1]=e):e=a[1];let{data:h}=(0,u._U)(P.sE,c,e);if(!s||r||o||\"chatgpt\"!==l||null==c||null==d||h?.accounts[c]?.account.tbo_config?.tbo_available!==!0)return null;let p=`${c}:${d}`;return a[2]!==c||a[3]!==p||a[4]!==d?(t=(0,n.jsx)(X,{children:(0,n.jsx)(J,{accountId:c,userId:d},p)}),a[2]=c,a[3]=p,a[4]=d,a[5]=t):t=a[5],t}";
 const FIXTURES = {
   "async/221857.4c17f751f6.js": chunk(221857, `Ab12(e,t,n){${LANDING_ROUTE}}`),
   "async/24191.7b05d5cf83.js": chunk(24191,SHARED_FACTORY),
-  "async/860646.06b6da0005.js": chunk(860646,`Ef56(module,exports,load){${PERSONALIZATION_FUNCTIONS};exports.page=$;exports.sidebar=Z}`),
+  "async/860646.06b6da0005.js": chunk(860646,`Ef56(module,exports,load){${PERSONALIZATION_FUNCTIONS};exports.page=$;exports.sidebar=Q}`),
 };
 
 
@@ -137,7 +137,7 @@ test("shared Dots capability checks no longer reject a country-gated account", (
 function loadSharedCapability(source,state) {
   const keys = Object.fromEntries(["accountId","session","accountState","blocked","query","format","flag"].map(name=>[name,Symbol(name)]));
   const imports = {
-    y5DF: {un: (_domain,read)=>({read})},
+    zTeN: {un: (_domain,read)=>({read})},
     vw1R: {H: ()=>({isLoading:false,isError:false,isCapable:false})},
     ksR2: {nw: keys.blocked}, CLax: {sE: keys.query},
     SPnB: {chatGptAuthenticatedAccountId$:keys.accountId,o8:keys.session,PO:keys.accountState},
@@ -151,7 +151,7 @@ function loadSharedCapability(source,state) {
     for (const [name,get] of Object.entries(getters)) Object.defineProperty(target,name,{get});
     Object.assign(target,values);
   };
-  const factories = vm.runInNewContext(source.replace(/export const (__rspack_esm_id|__rspack_esm_ids|__webpack_modules__)=/g,"const $1=")+"\n;__webpack_modules__");
+  const factories = vm.runInNewContext(source.replace(/export const (__rspack_esm_ids|__webpack_modules__)=/g,"const $1=")+"\n;__webpack_modules__");
   Object.values(factories)[0]({},exports,require);
   const queryReads = [],invalidations = [];
   const get = (key,accountId)=>{
@@ -166,7 +166,7 @@ function loadSharedCapability(source,state) {
     assert.fail("unexpected shared capability read");
   };
   const context = {get,queryClient:{getQueryState:()=>({status:state.response.status})},query:{
-    snapshot:()=>({queryKey:[state.accountId]}),getData:()=>state.response.data,
+    snapshot:()=>({queryKey:[state.accountId],getData:()=>state.response.data}),getData:()=>state.response.data,
     invalidate:(key,account)=>invalidations.push([key,account]),
   }};
   return {exports,read:token=>get(token),context,queryReads,invalidations,keys};
@@ -181,6 +181,19 @@ test("current shared module retains auth, query status, account refresh, workspa
   assert.throws(()=>original.exports.qo(original.context),/Account unavailable/);
   assert.equal(patched.read(patched.exports.vA).isCapable,true);
   assert.doesNotThrow(()=>patched.exports.qo(patched.context));
+  for (const [features,status,available,expected] of [
+    [[],"success",false,null],
+    [["dot_account_access_policy"],"pending",true,false],
+    [["dot_account_access_policy"],"success",false,false],
+    [["dot_account_access_policy"],"success",true,true],
+  ]) {
+    state.response.status=status;
+    state.response.data.accounts.first={features,account:{tbo_config:{tbo_available:available}}};
+    assert.equal(patched.read(patched.exports.Tw),expected,"keeps the native account-access policy");
+    assert.equal(patched.exports.wx(patched.context,"first"),expected);
+    assert.equal(original.read(original.exports.Tw),expected);
+  }
+  state.response.status="success";
   state.accountId="second";state.response.data=data("second");
   assert.equal(patched.read(patched.exports.vA).isCapable,true);
   assert.equal(patched.queryReads.at(-1),"second");
@@ -286,15 +299,15 @@ function loadPersonalization(source,state) {
     URLSearchParams,
     i: {c:size=>Array(size).fill(Symbol.for("react.memo_cache_sentinel"))},
     g: {zy:()=>({hash:"",search:"?rules=custom"}),Zp:()=>()=>{},Rr:()=>({pathname:"",search:""})},
-    V: {Zj:key=>key===false ? state.hidden : state.enabled,DR:()=>state.pendingGate},
-    j: {As:()=>state.auth},
+    Y: {Zj:key=>key===false ? state.hidden : state.enabled,DR:()=>state.pendingGate},
+    v: {As:()=>state.auth},
     u: {Ul:()=>({status:"ready"}),_U:(query,account,options)=>{queryReads.push({account,enabled:options.enabled});return state.response;}},
-    N: {sE:"query"},y: {kf:"account-status"},
+    P: {sE:"query"},y: {kf:"account-status"},
     n: {Fragment:"Fragment",jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})},
-    X: {U:"Title"},h: {A:"Message"},D: {P:"Panel"},I: {$:"Button"},z: {M:"Loading"},
-    m: {Suspense:"Suspense"},Q:"AccessBoundary",W:"RulesPage",J:"RulesSidebar",
+    K: {U:"Title"},h: {A:"Message"},D: {P:"Panel"},M: {$:"Button"},z: {M:"Loading"},
+    m: {Suspense:"Suspense"},X:"AccessBoundary",W:"RulesPage",J:"RulesSidebar",
   };
-  const factories = vm.runInNewContext(source.replace(/export const (__rspack_esm_id|__rspack_esm_ids|__webpack_modules__)=/g,"const $1=")+"\n;__webpack_modules__",hooks);
+  const factories = vm.runInNewContext(source.replace(/export const (__rspack_esm_ids|__webpack_modules__)=/g,"const $1=")+"\n;__webpack_modules__",hooks);
   const pages={};Object.values(factories)[0]({},pages,()=>({}));
   return {...pages,queryReads};
 }
@@ -341,7 +354,7 @@ test("Personalization requires both current gates or both marked replacements", 
   const source=FIXTURES["async/860646.06b6da0005.js"],patched=applyDotsPersonalizationPatch(source);
   assert.equal(descriptors[2].assetMatch(source),true);assert.equal(descriptors[2].assetMatch(patched),true);
   for (const input of ["",source+source,source+patched,patched+patched,
-    source.replace("accounts[M]","accounts[wrongAccount]"),
+    source.replace("accounts[I]","accounts[wrongAccount]"),
     patched.replace("/*codexDotsPersonalization*/",""),
     patched.replace("!1/*codexDotsPersonalization*/","!0/*codexDotsPersonalization*/"),
     "!1/*codexDotsPersonalization*/;!1/*codexDotsPersonalization*/;"]) {
@@ -364,10 +377,11 @@ test("Personalization production selection retains needles and rejects broken au
     const patched=fs.readFileSync(file,"utf8");assert.ok(descriptor.assetNeedles.every(needle=>patched.includes(needle)));
     assert.equal(run().status,"already-applied");
     for(const damaged of [
-      original.replace("accounts[M]","accounts[wrongAccount]"),
-      original.replace('"chatgpt"!==C','"api-key"!==C'),
+      original.replace("accounts[I]","accounts[wrongAccount]"),
+      original.replace('"chatgpt"!==S','"api-key"!==S'),
       patched.replace("!1/*codexDotsPersonalization*/","!0/*codexDotsPersonalization*/"),
     ]){
+      assert.notEqual(damaged,original);assert.notEqual(damaged,patched);
       fs.writeFileSync(file,damaged);assert.equal(run().status,"skipped-optional");assert.equal(fs.readFileSync(file,"utf8"),damaged);
     }
     fs.writeFileSync(file,patched);const duplicate=path.join(assets,"duplicate.current.js");fs.writeFileSync(duplicate,patched);
@@ -417,7 +431,8 @@ test("each descriptor patches its current rspack chunk contract", () => {
     assert.deepEqual(report.patches.map(({ status }) => status), ["applied", "applied", "applied"]);
     assert.deepEqual(report.patches.map(({ assetName }) => assetName), Object.keys(FIXTURES));
     for (const name of Object.keys(FIXTURES)) {
-      assert.doesNotMatch(fs.readFileSync(path.join(assetsDir, name), "utf8"), /tbo_available(?:==null|[!=]==!0)/);
+      assert.equal(descriptors[Object.keys(FIXTURES).indexOf(name)].assetMatch(
+        fs.readFileSync(path.join(assetsDir, name), "utf8")), true);
     }
     const repeated=createPatchReport();
     applyWebviewAssetPatchDescriptors(extractedDir,normalizePatchDescriptors(descriptors),{},repeated);
