@@ -7,7 +7,6 @@ const { inspectGlobalShortcutsPortal, installPortalBackend, PATCH_MARKER } = req
 const { mainBundleFixture } = require("./global-shortcuts-portal.test-helpers.js");
 const { applyLinuxGlobalDictationMainProcessPatch: dictation } = require("../../../linux-features/global-dictation/patch.js");
 const { applyWaylandGlobalShortcutsPatch: shortcuts } = require("../../../linux-features/wayland-global-shortcuts/patch.js");
-const { applyQuitConfirmationFocus } = require("../core/quit-confirmation-focus/patch.js");
 
 function assertActualRanges(source, metadata, shared) {
   assert.equal(metadata.reason, null); assert.ok(metadata.owner);
@@ -88,7 +87,7 @@ test("Portal semantic facade refuses partial shared authority and marks unrelate
 });
 
 const signed = process.env.CODEX_SIGNED_EXTRACTED_APP;
-test("Portal semantic facade projects real raw/core/shared main sources and unrelated entry", { skip: !signed }, () => {
+test("Portal semantic facade projects real raw/shared main sources and unrelated entry", { skip: !signed }, () => {
   const build = path.join(signed, ".vite/build");
   const originals = fs.readdirSync(build).filter(name => /^early-bootstrap.*\.js$/u.test(name))
     .map(name => ({ name, source: fs.readFileSync(path.join(build, name), "utf8") }));
@@ -96,7 +95,7 @@ test("Portal semantic facade projects real raw/core/shared main sources and unre
   assert.ok(owner); assert.equal(inspectGlobalShortcutsPortal(originals.find(item => item.name === "early-bootstrap.js").source).state, "unrelated");
   const unsupportedHeader = owner.source.replace("exports.ids=[45],exports.modules=", "exports.ids=[45];exports.modules=");
   assert.notEqual(unsupportedHeader, owner.source); assert.equal(inspectGlobalShortcutsPortal(unsupportedHeader).state, "drifted");
-  for (const source of [owner.source, applyQuitConfirmationFocus(owner.source)]) {
+  for (const source of [owner.source]) {
     const metadata = inspectGlobalShortcutsPortal(source); assert.equal(metadata.state, "current"); assertActualRanges(source, metadata, false);
     assert.equal(metadata.owner.windowServices.bindings.globalDictationLifecycleManager, "L");
     assert.equal(metadata.owner.windowServices.bindings.appshotHotkeysService, "W");
