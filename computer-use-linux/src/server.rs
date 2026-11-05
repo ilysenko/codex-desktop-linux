@@ -1505,7 +1505,7 @@ impl ComputerUseLinux {
             )
             .await
         {
-            return Json(output);
+            return Json(pointer_action_result(output));
         }
         let input_guard = Arc::try_unwrap(input_guard)
             .expect("pixelflux fallback must not retain dispatched input");
@@ -2111,7 +2111,7 @@ impl ComputerUseLinux {
             )
             .await
         {
-            return Json(output);
+            return Json(pointer_action_result(output));
         }
         let input_guard = Arc::try_unwrap(input_guard)
             .expect("pixelflux fallback must not retain dispatched input");
@@ -2388,7 +2388,7 @@ impl ComputerUseLinux {
             )
             .await
         {
-            return Json(output);
+            return Json(pointer_action_result(output));
         }
         let input_guard = Arc::try_unwrap(input_guard)
             .expect("pixelflux fallback must not retain dispatched input");

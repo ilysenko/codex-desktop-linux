@@ -192,6 +192,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- A successful pixelflux click, scroll or drag in a Selkies container
+  notifies the Codex avatar cursor, as the other pointer routes do. These
+  routes had skipped it since the pixelflux backend arrived.
 - A successful uinput scroll notifies the Codex avatar cursor, as every other
   pointer route already did.
 - AppShots focuses windows from the i3 backend the way the backend does: by
