@@ -19,6 +19,8 @@ pub mod remote_desktop;
 pub mod screenshot;
 pub mod server;
 pub mod terminal;
+#[cfg(test)]
+mod test_sockets;
 pub(crate) mod tree_encoding;
 pub(crate) mod tree_spill;
 pub mod windowing;

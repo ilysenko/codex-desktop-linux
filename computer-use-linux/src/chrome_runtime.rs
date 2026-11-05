@@ -3347,12 +3347,11 @@ mod tests {
     }
 
     fn test_root(_name: &str) -> PathBuf {
-        // Leave room for app-server socket names under a private TMPDIR.
-        env::temp_dir().join(format!(
-            "cr-{}-{}",
-            std::process::id(),
-            random_hex(4).unwrap()
-        ))
+        // The deepest socket: an app-server socket under a `runtime` root.
+        crate::test_sockets::socket_fixture(
+            &format!("cr-{}-{}", std::process::id(), random_hex(4).unwrap()),
+            "runtime/a-0000000000000000.sock",
+        )
     }
 
     fn test_executable(name: &str) -> PathBuf {

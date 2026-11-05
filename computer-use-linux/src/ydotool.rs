@@ -571,12 +571,27 @@ mod tests {
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {
-        fn new(_label: &str) -> Self {
-            let path = env::temp_dir().join(format!(
-                "cy-{}-{}",
+        fn new(label: &str) -> Self {
+            Self::create(env::temp_dir().join(Self::name(label)))
+        }
+
+        /// A directory for sockets no longer than `deepest`.
+        fn with_sockets(label: &str, deepest: &str) -> Self {
+            Self::create(crate::test_sockets::socket_fixture(
+                &Self::name(label),
+                deepest,
+            ))
+        }
+
+        fn name(label: &str) -> String {
+            format!(
+                "cul-yd-{label}-{}-{}",
                 process::id(),
                 random_hex(8).expect("test nonce")
-            ));
+            )
+        }
+
+        fn create(path: PathBuf) -> Self {
             let mut builder = fs::DirBuilder::new();
             builder.mode(0o700);
             builder.create(&path).expect("create test directory");
@@ -657,7 +672,7 @@ esac
 
     #[test]
     fn implicit_socket_requires_private_runtime_directory_and_socket() {
-        let root = TestDirectory::new("implicit-socket");
+        let root = TestDirectory::with_sockets("implicit-socket", YDOTOOL_SOCKET_NAME);
         let socket_path = root.0.join(YDOTOOL_SOCKET_NAME);
         let Some(socket) = bind_test_datagram(&socket_path) else {
             return;
@@ -687,7 +702,7 @@ esac
         let uid = unsafe { libc::geteuid() };
         assert!(implicit_socket_path(Some(OsStr::new("/tmp")), uid).is_err());
 
-        let root = TestDirectory::new("wrong-owner");
+        let root = TestDirectory::with_sockets("wrong-owner", YDOTOOL_SOCKET_NAME);
         let socket_path = root.0.join(YDOTOOL_SOCKET_NAME);
         let Some(_socket) = bind_test_datagram(&socket_path) else {
             return;

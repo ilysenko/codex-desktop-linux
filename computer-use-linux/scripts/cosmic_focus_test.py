@@ -11,10 +11,11 @@ import socket
 import struct
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
+
+from socket_fixture import socket_tempdir
 
 BINARY = str(Path(sys.argv.pop(1)).resolve())
 OUTPUT = 0xFE000001
@@ -183,7 +184,7 @@ class FocusTests(unittest.TestCase):
     def run_helper(self, command, **scenario):
         cache = Path.home() / ".cache"
         cache.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="cul-wl-", dir=cache) as directory:
+        with socket_tempdir("cul-wl-", ["wayland-test"], dir=cache) as directory:
             with socket.socket(socket.AF_UNIX) as listener:
                 listener.bind(str(Path(directory) / "wayland-test"))
                 listener.listen(1)

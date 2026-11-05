@@ -5,6 +5,7 @@ Requires Xvfb, xterm, xdotool, xkbcomp, setxkbmap and dbus-run-session. Checks b
 stable input, restored layout changes, keyboard grabs, restored focus changes, and
 PointerRoot/no-fixed-focus dispatch behavior.
 """
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -13,9 +14,10 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
+
+from socket_fixture import INDICATOR_SOCKET, socket_tempdir
 
 
 def rpc(proc, request):
@@ -41,8 +43,14 @@ def main():
     binary = str(Path(sys.argv[1]).resolve())
     cache = Path.home() / ".cache"
     cache.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="cul-x11-type-", dir=cache) as scratch:
-        if not os.environ.get("CUL_X11_PRIVATE_BUS"):
+    private = os.environ.get("CUL_X11_PRIVATE_BUS")
+    # runtime/ is the server's runtime dir and the private bus's, and its
+    # overlay socket is the longest. The private bus run reuses the scratch.
+    fixture = (contextlib.nullcontext(os.environ["CUL_X11_SCRATCH"]) if private else
+               socket_tempdir("cul-x11-type-", [f"runtime/{INDICATOR_SOCKET}"],
+                              bus_dir="runtime", dir=cache))
+    with fixture as scratch:
+        if not private:
             env = os.environ.copy()
             runtime = Path(scratch) / "runtime"
             runtime.mkdir(mode=0o700)
@@ -55,7 +63,7 @@ def main():
                 '<policy context="default"><allow own="*"/>'
                 '<allow send_destination="*"/><allow receive_sender="*"/>'
                 '</policy></busconfig>')
-            env.update(CUL_X11_PRIVATE_BUS="1", XDG_CACHE_HOME=scratch,
+            env.update(CUL_X11_PRIVATE_BUS="1", CUL_X11_SCRATCH=scratch, XDG_CACHE_HOME=scratch,
                        XDG_CONFIG_HOME=scratch, XDG_RUNTIME_DIR=str(runtime),
                        CODEX_COMPUTER_USE_INDICATOR="0",
                        CODEX_COMPUTER_USE_SCREENSHOT_BACKEND="x11")

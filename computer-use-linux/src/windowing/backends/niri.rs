@@ -966,11 +966,14 @@ mod tests {
 
     struct TempDir(PathBuf);
     impl TempDir {
-        fn new() -> Self {
+        /// A directory for sockets no longer than `deepest`.
+        fn new(deepest: &str) -> Self {
             let mut random = [0u8; 8];
             getrandom::fill(&mut random).unwrap();
-            let path =
-                std::env::temp_dir().join(format!("niri-test-{}", u64::from_ne_bytes(random)));
+            let path = crate::test_sockets::socket_fixture(
+                &format!("niri-test-{}", u64::from_ne_bytes(random)),
+                deepest,
+            );
             fs::create_dir(&path).unwrap();
             Self(path)
         }
@@ -984,7 +987,7 @@ mod tests {
     #[test]
     fn discovery_refuses_other_sessions_and_ambiguous_sockets() {
         use std::os::unix::net::UnixListener;
-        let dir = TempDir::new();
+        let dir = TempDir::new("niri.wayland-10.12.sock");
         let other = dir.0.join("niri.wayland-10.12.sock");
         let _other = UnixListener::bind(&other).unwrap();
         assert!(infer_niri_socket_path(&dir.0, "wayland-1").is_err());
@@ -1036,7 +1039,7 @@ mod tests {
     #[test]
     fn socket_reads_a_complete_line_without_waiting_for_eof() {
         use std::os::unix::net::UnixListener;
-        let dir = TempDir::new();
+        let dir = TempDir::new("niri.sock");
         let path = dir.0.join("niri.sock");
         let listener = UnixListener::bind(&path).unwrap();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -1067,7 +1070,7 @@ mod tests {
             "{}".to_string(),
             "x".repeat(MAX_IPC_REPLY_BYTES as usize + 1),
         ] {
-            let dir = TempDir::new();
+            let dir = TempDir::new("niri.sock");
             let path = dir.0.join("niri.sock");
             let listener = UnixListener::bind(&path).unwrap();
             let server = std::thread::spawn(move || {

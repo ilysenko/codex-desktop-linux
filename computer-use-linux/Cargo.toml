@@ -1,6 +1,6 @@
 [package]
 name = "codex-computer-use-linux"
-version = "0.7.41"
+version = "0.7.43"
 edition = "2021"
 
 [[bin]]

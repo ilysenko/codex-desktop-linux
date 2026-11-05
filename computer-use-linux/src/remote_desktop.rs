@@ -344,6 +344,15 @@ pub(crate) async fn kwin_desktop_layout() -> Option<Vec<LogicalMonitor>> {
 }
 
 pub(crate) async fn logical_desktop_layout() -> Option<Vec<LogicalMonitor>> {
+    match compositor_desktop_layout().await {
+        Some(layout) => Some(layout),
+        None => xrandr_desktop_layout().await,
+    }
+}
+
+/// The layout from the desktop's own interfaces, without RandR. On Wayland
+/// an X client such as xrandr can make the compositor start Xwayland.
+pub(crate) async fn compositor_desktop_layout() -> Option<Vec<LogicalMonitor>> {
     if env_token_contains("XDG_CURRENT_DESKTOP", "gnome") {
         if let Some(layout) = crate::windowing::backends::gnome::extension_monitor_layout()
             .await
@@ -445,7 +454,10 @@ pub(crate) async fn logical_desktop_layout() -> Option<Vec<LogicalMonitor>> {
             return Some(layout);
         }
     }
+    None
+}
 
+async fn xrandr_desktop_layout() -> Option<Vec<LogicalMonitor>> {
     let mut command = Command::new("xrandr");
     command.arg("--listactivemonitors");
     let output = command_runner::output(command, "query XRandR monitor layout")
@@ -1123,6 +1135,11 @@ impl PortalPointerSession {
             bail!("desktop monitor layout changed after the remote desktop portal session started");
         }
         Ok(())
+    }
+
+    /// The monitor layout the session checks every point against.
+    pub(crate) fn monitor_layout(&self) -> Option<&[LogicalMonitor]> {
+        self.desktop_layout.as_deref()
     }
 
     pub(crate) fn logical_point_from_capture(
@@ -3270,7 +3287,7 @@ mod tests {
         #[zbus::interface(name = "org.freedesktop.portal.RemoteDesktop")]
         impl RemoteDesktop {}
 
-        let dir = TempState::new();
+        let dir = TempState::with_bus();
         let socket = dir.path.join("bus");
         let address = format!("unix:path={}", socket.display());
         let probe = || remote_desktop_portal_missing_at(address.parse().unwrap());
@@ -3565,9 +3582,18 @@ mod tests {
 
     impl TempState {
         fn new() -> Self {
+            Self::create(|name| std::env::temp_dir().join(name))
+        }
+
+        /// A state dir that also holds a private bus's `bus` socket.
+        fn with_bus() -> Self {
+            Self::create(|name| crate::test_sockets::bus_fixture(name, "bus"))
+        }
+
+        fn create(place: impl FnOnce(&str) -> PathBuf) -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(1);
             let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
+            let path = place(&format!(
                 "cul-rd-persist-{}-{}-{nonce}",
                 std::process::id(),
                 std::time::SystemTime::now()

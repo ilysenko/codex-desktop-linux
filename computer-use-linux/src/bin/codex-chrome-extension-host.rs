@@ -25,6 +25,12 @@ use std::{
 
 #[path = "../chrome_runtime.rs"]
 mod chrome_runtime;
+// chrome_runtime.rs builds only into this binary, so its tests reach the
+// socket fixture helper through this crate.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../test_sockets.rs"]
+mod test_sockets;
 
 use chrome_runtime::RuntimeManager;
 
@@ -3044,6 +3050,10 @@ while True:
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        env::temp_dir().join(format!("{prefix}-{}-{nonce}", process::id()))
+        // The deepest socket: an app-server socket under the `r` runtime root.
+        crate::test_sockets::socket_fixture(
+            &format!("{prefix}-{}-{nonce}", process::id()),
+            "r/a-0000000000000000.sock",
+        )
     }
 }

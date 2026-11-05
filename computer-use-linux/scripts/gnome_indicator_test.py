@@ -22,6 +22,8 @@ import time
 import unittest
 import zlib
 
+from socket_fixture import INDICATOR_SOCKET, TEMPDIR_NAME, socket_tempdir
+
 SERVER, INDICATOR = (str(Path(arg).resolve()) for arg in sys.argv[1:3])
 SERVICE = 'com.openai.Codex.WindowControl'
 OBJECT = '/com/openai/Codex/WindowControl'
@@ -115,7 +117,7 @@ def run_private(directory):
             self.stderr = self.enterContext(tempfile.TemporaryFile(mode='w+'))
             self.indicator = subprocess.Popen([INDICATOR], env=self.env, stderr=self.stderr)
             self.addCleanup(stop, self.indicator)
-            self.path = self.root/'computer-use-linux-indicator.sock'
+            self.path = self.root/INDICATOR_SOCKET
             self.wait_for(lambda: self.path.exists())
             # A processed action is a barrier: startup finished and the loop is
             # active, with an indicator that will require compositor settling.
@@ -302,7 +304,9 @@ def run_private(directory):
 if __name__ == '__main__':
     if len(sys.argv) > 3 and sys.argv[3] == '--private':
         raise SystemExit(0 if run_private(sys.argv[4]) else 1)
-    with tempfile.TemporaryDirectory(prefix='cul-gnome-') as directory:
+    # Each test's directory holds the overlay socket, the longest one here.
+    with socket_tempdir('cul-gnome-', [f'{TEMPDIR_NAME}/{INDICATOR_SOCKET}'],
+                        bus_dir='') as directory:
         env = dict(os.environ, XDG_RUNTIME_DIR=directory)
         # No service directories: accessibility/portal discovery must never
         # activate real desktop processes on this private bus.
