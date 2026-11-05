@@ -64,12 +64,17 @@ exit 7
 // start.sh and creates XDG_STATE_HOME/codex-desktop/usage-reporting. Under a
 // test root, a reporter still running at cleanup recreates the root after it
 // was removed. The subshell inherits a spare pipe on fd 3, and spawnSync
-// returns only once every holder has closed it, so the reporter is done.
+// returns only once every holder has closed it, so the reporter is done. The
+// reporter's curl gives up after 3 seconds. A holder that outlives the
+// timeout fails the test (ETIMEDOUT) instead of hanging the suite.
 function runLauncherWithReporting(root, args, options) {
-  return childProcess.spawnSync(path.join(root, "start.sh"), args, {
+  const result = childProcess.spawnSync(path.join(root, "start.sh"), args, {
     ...options,
     stdio: ["pipe", "pipe", "pipe", "pipe"],
+    timeout: 10_000,
   });
+  assert.ifError(result.error);
+  return result;
 }
 
 function waitForFile(filePath, timeoutMs = 2000) {
