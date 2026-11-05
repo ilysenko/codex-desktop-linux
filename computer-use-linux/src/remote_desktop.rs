@@ -1680,7 +1680,7 @@ async fn commit_restore_permit(permit: Option<RestorePermit>, parsed: ParsedRest
 fn warn_persist_disabled_once(reason: &str) {
     static ONCE: OnceLock<()> = OnceLock::new();
     if ONCE.set(()).is_ok() {
-        eprintln!("[computer-use-linux] remote desktop persistence disabled: {reason}");
+        eprintln!("[codex-computer-use] remote desktop persistence disabled: {reason}");
     }
 }
 
@@ -1688,7 +1688,7 @@ fn warn_persist_store_once(error: &io::Error) {
     static ONCE: OnceLock<()> = OnceLock::new();
     if ONCE.set(()).is_ok() {
         eprintln!(
-            "[computer-use-linux] remote desktop persistence disabled: could not open the restore-token store ({error})"
+            "[codex-computer-use] remote desktop persistence disabled: could not open the restore-token store ({error})"
         );
     }
 }
@@ -1696,7 +1696,7 @@ fn warn_persist_store_once(error: &io::Error) {
 fn warn_persist_commit_once(error: &io::Error) {
     static ONCE: OnceLock<()> = OnceLock::new();
     if ONCE.set(()).is_ok() {
-        eprintln!("[computer-use-linux] could not store the remote desktop restore token: {error}");
+        eprintln!("[codex-computer-use] could not store the remote desktop restore token: {error}");
     }
 }
 
@@ -1704,7 +1704,7 @@ fn warn_rejected_restore_token_once() {
     static ONCE: OnceLock<()> = OnceLock::new();
     if ONCE.set(()).is_ok() {
         eprintln!(
-            "[computer-use-linux] RemoteDesktop returned a restore token this process will not store (empty, too long, or it contains whitespace or control characters). The next portal session will prompt again."
+            "[codex-computer-use] RemoteDesktop returned a restore token this process will not store (empty, too long, or it contains whitespace or control characters). The next portal session will prompt again."
         );
     }
 }

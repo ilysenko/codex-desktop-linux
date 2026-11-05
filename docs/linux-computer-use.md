@@ -404,8 +404,9 @@ Since the v0.7.47 sync, setup writes the user copy of the extension to
 extensions, and to `~/.local/share/gnome-shell/extensions` only when
 `XDG_DATA_HOME` is unset or empty. When GNOME Shell already loaded a user
 copy, setup updates the copy the Shell reports, since the Shell can run with
-another `XDG_DATA_HOME` than the app. The app starts the backend with its own
-environment, so the backend sees the same `XDG_DATA_HOME` as the app.
+another `XDG_DATA_HOME` than the app. The backend inherits the launcher's
+environment through the host bridge, including `XDG_DATA_HOME`. A bridge that
+an earlier launch started keeps that launch's environment.
 
 The direct MCP server also exposes `run_shell` only when explicitly started
 with `CODEX_COMPUTER_USE_ENABLE_SHELL=1`. The standalone
