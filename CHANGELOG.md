@@ -295,6 +295,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   AppShots monitor start, and one per keyboard per global dictation hold.
   Each monitor now gives `stdbuf` a directory of its own and removes it when it
   exits, also on SIGHUP, SIGINT and SIGTERM. GNU `stdbuf` writes nothing there.
+- The Node tests leave nothing in `TMPDIR`, also when a test fails, and pass
+  with a long `TMPDIR`. Socket fixtures move to `XDG_RUNTIME_DIR` when a
+  socket path would not fit under `TMPDIR`. `scripts/ci/run-node-checks.sh`
+  runs the suite with a fresh `TMPDIR` and fails, naming the entries, when a
+  run leaves any.
 - Desktop entries no longer offer a "New Window" action. It relied on the
   retired multi-instance launcher (`--new-instance`, `CODEX_MULTI_LAUNCH`),
   which the official app ignores, so it did nothing while the app was running

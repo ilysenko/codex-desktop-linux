@@ -89,16 +89,38 @@ run_node_tests() {
     return "$status"
 }
 
+# Every test removes what it creates, also when it fails. The suite runs with a
+# fresh TMPDIR, and anything left there fails the run and is named.
+run_node_tests_in_fresh_tmpdir() {
+    local fresh
+    local leftovers
+    local name
+    local status=0
+
+    fresh="$(mktemp -d)"
+    TMPDIR="$fresh" run_node_tests || status=$?
+    leftovers="$(find "$fresh" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
+    if [ -n "$leftovers" ]; then
+        echo "Node tests left $(printf '%s\n' "$leftovers" | wc -l) entries in their TMPDIR; each test must remove what it creates:" >&2
+        while IFS= read -r name; do
+            printf '  %s\n' "$name" >&2
+        done <<<"$leftovers"
+        [ "$status" -ne 0 ] || status=1
+    fi
+    rm -rf -- "$fresh"
+    return "$status"
+}
+
 case "$MODE" in
     all)
         run_node_syntax_checks
-        run_node_tests
+        run_node_tests_in_fresh_tmpdir
         ;;
     syntax)
         run_node_syntax_checks
         ;;
     test|tests)
-        run_node_tests
+        run_node_tests_in_fresh_tmpdir
         ;;
     *)
         echo "Usage: $0 [all|syntax|tests]" >&2
