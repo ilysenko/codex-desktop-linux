@@ -847,11 +847,25 @@ async function spawnOrphanAuthority(socketPath, alias = false) {
   assert.equal(Number.isSafeInteger(pid), true);
   const startTime = processStartTime(pid);
   assert.notEqual(startTime, null);
-  await waitForCondition(
-    () => hasLegitimateOrphanAdoption(pid) && fs.existsSync(socketPath),
-    "detached authority to be adopted by PID 1 or the systemd user manager",
-  );
+  try {
+    await waitForCondition(
+      () => hasLegitimateOrphanAdoption(pid) && fs.existsSync(socketPath),
+      "detached authority to be adopted by PID 1 or the systemd user manager",
+    );
+  } catch (error) {
+    stopOrphanAuthority({ pid, startTime });
+    throw error;
+  }
   return { pid, startTime };
+}
+
+function stopOrphanAuthority(orphan) {
+  if (orphan == null || processStartTime(orphan.pid) !== orphan.startTime) return;
+  try {
+    process.kill(orphan.pid, "SIGTERM");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
 }
 
 // Mirrors the rspack/SWC-minified 26.1027 main-process chunk: double-quoted
@@ -2598,12 +2612,17 @@ test("orphan reaper rejects an authority adopted by an unrelated live parent", (
 
 for (const alias of [false, true]) {
   test(`orphan reaper stops an exact reparented authority with ${alias ? "a socket alias" : "a direct socket"}`, async () => {
-    const tempDir = makeSocketTempDir("shared-app-server-orphan-reaper-");
+    // The alias listens on app-server.sock.target, the longest socket path.
+    const tempDir = makeSocketTempDir(
+      "shared-app-server-orphan-reaper-",
+      alias ? "app-server.sock.target" : "app-server.sock",
+    );
     const socketPath = path.join(tempDir, "app-server.sock");
     const lockPath = `${socketPath}.lock`;
-    const orphan = await spawnOrphanAuthority(socketPath, alias);
-    fs.writeFileSync(lockPath, `99999999 1 ${orphan.pid} ${orphan.startTime}\n`, { mode: 0o600 });
+    let orphan;
     try {
+      orphan = await spawnOrphanAuthority(socketPath, alias);
+      fs.writeFileSync(lockPath, `99999999 1 ${orphan.pid} ${orphan.startTime}\n`, { mode: 0o600 });
       const result = spawnSync(process.execPath, [orphanReaper, socketPath], {
         encoding: "utf8",
       });
@@ -2616,13 +2635,7 @@ for (const alias of [false, true]) {
       assert.equal(fs.existsSync(socketPath), false);
       assert.equal(fs.existsSync(lockPath), false);
     } finally {
-      if (processStartTime(orphan.pid) === orphan.startTime) {
-        try {
-          process.kill(orphan.pid, "SIGTERM");
-        } catch (error) {
-          if (error.code !== "ESRCH") throw error;
-        }
-      }
+      stopOrphanAuthority(orphan);
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
@@ -2633,12 +2646,14 @@ test("orphan reaper refuses two live listener inodes for the same pathname", asy
   const tempDir = makeSocketTempDir("shared-app-server-rebind-reaper-");
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
-  const orphan = await spawnOrphanAuthority(socketPath);
-  const lockContents = `99999999 1 ${orphan.pid} ${orphan.startTime}\n`;
-  fs.writeFileSync(lockPath, lockContents, { mode: 0o600 });
-  fs.unlinkSync(socketPath);
-  const replacement = await listenUnix(socketPath);
+  let orphan;
+  let replacement;
   try {
+    orphan = await spawnOrphanAuthority(socketPath);
+    const lockContents = `99999999 1 ${orphan.pid} ${orphan.startTime}\n`;
+    fs.writeFileSync(lockPath, lockContents, { mode: 0o600 });
+    fs.unlinkSync(socketPath);
+    replacement = await listenUnix(socketPath);
     await waitForCondition(
       () => unixListenerInodes(socketPath).length === 2,
       "old and replacement listener inodes",
@@ -2652,14 +2667,8 @@ test("orphan reaper refuses two live listener inodes for the same pathname", asy
     assert.equal(fs.readFileSync(lockPath, "utf8"), lockContents);
     assert.equal(fs.lstatSync(socketPath).isSocket(), true);
   } finally {
-    await closeServer(replacement);
-    if (processStartTime(orphan.pid) === orphan.startTime) {
-      try {
-        process.kill(orphan.pid, "SIGTERM");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
-    }
+    if (replacement) await closeServer(replacement);
+    stopOrphanAuthority(orphan);
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

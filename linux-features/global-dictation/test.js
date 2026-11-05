@@ -49,6 +49,15 @@ function writeExecutable(filePath, body) {
   fs.writeFileSync(filePath, body, { mode: 0o755 });
 }
 
+// The monitor removes its own event dir from TMPDIR. TMPDIR is the fixture here,
+// so check it before the fixture's removal would hide a leftover.
+function assertNoMonitorEventDir(tempDir) {
+  assert.deepEqual(
+    fs.readdirSync(tempDir).filter((name) => name.startsWith("codex-global-dictation.")),
+    [],
+  );
+}
+
 function runX11ReleaseMonitor({
   accelerator,
   xmodmapLines,
@@ -77,7 +86,7 @@ function runX11ReleaseMonitor({
   );
 
   try {
-    return spawnSync(
+    const result = spawnSync(
       path.join(__dirname, "bin", "global-dictation-release-monitor"),
       ["--accelerator", accelerator],
       {
@@ -92,6 +101,8 @@ function runX11ReleaseMonitor({
         timeout,
       },
     );
+    assertNoMonitorEventDir(tempDir);
+    return result;
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -343,6 +354,7 @@ test("X11 release watcher exits when a required modifier is released", () => {
       },
     );
     assert.equal(result.status, 0, result.stderr);
+    assertNoMonitorEventDir(tempDir);
     assert.equal(Number(fs.readFileSync(stateFile, "utf8")), 1);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -387,6 +399,7 @@ test("X11 release watcher exits when the primary key is released while the modif
       },
     );
     assert.equal(result.status, 0, result.stderr);
+    assertNoMonitorEventDir(tempDir);
     assert.equal(result.signal, null);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -431,6 +444,7 @@ test("X11 release watcher prefers resolved keycodes over fallback codes", () => 
       },
     );
     assert.equal(result.status, 0, result.stderr);
+    assertNoMonitorEventDir(tempDir);
     assert.equal(result.signal, null);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
