@@ -330,7 +330,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   starts its XInput 2 stream, and reports `permission-denied` when the X
   server cannot be reached or has no XInput 2. Before, it judged the stream
   by whether it still ran 0.1 s after the start, so under load a failing
-  `xinput` could print `ready` and then stop.
+  `xinput` could print `ready` and then stop. A stop signal or the app's
+  exit still ends the monitor and the check while it waits.
 - The global dictation release watcher stops each helper subshell, signals
   its children, then ends the subshell with SIGKILL. A child that a subshell
   forked between `pkill -P` and its own end, such as the watchdog's `sleep`,

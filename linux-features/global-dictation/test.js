@@ -619,15 +619,17 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
   });
 }
 
-// Live processes whose environment holds TMPDIR=dir: what a watcher run with
-// that TMPDIR left behind. Zombies are skipped.
+// Live processes whose environment sets TMPDIR to dir or to a directory under
+// it, such as the stream's stdbuf directory: what a watcher run with that
+// TMPDIR left behind. Zombies are skipped.
 function processesWithTmpdir(dir) {
-  const marker = `\0TMPDIR=${dir}\0`;
+  const markers = [`\0TMPDIR=${dir}\0`, `\0TMPDIR=${dir}/`];
   const found = [];
   for (const entry of fs.readdirSync("/proc")) {
     if (!/^\d+$/.test(entry)) continue;
     try {
-      if (!`\0${fs.readFileSync(`/proc/${entry}/environ`, "latin1")}`.includes(marker)) continue;
+      const environ = `\0${fs.readFileSync(`/proc/${entry}/environ`, "latin1")}`;
+      if (!markers.some((marker) => environ.includes(marker))) continue;
       const stat = fs.readFileSync(`/proc/${entry}/stat`, "utf8");
       if (stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] !== "Z") found.push(Number(entry));
     } catch {}
@@ -649,7 +651,7 @@ function killProcessesWithTmpdir(dir) {
 // The parent check runs sleep 1 in a loop. Here its sleep ignores SIGTERM and
 // lasts 0.4 s, and pkill takes 1 s after it signals, so the loop forks its next
 // sleep after pkill -P has listed the children and before kill reaches the
-// subshell. That sleep must not outlive the watcher.
+// subshell. That sleep must not outlive its helper.
 test("X11 release watcher leaves no child that a helper forks during cleanup", { timeout: 20_000 }, async (t) => {
   let realPkill;
   try {
