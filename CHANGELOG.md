@@ -20,8 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `setup-window-targeting` no longer ask for a new login when only the Codex
   GNOME Shell extension's display metadata changed (`name`, `description`,
   `url`, `version-name`, `donations`), such as the `url` the v0.7.45 sync
-  added. A changed `extension.js`, or a change to any other `metadata.json`
-  field, such as `shell-version`, still sets `requires_shell_reload`. The
+  added. While the extension is enabled, or its state cannot be read, a
+  changed `extension.js` or a change to any other `metadata.json` field, such
+  as `shell-version`, still sets `requires_shell_reload`. The
   `press_key` description and the `type_text` sentence of the MCP instructions
   name pixelflux, `setup --help` says when setup requests `IsEnabled`, and the
   `terminal_command`, `pid`, click `x` and `y`, and `set_value` `value` docs

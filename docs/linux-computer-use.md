@@ -392,9 +392,10 @@ helper connects to the compositor.
 
 `setup-window-targeting` and the `setup_window_targeting` tool install the
 Codex GNOME Shell extension and set `requires_shell_reload` when GNOME Shell
-must load it again, which takes a log out and back in. A changed
-`extension.js` needs one, and so does a changed `metadata.json` field GNOME
-Shell acts on, such as `shell-version`. Since the v0.7.46 sync, a change only
+must load it again, which takes a log out and back in. While the extension
+is enabled, or its state cannot be read, a changed `extension.js` needs one,
+and so does a changed `metadata.json` field GNOME Shell acts on, such as
+`shell-version`. Since the v0.7.46 sync, a change only
 to the display fields `name`, `description`, `url`, `version-name` or
 `donations` does not.
 
