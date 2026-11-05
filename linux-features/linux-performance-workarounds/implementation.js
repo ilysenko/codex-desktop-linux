@@ -3,10 +3,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const {
+  escapeRegExp,
   findMatchingBrace,
 } = require("../../scripts/patches/lib/minified-js.js");
 const { listWebviewAssetFiles } = require("../../scripts/patches/lib/assets.js");
 const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
+const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 // rspack references imported bindings as member chains such as `x.It`.
 const JS_MEMBER = `${JS_IDENT}(?:\\.${JS_IDENT})*`;
@@ -17,7 +19,7 @@ const SIDEBAR_STYLE =
   '{animationName:"none",animationTimeline:"auto","--bottom-fade":"calc(var(--spacing) * 10)"}';
 
 const SIDEBAR_ASSET_NEEDLES = [".sidebarScroll,className:", "vertical-scroll-fade-mask", "[contain:layout_paint]"];
-const TAB_ASSET_NEEDLES = [".render({disabled:", "animateLayout:", "animatePosition:"];
+const TAB_ASSET_NEEDLES = ["animateLayout:", "data-app-shell-tab-separator", "data-app-shell-tab-strip-controller"];
 const MARKDOWN_STYLESHEET_NEEDLES = ["[data-markdown-animated]", ".FadeListDecoration-", ".ImageEnter-"];
 const SIDEBAR_WARNING =
   "WARN: Could not uniquely identify the main sidebar scroll container — skipping Linux sidebar scroll performance patch";
@@ -106,23 +108,53 @@ function applyLinuxMarkdownAnimationStylesheetPatch(extractedDir) {
 }
 
 function layoutAnimationFlags(source) {
-  const currentPattern = new RegExp(
-    `(?<tab>${JS_IDENT})\\.render\\(\\{disabled:\\k<tab>\\.disabled,isActive:${JS_IDENT},` +
-      `isClosable:\\k<tab>\\.isClosable,isPresented:[^,]+,isRenaming:[^,]+,` +
-      `animateLayout:(?<expression>${JS_IDENT}),animateExit:[^,]+,animatePosition:[^,]+,animateWidth:`,
+  const renderPattern = new RegExp(
+    `(?<collection>${JS_IDENT})\\.map\\(\\((?<tab>${JS_IDENT}),(?<index>${JS_IDENT})\\)=>\\{` +
+      `let (?<active>${JS_IDENT})=(?<selected>${JS_IDENT})===\\k<tab>\\.id,` +
+      `(?<next>${JS_IDENT})=\\k<collection>\\[\\k<index>\\+1\\],` +
+      `(?<separator>${JS_IDENT})=\\k<index><\\k<collection>\\.length-1&&!\\k<active>&&\\k<selected>!==\\k<next>\\?\\.id,` +
+      `(?<element>${JS_IDENT})=\\k<tab>\\.render\\(\\{disabled:\\k<tab>\\.disabled,isActive:\\k<active>,isClosable:\\k<tab>\\.isClosable,` +
+      `isPresented:${JS_IDENT}===\\k<tab>\\.id,isRenaming:${JS_IDENT}===\\k<tab>\\.id,` +
+      `animateLayout:(?<expression>${JS_IDENT}|!1),animateExit:(?<motion>${JS_IDENT})&&!(?<position>${JS_IDENT}),` +
+      `animatePosition:\\k<motion>&&\\k<position>,animateWidth:${JS_IDENT},layoutTransition:${JS_IDENT},` +
+      `targetWidth:${JS_IDENT}\\[\\k<index>\\],onActionsWidthChange:`,
     "gu",
   );
-  const patchedPattern = new RegExp(
-    `(?<tab>${JS_IDENT})\\.render\\(\\{disabled:\\k<tab>\\.disabled,isActive:${JS_IDENT},` +
-      `isClosable:\\k<tab>\\.isClosable,isPresented:[^,]+,isRenaming:[^,]+,` +
-      `animateLayout:(?<expression>!1),animateExit:[^,]+,animatePosition:[^,]+,animateWidth:`,
-    "gu",
-  );
-  return [...source.matchAll(currentPattern), ...source.matchAll(patchedPattern)].map((match) => ({
-    start: match.index + match[0].indexOf(match.groups.expression),
-    end: match.index + match[0].indexOf(match.groups.expression) + match.groups.expression.length,
-    patched: match.groups.expression === "!1",
-  }));
+  let modules;
+  try {
+    modules = source.includes("__webpack_modules__")
+      ? [...rspackModuleFactories(source, "app-shell tabs")]
+      : [{ moduleSource: source, start: 0 }];
+  } catch { return []; }
+  const flags = [];
+  for (const module of modules) {
+    const body = module.moduleSource;
+    const inCode = match => findMatchingBrace("{" + body.slice(0, match.index) + "}".repeat(match.index + 2), 0) >= match.index + 1;
+    const candidates = [...body.matchAll(new RegExp(`(${JS_IDENT})\\.render\\(\\{disabled:\\1\\.disabled,isActive:`, "gu"))].filter(inCode);
+    if (candidates.length === 0) continue;
+    if (!TAB_ASSET_NEEDLES.every(needle => body.includes(needle))) return [];
+    const matches = [...body.matchAll(renderPattern)].filter(inCode);
+    if (matches.length !== candidates.length) return [];
+    for (const match of matches) {
+      const { tab, index, selected, element, expression } = match.groups;
+      const entry = escapeRegExp(tab), position = escapeRegExp(index), active = escapeRegExp(selected);
+      const open = match.index + match[0].indexOf(".render({") + ".render(".length;
+      const close = findMatchingBrace(body, open);
+      if (close < open) return [];
+      const props = body.slice(open + 1, close);
+      const separator = new RegExp(`"data-app-shell-tab-separator":${entry}\\.id,"data-app-shell-tab-separator-index":${position}(?=,|\\})`, "u");
+      const buttons = new RegExp(`tabButtonProps:\\{"aria-controls":\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${entry}\\.key\\),` +
+        `"aria-keyshortcuts":${entry}\\.isClosable\\?"Delete":void 0,id:\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${entry}\\.key\\),` +
+        `tabIndex:${entry}\\.disabled\\|\\|${active}!==${entry}\\.id\\?-1:0\\}`, "u");
+      const returned = new RegExp(`^\\);return null==${escapeRegExp(element)}\\?null:\\(0,${JS_IDENT}\\.cloneElement\\)\\(${escapeRegExp(element)},\\{key:${entry}\\.key\\}\\)\\}\\)`, "u");
+      if (!separator.test(props) || !buttons.test(props) || !returned.test(body.slice(close + 1)) ||
+          !new RegExp(`onActionsWidthChange:${JS_IDENT}=>\\{`, "u").test(props) ||
+          !new RegExp(`onRenamingChange:${JS_IDENT}=>\\{`, "u").test(props)) return [];
+      const start = module.start + match.index + match[0].indexOf("animateLayout:") + "animateLayout:".length;
+      flags.push({ start, end: start + expression.length, patched: expression === "!1" });
+    }
+  }
+  return flags;
 }
 
 function matchesLinuxAppShellTabLayoutPerformanceContract(source) {

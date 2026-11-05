@@ -20,9 +20,17 @@ const {
   matchesLinuxMarkdownAnimationPerformanceContract,
 } = require("./implementation.js");
 
-// Shapes below follow the signed 26.1103.31037 rspack webview.
+// Shapes below follow the latest signed rspack webview.
 function currentAppShellTabLayoutFixture() {
-  return 'function tabs(){let e8=!0,ez=!0,eN=!1,t$=ew.map((e,t)=>{let n=t===eW,i=e.render({disabled:e.disabled,isActive:n,isClosable:e.isClosable,isPresented:!!e.presentedContent,isRenaming:e.renameState.active,animateLayout:e8,animateExit:ez&&!eN,animatePosition:ez&&eN,animateWidth:tA,closeButtonTabIndex:-1,controller:eF,dragActivator:"tab",shortcutHint:null});return i});return t$}';
+  return 'function tabs(entries){let selected,presented,renaming,layout,motion,position,width,transition,widths;' +
+    'let rendered=entries.map((entry,index)=>{let active=selected===entry.id,next=entries[index+1],separator=index<entries.length-1&&!active&&selected!==next?.id,view=entry.render({' +
+    'disabled:entry.disabled,isActive:active,isClosable:entry.isClosable,isPresented:presented===entry.id,isRenaming:renaming===entry.id,' +
+    'animateLayout:layout,animateExit:motion&&!position,animatePosition:motion&&position,animateWidth:width,layoutTransition:transition,targetWidth:widths[index],' +
+    'onActionsWidthChange:value=>{measure(value)},onRenamingChange:value=>{rename(value)},' +
+    'trailingDecoration:(0,ui.jsx)("div",{"data-app-shell-tab-separator":entry.id,"data-app-shell-tab-separator-index":index,separator}),' +
+    'tabButtonProps:{"aria-controls":(0,controller.aria)(entry.key),"aria-keyshortcuts":entry.isClosable?"Delete":void 0,id:(0,controller.dom)(entry.key),tabIndex:entry.disabled||selected!==entry.id?-1:0}});' +
+    'return null==view?null:(0,react.cloneElement)(view,{key:entry.key})});' +
+    'return (0,ui.jsx)("div",{"data-app-shell-tab-strip-controller":controller,children:rendered})}';
 }
 
 function currentSidebarFixture() {
@@ -104,7 +112,7 @@ test("current app-shell tab workaround disables tab layout animation", () => {
   assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), true);
   const patched = applyLinuxAppShellTabLayoutPerformancePatch(source);
   assert.notEqual(patched, source);
-  assert.match(patched, /animateLayout:!1,animateExit:ez&&!eN,animatePosition:ez&&eN,animateWidth:tA/u);
+  assert.match(patched, /animateLayout:!1,animateExit:motion&&!position,animatePosition:motion&&position,animateWidth:width/u);
   assert.doesNotThrow(() => new Function(patched));
   assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(patched), true);
   assert.equal(applyLinuxAppShellTabLayoutPerformancePatch(patched), patched);
@@ -113,12 +121,12 @@ test("current app-shell tab workaround disables tab layout animation", () => {
 test("app-shell tab workaround fails closed for missing, duplicate, mixed, and partial owners", () => {
   const owner = currentAppShellTabLayoutFixture();
   const patched = applyLinuxAppShellTabLayoutPerformancePatch(owner);
-  const renamed = owner.replaceAll("Qe", "Xe").replaceAll("map", "tabsById");
+  const renamed = owner.replaceAll("entries", "records");
   const cases = [
-    owner.replace("disabled:e.disabled", "disabled:!1"),
+    owner.replace("data-app-shell-tab-strip-controller", "data-other-controller"),
     owner + renamed,
     patched + renamed,
-    owner.replace("animateWidth:tA", "layoutWidth:tA"),
+    owner.replace("animatePosition:motion&&position", "animatePosition:motion&&otherPosition"),
   ];
   for (const source of cases) {
     assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), false);
