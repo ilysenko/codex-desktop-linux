@@ -321,25 +321,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `XDG_RUNTIME_DIR` they fail with the limit and the path.
   `scripts/ci/run-node-checks.sh all` syntax-checks every tracked `.js` file,
   then runs every `*.test.js` and `test.js` with a fresh `TMPDIR` and fails,
-  naming the entries, when a run leaves any. CI's
-  Node step runs it, so CI runs exactly the files the guard checks;
-  `scripts/ci-local.sh` still runs its own list. The GNOME dictation tests
-  keep their scratch under `TMPDIR` too, and the shared app-server tests bind
-  their sockets inside the `try` that removes them.
-- The AppShots bare modifier monitor checks `xinput --version` before it
+  naming the entries, when a run leaves any. CI's Node step runs it, so CI
+  runs exactly the files the guard checks; `scripts/ci-local.sh` still runs
+  its own list. The GNOME dictation and package permission tests keep their
+  scratch under `TMPDIR` too, and the shared app-server tests bind their
+  sockets inside the `try` that removes them.
+- The AppShots bare modifier monitor waits for `xinput --version` before it
   starts its XInput 2 stream, and reports `permission-denied` when the X
   server cannot be reached or has no XInput 2. Before, it judged the stream
   by whether it still ran 0.1 s after the start, so under load a failing
   `xinput` could print `ready` and then stop.
-- The global dictation release watcher stops each helper subshell before it
-  signals its children. A child that a subshell forked between `pkill -P`
-  and `kill`, such as the watchdog's `sleep`, no longer outlives the watcher.
-  A second SIGINT, SIGTERM or SIGHUP during cleanup no longer cuts it short,
-  which left the helpers running.
+- The global dictation release watcher stops each helper subshell, signals
+  its children, then ends the subshell with SIGKILL. A child that a subshell
+  forked between `pkill -P` and its own end, such as the watchdog's `sleep`,
+  no longer outlives the watcher. A second SIGINT, SIGTERM or SIGHUP during
+  cleanup no longer cuts it short, which left the helpers running.
 - The embedded Computer Use crate's
   `editable_text_normalization_mismatch_is_not_verified` test accepts
   `ReadbackTimedOut` as well as `MismatchAfterDeadline`, like the two other
-  mismatch tests (standalone computer-use-linux #431). Its last poll can start
+  mismatch tests (agent-sh/computer-use-linux#431). Its last poll can start
   just before the one-second deadline and still be reading when it passes.
   Both outcomes leave the write unverified, and neither allows a replay.
 - Desktop entries no longer offer a "New Window" action. It relied on the

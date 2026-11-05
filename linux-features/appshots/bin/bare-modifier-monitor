@@ -116,12 +116,9 @@ fi
 # XInput 2, but how soon that exit shows depends on load, so the check after
 # starting the stream below can miss it. xinput --version opens the display
 # and reads the server's XInput version, the same preconditions, and its exit
-# is awaited here, for at most 5 s when timeout is available.
-preflight=(xinput --version)
-if command -v timeout >/dev/null 2>&1; then
-    preflight=(timeout 5 xinput --version)
-fi
-xinput_version_output="$("${preflight[@]}" 2>/dev/null)" || xinput_version_output=""
+# is awaited here for as long as the server takes, as the stream itself would
+# wait for it; an Xwayland started on demand can take a while.
+xinput_version_output="$(xinput --version 2>/dev/null)" || xinput_version_output=""
 server_xi_version="${xinput_version_output##*XI version on server: }"
 case "$server_xi_version" in
     [2-9].*|[1-9][0-9]*.*) ;;

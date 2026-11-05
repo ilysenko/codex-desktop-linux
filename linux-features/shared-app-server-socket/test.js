@@ -3057,6 +3057,7 @@ test("injected transport reclaims a dead owner's unbound socket inode", async ()
     assert.match(fs.readFileSync(lockPath, "utf8"), new RegExp(`^${process.pid} \\d+\\n$`));
     transport.releaseOwnedPaths();
   } finally {
+    await closeServer(server);
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

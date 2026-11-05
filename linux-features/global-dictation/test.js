@@ -619,11 +619,38 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
   });
 }
 
+// Live processes whose environment holds TMPDIR=dir: what a watcher run with
+// that TMPDIR left behind. Zombies are skipped.
+function processesWithTmpdir(dir) {
+  const marker = `\0TMPDIR=${dir}\0`;
+  const found = [];
+  for (const entry of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      if (!`\0${fs.readFileSync(`/proc/${entry}/environ`, "latin1")}`.includes(marker)) continue;
+      const stat = fs.readFileSync(`/proc/${entry}/stat`, "utf8");
+      if (stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] !== "Z") found.push(Number(entry));
+    } catch {}
+  }
+  return found;
+}
+
+// Ends whatever a watcher run left, stopped processes included.
+function killProcessesWithTmpdir(dir) {
+  for (const pid of processesWithTmpdir(dir)) {
+    for (const signal of ["SIGCONT", "SIGKILL"]) {
+      try {
+        process.kill(pid, signal);
+      } catch {}
+    }
+  }
+}
+
 // The parent check runs sleep 1 in a loop. Here its sleep ignores SIGTERM and
 // lasts 0.4 s, and pkill takes 1 s after it signals, so the loop forks its next
 // sleep after pkill -P has listed the children and before kill reaches the
 // subshell. That sleep must not outlive the watcher.
-test("X11 release watcher leaves no child that a helper forks during cleanup", { timeout: 20_000 }, (t) => {
+test("X11 release watcher leaves no child that a helper forks during cleanup", { timeout: 20_000 }, async (t) => {
   let realPkill;
   try {
     realPkill = findHostExecutable("pkill");
@@ -633,23 +660,9 @@ test("X11 release watcher leaves no child that a helper forks during cleanup", {
   }
   const realSleep = findHostExecutable("sleep");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-cleanup-race-"));
-  const sleepPids = path.join(tempDir, "sleep-pids");
-  const recordedPids = () =>
-    fs.existsSync(sleepPids) ? fs.readFileSync(sleepPids, "utf8").trim().split("\n").map(Number) : [];
-  const running = (pid) => {
-    try {
-      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-      return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z";
-    } catch {
-      return false;
-    }
-  };
+  const sleepLog = path.join(tempDir, "sleeps");
   t.after(() => {
-    for (const pid of recordedPids()) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {}
-    }
+    killProcessesWithTmpdir(tempDir);
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
   const binDir = path.join(tempDir, "bin");
@@ -676,9 +689,13 @@ test("X11 release watcher leaves no child that a helper forks during cleanup", {
     path.join(binDir, "sleep"),
     [
       `#!${hostBash}`,
-      'echo "$$" >> "$SLEEP_PIDS"',
-      `if [ "$1" = 1 ]; then trap '' TERM; exec ${realSleep} 0.4; fi`,
-      `exec ${realSleep} "$@"`,
+      'echo "$1" >> "$SLEEP_LOG"',
+      `[ "$1" = 1 ] || exec ${realSleep} "$@"`,
+      // Outlives SIGTERM, and reports when the helper that started it died first.
+      "trap '' TERM",
+      "helper=$PPID",
+      `${realSleep} 0.4`,
+      'kill -0 "$helper" 2>/dev/null || echo outlived >> "$SLEEP_LOG"',
     ].join("\n"),
   );
 
@@ -691,15 +708,79 @@ test("X11 release watcher leaves no child that a helper forks during cleanup", {
         ...process.env,
         DISPLAY: ":99",
         PATH: `${binDir}${path.delimiter}${hostPath}`,
-        SLEEP_PIDS: sleepPids,
+        SLEEP_LOG: sleepLog,
         TMPDIR: tempDir,
       },
       timeout: 15_000,
     },
   );
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(recordedPids().length > 1, "the parent check never looped");
-  assert.deepEqual(recordedPids().filter(running), []);
+  // Every parent-check sleep has ended 0.4 s after it started.
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const sleeps = fs.readFileSync(sleepLog, "utf8").split("\n");
+  assert.ok(sleeps.filter((arg) => arg === "1").length > 1, "the parent check never looped");
+  assert.ok(!sleeps.includes("outlived"), "a parent-check sleep outlived its helper");
+  assert.deepEqual(processesWithTmpdir(tempDir), []);
+  assertMonitorLeftNothing(tempDir);
+});
+
+// A second SIGTERM while cleanup waits on a slow pkill used to run the exit
+// trap at once, which left the helpers and their sleeps running.
+test("X11 release watcher finishes its cleanup when a second SIGTERM arrives", { timeout: 20_000 }, async (t) => {
+  let realPkill;
+  try {
+    realPkill = findHostExecutable("pkill");
+  } catch {
+    t.skip("pkill is unavailable");
+    return;
+  }
+  const realSleep = findHostExecutable("sleep");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-second-signal-"));
+  t.after(() => {
+    killProcessesWithTmpdir(tempDir);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+  const binDir = path.join(tempDir, "bin");
+  const started = path.join(tempDir, "started");
+  fs.mkdirSync(binDir);
+  writeExecutable(
+    path.join(binDir, "xmodmap"),
+    `#!${hostBash}\nprintf '%s\\n' 'keycode 37 = Control_L' 'keycode 65 = space'\n`,
+  );
+  writeExecutable(
+    path.join(binDir, "xinput"),
+    [
+      `#!${hostBash}`,
+      "if [ \"$1\" = list ]; then printf '%s\\n' 'Virtual keyboard id=12 [slave  keyboard (3)]'; exit 0; fi",
+      "if [ \"$1\" = query-state ]; then printf '%s\\n' 'key[37]=down' 'key[65]=down'; exit 0; fi",
+      `if [ "$1" = test ]; then : > "${started}"; exec ${realSleep} 30; fi`,
+      "exit 2",
+    ].join("\n"),
+  );
+  writeExecutable(
+    path.join(binDir, "pkill"),
+    `#!${hostBash}\n${realPkill} "$@"\nstatus=$?\n${realSleep} 1.3\nexit "$status"\n`,
+  );
+
+  const monitor = spawn(
+    path.join(__dirname, "bin", "global-dictation-release-monitor"),
+    ["--accelerator", "Ctrl+Space"],
+    {
+      env: { ...process.env, DISPLAY: ":99", PATH: `${binDir}${path.delimiter}${hostPath}`, TMPDIR: tempDir },
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  const exited = once(monitor, "exit");
+  const deadline = Date.now() + 5_000;
+  while (!fs.existsSync(started)) {
+    assert.ok(Date.now() < deadline, "the keyboard stream never started");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  monitor.kill("SIGTERM");
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  monitor.kill("SIGTERM");
+  await exited;
+  assert.deepEqual(processesWithTmpdir(tempDir), []);
   assertMonitorLeftNothing(tempDir);
 });
 

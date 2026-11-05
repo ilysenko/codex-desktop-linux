@@ -117,6 +117,7 @@ bash -n install.sh scripts/lib/*.sh launcher/start.sh.template
 bash tests/scripts_smoke.sh
 node --test scripts/lib/upstream-linux-package.test.js
 node --test scripts/patch-linux-window-ui.test.js scripts/lib/linux-features.test.js linux-features/*/test.js
+bash scripts/ci/run-node-checks.sh all  # every Node test in a fresh TMPDIR, as CI runs them
 cargo test -p codex-update-manager
 cargo clippy -p codex-update-manager --all-targets -- -D warnings
 ./scripts/ci-local.sh pr

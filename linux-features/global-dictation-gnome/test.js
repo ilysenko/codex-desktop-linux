@@ -154,7 +154,7 @@ test('real GJS private-bus dispatch returns uint32 version, denies async Paste a
         const xmlSocket = socket.replace(/[&<>"']/g, c => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
         })[c]);
-        // A private socket on disk, not /tmp and never the user's session bus.
+        // A private socket in the test's scratch, never the user's session bus.
         write(busConfig, `<busconfig><type>session</type><listen>unix:path=${xmlSocket}</listen>
 <auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/>
 <allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>`);
@@ -253,7 +253,7 @@ if (failed) System.exit(1);
         {env, encoding: 'utf8', timeout: 15000});
         assert.equal(result.status, 0, `${result.error ?? ''}\n${result.stderr}\n${result.stdout}`);
         assert.match(result.stdout, /REAL_DBUS_OK: uint32=1; async caller denied; events=0; name released; object unexported/);
-        t.diagnostic('Real Gio async dispatch and unsigned reply verified on a private cache-backed bus');
+        t.diagnostic('Real Gio async dispatch and unsigned reply verified on a private test bus');
     });
 
 test('live configuration changes authorize only the new exact executable without re-enabling', async () => {
