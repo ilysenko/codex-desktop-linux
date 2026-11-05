@@ -237,6 +237,10 @@ test("stages the Linux bare modifier monitor helper and Wayland portal hook", ()
 // directory in TMPDIR and execs its command, so nothing removes the directory.
 const LEAKY_STDBUF = '#!/bin/sh\nmktemp -d "${TMPDIR:-/tmp}/.tmpXXXXXX" >/dev/null || exit 125\nshift\nexec "$@"\n';
 
+// A stdbuf that only execs, like GNU stdbuf, for a test where a slower start
+// would race the monitor's startup check.
+const PLAIN_STDBUF = '#!/bin/sh\nshift\nexec "$@"\n';
+
 // What the bare modifier monitor's stdbuf run leaves in TMPDIR.
 function stdbufLeftovers(dir) {
   return fs
@@ -305,7 +309,8 @@ test("bare modifier monitor fails before ready when XInput2 exits during startup
     "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
     { mode: 0o755 },
   );
-  fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+  // The monitor still makes, and must remove, its own stdbuf directory.
+  fs.writeFileSync(path.join(binDir, "stdbuf"), PLAIN_STDBUF, { mode: 0o755 });
   fs.writeFileSync(
     path.join(binDir, "xinput"),
     "#!/bin/sh\n[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2\nexit 2\n",
