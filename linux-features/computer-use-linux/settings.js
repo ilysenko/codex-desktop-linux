@@ -4,6 +4,8 @@ const path = require("node:path");
 const { findUniqueRspackModuleCopies, patchRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
+const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
+
 const IDENTIFIER = "[A-Za-z_$][\\w$]*";
 const AVAILABILITY_MARKER = "/* linux-native-settings-availability */";
 
@@ -68,7 +70,7 @@ const NATIVE_SETTINGS_VISIBILITY_NEEDLES = ['"built by openai"', '"chatgpt offic
 
 function nativeSettingsVisibilityState(source) {
   const marker = NATIVE_SETTINGS_VISIBILITY_MARKER;
-  const pattern = /(?:(?<property>[\w$]+):function|function (?<fn>[\w$]+))\((?<plugins>[\w$]+),(?<hidden>[\w$]+),(?<restrictedMode>[\w$]+)\)\{(?:if\(0===\k<hidden>\.length&&!\k<restrictedMode>\)return \k<plugins>;|(?<patched>\/\* linux-native-settings-component \*\/))let (?<set>[\w$]+)=new Set\(\k<hidden>\);return \k<plugins>\.filter\((?<entry>[\w$]+)=>(?<exclusion>!\("openai-bundled"===\k<entry>\.marketplaceName&&"computer-use"===\k<entry>\.plugin\.name\)&&)?\(!\k<restrictedMode>\|\|!(?<restricted>\(0,[\w$]+\.[\w$]+\))\(\k<entry>\.plugin\.id\)\)&&!\k<set>\.has\(\k<entry>\.plugin\.id\)\)\}/g;
+  const pattern = /function(?: (?<fn>[\w$]+))?\((?<plugins>[\w$]+),(?<hidden>[\w$]+),(?<restrictedMode>[\w$]+)\)\{(?:if\(0===\k<hidden>\.length&&!\k<restrictedMode>\)return \k<plugins>;|(?<patched>\/\* linux-native-settings-component \*\/))let (?<set>[\w$]+)=new Set\(\k<hidden>\);return \k<plugins>\.filter\((?<entry>[\w$]+)=>(?<exclusion>!\("openai-bundled"===\k<entry>\.marketplaceName&&"computer-use"===\k<entry>\.plugin\.name\)&&)?\(!\k<restrictedMode>\|\|!(?<restricted>\(0,[\w$]+\.[\w$]+\))\(\k<entry>\.plugin\.id\)\)&&!\k<set>\.has\(\k<entry>\.plugin\.id\)\)\}/g;
   const matches = [...source.matchAll(pattern)];
   const markerCount = source.split(marker).length - 1;
   const patchedCount = matches.filter((match) => match.groups.patched != null).length;
@@ -94,9 +96,8 @@ function applyNativeSettingsVisibilityPatch(source) {
   }
   if (state.kind === "patched") return source;
   const { match, marker } = state;
-  const { property, fn, plugins, hidden, restrictedMode, set, entry, restricted } = match.groups;
-  const head = property == null ? `function ${fn}` : `${property}:function`;
-  const replacement = `${head}(${plugins},${hidden},${restrictedMode}){${marker}let ${set}=new Set(${hidden});return ${plugins}.filter(${entry}=>!("openai-bundled"===${entry}.marketplaceName&&"computer-use"===${entry}.plugin.name)&&(!${restrictedMode}||!${restricted}(${entry}.plugin.id))&&!${set}.has(${entry}.plugin.id))}`;
+  const { fn, plugins, hidden, restrictedMode, set, entry, restricted } = match.groups;
+  const replacement = `function${fn ? ` ${fn}` : ""}(${plugins},${hidden},${restrictedMode}){${marker}let ${set}=new Set(${hidden});return ${plugins}.filter(${entry}=>!("openai-bundled"===${entry}.marketplaceName&&"computer-use"===${entry}.plugin.name)&&(!${restrictedMode}||!${restricted}(${entry}.plugin.id))&&!${set}.has(${entry}.plugin.id))}`;
   const patched = source.slice(0, match.index) + replacement +
     source.slice(match.index + match[0].length);
   if (nativeSettingsVisibilityState(patched).kind !== "patched") {
@@ -105,11 +106,15 @@ function applyNativeSettingsVisibilityPatch(source) {
   return patched;
 }
 
-function matchesNativeSettingsVisibilityModule(moduleSource) {
+function matchesNativeSettingsVisibilityModule(moduleSource, snapshot) {
   const state = nativeSettingsVisibilityState(moduleSource);
   if (state.kind === "invalid" || !NATIVE_SETTINGS_VISIBILITY_NEEDLES.every(needle => moduleSource.includes(needle)) ||
       !moduleSource.includes('"plugins-connected"') || !moduleSource.includes('"plugins-featured"')) return false;
-  return new RegExp(`:\\(\\)=>${escapeRegExp(state.match.groups.fn)}[,}]`).test(moduleSource);
+  if (state.match.groups.fn != null) return false;
+  const key = new RegExp(`(${IDENTIFIER}):$`, "u").exec(moduleSource.slice(0, state.match.index));
+  if (!key) return false;
+  const publication = findRspackExportPublication({ ...snapshot, moduleSource }, key[1]);
+  return publication?.fn?.start === state.match.index && publication.fn.end === state.match.index + state.match[0].length;
 }
 
 function applyNativeSettingsVisibilityAssets(extractedDir) {
@@ -119,8 +124,8 @@ function applyNativeSettingsVisibilityAssets(extractedDir) {
     matchModule: matchesNativeSettingsVisibilityModule,
     description: "native Settings plugin presentation owner",
   });
-  const result = patchRspackModuleCopies(assets, copies, moduleSource => {
-    if (!matchesNativeSettingsVisibilityModule(moduleSource)) {
+  const result = patchRspackModuleCopies(assets, copies, (moduleSource, snapshot) => {
+    if (!matchesNativeSettingsVisibilityModule(moduleSource, snapshot)) {
       throw new Error("Linux native Settings visibility module contract missing or partially applied");
     }
     return applyNativeSettingsVisibilityPatch(moduleSource);

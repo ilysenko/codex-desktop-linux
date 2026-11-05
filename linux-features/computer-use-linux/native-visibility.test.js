@@ -15,7 +15,7 @@ const { findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspa
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 
 const filter = 'function visible(e,t,n){if(0===t.length&&!n)return e;let r=new Set(t);return e.filter(e=>(!n||!(0,restriction.isRestricted)(e.plugin.id))&&!r.has(e.plugin.id))}';
-const moduleBody = `${filter}let sections=["plugins-connected","plugins-featured"],labels=["built by openai","chatgpt official"];n.d(t,{view:()=>visible});`;
+const moduleBody = `let sections=["plugins-connected","plugins-featured"],labels=["built by openai","chatgpt official"];n.d(t,{},{view:${filter.replace("function visible", "function")}});`;
 const chunk = (body, moduleId = "Presentation") => `export const __webpack_modules__={${moduleId}(e,t,n){${body}}};`;
 
 function workspace(t) {
@@ -126,4 +126,20 @@ test("visibility production descriptor patches all current signed owner copies w
     assert.equal(fs.readFileSync(path.join(upstream, copy.assetName), "utf8"), copy.source);
   }
   assert.equal(run().status, "already-applied");
+});
+
+
+test("visibility rejects a disconnected inline export and rebound publication authority", t => {
+  t.mock.method(console, "warn", () => {});
+  for (const body of [
+    moduleBody.replace("n.d(t,", "n.d(other,"),
+    moduleBody.replace("n.d(t,", "other.d(t,"),
+    "({n}=other);" + moduleBody,
+    "({t}=other);" + moduleBody,
+    "if(false){" + moduleBody + "}",
+  ]) {
+    const {write,run}=workspace(t),source=chunk(body),file=write("async/1.hash.js",source);
+    assert.equal(run().status,"skipped-optional");
+    assert.equal(fs.readFileSync(file,"utf8"),source);
+  }
 });
