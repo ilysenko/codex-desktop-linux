@@ -409,6 +409,11 @@ exit 7
     env: {
       ...process.env,
       CODEX_HOME: codexHome,
+      // Keep this hook/URI fixture independent of the caller's display backend.
+      CODEX_OZONE_PLATFORM: "auto",
+      NIXOS_OZONE_WL: "",
+      WAYLAND_DISPLAY: "",
+      XDG_SESSION_TYPE: "x11",
       CODEX_LINUX_DISABLE_USAGE_REPORTING: "1",
       CODEX_MCP_HELPER_REAPER_DISABLE: "0",
       CODEX_MCP_HELPER_REAPER_DISABLE_HOOK: "0",
