@@ -77,9 +77,12 @@ test("Portal refuses every overriding critical member form at object seams", () 
     '["markAppQuitting"]:()=>{}', 'get markAppQuitting(){return ()=>{}}', 'markAppQuitting(){}',
     String.raw`hotkeyWindowLifecycleManag\u0065r:L`,
   ]) assertRefused(source.replace("U.dispose()}}}(", `U.dispose()},${member}}}(`), member);
-  const declaredShorthand = source.replace("{let O;return{", "{let O;const markAppQuitting=()=>{},hotkeyWindowLifecycleManager=L;return{");
+  const declaredShorthand = source.replace("{let O,L=new H7({windowManager:D,globalState:G});return{", "{let O,L=new H7({windowManager:D,globalState:G});const markAppQuitting=()=>{},hotkeyWindowLifecycleManager=L;return{");
+  assert.notEqual(declaredShorthand, source, "Shorthand controls are declared in the current window producer");
   for (const member of ["markAppQuitting", "hotkeyWindowLifecycleManager", "...{}&&{hotkeyWindowLifecycleManager:L}"]) {
-    assertRefused(declaredShorthand.replace("U.dispose()}}}(", `U.dispose()},${member}}}(`), member);
+    const variant = declaredShorthand.replace("U.dispose()}}}(", `U.dispose()},${member}}}(`);
+    assert.notEqual(variant, declaredShorthand, `The returned object contains ${member}`);
+    assertRefused(variant, member);
   }
   for (const member of ['"windows":windows.windowManager', 'get windows(){return windows.windowManager}', '["windows"]:windows.windowManager', 'windows(){return windows.windowManager}']) {
     const variant = source.replace("canAttributeAppReactivation:input.canAttributeAppReactivation}", `canAttributeAppReactivation:input.canAttributeAppReactivation,${member}}`);

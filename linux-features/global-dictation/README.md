@@ -61,9 +61,11 @@ The backend uses the application's shortcut registry, including suspension
 during shortcut capture and cancellation of held gestures. Approval requests
 are serialized. Partial approval affects the corresponding actions; a failed
 reconfiguration attempts one recovery of still-requested working actions.
-Startup binds after account-access discovery. Once application quit is accepted,
-the backend stops before windows and action owners are disposed, preserving KDE's
-saved choices across ordinary restarts and update exits.
+Startup binds after account-access discovery. Accepting quit starts backend
+shutdown before native window and shortcut-owner cleanup. The normal asynchronous
+quit drain waits for helper shutdown before final context disposal and application
+exit; canceling quit leaves the backend running. This preserves KDE's saved
+choices across ordinary restarts and update exits.
 Session replacement can briefly interrupt global shortcuts. The helper's
 registration timeout is 30 seconds.
 

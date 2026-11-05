@@ -13,7 +13,7 @@ const vm = require("node:vm");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const {
-  applyMainBundlePatchDescriptors,
+  applyExtractedAppPatchDescriptors,
   normalizePatchDescriptors,
 } = require("../../scripts/patches/engine.js");
 const {
@@ -310,9 +310,9 @@ test("X11 hold watcher exposes a disposable and releases once", async () => {
   assert.equal(releases, 1);
 });
 
-test("feature descriptor stays limited to the main bundle", () => {
+test("feature descriptor owns a complete main inventory transaction", () => {
   assert.equal(descriptors.length, 1);
-  assert.equal(descriptors[0].phase, "main-bundle");
+  assert.equal(descriptors[0].phase, "extracted-app:pre-webview");
 });
 
 test("X11 release watcher exits when a required modifier is released", () => {
@@ -511,43 +511,25 @@ test("main patch warns when the release watcher sentinel is missing", () => {
     console.warn = previousWarn;
   }
 
-  assert.deepEqual(warnings, [
-    "WARN: release watcher sentinel was not found - skipping Linux global dictation patch",
-  ]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /dictation release helper consumption/u);
 });
 
-test("main patch reports a missing release watcher sentinel as an optional skip", () => {
+test("main descriptor reports missing live helper authority without writing", (t) => {
   const source = mainBundleFixture().replaceAll(
-    "Global dictation hotkey release watching is not supported.",
-    "Global dictation release watcher changed.",
-  );
+    "Global dictation hotkey release watching is not supported.", "Global dictation release watcher changed.");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-missing-authority-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const build = path.join(root, ".vite/build"); fs.mkdirSync(build, { recursive: true });
+  const target = path.join(build, "early-bootstrap-45-abc.js"); fs.writeFileSync(target, source);
   const report = createPatchReport();
-  const [descriptor] = normalizePatchDescriptors([
-    {
-      ...descriptors[0],
-      id: "feature:global-dictation:linux-global-dictation-main-process",
-      sourceKind: "feature",
-      featureId: "global-dictation",
-    },
-  ]);
-
-  const result = applyMainBundlePatchDescriptors(source, [descriptor], {}, report);
-
-  assert.equal(result.patchedSource, source);
-  assert.deepEqual(report.patches, [
-    {
-      name: "feature:global-dictation:linux-global-dictation-main-process",
-      status: "skipped-optional",
-      reason: "WARN: release watcher sentinel was not found - skipping Linux global dictation patch",
-      phase: "main-bundle",
-      targetSummary: "all-linux",
-      ciPolicy: "optional",
-      enforceWhenEnabled: true,
-      sourceKind: "feature",
-      featureId: "global-dictation",
-      warnings: ["WARN: release watcher sentinel was not found - skipping Linux global dictation patch"],
-    },
-  ]);
+  const selected = normalizePatchDescriptors(descriptors.map(descriptor => ({ ...descriptor,
+    id: "feature:global-dictation:" + descriptor.id, sourceKind: "feature", featureId: "global-dictation" })));
+  applyExtractedAppPatchDescriptors(root, selected, {}, report, "extracted-app:pre-webview");
+  assert.equal(fs.readFileSync(target, "utf8"), source);
+  assert.equal(report.patches[0].status, "skipped-optional");
+  assert.equal(report.patches[0].phase, "extracted-app:pre-webview");
+  assert.match(report.patches[0].reason, /dictation release helper consumption/u);
 });
 
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {

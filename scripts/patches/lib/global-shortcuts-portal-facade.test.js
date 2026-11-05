@@ -44,8 +44,11 @@ test("Portal semantic facade returns actual supplied coordinates in either share
 });
 
 test("Portal semantic facade projects other bound returned data roles without constructor inference", () => {
-  const source = mainBundleFixture().replace("{let O;return{", "{let O;const A={};return{")
-    .replace("spotlightController:U,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:", "spotlightController:U,appshotHotkeysService:A,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:");
+  const original = mainBundleFixture();
+  const declared = original.replace("{let O,L=new H7({windowManager:D,globalState:G});return{", "{let O,L=new H7({windowManager:D,globalState:G});const A={};return{");
+  assert.notEqual(declared, original, "The additional role is declared in the current window producer");
+  const source = declared.replace("spotlightController:U,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:", "spotlightController:U,appshotHotkeysService:A,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:");
+  assert.notEqual(source, declared, "The declared role is added to the returned window object");
   const metadata = inspectGlobalShortcutsPortal(source);
   assert.equal(metadata.state, "current"); assert.equal(metadata.owner.windowServices.bindings.appshotHotkeysService, "A");
   assert.equal(metadata.owner.windowServices.bindings.markAppQuitting, undefined);
