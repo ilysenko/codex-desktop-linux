@@ -288,6 +288,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   run, and recreated up to two `codex-launcher-test-*/state` folders in
   `TMPDIR`. The tests now wait for the reporter before cleanup, and kill the
   launcher's process group if it is still running after 10 seconds.
+- The AppShots bare modifier monitor and the global dictation release watcher
+  no longer leave an empty `.tmpXXXXXX` directory in `TMPDIR` where `stdbuf`
+  is uutils coreutils. That `stdbuf` makes a temporary directory and then
+  execs `xinput`, so nothing removed it (uutils/coreutils#13939): one per
+  AppShots monitor start, and one per keyboard per global dictation hold.
+  Each monitor now gives `stdbuf` a directory of its own and removes it when it
+  exits, also on SIGHUP, SIGINT and SIGTERM. GNU `stdbuf` writes nothing there.
 - Desktop entries no longer offer a "New Window" action. It relied on the
   retired multi-instance launcher (`--new-instance`, `CODEX_MULTI_LAUNCH`),
   which the official app ignores, so it did nothing while the app was running
