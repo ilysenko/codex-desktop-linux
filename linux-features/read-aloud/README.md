@@ -17,9 +17,10 @@ Add the feature to `linux-features/features.json`:
 ```
 
 Then rebuild/package the app. The installed app remains silent until the user
-explicitly clicks a message's speech icon, uses conversation mode, or calls the
-Read Aloud MCP tool. For scripted launches that need to force-enable direct
-runtime calls, set the runtime opt-in:
+explicitly clicks a message's speech icon. Conversation mode is a future layer
+described below; agent tools are provided by the separate `read-aloud-mcp` feature.
+For scripted launches that need to force-enable direct runtime calls, set the
+runtime opt-in:
 
 ```bash
 mkdir -p ~/.config/codex-desktop
@@ -50,10 +51,16 @@ ready:
 The official webview is an rspack build, so every patch finds its target by
 content, not by file name:
 
-- `main-handler` adds one `vscode://codex/linux-read-aloud` route to the
-  desktop fetch request entry, next to the official dictation route, and
-  answers with the same inline `fetch-response` view message. Only the two
-  read-aloud settings keys can be read or written through it.
+- `main-handler` verifies the current native view handler, constructed fetch
+  wrapper and inline sender across the complete main-chunk inventory, then adds
+  one `vscode://codex/linux-read-aloud`
+  route beside the official dictation route. Its helper block is owned by the
+  outer CommonJS chunk and imports its own builtins and Electron access. Each
+  rerun revalidates the native owner, exact route, reply callback and helper
+  payload before reporting an already-applied patch. Missing, duplicate, mixed
+  or incomplete copies of its native factory are rejected before the one-owner
+  asset transaction writes anything. Only the two read-aloud
+  settings keys can be read or written through it.
 - `webview-runtime` appends the self-contained click, setup, and settings
   runtime to the rspack runtime entry chunks (main and detached windows).
 - `assistant-runtime` wraps the two assistant message render calls of the
@@ -63,6 +70,15 @@ content, not by file name:
   page module's own JSX runtime.
 
 Nothing is downloaded during app install or on first launch.
+
+A speech reply waits for the child command's startup or startup error.
+`spoken: true` acknowledges a launched command; it does not verify audible
+output or wait for the complete utterance. Later child/stream failures are
+handled and release the owned playback processes. Stop or a newer speech
+request also cancels a pending launch. Piper owns both its synthesizer and
+player process groups. Final application quit and process exit clean up owned
+speech and setup commands; a cancelled `before-quit` or ordinary window close
+does not stop them.
 
 ## Conversation mode direction
 

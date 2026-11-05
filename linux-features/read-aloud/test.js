@@ -7,6 +7,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { EventEmitter } = require("node:events");
+const { fixture: requestGraphFixture } = require("../../scripts/patches/lib/fixtures/main-request-graph.js");
 const {
   applyAssistantRenderPatch,
   applyGeneralSettingsPatch,
@@ -22,11 +24,34 @@ const {
   normalizePatchDescriptors,
 } = require("../../scripts/patches/engine.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
-const { requireName } = require("../../scripts/patches/lib/minified-js.js");
+require("./main-handler.test.js");
 
-// Current official desktop fetch wrapper shape (26.1029 rspack main chunk):
-// only the dictation route is served from the view-message "fetch" entry.
-const MAIN_FIXTURE = 'class Ra{options;constructor(e){this.options=e}async handleRequest(e,t){if("/codex/dictation-stream-connect-info"===t.url)return void await this.handleDictationStreamConnectInfoRequest(e,t);throw Error("HTTP requests must use the HTTP fetch service.")}async handleDictationStreamConnectInfoRequest(e,t){try{this.options.chunkedMessageSender.sendInlineMessageForView(e,{type:"fetch-response",responseType:"success",requestId:t.requestId,status:200,bodyJsonString:"{}"})}catch(r){this.options.chunkedMessageSender.sendInlineMessageForView(e,{type:"fetch-response",responseType:"error",requestId:t.requestId,status:432,error:"failed"})}}}';
+// The complete source-local graph, including native-style startup/factory
+// wiring, is shared with the foundation's tests. No real runtime is launched.
+const MAIN_FIXTURE = requestGraphFixture();
+let speechPid = 20000;
+function fakeSpeechChild(close = false) {
+  const child = new EventEmitter();
+  child.pid = ++speechPid;
+  child.stdin = new EventEmitter(); child.stdin.end = () => {};
+  child.stdout = new EventEmitter(); child.stdout.pipe = () => {};
+  child.kill = () => true; child.unref = () => {};
+  queueMicrotask(() => {
+    child.emit("spawn");
+    if (close) queueMicrotask(() => { child.emit("exit", 0); child.emit("close", 0); });
+  });
+  return child;
+}
+function graphRuntime(patched, requireStub, processStub, sent = []) {
+  const carrier = {};
+  new Function("require", "process", "exports", patched)(requireStub, processStub, carrier);
+  const target = {}, load = () => { throw Error("Unexpected fixture import"); };
+  load.d = (out, getters) => { for (const [key, get] of Object.entries(getters)) Object.defineProperty(out, key, { get }); };
+  carrier.modules[82820]({}, target, load);
+  const host = target.runMainAppStartup({ globalState: new Map(), cancelled: [],
+    chunkedMessageSender: { sendInlineMessageForView: (view, message) => sent.push({ webContents: view, message }) } });
+  return { host, request: (view, payload) => host.handleMessage(view, { type: "fetch", ...payload }) };
+}
 
 function twice(fn, source) {
   const patched = fn(source);
@@ -66,7 +91,7 @@ test("language routing uses dominant letters and preserves explicit overrides", 
   ].join("");
   const patched = twice(applyMainBundlePatch, source);
   const env = {};
-  const language = new Function("require", "process", `${patched};return codexLinuxReadAloudLanguage;`)(
+  const language = new Function("require", "process", `const exports={};${patched};return codexLinuxReadAloudLanguage;`)(
     require, { platform: "linux", env },
   );
   for (const [text, expected] of [
@@ -151,14 +176,13 @@ test("main route answers read aloud webview fetches through the inline view send
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-route-"));
   try {
     const patched = twice(applyMainBundlePatch, MAIN_FIXTURE);
-    const Ra = new Function("require", "process", `${patched};return Ra;`)(require, {
+    const sent = [];
+    const requireStub = name => name === "node:child_process" ? { spawnSync: () => ({status:1}) } : require(name);
+    const runtime = graphRuntime(patched, requireStub, {
       platform: "linux",
       env: { HOME: root, XDG_CONFIG_HOME: path.join(root, "config") },
-    });
-    const sent = [];
-    const wrapper = new Ra({
-      chunkedMessageSender: { sendInlineMessageForView: (webContents, message) => sent.push({ webContents, message }) },
-    });
+    }, sent);
+    const wrapper = { handleRequest: (view, payload) => runtime.request(view, payload) };
     const view = { id: 7 };
     const request = (requestId, body) => wrapper.handleRequest(view, {
       type: "fetch",
@@ -211,7 +235,7 @@ test("main route answers read aloud webview fetches through the inline view send
 
 test("main route fails closed on missing, duplicate or drifted fetch entries", () => {
   const missing = MAIN_FIXTURE.replace('"/codex/dictation-stream-connect-info"', '"/codex/other"');
-  const duplicate = `${MAIN_FIXTURE}${MAIN_FIXTURE.replace("class Ra", "class Rb")}`;
+  const duplicate = `${MAIN_FIXTURE}${MAIN_FIXTURE.replace("RequestWrapper", "OtherWrapper")}`;
   const noInlineSender = MAIN_FIXTURE.replaceAll(
     "this.options.chunkedMessageSender.sendInlineMessageForView(",
     "this.options.chunkedMessageSender.sendMessageForView(",
@@ -219,17 +243,17 @@ test("main route fails closed on missing, duplicate or drifted fetch entries", (
   for (const source of [missing, duplicate, noInlineSender]) {
     const { result, warnings } = captureWarnings(() => applyMainBundlePatch(source));
     assert.equal(result, source);
-    assert.match(warnings.join("\n"), /unique desktop fetch request entry/);
+    assert.match(warnings.join("\n"), /native read aloud request owner/);
   }
   const patched = applyMainBundlePatch(MAIN_FIXTURE);
   const partial = patched.replace("/*codex-linux-read-aloud-route*/", "");
   const { result, warnings } = captureWarnings(() => applyMainBundlePatch(partial));
   assert.equal(result, partial);
-  assert.match(warnings.join("\n"), /partial or duplicate read aloud fetch route/);
+  assert.match(warnings.join("\n"), /native read aloud request owner|incomplete read aloud route\/helper ownership/);
 });
 
 test("main route composes with other Linux fetch routes in the same request entry", () => {
-  const foreignRoute = "/*codex-linux-chronicle-skysight-route*/if(codexLinuxChronicleFetchHandler(t?.url))return void await codexLinuxChronicleFetch(t,m=>m);";
+  const foreignRoute = "/*codex-linux-chronicle-skysight-route*/if(codexLinuxChronicleFetchHandler(t?.url))return void await codexLinuxChronicleFetch(t,m=>this.options.chunkedMessageSender.sendInlineMessageForView(e,m));";
   const routed = MAIN_FIXTURE.replace("async handleRequest(e,t){", `async handleRequest(e,t){${foreignRoute}`);
   const patched = applyMainBundlePatch(routed);
   assert.notEqual(patched, routed);
@@ -239,7 +263,7 @@ test("main route composes with other Linux fetch routes in the same request entr
   const unknownPrefix = MAIN_FIXTURE.replace("async handleRequest(e,t){", "async handleRequest(e,t){otherCode();");
   const { result, warnings } = captureWarnings(() => applyMainBundlePatch(unknownPrefix));
   assert.equal(result, unknownPrefix);
-  assert.match(warnings.join("\n"), /unique desktop fetch request entry/);
+  assert.match(warnings.join("\n"), /native read aloud request owner/);
 });
 
 test("main handler does not capture a function-local child-process alias from another feature", () => {
@@ -267,7 +291,7 @@ for (const [label, prefix] of [
     try {
       const source = prefix + MAIN_FIXTURE;
       const patched = twice(applyMainBundlePatch, source);
-      const runtime = new Function("require", "process", `${patched};return {
+      const runtime = new Function("require", "process", `const exports={};${patched};return {
         home:codexLinuxReadAloudHome,
         settingsPath:codexLinuxReadAloudSettingsPath,
         writeSettings:codexLinuxReadAloudWriteSettings,
@@ -289,18 +313,12 @@ for (const [label, prefix] of [
   });
 }
 
-test("main bundle helper preserves the official Electron binding across patch reruns", () => {
-  const source = [
-    '"use strict";',
-    'let c=require("electron"),e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);',
-    MAIN_FIXTURE,
-  ].join("");
-  const patched = applyMainBundlePatch(source);
-
-  assert.equal(requireName(patched, "electron"), "c");
-  assert.match(patched, /electronApi=c/);
-  assert.doesNotMatch(patched, /electronApi=require\(`electron`\)/);
-  assert.equal(applyMainBundlePatch(patched), patched);
+test("main helper requires Electron in its outer CJS scope without borrowing factory aliases", () => {
+  const prefix = 'function otherFactory(){let c=require("electron");return c}';
+  const source = prefix + MAIN_FIXTURE, patched = twice(applyMainBundlePatch, source);
+  assert.ok(patched.includes(prefix));
+  assert.match(patched, /electronApi=require\(`electron`\)/);
+  assert.doesNotMatch(patched, /electronApi=c\b/);
 });
 
 test("webview runtime appends only once", () => {
@@ -554,7 +572,7 @@ test("main handler stores a chosen Kokoro model folder", async () => {
     const result = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"setup",mode:"choose-folder"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"setup",mode:"choose-folder"});`,
     )(requireStub, processStub);
 
     assert.equal(result.ok, true);
@@ -606,7 +624,7 @@ test("main handler reports when a chosen Kokoro model folder is not speakable ye
     const result = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"setup",mode:"choose-folder"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"setup",mode:"choose-folder"});`,
     )(requireStub, processStub);
 
     assert.equal(result.ok, false);
@@ -673,7 +691,7 @@ test("main handler honors Linux app-specific settings paths", async () => {
     const result = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"setup",mode:"choose-folder"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"setup",mode:"choose-folder"});`,
     )(requireStub, processStub);
 
     assert.equal(result.ok, true);
@@ -712,7 +730,7 @@ test("main handler reports missing Python during download setup", async () => {
     const result = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"setup",mode:"download"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"setup",mode:"download"});`,
     )(requireStub, processStub);
 
     assert.equal(result.ok, false);
@@ -756,7 +774,7 @@ test("main handler reads and clamps stored Kokoro pace", async () => {
     const result = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"config"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"config"});`,
     )(requireStub, processStub);
 
     assert.equal(result.kokoro.speed, 1.4);
@@ -786,7 +804,7 @@ test("main handler enables native fallback by default but allows explicit disabl
     const defaultConfig = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"config"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"config"});`,
     )(requireStub, {
       platform: "linux",
       env: { HOME: root },
@@ -795,7 +813,7 @@ test("main handler enables native fallback by default but allows explicit disabl
     const disabledConfig = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"config"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"config"});`,
     )(requireStub, {
       platform: "linux",
       env: { HOME: root, CODEX_LINUX_READ_ALOUD_NATIVE_FALLBACK: "0" },
@@ -826,10 +844,7 @@ test("main handler treats the message button as an explicit speech request", asy
           }),
           spawn: (command, args, options) => {
             spawned.push({ command, args, options });
-            return {
-              on: () => {},
-              unref: () => {},
-            };
+            return fakeSpeechChild(args?.[0] === "-C");
           },
         };
       }
@@ -847,7 +862,7 @@ test("main handler treats the message button as an explicit speech request", asy
     const buttonResult = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"hello"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"hello"});`,
     )(requireStub, processStub);
     assert.equal(buttonResult.spoken, true);
     assert.equal(buttonResult.engine, "spd-say");
@@ -856,7 +871,7 @@ test("main handler treats the message button as an explicit speech request", asy
     const directResult = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudSpeak("hello");`,
+      `const exports={};${patched};return codexLinuxReadAloudSpeak("hello");`,
     )(requireStub, processStub);
     assert.equal(directResult.spoken, false);
     assert.equal(directResult.reason, "disabled");
@@ -897,11 +912,7 @@ test("main handler passes the configured Kokoro Python to the runner", async () 
           }),
           spawn: (command, args, options) => {
             spawned.push({ command, args, options });
-            return {
-              on: () => {},
-              unref: () => {},
-              stdin: { end: () => {} },
-            };
+            return fakeSpeechChild(args?.[0] === "-C");
           },
         };
       }
@@ -913,7 +924,7 @@ test("main handler passes the configured Kokoro Python to the runner", async () 
     const result = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"hello"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"hello"});`,
     )(requireStub, {
       platform: "linux",
       env: {
@@ -934,7 +945,7 @@ test("main handler passes the configured Kokoro Python to the runner", async () 
     const chineseResult = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文朗读测试。"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文朗读测试。"});`,
     )(requireStub, {
       platform: "linux",
       env: {
@@ -953,7 +964,7 @@ test("main handler passes the configured Kokoro Python to the runner", async () 
     assert.equal(spawned[1]?.options?.env?.CODEX_LINUX_READ_ALOUD_KOKORO_VOICES, voices);
     assert.equal(spawned[1]?.options?.env?.CODEX_LINUX_READ_ALOUD_KOKORO_LANG, "cmn");
     for (const text of ["The Chinese greeting 你好 means hello.", "The Russian greeting привет means hello."]) {
-      const mixed = new Function("require", "process", "text", `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text});`)(requireStub, {
+      const mixed = await new Function("require", "process", "text", `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text});`)(requireStub, {
         platform: "linux",
         env: {
           HOME: root,
@@ -970,7 +981,7 @@ test("main handler passes the configured Kokoro Python to the runner", async () 
     }
 
     for (const text of ["שלום עולם", "Привет мир", "안녕하세요"]) {
-      const overridden = new Function("require", "process", "text", `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text});`)(requireStub, {
+      const overridden = await new Function("require", "process", "text", `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text});`)(requireStub, {
         platform: "linux",
         env: {
           HOME: root,
@@ -994,9 +1005,9 @@ test("main handler passes the configured Kokoro Python to the runner", async () 
       [{ CODEX_LINUX_READ_ALOUD_KOKORO_VOICE: "af_heart", CODEX_LINUX_READ_ALOUD_KOKORO_LANG: "en-us" }, "af_heart", "en-us"],
       [{ CODEX_LINUX_READ_ALOUD_KOKORO_VOICE: "af_heart", CODEX_LINUX_READ_ALOUD_KOKORO_LANGUAGE_VOICE: "zf_xiaoni" }, "zf_xiaoni", "cmn"],
     ]) {
-      const overridden = new Function(
+      const overridden = await new Function(
         "require", "process",
-        `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文测试。"});`,
+        `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文测试。"});`,
       )(requireStub, {
         platform: "linux",
         env: {
@@ -1036,10 +1047,7 @@ test("main handler falls back to native speech without forcing spd-say voice typ
           }),
           spawn: (command, args, options) => {
             spawned.push({ command, args, options });
-            return {
-              on: () => {},
-              unref: () => {},
-            };
+            return fakeSpeechChild(args?.[0] === "-C");
           },
         };
       }
@@ -1051,7 +1059,7 @@ test("main handler falls back to native speech without forcing spd-say voice typ
     const result = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"hello"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"hello"});`,
     )(requireStub, {
       platform: "linux",
       env: { HOME: root, CODEX_LINUX_READ_ALOUD_ENABLED: "1" },
@@ -1067,7 +1075,7 @@ test("main handler falls back to native speech without forcing spd-say voice typ
     const chineseResult = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文测试。"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"你好，这是中文测试。"});`,
     )(requireStub, {
       platform: "linux",
       env: { HOME: root, CODEX_LINUX_READ_ALOUD_ENABLED: "1" },
@@ -1079,9 +1087,9 @@ test("main handler falls back to native speech without forcing spd-say voice typ
       (entry) => entry.command === "spd-say" && entry.args.includes("cmn"),
     );
     assert.ok(chineseCall);
-    const hebrewResult = new Function(
+    const hebrewResult = await new Function(
       "require", "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"שלום עולם"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text:"שלום עולם"});`,
     )(requireStub, {
       platform: "linux",
       env: { HOME: root, CODEX_LINUX_READ_ALOUD_ENABLED: "1" },
@@ -1094,7 +1102,7 @@ test("main handler falls back to native speech without forcing spd-say voice typ
   }
 });
 
-test("native espeak fallback preserves English defaults and configured voices", () => {
+test("native espeak fallback preserves English defaults and configured voices", async () => {
   const source = [
     "let e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);",
     MAIN_FIXTURE,
@@ -1112,11 +1120,11 @@ test("native espeak fallback preserves English defaults and configured voices", 
       if (name === "node:fs") return { existsSync: () => false, accessSync() { throw Error("missing"); }, constants: fs.constants };
       if (name === "node:child_process") return {
         spawnSync: (command, args) => ({ status: command === "which" && args[0] === "espeak-ng" ? 0 : 1 }),
-        spawn: (command, args) => { spawned.push({ command, args }); return { on() {}, unref() {} }; },
+        spawn: (command, args) => { spawned.push({ command, args }); return fakeSpeechChild(args?.[0] === "-C"); },
       };
       return require(name);
     };
-    const result = new Function("require", "process", "text", `${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text});`)(
+    const result = await new Function("require", "process", "text", `const exports={};${patched};return codexLinuxReadAloudHandle({action:"speak",source:"button",text});`)(
       requireStub, { platform: "linux", env: overrides, resourcesPath: "/missing" }, text,
     );
     assert.equal(result.engine, "espeak-ng");
@@ -1149,7 +1157,7 @@ test("main handler exposes Hugging Face Kokoro download defaults", async () => {
     const result = await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudHandle({action:"config"});`,
+      `const exports={};${patched};return codexLinuxReadAloudHandle({action:"config"});`,
     )(requireStub, processStub);
 
     assert.equal(
@@ -1210,7 +1218,7 @@ test("main handler downloads setup files atomically", async () => {
     await new Function(
       "require",
       "process",
-      `${patched};return codexLinuxReadAloudDownloadFile("https://huggingface.co/test.bin", ${JSON.stringify(target)}, 10);`,
+      `const exports={};${patched};return codexLinuxReadAloudDownloadFile("https://huggingface.co/test.bin", ${JSON.stringify(target)}, 10);`,
     )(requireStub, processStub);
 
     assert.equal(fs.readFileSync(target, "utf8"), "downloaded voice bytes");
