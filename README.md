@@ -318,6 +318,7 @@ requirements, known limitations, configuration, and tests.
 | `start-minimized-to-tray` | Add opt-in General settings to start hidden in the tray, either on every launch or only at login autostart | [Docs](linux-features/start-minimized-to-tray/README.md) |
 | `thorium-chrome-plugin` | Add Thorium to the official bundled Chrome integration | [Docs](linux-features/thorium-chrome-plugin/README.md) |
 | `tray-usage` | Show usage remaining in the Linux system-tray menu | [Docs](linux-features/tray-usage/README.md) |
+| `usage-limit-send-attempt` | Keep Send available in local Codex threads when the signed-in account reports exhausted usage | [Docs](linux-features/usage-limit-send-attempt/README.md) |
 | `ui-tweaks` | Optional visual and interaction customizations | [Docs](linux-features/ui-tweaks/README.md) |
 
 For GNOME Wayland dictation without RemoteDesktop permission prompts, select
