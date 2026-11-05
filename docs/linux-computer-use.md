@@ -41,7 +41,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.41. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.43. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -464,6 +464,25 @@ uinput clamp note or the portal off-screen warning, and appends the KWin
 coordinate mapping. An untargeted scroll whose portal could not start falls back to ydotool; if
 that fails too, the result reports the ydotool error followed by the portal
 error, which may be a denied consent.
+
+Since the v0.7.43 sync, a click, scroll or drag point between monitors gets a
+warning too. The server reads the monitor layout once per screenshot: from the
+portal session when one is cached, then KWin, then the compositor (the Codex
+GNOME Shell extension, Hyprland, kscreen, Sway, COSMIC, niri or wlr output
+management). It runs xrandr only on X11, since an X client could start
+Xwayland. Each new screenshot resets the layout, and the check takes no
+screenshot. Without a layout that fits the screenshot, only its outer
+rectangle is checked. The warning says what the route did with the point. The
+portal sends nothing. On X11 the server keeps the pointer on the screen, so a
+point off the screenshot lands at an edge. On X11 and the uinput pointer, a
+point between monitors lands at a monitor edge or on no visible pixel. A
+failed X11 dispatch gets no warning. A drag gets one warning per endpoint,
+naming the start or end coordinate, and a uinput drag carries the clamp note
+for each clamped endpoint. A portal drag with an endpoint off the shared
+monitors still sends nothing, and its error names each endpoint that stopped
+it. When a stale uinput device cannot be replaced, the result says the device
+was removed and where a retry goes: a new device from a fresh screenshot,
+then the portal, ydotool, or a refusal on Wayland.
 
 On COSMIC Wayland, pointer input uses per-monitor portal streams instead of
 uinput absolute coordinates. EIS input waits for its devices to resume. Portal

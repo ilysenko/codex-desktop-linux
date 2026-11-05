@@ -7,6 +7,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.43, which
+  includes v0.7.42. A click, scroll or drag coordinate between monitors now
+  gets a warning. Monitors of different heights or offset rows leave parts of
+  the screenshot that no monitor shows, and a point there used to pass as
+  on-screen. The server reads the monitor layout once per screenshot, from the
+  portal session, KWin or the compositor, and from RandR only on X11, so it
+  never starts Xwayland. Without a layout that fits the screenshot, only its
+  outer rectangle is checked, as before. Off-screen warnings say what the
+  route did with the point: the portal sends nothing, the X server keeps the
+  pointer on the screen, and the uinput device clamps it. A drag gets these
+  warnings for each endpoint, a uinput drag says where an off-screen endpoint
+  was clamped to, and a portal drag error names each endpoint that stopped it.
+  When a stale uinput device cannot be replaced, the result names the route a
+  retry takes, and a KWin element click reports that device failure instead
+  of a mapping failure. Socket test fixtures, Rust and Python, stay under the
+  Unix path limit when `TMPDIR` is long.
 - Synchronize the embedded Computer Use backend to standalone v0.7.41. When a
   later screenshot reports a different desktop size, the next click,
   coordinate scroll or drag replaces the uinput absolute pointer with one
