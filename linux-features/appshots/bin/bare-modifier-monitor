@@ -162,7 +162,7 @@ cleanup() {
 
     # Only the directory this script made.
     case "$stdbuf_dir" in
-        */codex-appshots-stdbuf.??????) rm -rf -- "$stdbuf_dir" ;;
+        */codex-appshots-stdbuf.??????) rm -rf -- "$stdbuf_dir" 2>/dev/null || true ;;
     esac
 }
 trap cleanup EXIT

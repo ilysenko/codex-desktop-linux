@@ -86,7 +86,6 @@ test("stage hook installs the orphan reaper without wrapping node_repl", (t) => 
   assert.match(fs.readFileSync(nodeRepl, "utf8"), /original node_repl/);
   assert.equal(fs.existsSync(path.join(appDir, "resources", "node_repl.codex-linux-original")), false);
   assert.equal(fs.existsSync(path.join(installedRoot, "mcp-helper-reaper", "node-repl-wrapper.sh")), false);
-
 });
 
 test("stage hook restores a node_repl wrapper left by the previous feature version", (t) => {
@@ -118,7 +117,6 @@ test("stage hook restores a node_repl wrapper left by the previous feature versi
   assert.match(fs.readFileSync(nodeRepl, "utf8"), /original node_repl/);
   assert.doesNotMatch(fs.readFileSync(nodeRepl, "utf8"), /mcp-helper-reaper-node-repl-wrapper/);
   assert.equal(fs.existsSync(originalNodeRepl), false);
-
 });
 
 test("cleanup hook restores node_repl and removes staged hooks", (t) => {
@@ -171,7 +169,6 @@ test("cleanup hook restores node_repl and removes staged hooks", (t) => {
   const hooks = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
   const commands = hooks.hooks.SessionStart.flatMap((entry) => entry.hooks ?? []).map((hook) => hook.command);
   assert.deepEqual(commands, ["existing mcp report # existing-session-hook"]);
-
 });
 
 test("session hook merge preserves existing SessionStart hook and deduplicates reaper hook", (t) => {
@@ -223,7 +220,6 @@ test("session hook merge preserves existing SessionStart hook and deduplicates r
   assert.match(reaperCommands[0], /--codex-parent "\$PPID"/);
   assert.match(reaperCommands[0], /--include-orphans/);
   assert.match(reaperCommands[0], /--app-dir /);
-
 });
 
 function reaperHookCommand(codexHome) {
@@ -285,7 +281,6 @@ test("session hook command stays stable across AppImage mount paths", async (t) 
   assert.ok(calls.startsWith(`${appDirB}/.codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper `));
   assert.ok(calls.includes(`--app-dir ${appDirB} `));
   assert.match(calls, /--codex-parent \d+ --include-orphans/);
-
 });
 
 test("session hook command has no Nix store fallback", (t) => {
@@ -312,7 +307,6 @@ test("session hook command has no Nix store fallback", (t) => {
   const command = reaperHookCommand(codexHome);
   assert.doesNotMatch(command, /\/nix\/store/);
   assert.match(command, /\|\| codex_mcp_reaper_app=''; /);
-
 });
 
 test("native session hook falls back to its install directory outside the app", async (t) => {
@@ -333,7 +327,6 @@ test("native session hook falls back to its install directory outside the app", 
   const calls = await waitForFileContent(callLog, (content) => content.includes("--quiet"));
   assert.ok(calls.startsWith(`${appDir}/.codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper `));
   assert.ok(calls.includes(`--app-dir ${appDir} `));
-
 });
 
 test("cold-start hook launches a short all-parent scan", async (t) => {
@@ -363,7 +356,6 @@ test("cold-start hook launches a short all-parent scan", async (t) => {
   assert.match(calls, /--all-codex-parents/);
   assert.match(calls, /--include-orphans/);
   assert.match(calls, /--app-dir /);
-
 });
 
 test("staged lifecycle hooks reach the reaper through the launcher", async (t) => {
@@ -443,5 +435,4 @@ exit 7
     "codex://thread/123",
   ]);
   assert.match(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"), /codex-mcp-helper-reaper-session/);
-
 });

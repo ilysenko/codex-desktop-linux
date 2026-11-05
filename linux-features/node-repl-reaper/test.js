@@ -36,8 +36,11 @@ test("tracks only the latest official ChatGPT and CUA helper layout", () => {
   assert.doesNotMatch(source, /\$APP_DIR\/resources\/node_repl(?:\.|\")/);
 });
 
-function makeFakeApp() {
+// The fake app is removed after the test, also when its setup throws. The
+// tests' finally blocks still stop their processes first.
+function makeFakeApp(t) {
   const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-node-repl-reaper-test-"));
+  t.after(() => fs.rmSync(appDir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(appDir, "resources", "cua_node", "bin"), { recursive: true });
   // The fake binaries run Node through app-local symlinks; what matters is
   // that /proc/<pid>/cmdline starts with the install-scoped executable path,
@@ -156,8 +159,8 @@ for (const { wrapped, executableOwner, launcherName } of [
   { wrapped: false, executableOwner: true, launcherName: "codex-linux-sandbox" },
   { wrapped: false, executableOwner: true, launcherName: "codex-mcp-helper-reaper" },
 ]) {
-  test(`preserves a ${wrapped ? "wrapped " : ""}helper through ${launcherName} until its ${executableOwner ? "executable" : "script"} Codex owner exits`, async () => {
-    const { appDir, nodeReplBin } = makeFakeApp();
+  test(`preserves a ${wrapped ? "wrapped " : ""}helper through ${launcherName} until its ${executableOwner ? "executable" : "script"} Codex owner exits`, async (t) => {
+    const { appDir, nodeReplBin } = makeFakeApp(t);
     const helperBin = wrapped ? `${nodeReplBin}.codex-linux-original` : nodeReplBin;
     if (wrapped) fs.symlinkSync(process.execPath, helperBin);
     const launcher = path.join(appDir, "launch.mjs");
@@ -204,7 +207,6 @@ for (const { wrapped, executableOwner, launcherName } of [
       for (const pid of [childPid, launcherPid, owner.pid]) {
         if (pid && pidAlive(pid)) process.kill(pid, "SIGKILL");
       }
-      fs.rmSync(appDir, { recursive: true, force: true });
     }
   });
 }
@@ -262,8 +264,8 @@ printf '%s %s\\n' "$1" "$2" >> "${callLog}"
   assert.ok(calls.split("\n").includes(`${appDir} once`));
 });
 
-test("reaps an orphaned node_repl after its launching process exits", async () => {
-  const { appDir, nodeReplBin } = makeFakeApp();
+test("reaps an orphaned node_repl after its launching process exits", async (t) => {
+  const { appDir, nodeReplBin } = makeFakeApp(t);
   const leakedPid = await spawnOrphan(nodeReplBin);
   try {
     const output = runReaperOnce(appDir);
@@ -271,12 +273,11 @@ test("reaps an orphaned node_repl after its launching process exits", async () =
     await waitForExit(leakedPid);
   } finally {
     if (pidAlive(leakedPid)) process.kill(leakedPid, "SIGKILL");
-    fs.rmSync(appDir, { recursive: true, force: true });
   }
 });
 
-test("reaps a wrapped node_repl running from the original backup path", async () => {
-  const { appDir } = makeFakeApp();
+test("reaps a wrapped node_repl running from the original backup path", async (t) => {
+  const { appDir } = makeFakeApp(t);
   const originalNodeReplBin = path.join(appDir, "resources", "cua_node", "bin", "node_repl.codex-linux-original");
   fs.symlinkSync(process.execPath, originalNodeReplBin);
   const leakedPid = await spawnOrphan(originalNodeReplBin);
@@ -286,12 +287,11 @@ test("reaps a wrapped node_repl running from the original backup path", async ()
     await waitForExit(leakedPid);
   } finally {
     if (pidAlive(leakedPid)) process.kill(leakedPid, "SIGKILL");
-    fs.rmSync(appDir, { recursive: true, force: true });
   }
 });
 
-test("leaves a node_repl with a live codex app-server parent alone", async () => {
-  const { appDir, nodeReplBin } = makeFakeApp();
+test("leaves a node_repl with a live codex app-server parent alone", async (t) => {
+  const { appDir, nodeReplBin } = makeFakeApp(t);
   // Fake app-server: an executable named codex run with an app-server arg,
   // so the parent's /proc cmdline matches "*codex*app-server*". It spawns
   // the helper and stays alive holding it.
@@ -326,12 +326,11 @@ test("leaves a node_repl with a live codex app-server parent alone", async () =>
   } finally {
     try { appServer.kill("SIGKILL"); } catch {}
     spawnSync("pkill", ["-9", "-f", nodeReplBin]);
-    fs.rmSync(appDir, { recursive: true, force: true });
   }
 });
 
-test("leaves a node_repl with a live codex resume parent alone", async () => {
-  const { appDir, nodeReplBin } = makeFakeApp();
+test("leaves a node_repl with a live codex resume parent alone", async (t) => {
+  const { appDir, nodeReplBin } = makeFakeApp(t);
   const fakeCodex = path.join(appDir, "codex");
   fs.writeFileSync(
     fakeCodex,
@@ -357,12 +356,11 @@ test("leaves a node_repl with a live codex resume parent alone", async () => {
   } finally {
     try { cliSession.kill("SIGKILL"); } catch {}
     spawnSync("pkill", ["-9", "-f", nodeReplBin]);
-    fs.rmSync(appDir, { recursive: true, force: true });
   }
 });
 
-test("watch mode waits for the cold-start ChatGPT process before self-terminating", async () => {
-  const { appDir, chatGptBin } = makeFakeApp();
+test("watch mode waits for the cold-start ChatGPT process before self-terminating", async (t) => {
+  const { appDir, chatGptBin } = makeFakeApp(t);
   const watcher = spawn("bash", [REAPER, appDir, "watch"], {
     encoding: "utf8",
     env: {
@@ -386,6 +384,5 @@ test("watch mode waits for the cold-start ChatGPT process before self-terminatin
   } finally {
     try { watcher.kill("SIGKILL"); } catch {}
     try { chatGpt?.kill("SIGKILL"); } catch {}
-    fs.rmSync(appDir, { recursive: true, force: true });
   }
 });
