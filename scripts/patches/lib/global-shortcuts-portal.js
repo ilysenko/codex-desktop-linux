@@ -580,7 +580,7 @@ function declaredBinding(body, parameters, name) {
   catch { return true; }
 }
 
-function lifecyclePlan(source, owner) {
+function windowWiringPlan(source, owner) {
   const startup = publishedStartup(owner.factory);
   const lifecycleHeader = new RegExp(`function\\(\\{((?:${IDENT}:${IDENT},)*isWindows:${IDENT},(?:${IDENT}:${IDENT},)*hotkeyWindowLifecycleManager:${IDENT},globalDictationLifecycleManager:${IDENT},(?:${IDENT}:${IDENT},)*flushAndDisposeContext:${IDENT},disposables:${IDENT}(?:,${IDENT}:${IDENT})*)\\}\\)\\{`, "gu");
   const header = one(codeMatches(startup.body, lifecycleHeader, true), "current accepted-quit installer");
@@ -616,6 +616,11 @@ function lifecyclePlan(source, owner) {
     roles[name] = rootProperty(windowProperties, name);
     if (!new RegExp(`^${IDENT}$`, "u").test(roles[name]) || !declaredBinding(producerBody, `{${producerHead[1]}}`, roles[name])) throw new Error(`Unbound native window ${name}`);
   }
+  return { startup, header, call, aliases, producer, producerBody, producerParameters: producerHead[1], windowProperties, roles };
+}
+
+function lifecyclePlan(source, owner) {
+  const { startup, header, call, aliases, producer, windowProperties, roles } = windowWiringPlan(source, owner);
   const mark = windowProperties.get("markAppQuitting");
   const markValue = `()=>{${roles.windowManager}.markAppQuitting(),${roles.avatarOverlayManager}.markAppQuitting(),${roles.notchOverlayManager}?.markAppQuitting(),${roles.spotlightController}.dispose()}`;
   if (!mark || mark.value !== markValue) throw new Error("Accepted application quit before window cleanup is unavailable");
@@ -822,9 +827,12 @@ function restoreCurrentPortalSource(source, block) {
   return restored;
 }
 
+function hasPortalArtifact(source) {
+  return source.includes(PATCH_MARKER) || /(?:function |var |let |const )codexLinuxGlobalShortcuts/u.test(source) || source.includes("codexLinuxGlobalShortcutsQuitStopped") || source.includes("codexLinuxGlobalShortcutsPortalShutdown(");
+}
+
 function installPortalBackend(source) {
-  const artifact = source.includes(PATCH_MARKER) || /(?:function |var |let |const )codexLinuxGlobalShortcuts/u.test(source) || source.includes("codexLinuxGlobalShortcutsQuitStopped") || source.includes("codexLinuxGlobalShortcutsPortalShutdown(");
-  if (!artifact) {
+  if (!hasPortalArtifact(source)) {
     assertPortalBindings(source);
     return applyCurrentPortalBackend(source);
   }
@@ -838,7 +846,49 @@ function installPortalBackend(source) {
   return source;
 }
 
+// Consumer-facing semantic metadata. The source parser and validation plan stay
+// private, and every range below belongs to the actual supplied source.
+function inspectGlobalShortcutsPortal(source) {
+  const result = { state: "unrelated", reason: null, factoryIds: [], owner: null };
+  if (typeof source !== "string") return { ...result, state: "drifted", reason: "Expected main-process source text" };
+  try {
+    result.factoryIds = mainFactories(source).map(factory => factory.identity);
+  } catch (error) {
+    const authorityHint = codeMatches(source,
+      /(?<![\w$.])exports\s*(?:\.\s*(?:ids|modules)|\[\s*(?:"(?:ids|modules)"|'(?:ids|modules)')\s*\])/gu).length > 0;
+    return { ...result, state: error instanceof SyntaxError || authorityHint || hasPortalArtifact(source) ? "drifted" : "unrelated", reason: error.message };
+  }
+  let owned;
+  try { owned = registrationOwner(source); }
+  catch (error) {
+    return { ...result, state: hasPortalArtifact(source) || !/registration owner matched 0 times/u.test(error.message) ? "drifted" : "unrelated", reason: error.message };
+  }
+  try {
+    const installed = installPortalBackend(source);
+    const wiring = windowWiringPlan(source, owned);
+    const bindings = Object.fromEntries([...wiring.windowProperties]
+      .filter(([name, property]) => name !== "__proto__" && typeof property.value === "string" &&
+        new RegExp(`^${IDENT}$`, "u").test(property.value) &&
+        declaredBinding(wiring.producerBody, `{${wiring.producerParameters}}`, property.value))
+      .map(([name, property]) => [name, property.value]));
+    const { factory, ...registration } = owned;
+    return {
+      state: installed === source ? "shared" : "current", reason: null,
+      factoryIds: result.factoryIds,
+      owner: {
+        id: factory.identity,
+        factoryBody: { start: factory.start, end: factory.end },
+        registration,
+        windowServices: {
+          body: { start: wiring.producer.open + 1, end: wiring.producer.close },
+          bindings,
+        },
+      },
+    };
+  } catch (error) { return { ...result, state: "drifted", reason: error.message }; }
+}
+
 module.exports = {
   IDENT, PATCH_MARKER, literal, platformIs, replaceUnique, registrationContract, registrationFunction,
-  insertBeforeRegistration, replaceInRegistrationModule, tagCommand, installPortalBackend,
+  insertBeforeRegistration, replaceInRegistrationModule, tagCommand, installPortalBackend, inspectGlobalShortcutsPortal,
 };
