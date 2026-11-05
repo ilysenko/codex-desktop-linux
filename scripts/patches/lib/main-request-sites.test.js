@@ -77,7 +77,7 @@ function runtime(source) {
 test("pure interface exposes only verified sites/parameters and view-only global state", () => {
   const source = fixture(), graph = inspect(source);
   assert.equal(graph.ok, true, graph.reason);
-  assert.deepEqual(Object.keys(graph).sort(), ["ok", "viewFetch", "wrapperRequest"]);
+  assert.deepEqual(Object.keys(graph).sort(), ["ok", "scope", "viewFetch", "wrapperRequest"]);
   assert.equal(graph.viewFetch.globalStateExpr, "this.globalState");
   assert.equal(Object.hasOwn(graph.wrapperRequest, "globalStateExpr"), false);
   assert.equal(graph.viewFetch.insertAt, graph.viewFetch.nativeStart);
@@ -85,6 +85,30 @@ test("pure interface exposes only verified sites/parameters and view-only global
   assert.ok(source.slice(graph.viewFetch.nativeStart).startsWith("await this.fetchWrapper.handleRequest(e,t)"));
   assert.ok(source.slice(graph.wrapperRequest.nativeStart).startsWith('if("/codex/dictation-stream-connect-info"===t.url)'));
   assert.deepEqual(inspect(source), graph, "inspection has no source edits or state changes");
+});
+
+test("verified source ranges keep feature contracts inside the actual factory, startup and host", () => {
+  const source = fixture(), graph = inspect(source);
+  assert.equal(graph.ok, true, graph.reason);
+  const { scope } = graph;
+  const factory = source.slice(scope.factoryStart, scope.factoryEnd);
+  const startup = source.slice(scope.startupStart, scope.startupEnd);
+  const host = source.slice(scope.hostStart, scope.hostEnd);
+  assert.ok(factory.startsWith("class RequestWrapper{"));
+  assert.ok(factory.endsWith("module.exports=exports;"));
+  assert.ok(startup.startsWith("let created=function("));
+  assert.ok(startup.endsWith("return created"));
+  assert.ok(host.startsWith("class Host{"));
+  assert.ok(host.endsWith("this.seen.push(t.type)}}"));
+  assert.ok(scope.factoryStart <= scope.startupStart && scope.startupEnd <= scope.factoryEnd);
+  assert.ok(scope.factoryStart <= scope.hostStart && scope.hostEnd <= scope.factoryEnd);
+  for (const site of [graph.viewFetch, graph.wrapperRequest]) {
+    assert.ok(scope.factoryStart <= site.ownerStart && site.ownerEnd <= scope.factoryEnd);
+    assert.ok(site.ownerStart < site.methodBodyStart && site.methodBodyEnd < site.ownerEnd);
+    assert.ok(site.methodBodyStart <= site.prefixStart && site.prefixEnd <= site.methodBodyEnd);
+    const method = source.slice(site.methodBodyStart, site.methodBodyEnd);
+    assert.doesNotThrow(() => new vm.Script(`async function request(${site.webContentsVar},${site.requestVar}){${method}}`));
+  }
 });
 
 test("current CJS carrier supports exponent keys and applies JavaScript property identity", () => {

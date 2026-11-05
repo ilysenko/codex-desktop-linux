@@ -139,7 +139,7 @@ function startup(factory) {
   const head = one(matches(factory.body, new RegExp(`(?:async )?function ${escapeRegExp(publication[1])}\\((${ID})?\\)\\{`, "gu")));
   if (!head || !statementAt(factory.body, head.index) || !stableBinding(factory.body, publication[1])) return null;
   const open = head.index + head[0].length - 1, end = findMatchingBrace(factory.body, open);
-  return end < open ? null : { body: factory.body.slice(open + 1, end), parameters: head[1] ?? "" };
+  return end < open ? null : { body: factory.body.slice(open + 1, end), bodyStart: open + 1, bodyEnd: end, parameters: head[1] ?? "" };
 }
 function ownBinding(scope, name) {
   try { new Script(`async function __codexMainRequestBinding(${scope.parameters}){${scope.body}\n;let ${name};}`); return false; }
@@ -239,6 +239,13 @@ function prefixComplete(prefix, site, ids) {
   return true;
 }
 
+function ownerBounds(factory, owner, entry) {
+  return {
+    ownerStart: factory.start + owner.start, ownerEnd: factory.start + owner.end + 1,
+    methodBodyStart: factory.start + entry.bodyStart, methodBodyEnd: factory.start + entry.bodyEnd,
+  };
+}
+
 function wrapper(factory, entryIndex) {
   const owner = owningClass(factory, entryIndex);
   if (!owner) return null;
@@ -264,7 +271,7 @@ function wrapper(factory, entryIndex) {
     const kind = one(matches(object, /responseType:"(success|error)"/gu));
     if (!kind || kind[1] !== (index === 0 ? "success" : "error")) return null;
   }
-  return { owner, entry, site: { insertAt: factory.start + entry.bodyStart, nativeStart: factory.start + entry.bodyStart + nativeStart,
+  return { owner, entry, site: { ...ownerBounds(factory, owner, entry), insertAt: factory.start + entry.bodyStart, nativeStart: factory.start + entry.bodyStart + nativeStart,
     prefixStart: factory.start + entry.bodyStart, prefixEnd: factory.start + entry.bodyStart + nativeStart,
     webContentsVar: entry.view, requestVar: entry.request, senderExpr } };
 }
@@ -291,7 +298,7 @@ function view(factory, forwardIndex) {
   const params = Object.fromEntries(["chunkedMessageSender", "fetchWrapper", "globalState"].map(field => [field, assigned(ctor.body, field)]));
   const indices = Object.fromEntries(Object.entries(params).map(([field, parameter]) => [field, ctor.parameters.indexOf(parameter)]));
   if (Object.values(indices).some(index => index < 0) || new Set(Object.values(indices)).size !== 3) return null;
-  return { owner, entry, indices, site: { insertAt, nativeStart, prefixStart: insertAt, prefixEnd: nativeStart,
+  return { owner, entry, indices, site: { ...ownerBounds(factory, owner, entry), insertAt, nativeStart, prefixStart: insertAt, prefixEnd: nativeStart,
     webContentsVar: entry.view, requestVar: entry.request, senderExpr: "this.chunkedMessageSender.sendInlineMessageForView", globalStateExpr: "this.globalState" } };
 }
 function connected(factory, wrapped, viewed) {
@@ -323,7 +330,9 @@ function connected(factory, wrapped, viewed) {
 /** Locate the two current native request insertion sites without editing or
  * executing source. Existing route payload/helper semantics remain owned by
  * each feature; this module validates their complete request/reply statement
- * shape and the native continuation, sender and profile-state wiring. */
+ * shape and the native continuation, sender and profile-state wiring. Scope
+ * metadata uses half-open source offsets: factory/startup/method body ranges
+ * exclude braces, while host/owner declaration ranges include their braces. */
 function inspectMainRequestSites(source) {
   if (typeof source !== "string") return { ok: false, reason: "expected main-process source text" };
   try {
@@ -343,7 +352,11 @@ function inspectMainRequestSites(source) {
         const ids = new Set();
         if (!prefixComplete(source.slice(viewed.site.prefixStart, viewed.site.prefixEnd), viewed.site, ids) ||
             !prefixComplete(source.slice(wrapped.site.prefixStart, wrapped.site.prefixEnd), wrapped.site, ids)) continue;
-        graphs.push({ ok: true, viewFetch: viewed.site, wrapperRequest: wrapped.site });
+        graphs.push({ ok: true, scope: {
+          factoryStart: factory.start, factoryEnd: factory.end,
+          startupStart: factory.start + entry.bodyStart, startupEnd: factory.start + entry.bodyEnd,
+          hostStart: factory.start + host.start, hostEnd: factory.start + host.end + 1,
+        }, viewFetch: viewed.site, wrapperRequest: wrapped.site });
       }
     }
     if (graphs.length !== 1) return { ok: false, reason: graphs.length ? "ambiguous native main request graph" : "missing or incomplete native main request graph" };
