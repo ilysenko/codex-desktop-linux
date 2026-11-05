@@ -150,7 +150,11 @@ linux_features_root_path() {
 
 remove_update_builder_test_files() {
     find "$1" -mindepth 1 \
-        \( -name test.js -o -name '*.test.js' -o -name '*.test-helpers.js' -o -name fixtures \) \
+        \( -name test.js -o -name 'test.[cm]js' \
+           -o -name '*.test.js' -o -name '*.test.[cm]js' \
+           -o -name test-helpers.js -o -name 'test-helpers.[cm]js' \
+           -o -name '*.test-helpers.js' -o -name '*.test-helpers.[cm]js' \
+           -o -name fixtures \) \
         -prune -exec rm -rf -- {} +
 }
 

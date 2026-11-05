@@ -208,8 +208,10 @@ test("Mini packaging retains its helper independently of global shortcuts", (t) 
   assert.equal(fs.readFileSync(retained, "utf8"), "#!/bin/sh\nexit 0\n");
   assert.equal(fs.statSync(retained).mode & 0o777, 0o755);
   const feature = path.join(builder, "linux-features/pet-overlay");
-  for (const relative of ["kwin-helper/src", "kwin-helper/tests", "kwin-helper/Cargo.toml", "kwin-helper/Cargo.lock"])
-    assert.equal(fs.existsSync(path.join(feature, relative)), false, relative);
+  for (const relative of [
+    "kwin-helper/src", "kwin-helper/tests", "kwin-helper/Cargo.toml", "kwin-helper/Cargo.lock",
+    "test.js", "kwin-bridge.test.cjs", "renderer-gesture.test.cjs", "native-kwin.test-helpers.cjs", "fixtures",
+  ]) assert.equal(fs.existsSync(path.join(feature, relative)), false, relative);
   for (const relative of ["patch.js", "native-kwin.cjs", "kwin-bridge.cjs", "kwin-script.cjs", "stage.sh"])
     assert.equal(fs.existsSync(path.join(feature, relative)), true, relative);
 });
@@ -537,8 +539,19 @@ test("update-builder omits test-only files without changing private features or 
   }
   fs.writeFileSync(path.join(features, "features.json"), JSON.stringify({ enabled: ["public-fixture", "private-fixture"] }));
   const trees = ["linux-features/public-fixture", "linux-features/local/private-fixture", "scripts/patches/filter-fixture"];
-  const omitted = ["test.js", "nested/example.test.js", "nested/example.test-helpers.js", "fixtures/input.json", "nested/fixtures/input.json"];
-  const retained = ["patch.js", "nested/runtime.js", "fixtures.json", "nested/tests/runtime.js"];
+  const omitted = [
+    ...["js", "cjs", "mjs"].flatMap(extension => [
+      `test.${extension}`, `nested/example.test.${extension}`,
+      `test-helpers.${extension}`, `nested/example.test-helpers.${extension}`,
+    ]),
+    "fixtures/input.json", "nested/fixtures/input.json",
+  ];
+  const retained = [
+    "patch.js", "nested/runtime.js", "nested/runtime.cjs", "nested/runtime.mjs",
+    "fixtures.json", "nested/tests/runtime.js", "nested/test-runtime.cjs",
+    "contest.js", "nested/foo.test-support.cjs",
+    "nested/example.test.cjs.map", "nested/example.test-helpers.mjs.map",
+  ];
   const original = new Map();
   for (const relative of trees) {
     const dir = path.join(source, relative);
@@ -590,7 +603,11 @@ test("update-builder omits test-only files without changing private features or 
   const inventory = fs.readFileSync(path.join(builder, ".codex-linux/update-builder-manifest.txt"), "utf8").split("\n");
   assert.equal(inventory.includes("linux-features/public-fixture/test.js"), false);
   assert.equal(inventory.includes("linux-features/local/private-fixture/test.js"), true);
-  assert.equal(inventory.includes("scripts/patches/filter-fixture/nested/example.test.js"), false);
+  for (const extension of ["js", "cjs", "mjs"]) {
+    assert.equal(inventory.includes(`linux-features/public-fixture/nested/example.test-helpers.${extension}`), false);
+    assert.equal(inventory.includes(`scripts/patches/filter-fixture/nested/example.test.${extension}`), false);
+    assert.equal(inventory.includes(`linux-features/local/private-fixture/nested/example.test.${extension}`), true);
+  }
 });
 
 const readAloudPluginPath = "resources/plugins/openai-bundled/plugins/read-aloud";

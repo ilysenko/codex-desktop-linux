@@ -1196,7 +1196,7 @@ function kwinMascotDragScenario({ ozonePlatform = "wayland", lockPosition = fals
     gate: fn => { gate = fn; } };
 }
 
-require("./native-kwin-tests.cjs")({ controllerFromPatchedSource, applyPetOverlayPatch, nativePresentationBundleFixture });
+require("./native-kwin.test-helpers.cjs")({ controllerFromPatchedSource, applyPetOverlayPatch, nativePresentationBundleFixture });
 
 test("Wayland mascot dragging uses the KWin cursor and crosses the old overlay boundary without a jump", async () => {
   const scenario = kwinMascotDragScenario();
