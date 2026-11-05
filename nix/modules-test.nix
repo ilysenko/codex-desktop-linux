@@ -55,7 +55,8 @@ let
     chmod +x "$out/bin/codex-desktop"
     printf '#!/bin/sh\nexit 0\n' > "$out/opt/codex-desktop/resources/codex"
     chmod +x "$out/opt/codex-desktop/resources/codex"
-    printf '[Desktop Entry]\nExec=%s/bin/codex-desktop\n' "$out" > "$out/share/applications/codex-desktop.desktop"
+    printf '[Desktop Entry]\nExec=%s/bin/codex-desktop\nActions=new-window;\n\n[Desktop Action new-window]\nName=New Window\nExec=%s/bin/codex-desktop --codex-community-new-window\n' \
+      "$out" "$out" > "$out/share/applications/codex-desktop.desktop"
   '';
   fakeBundledCli = import ./bundled-codex-cli.nix {
     inherit pkgs;
@@ -258,7 +259,9 @@ pkgs.runCommand "codex-desktop-module-evaluation" { } ''
   test "$(${builtins.head bundledNixOS.environment.systemPackages}/bin/codex-desktop)" = "${fakeBundledCli}/bin/codex"
   test "$(${homeCliPackage}/bin/codex-desktop)" = "${fakeCli}/bin/codex"
   test "$(CODEX_CLI_PATH=/explicit/codex ${homeCliPackage}/bin/codex-desktop)" = "/explicit/codex"
-  grep -F "Exec=${homeCliPackage}/bin/codex-desktop" \
+  grep -Fx "Exec=${homeCliPackage}/bin/codex-desktop" \
+    ${homeCliPackage}/share/applications/codex-desktop.desktop
+  grep -Fx "Exec=${homeCliPackage}/bin/codex-desktop --codex-community-new-window" \
     ${homeCliPackage}/share/applications/codex-desktop.desktop
   touch "$out"
 ''

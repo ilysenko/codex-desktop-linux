@@ -28,26 +28,40 @@ node --test scripts/gentoo-native.test.js scripts/gentoo-install.test.js scripts
 assert_contains packaging/linux/codex-desktop.desktop '^Name=ChatGPT Community$'
 assert_contains packaging/linux/codex-desktop.desktop '^Comment=Community Linux distribution based on OpenAI ChatGPT$'
 
-# The official app ignores --new-instance and CODEX_MULTI_LAUNCH: a second
-# launch only focuses the existing window. A "New Window" desktop action built
-# on them does nothing while the app runs (#1655), so no entry may offer one.
+# The retired launcher flags only focus the existing window (#1655).
 for desktop_source in packaging/linux/codex-desktop.desktop \
     packaging/appimage/codex-desktop.desktop flake.nix; do
-    assert_absent "$desktop_source" 'new-window|new-instance|CODEX_MULTI_LAUNCH'
+    assert_absent "$desktop_source" 'new-instance|CODEX_MULTI_LAUNCH'
 done
 desktop_fixture="$(mktemp -d "${TMPDIR:-/tmp}/codex-desktop-entry-smoke.XXXXXX")"
 (
-    eval "$(sed -n '/^sed_escape_replacement()/,/^}/p; /^package_with_updater_enabled()/,/^}/p; /^render_desktop_entry()/,/^}/p' scripts/lib/package-common.sh)"
+    source scripts/lib/package-common.sh
+    APP_DIR="$desktop_fixture/app"
     PACKAGE_NAME=codex-desktop
     DESKTOP_TEMPLATE=packaging/linux/codex-desktop.desktop
     PACKAGE_WITH_UPDATER=1 render_desktop_entry "$desktop_fixture/with-updater.desktop"
     PACKAGE_WITH_UPDATER=0 render_desktop_entry "$desktop_fixture/without-updater.desktop"
+    mkdir -p "$APP_DIR/.codex-linux"
+    report="$APP_DIR/.codex-linux/patch-report.json"
+    printf '%s\n' '{"enabledFeatures":["desktop-new-window"],"patches":[{"name":"feature:desktop-new-window:second-instance","status":"applied"}]}' > "$report"
+    PACKAGE_WITH_UPDATER=1 render_desktop_entry "$desktop_fixture/new-window-and-updater.desktop"
+    PACKAGE_WITH_UPDATER=0 render_desktop_entry "$desktop_fixture/new-window-only.desktop"
+    filter_desktop_actions 0 < packaging/appimage/codex-desktop.desktop > "$desktop_fixture/appimage.desktop"
+    sed -i 's/"applied"/"skipped-optional"/' "$report"
+    PACKAGE_WITH_UPDATER=0 render_desktop_entry "$desktop_fixture/drifted.desktop"
 )
 assert_contains "$desktop_fixture/with-updater.desktop" '^Actions=CheckForUpdates;InstallReadyUpdate;$'
 assert_absent "$desktop_fixture/without-updater.desktop" '^Actions=|^\[Desktop Action '
 assert_contains "$desktop_fixture/without-updater.desktop" '^Exec=.*/usr/bin/codex-desktop %u$'
+assert_contains "$desktop_fixture/new-window-and-updater.desktop" '^Actions=new-window;CheckForUpdates;InstallReadyUpdate;$'
+assert_contains "$desktop_fixture/new-window-only.desktop" '^Actions=new-window;$'
+assert_contains "$desktop_fixture/new-window-only.desktop" '^Exec=.*/usr/bin/codex-desktop --codex-community-new-window$'
+assert_absent "$desktop_fixture/new-window-only.desktop" 'CheckForUpdates|InstallReadyUpdate'
+assert_contains "$desktop_fixture/appimage.desktop" '^Exec=AppRun --codex-community-new-window$'
+assert_absent "$desktop_fixture/drifted.desktop" 'new-window'
 if command -v desktop-file-validate >/dev/null 2>&1; then
-    desktop-file-validate "$desktop_fixture/with-updater.desktop" "$desktop_fixture/without-updater.desktop" ||
+    desktop-file-validate "$desktop_fixture/with-updater.desktop" "$desktop_fixture/without-updater.desktop" \
+        "$desktop_fixture/new-window-and-updater.desktop" "$desktop_fixture/new-window-only.desktop" ||
         fail "rendered desktop entries are invalid"
 fi
 rm -rf "$desktop_fixture"

@@ -79,7 +79,8 @@ prepare_appdir() {
     render_template "$APPRUN_TEMPLATE" "$APPDIR/AppRun"
     chmod 0755 "$APPDIR/AppRun"
 
-    render_template "$DESKTOP_TEMPLATE" "$APPDIR/$PACKAGE_NAME.desktop"
+    render_template "$DESKTOP_TEMPLATE" /dev/stdout |
+        filter_desktop_actions 0 > "$APPDIR/$PACKAGE_NAME.desktop"
     chmod 0644 "$APPDIR/$PACKAGE_NAME.desktop"
     cp "$APPDIR/$PACKAGE_NAME.desktop" "$APPDIR/usr/share/applications/$PACKAGE_NAME.desktop"
 

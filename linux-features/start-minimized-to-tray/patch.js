@@ -121,6 +121,7 @@ function codexLinuxStartMinimizedPreference(globalState, runtime = process, read
   return {
     enabled, onlyOnBoot, autostart,
     requested: runtime.platform === "linux" && (onlyOnBoot ? autostart : enabled) &&
+      !runtime.argv.includes("--codex-community-new-window") &&
       runtime.argv.slice(1).every(arg => arg.startsWith("-")),
   };
 }

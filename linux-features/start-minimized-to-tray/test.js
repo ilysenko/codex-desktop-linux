@@ -224,6 +224,15 @@ test("second launch reveals the hidden window through the upstream handler", asy
   assert.deepEqual(calls, ["hideHotkey", "show", "attribution", "focus"]);
 });
 
+test("an explicit desktop New Window launch opens visibly with tray startup enabled", async () => {
+  const argv = ["ChatGPT", "--codex-community-new-window"];
+  const regular = await runStartup({ argv });
+  const autostart = await runStartup({ onlyOnBoot: true, argv: [...argv, "--codex-autostart"] });
+  for (const { calls } of [regular, autostart]) {
+    assert.deepEqual(calls, ["show", "attribution", "focus"]);
+  }
+});
+
 test("boot-only works independently, overrides all-starts preference, and leaves manual starts visible", async () => {
   for (const preference of [true, false, null]) {
     assert.deepEqual((await runStartup({ preference, onlyOnBoot: true })).calls, ["show", "attribution", "focus"]);
