@@ -17,13 +17,17 @@ for its limitations.
 It supports:
 
 - app listing and accessibility trees through AT-SPI
-- screenshots through GNOME Shell DBus, the Codex GNOME Shell extension, or XDG Desktop Portal
+- screenshots through pixelflux when configured, then GNOME Shell DBus, the
+  Codex GNOME Shell extension, XDG Desktop Portal, native X11 or
+  `gnome-screenshot`, and through `grim` in Hyprland background mode
 - window listing and focusing on GNOME, KWin/Plasma 5 and 6, Hyprland, Niri,
   COSMIC, i3 and Sway, labwc with Selkies IPC, other wlroots compositors through
   wlr-foreign-toplevel-management, and generic X11/EWMH window managers; GNOME
-  extension and X11 windows can also be moved and resized
-- keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
-  RemoteDesktop portal, `xdotool` on X11, or `ydotool`
+  extension and X11 windows can also be moved and resized (on X11, the size is
+  the client area and decorations add to it)
+- keyboard, text, click, scroll, and drag input through pixelflux when
+  configured, `/dev/uinput`, the XDG RemoteDesktop portal, `xdotool` on X11,
+  `wtype`, KDE clipboard paste, or `ydotool`
 - pointer-direction feedback for the built-in V2 pet after successful click,
   scroll, and drag actions
 
@@ -41,7 +45,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.43. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.45. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -370,6 +374,17 @@ You can also run the backend directly:
 ./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux windows
 ./codex-app/resources/plugins/openai-bundled/plugins/unified-computer-use/bin/codex-computer-use-linux screenshot
 ```
+
+`codex-computer-use-linux --help` lists every command but the `abs-test`
+development probe. Every command prints its own help with `-h` or `--help` and
+exits without touching the desktop. The whole command line is checked before
+anything runs: an unknown command, flag or argument count exits 2. `--` ends
+flags, so `state -- -name` reads the app named `-name`. Since the v0.7.45 sync,
+`setup --help` no longer runs setup and `setup-window-targeting --help` no
+longer installs the extension. The Chrome native-messaging host,
+`codex-chrome-extension-host`, takes only the origin Chrome passes it,
+`chrome-extension://ID/`: `--help` prints its usage, and a flag or a second
+argument exits 2 before it binds its socket.
 
 The direct MCP server also exposes `run_shell` only when explicitly started
 with `CODEX_COMPUTER_USE_ENABLE_SHELL=1`. The standalone
