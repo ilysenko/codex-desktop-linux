@@ -2,11 +2,15 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { Script } = require("node:vm");
 const {
   findCodexRequestWebviewAsset,
+  findMainProcessChunks,
   listWebviewScriptAssets,
+  patchWebviewAssets,
 } = require("../../scripts/patches/lib/assets.js");
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
 const SETTINGS_ASSET = "agent-workspaces-linux.js";
 const SETTINGS_SLUG = "agent-workspaces";
 const SETTINGS_COMMAND_KEY = "codex-linux-agent-workspace-command";
@@ -27,8 +31,7 @@ const GLOBAL_STATE_SET_METHOD = "linux-agent-workspace-set-global-state";
 const FETCH_ROUTE_MARKER = "/*codex-linux-agent-workspace-route*/";
 const HANDLERS_HELPER = "function codexLinuxAgentWorkspaceHandlers(";
 const FETCH_HELPER = "async function codexLinuxAgentWorkspaceFetch(";
-const FETCH_CLAUSE =
-  /await this\.fetchWrapper\.handleRequest\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\);break;case"cancel-fetch":/g;
+const OWNED_BINDINGS = ["codexLinuxAgentWorkspaceHandlers", "codexLinuxAgentWorkspaceFetch"];
 
 function countOccurrences(source, needle) {
   return source.split(needle).length - 1;
@@ -187,62 +190,98 @@ function agentWorkspaceFetchSource() {
     "return!0}";
 }
 
-const VIEW_HANDLER_FIELDS = ["fetchWrapper;", "globalState;", "chunkedMessageSender;"];
-const CLASS_OPEN = /class [A-Za-z_$][\w$]*(?: extends [A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)?\{/g;
+function bindingReferences(source, name) {
+  return [...source.matchAll(new RegExp(`(?<![\\w$])${name}(?![\\w$])`, "gu"))].length;
+}
 
-// Other Linux features route their own URLs in the same `case"fetch"`; they
-// are tolerated in front of this route only as complete codex-linux routes.
-function findFetchClause(source) {
-  const clauses = [...source.matchAll(FETCH_CLAUSE)];
-  if (clauses.length !== 1) return null;
-  const [clause] = clauses;
-  const [, webContents, message] = clause;
-  const caseIndex = source.lastIndexOf('case"fetch":', clause.index);
-  if (caseIndex < 0) return null;
-  const between = source.slice(caseIndex + 'case"fetch":'.length, clause.index);
-  if (between.length > 0 && !between.startsWith("/*codex-linux-")) return null;
-  // The clause belongs to the view-message handler class that owns the global
-  // state and the inline view-message sender used by the dictation route.
-  // Look the class up by its field declarations, not the nearest "class "
-  // keyword: other Linux features inject helpers (some declaring their own
-  // classes) into the handler's methods.
-  const owners = [...source.slice(0, caseIndex).matchAll(CLASS_OPEN)]
-    .map((match) => match.index + match[0].length - 1)
-    .filter((open) => {
-      const fields = source.slice(open, open + 1000).split(/[(=]/, 1)[0];
-      return VIEW_HANDLER_FIELDS.every((field) => fields.includes(field));
-    });
-  if (owners.length !== 1) return null;
-  const [classOpen] = owners;
-  if (findMatchingBrace(source, classOpen) < clause.index) return null;
-  if (source.lastIndexOf(`async handleMessage(${webContents},${message}){`, caseIndex) < classOpen) return null;
-  return { index: caseIndex + 'case"fetch":'.length, webContents, message };
+function hasOwnedMainReferences(source) {
+  return typeof source === "string" && (source.includes(FETCH_ROUTE_MARKER) || OWNED_BINDINGS.some(name => bindingReferences(source, name) > 0));
+}
+
+function agentWorkspaceRouteSource(site) {
+  const reply = site.webContentsVar === "codexLinuxMessage" ? "codexLinuxAgentWorkspaceReply" : "codexLinuxMessage";
+  return `${FETCH_ROUTE_MARKER}if(await codexLinuxAgentWorkspaceFetch.call(this,${site.requestVar},` +
+    `${reply}=>${site.senderExpr}(${site.webContentsVar},${reply})))break;`;
+}
+
+function outerHelperDeclaration(source, index) {
+  const prefix = source.slice(0, index);
+  if (findMatchingBrace("{" + prefix + "}", 0) !== prefix.length + 1) return false;
+  try { new Script(prefix + "const __codexAgentWorkspaceDeclaration=0;"); return true; }
+  catch { return false; }
+}
+
+// The shared inspector owns the native constructor/dispatch/continuation
+// proof. This feature owns its exact route and complete outer-CJS helpers.
+// Exact reference counts also reject an extra local binding shadowing the
+// outer helper at the actual request site, or an orphan helper/route copy.
+function mainBridgeState(source, graph = inspectMainRequestSites(source)) {
+  if (typeof source !== "string") return { kind: "invalid" };
+  if (!graph.ok) return { kind: "invalid", graph, reason: graph.reason };
+  if (!hasOwnedMainReferences(source)) return { kind: "current", graph, site: graph.viewFetch };
+  const helpers = agentWorkspaceHandlersSource() + agentWorkspaceFetchSource();
+  const helperAt = source.indexOf(helpers), route = agentWorkspaceRouteSource(graph.viewFetch);
+  const routeAt = source.indexOf(route), scope = graph.scope, site = graph.viewFetch;
+  const factory = source.slice(scope.factoryStart, scope.factoryEnd);
+  if (countOccurrences(source, FETCH_ROUTE_MARKER) !== 1 || countOccurrences(source, helpers) !== 1 ||
+      OWNED_BINDINGS.some(name => bindingReferences(source, name) !== 2) ||
+      helperAt < 0 || !outerHelperDeclaration(source, helperAt) ||
+      countOccurrences(source, route) !== 1 ||
+      !source.slice(site.prefixStart, site.prefixEnd).includes(route) ||
+      routeAt < site.methodBodyStart || routeAt + route.length > site.methodBodyEnd ||
+      (helperAt < scope.factoryEnd && helperAt + helpers.length > scope.factoryStart) ||
+      bindingReferences(factory, OWNED_BINDINGS[0]) !== 0 || bindingReferences(factory, OWNED_BINDINGS[1]) !== 1) {
+    return { kind: "invalid", graph, reason: "incomplete or stale Agent Workspaces route/helper bindings" };
+  }
+  return { kind: "applied", graph, site: graph.viewFetch };
 }
 
 function applyAgentWorkspaceMainBridgePatch(currentSource) {
   const patchName = "agent workspace main bridge patch";
-  const routeCount = countOccurrences(currentSource, FETCH_ROUTE_MARKER);
-  const handlersCount = countOccurrences(currentSource, HANDLERS_HELPER);
-  const fetchCount = countOccurrences(currentSource, FETCH_HELPER);
-  if (routeCount > 0 || handlersCount > 0 || fetchCount > 0) {
-    if (routeCount !== 1 || handlersCount !== 1 || fetchCount !== 1 ||
-        !currentSource.includes(agentWorkspaceHandlersSource()) || !currentSource.includes(agentWorkspaceFetchSource())) {
-      warn("Found incomplete or stale agent workspace main bridge", patchName);
-    }
+  const state = mainBridgeState(currentSource);
+  if (state.kind === "applied") return currentSource;
+  if (state.kind !== "current") {
+    warn(hasOwnedMainReferences(currentSource) ? "Found incomplete or stale agent workspace main bridge" :
+      "Could not find the main-process fetch message route", patchName);
     return currentSource;
   }
-  const clause = findFetchClause(currentSource);
-  if (clause == null) {
-    warn("Could not find the main-process fetch message route", patchName);
-    return currentSource;
-  }
-  const route = `${FETCH_ROUTE_MARKER}if(await codexLinuxAgentWorkspaceFetch.call(this,${clause.message},` +
-    `codexLinuxMessage=>this.chunkedMessageSender.sendInlineMessageForView(${clause.webContents},codexLinuxMessage)))break;`;
-  const patched = `${currentSource.slice(0, clause.index)}${route}${currentSource.slice(clause.index)}`;
+  const route = agentWorkspaceRouteSource(state.site);
+  const patched = `${currentSource.slice(0, state.site.nativeStart)}${route}${currentSource.slice(state.site.nativeStart)}`;
   // Declare the helpers at chunk scope, before a trailing source-map comment.
   const sourceMap = patched.match(/\n\/\/# sourceMappingURL=[^\n]*\n?$/);
   const insertAt = sourceMap == null ? patched.length : sourceMap.index;
-  return `${patched.slice(0, insertAt)}\n${agentWorkspaceHandlersSource()}${agentWorkspaceFetchSource()}${patched.slice(insertAt)}`;
+  const complete = `${patched.slice(0, insertAt)}\n${agentWorkspaceHandlersSource()}${agentWorkspaceFetchSource()}${patched.slice(insertAt)}`;
+  if (mainBridgeState(complete).kind === "applied") return complete;
+  warn("Could not verify the complete agent workspace main bridge poststate", patchName);
+  return currentSource;
+}
+
+function patchAgentWorkspaceMainAssets(extractedDir, context = {}) {
+  const main = findMainProcessChunks(extractedDir);
+  const chunks = main == null ? [] : main.chunks.map(assetName => {
+    const source = fs.readFileSync(path.join(main.buildDir, assetName), "utf8");
+    const graph = inspectMainRequestSites(source);
+    return { assetName, source, graph, state: mainBridgeState(source, graph) };
+  });
+  const owners = chunks.filter(({ graph }) => graph.ok);
+  const factoryId = owners.length === 1 ? owners[0].graph.scope.factoryId : null;
+  // Follow the inspector's opaque identity even when a replica has lost every
+  // graph needle. Keep detached own artifacts and unparseable native-looking
+  // candidates visible as well; no partial cohort may authorize a write.
+  const candidates = chunks.filter(({ source, graph }) => graph.ok || hasOwnedMainReferences(source) ||
+    (factoryId != null && graph.factoryIds.includes(factoryId)) ||
+    (graph.factoryIds.length === 0 && (source.includes("HTTP requests must use the HTTP fetch service.") || source.includes("this.fetchWrapper.handleRequest("))));
+  if (owners.length !== 1 || candidates.length !== 1 || candidates[0].state.kind === "invalid") {
+    const reason = `Expected one complete Agent Workspaces native main owner; found ${candidates.length} candidate(s)`;
+    warn(reason, "agent workspace main bridge patch");
+    return { matched: 0, changed: 0, reason };
+  }
+  const [{ assetName, source, state }] = candidates;
+  const patchedSource = applyAgentWorkspaceMainBridgePatch(source);
+  if (mainBridgeState(patchedSource).kind !== "applied") throw Error("Incomplete Agent Workspaces main bridge poststate");
+  const result = patchWebviewAssets(main.buildDir, [{ assetName, source, patchedSource }], context);
+  if (result.changed !== Number(state.kind === "current")) throw Error("Agent Workspaces main transaction did not commit the prepared change");
+  return { ...result, matched: 1, assetName: `.vite/build/${assetName}` };
 }
 
 // The settings page is an extra ESM asset beside the rspack chunks. Chunks no
@@ -1832,10 +1871,13 @@ module.exports = {
   descriptors: [
     {
       id: "main-bridge",
-      phase: "main-bundle",
+      phase: "extracted-app:pre-webview",
       order: 20_800,
       ciPolicy: "optional",
-      apply: applyAgentWorkspaceMainBridgePatch,
+      apply: patchAgentWorkspaceMainAssets,
+      status: result => result?.matched !== 1
+        ? { status: "skipped-optional", reason: result?.reason ?? "missing native main owner" }
+        : result.changed > 0 ? "applied" : "already-applied",
     },
     {
       id: "settings-page",

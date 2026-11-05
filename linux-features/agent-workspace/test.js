@@ -8,6 +8,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { fixture: mainRequestFixture } = require("../../scripts/patches/lib/fixtures/main-request-graph.js");
 const {
   enabledLinuxFeatureIds,
   enabledLinuxFeatureInstallPlan,
@@ -17,7 +18,11 @@ const {
 } = require("../../scripts/lib/linux-features.js");
 const {
   createPatchReport,
+  enabledFeatureFailuresFromReport,
 } = require("../../scripts/lib/patch-report.js");
+const { applyExtractedAppPatchDescriptors, normalizeDescriptor } = require("../../scripts/patches/engine.js");
+const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const {
   patchExtractedApp,
 } = require("../../scripts/patches/runner.js");
@@ -81,23 +86,24 @@ function captureWarns(fn) {
 // Signed stable 26.1029.61003 (rspack) main-process chunk shape: the
 // view-message handler forwards every `fetch` message to the fetch wrapper.
 function syntheticMainBundle() {
-  return [
-    'exports.ids=[45],exports.modules={35575(e,t,r){"use strict";r.d(t,{V:()=>ViewMessageHandler});',
-    "class ViewMessageHandler{hostId;windowManager;chunkedMessageSender;fetchWrapper;globalState;",
-    "constructor(e,t,r){this.fetchWrapper=e,this.globalState=t,this.chunkedMessageSender=r}",
-    'async handleMessage(e,t){switch(t.type){case"mcp-response":break;case"fetch":await this.fetchWrapper.handleRequest(e,t);break;',
-    'case"cancel-fetch":this.fetchWrapper.cancelRequest(e,t);break;case"show-diff":break}}}',
-    "}};",
-    "\n//# sourceMappingURL=early-bootstrap-45.js.map",
-  ].join("");
+  return mainRequestFixture() + "\n//# sourceMappingURL=early-bootstrap-45.js.map";
 }
 
 function loadMainBundle(patched, sandbox) {
   const module = { exports: {} };
   vm.runInNewContext(
-    `${patched}\n;this.ViewMessageHandler=(()=>{let t={};exports.modules[35575]({},t,{d:(e,g)=>Object.entries(g).forEach(([k,f])=>Object.defineProperty(e,k,{get:f}))});return t.V})();`,
+    `${patched}\n;this.codexLinuxFixtureStartup=(()=>{let t={};exports.modules[82820]({exports:t},t,{d:(e,g)=>Object.entries(g).forEach(([k,f])=>Object.defineProperty(e,k,{get:f}))});return t.runMainAppStartup})();`,
     Object.assign(sandbox, { exports: module.exports }),
   );
+  // Construct the complete shared native-shaped graph. Only the backend
+  // transport method is replaced by the caller's explicit inert boundary.
+  sandbox.ViewMessageHandler = class {
+    constructor(fetchWrapper, globalState, chunkedMessageSender) {
+      const host = sandbox.codexLinuxFixtureStartup({ globalState, chunkedMessageSender, cancelled: [] });
+      Object.assign(host.fetchWrapper, fetchWrapper);
+      return host.messageHandler;
+    }
+  };
   return sandbox;
 }
 
@@ -133,7 +139,7 @@ function buildBridgeHarness({ env = {}, globalState = new Map(), execFile, spawn
       if (name === "electron" && electron) return electron;
       throw new Error(`unexpected require ${name}`);
     },
-    process: { env: { ...process.env, ...env } },
+    process: { env: { TMPDIR: os.tmpdir(), XDG_RUNTIME_DIR: os.tmpdir(), ...env } },
     Buffer,
     clearTimeout,
     setTimeout,
@@ -403,7 +409,7 @@ test("agent-workspace feature exposes optional bridge, settings, resources, and 
     assert.deepEqual(
       loadLinuxFeaturePatchDescriptors({ featuresRoot: root }).map((patch) => [patch.name, patch.phase, patch.ciPolicy]),
       [
-        ["feature:agent-workspace:main-bridge", "main-bundle", "optional"],
+        ["feature:agent-workspace:main-bridge", "extracted-app:pre-webview", "optional"],
         ["feature:agent-workspace:settings-page", "extracted-app:post-webview", "optional"],
       ],
     );
@@ -572,14 +578,15 @@ test("main bridge route is placed in the view-message fetch case with chunk-scop
   assert.equal(applyAgentWorkspaceMainBridgePatch(patched), patched);
 
   // Other marked Linux routes may already sit in front of the forward.
-  const routed = syntheticMainBundle().replace('case"fetch":', 'case"fetch":/*codex-linux-other-route*/if(t.url==="x")break;');
-  assert.match(applyAgentWorkspaceMainBridgePatch(routed), /case"fetch":\/\*codex-linux-agent-workspace-route\*\/.*\/\*codex-linux-other-route\*\//);
+  const otherRoute = '/*codex-linux-other-route*/if(await codexLinuxOtherRoute.call(this,t,reply=>this.chunkedMessageSender.sendInlineMessageForView(e,reply)))break;';
+  const routed = syntheticMainBundle().replace('case"fetch":', 'case"fetch":' + otherRoute);
+  assert.match(applyAgentWorkspaceMainBridgePatch(routed), /case"fetch":\/\*codex-linux-other-route\*\/.*\/\*codex-linux-agent-workspace-route\*\//);
 
   for (const drift of [
     syntheticMainBundle().replace('case"cancel-fetch":', 'case"other":'),
-    syntheticMainBundle().replace("chunkedMessageSender;", ""),
+    syntheticMainBundle().replace("this.chunkedMessageSender=sender", "this.chunkedMessageSender=wrapper"),
     syntheticMainBundle().replace('case"fetch":', 'case"fetch":log(t);'),
-    syntheticMainBundle() + 'class Other{fetchWrapper;globalState;chunkedMessageSender;async handleMessage(e,t){switch(t.type){case"fetch":await this.fetchWrapper.handleRequest(e,t);break;case"cancel-fetch":}}}',
+    syntheticMainBundle() + "\n" + mainRequestFixture(),
   ]) {
     const { value, warnings } = captureWarns(() => applyAgentWorkspaceMainBridgePatch(drift));
     assert.equal(value, drift);
@@ -589,14 +596,15 @@ test("main bridge route is placed in the view-message fetch case with chunk-scop
 
 test("main bridge route composes with other Linux routes and handler helpers in either order", async () => {
   // start-minimized-to-tray shape: a marked route directly before the forward.
-  const trayRoute = '/*codex-linux-start-minimized-to-tray-route*/if("vscode://codex/codex-linux-start-minimized-to-tray"===t?.url){this.chunkedMessageSender.sendInlineMessageForView(e,{type:"fetch-response",responseType:"success",requestId:t.requestId,status:200,bodyJsonString:"{}"});break}';
+  const trayRoute = '/*codex-linux-start-minimized-to-tray-route*/if("vscode://codex/codex-linux-start-minimized-to-tray"===t?.url){codexLinuxFixtureTray(t,this.globalState,reply=>this.chunkedMessageSender.sendInlineMessageForView(e,reply));break}';
+  const trayHelper = 'function codexLinuxFixtureTray(request,state,reply){reply({type:"fetch-response",responseType:"success",requestId:request.requestId,status:200,bodyJsonString:"{}"})}';
   const addTrayRoute = (source) => source.includes(trayRoute) ? source
-    : source.replace("await this.fetchWrapper.handleRequest(e,t);", `${trayRoute}await this.fetchWrapper.handleRequest(e,t);`);
+    : trayHelper + "\n" + source.replace("await this.fetchWrapper.handleRequest(e,t);", `${trayRoute}await this.fetchWrapper.handleRequest(e,t);`);
   // account-switcher shape: a helper declaring its own class inside a handler
   // method, so the nearest "class " keyword no longer names the handler.
   const helper = "this.codexLinuxFixtureHelper??=(function(){class SwitcherError extends Error{}return SwitcherError})();";
   const addHelper = (source) => source.includes(helper) ? source
-    : source.replace("async handleMessage(e,t){", `async handleMessage(e,t){${helper}`);
+    : source.replace('case"mcp-response":', `case"mcp-response":${helper}`);
   const others = (source) => addHelper(addTrayRoute(source));
   for (const order of [[applyAgentWorkspaceMainBridgePatch, others], [others, applyAgentWorkspaceMainBridgePatch]]) {
     const apply = (source) => order.reduce((current, patch) => {
@@ -2399,8 +2407,299 @@ test("feature patch list is intentionally small", () => {
   assert.deepEqual(
     featurePatches.map((patch) => [patch.id, patch.phase]),
     [
-      ["main-bridge", "main-bundle"],
+      ["main-bridge", "extracted-app:pre-webview"],
       ["settings-page", "extracted-app:post-webview"],
     ],
   );
 });
+
+const MAIN_MARKER = "/*codex-linux-agent-workspace-route*/";
+const MAIN_NAMES = ["codexLinuxAgentWorkspaceHandlers", "codexLinuxAgentWorkspaceFetch"];
+function mainOwnedParts(source) {
+  const start = source.indexOf("function " + MAIN_NAMES[0] + "(");
+  assert.ok(start >= 0);
+  const handlersEnd = findMatchingBrace(source, source.indexOf("{", start)) + 1;
+  assert.ok(source.startsWith("async function " + MAIN_NAMES[1] + "(", handlersEnd));
+  const end = findMatchingBrace(source, source.indexOf("{", handlersEnd)) + 1;
+  const routeStart = source.indexOf(MAIN_MARKER), routeEnd = source.indexOf("break;", routeStart) + 6;
+  assert.ok(routeStart >= 0 && routeEnd > routeStart);
+  return { start, end, helpers: source.slice(start, end), route: source.slice(routeStart, routeEnd) };
+}
+function mainBridgeWorkspace(t, files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-workspace-main-contract-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const build = path.join(root, ".vite/build"); fs.mkdirSync(build, { recursive: true });
+  for (const [name, source] of Object.entries({ "early-bootstrap.js": "exports.ids=[0],exports.modules={};", ...files })) fs.writeFileSync(path.join(build, name), source);
+  return { root, build, read: name => fs.readFileSync(path.join(build, name), "utf8") };
+}
+function normalMainBridge(root, context = {}, report = createPatchReport()) {
+  const descriptor = normalizeDescriptor({ ...featurePatches[0], id: "feature:agent-workspace:main-bridge", sourceKind: "feature", featureId: "agent-workspace" });
+  report.enabledFeatures = ["agent-workspace"];
+  captureWarns(() => applyExtractedAppPatchDescriptors(root, [descriptor], context, report, descriptor.phase));
+  return { patch: report.patches[0], report };
+}
+
+test("main descriptor validates the complete source cohort before writing and rejects ambiguous or mixed states", t => {
+  const current = syntheticMainBundle(), applied = applyAgentWorkspaceMainBridgePatch(current);
+  for (const files of [
+    {},
+    { "early-bootstrap-45-aa.js": current, "early-bootstrap-46-bb.js": current },
+    { "early-bootstrap-45-aa.js": current, "early-bootstrap-46-bb.js": applied },
+    { "early-bootstrap-45-aa.js": current, "early-bootstrap-46-bb.js": 'exports.ids=[46],exports.modules={82820(module,exports,require){return false}};' },
+    { "early-bootstrap-45-aa.js": applied, "early-bootstrap-46-bb.js": '/*codex-linux-agent-workspace-route*/const lost=true;' },
+    { "early-bootstrap-45-aa.js": current, "early-bootstrap-46-bb.js": current.replace("this.globalState=state", "this.globalState=wrapper") },
+  ]) {
+    const app = mainBridgeWorkspace(t, files), before = new Map(fs.readdirSync(app.build).map(name => [name, fs.readFileSync(path.join(app.build, name))]));
+    const { patch, report } = normalMainBridge(app.root);
+    assert.equal(patch.status, "skipped-optional"); assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
+    for (const [name, bytes] of before) assert.deepEqual(fs.readFileSync(path.join(app.build, name)), bytes);
+  }
+  const app = mainBridgeWorkspace(t, { "early-bootstrap-45-aa.js": current });
+  assert.equal(normalMainBridge(app.root).patch.status, "applied");
+  assert.equal(normalMainBridge(app.root).patch.status, "already-applied");
+  const unrelated = mainBridgeWorkspace(t, { "early-bootstrap-45-aa.js": current, "early-bootstrap-46-bb.js": 'exports.ids=[46],exports.modules={12345(module,exports,require){return false}};' });
+  assert.equal(normalMainBridge(unrelated.root).patch.status, "applied");
+  assert.equal(unrelated.read("early-bootstrap-46-bb.js"), 'exports.ids=[46],exports.modules={12345(module,exports,require){return false}};');
+});
+
+test("canonical bridge rechecks native wiring, exact route/payload, outer bindings and orphan references", t => {
+  const current = syntheticMainBundle(), applied = applyAgentWorkspaceMainBridgePatch(current), own = mainOwnedParts(applied);
+  const withoutHelpers = applied.slice(0, own.start) + applied.slice(own.end);
+  const variants = [
+    applied.replace("this.globalState=state", "this.globalState=wrapper"),
+    applied.replace("async handleMessage(e,t){switch", "async unusedHandleMessage(e,t){switch"),
+    applied.replace(".call(this,t,codexLinuxMessage", ".call(other,t,codexLinuxMessage"),
+    applied.replace(".call(this,t,codexLinuxMessage", ".call(this,e,codexLinuxMessage"),
+    applied.replace("ForView(e,codexLinuxMessage)", "ForView(t,codexLinuxMessage)"),
+    applied.replace("codexLinuxAgentWorkspaceFetch.call", "codexLinuxOtherFetch.call"),
+    applied.replace("Object.prototype.hasOwnProperty.call", "Object.prototype.hasOwnProperty.apply"),
+    applied.replace("Unsupported global-state key", "wrong global-state policy"),
+    applied.replace(own.route, ""),
+    withoutHelpers,
+    applied.replace(own.helpers, `function unusedHelpers(){${own.helpers}}`),
+    withoutHelpers.replace("82820(module,exports,require){", "82820(module,exports,require){" + own.helpers),
+    applied.replace("82820(module,exports,require){", "82820(module,exports,require){var codexLinuxAgentWorkspaceFetch=()=>false;"),
+    applied + ";codexLinuxAgentWorkspaceFetch({},()=>{});",
+    current + MAIN_MARKER,
+    current.replace('case"fetch":', 'case"fetch":/*codex-linux-fake-route*/return;'),
+  ];
+  for (const source of variants) {
+    assert.doesNotThrow(() => new vm.Script(source));
+    const rejected = captureWarns(() => applyAgentWorkspaceMainBridgePatch(source));
+    assert.equal(rejected.value, source); assert.equal(rejected.warnings.length, 1);
+    const app = mainBridgeWorkspace(t, { "early-bootstrap-45-aa.js": source });
+    assert.equal(normalMainBridge(app.root).patch.status, "skipped-optional");
+    assert.equal(app.read("early-bootstrap-45-aa.js"), source);
+  }
+  const unrelated = applied + ";const codexLinuxAgentWorkspaceFetchColor='kept';";
+  assert.deepEqual(captureWarns(() => applyAgentWorkspaceMainBridgePatch(unrelated)), { value: unrelated, warnings: [] });
+});
+
+test("main transaction restores partial writes, retries, and propagates unverifiable rollback as fatal", t => {
+  const original = syntheticMainBundle();
+  for (const fatal of [false, true]) {
+    const app = mainBridgeWorkspace(t, { "early-bootstrap-45-aa.js": original }); let writes = 0;
+    const context = { writeFileSync(file, bytes) {
+      if (++writes === 1) { fs.writeFileSync(file, "partial main chunk"); throw Error("interrupted main write"); }
+      if (fatal) return;
+      fs.writeFileSync(file, bytes);
+    } };
+    const report = createPatchReport();
+    if (fatal) {
+      assert.throws(() => normalMainBridge(app.root, context, report), { code: "PATCH_INTEGRITY_FAILURE" });
+      assert.equal(report.patches[0].status, "failed-integrity");
+    } else {
+      assert.equal(normalMainBridge(app.root, context).patch.status, "skipped-optional");
+      assert.equal(app.read("early-bootstrap-45-aa.js"), original);
+      assert.equal(normalMainBridge(app.root).patch.status, "applied");
+      assert.equal(normalMainBridge(app.root).patch.status, "already-applied");
+    }
+  }
+});
+
+function routedBridgeRequest(harness, method, params, extra = {}) {
+  const request = { type: "fetch", requestId: "routed-" + harness.responses.length, url: "vscode://codex/" + method, body: JSON.stringify(params), ...extra };
+  const view = { id: "owned-view" }, before = harness.responses.length;
+  return harness.host.handleMessage(view, request).then(() => {
+    assert.equal(harness.responses.length, before + 1, "exactly one inline response");
+    const response = harness.responses.at(-1);
+    assert.equal(response.webContents, view); assert.equal(response.message.requestId, request.requestId);
+    return response.message;
+  });
+}
+
+test("every supported CLI action routes once with the existing argument contract and inert processes", async t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-workspace-routed-actions-")); t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const calls = [], spawnCalls = [], state = new Map();
+  const harness = buildBridgeHarness({ env: { HOME: path.join(temp, "home"), XDG_DATA_HOME: path.join(temp, "data"), XDG_RUNTIME_DIR: temp, CODEX_AGENT_WORKSPACE_BIN: "/fixture/agent-workspace-linux" }, globalState: state,
+    execFile(command, args, options, callback) {
+      const argv = Array.from(args); assert.equal(options.shell, undefined); calls.push({ command, args: argv });
+      if (argv.includes("--json")) {
+        const file = argv[argv.indexOf("--json") + 1]; assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).id, "owned-profile");
+        assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      }
+      callback(null, argv[0] === "--version" ? "agent-workspace-linux 0.6.0\n" : "{\"fixture\":true}", "");
+    },
+    spawn(command, args, options) { const call = { command, args: Array.from(args), options }; spawnCalls.push(call); return { pid: 17, once(event, callback) { if (event === "spawn") process.nextTick(callback); return this; }, unref() { call.unref = true; } }; },
+  });
+  const cases = [
+    [{ action: "doctor" }, ["doctor"]], [{ action: "guardrails" }, ["guardrails"]],
+    [{ action: "profilePath" }, ["profile", "path"]], [{ action: "profileList" }, ["profile", "list"]],
+    [{ action: "profileGet", profileId: "p" }, ["profile", "get", "p"]], [{ action: "profileCheck", profileId: "p" }, ["profile", "check", "p"]],
+    [{ action: "profileDelete", profileId: "p", dryRun: true }, ["profile", "delete", "--dry-run", "p"]],
+    [{ action: "profileExport", profileId: "p", outputPath: "/fixture/export.json", replace: true }, ["profile", "export", "p", "--output", "/fixture/export.json", "--replace"]],
+    [{ action: "profileTemplate", templateKind: "chrome", profileId: "p", hostPath: "/fixture/project", browserPath: "/fixture/chrome", userDataDir: "/fixture/browser" }, ["profile", "template", "chrome", "--id", "p", "--host-path", "/fixture/project", "--browser-path", "/fixture/chrome", "--user-data-dir", "/fixture/browser"]],
+    [{ action: "workspaceList" }, ["workspace", "list"]], [{ action: "workspaceStatus", workspaceId: "w" }, ["workspace", "status", "--id", "w"]],
+    [{ action: "workspaceManifest", workspaceId: "w" }, ["workspace", "manifest", "--id", "w"]], [{ action: "workspaceArtifacts", workspaceId: "w" }, ["workspace", "artifacts", "--id", "w"]],
+    [{ action: "workspaceOpenProfile", profileId: "p", workspaceId: "w", purpose: "test", dryRun: true, runSetup: true, startupWaitWindow: true, startupScreenshotWindow: true }, ["workspace", "open-profile", "--dry-run", "--profile", "p", "--id", "w", "--purpose", "test", "--setup", "--startup-wait-window", "--startup-screenshot-window"]],
+    [{ action: "workspaceStart", profileId: "p", workspaceId: "w", purpose: "test", ackHiddenWorkspace: true }, ["workspace", "start", "--ack-hidden-workspace", "--profile", "p", "--id", "w", "--purpose", "test"]],
+    [{ action: "workspaceStop", workspaceId: "w" }, ["workspace", "stop", "--id", "w"]], [{ action: "workspaceCleanup", cleanupId: "stale", dryRun: true }, ["workspace", "cleanup", "--dry-run", "--id", "stale"]],
+    [{ action: "version" }, ["--version"]],
+  ];
+  for (const [params, expected] of cases) {
+    const count = calls.length, reply = await routedBridgeRequest(harness, "linux-agent-workspace", params);
+    assert.equal(reply.responseType, "success"); assert.equal(JSON.parse(reply.bodyJsonString).ok, true);
+    assert.equal(calls.length, count + 1); assert.deepEqual(calls.at(-1).args, expected);
+  }
+  for (const action of ["profileValidate", "profileSave"]) {
+    const reply = await routedBridgeRequest(harness, "linux-agent-workspace", { action, profile: { id: "owned-profile" }, replace: true, dryRun: true });
+    assert.equal(JSON.parse(reply.bodyJsonString).ok, true);
+    const args = calls.at(-1).args; assert.deepEqual(args.slice(0, 3), ["profile", action === "profileValidate" ? "validate" : "put", "--json"]);
+    assert.equal(fs.existsSync(args[3]), false, "temporary profile removed after response");
+    if (action === "profileSave") assert.deepEqual(args.slice(4), ["--replace", "--dry-run"]);
+  }
+  const install = await routedBridgeRequest(harness, "linux-agent-workspace", { action: "installRuntime" });
+  assert.equal(JSON.parse(install.bodyJsonString).ok, true);
+  assert.deepEqual(calls.at(-1).args, ["install", "-g", "--prefix", path.join(temp, "home/.local"), "@agent-sh/agent-workspace-linux@>=0.6.0"]);
+  const viewer = await routedBridgeRequest(harness, "linux-agent-workspace", { action: "workspaceOpenViewer", workspaceId: "w", alwaysOnTop: true });
+  assert.equal(JSON.parse(viewer.bodyJsonString).ok, true); assert.equal(spawnCalls.length, 1);
+  assert.deepEqual(spawnCalls[0].args, ["viewer", "--id", "w", "--exit-when-workspace-gone", "--always-on-top"]); assert.equal(spawnCalls[0].unref, true);
+  const config = await routedBridgeRequest(harness, "linux-agent-workspace", { action: "permissionConfig" }); assert.equal(JSON.parse(config.bodyJsonString).json.configured, false);
+  const save = await routedBridgeRequest(harness, "linux-agent-workspace", { action: "permissionSave", permissions: { apps: { allow: ["/fixture/app"] } } });
+  assert.equal(JSON.parse(save.bodyJsonString).ok, true); const permissionsPath = state.get(SETTINGS_PERMISSIONS_KEY);
+  assert.equal(fs.statSync(permissionsPath).mode & 0o777, 0o600); assert.deepEqual(JSON.parse(fs.readFileSync(permissionsPath, "utf8")), { apps: { allow: ["/fixture/app"] } });
+});
+
+test("routed bridge rejects invalid input, reports missing runtime/errors, and handles picker cancellation once", async () => {
+  const harness = buildBridgeHarness({ execFile(command, args, options, callback) { const error = Object.assign(new Error("synthetic missing runtime"), { code: "ENOENT" }); callback(error, "", "missing"); } });
+  const missing = await routedBridgeRequest(harness, "linux-agent-workspace", { action: "doctor" });
+  assert.equal(missing.responseType, "success"); assert.equal(JSON.parse(missing.bodyJsonString).ok, false); assert.equal(JSON.parse(missing.bodyJsonString).code, "ENOENT");
+  for (const params of [{ action: "unknown" }, ...["profileGet", "profileCheck", "profileDelete", "profileExport", "workspaceOpenProfile"].map(action => ({ action })), { action: "profileSave", profile: [] }, { action: "profileValidate" }, { action: "permissionSave", permissions: { apps: { allow: "bad" } } }]) {
+    const reply = await routedBridgeRequest(harness, "linux-agent-workspace", params); assert.equal(reply.responseType, "success"); assert.equal(JSON.parse(reply.bodyJsonString).ok, false);
+  }
+  const invalidJson = await routedBridgeRequest(harness, "linux-agent-workspace", {}, { body: "{bad json" }); assert.equal(invalidJson.responseType, "error"); assert.equal(invalidJson.status, 500);
+  const wrongKey = await routedBridgeRequest(harness, GLOBAL_STATE_SET_METHOD, { key: "unrelated-key", value: true }); assert.equal(wrongKey.responseType, "error"); assert.equal(wrongKey.status, 500);
+  const cancelled = buildBridgeHarness({ electron: { dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) } } });
+  for (const method of ["linux-agent-workspace-pick-app", "linux-agent-workspace-pick-project", "linux-agent-workspace-pick-browser-data"]) {
+    const reply = await routedBridgeRequest(cancelled, method, {}); const body = JSON.parse(reply.bodyJsonString); assert.equal(body.ok, false); assert.equal(body.json.canceled, true);
+  }
+  const noPicker = await routedBridgeRequest(harness, "linux-agent-workspace-pick-project", {}); assert.equal(JSON.parse(noPicker.bodyJsonString).message, "file picker unavailable");
+});
+
+test("routed global config, picker success and browser copy stay feature-owned and reply once", async t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "agent-workspace-routed-local-")); t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const browser = path.join(temp, "browser"), project = path.join(temp, "project"), desktop = path.join(temp, "owned.desktop");
+  fs.mkdirSync(browser); fs.mkdirSync(project); fs.writeFileSync(path.join(browser, "owned-data"), "fixture"); fs.writeFileSync(path.join(browser, "SingletonLock"), "excluded");
+  fs.writeFileSync(desktop, '[Desktop Entry]\nName=Owned app\nExec=/fixture/app --new-window %U\n');
+  const values = new Map(), harness = buildBridgeHarness({ globalState: values, env: { HOME: path.join(temp, "home"), XDG_DATA_HOME: path.join(temp, "data") }, electron: { dialog: { async showOpenDialog(options) {
+    return { canceled: false, filePaths: [options.title === "Choose startup app" ? desktop : options.title === "Choose project folder" ? project : browser] };
+  } } } });
+  for (const [key, value] of [[SETTINGS_COMMAND_KEY, "/fixture/owned-runtime"], [SETTINGS_PERMISSIONS_KEY, "/fixture/permissions.json"]]) {
+    const write = await routedBridgeRequest(harness, GLOBAL_STATE_SET_METHOD, { params: { key, value } }); assert.deepEqual(JSON.parse(write.bodyJsonString), { success: true });
+    const read = await routedBridgeRequest(harness, GLOBAL_STATE_GET_METHOD, { key }); assert.deepEqual(JSON.parse(read.bodyJsonString), { value }); assert.equal(values.get(key), value);
+  }
+  for (const [method, expected] of [["linux-agent-workspace-pick-app", desktop], ["linux-agent-workspace-pick-project", project], ["linux-agent-workspace-pick-browser-data", browser]]) {
+    const reply = await routedBridgeRequest(harness, method, {}), result = JSON.parse(reply.bodyJsonString); assert.equal(result.ok, true); assert.equal(result.json.path, expected);
+    if (method.endsWith("pick-app")) assert.deepEqual(result.json.startup_app.command, ["/fixture/app", "--new-window"]);
+  }
+  const copied = await routedBridgeRequest(harness, "linux-agent-workspace-copy-browser-data", { sourcePath: browser, profileId: "owned-profile" });
+  const target = JSON.parse(copied.bodyJsonString).json.path; assert.equal(fs.readFileSync(path.join(target, "owned-data"), "utf8"), "fixture"); assert.equal(fs.existsSync(path.join(target, "SingletonLock")), false);
+  const missing = await routedBridgeRequest(harness, "linux-agent-workspace-copy-browser-data", {}); assert.equal(JSON.parse(missing.bodyJsonString).ok, false);
+});
+
+function signedMainInput(app) {
+  const build = path.join(app, ".vite/build"), files = Object.fromEntries(fs.readdirSync(build).filter(name => /^early-bootstrap(?:-\d+-[0-9a-f]+)?\.js$/u.test(name)).map(name => [name, fs.readFileSync(path.join(build, name), "utf8")]));
+  const owners = Object.entries(files).map(([name, source]) => ({ name, source, graph: inspectMainRequestSites(source) })).filter(row => row.graph.ok);
+  assert.equal(owners.length, 1); return { build, files, owner: owners[0] };
+}
+function actualNativeBridgeHarness(source, temp) {
+  const graph = inspectMainRequestSites(source); assert.equal(graph.ok, true, graph.reason);
+  const helpers = mainOwnedParts(source).helpers, view = graph.viewFetch, wrapper = graph.wrapperRequest;
+  const method = (site, name) => `async ${name}(${site.webContentsVar},${site.requestVar}){${source.slice(site.methodBodyStart, site.methodBodyEnd)}}`;
+  const wrapperClass = source.slice(wrapper.ownerStart, wrapper.ownerEnd), responderStart = wrapperClass.indexOf("async handleDictationStreamConnectInfoRequest("); assert.ok(responderStart >= 0);
+  const responseOpen = wrapperClass.indexOf("{", responderStart), responseEnd = findMatchingBrace(wrapperClass, responseOpen) + 1;
+  const responses = [], execCalls = [], delegated = [], cancelled = [], values = new Map([[SETTINGS_COMMAND_KEY, "/fixture/agent-workspace-linux"]]);
+  const context = vm.createContext({ an: { n: "fixture-local" }, Buffer, Error, JSON, Promise, setTimeout, clearTimeout,
+    process: { env: { HOME: path.join(temp, "home"), XDG_DATA_HOME: path.join(temp, "data"), XDG_RUNTIME_DIR: temp, TMPDIR: temp } },
+    require(name) {
+      if (name === "node:fs") return fs;
+      if (name === "node:path") return path;
+      if (name === "node:child_process") return { execFile(command, args, options, callback) { execCalls.push({ command, args: Array.from(args), options }); callback(null, '{"fixture":true}', ""); }, spawn() { throw Error("Unexpected native VM spawn"); } };
+      if (name === "electron") return { dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) } };
+      throw Error("Unexpected native VM import " + name);
+    },
+  });
+  vm.runInContext(helpers, context);
+  const handleView = vm.runInContext(`({${method(view, "handleMessage")}}).handleMessage`, context);
+  const handleWrapper = vm.runInContext(`({${method(wrapper, "handleRequest")}}).handleRequest`, context);
+  const handleResponse = vm.runInContext(`({${wrapperClass.slice(responderStart, responseEnd)}}).handleDictationStreamConnectInfoRequest`, context);
+  const sender = { sendInlineMessageForView(webContents, message) { assert.equal(this, sender); responses.push({ webContents, message }); } };
+  let currentView, currentRequest;
+  const wrapperOwner = { options: { chunkedMessageSender: sender }, handleDictationStreamConnectInfoRequest: handleResponse,
+    handleRequest(webContents, request) { assert.equal(this, wrapperOwner); assert.equal(webContents, currentView); assert.equal(request, currentRequest); delegated.push(request); return handleWrapper.call(this, webContents, request); },
+    cancelRequest(webContents, request) { assert.equal(this, wrapperOwner); cancelled.push({ webContents, request }); },
+    getAppServerConnection(host) { assert.equal(this, wrapperOwner); assert.equal(host, "fixture-local"); return { async getBackendRequestAuth(options) { assert.equal(options.refreshToken, false); return { routing: { kind: "personal" }, signal: { throwIfAborted() {} }, token: "synthetic-test-token" }; } }; },
+    getDictationStreamWebsocketUrl() { assert.equal(this, wrapperOwner); return "wss://fixture.invalid/dictation"; },
+  };
+  const viewOwner = { fetchWrapper: wrapperOwner, globalState: values, chunkedMessageSender: sender };
+  assert.equal(viewOwner.chunkedMessageSender, wrapperOwner.options.chunkedMessageSender); assert.equal(Object.hasOwn(wrapperOwner, "globalState"), false);
+  return { responses, execCalls, delegated, cancelled, values, viewOwner, async request(url, params, extra = {}) {
+    currentView = { id: "actual-native-view" }; currentRequest = { type: "fetch", requestId: "native-" + responses.length, url, body: JSON.stringify(params), ...extra };
+    const webContents = currentView, request = currentRequest; await handleView.call(viewOwner, webContents, request); return { webContents, request };
+  }, handleView };
+}
+
+for (const envName of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
+  test(`actual native main bridge preserves owner/state/reply identity and canonical rejection (${envName})`, { skip: !process.env[envName] }, async t => {
+    const input = signedMainInput(process.env[envName]), originalFiles = new Map(Object.entries(input.files).map(([name, source]) => [name, Buffer.from(source)]));
+    const app = mainBridgeWorkspace(t, input.files);
+    assert.equal(normalMainBridge(app.root).patch.status, "applied"); assert.equal(normalMainBridge(app.root).patch.status, "already-applied");
+    const patched = app.read(input.owner.name), graph = inspectMainRequestSites(patched); assert.equal(graph.ok, true);
+    const harness = actualNativeBridgeHarness(patched, app.root);
+    const owned = async (method, params, extra) => {
+      const before = harness.responses.length, ids = await harness.request("vscode://codex/" + method, params, extra);
+      assert.equal(harness.responses.length, before + 1); const reply = harness.responses.at(-1); assert.equal(reply.webContents, ids.webContents); assert.equal(reply.message.requestId, ids.request.requestId); return reply.message;
+    };
+    const saved = await owned(GLOBAL_STATE_SET_METHOD, { key: SETTINGS_COMMAND_KEY, value: "/fixture/current-runtime" }); assert.deepEqual(JSON.parse(saved.bodyJsonString), { success: true });
+    const read = await owned(GLOBAL_STATE_GET_METHOD, { key: SETTINGS_COMMAND_KEY }); assert.deepEqual(JSON.parse(read.bodyJsonString), { value: "/fixture/current-runtime" });
+    const doctor = await owned("linux-agent-workspace", { action: "doctor" }); assert.equal(JSON.parse(doctor.bodyJsonString).ok, true); assert.equal(harness.execCalls.length, 1); assert.equal(harness.execCalls[0].command, "/fixture/current-runtime"); assert.deepEqual(harness.execCalls[0].args, ["doctor"]);
+    const wrongKey = await owned(GLOBAL_STATE_GET_METHOD, { key: "unrelated" }); assert.equal(wrongKey.responseType, "error"); assert.equal(wrongKey.status, 500);
+    const badJson = await owned("linux-agent-workspace", {}, { body: "{bad" }); assert.equal(badJson.responseType, "error"); assert.equal(badJson.status, 500);
+    const picker = await owned("linux-agent-workspace-pick-project", {}); assert.equal(JSON.parse(picker.bodyJsonString).json.canceled, true);
+    const config = await owned("linux-agent-workspace", { action: "permissionSave", permissions: { apps: { allow: ["/fixture/app"] } } }); assert.equal(JSON.parse(config.bodyJsonString).ok, true); assert.ok(harness.values.get(SETTINGS_PERMISSIONS_KEY).startsWith(app.root));
+    assert.equal(harness.delegated.length, 0, "owned requests cannot execute the native wrapper twice");
+    const nativeBefore = harness.responses.length, native = await harness.request("/codex/dictation-stream-connect-info", {}); assert.equal(harness.responses.length, nativeBefore + 1); assert.equal(harness.responses.at(-1).webContents, native.webContents); assert.equal(harness.responses.at(-1).message.status, 200); assert.equal(harness.delegated.length, 1);
+    await assert.rejects(harness.request("vscode://codex/toString", {}), /HTTP requests must use the HTTP fetch service/); assert.equal(harness.responses.length, nativeBefore + 1);
+    const cancelView = { id: "cancel-view" }, cancelRequest = { type: "cancel-fetch", requestId: "cancel-request" }; await harness.handleView.call(harness.viewOwner, cancelView, cancelRequest); assert.equal(harness.cancelled[0].webContents, cancelView); assert.equal(harness.cancelled[0].request, cancelRequest);
+    for (const state of [input.owner.source, patched]) {
+      const site = inspectMainRequestSites(state).viewFetch;
+      const owner = state.slice(site.ownerStart, site.ownerEnd);
+      assert.equal(owner.split("this.globalState=l").length, 2);
+      const mutations = [
+        ["actual method early return", state.slice(0, site.methodBodyStart) + "return;" + state.slice(site.methodBodyStart)],
+        ["actual owner state binding", state.slice(0, site.ownerStart) + owner.replace("this.globalState=l", "this.globalState=c") + state.slice(site.ownerEnd)],
+        ["orphan marker", state + MAIN_MARKER],
+      ];
+      if (state === patched) {
+        const own = mainOwnedParts(state);
+        mutations.push(["route receiver", state.replace(".call(this,t,codexLinuxMessage", ".call(other,t,codexLinuxMessage")],
+          ["owned helper payload", state.slice(0, own.start) + own.helpers.replace("Object.prototype.hasOwnProperty.call", "Object.prototype.hasOwnProperty.apply") + state.slice(own.end)]);
+      }
+      for (const [name, damaged] of mutations) {
+        assert.notEqual(damaged, state); assert.doesNotThrow(() => new vm.Script(damaged)); fs.writeFileSync(path.join(app.build, input.owner.name), damaged);
+        assert.equal(normalMainBridge(app.root).patch.status, "skipped-optional", name); assert.equal(app.read(input.owner.name), damaged);
+      }
+    }
+    for (const [name, bytes] of originalFiles) assert.deepEqual(fs.readFileSync(path.join(input.build, name)), bytes, "raw signed main chunk " + name);
+  });
+}

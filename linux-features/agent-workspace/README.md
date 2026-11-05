@@ -186,13 +186,23 @@ conversation and composer webview assets stay untouched.
 
 Since the official 26.1029 release the main process no longer serves webview
 `vscode://codex/<method>` requests from a handler map. The bridge therefore
-adds one marked route (`/*codex-linux-agent-workspace-route*/`) at the start
-of the view-message handler's `fetch` case. It answers only its own
+adds one marked route (`/*codex-linux-agent-workspace-route*/`) inside the
+view-message handler's `fetch` case, before the native wrapper forward. It answers only its own
 `linux-agent-workspace*` methods (including the allowlisted
 `linux-agent-workspace-get-global-state` / `-set-global-state` for the command
 and permission-file keys) with the same `fetch-response` message the upstream
 dictation route uses, and forwards everything else unchanged. It composes with
 the other marked Linux fetch routes in any patch order.
+
+The main bridge resolves that site through the shared native request inspector.
+It verifies the published startup, host constructor, view dispatcher, wrapper,
+sender and profile-state wiring before preparing a change. The complete owned
+route must remain inside the real `fetch` case, and both complete helpers must
+be real declarations at the outer CommonJS chunk scope. Existing markers alone
+do not establish an applied bridge: changed helpers, moved routes, shadow
+bindings and orphan copies reject the contract. All main-chunk candidates are
+checked before the verified file transaction; ambiguous or mixed states leave
+the original files unchanged, and an unverifiable rollback stops the build.
 
 The webview is an rspack build, so the settings page is a separate
 `webview/assets/agent-workspaces-linux.js` ES module that exports
@@ -227,10 +237,21 @@ workspaces should be controlled from Settings plus the native viewer.
 Run the feature tests with:
 
 ```bash
-node --test linux-features/agent-workspace/test.js
+test_tmp="${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-dev/tmp"
+mkdir -p "$test_tmp"
+TMPDIR="$test_tmp" node --test linux-features/agent-workspace/test.js
+TMPDIR="$test_tmp" \
 CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
+CODEX_SIGNED_ARM64_EXTRACTED_APP=/path/to/arm64/extracted/app.asar \
   node --test linux-features/agent-workspace/test.js
 ```
+
+The signed-source checks use independent main-chunk copies and execute only
+the actual native request methods with explicit inert CLI, picker and reply
+collaborators. They verify request/reply and profile-state identity without
+starting the app or a hidden workspace. The action tests use process stubs and
+owned temporary files; no CLI/npm install, real file picker or user profile is
+used. These checks do not establish live GUI, desktop-session or backend health.
 
 ## Catalog subfeatures
 
