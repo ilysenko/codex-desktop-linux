@@ -332,14 +332,20 @@ function connected(factory, wrapped, viewed) {
  * each feature; this module validates their complete request/reply statement
  * shape and the native continuation, sender and profile-state wiring. Scope
  * metadata uses half-open source offsets: factory/startup/method body ranges
- * exclude braces, while host/owner declaration ranges include their braces. */
+ * exclude braces, while host/owner declaration ranges include their braces.
+ * Parsed factoryIds remain available when a current carrier has no valid
+ * request graph, so callers can reject incomplete same-identity copies. */
 function inspectMainRequestSites(source) {
-  if (typeof source !== "string") return { ok: false, reason: "expected main-process source text" };
+  let factoryIds = [];
+  const failure = reason => ({ ok: false, reason, factoryIds });
+  if (typeof source !== "string") return failure("expected main-process source text");
   try {
     new Script(source);
     const graphs = [];
-    const carriers = factories(source).map(factory => ({ factory, entry: startup(factory) })).filter(owner => owner.entry);
-    if (carriers.length !== 1) return { ok: false, reason: "missing or ambiguous main startup authority" };
+    const inventory = factories(source);
+    factoryIds = inventory.map(factory => factory.identity);
+    const carriers = inventory.map(factory => ({ factory, entry: startup(factory) })).filter(owner => owner.entry);
+    if (carriers.length !== 1) return failure("missing or ambiguous main startup authority");
     for (const { factory, entry } of carriers) {
       if (!factory.body.includes("HTTP requests must use the HTTP fetch service.") || !factory.body.includes("this.fetchWrapper.handleRequest(")) continue;
       const entries = [...factory.body.matchAll(/async handleRequest\(/gu)];
@@ -352,16 +358,16 @@ function inspectMainRequestSites(source) {
         const ids = new Set();
         if (!prefixComplete(source.slice(viewed.site.prefixStart, viewed.site.prefixEnd), viewed.site, ids) ||
             !prefixComplete(source.slice(wrapped.site.prefixStart, wrapped.site.prefixEnd), wrapped.site, ids)) continue;
-        graphs.push({ ok: true, scope: {
-          factoryStart: factory.start, factoryEnd: factory.end,
+        graphs.push({ ok: true, factoryIds, scope: {
+          factoryId: factory.identity, factoryStart: factory.start, factoryEnd: factory.end,
           startupStart: factory.start + entry.bodyStart, startupEnd: factory.start + entry.bodyEnd,
           hostStart: factory.start + host.start, hostEnd: factory.start + host.end + 1,
         }, viewFetch: viewed.site, wrapperRequest: wrapped.site });
       }
     }
-    if (graphs.length !== 1) return { ok: false, reason: graphs.length ? "ambiguous native main request graph" : "missing or incomplete native main request graph" };
+    if (graphs.length !== 1) return failure(graphs.length ? "ambiguous native main request graph" : "missing or incomplete native main request graph");
     return graphs[0];
-  } catch (error) { return { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
+  } catch (error) { return failure(error instanceof Error ? error.message : String(error)); }
 }
 
 module.exports = { inspectMainRequestSites };

@@ -77,7 +77,7 @@ function runtime(source) {
 test("pure interface exposes only verified sites/parameters and view-only global state", () => {
   const source = fixture(), graph = inspect(source);
   assert.equal(graph.ok, true, graph.reason);
-  assert.deepEqual(Object.keys(graph).sort(), ["ok", "scope", "viewFetch", "wrapperRequest"]);
+  assert.deepEqual(Object.keys(graph).sort(), ["factoryIds", "ok", "scope", "viewFetch", "wrapperRequest"]);
   assert.equal(graph.viewFetch.globalStateExpr, "this.globalState");
   assert.equal(Object.hasOwn(graph.wrapperRequest, "globalStateExpr"), false);
   assert.equal(graph.viewFetch.insertAt, graph.viewFetch.nativeStart);
@@ -116,6 +116,19 @@ test("current CJS carrier supports exponent keys and applies JavaScript property
   for (const source of [fixture(graphBody(), "8.282e4", ',82820(){return false}'), fixture(graphBody(), "8.282e4", ',"82820"(){return false}'), fixture(graphBody(), "9007199254740993"), fixture(graphBody(), "8.5"), fixture() + fixture(), 'const text=' + JSON.stringify(fixture()) + ";", 'function unused(){' + fixture() + '}']) {
     assert.equal(inspect(source).ok, false);
   }
+});
+test("factory identity finds related copies even after every request discovery needle is lost", () => {
+  const good = inspect(fixture());
+  assert.equal(good.ok, true, good.reason);
+  assert.equal(good.scope.factoryId, "82820");
+  assert.deepEqual(good.factoryIds, [good.scope.factoryId]);
+  for (const key of ["82820", "8.282e4", '"82820"']) {
+    const missing = inspect(fixture("return false;", key));
+    assert.equal(missing.ok, false);
+    assert.deepEqual(missing.factoryIds, [good.scope.factoryId]);
+    assert.equal(Object.hasOwn(missing, "scope"), false, "identity alone is not a verified graph");
+  }
+  assert.deepEqual(inspect("const unrelated=true;").factoryIds, []);
 });
 test("current inert empty object spread cannot override a literal wiring property", () => {
   const source = fixture().replace("}({globalState:e.globalState,chunkedMessageSender", "}({globalState:e.globalState,...{},chunkedMessageSender");
