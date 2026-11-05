@@ -2426,13 +2426,14 @@ test("socket hook emits no launcher environment during after-exit cleanup", () =
 
 test("orphan reaper preserves a live owner and its listener", async () => {
   const tempDir = makeSocketTempDir("shared-app-server-live-reaper-");
-  const socketPath = path.join(tempDir, "app-server.sock");
-  const lockPath = `${socketPath}.lock`;
-  const selfStat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
-  const selfStartTime = selfStat.slice(selfStat.lastIndexOf(")") + 2).trim().split(/\s+/)[19];
-  const server = await listenUnix(socketPath);
-  fs.writeFileSync(lockPath, `${process.pid} ${selfStartTime}\n`, { mode: 0o600 });
+  let server;
   try {
+    const socketPath = path.join(tempDir, "app-server.sock");
+    const lockPath = `${socketPath}.lock`;
+    const selfStat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
+    const selfStartTime = selfStat.slice(selfStat.lastIndexOf(")") + 2).trim().split(/\s+/)[19];
+    server = await listenUnix(socketPath);
+    fs.writeFileSync(lockPath, `${process.pid} ${selfStartTime}\n`, { mode: 0o600 });
     const result = spawnSync(process.execPath, [orphanReaper, socketPath], {
       encoding: "utf8",
     });
@@ -2447,12 +2448,13 @@ test("orphan reaper preserves a live owner and its listener", async () => {
 
 test("orphan reaper fails closed on an unknown live listener", async () => {
   const tempDir = makeSocketTempDir("shared-app-server-foreign-reaper-");
-  const socketPath = path.join(tempDir, "app-server.sock");
-  const lockPath = `${socketPath}.lock`;
-  const server = await listenUnix(socketPath);
-  const selfStartTime = processStartTime(process.pid);
-  fs.writeFileSync(lockPath, `99999999 1 ${process.pid} ${selfStartTime}\n`, { mode: 0o600 });
+  let server;
   try {
+    const socketPath = path.join(tempDir, "app-server.sock");
+    const lockPath = `${socketPath}.lock`;
+    server = await listenUnix(socketPath);
+    const selfStartTime = processStartTime(process.pid);
+    fs.writeFileSync(lockPath, `99999999 1 ${process.pid} ${selfStartTime}\n`, { mode: 0o600 });
     const result = spawnSync(process.execPath, [orphanReaper, socketPath], {
       encoding: "utf8",
     });
@@ -3019,12 +3021,13 @@ test("injected transport reclaims a dead owner's lock when no socket exists", as
 
 test("injected transport preserves a dead owner's lock while its socket is live", async () => {
   const tempDir = makeSocketTempDir("shared-app-server-orphan-socket-");
-  const socketPath = path.join(tempDir, "app-server.sock");
-  const lockPath = `${socketPath}.lock`;
-  fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
-  const server = await listenUnix(socketPath);
-  const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
+  let server;
   try {
+    const socketPath = path.join(tempDir, "app-server.sock");
+    const lockPath = `${socketPath}.lock`;
+    fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
+    server = await listenUnix(socketPath);
+    const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
     await assert.rejects(new Transport(socketPath).acquireOwnership(), /already owned/);
     assert.equal(fs.readFileSync(lockPath, "utf8"), "99999999 1\n");
     assert.equal(fs.lstatSync(socketPath).isSocket(), true);
@@ -3036,17 +3039,18 @@ test("injected transport preserves a dead owner's lock while its socket is live"
 
 test("injected transport reclaims a dead owner's unbound socket inode", async () => {
   const tempDir = makeSocketTempDir("shared-app-server-stale-socket-");
-  const socketPath = path.join(tempDir, "app-server.sock");
-  const stalePath = `${socketPath}.stale`;
-  const lockPath = `${socketPath}.lock`;
-  fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
-  const server = await listenUnix(socketPath);
-  fs.renameSync(socketPath, stalePath);
-  await closeServer(server);
-  fs.renameSync(stalePath, socketPath);
-  const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
-  const transport = new Transport(socketPath);
+  let server;
   try {
+    const socketPath = path.join(tempDir, "app-server.sock");
+    const stalePath = `${socketPath}.stale`;
+    const lockPath = `${socketPath}.lock`;
+    fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
+    server = await listenUnix(socketPath);
+    fs.renameSync(socketPath, stalePath);
+    await closeServer(server);
+    fs.renameSync(stalePath, socketPath);
+    const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
+    const transport = new Transport(socketPath);
     await transport.acquireOwnership();
     assert.equal(fs.existsSync(socketPath), false);
     assert.match(fs.readFileSync(lockPath, "utf8"), new RegExp(`^${process.pid} \\d+\\n$`));
@@ -3357,12 +3361,13 @@ test("orphan reaper JavaScript syntax is valid", () => {
 test("socket aliases validate private targets and reject unsafe or changing paths", async () => {
   const { readSocketPath } = require("./socket-path.js");
   const root = makeSocketTempDir("shared-alias-");
-  const alias = path.join(root, "alias");
-  const target = path.join(root, "socket");
-  const server = await listenUnix(target);
-  fs.chmodSync(target, 0o600);
-  fs.symlinkSync(target, alias);
+  let server;
   try {
+    const alias = path.join(root, "alias");
+    const target = path.join(root, "socket");
+    server = await listenUnix(target);
+    fs.chmodSync(target, 0o600);
+    fs.symlinkSync(target, alias);
     assert.equal(readSocketPath(alias).targetPath, target);
     fs.chmodSync(root, 0o755);
     assert.throws(() => readSocketPath(alias), /directory is unsafe/);
@@ -3390,15 +3395,16 @@ test("socket aliases validate private targets and reject unsafe or changing path
 
 test("dead socket aliases are reclaimed without unlinking their target", async () => {
   const root = makeSocketTempDir("shared-stale-alias-");
-  const alias = path.join(root, "alias");
-  const target = path.join(root, "socket");
-  const server = await listenUnix(target);
-  fs.chmodSync(target, 0o600);
-  fs.symlinkSync(target, alias);
-  fs.writeFileSync(`${alias}.lock`, "99999999 1\n", { mode: 0o600 });
-  const { Transport } = loadInjectedTransport();
-  const transport = new Transport(alias);
+  let server;
   try {
+    const alias = path.join(root, "alias");
+    const target = path.join(root, "socket");
+    server = await listenUnix(target);
+    fs.chmodSync(target, 0o600);
+    fs.symlinkSync(target, alias);
+    fs.writeFileSync(`${alias}.lock`, "99999999 1\n", { mode: 0o600 });
+    const { Transport } = loadInjectedTransport();
+    const transport = new Transport(alias);
     await assert.rejects(transport.acquireOwnership(), /already owned/);
     assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
     const saved = `${target}.saved`;

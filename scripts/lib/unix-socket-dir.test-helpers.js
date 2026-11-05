@@ -15,6 +15,8 @@ const path = require("node:path");
 
 // sun_path holds 108 bytes, including the terminating NUL.
 const SOCKET_PATH_MAX = 107;
+// dbus-daemon refuses a listen path longer than this.
+const DBUS_SOCKET_PATH_MAX = 99;
 // fs.mkdtempSync appends six characters to the prefix.
 const MKDTEMP_SUFFIX = "XXXXXX";
 
@@ -61,4 +63,4 @@ function makeSocketTempDir(prefix, deepest, { limit = SOCKET_PATH_MAX, runtimeDi
   return fs.mkdtempSync(path.join(socketDirBase({ prefix, deepest, limit, runtimeDir }), prefix));
 }
 
-module.exports = { SOCKET_PATH_MAX, makeSocketTempDir, socketDirBase };
+module.exports = { DBUS_SOCKET_PATH_MAX, SOCKET_PATH_MAX, makeSocketTempDir, socketDirBase };
