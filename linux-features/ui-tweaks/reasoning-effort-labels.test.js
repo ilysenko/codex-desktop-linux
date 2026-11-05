@@ -19,10 +19,10 @@ const values={
 };
 function catalog(dictionary,chunk=101,id="ZhCn"){
   const json=JSON.stringify(dictionary).replaceAll("\\","\\\\").replaceAll("'","\\'");
-  return `export const __rspack_esm_id=${chunk};export const __rspack_esm_ids=[${chunk}];export const __webpack_modules__={${id}(e){e.exports=JSON.parse('${json}')}};`;
+  return `export const __rspack_esm_ids=[${chunk}];export const __webpack_modules__={${id}(e){e.exports=JSON.parse('${json}')}};`;
 }
 function readCatalog(source){
-  const factories=vm.runInNewContext(source.replace(/export const (__rspack_esm_id|__rspack_esm_ids|__webpack_modules__)=/g,"const $1=")+"\n;__webpack_modules__");
+  const factories=vm.runInNewContext(source.replace(/export const (__rspack_esm_ids|__webpack_modules__)=/g,"const $1=")+"\n;__webpack_modules__");
   const module={};Object.values(factories)[0](module);return module.exports;
 }
 function workspace(t,{source=catalog(values),chunk=101,id="ZhCn",assetName=`async/${chunk}.abcdef1234.js`}={}){
@@ -69,9 +69,24 @@ test("English effort locale rejects missing or duplicated Persistent before chan
   }
 });
 
+test("English effort locale requires its current array chunk identity before writing", t => {
+  const original = catalog(values);
+  for (const header of [
+    "export const __rspack_esm_ids=[999];",
+    "export const __rspack_esm_ids=[101,999];",
+    "export const __rspack_esm_ids=[];",
+    "export const __rspack_esm_id=101;",
+  ]) {
+    const source = original.replace("export const __rspack_esm_ids=[101];", header);
+    const app = workspace(t, { source });
+    assert.equal(app.run().status, "skipped-optional");
+    assert.equal(fs.readFileSync(app.target, "utf8"), source);
+  }
+});
+
 test("English effort locale signed route retains all non-target entries and is repeatable",{skip:!process.env.CODEX_SIGNED_EXTRACTED_APP},t=>{
   const original=findZhCnLocaleAsset(process.env.CODEX_SIGNED_EXTRACTED_APP),dictionary=readCatalog(original.source);
-  const chunk=Number(/^export const __rspack_esm_id=(\d+);/.exec(original.source)[1]);
+  const chunk=Number(/^export const __rspack_esm_ids=\[(\d+)\];/.exec(original.source)[1]);
   const id=/__webpack_modules__=\{([A-Za-z_$][\w$]*)\(/.exec(original.source)[1];
   const app=workspace(t,{source:original.source,chunk,id,assetName:original.assetName});
   assert.equal(app.run().status,"applied");const after=fs.readFileSync(app.target,"utf8");assert.ok(after===expectedSource(original.source,dictionary));
