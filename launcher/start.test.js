@@ -60,6 +60,18 @@ exit 7
   return root;
 }
 
+// The launcher reports usage from a background subshell that outlives
+// start.sh and creates XDG_STATE_HOME/codex-desktop/usage-reporting. Under a
+// test root, a reporter still running at cleanup recreates the root after it
+// was removed. The subshell inherits a spare pipe on fd 3, and spawnSync
+// returns only once every holder has closed it, so the reporter is done.
+function runLauncherWithReporting(root, args, options) {
+  return childProcess.spawnSync(path.join(root, "start.sh"), args, {
+    ...options,
+    stdio: ["pipe", "pipe", "pipe", "pipe"],
+  });
+}
+
 function waitForFile(filePath, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
   while (!fs.existsSync(filePath) && Date.now() < deadline) {
@@ -271,13 +283,12 @@ printf '<%s>\\n' "$@" >> "$TEST_ROOT/curl-arguments"
   };
 
   for (let launch = 0; launch < 2; launch += 1) {
-    const result = childProcess.spawnSync(path.join(root, "start.sh"), [], {
+    const result = runLauncherWithReporting(root, [], {
       env,
       encoding: "utf8",
     });
     assert.equal(result.status, 7);
     assert.equal(result.stderr, "");
-    if (launch === 0) waitForFile(callsPath);
   }
 
   assert.equal(fs.readFileSync(callsPath, "utf8"), "call\n");
@@ -301,7 +312,7 @@ test("launcher usage reporting has one opt-out and suppresses curl failures", (t
 printf 'unexpected\\n' >> "$TEST_ROOT/curl-calls"
 `,
   );
-  const disabled = childProcess.spawnSync(path.join(disabledRoot, "start.sh"), [], {
+  const disabled = runLauncherWithReporting(disabledRoot, [], {
     env: {
       ...process.env,
       CODEX_HOME: path.join(disabledRoot, "codex-home"),
@@ -325,7 +336,7 @@ printf 'unexpected\\n' >> "$TEST_ROOT/curl-calls"
   const missingBin = path.join(missingRoot, "bin");
   fs.mkdirSync(missingBin, { recursive: true });
   fs.symlinkSync(dirnamePath, path.join(missingBin, "dirname"));
-  const missing = childProcess.spawnSync(path.join(missingRoot, "start.sh"), [], {
+  const missing = runLauncherWithReporting(missingRoot, [], {
     env: {
       ...process.env,
       CODEX_HOME: path.join(missingRoot, "codex-home"),
@@ -350,7 +361,7 @@ printf 'simulated curl failure\\n' >&2
 exit 22
 `,
   );
-  const failing = childProcess.spawnSync(path.join(failingRoot, "start.sh"), [], {
+  const failing = runLauncherWithReporting(failingRoot, [], {
     env: {
       ...process.env,
       CODEX_HOME: path.join(failingRoot, "codex-home"),
@@ -364,6 +375,12 @@ exit 22
   assert.equal(failing.status, 7);
   assert.equal(failing.stdout, "");
   assert.equal(failing.stderr, "");
+  // The reporter reserved the day before the failed request, and it finished
+  // before the run returned.
+  assert.equal(
+    fs.readdirSync(path.join(failingRoot, "state/codex-desktop/usage-reporting")).length,
+    1,
+  );
 });
 
 test("launcher composes declarative hooks and forwards arguments", (t) => {

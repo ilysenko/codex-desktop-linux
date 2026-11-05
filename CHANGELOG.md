@@ -236,6 +236,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The launcher's usage-reporting tests wait for the background reporter before
+  they remove their test folder. The reporter used to run after the cleanup and
+  recreate `codex-launcher-test-*/state` in `TMPDIR`, two folders per run.
 - A successful pixelflux click, scroll or drag in a Selkies container
   notifies the Codex avatar cursor, as the other pointer routes do. These
   routes had skipped it since the pixelflux backend arrived.
