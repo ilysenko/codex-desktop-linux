@@ -299,10 +299,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   fixtures move to `XDG_RUNTIME_DIR` when a socket path would not fit under
   `TMPDIR`, so the suite passes with a long `TMPDIR` too; without
   `XDG_RUNTIME_DIR` they fail with the limit and the path.
-  `scripts/ci/run-node-checks.sh`, a standalone script that runs every Node
-  test, now runs them with a fresh `TMPDIR` and fails, naming the entries,
-  when a run leaves any. CI and `scripts/ci-local.sh` run their own lists of
-  Node tests and do not use it.
+  `scripts/ci/run-node-checks.sh`, a standalone script that runs the
+  `*.test.js` files and the feature `test.js` files, now runs them with a
+  fresh `TMPDIR` and fails, naming the entries, when a run leaves any. CI and
+  `scripts/ci-local.sh` run their own lists of Node tests and do not use it.
 - Desktop entries no longer offer a "New Window" action. It relied on the
   retired multi-instance launcher (`--new-instance`, `CODEX_MULTI_LAUNCH`),
   which the official app ignores, so it did nothing while the app was running
