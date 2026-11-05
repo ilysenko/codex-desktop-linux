@@ -21,7 +21,7 @@ desktops, dependencies, permissions, and troubleshooting.
 
 ## Supported operations
 
-The embedded backend tracks standalone computer-use-linux v0.7.45. GNOME
+The embedded backend tracks standalone computer-use-linux v0.7.46. GNOME
 scaled pointer sessions use portal EIS regions when available and retain the
 legacy route when negotiation fails. Selkies containers can set `PIXELFLUX_CU`
 and `PIXELFLUX_CU_TOKEN` to use their loopback computer-use API for capture and

@@ -7,6 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.46.
+  `codex-computer-use-cosmic` and `codex-computer-use-indicator` check their
+  command line before they do anything, as `codex-computer-use-linux` does
+  since the v0.7.45 sync. Both print help on `-h` or `--help` and exit 0. The
+  indicator takes no arguments, and the COSMIC helper takes only its five
+  commands and `--window-id`. Anything else prints an error on stderr and
+  exits 2. The indicator used to start on `--help` or any flag: it took its
+  lock files in `XDG_RUNTIME_DIR` and connected to the compositor. The COSMIC
+  helper exited 1 on a bad line, and `probe --help` failed instead of printing
+  help. The backend starts both as before. `setup_window_targeting` and
+  `setup-window-targeting` no longer ask for a new login when only the Codex
+  GNOME Shell extension's display metadata changed (`name`, `description`,
+  `url`, `version-name`, `donations`), such as the `url` the v0.7.45 sync
+  added. A changed `extension.js`, or a change to any other `metadata.json`
+  field, such as `shell-version`, still sets `requires_shell_reload`. The
+  `press_key` description and the `type_text` sentence of the MCP instructions
+  name pixelflux, `setup --help` says when setup requests `IsEnabled`, and the
+  `terminal_command`, `pid`, click `x` and `y`, and `set_value` `value` docs
+  match the code.
 - Synchronize the embedded Computer Use backend to standalone v0.7.45, which
   includes v0.7.44. `codex-computer-use-linux` validates the whole command
   line before anything runs. Every command prints its own help on `-h` or

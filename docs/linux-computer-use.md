@@ -45,7 +45,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.45. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.46. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -382,6 +382,21 @@ anything runs: an unknown command, flag or argument count exits 2. `--` ends
 flags, so `state -- -name` reads the app named `-name`. Since the v0.7.45 sync,
 `setup --help` no longer runs setup and `setup-window-targeting --help` no
 longer installs the extension.
+
+Since the v0.7.46 sync, the `codex-computer-use-cosmic` and
+`codex-computer-use-indicator` helpers check their command line the same way.
+The backend starts both. The COSMIC helper takes its five commands, and
+`activate-window` takes `--window-id ID`. The indicator takes no arguments.
+Both print help on `-h` or `--help`, and anything else exits 2 before the
+helper connects to the compositor.
+
+`setup-window-targeting` and the `setup_window_targeting` tool install the
+Codex GNOME Shell extension and set `requires_shell_reload` when GNOME Shell
+must load it again, which takes a log out and back in. A changed
+`extension.js` needs one, and so does a changed `metadata.json` field GNOME
+Shell acts on, such as `shell-version`. Since the v0.7.46 sync, a change only
+to the display fields `name`, `description`, `url`, `version-name` or
+`donations` does not.
 
 The direct MCP server also exposes `run_shell` only when explicitly started
 with `CODEX_COMPUTER_USE_ENABLE_SHELL=1`. The standalone
