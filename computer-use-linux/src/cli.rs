@@ -63,7 +63,7 @@ const SUBCOMMANDS: &[Subcommand] = &[
         required: 0,
         allowed: 0,
         summary: "Install the GNOME Shell extension for window targeting.",
-        details: "Writes the extension into the user's GNOME Shell extensions directory, unless a system copy is installed, enables it, and prints a JSON report. GNOME may need a new login before it loads the extension. The report's requires_shell_reload says when GNOME Shell needs a new login. That is when the Shell does not serve the window API yet, or a system copy replaces the copy it loaded. It is also when extension.js, or a metadata field the Shell acts on, changed while the extension was enabled or its state was unknown. A change to the name, description or url alone needs no new login.",
+        details: "Writes the extension into $XDG_DATA_HOME/gnome-shell/extensions (default ~/.local/share), where GNOME Shell loads user extensions, or into the user copy GNOME Shell reports it loaded, unless a system copy is installed, enables it, and prints a JSON report. GNOME may need a new login before it loads the extension. The report's requires_shell_reload says when GNOME Shell needs a new login. That is when the Shell does not serve the window API yet, or a system copy replaces the copy it loaded. It is also when extension.js, or a metadata field the Shell acts on, changed while the extension was enabled or its state was unknown. A change to the name, description, url, version-name or donations alone needs no new login.",
         hidden: false,
     },
     Subcommand {
@@ -438,6 +438,21 @@ mod tests {
                 format!("run {} {positionals:?}", subcommand.name)
             }
             Err(error) => format!("error: {}", error.message),
+        }
+    }
+
+    #[test]
+    fn setup_help_names_every_display_only_metadata_field() {
+        let details = super::subcommand("setup-window-targeting").unwrap().details;
+        // Whole words, so version-name does not count for name.
+        let words: Vec<&str> = details
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .collect();
+        for field in super::gnome_extension::DISPLAY_ONLY_METADATA {
+            assert!(
+                words.contains(field),
+                "setup-window-targeting help leaves out {field}"
+            );
         }
     }
 

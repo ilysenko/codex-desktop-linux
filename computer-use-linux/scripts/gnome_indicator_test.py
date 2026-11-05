@@ -22,7 +22,7 @@ import time
 import unittest
 import zlib
 
-from socket_fixture import INDICATOR_SOCKET, TEMPDIR_NAME, socket_tempdir
+from socket_fixture import INDICATOR_SOCKET, TEMPDIR_NAME, private_bus_config, socket_tempdir
 
 SERVER, INDICATOR = (str(Path(arg).resolve()) for arg in sys.argv[1:3])
 SERVICE = 'com.openai.Codex.WindowControl'
@@ -310,11 +310,7 @@ if __name__ == '__main__':
         env = dict(os.environ, XDG_RUNTIME_DIR=directory)
         # No service directories: accessibility/portal discovery must never
         # activate real desktop processes on this private bus.
-        config = Path(directory)/'bus.conf'
-        config.write_text('<busconfig><type>session</type>'
-            f'<listen>unix:tmpdir={directory}</listen>'
-            '<policy context="default"><allow own="*"/>'
-            '<allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>')
+        config = private_bus_config(Path(directory)/'bus.conf', directory)
         proc = subprocess.Popen(['dbus-run-session', '--config-file', str(config), '--', '/usr/bin/python3', __file__,
             SERVER, INDICATOR, '--private', directory], env=env, start_new_session=True)
         try:

@@ -500,6 +500,23 @@ fn helper_binaries_print_help_without_side_effects() {
 }
 
 #[test]
+fn indicator_errors_name_its_binary() {
+    // Without XDG_RUNTIME_DIR the overlay stops before it opens a file or a
+    // Wayland connection.
+    let output = Command::new(INDICATOR)
+        .env_clear()
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "[codex-computer-use-indicator] XDG_RUNTIME_DIR is not set\n"
+    );
+}
+
+#[test]
 fn helper_binaries_refuse_bad_command_lines_with_status_2_and_no_side_effects() {
     let mut cases: Vec<(&str, Vec<&str>)> = vec![
         (INDICATOR, vec!["--cul-no-such-flag"]),

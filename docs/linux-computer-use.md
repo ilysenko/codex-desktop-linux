@@ -45,7 +45,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.46. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.47. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -398,6 +398,15 @@ and so does a changed `metadata.json` field GNOME Shell acts on, such as
 `shell-version`. Since the v0.7.46 sync, a change only
 to the display fields `name`, `description`, `url`, `version-name` or
 `donations` does not.
+
+Since the v0.7.47 sync, setup writes the user copy of the extension to
+`$XDG_DATA_HOME/gnome-shell/extensions`, where GNOME Shell loads user
+extensions, and to `~/.local/share/gnome-shell/extensions` only when
+`XDG_DATA_HOME` is unset or empty. When GNOME Shell already loaded a user
+copy, setup updates the copy the Shell reports, since the Shell can run with
+another `XDG_DATA_HOME` than the app. The backend inherits the launcher's
+environment through the host bridge, including `XDG_DATA_HOME`. A bridge that
+an earlier launch started keeps that launch's environment.
 
 The direct MCP server also exposes `run_shell` only when explicitly started
 with `CODEX_COMPUTER_USE_ENABLE_SHELL=1`. The standalone

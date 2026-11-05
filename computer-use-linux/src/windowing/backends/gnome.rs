@@ -128,7 +128,7 @@ pub struct MonitorInfo {
     pub scale: f64,
 }
 
-const EXTENSION_OUTDATED_HINT: &str = "the installed computer-use-linux GNOME Shell extension predates this method; rerun setup_window_targeting, then log out and back in to reload GNOME Shell";
+const EXTENSION_OUTDATED_HINT: &str = "the installed Codex GNOME Shell extension predates this method; rerun setup_window_targeting, then log out and back in to reload GNOME Shell";
 
 fn map_unknown_method(error: zbus::Error) -> anyhow::Error {
     let text = error.to_string();
@@ -150,9 +150,8 @@ pub async fn extension_monitor_layout() -> Result<Vec<MonitorInfo>> {
         .call("GetMonitorLayout", &())
         .await
         .map_err(map_unknown_method)
-        .context("computer-use-linux GNOME Shell extension GetMonitorLayout call failed")?;
-    serde_json::from_str(&json)
-        .context("computer-use-linux GNOME Shell extension returned invalid monitor JSON")
+        .context("Codex GNOME Shell extension GetMonitorLayout call failed")?;
+    serde_json::from_str(&json).context("Codex GNOME Shell extension returned invalid monitor JSON")
 }
 
 pub(crate) async fn move_extension_window(window_id: u64, x: i32, y: i32) -> Result<String> {
@@ -181,13 +180,11 @@ async fn extension_window_op<B: serde::Serialize + zbus::zvariant::DynamicType>(
         .call(method, body)
         .await
         .map_err(map_unknown_method)
-        .with_context(|| {
-            format!("computer-use-linux GNOME Shell extension {method} call failed")
-        })?;
+        .with_context(|| format!("Codex GNOME Shell extension {method} call failed"))?;
     if ok {
         Ok(message)
     } else {
-        bail!("computer-use-linux GNOME Shell extension refused {method}: {message}");
+        bail!("Codex GNOME Shell extension refused {method}: {message}");
     }
 }
 
@@ -220,7 +217,7 @@ pub(crate) async fn verified_extension_proxy(connection: &zbus::Connection) -> R
         GNOME_SHELL_EXTENSION_SERVICE,
     )
     .await
-    .context("failed to create verified computer-use-linux GNOME Shell extension proxy")
+    .context("failed to create verified Codex GNOME Shell extension proxy")
 }
 
 async fn verified_extension_owner(connection: &zbus::Connection) -> Result<OwnedUniqueName> {

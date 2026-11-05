@@ -539,9 +539,18 @@ mod tests {
     use super::*;
     use std::{fs, path::PathBuf, time::Instant};
 
+    /// Removes the script when dropped, also when the test fails.
+    struct Script(PathBuf);
+
+    impl Drop for Script {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
     /// A script whose own write handle is still open: `exec` must fail with
     /// ETXTBSY until the handle closes.
-    fn busy_script(label: &str) -> (PathBuf, std::fs::File) {
+    fn busy_script(label: &str) -> (Script, std::fs::File) {
         use std::io::Write as _;
         use std::os::unix::fs::PermissionsExt as _;
         let path = std::env::temp_dir().join(format!(
@@ -555,14 +564,15 @@ mod tests {
         let mut file = std::fs::File::create(&path).unwrap();
         file.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
         file.flush().unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-        (path, file)
+        let script = Script(path);
+        std::fs::set_permissions(&script.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+        (script, file)
     }
 
     #[test]
     fn blocking_spawn_waits_out_a_transient_text_file_busy() {
-        let (path, writer) = busy_script("std");
-        let direct = StdCommand::new(&path).spawn();
+        let (script, writer) = busy_script("std");
+        let direct = StdCommand::new(&script.0).spawn();
         assert!(
             direct.as_ref().err().is_some_and(is_text_file_busy),
             "an open write handle must make exec fail with ETXTBSY: {direct:?}"
@@ -572,35 +582,33 @@ mod tests {
             drop(writer);
         });
 
-        let mut child = spawn_std_retrying_busy(&mut StdCommand::new(&path))
+        let mut child = spawn_std_retrying_busy(&mut StdCommand::new(&script.0))
             .expect("retry must outlast a 20 ms busy window");
         assert!(child.wait().unwrap().success());
         release.join().unwrap();
-        let _ = fs::remove_file(path);
     }
 
     #[tokio::test]
     async fn async_spawn_waits_out_a_transient_text_file_busy() {
-        let (path, writer) = busy_script("tokio");
+        let (script, writer) = busy_script("tokio");
         let release = thread::spawn(move || {
             thread::sleep(Duration::from_millis(20));
             drop(writer);
         });
 
-        let mut child = spawn_retrying_busy(&mut Command::new(&path))
+        let mut child = spawn_retrying_busy(&mut Command::new(&script.0))
             .await
             .expect("retry must outlast a 20 ms busy window");
         assert!(child.wait().await.unwrap().success());
         release.join().unwrap();
-        let _ = fs::remove_file(path);
     }
 
     #[test]
     fn persistent_text_file_busy_is_still_reported() {
-        let (path, writer) = busy_script("persistent");
+        let (script, writer) = busy_script("persistent");
         let started = Instant::now();
 
-        let error = spawn_std_retrying_busy(&mut StdCommand::new(&path)).unwrap_err();
+        let error = spawn_std_retrying_busy(&mut StdCommand::new(&script.0)).unwrap_err();
 
         assert!(is_text_file_busy(&error));
         assert!(
@@ -608,7 +616,6 @@ mod tests {
             "the retry budget must stay short"
         );
         drop(writer);
-        let _ = fs::remove_file(path);
     }
 
     #[tokio::test]

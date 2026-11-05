@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 
-from socket_fixture import INDICATOR_SOCKET, socket_tempdir
+from socket_fixture import INDICATOR_SOCKET, private_bus_config, socket_tempdir
 
 
 def rpc(proc, request):
@@ -54,15 +54,9 @@ def main():
             env = os.environ.copy()
             runtime = Path(scratch) / "runtime"
             runtime.mkdir(mode=0o700)
-            bus_config = Path(scratch) / "bus.conf"
             # No service directories: this test must not activate desktop
             # portals, mount a document FUSE filesystem, or start host apps.
-            bus_config.write_text(
-                '<busconfig><type>session</type>'
-                f'<listen>unix:tmpdir={runtime}</listen>'
-                '<policy context="default"><allow own="*"/>'
-                '<allow send_destination="*"/><allow receive_sender="*"/>'
-                '</policy></busconfig>')
+            bus_config = private_bus_config(Path(scratch) / "bus.conf", runtime)
             env.update(CUL_X11_PRIVATE_BUS="1", CUL_X11_SCRATCH=scratch, XDG_CACHE_HOME=scratch,
                        XDG_CONFIG_HOME=scratch, XDG_RUNTIME_DIR=str(runtime),
                        CODEX_COMPUTER_USE_INDICATOR="0",

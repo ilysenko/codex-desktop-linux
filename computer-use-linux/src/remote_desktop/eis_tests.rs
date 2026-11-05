@@ -67,21 +67,17 @@ async fn gnome_fractional_pointer_reaches_full_eis_region() {
     const TEST: &str =
         "remote_desktop::eis_tests::gnome_fractional_pointer_reaches_full_eis_region";
     if std::env::var_os("CUL_PRIVATE_EIS_TEST").is_none() {
-        let root =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/gnome-eis-fixture");
-        std::fs::create_dir_all(&root).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let status = std::process::Command::new("dbus-run-session")
-            .arg("--")
-            .arg(std::env::current_exe().unwrap())
+        // The bus directory is the runtime dir too; drop removes both.
+        let bus = crate::test_sockets::PrivateBus::start("cul-eis-bus");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture"])
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("CUL_PRIVATE_EIS_TEST", "1")
+            .env("DBUS_SESSION_BUS_ADDRESS", bus.address())
             .env("XDG_CURRENT_DESKTOP", "GNOME")
             .env("XDG_SESSION_TYPE", "wayland")
-            .env("XDG_RUNTIME_DIR", &root)
+            .env("XDG_RUNTIME_DIR", bus.dir())
             .status()
             .unwrap();
         assert!(status.success(), "private GNOME/EIS regression failed");

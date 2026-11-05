@@ -1,5 +1,5 @@
-//! `computer-use-linux-indicator`: a click-through overlay that shows when an
-//! agent drives the desktop through computer-use-linux.
+//! `codex-computer-use-indicator`: a click-through overlay that shows when an
+//! agent drives the desktop through `codex-computer-use-linux`.
 //!
 //! The MCP server sends one JSON datagram per action (see
 //! `codex_computer_use_linux::indicator`). While actions arrive this draws, on
@@ -1518,7 +1518,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("[computer-use-linux-indicator] {error}");
+            eprintln!("[{BIN}] {error}");
             ExitCode::FAILURE
         }
     }
