@@ -231,13 +231,23 @@ function findCodexRequestExportName(source) {
       `async function (${ID})\\(${ID}(?:,${ID})*\\)\\{let ${ID}=\\(await ${ID}(?:\\.${ID})*\\.getInstance\\(\\)\\.post\\(\`vscode://codex/\\$\\{`,
       "gu",
     ))];
-    if (raw.length !== 1) continue;
-    const wrappers = [...body.matchAll(new RegExp(
+    let wrappers = raw.length === 1 ? [...body.matchAll(new RegExp(
       `async function (${ID})\\(\\.\\.\\.(${ID})\\)\\{let\\[(${ID}),(${ID})\\]=\\2,` +
         `\\{params:(${ID}),select:(${ID}),signal:(${ID}),source:(${ID})(?:,responsePriority:(${ID}))?\\}=\\4\\?\\?\\{\\};` +
         `return ${escape(raw[0][1])}\\(\\3,\\5,\\6,\\7,\\8(?:,\\9)?\\)\\}`,
       "gu",
-    ))];
+    ))] : [];
+    // Current rspack output inlines the request implementation as an async
+    // IIFE inside the exported wrapper instead of naming the inner helper.
+    if (wrappers.length === 0) {
+      wrappers = [...body.matchAll(new RegExp(
+        `async function (${ID})\\(\\.\\.\\.(${ID})\\)\\{let\\[(${ID}),(${ID})\\]=\\2,` +
+          `\\{params:(${ID}),select:(${ID}),signal:(${ID}),source:(${ID}),responsePriority:(${ID})\\}=\\4\\?\\?\\{\\};` +
+          `return async function\\(${ID}(?:,${ID}){5}\\)\\{[\\s\\S]{0,900}?\\.getInstance\\(\\)\\.post\\(\\x60vscode://codex/\\$\\{` +
+          `[\\s\\S]{0,900}?\\}\\(\\3,\\5,\\6,\\7,\\8,\\9\\)\\}`,
+        "gu",
+      ))];
+    }
     if (wrappers.length !== 1) continue;
     const exportNames = [...body.matchAll(new RegExp(
       `(?<![\\w$.])${escape(requireParam)}\\.d\\(${escape(exportsParam)},\\{(?:[^{}]*?,)?(${ID}):\\(\\)=>${escape(wrappers[0][1])}(?=[,}])`,
@@ -263,7 +273,7 @@ function findCodexRequestWebviewAsset(webviewAssetsDir) {
       continue;
     }
     const requestModule = findCodexRequestExportName(source);
-    const chunkId = source.match(/(?:^|[;\n])export const __rspack_esm_id=(\d+);/)?.[1];
+    const chunkId = source.match(/(?:^|[;\n])export const __rspack_esm_id(?:s=\[|=)(\d+)\]?;/)?.[1];
     if (requestModule != null && chunkId != null) {
       matches.push({ assetName: candidate, chunkId: Number(chunkId), ...requestModule });
     }

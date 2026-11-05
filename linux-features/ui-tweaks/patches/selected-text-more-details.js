@@ -262,6 +262,21 @@ function containingFunction(source, marker, from = 0, to = source.length) {
   return [...functions.values()][0];
 }
 
+function containingNamedFunction(source, marker, from = 0, to = source.length) {
+  const markerIndex = source.indexOf(marker, from);
+  const duplicate = source.indexOf(marker, markerIndex + 1);
+  if (markerIndex < 0 || markerIndex >= to || duplicate >= 0 && duplicate < to) {
+    throw new Error(`Expected one ${marker} marker`);
+  }
+  for (let start = source.lastIndexOf("function", markerIndex); start >= from;
+    start = source.lastIndexOf("function", start - 1)) {
+    const begin = source.slice(start - 6, start) === "async " ? start - 6 : start;
+    const result = functionAt(source, begin);
+    if (result.name != null && markerIndex < result.end) return result;
+  }
+  throw new Error(`Expected named owner for ${marker}`);
+}
+
 function namedFunction(source, name, from = 0, to = source.length) {
   const match = uniqueMatch(source.slice(from, to), `(?:^|[^\\w$.])((?:async )?function ${escapeRegExp(name)}\\()`,
     `${name} declaration`);
@@ -322,7 +337,7 @@ function quickChatContract(source, modules) {
   const offset = quick.start;
   const factoryHeader = uniqueMatch(quickText,
     `function (${IDENT})\\((${IDENT}),\\{projectId:${IDENT}=null,projectName:${IDENT}=null,` +
-      `preservePreviousSession:${IDENT}=!1,\\.\\.\\.${IDENT}\\}=\\{\\}\\)`,
+      `preservePreviousSession:${IDENT}=!1,(?:previewSession:${IDENT},)?\\.\\.\\.${IDENT}\\}=\\{\\}\\)`,
     "Quick Chat factory");
   const factory = functionAt(source, offset + factoryHeader.index);
   const scope = escapeRegExp(factoryHeader[2]);
@@ -331,7 +346,7 @@ function quickChatContract(source, modules) {
     "Quick Chat capability")[1];
   const constructor = uniqueMatch(factory.source,
     `\\(function\\((${IDENT}),\\{conversationId:${IDENT}=\\(0,${MEMBER}\\)\\(\\),contextSourceThread:${IDENT}=null,` +
-      `projectId:${IDENT}=null,projectName:${IDENT}=null,preservePreviousSession:${IDENT}=!1\\}=\\{\\}\\)\\{`,
+      `projectId:${IDENT}=null,projectName:${IDENT}=null,preservePreviousSession:${IDENT}=!1(?:,previewSession:${IDENT})?\\}=\\{\\}\\)\\{`,
     "Quick Chat session constructor");
   const create = functionAt(source, factory.start + constructor.index + 1);
   if (!source.startsWith(`)(${factoryHeader[2]},{contextSourceThread:`, create.end)) {
@@ -346,10 +361,25 @@ function quickChatContract(source, modules) {
     "Quick Chat visibility helper")[1];
   const context = containingFunction(source,
     "Reply to the user query using the following additional context from their Codex conversation:", quick.start, quick.end);
-  const contextWrapper = uniqueMatch(quickText,
-    `function (${IDENT})\\((${IDENT}),(${IDENT})\\)\\{return ${escapeRegExp(context.name)}\\(\\2,` +
-      `\\{isBackgroundSubagentsEnabled:!0,sourceThread:\\3\\}\\)\\}`,
-    "Quick Chat source-context helper")[1];
+  let contextWrapper;
+  if (context.name != null) {
+    contextWrapper = uniqueMatch(quickText,
+      `function (${IDENT})\\((${IDENT}),(${IDENT})\\)\\{return ${escapeRegExp(context.name)}\\(\\2,` +
+        `\\{isBackgroundSubagentsEnabled:!0,sourceThread:\\3\\}\\)\\}`,
+      "Quick Chat source-context helper")[1];
+  } else {
+    const owner = containingNamedFunction(source,
+      "Reply to the user query using the following additional context from their Codex conversation:", quick.start, quick.end);
+    const ownerParams = source.slice(owner.start, owner.paramsEnd);
+    const params = new RegExp(`^function ${escapeRegExp(owner.name)}\\((${IDENT}),(${IDENT})\\)$`, "u").exec(ownerParams);
+    if (
+      params == null ||
+      !owner.source.endsWith(`}(${params[1]},{isBackgroundSubagentsEnabled:!0,sourceThread:${params[2]}})}`)
+    ) {
+      throw new Error("Quick Chat source-context helper drifted");
+    }
+    contextWrapper = owner.name;
+  }
   const accountContext = containingFunction(source, "Context window or account changed", quick.start, quick.end);
   const account = uniqueMatch(accountContext.source,
     `let (${IDENT})=${IDENT}\\.get\\((${MEMBER})\\);if\\(null==\\1\\)return null;`, "context account guard")[2];
@@ -616,7 +646,7 @@ function overlayContract(source, modules, toolbarCopies) {
     if (!ownerText.includes(TOOLBAR_NEEDLE) || !/[{,]onMoreDetails:/u.test(ownerText)) {
       throw new Error("Selected-text toolbar no longer offers More details");
     }
-    if (!new RegExp(`[{,]${escapeRegExp(toolbar[2])}:\\(\\)=>`, "u").test(ownerText)) {
+    if (!new RegExp(`[{,]${escapeRegExp(toolbar[2])}:(?:\\(\\)=>|function\\()`, "u").test(ownerText)) {
       throw new Error("Selected-text toolbar export drifted");
     }
     const hook = uniqueMatch(ownerText,

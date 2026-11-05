@@ -193,6 +193,49 @@ function mainContract(source, state) {
   return aliasesAgree ? { contract, groups } : null;
 }
 
+// The current signed package keeps the Dock apply callback behind a separate
+// appearance-state guard and owns macOS appearance observation in an async
+// native observer. Linux adds its nativeTheme listener beside that owner.
+function currentMainContract(source, state) {
+  const patched = state === "patched";
+  const patterns = mainPatterns(state);
+  const names = ["preview", "resourceName", "appInfo", "windowResource", "applyDefaultGate", "applyTail",
+    "updateHead", "updateTail", "windowRegistration", "tray", "trayState"];
+  const contract = Object.fromEntries(names.map((name) => [name, oneMatch(source, patterns[name])]));
+  if (Object.values(contract).some((match) => match == null)) return null;
+  const applyPrefix = oneMatch(source, new RegExp(patched
+    ? `(?<apply>${id})=function ${dockIconApplyHelper}\\((?<arg>${id})\\)\\{if\\("app-default"!==\\k<arg>&&null==(?<themeState>${id})&&${notLinux}\\)return;if\\((?<devIcons>${id})&&${notLinux}\\)\\{`
+    : `(?<apply>${id})=(?<arg>${id})=>\\{if\\("app-default"!==\\k<arg>&&null==(?<themeState>${id})\\)return;if\\((?<devIcons>${id})\\)\\{`, "g"));
+  if (applyPrefix == null) return null;
+  const themePrefixPattern = new RegExp(
+    `if\\((?<isMac>${id})\\)\\{let (?<cleanup>${id}),(?<disposed>${id})=!1;(?<disposables>${id})\\.add\\(\\(\\)=>\\{\\k<disposed>=!0,\\k<cleanup>\\?\\.\\(\\)\\}\\);let (?<listener>${id})=`,
+    "g",
+  );
+  const themePrefix = oneMatch(source, themePrefixPattern);
+  const themeMarker = "codexLinuxDockIconThemeListener";
+  const markerCount = source.split(themeMarker).length - 1;
+  if (themePrefix == null || (patched ? markerCount !== 3 : markerCount !== 0)) return null;
+  const themeOwner = source.slice(themePrefix.index, themePrefix.index + 3500);
+  if (!themeOwner.includes("Failed to observe macOS Dock icon appearance") || !themeOwner.includes(",V()}")) return null;
+  const groups = Object.fromEntries(Object.entries(contract).map(([name, match]) => [name, match.groups]));
+  const aliasesAgree =
+    groups.preview.resource === groups.appInfo.owner &&
+    sameAliases(groups.appInfo.electron, groups.windowResource.electron, groups.applyTail.electron, groups.tray.electron) &&
+    sameAliases(groups.appInfo.path, groups.windowResource.path ?? groups.appInfo.path) &&
+    sameAliases(groups.appInfo.exists, groups.windowResource.exists) &&
+    sameAliases(applyPrefix.groups.apply, groups.updateHead.apply, groups.updateTail.apply) &&
+    sameAliases(groups.resourceName.resourceName, groups.updateTail.resourceName) &&
+    sameAliases(applyPrefix.groups.arg, groups.applyDefaultGate.arg, groups.applyTail.arg) &&
+    sameAliases(groups.updateHead.read, groups.updateTail.read) &&
+    sameAliases(groups.updateHead.preference, groups.updateTail.preference) &&
+    sameAliases(groups.updateHead.isMac, themePrefix.groups.isMac) &&
+    sameAliases(groups.tray.tray, groups.trayState.tray) &&
+    sameAliases(groups.applyTail.trayState ?? groups.trayState.trayState, groups.trayState.trayState);
+  return aliasesAgree ? { contract: { ...contract, applyPrefix, themePrefix }, groups: {
+    ...groups, applyPrefix: applyPrefix.groups, themePrefix: themePrefix.groups,
+  } } : null;
+}
+
 function dockIconConfig(context) {
   const defaults = context?.feature?.manifest?.tweaks?.appearance?.dockIcon;
   const settings = context?.feature?.settings?.tweaks?.appearance?.dockIcon;
@@ -210,7 +253,47 @@ function replaceMatch(source, match, replacement) {
   return source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
 }
 
+function applyCurrentDockIconMainPatch(source, current) {
+  const { contract, groups } = current;
+  const preview = groups.preview;
+  const info = groups.appInfo;
+  const win = groups.windowResource;
+  const names = groups.resourceName;
+  const tail = groups.applyTail;
+  const trayState = groups.trayState.trayState;
+  const linux = '"linux"===process.platform';
+  const themeListener = "codexLinuxDockIconThemeListener";
+  const replacements = [
+    [contract.preview, `dockIconPreviews:function(${preview.arg}){if("darwin"!==process.platform&&"linux"!==process.platform)return null;let ${preview.theme}=${preview.themeHelper}(${preview.arg}),${preview.defaultIcon}=${preview.resource}(\`\${${preview.iconName}(${preview.arg})}.png\`),${preview.codexDark}=${preview.resource}(${preview.theme}.dark),${preview.codexLight}=${preview.resource}(${preview.theme}.light),${preview.spaceDark}=${linux}?${preview.codexDark}:${preview.resource}(${preview.theme}.spaceDark),${preview.spaceLight}=${linux}?${preview.codexLight}:${preview.resource}(${preview.theme}.spaceLight);return null==${preview.defaultIcon}||null==${preview.codexDark}||null==${preview.codexLight}||null==${preview.spaceDark}||null==${preview.spaceLight}?null:{appDefault:${preview.defaultIcon},codexDark:${preview.codexDark},codexLight:${preview.codexLight},spaceDark:${preview.spaceDark},spaceLight:${preview.spaceLight}}}(${preview.arg})`],
+    [contract.appInfo, `function ${dockIconResourceHelper}(${info.arg}){return ${linux}?(0,${info.path}.join)(process.resourcesPath,"dock-icon",${info.arg}):(0,${info.path}.join)(process.resourcesPath,${info.arg})}function ${info.owner}(${info.arg}){if(null==${info.arg})return null;let ${info.candidate}=${info.electron}.app.isPackaged||${linux}?${dockIconResourceHelper}(${info.arg}):null;return ${info.normalize}(null!=${info.candidate}&&(0,${info.exists}.existsSync)(${info.candidate})?${info.candidate}:(0,${info.path}.join)(${info.electron}.app.getAppPath(),"src","icons",${info.arg}))}`],
+    [contract.windowResource, `(${win.arg}=>{if(!${win.electron}.app.isPackaged&&"linux"!==process.platform)return null;let ${win.candidate}=${dockIconResourceHelper}(${win.arg});return(0,${win.exists}.existsSync)(${win.candidate})?${win.candidate}:null})`],
+    [contract.resourceName, `${names.resourceName}=(${names.preference},${names.dark})=>{switch(${names.preference}){case"app-default":return null;case"codex-system":return ${names.dark}?${names.theme}.dark:${names.theme}.light;case"space-system":return ${linux}?${names.dark}?${names.theme}.dark:${names.theme}.light:${names.dark}?${names.theme}.spaceDark:${names.theme}.spaceLight}}`],
+    [contract.applyPrefix, `${groups.applyPrefix.apply}=function ${dockIconApplyHelper}(${groups.applyPrefix.arg}){if("app-default"!==${groups.applyPrefix.arg}&&null==${groups.applyPrefix.themeState}&&"linux"!==process.platform)return;if(${groups.applyPrefix.devIcons}&&"linux"!==process.platform){`],
+    [contract.applyDefaultGate, contract.applyDefaultGate[0].replace("&&", '&&"linux"!==process.platform&&')],
+    [contract.applyTail, `if(${tail.image}.isEmpty())return;if("linux"!==process.platform&&("codex-system"===${tail.arg}||"space-system"===${tail.arg})){let{width:${tail.width},height:${tail.height}}=${tail.image}.getSize(),${tail.inset}=Math.round(${tail.width}/128);${tail.image}=${tail.image}.crop({x:${tail.inset},y:${tail.inset},width:${tail.width}-2*${tail.inset},height:${tail.height}-2*${tail.inset}})}if(${linux}){let codexLinuxIconSelection="codex-system"===${tail.arg}||"space-system"===${tail.arg}?${tail.electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?"codex-dark":"codex-light":"chatgpt";globalThis.codexLinuxDockIconImage=${tail.image};for(let codexLinuxWindow of ${tail.electron}.BrowserWindow.getAllWindows())codexLinuxWindow.isDestroyed()||codexLinuxWindow.setIcon(${tail.image});null!=${trayState}?.tray&&!${trayState}.tray.isDestroyed()&&${trayState}.tray.setImage(${tail.image});let codexLinuxSyncScript=${dockIconResourceHelper}("sync-desktop-icon.sh");if(require("node:fs").existsSync(codexLinuxSyncScript))try{let codexLinuxChild=require("node:child_process").spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:["pipe","ignore","ignore"]});codexLinuxChild.on("error",()=>{}),codexLinuxChild.stdin.on("error",()=>{}),codexLinuxChild.stdin.end(${tail.image}.toPNG()),codexLinuxChild.unref()}catch{}return}${tail.electron}.app.dock?.setIcon(${tail.image})}`],
+    [contract.updateHead, contract.updateHead[0].replace(`if(!${groups.updateHead.isMac})`, `if(!${groups.updateHead.isMac}&&"linux"!==process.platform)`)],
+    [contract.themePrefix, `if(${linux}){${groups.updateHead.update}();let ${themeListener}=()=>{let e=${groups.updateHead.read}();"app-default"!==e&&${groups.applyPrefix.apply}(e)};${tail.electron}.nativeTheme.on("updated",${themeListener}),${groups.themePrefix.disposables}.add(()=>{${tail.electron}.nativeTheme.off("updated",${themeListener})})}${contract.themePrefix[0]}`],
+    [contract.windowRegistration, contract.windowRegistration[0].replace(
+      `?.(${groups.windowRegistration.window})}`,
+      `?.(${groups.windowRegistration.window}),"linux"===process.platform&&setImmediate(${groups.updateHead.update})}`,
+    )],
+    [contract.tray, contract.tray[0].replace(
+      `${groups.tray.iconInfo}.defaultIcon`,
+      `"linux"===process.platform&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:${groups.tray.iconInfo}.defaultIcon`,
+    )],
+  ];
+  let patchedSource = source;
+  for (const [match, replacement] of replacements.sort(([left], [right]) => right.index - left.index)) {
+    patchedSource = replaceMatch(patchedSource, match, replacement);
+  }
+  return currentMainContract(patchedSource, "patched") != null ? patchedSource : source;
+}
+
 function applyDockIconMainPatch(source) {
+  const currentSigned = currentMainContract(source, "current");
+  const patchedSigned = currentMainContract(source, "patched");
+  if (patchedSigned != null && currentSigned == null) return source;
+  if (currentSigned != null && patchedSigned == null) return applyCurrentDockIconMainPatch(source, currentSigned);
   const current = mainContract(source, "current");
   const patched = mainContract(source, "patched");
   if (patched != null && current == null) return source;
@@ -262,7 +345,7 @@ function applyDockIconMainPatch(source) {
 //   function n({platform:e,dockIconPreviews:t,buildFlavor:a="prod"}){
 //     return"macOS"!==e||a===s.x1u.Agent?null:t}
 const settingsGateHead =
-  `function ${id}\\(\\{platform:(?<platform>${id}),dockIconPreviews:(?<previews>${id}),` +
+  `(?:function ${id}|${id}:function)\\(\\{platform:(?<platform>${id}),dockIconPreviews:(?<previews>${id}),` +
   `buildFlavor:(?<flavor>${id})="prod"\\}\\)\\{return"macOS"!==\\k<platform>`;
 const settingsGateTail =
   `\\|\\|\\k<flavor>===${id}(?:\\.${id})*\\.Agent\\?null:\\k<previews>\\}`;

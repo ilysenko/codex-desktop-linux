@@ -89,7 +89,7 @@ function reasoningComponent(source) {
   const { stream, body, state: expanded, setter } = state.groups;
   if (!text.includes(`:${expanded},`) || !text.includes(`expanded:${expanded},onToggle:()=>{${setter}(`) ||
       !text.includes(`autoScrollToBottom:${stream},`) ||
-      (!text.includes(`?${body}`) && !text.includes(`:${body},`))) return null;
+      (!text.includes(`?${body}`) && !text.includes(`:${body},`) && !text.includes(`:${body};`))) return null;
   return { start: header.index, text, state };
 }
 

@@ -291,7 +291,7 @@ test("native settings toggle saves both choices and a fresh renderer honors the 
 });
 
 test("all setting labels, descriptions, accessible labels and save errors use the active locale", () => {
-  assert.equal(Object.keys(translations).length, 65);
+  assert.equal(Object.keys(translations).length, 66);
   for (const [locale, messages] of Object.entries(translations)) {
     assert.equal(messages.length, MESSAGE_IDS.length, locale);
     assert.ok(messages.every((message) => typeof message === "string" && message.trim()), locale);
@@ -422,5 +422,5 @@ test("official signed General settings module and all locale catalogs satisfy th
   const [loaderName, ...extraLoaders] = findWebviewAssetsContaining(signedApp, ['"../locales/pl-PL.json":function(){return ']);
   assert.deepEqual(extraLoaders, []);
   const catalogs = catalogPatches(assetsDir, listWebviewScriptAssets(signedApp), fs.readFileSync(path.join(assetsDir, loaderName), "utf8"));
-  assert.equal(catalogs.length, 64);
+  assert.equal(catalogs.length, 65);
 });

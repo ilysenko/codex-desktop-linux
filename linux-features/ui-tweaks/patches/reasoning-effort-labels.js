@@ -133,7 +133,8 @@ function findZhCnLocaleAsset(extractedDir) {
   }
   const assetName = chunkAssets[0];
   const source = fs.readFileSync(path.join(assetsDir, assetName), "utf8");
-  if (!source.startsWith(`export const __rspack_esm_id=${chunk};`)) {
+  if (!source.startsWith(`export const __rspack_esm_id=${chunk};`) &&
+      !source.startsWith(`export const __rspack_esm_ids=[${chunk}];`)) {
     throw new Error(`Simplified Chinese locale chunk ${assetName} does not declare rspack chunk ${chunk}`);
   }
   const catalogs = [...source.matchAll(localeCatalogPattern(moduleId))];
