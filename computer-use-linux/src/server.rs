@@ -358,7 +358,7 @@ impl ComputerUseLinux {
 
     #[tool(
         name = "setup_accessibility",
-        description = "Enable GNOME accessibility through gsettings so Linux Computer Use can read AT-SPI trees.",
+        description = "Enable GNOME accessibility so Linux Computer Use can read AT-SPI trees: sets and reads back the toolkit-accessibility gsettings key when it is not already true, and requests runtime org.a11y.Status IsEnabled when the tree cannot be built or the key does not read back.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -376,7 +376,7 @@ impl ComputerUseLinux {
 
     #[tool(
         name = "setup_window_targeting",
-        description = "Install and enable the optional GNOME Shell extension used for exact window list/focus targeting when GNOME blocks native introspection.",
+        description = "Install and enable the bundled Codex GNOME Shell extension. GNOME Wayland needs it for exact window focus, move_window and resize_window, since Introspect cannot focus, move or resize windows (and recent GNOME blocks its window list too); every GNOME session needs it for the on-screen indicator, and its screenshot route is tried when the GNOME Shell screenshot call fails. Ask the user to log out and back in when the result says a shell reload is required.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -554,7 +554,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "get_app_state",
         output_schema = rmcp::handler::server::tool::schema_for_output::<GetAppStateOutput>(),
-        description = "Start an app use session if needed, then get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. Screenshot results include coordinate_width, coordinate_height, scale, format, and quality when the returned image is downscaled or compressed; callers can request jpeg/quality for compression before resizing.",
+        description = "Get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A window-targeted screenshot needs that window visible and already focused (outside Hyprland background mode); otherwise screenshot_error is set and the tree still returns, so use the screenshot tool to raise and capture it. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. Screenshot results always include coordinate_width, coordinate_height, scale, and format, plus quality for jpeg; callers can request jpeg/quality for compression before resizing.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -887,7 +887,7 @@ impl ComputerUseLinux {
 
     #[tool(
         name = "screenshot",
-        description = "Capture the screen and return it as a viewable, size-bounded image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped before any resize. Returns the image plus a short caption with returned dimensions, coordinate dimensions, scale, format, quality, source, and crop bounds; callers can request jpeg/quality for compression before resizing.",
+        description = "Capture the screen and return it as a viewable, size-bounded image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped before any resize; outside Hyprland background mode, a target without known bounds is refused, so pass full_screen=true there. Returns the image plus a JSON caption with returned and coordinate dimensions, scale, format, quality, source, cropped_to_window, and window_title. The crop origin is not reported; use relative=true on click or scroll for window-relative input. Callers can request jpeg/quality for compression before resizing.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1237,7 +1237,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "click",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Click an element by index, semantic selector, or desktop coordinate pixels from screenshot metadata. Plain left activation prefers a native AT-SPI click/press/toggle action, avoiding toolkit coordinate scaling. Entry activate and slider jump actions are not substituted for pointer clicks. Explicit coordinates, right clicks, and multi-clicks retain pointer semantics. Explicit x/y default to raw screenshot capture pixels; coordinate_space=\"atspi\" with element_index or a semantic selector maps a global AT-SPI screen point through the element's KWin window and output geometry on KDE Wayland. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Click an element by index, semantic selector, or desktop coordinate pixels from screenshot metadata. A plain left click on an element whose first AT-SPI action is click, press, or toggle invokes that action, avoiding toolkit coordinate scaling. Entry activate and slider jump actions are not substituted for pointer clicks. Explicit coordinates, right clicks, and multi-clicks retain pointer semantics. Explicit x/y default to raw screenshot capture pixels; coordinate_space=\"atspi\" with element_index or a semantic selector maps a global AT-SPI screen point through the element's KWin window and output geometry on KDE Wayland. A window target is raised and focused first (on GNOME Wayland, raising needs the Shell extension); nothing is sent when focus cannot be verified. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -1867,7 +1867,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "scroll",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Scroll an element in a direction by a number of pages. With a window target and no x/y/element_index, scrolls at the centre of the targeted window. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Scroll an element, window, or point in a direction by a number of pages (5 wheel notches per page). With a window target and no x/y/element_index, scrolls at the centre of the targeted window; with no point or target, at the current pointer. A window target is raised and focused first; nothing is sent when focus cannot be verified. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -2346,7 +2346,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "drag",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Drag from one point to another using pixel coordinates. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Drag with the left button from one point to another in screenshot capture pixels. Takes no window target or relative coordinates. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -2588,7 +2588,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "press_key",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Press a key or key-combination on the keyboard, optionally after focusing a target window or terminal selector. Key grammar (case-insensitive; hyphens/spaces ignored): combos join with '+', e.g. Ctrl+L or Ctrl+Shift+T. Modifiers: ctrl/control, alt/option, shift, meta/super/cmd/command. Named keys: enter/return, escape/esc, tab, backspace, delete/del, space, home, end, pageup, pagedown, arrowleft/left, arrowright/right, arrowup/up, arrowdown/down, f1-f12. Plus single US letters a-z and digits 0-9. Anything else returns an error (never silently dropped). On Wayland, chords are sent through an active remote desktop portal keyboard session when one is available (or when ydotool is absent), falling back to ydotool otherwise. When ydotool is absent and the session has no RemoteDesktop portal (for example wlroots compositors), chords go through wtype instead. Portal chords send modifiers and named keys as keysyms so remapped keys (e.g. Caps Lock swapped with Control) follow the active keymap; letters and digits are physical US positions. Note: compositor-level shortcuts (e.g. Super+Up) may be consumed by GNOME before reaching the app. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Press a key or key-combination on the keyboard, optionally after focusing a target window or terminal selector. Key grammar (case-insensitive; hyphens/spaces ignored): combos join with '+', e.g. Ctrl+L or Ctrl+Shift+T. Modifiers: ctrl/control, alt/option, shift, meta/super/cmd/command. Named keys: enter/return, escape/esc, tab, backspace, delete/del, space, home, end, pageup, pagedown, arrowleft/left, arrowright/right, arrowup/up, arrowdown/down, f1-f12. Plus single US letters a-z and digits 0-9. Anything else returns an error (never silently dropped). On X11, chords go through xdotool (XTEST), or ydotool when xdotool is missing or cannot start. On Wayland, chords are sent through an active remote desktop portal keyboard session when one is available (or when ydotool is absent), falling back to ydotool otherwise. When ydotool is absent and the session has no RemoteDesktop portal (for example wlroots compositors), chords go through wtype instead. Portal chords send modifiers and named keys as keysyms so remapped keys (e.g. Caps Lock swapped with Control) follow the active keymap; letters and digits are physical US positions. On KDE Plasma every key in a portal chord is a physical keycode. Note: compositor-level shortcuts (e.g. Super+Up) may be consumed by GNOME before reaching the app. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -2846,7 +2846,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "type_text",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector. Success confirms dispatch, not field-content verification; re-observe the target before retrying. X11 xdotool can silently substitute symbols under non-US or changing XKB layouts; inspect the text before pressing Enter or submitting it. The wtype backend rejects NUL and text over 131071 UTF-8 bytes before focus or indicators; Hyprland rejects confirmed password fields; ambiguous fields and terminals use private stdin for at most 100 Unicode characters per call. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector. Success confirms dispatch, not field-content verification; re-observe the target before retrying. X11 xdotool can silently substitute symbols under non-US or changing XKB layouts; inspect the text before pressing Enter or submitting it. The wtype backend rejects NUL and text over 131071 UTF-8 bytes before focus or indicators. On Hyprland, confirmed password fields are rejected, and ambiguous fields and terminals use private stdin for at most 100 Unicode characters per call. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -3181,7 +3181,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "move_window",
         output_schema = rmcp::handler::server::tool::schema_for_output::<WindowGeometryToolOutput>(),
-        description = "Move a window to a new desktop position (frame top-left in desktop coordinates). Useful to recover windows that are partially off-screen. Works through the Codex GNOME Shell extension or a generic X11/EWMH window manager (wmctrl). Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Move a window to a new desktop position (frame top-left in desktop coordinates). Useful to recover windows that are partially off-screen. Works only through the Codex GNOME Shell extension or a generic X11/EWMH window manager (wmctrl); other window backends refuse it. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -3209,7 +3209,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "resize_window",
         output_schema = rmcp::handler::server::tool::schema_for_output::<WindowGeometryToolOutput>(),
-        description = "Resize a window to a new frame width/height in desktop pixels, unmaximizing it first if needed. Useful to fit a window fully on-screen. Works through the Codex GNOME Shell extension or a generic X11/EWMH window manager (wmctrl). Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Resize a window in desktop pixels, unmaximizing it first if needed. Useful to fit a window fully on-screen. Through the Codex GNOME Shell extension, width and height set the frame; through a generic X11/EWMH window manager (wmctrl), they set the client area, and decorations add to it. Other window backends refuse it. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -3242,8 +3242,8 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.43",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send literal type_text through KDE clipboard integration on Plasma Wayland, wtype on compatible Wayland compositors, or portal keysyms on other Wayland sessions. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable) and warn when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype uses a single literal argument after -- to avoid stdin keymap-refresh corruption; text is visible in process arguments, so confirmed password fields are rejected (use set_value). Terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call; split larger input into smaller calls or expose accessibility. Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, click, and input results warn when the target window or coordinate is partially or fully off-screen; use move_window/resize_window (GNOME Shell extension backend) to bring a window fully on-screen before retrying. scroll accepts the same window targeting and relative coordinates as click. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
+    version = "0.7.45",
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll moves the uinput pointer and sends only the wheel through ydotool. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -3651,6 +3651,8 @@ struct PostActionCaptureParams {
     #[schemars(range(min = 1, max = 95))]
     quality: Option<u8>,
     /// Include a fresh compacted AT-SPI accessibility tree snapshot after the action (default false). Also refreshes cached element_index values.
+    /// It reads at most 1000 nodes and depth 32; when accessibility_tree_truncated
+    /// is true, call get_app_state with a higher max_nodes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     include_tree: Option<bool>,
 }
@@ -3703,26 +3705,45 @@ struct PostActionObservation {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ActivateWindowParams {
+    /// Window id from a recent list_windows. The first target field set
+    /// decides, in this order: window_id, terminal fields, pid, app_id,
+    /// wm_class, title. With a terminal field, pid, app_id, wm_class and title
+    /// only narrow the terminal match, which must name one window.
     #[serde(
         default,
         deserialize_with = "crate::windowing::types::deserialize_window_id"
     )]
     #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
+    /// Process id. It must match exactly one window.
     #[serde(default)]
     pid: Option<u32>,
+    /// Terminal tty: /dev/pts/N, pts/N or N.
     #[serde(default)]
     tty: Option<String>,
+    /// Pid of the shell or foreground process on a terminal's tty, not the
+    /// terminal emulator (use pid for that).
     #[serde(default)]
     terminal_pid: Option<u32>,
+    /// Case-insensitive substring of the command name or command line of a
+    /// terminal's shell or foreground process.
     #[serde(default)]
     terminal_command: Option<String>,
+    /// Working directory of a terminal's shell or foreground process: an
+    /// absolute path, or a trailing path such as project/src.
     #[serde(default)]
     terminal_cwd: Option<String>,
+    /// Application id, ignoring ASCII case: the full desktop id, or its last
+    /// dot-separated segment outside a terminal match. A segment that matches several apps is
+    /// rejected.
     #[serde(default)]
     app_id: Option<String>,
+    /// Window manager class, an exact match ignoring ASCII case. When several
+    /// windows match outside a terminal match, the first wins.
     #[serde(default)]
     wm_class: Option<String>,
+    /// Window title substring, ignoring ASCII case. When several windows
+    /// match outside a terminal match, the first wins.
     #[serde(default)]
     title: Option<String>,
     #[serde(flatten)]
@@ -3754,7 +3775,7 @@ struct ActivateWindowOutput {
     error: Option<String>,
     permissions_hint: Option<String>,
     // Echo of the request for debugging. `serde_json::Value` has no fixed JSON
-    // schema, which strict MCP clients (Claude Code) reject in `outputSchema` —
+    // schema, which strict MCP clients (Claude Code) reject in `outputSchema`,
     // and one invalid tool fails the whole tool list. Keep it in the runtime
     // response (serde) but omit it from the generated schema.
     #[schemars(skip)]
@@ -3786,9 +3807,11 @@ struct MoveWindowParams {
 struct ResizeWindowParams {
     #[serde(flatten)]
     target: ActivateWindowParams,
-    /// New frame width in desktop pixels.
+    /// New width in desktop pixels: the frame through the GNOME Shell
+    /// extension, the client area on X11/EWMH.
     width: i32,
-    /// New frame height in desktop pixels.
+    /// New height in desktop pixels: the frame through the GNOME Shell
+    /// extension, the client area on X11/EWMH.
     height: i32,
 }
 
@@ -3871,8 +3894,9 @@ struct GetAppStateParams {
     /// and scopes the tree when possible.
     #[serde(default)]
     tty: Option<String>,
-    /// Terminal emulator pid. Resolves a window target and scopes the tree when
-    /// possible.
+    /// Pid of the shell or foreground process on a terminal's tty, not the
+    /// terminal emulator (use pid for that). Resolves a window target and
+    /// scopes the tree when possible.
     #[serde(default)]
     terminal_pid: Option<u32>,
     /// Terminal command substring. Resolves a window target and scopes the tree
@@ -3968,18 +3992,28 @@ impl GetAppStateParams {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ScreenshotParams {
+    /// Window id from a recent list_windows. The first target field set
+    /// decides, in this order: window_id, pid, app_id, wm_class, title.
     #[serde(
         default,
         deserialize_with = "crate::windowing::types::deserialize_window_id"
     )]
     #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
+    /// Process id. It must match exactly one window.
     #[serde(default)]
     pid: Option<u32>,
+    /// Application id, ignoring ASCII case: the full desktop id, or its last
+    /// dot-separated segment. A segment that matches several apps is
+    /// rejected.
     #[serde(default)]
     app_id: Option<String>,
+    /// Window manager class, an exact match ignoring ASCII case. When several
+    /// windows match, the first wins.
     #[serde(default)]
     wm_class: Option<String>,
+    /// Window title substring, ignoring ASCII case. When several windows
+    /// match, the first wins.
     #[serde(default)]
     title: Option<String>,
     /// Raise the targeted window before capture (default true). Ignored without
@@ -4306,43 +4340,70 @@ enum ClickCoordinateSpace {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ClickParams {
+    /// Element index from the latest get_app_state or include_tree snapshot.
     #[serde(default)]
     element_index: Option<u32>,
+    /// Case-insensitive substring of the element's AT-SPI role.
     #[serde(default)]
     role: Option<String>,
+    /// Case-insensitive substring of the element's accessible name.
     #[serde(default)]
     name: Option<String>,
+    /// Case-insensitive substring of the element's text, name or description.
     #[serde(default)]
     text: Option<String>,
+    /// AT-SPI states the element must all have, case-insensitive (for
+    /// example focused, checked).
     #[serde(default)]
     states: Vec<String>,
+    /// Point x in raw screenshot capture pixels: the coordinate_width and
+    /// coordinate_height space. Divide preview pixels by the screenshot scale
+    /// first. With relative=true, measured from the window screenshot's crop origin.
     #[serde(default)]
     x: Option<i32>,
+    /// Point y in raw screenshot capture pixels: the coordinate_width and
+    /// coordinate_height space. Divide preview pixels by the screenshot scale
+    /// first. With relative=true, measured from the window screenshot's crop origin.
     #[serde(default)]
     y: Option<i32>,
     /// Pixel space for explicit x/y: raw screenshot capture pixels (default),
     /// or global AT-SPI screen coordinates mapped through the element's KWin window.
     #[serde(default)]
     coordinate_space: ClickCoordinateSpace,
+    /// Mouse button: left (default), right or middle. side, extra, forward and
+    /// back reach only the portal and ydotool routes, which treat an unknown
+    /// name as left. Native X11 refuses any other name.
     #[serde(default)]
     button: Option<String>,
+    /// Number of clicks (default 1), clamped to 1 to 10.
     #[serde(default)]
     click_count: Option<u32>,
     // Optional window target: when set, the window is raised/focused before the
     // click so a coordinate click reliably lands on the intended app rather than
     // whatever window happens to be stacked on top at that pixel.
+    /// Window id from a recent list_windows. The first target field set
+    /// decides, in this order: window_id, pid, app_id, wm_class, window_title.
     #[serde(
         default,
         deserialize_with = "crate::windowing::types::deserialize_window_id"
     )]
     #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
+    /// Process id. It must match exactly one window.
     #[serde(default)]
     pid: Option<u32>,
+    /// Application id, ignoring ASCII case: the full desktop id, or its last
+    /// dot-separated segment. A segment that matches several apps is
+    /// rejected.
     #[serde(default)]
     app_id: Option<String>,
+    /// Window manager class, an exact match ignoring ASCII case. When several
+    /// windows match, the first wins.
     #[serde(default)]
     wm_class: Option<String>,
+    /// Window title substring, ignoring ASCII case. When several windows
+    /// match, the first wins.
+    /// This tool names the field window_title; a title field is ignored.
     #[serde(default)]
     window_title: Option<String>,
     /// Interpret `x`/`y` from the clipped window screenshot crop origin, in
@@ -4413,18 +4474,29 @@ fn optional_window_target(
 /// cached element_index or selector must come from.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ElementActionTarget {
+    /// Window id from a recent list_windows. The first target field set
+    /// decides, in this order: window_id, pid, app_id, wm_class, window_title.
     #[serde(
         default,
         deserialize_with = "crate::windowing::types::deserialize_window_id"
     )]
     #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
+    /// Process id of the target app.
     #[serde(default)]
     pid: Option<u32>,
+    /// Application id, ignoring ASCII case: the full desktop id, or its last
+    /// dot-separated segment. A segment that matches several apps is
+    /// rejected.
     #[serde(default)]
     app_id: Option<String>,
+    /// Window manager class, an exact match ignoring ASCII case. When several
+    /// windows match, the first wins.
     #[serde(default)]
     wm_class: Option<String>,
+    /// Window title substring, ignoring ASCII case. When several windows
+    /// match, the first wins.
+    /// This tool names the field window_title; a title field is ignored.
     #[serde(default)]
     window_title: Option<String>,
 }
@@ -4444,18 +4516,29 @@ impl ElementActionTarget {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ActionParams {
+    /// Element index from the latest get_app_state or include_tree snapshot.
     #[serde(default)]
     element_index: Option<u32>,
+    /// A node's object_ref from get_app_state or get_tree_page. It names the
+    /// AT-SPI object itself, not a snapshot index, and wins over element_index
+    /// and the selectors.
     #[serde(default)]
     element_identifier: Option<String>,
+    /// Case-insensitive substring of the element's AT-SPI role.
     #[serde(default)]
     role: Option<String>,
+    /// Case-insensitive substring of the element's accessible name.
     #[serde(default)]
     name: Option<String>,
+    /// Case-insensitive substring of the element's text, name or description.
     #[serde(default)]
     text: Option<String>,
+    /// AT-SPI states the element must all have, case-insensitive (for
+    /// example focused, checked).
     #[serde(default)]
     states: Vec<String>,
+    /// AT-SPI action to invoke: its name or description, ignoring ASCII case,
+    /// or its 0-based index. Default: the element's first action.
     #[serde(default)]
     action: Option<String>,
     #[serde(flatten)]
@@ -4477,18 +4560,30 @@ impl ActionParams {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct SetValueParams {
+    /// Element index from the latest get_app_state or include_tree snapshot.
     #[serde(default)]
     element_index: Option<u32>,
+    /// A node's object_ref from get_app_state or get_tree_page. It names the
+    /// AT-SPI object itself, not a snapshot index, and wins over element_index
+    /// and the selectors.
     #[serde(default)]
     element_identifier: Option<String>,
+    /// Case-insensitive substring of the element's AT-SPI role.
     #[serde(default)]
     role: Option<String>,
+    /// Case-insensitive substring of the element's accessible name.
     #[serde(default)]
     name: Option<String>,
+    /// Case-insensitive substring of the element's text, name or description.
     #[serde(default)]
     text: Option<String>,
+    /// AT-SPI states the element must all have, case-insensitive (for
+    /// example focused, checked).
     #[serde(default)]
     states: Vec<String>,
+    /// A number sets an element with the AT-SPI Value interface (slider, spin
+    /// button). Otherwise the text replaces an editable text element's
+    /// contents. Text on a Value-only element is refused.
     value: String,
     #[serde(flatten)]
     target: ElementActionTarget,
@@ -4509,30 +4604,52 @@ impl SetValueParams {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ScrollParams {
+    /// Element index from the latest get_app_state or include_tree snapshot.
     #[serde(default)]
     element_index: Option<u32>,
+    /// Point x to scroll at in raw screenshot capture pixels: the coordinate_width and
+    /// coordinate_height space. Divide preview pixels by the screenshot scale
+    /// first. With relative=true, measured from the window screenshot's crop origin.
+    /// Without x/y or element_index, the target window's centre, or the pointer.
     #[serde(default)]
     x: Option<i32>,
+    /// Point y to scroll at in raw screenshot capture pixels: the coordinate_width and
+    /// coordinate_height space. Divide preview pixels by the screenshot scale
+    /// first. With relative=true, measured from the window screenshot's crop origin.
     #[serde(default)]
     y: Option<i32>,
+    /// up, down, left or right (case-insensitive).
     direction: String,
+    /// Distance in pages (default 1), 5 wheel notches each. The sign is
+    /// ignored (direction sets it), and any value sends at least one notch.
     #[serde(default)]
     #[schemars(range(min = -100, max = 100))]
     pages: Option<f64>,
     // Optional window target (parity with click): the window is raised/focused
     // before scrolling so the wheel events land on the intended app.
+    /// Window id from a recent list_windows. The first target field set
+    /// decides, in this order: window_id, pid, app_id, wm_class, window_title.
     #[serde(
         default,
         deserialize_with = "crate::windowing::types::deserialize_window_id"
     )]
     #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
+    /// Process id. It must match exactly one window.
     #[serde(default)]
     pid: Option<u32>,
+    /// Application id, ignoring ASCII case: the full desktop id, or its last
+    /// dot-separated segment. A segment that matches several apps is
+    /// rejected.
     #[serde(default)]
     app_id: Option<String>,
+    /// Window manager class, an exact match ignoring ASCII case. When several
+    /// windows match, the first wins.
     #[serde(default)]
     wm_class: Option<String>,
+    /// Window title substring, ignoring ASCII case. When several windows
+    /// match, the first wins.
+    /// This tool names the field window_title; a title field is ignored.
     #[serde(default)]
     window_title: Option<String>,
     /// Interpret `x`/`y` from the clipped window screenshot crop origin, in
@@ -4570,9 +4687,14 @@ impl ScrollParams {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct DragParams {
+    /// Start x in raw screenshot capture pixels: the coordinate_width space.
+    /// Divide preview pixels by the screenshot scale first.
     start_x: i32,
+    /// Start y in raw screenshot capture pixels.
     start_y: i32,
+    /// End x in raw screenshot capture pixels.
     end_x: i32,
+    /// End y in raw screenshot capture pixels.
     end_y: i32,
     #[serde(flatten)]
     capture: PostActionCaptureParams,
@@ -4580,27 +4702,48 @@ struct DragParams {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct PressKeyParams {
+    /// Key or chord in the grammar the tool description gives, for example
+    /// Enter or Ctrl+Shift+T.
     key: String,
+    /// Window id from a recent list_windows. The first target field set
+    /// decides, in this order: window_id, terminal fields, pid, app_id,
+    /// wm_class, title. With a terminal field, pid, app_id, wm_class and title
+    /// only narrow the terminal match, which must name one window.
     #[serde(
         default,
         deserialize_with = "crate::windowing::types::deserialize_window_id"
     )]
     #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
+    /// Process id. It must match exactly one window.
     #[serde(default)]
     pid: Option<u32>,
+    /// Terminal tty: /dev/pts/N, pts/N or N.
     #[serde(default)]
     tty: Option<String>,
+    /// Pid of the shell or foreground process on a terminal's tty, not the
+    /// terminal emulator (use pid for that).
     #[serde(default)]
     terminal_pid: Option<u32>,
+    /// Case-insensitive substring of the command name or command line of a
+    /// terminal's shell or foreground process.
     #[serde(default)]
     terminal_command: Option<String>,
+    /// Working directory of a terminal's shell or foreground process: an
+    /// absolute path, or a trailing path such as project/src.
     #[serde(default)]
     terminal_cwd: Option<String>,
+    /// Application id, ignoring ASCII case: the full desktop id, or its last
+    /// dot-separated segment outside a terminal match. A segment that matches several apps is
+    /// rejected.
     #[serde(default)]
     app_id: Option<String>,
+    /// Window manager class, an exact match ignoring ASCII case. When several
+    /// windows match outside a terminal match, the first wins.
     #[serde(default)]
     wm_class: Option<String>,
+    /// Window title substring, ignoring ASCII case. When several windows
+    /// match outside a terminal match, the first wins.
     #[serde(default)]
     title: Option<String>,
     #[serde(flatten)]
@@ -4609,27 +4752,47 @@ struct PressKeyParams {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct TypeTextParams {
+    /// Literal text to type, sent as characters, not as key names.
     text: String,
+    /// Window id from a recent list_windows. The first target field set
+    /// decides, in this order: window_id, terminal fields, pid, app_id,
+    /// wm_class, title. With a terminal field, pid, app_id, wm_class and title
+    /// only narrow the terminal match, which must name one window.
     #[serde(
         default,
         deserialize_with = "crate::windowing::types::deserialize_window_id"
     )]
     #[schemars(range(max = crate::windowing::types::MAX_WINDOW_ID))]
     window_id: Option<u64>,
+    /// Process id. It must match exactly one window.
     #[serde(default)]
     pid: Option<u32>,
+    /// Terminal tty: /dev/pts/N, pts/N or N.
     #[serde(default)]
     tty: Option<String>,
+    /// Pid of the shell or foreground process on a terminal's tty, not the
+    /// terminal emulator (use pid for that).
     #[serde(default)]
     terminal_pid: Option<u32>,
+    /// Case-insensitive substring of the command name or command line of a
+    /// terminal's shell or foreground process.
     #[serde(default)]
     terminal_command: Option<String>,
+    /// Working directory of a terminal's shell or foreground process: an
+    /// absolute path, or a trailing path such as project/src.
     #[serde(default)]
     terminal_cwd: Option<String>,
+    /// Application id, ignoring ASCII case: the full desktop id, or its last
+    /// dot-separated segment outside a terminal match. A segment that matches several apps is
+    /// rejected.
     #[serde(default)]
     app_id: Option<String>,
+    /// Window manager class, an exact match ignoring ASCII case. When several
+    /// windows match outside a terminal match, the first wins.
     #[serde(default)]
     wm_class: Option<String>,
+    /// Window title substring, ignoring ASCII case. When several windows
+    /// match outside a terminal match, the first wins.
     #[serde(default)]
     title: Option<String>,
     #[serde(flatten)]
@@ -4808,7 +4971,7 @@ impl ComputerUseLinux {
     /// Portal keyboard policy for `press_key` chords. Unlike literal text
     /// (where KDE prefers the clipboard paste backend), key chords have no
     /// clipboard route, so the portal keyboard session is preferred on ANY
-    /// Wayland session — including Plasma. An already-active keyboard
+    /// Wayland session, including Plasma. An already-active keyboard
     /// session (e.g. established by a KDE clipboard paste) is reused even
     /// when ydotool is available, so the consent the user already granted
     /// keeps covering key chords; otherwise the portal is preferred only
@@ -6225,7 +6388,7 @@ impl ComputerUseLinux {
         }
         // Window bounds are logical pixels: prefer the extension's logical
         // monitor layout (same space). The physical capture rect is a safe
-        // fallback — on scaled displays it is at least as large as the logical
+        // fallback: on scaled displays it is at least as large as the logical
         // union, so it can only under-warn, never false-positive.
         let rects = match self.logical_monitor_rects().await {
             Some(rects) => rects,
@@ -6250,7 +6413,7 @@ impl ComputerUseLinux {
             return None;
         }
         Some(format!(
-            "WARNING: the target window (bounds {x},{y} {w}x{h}) is only ~{visible_pct}% on-screen; off-screen regions are missing from screenshots and unreachable by coordinate input. Use move_window/resize_window to bring it fully on-screen."
+            "WARNING: the target window (bounds {x},{y} {w}x{h}) is only ~{visible_pct}% on-screen; off-screen regions are missing from screenshots and unreachable by coordinate input. Use move_window/resize_window (GNOME Shell extension or X11/EWMH only) to bring it fully on-screen."
         ))
     }
 

@@ -1,7 +1,9 @@
 [package]
 name = "codex-computer-use-linux"
-version = "0.7.43"
+version = "0.7.45"
 edition = "2021"
+# File::try_lock, used by the indicator, is stable since Rust 1.89.
+rust-version = "1.89"
 
 [[bin]]
 name = "codex-computer-use-linux"
@@ -23,7 +25,7 @@ path = "src/bin/computer-use-linux-indicator/main.rs"
 mimalloc = { version = "0.1", default-features = false }
 anyhow = "1.0.102"
 # atspi without its "connection" feature: that feature pulls atspi-connection
-# with default features, which include "p2p" — and p2p peer enumeration during
+# with default features, which include "p2p", and p2p peer enumeration during
 # connect() calls GetInterfaces on every a11y-bus peer, so a single
 # AppArmor-confined peer (e.g. snap-packaged Slack) aborts the whole
 # AccessibilityConnection. We deliberately never use P2P routing (upstream
