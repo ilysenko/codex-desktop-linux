@@ -381,10 +381,7 @@ exits without touching the desktop. The whole command line is checked before
 anything runs: an unknown command, flag or argument count exits 2. `--` ends
 flags, so `state -- -name` reads the app named `-name`. Since the v0.7.45 sync,
 `setup --help` no longer runs setup and `setup-window-targeting --help` no
-longer installs the extension. The Chrome native-messaging host,
-`codex-chrome-extension-host`, takes only the origin Chrome passes it,
-`chrome-extension://ID/`: `--help` prints its usage, and a flag or a second
-argument exits 2 before it binds its socket.
+longer installs the extension.
 
 The direct MCP server also exposes `run_shell` only when explicitly started
 with `CODEX_COMPUTER_USE_ENABLE_SHELL=1`. The standalone

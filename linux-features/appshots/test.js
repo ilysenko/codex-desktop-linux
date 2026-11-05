@@ -393,7 +393,10 @@ test("routes AppShots capture through the self-contained Linux feature", () => {
   assert.doesNotThrow(() => new Function("TF", "bridge", "oI", "OK", "Oz", "require", patched));
   assert.match(patched, /function codexLinuxAppshotBackendPath/);
   assert.match(patched, /codexLinuxAppshotBackendJson\(\[`windows`\],5000\)/);
-  assert.match(patched, /codexLinuxAppshotBackendJson\(\[`state`,e\],10000\)/);
+  assert.match(
+    patched,
+    /codexLinuxAppshotBackendJson\(e\.startsWith\(`-`\)\?\[`state`,`--`,e\]:\[`state`,e\],10000\)/,
+  );
   assert.match(patched, /function codexLinuxAppshotPreviousExternalWindow/);
   assert.match(patched, /function codexLinuxAppshotHyprlandPickerData/);
   assert.match(patched, /`hyprland-preview-share-picker`,`hyprland-share-picker`/);
@@ -738,6 +741,42 @@ test("AppShots resolves the live Hyprland instance when Electron did not inherit
     Array.from(context.codexLinuxAppshotHyprctlArgs(["clients", "-j"])),
     ["clients", "-j"],
   );
+});
+
+test("AppShots ends backend flags before a candidate that starts with a dash", async () => {
+  const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
+  const helperStart = patched.lastIndexOf(";function codexLinuxAppshotRequire");
+  const context = vm.createContext({
+    Buffer,
+    console: { warn() {} },
+    process: { env: {}, pid: 101, platform: "linux", resourcesPath: "" },
+    require() {
+      throw new Error("No module access expected");
+    },
+    setTimeout,
+  });
+  vm.runInContext(patched.slice(helperStart), context, { timeout: 1_000 });
+  const calls = [];
+  context.codexLinuxAppshotBackendJson = async (args) => {
+    calls.push(Array.from(args));
+    // The backend refuses an unknown flag with exit 2, so only `--` reaches
+    // the terminal frame named after the login shell.
+    if (args[1] === "-zsh") throw new Error("unknown option '-zsh' for 'state'");
+    return args[2] === "-zsh" ? [{ role: "frame", name: "-zsh" }] : [];
+  };
+
+  const result = await context.codexLinuxAppshotAccessibilityNodes(
+    { app_id: "org.example.Terminal", wm_class: "example-terminal", title: "-zsh" },
+    "org.example.Terminal",
+  );
+
+  assert.equal(result.candidate, "-zsh");
+  assert.equal(result.nodes.length, 1);
+  assert.deepEqual(calls, [
+    ["state", "org.example.Terminal"],
+    ["state", "example-terminal"],
+    ["state", "--", "-zsh"],
+  ]);
 });
 
 test("AppShots requires a safe return target before changing Hyprland focus", async () => {

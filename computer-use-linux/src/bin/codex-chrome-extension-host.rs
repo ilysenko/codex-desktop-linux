@@ -1500,6 +1500,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn command_line_reads_the_extension_id_from_the_only_origin() {
+        let parse = |arguments: &[&str]| {
+            let arguments: Vec<String> = arguments.iter().map(|value| value.to_string()).collect();
+            parse_invocation(&arguments)
+        };
+        let run = |extension_id: Option<&str>| {
+            Ok(Invocation::Run {
+                extension_id: extension_id.map(ToString::to_string),
+            })
+        };
+        let id = "abcdefghijklmnopabcdefghijklmnop";
+
+        assert_eq!(
+            parse(&[&format!("chrome-extension://{id}/")]),
+            run(Some(id))
+        );
+        assert_eq!(
+            parse(&["--", &format!("chrome-extension://{id}/")]),
+            run(Some(id))
+        );
+        assert_eq!(parse(&[]), run(None));
+        assert_eq!(parse(&["chrome-extension://not-an-id/"]), run(None));
+        assert_eq!(parse(&["https://example.com/"]), run(None));
+        assert_eq!(parse(&["--", "--help"]), run(None));
+        assert_eq!(parse(&["origin", "-h"]), Ok(Invocation::Help));
+        assert_eq!(
+            parse(&["--parent-window=0"]),
+            Err("unknown option '--parent-window=0'".to_string())
+        );
+        assert_eq!(
+            parse(&["origin", "--", "second"]),
+            Err("unexpected argument 'second'".to_string())
+        );
+    }
+
+    #[test]
     fn queue_byte_reservation_is_bounded_and_does_not_overflow() {
         let counter = AtomicUsize::new(3);
 

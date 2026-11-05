@@ -14,17 +14,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   ran setup and `setup-window-targeting --help` installed the GNOME Shell
   extension. An unknown command, flag or argument count exits 2, `--` ends
   flags, and `abs-test` needs integer coordinates. The top-level usage lists
-  every command but that development probe. `codex-chrome-extension-host` follows the same rule: `--help`
-  prints its usage, and a flag or a second argument exits 2 before it binds
-  its socket. The MCP instructions, tool descriptions and parameter docs now
-  say what the code does: the screenshot routes, including the Codex GNOME
-  Shell extension, and the pointer route order; that on Wayland a pointer
-  position never goes through ydotool; which results warn about off-screen
-  windows and points; that `move_window` and `resize_window` work only
-  through the Codex GNOME Shell extension or X11/EWMH, where a resize sets the
-  client area; and the order in which window-target fields resolve. The crate
-  declares `rust-version = "1.89"`, and the Codex GNOME Shell extension
-  metadata links this repository.
+  every command but that development probe. AppShots passes `--` before an
+  app lookup candidate that starts with `-`, such as a terminal titled
+  `-zsh`, which the strict parser would refuse as a flag. The crate's
+  `codex-chrome-extension-host` binary, which no package ships, follows the
+  same rule: `--help` prints its usage, and a flag or a second argument exits
+  2 before it binds its socket. The MCP instructions, tool descriptions and
+  parameter docs now say what the code does: the screenshot routes, including
+  the Codex GNOME Shell extension, and the pointer route order; that on
+  Wayland a pointer position never goes through ydotool; which results warn
+  about off-screen windows and points; that `move_window` and `resize_window`
+  work only through the Codex GNOME Shell extension or X11/EWMH, where a
+  resize sets the client area; and the order in which window-target fields
+  resolve. The crate declares `rust-version = "1.89"`, and the Codex GNOME
+  Shell extension metadata links this repository.
 - Synchronize the embedded Computer Use backend to standalone v0.7.43, which
   includes v0.7.42. A click, scroll or drag coordinate between monitors now
   gets a warning. Monitors of different heights or offset rows leave parts of
