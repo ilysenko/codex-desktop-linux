@@ -1,0 +1,122 @@
+"use strict";
+const assert = require("node:assert/strict");
+const test = require("node:test");
+const { Script } = require("node:vm");
+const { findMatchingBrace } = require("./minified-js.js");
+const { installPortalBackend, PATCH_MARKER, registrationContract } = require("./global-shortcuts-portal.js");
+const { mainBundleFixture, mainBundleFixtureBody, applyFeatures } = require("./global-shortcuts-portal.test-helpers.js");
+
+function assertRefused(source, name) {
+  assert.doesNotThrow(() => new Script(source), `${name} is valid JavaScript`);
+  assert.throws(() => installPortalBackend(source), undefined, name);
+}
+
+for (const key of ["82820", '"82820"', "8.282e4", "0x14384"]) {
+  test(`Portal owns current CommonJS factory key ${key}`, () => {
+    const source = mainBundleFixture({ key }), patched = installPortalBackend(source);
+    assert.notEqual(patched, source); assert.doesNotThrow(() => new Script(patched));
+    assert.equal(installPortalBackend(patched), patched);
+    const mapped = source + "\n//# sourceMappingURL=fixture.js.map";
+    const mappedPatch = installPortalBackend(mapped);
+    assert.notEqual(mappedPatch, mapped); assert.equal(installPortalBackend(mappedPatch), mappedPatch);
+  });
+}
+
+test("Portal preserves native unbraced privacy exits and refuses unconditional dead startup", () => {
+  const source = mainBundleFixture();
+  const conditional = source.replace('ea.app.on("before-quit",i=>{', 'ea.app.on("before-quit",i=>{if(function(){return false}())return void i.preventDefault();');
+  const patched = installPortalBackend(conditional);
+  assert.notEqual(patched, conditional); assert.equal(installPortalBackend(patched), patched);
+  assertRefused(source.replace("function runMainAppStartup(input){", "function runMainAppStartup(input){return;"), "dead startup");
+  assertRefused(source.replace('ea.app.on("before-quit",i=>{', 'ea.app.on("before-quit",i=>{return;'), "dead confirmation");
+});
+
+test("Portal refuses duplicate, fake and disconnected factory owners", () => {
+  const source = mainBundleFixture(), body = mainBundleFixtureBody();
+  const start = body.indexOf("var accessState="), end = body.indexOf("function flushWithTimeout(");
+  const withoutAccess = body.slice(0, start) + body.slice(end), access = body.slice(start, end);
+  for (const [first, second] of [["11", "22"], ['"11"', '"22"'], ["1.1e1", "2.2e1"], ["0xb", "0x16"]]) {
+    assertRefused(`exports.ids=[45],exports.modules={${first}(e,t,r){${withoutAccess}},${second}(e,t,r){${access}}};`, first);
+  }
+  assertRefused(mainBundleFixture({ extra: ',8.282e4(e,t,r){}' }), "normalized duplicate key");
+  assertRefused(`function unused(){${source}}`, "unused carrier");
+  assertRefused(source + "\nexports.modules={};", "overwritten carrier");
+  assertRefused(source + '\nexports["modules"]={};', "computed carrier overwrite");
+  const declaration = registrationContract(source);
+  const replaced = source.slice(0, declaration.start) + `function unused(){${declaration.body}}` + source.slice(declaration.end);
+  assertRefused(replaced, "unused registration declaration");
+});
+
+test("Portal requires the published startup and actual direct quit call wiring", () => {
+  const source = mainBundleFixture(), start = source.indexOf("function({isWindows:"), open = source.indexOf("){", start) + 1;
+  const end = findMatchingBrace(source, open) + 1, installer = source.slice(start, end);
+  const detached = source.slice(0, start) + "function(){}" + source.slice(end);
+  const variants = {
+    unexported: source.replace("runMainAppStartup:()=>runMainAppStartup", "unrelated:()=>runMainAppStartup"),
+    unusedQuit: detached.replace("r.d(t,", `const unusedQuit=${installer};r.d(t,`),
+    skippedQuit: source.replace("0,function({isWindows:", "false&&function({isWindows:"),
+    disconnectedWindows: source.replace("windows:windows,applicationMenuManager:", "windows:foreignWindows,applicationMenuManager:"),
+    disconnectedDictation: source.replace("globalDictationLifecycleManager:windows.globalDictationLifecycleManager", "globalDictationLifecycleManager:windows.hotkeyWindowLifecycleManager"),
+    windowMarkOnlyInUnusedObject: source.replace("markAppQuitting:()=>{D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}", "markAppQuitting:()=>{}")
+      .replace("r.d(t,", "const unusedWindows={markAppQuitting:()=>{D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}};r.d(t,"),
+    duplicateMark: source.replace("U.dispose()}}}(", "U.dispose()},markAppQuitting:()=>{}}}("),
+    computedMark: source.replace("U.dispose()}}}(", 'U.dispose()},["markAppQuitting"]:()=>{}}}('),
+    overwrittenWindowRole: source.replace("U.dispose()}}}(", "U.dispose()},windowManager:null}}("),
+    missingDrain: source.replace("l.flush(),c.flush(),u(),h()", "l.flush(),u(),h()"),
+    missingCancel: source.replace("?i.preventDefault():(r.markQuitApproved()", "?null:(r.markQuitApproved()"),
+  };
+  for (const [name, variant] of Object.entries(variants)) assertRefused(variant, name);
+});
+
+test("Portal refuses every overriding critical member form at object seams", () => {
+  const source = mainBundleFixture();
+  for (const member of [
+    '"hotkeyWindowLifecycleManager":L', '["hotkeyWindowLifecycleManager"]:L',
+    'get ["hotkeyWindowLifecycleManager"](){return L}', 'get hotkeyWindowLifecycleManager(){return L}',
+    'hotkeyWindowLifecycleManager(){return L}', '"markAppQuitting":()=>{}',
+    '["markAppQuitting"]:()=>{}', 'get markAppQuitting(){return ()=>{}}', 'markAppQuitting(){}',
+    String.raw`hotkeyWindowLifecycleManag\u0065r:L`,
+  ]) assertRefused(source.replace("U.dispose()}}}(", `U.dispose()},${member}}}(`), member);
+  const declaredShorthand = source.replace("{let O;return{", "{let O;const markAppQuitting=()=>{},hotkeyWindowLifecycleManager=L;return{");
+  for (const member of ["markAppQuitting", "hotkeyWindowLifecycleManager", "...{}&&{hotkeyWindowLifecycleManager:L}"]) {
+    assertRefused(declaredShorthand.replace("U.dispose()}}}(", `U.dispose()},${member}}}(`), member);
+  }
+  for (const member of ['"windows":windows.windowManager', 'get windows(){return windows.windowManager}', '["windows"]:windows.windowManager', 'windows(){return windows.windowManager}']) {
+    const variant = source.replace("canAttributeAppReactivation:input.canAttributeAppReactivation}", `canAttributeAppReactivation:input.canAttributeAppReactivation,${member}}`);
+    assertRefused(variant, `quit argument ${member}`);
+  }
+});
+
+test("Portal uses parsed member keys across separator whitespace", () => {
+  const source = mainBundleFixture();
+  for (const separator of [", ", ",\t", ",\n"]) {
+    const formatted = source.replace("windowManager:D,avatarOverlayManager:M", `windowManager:D${separator}avatarOverlayManager:M`);
+    const patched = installPortalBackend(formatted);
+    assert.notEqual(patched, formatted); assert.equal(installPortalBackend(patched), patched);
+    for (const member of ["hotkeyWindowLifecycleManager:L", "markAppQuitting:()=>{}"]) {
+      assertRefused(source.replace("U.dispose()}}}(", `U.dispose()}${separator}${member}}}(`), member);
+    }
+    assertRefused(source.replace("canAttributeAppReactivation:input.canAttributeAppReactivation}", `canAttributeAppReactivation:input.canAttributeAppReactivation${separator}windows:windows.windowManager}`), "duplicate call window");
+  }
+});
+
+test("Portal validates canonical payload and hooks in both consumer orders", () => {
+  const source = mainBundleFixture();
+  const dictation = require("../../../linux-features/global-dictation/patch.js").applyLinuxGlobalDictationMainProcessPatch;
+  const shortcuts = require("../../../linux-features/wayland-global-shortcuts/patch.js").applyWaylandGlobalShortcutsPatch;
+  for (const order of [[dictation, shortcuts], [shortcuts, dictation]]) {
+    const canonical = order.reduce((value, apply) => apply(value), source);
+    assert.notEqual(canonical, source); assert.equal(installPortalBackend(canonical), canonical);
+    for (const [name, partial] of Object.entries({
+      missingMarkHook: canonical.replace("codexLinuxGlobalShortcutsPortalShutdown();", ""),
+      missingOneDrain: canonical.replace("codexLinuxGlobalShortcutsQuitStopped=codexLinuxGlobalShortcutsPortalShutdown(),", ""),
+      renamedRuntime: canonical.replace("function codexLinuxGlobalShortcutsPortalShutdown()", "function unrelatedShutdown()"),
+      nestedShadow: canonical.replace("function runMainAppStartup(input){", "function runMainAppStartup(input){function codexLinuxGlobalShortcutsPortalShutdown(){}"),
+      commentedWrite: canonical.replace("r.d(t,", "codexLinuxGlobalShortcutsPortalShutdown/**/=()=>{};r.d(t,"),
+      escapedWrite: canonical.replace("r.d(t,", String.raw`codexLinuxGlobalShortcutsPortalShutdow\u006e=()=>{};r.d(t,`),
+    })) assertRefused(partial, name);
+  }
+  assertRefused(`const marker=${JSON.stringify(PATCH_MARKER)};`, "marker only");
+  assertRefused(`/*${PATCH_MARKER}*/${source}`, "marker decoy on native source");
+  assert.notEqual(applyFeatures(source, { dictation: true, shortcuts: true }), source);
+});

@@ -3,6 +3,7 @@ const assert=require('node:assert/strict');
 const { EventEmitter }=require('node:events');
 const path=require('node:path');
 const vm=require('node:vm');
+const { findMatchingBrace } = require('./minified-js.js');
 const {applyLinuxGlobalDictationMainProcessPatch:dictationPatch}=require('../../../linux-features/global-dictation/patch.js');
 const {applyWaylandGlobalShortcutsPatch:shortcutPatch}=require('../../../linux-features/wayland-global-shortcuts/patch.js');
 function applyFeatures(source,{dictation=false,shortcuts=false}={}) {
@@ -21,14 +22,11 @@ function applyPatchTwice(source, features={dictation:true}) {
 }
 // Mirrors the signed rspack/SWC main-process module that owns global shortcuts
 // (double-quoted literals, Yoda comparisons, (e,t,r) registration parameters).
-function mainBundleFixture() {
+function mainBundleFixtureBody() {
   return [
-    'var p=require("node:fs"),u=require("node:path"),h=require("node:child_process"),c=require("electron"),r={r:()=>({warning(){}})};',
+    'var p=require("node:fs"),u=require("node:path"),h=require("node:child_process"),ea=require("electron"),logModule={r:()=>({warning(){}})};',
     'var accessState={codexLocalAccess:true,workCloudAccess:false,workLocalAccess:false},accessReady=true,accessListeners=new Set;function getAccess(){if(!accessReady)return{status:"loading"};let{codexLocalAccess:e,workCloudAccess:t,workLocalAccess:r}=accessState;return{status:"ready",codexLocalAccess:e,workCloudAccess:t,workLocalAccess:r}}function publishAccess(e){let t=!accessReady,r={...accessState,...e},n=!0,i=!0;return accessState=r,t&&(accessReady=!0),accessReady&&(t||i)&&accessListeners.forEach(e=>{e()}),n}',
-    // Accepted-quit lifecycle: will-quit disposes the shortcut owners, then drains.
-    'function flushWithTimeout(e,t){return Promise.resolve(e())}function installQuitLifecycle({isWindows:e,hotkeyWindowLifecycleManager:a,globalDictationLifecycleManager:o,flushTracingBeforeQuit:h,flushAndDisposeContext:p,hasPendingLocalGitReviewComments:r,disposables:m,appEvent:g}){let y=!1;c.app.on("will-quit",t=>{if(y)return;let n=()=>{flushWithTimeout(p,5e3).then(()=>{m.dispose(),c.app.quit()})};if(e){t.preventDefault(),y=!0,a.dispose(),o.dispose(),Promise.allSettled([h()]).then(n);return}t.preventDefault(),y=!0,a.dispose(),o.dispose(),Promise.allSettled([h()]).then(n)})}',
-    'function shutdownApp(e){return new Promise(t=>{c.app.once("quit",t),installQuitLifecycle({isWindows:!1,flushTracingBeforeQuit:async()=>{},appEvent:null,...e}),c.app.emit("will-quit",{preventDefault(){}})})}',
-    'function createWindowServices(D,M,U,O){return{markAppQuitting:()=>{D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}}}',
+    'function flushWithTimeout(e,t){return Promise.resolve(e())}',
     'function Kk(e,t){let r="";e.stdout?.on("data",e=>{let n=(r+=e.toString("utf8")).indexOf("\\n");for(;-1!==n;)t(r.slice(0,n).trim()),r=r.slice(n+1),n=r.indexOf("\\n")})}',
     'function pauseBareModifiers(e){}function pauseWindowsHooks(e){}var managerEntries=new Set,suspendDepth=0;function suspendGlobalHotkeys(){return function(){if(1===(suspendDepth+=1))for(let e of(pauseBareModifiers(!0),pauseWindowsHooks(!0),managerEntries))e.onCancelled?.(),e.registered=!1,c.globalShortcut.unregister(e.registrationHotkey);let e=!1;return()=>{if(!e&&(e=!0,0==(suspendDepth-=1)))for(let e of(pauseBareModifiers(!1),pauseWindowsHooks(!1),managerEntries))activateHotkey(e)}}()}',
     'function eA(e,t,r){var n;let i=r?.ownership,s=t.onReleased,a=t.onCancelled,o=null==i?t:{onRegistrationChanged:t.onRegistrationChanged,onPressed:()=>{i.isOwner()&&t.onPressed()},onReleased:null==s?void 0:()=>{i.isOwner()&&s()},onCancelled:null==a?void 0:()=>{i.isOwner()&&a()}};if("win32"===process.platform&&uV(e))return function(e,t){return null}(e,o);if(Rk(e)||Tk(e))return Lk(e)||Tk(e)?function(e,t,r="press"){return"darwin"!==process.platform?null:{handlesRelease:!0,unregister(){}}}(e,o,r?.bareModifierTrigger):null;let l=(n=e,oA(n));if([...managerEntries].some(e=>e.registrationHotkey===l))return null;let d={onCancelled:o.onCancelled,hotkey:e,onPressed:()=>{logHotkey("global_hotkey_pressed",{safe:{hotkey:e},sensitive:{}}),o.onPressed()},registrationHotkey:l,generation:0,registered:!1},m=activateHotkey(d);if(!m)return null;let w=null;if("win32"===process.platform&&null!=o.onReleased){let t=lP(e);if(null==(w=null==t?null:g._(t,!1,e=>{"up"===e&&d.registered&&0===suspendDepth&&o.onReleased?.()})))return d.registered=!1,c.globalShortcut.unregister(l),null}return managerEntries.add(d),suspendDepth>0&&(d.registered=!1,c.globalShortcut.unregister(l)),{handlesRelease:null!=w,unregister:()=>{managerEntries.delete(d)&&(d.registered=!1,w?.dispose(),c.globalShortcut.unregister(d.registrationHotkey))}}}',
@@ -44,7 +42,40 @@ function mainBundleFixture() {
     'function voiceHotkey(r,a){return eA(r,{onPressed:()=>{"locked"!==c.powerMonitor.getSystemIdleState(1)&&a()}})}',
     'function meetingHotkey(i,n,e){return eA(i,{onPressed:()=>{n===i&&"locked"!==c.powerMonitor.getSystemIdleState(1)&&e()}})}',
     'function W7(){return"darwin"===process.platform||"win32"===process.platform}',
-  ].join("");
+    // The published startup evaluates the same direct object-IIFE shape as the
+    // current signed app. No test adapter invokes this complete startup.
+    'function runMainAppStartup(input){let windows=function({windowManager:D,avatarOverlayManager:M,spotlightController:U,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L}){let O;return{windowManager:D,avatarOverlayManager:M,notchOverlayManager:O,spotlightController:U,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:()=>{D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}}}({windowManager:input.windowManager,avatarOverlayManager:input.avatarOverlayManager,spotlightController:input.spotlightController,hotkeyWindowLifecycleManager:input.hotkeyWindowLifecycleManager,globalDictationLifecycleManager:input.globalDictationLifecycleManager});0,function({isWindows:e,disableQuitConfirmationPrompt:t,quitState:r,windows:n,applicationMenuManager:i,ensureWindow:s,hotkeyWindowLifecycleManager:a,globalDictationLifecycleManager:o,globalState:l,settingsStore:c,getPendingWorktrees:d,stopCodexMicro:u,flushTracingBeforeQuit:h,flushAndDisposeContext:p,disposables:m,appEvent:g,onAppEntrySource:f,canAttributeAppReactivation:w}){let y=!1,v=!1;ea.app.on("before-quit",i=>{if(e||r.canQuitWithoutPrompt()||t){v=!0,n.markAppQuitting();return}0!==ea.dialog.showMessageBoxSync({type:"warning",message:"Quit?",buttons:["Quit","Cancel"]})?i.preventDefault():(r.markQuitApproved(),v=!0,n.markAppQuitting())}),ea.app.on("will-quit",t=>{if(v=!0,y)return;let n=()=>{flushWithTimeout(p,5e3).then(()=>{m.dispose(),ea.app.quit()})};if(r.shouldSkipDrainBeforeQuit()){t.preventDefault(),y=!0,a.dispose(),o.dispose(),Promise.allSettled([l.flush(),u(),h()]).then(n);return}t.preventDefault(),y=!0,a.dispose(),o.dispose(),Promise.allSettled([l.flush(),c.flush(),u(),h()]).then(n)})}({isWindows:input.isWindows,disableQuitConfirmationPrompt:input.disableQuitConfirmationPrompt,quitState:input.quitState,windows:windows,applicationMenuManager:input.applicationMenuManager,ensureWindow:input.ensureWindow,hotkeyWindowLifecycleManager:windows.hotkeyWindowLifecycleManager,globalDictationLifecycleManager:windows.globalDictationLifecycleManager,globalState:input.globalState,settingsStore:input.settingsStore,getPendingWorktrees:input.getPendingWorktrees,stopCodexMicro:input.stopCodexMicro,flushTracingBeforeQuit:input.flushTracingBeforeQuit,flushAndDisposeContext:input.flushAndDisposeContext,disposables:input.disposables,appEvent:input.appEvent,onAppEntrySource:input.onAppEntrySource,canAttributeAppReactivation:input.canAttributeAppReactivation});return windows}',
+    'r.d(t,{runMainAppStartup:()=>runMainAppStartup});e.exports=t;',
+  ].join("").replace(/\bc\.(app|globalShortcut|BrowserWindow|powerMonitor)\b/gu, "ea.$1");
+}
+
+function mainBundleFixture({ key = "82820", extra = "" } = {}) {
+  return `exports.ids=[45],exports.modules={${key}(e,t,r){"use strict";${mainBundleFixtureBody()}}${extra}};`;
+}
+
+function fixtureFactoryBody(source) {
+  const header = /82820\(e,t,r\)\{/u.exec(source);
+  assert.ok(header, "Expected the test fixture's explicit CommonJS factory");
+  const open = header.index + header[0].length - 1;
+  const end = findMatchingBrace(source, open);
+  assert.ok(end > open);
+  return source.slice(open + 1, end);
+}
+
+function fixtureQuitInstaller(source) {
+  const start = source.indexOf("function({isWindows:");
+  assert.ok(start >= 0, "Expected the fixture's direct quit installer");
+  const open = source.indexOf("){", start) + 1;
+  const end = findMatchingBrace(source, open);
+  assert.ok(end > open);
+  return source.slice(start, end + 1);
+}
+
+function fixtureMarkProperty(source) {
+  const start = source.indexOf("markAppQuitting:()=>{");
+  assert.ok(start >= 0, "Expected the fixture's window mark callback");
+  const open = source.indexOf("{", start);
+  return source.slice(start, findMatchingBrace(source, open) + 1);
 }
 
 function fakeHelperChild() {
@@ -121,7 +152,34 @@ function waylandPatchContext(children, features={dictation:true}) {
     __upstreamExecFile: async () => {},
     Rk: ()=>false, Tk: ()=>false, oA: key=>key,
   };
-  vm.runInNewContext(applyPatchTwice(mainBundleFixture(), features), context);
+  const patched = applyPatchTwice(mainBundleFixture(), features);
+  const exports = {};
+  context.e = { exports };
+  context.t = exports;
+  context.r = { d(target, getters) {
+    for (const [name, getter] of Object.entries(getters)) Object.defineProperty(target, name, { get: getter });
+  } };
+  // Evaluate the verified fixture factory body to expose existing inert runtime
+  // variables. The published Electron startup is deliberately left uncalled.
+  vm.runInNewContext(fixtureFactoryBody(patched), context);
+  context.createWindowServices = vm.runInNewContext(
+    `(function(D,M,U,O){return{${fixtureMarkProperty(patched)}}})`, context,
+  );
+  const registerQuitLifecycle = vm.runInNewContext(`(${fixtureQuitInstaller(patched)})`, context);
+  context.shutdownApp = options => new Promise(resolve => {
+    context.ea.app.once("quit", resolve);
+    registerQuitLifecycle({
+      isWindows: false,
+      disableQuitConfirmationPrompt: false,
+      quitState: { canQuitWithoutPrompt: () => false, markQuitApproved() {}, shouldSkipDrainBeforeQuit: () => false },
+      windows: {}, applicationMenuManager: {}, ensureWindow() {},
+      globalState: { flush: async () => {} }, settingsStore: { flush: async () => {} },
+      getPendingWorktrees: () => [], stopCodexMicro: async () => {}, flushTracingBeforeQuit: async () => {},
+      appEvent: null, onAppEntrySource() {}, canAttributeAppReactivation: () => false,
+      ...options,
+    });
+    context.ea.app.emit("will-quit", { preventDefault() {} });
+  });
   return context;
 }
 
@@ -130,4 +188,4 @@ function registerPortal(context, accelerator, callbacks, commandId = "globalDict
 }
 
 
-module.exports={mainBundleFixture,applyFeatures,applyPatchTwice,waylandPatchContext,fakeHelperChild,registerPortal};
+module.exports={mainBundleFixture,mainBundleFixtureBody,fixtureFactoryBody,fixtureQuitInstaller,fixtureMarkProperty,applyFeatures,applyPatchTwice,waylandPatchContext,fakeHelperChild,registerPortal};

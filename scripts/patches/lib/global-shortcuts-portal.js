@@ -1,5 +1,6 @@
 "use strict";
 
+const { Script } = require("node:vm");
 const { escapeRegExp, findMatchingBrace } = require("./minified-js.js");
 const PATCH_MARKER = "codex-linux-global-shortcuts-portal-v1";
 const IDENT = "[A-Za-z_$][\\w$]*";
@@ -29,36 +30,119 @@ function notNull(expression) {
   return `(?:null!=${expression}|${expression}!=null)`;
 }
 
-const MODULE_HEADER = /(?:^|[{,])\d+\((?:[A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*){0,2})?\)\{/g;
+function codeAt(body, index) {
+  return findMatchingBrace("{" + body.slice(0, index) + "}".repeat(index + 2), 0) >= index + 1;
+}
 
-// rspack chunks hold many module factories. Injected code shares the module
-// scope of the registration function, so every lifecycle anchor it captures
-// must live in that same factory.
-function moduleStartAt(source, index) {
-  let start = 0;
-  for (const match of source.matchAll(MODULE_HEADER)) {
-    if (match.index > index) break;
-    start = match.index;
+function rootAt(body, index) {
+  return findMatchingBrace("{" + body.slice(0, index) + "}", 0) === index + 1;
+}
+
+function codeMatches(body, pattern, root = false) {
+  return [...body.matchAll(pattern)].filter(match => codeAt(body, match.index) && (!root || rootAt(body, match.index)));
+}
+
+function statementAt(body, index) {
+  if (!codeAt(body, index) || !rootAt(body, index)) return false;
+  try { new Script(body.slice(0, index) + "\nconst __portalStatement=0;\n"); return true; }
+  catch { return false; }
+}
+
+function evaluatedAt(body, index) {
+  if (!codeAt(body, index) || !rootAt(body, index)) return false;
+  let prefix = body.slice(0, index);
+  for (const returned of codeMatches(prefix, /\breturn\b/gu, true)) {
+    // A const declaration cannot be the unbraced body of an if/else. This
+    // separates current native conditional exits from an unconditional return.
+    try {
+      new Script(`async function __portalReturn(){\n${prefix.slice(0, returned.index)}\nconst __portalBeforeReturn=0;\n}`);
+      return false;
+    } catch { /* The return is controlled by the preceding statement. */ }
   }
-  return start;
+  if (prefix.endsWith(",")) prefix = prefix.slice(0, -1) + ";";
+  try { new Script(`async function __portalStartup(){\n${prefix}\nconst __portalEvaluated=0;\n}`); return true; }
+  catch { return false; }
+}
+
+function one(values, description) {
+  if (values.length !== 1) throw new Error(`${description} matched ${values.length} times`);
+  return values[0];
+}
+
+// The owning module is structural CommonJS, not the nearest numeric-looking
+// text. Legal generated key spellings are normalized before duplicate checks.
+function mainFactories(source) {
+  new Script(source);
+  const header = one(codeMatches(source, /(?<![\w$.])exports\.ids=\[[\d,eE+\-]*\],exports\.modules=\{/gu)
+    .filter(match => statementAt(source, match.index)), "main CommonJS factory carrier");
+  const exportsReferences = codeMatches(source, /(?<![\w$.])exports(?=\s*[.\[])/gu);
+  const expectedReferences = new Set([header.index, header.index + header[0].indexOf("exports.modules")]);
+  if (exportsReferences.length !== 2 || exportsReferences.some(match => !expectedReferences.has(match.index))) throw new Error("Main CommonJS carrier is overwritten or aliased");
+  let cursor = header.index + header[0].length;
+  const result = [], identities = new Set();
+  const key = `(?:"(?:\\\\.|[^"\\\\])*"|${IDENT}|0[xX][\\da-fA-F]+|\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`;
+  const member = new RegExp(`(${key})\\((${IDENT}(?:,${IDENT}){0,2})?\\)\\{`, "uy");
+  for (;;) {
+    while (/\s/u.test(source[cursor] ?? "") && cursor < source.length) cursor++;
+    if (source[cursor] === "}") return result;
+    member.lastIndex = cursor;
+    const found = member.exec(source);
+    if (!found) throw new Error("Unsupported main CommonJS factory member");
+    let identity = found[1];
+    if (identity.startsWith('"')) identity = JSON.parse(identity);
+    else if (/^\d/u.test(identity)) {
+      const numeric = Number(identity);
+      if (!Number.isSafeInteger(numeric) || numeric < 0) throw new Error("Unsafe main factory identity");
+      identity = String(numeric);
+    }
+    if (identities.has(identity)) throw new Error("Duplicate main factory identity");
+    identities.add(identity);
+    const start = member.lastIndex, end = findMatchingBrace(source, start - 1);
+    if (end < start) throw new Error("Incomplete main CommonJS factory");
+    result.push({ identity, start, end, body: source.slice(start, end), parameters: found[2]?.split(",") ?? [] });
+    cursor = end + 1;
+    while (/\s/u.test(source[cursor] ?? "") && cursor < source.length) cursor++;
+    if (source[cursor] === "}") return result;
+    if (source[cursor++] !== ",") throw new Error("Invalid main factory separator");
+  }
+}
+
+function registrationOwner(source) {
+  const owners = [];
+  for (const factory of mainFactories(source)) {
+    for (const contract of registrationCandidates(factory.body)) {
+      if (!statementAt(factory.body, contract.start)) continue;
+      owners.push({ ...contract, start: factory.start + contract.start, end: factory.start + contract.end, factory });
+    }
+  }
+  return one(owners, "global shortcut registration owner");
+}
+
+function registrationContract(source) {
+  const { factory, ...contract } = registrationOwner(source);
+  return contract;
+}
+
+function ownedMatches(source, pattern, factory) {
+  return [...source.matchAll(pattern)].filter(match => factory.start <= match.index && match.index < factory.end && codeAt(source, match.index));
 }
 
 function assertSameModule(source, anchorIndex, index, description) {
-  if (moduleStartAt(source, anchorIndex) !== moduleStartAt(source, index)) {
+  const owner = registrationOwner(source).factory;
+  if (!(owner.start <= anchorIndex && anchorIndex < owner.end && owner.start <= index && index < owner.end) || !codeAt(source, index)) {
     throw new Error(`${description} is outside the global shortcut module`);
   }
 }
 
-function registrationContract(source) {
+function registrationCandidates(source) {
   const pattern = new RegExp(
     `function (?<name>${IDENT})\\((?<accelerator>${IDENT}),(?<callbacks>${IDENT}),(?<options>${IDENT})\\)\\{[\\s\\S]{0,500}?;` +
     `if\\(${platformIs("win32")}&&${IDENT}\\(\\k<accelerator>\\)\\)return [\\s\\S]{0,1500}?;` +
     `if\\((?<bareModifier>${IDENT})\\(\\k<accelerator>\\)\\|\\|(?<special>${IDENT})\\(\\k<accelerator>\\)\\)return ` +
     `${IDENT}\\(\\k<accelerator>\\)\\|\\|\\k<special>\\(\\k<accelerator>\\)\\?[\\s\\S]{0,4000}?` +
     `\\(\\k<accelerator>,${IDENT},\\k<options>\\?\\.bareModifierTrigger\\):null;`, "gu");
-  const matches = [...source.matchAll(pattern)];
-  if (matches.length !== 1) throw new Error(`global shortcut registration function matched ${matches.length} times`);
-  const match = matches[0];
+  const matches = codeMatches(source, pattern, true);
+  return matches.map(match => {
   const end = findMatchingBrace(source, source.indexOf("{", match.index));
   if (end === -1) throw new Error("global shortcut registration function is incomplete");
   if (match.index > 0 && !";}".includes(source[match.index - 1])) {
@@ -73,6 +157,7 @@ function registrationContract(source) {
     `onCancelled:${isNull("\\3")}\\?void 0:\\(\\)=>\\{\\1\\.isOwner\\(\\)&&\\3\\(\\)\\}\\}`, "u");
   if (!ownership.test(body)) throw new Error("global shortcut ownership callbacks drifted");
   return { ...match.groups, start: match.index, end: end + 1, body };
+  });
 }
 
 function registrationFunction(source) {
@@ -425,9 +510,148 @@ function codexLinuxGlobalShortcutsActivate(entry, generation) {
   return true;
 }
 
-function installPortalBackend(source) {
-  if (source.includes(PATCH_MARKER)) return source;
-  const contract = registrationContract(source);
+function rootProperty(properties, name) {
+  const property = properties.get(name);
+  if (!property || !new RegExp(`^${IDENT}(?:\\.${IDENT})*$`, "u").test(property.value)) throw new Error(`${name} owner wiring is unavailable`);
+  return property.value;
+}
+
+function objectMembers(body) {
+  const separators = [];
+  for (const comma of codeMatches(body, /,/gu)) {
+    try {
+      new Script(`async function __portalObject(){return({\n${body.slice(0, comma.index)}\n});}`);
+      separators.push(comma.index);
+    } catch { /* A nested expression has not finished its property value. */ }
+  }
+  const result = []; let start = 0;
+  for (const end of [...separators, body.length]) {
+    const member = body.slice(start, end).trim();
+    if (member) result.push(member);
+    start = end + 1;
+  }
+  return result;
+}
+
+function objectProperties(body, description, windowResult = false) {
+  const properties = new Map();
+  for (const member of objectMembers(body)) {
+    if (windowResult && member === "...{}") continue;
+    let key, value;
+    if (windowResult && new RegExp(`^get windowIconPath\\(\\)\\{return ${IDENT}\\}$`, "u").test(member)) {
+      key = "windowIconPath";
+    } else {
+      const data = new RegExp(`^(${IDENT})\\s*:\\s*([\\s\\S]+)$`, "u").exec(member);
+      if (!data) throw new Error(`${description} requires native identifier-key data properties`);
+      key = data[1]; value = data[2].trim();
+    }
+    if (properties.has(key)) throw new Error(`${description} contains duplicate ${key}`);
+    properties.set(key, { value, member });
+  }
+  return properties;
+}
+
+function directObjectCall(source, open) {
+  const close = findMatchingBrace(source, open);
+  if (close < open || !source.startsWith("({", close + 1)) throw new Error("Quit owner is not a direct object-IIFE call");
+  const argumentOpen = close + 2, argumentClose = findMatchingBrace(source, argumentOpen);
+  if (argumentClose < argumentOpen || source[argumentClose + 1] !== ")") throw new Error("Incomplete direct quit-owner arguments");
+  return { open, close, argumentOpen, argumentClose, end: argumentClose + 2, arguments: source.slice(argumentOpen + 1, argumentClose) };
+}
+
+function publishedStartup(factory) {
+  const [, exportsName, loader] = factory.parameters;
+  if (!exportsName || !loader) throw new Error("Main factory export parameters are unavailable");
+  const publication = one(codeMatches(factory.body, new RegExp(`(?<![\\w$.])${escapeRegExp(loader)}\\.d\\(${escapeRegExp(exportsName)},\\{runMainAppStartup:\\(\\)=>(${IDENT})\\}\\)`, "gu"), true), "published startup export");
+  if (!evaluatedAt(factory.body, publication.index)) throw new Error("Startup export is not evaluated in its factory");
+  const head = one(codeMatches(factory.body, new RegExp(`\\b(?:async )?function ${escapeRegExp(publication[1])}\\((?:${IDENT})?\\)\\{`, "gu"), true), "published startup declaration");
+  if (!statementAt(factory.body, head.index)) throw new Error("Published startup is not a factory declaration");
+  const open = head.index + head[0].length - 1, close = findMatchingBrace(factory.body, open);
+  if (close < open) throw new Error("Published startup is incomplete");
+  return { start: factory.start + open + 1, end: factory.start + close, body: factory.body.slice(open + 1, close), name: publication[1] };
+}
+
+function declaredBinding(body, parameters, name) {
+  try { new Script(`async function __portalBindingName(${name}){}`); }
+  catch { return false; }
+  // A final source-map line comment must not consume the synthetic suffix.
+  new Script(`async function __portalBinding(${parameters}){\n${body}\n}`);
+  try { new Script(`async function __portalBinding(${parameters}){\n${body}\n;let ${name};\n}`); return false; }
+  catch { return true; }
+}
+
+function lifecyclePlan(source, owner) {
+  const startup = publishedStartup(owner.factory);
+  const lifecycleHeader = new RegExp(`function\\(\\{((?:${IDENT}:${IDENT},)*isWindows:${IDENT},(?:${IDENT}:${IDENT},)*hotkeyWindowLifecycleManager:${IDENT},globalDictationLifecycleManager:${IDENT},(?:${IDENT}:${IDENT},)*flushAndDisposeContext:${IDENT},disposables:${IDENT}(?:,${IDENT}:${IDENT})*)\\}\\)\\{`, "gu");
+  const header = one(codeMatches(startup.body, lifecycleHeader, true), "current accepted-quit installer");
+  if (!evaluatedAt(startup.body, header.index)) throw new Error("Quit installer is not evaluated by published startup");
+  const localOpen = header.index + header[0].length - 1;
+  const call = directObjectCall(source, startup.start + localOpen);
+  const parameters = header[1].split(",").map(value => value.split(":"));
+  const aliases = Object.fromEntries(parameters);
+  if (Object.keys(aliases).length !== parameters.length) throw new Error("Duplicate quit-installer parameter role");
+  for (const name of ["isWindows", "disableQuitConfirmationPrompt", "quitState", "windows", "globalState", "settingsStore", "stopCodexMicro", "flushTracingBeforeQuit", "flushAndDisposeContext", "disposables"]) {
+    if (!aliases[name]) throw new Error(`Quit installer has no ${name} parameter`);
+  }
+  const argumentsProperties = objectProperties(call.arguments, "Quit arguments");
+  const windows = rootProperty(argumentsProperties, "windows");
+  if (!new RegExp(`^${IDENT}$`, "u").test(windows) ||
+      rootProperty(argumentsProperties, "hotkeyWindowLifecycleManager") !== `${windows}.hotkeyWindowLifecycleManager` ||
+      rootProperty(argumentsProperties, "globalDictationLifecycleManager") !== `${windows}.globalDictationLifecycleManager`) {
+    throw new Error("Quit installer is disconnected from its window shortcut owners");
+  }
+  const producerHead = one(codeMatches(startup.body,
+    new RegExp(`(?:let|const|var) ${escapeRegExp(windows)}=function\\(\\{([^{}]*)\\}\\)\\{`, "gu"), true), "accepted-quit window producer");
+  if (!evaluatedAt(startup.body, producerHead.index) || producerHead.index >= header.index) throw new Error("Window producer is not evaluated before quit installation");
+  const producerOpen = startup.start + producerHead.index + producerHead[0].length - 1;
+  const producer = directObjectCall(source, producerOpen);
+  if (producer.end > startup.start + header.index) throw new Error("Quit installation is nested inside its window producer");
+  const producerBody = source.slice(producerOpen + 1, producer.close);
+  const returned = one(codeMatches(producerBody, /\breturn\{/gu, true), "returned native window services");
+  const resultOpen = producerOpen + 1 + returned.index + "return".length, resultClose = findMatchingBrace(source, resultOpen);
+  if (source.slice(resultClose + 1, producer.close).trim() !== "") throw new Error("Native window services are not the returned producer result");
+  const resultBody = source.slice(resultOpen + 1, resultClose), roles = {};
+  const windowProperties = objectProperties(resultBody, "Window services", true);
+  for (const name of ["windowManager", "avatarOverlayManager", "notchOverlayManager", "spotlightController", "hotkeyWindowLifecycleManager", "globalDictationLifecycleManager"]) {
+    roles[name] = rootProperty(windowProperties, name);
+    if (!new RegExp(`^${IDENT}$`, "u").test(roles[name]) || !declaredBinding(producerBody, `{${producerHead[1]}}`, roles[name])) throw new Error(`Unbound native window ${name}`);
+  }
+  const mark = windowProperties.get("markAppQuitting");
+  const markValue = `()=>{${roles.windowManager}.markAppQuitting(),${roles.avatarOverlayManager}.markAppQuitting(),${roles.notchOverlayManager}?.markAppQuitting(),${roles.spotlightController}.dispose()}`;
+  if (!mark || mark.value !== markValue) throw new Error("Accepted application quit before window cleanup is unavailable");
+  const electron = owner.body.match(new RegExp(`(${IDENT})\\.globalShortcut\\.unregister\\(`, "u"))?.[1];
+  const body = source.slice(call.open + 1, call.close);
+  if (declaredBinding(body, `{${header[1]}}`, electron)) throw new Error("Quit installer shadows its Electron owner");
+  for (const name of ["require", "process", "Promise", "Set", "Map", "Object", "String", "Boolean", "Error", "console", "setTimeout", "clearTimeout"]) {
+    if (declaredBinding(source, "", name) || declaredBinding(owner.factory.body, owner.factory.parameters.join(","), name)) throw new Error(`Shared Portal shadows ${name}`);
+  }
+  if (declaredBinding(startup.body, "", "Promise")) throw new Error("Quit startup shadows its drain Promise");
+  const beforeHeader = one(codeMatches(body, new RegExp(`${escapeRegExp(electron)}\\.app\\.on\\(${literal("before-quit")},(${IDENT})=>\\{`, "gu"), true), "native before-quit callback");
+  const beforeOpen = beforeHeader.index + beforeHeader[0].length - 1, beforeClose = findMatchingBrace(body, beforeOpen), before = body.slice(beforeOpen + 1, beforeClose);
+  const bypass = new RegExp(`if\\(${aliases.isWindows}\\|\\|${aliases.quitState}\\.canQuitWithoutPrompt\\(\\)\\|\\|${aliases.disableQuitConfirmationPrompt}(?:\\|\\|!${IDENT}&&!${IDENT}&&!${IDENT})?\\)\\{(${IDENT})=!0,${aliases.windows}\\.markAppQuitting\\(\\);return\\}`, "gu");
+  one(codeMatches(before, bypass, true), "accepted quit bypass and window marking");
+  const rawApproval = new RegExp(`0!==${escapeRegExp(electron)}\\.dialog\\.showMessageBoxSync\\([\\s\\S]*?\\)\\?${beforeHeader[1]}\\.preventDefault\\(\\):\\(${aliases.quitState}\\.markQuitApproved\\(\\),${IDENT}=!0,${aliases.windows}\\.markAppQuitting\\(\\)\\)`, "u");
+  const coreApproval = new RegExp(`Promise\\.resolve\\(\\)\\.then\\(\\(\\)=>codexLinuxParent\\?${escapeRegExp(electron)}\\.dialog\\.showMessageBox\\(codexLinuxParent,codexLinuxOptions\\):${escapeRegExp(electron)}\\.dialog\\.showMessageBox\\(codexLinuxOptions\\)\\)\\.then\\((${IDENT})=>\\{codexLinuxQuitPromptPending=!1;if\\(\\1\\.response===0\\)\\{${aliases.quitState}\\.markQuitApproved\\(\\);${escapeRegExp(electron)}\\.app\\.quit\\(\\)\\}\\}\\)`, "u");
+  const corePrefix = `if(codexLinuxQuitPromptPending){${beforeHeader[1]}.preventDefault();return}`;
+  const raw = codeMatches(before, new RegExp(rawApproval.source, "gu"), true).filter(match => evaluatedAt(before, match.index));
+  const core = codeMatches(before, new RegExp(coreApproval.source, "gu"), true).filter(match => evaluatedAt(before, match.index));
+  if (raw.length + core.length !== 1 || (core.length && (!before.startsWith(corePrefix) || !before.includes(`let codexLinuxParent=codexLinuxQuitDialogParent(${aliases.windows});`)))) throw new Error("Accepted/cancelled quit confirmation flow is unavailable");
+  const willHeader = one(codeMatches(body, new RegExp(`${escapeRegExp(electron)}\\.app\\.on\\(${literal("will-quit")},(${IDENT})=>\\{`, "gu"), true), "native will-quit callback");
+  const willOpen = willHeader.index + willHeader[0].length - 1, willClose = findMatchingBrace(body, willOpen), will = body.slice(willOpen + 1, willClose);
+  const guard = one(codeMatches(will, new RegExp(`if\\((?:${IDENT}=!0,)?(${IDENT})\\)return;`, "gu"), true), "repeat quit guard");
+  const finalizer = one(codeMatches(will, new RegExp(`let (${IDENT})=\\(\\)=>\\{(${IDENT})\\(${aliases.flushAndDisposeContext},5e3\\)\\.then\\(\\(\\)=>\\{${aliases.disposables}\\.dispose\\(\\),${escapeRegExp(electron)}\\.app\\.quit\\(\\)\\}\\)\\}`, "gu"), true), "final quit drain");
+  const event = willHeader[1], hotkey = aliases.hotkeyWindowLifecycleManager, dictation = aliases.globalDictationLifecycleManager;
+  const disposal = `${event}.preventDefault(),${guard[1]}=!0,${hotkey}.dispose(),${dictation}.dispose(),Promise.allSettled([`;
+  const skip = `if(${aliases.quitState}.shouldSkipDrainBeforeQuit()){${disposal}${aliases.globalState}.flush(),${aliases.stopCodexMicro}(),${aliases.flushTracingBeforeQuit}()]).then(${finalizer[1]});return}`;
+  const normal = `${disposal}${aliases.globalState}.flush(),${aliases.settingsStore}.flush(),${aliases.stopCodexMicro}(),${aliases.flushTracingBeforeQuit}()]).then(${finalizer[1]})`;
+  if (!will.includes(skip) || !will.endsWith(normal)) throw new Error("Both native accepted-quit drain branches are required");
+  return { factory: owner.factory, startup, producer, call, aliases, electron, quitStart: startup.start + header.index, quitOpen: call.open, quitClose: call.close };
+}
+
+function applyCurrentPortalBackend(source) {
+  const owned = registrationOwner(source);
+  lifecyclePlan(source, owned);
+  const contract = owned;
   const { accelerator: e, callbacks: t } = contract;
   const entryMatch = contract.body.match(new RegExp(
     `if\\(\\[\\.\\.\\.(?<registry>${IDENT})\\]\\.some\\((?<item>${IDENT})=>\\k<item>\\.registrationHotkey===(?<key>${IDENT})\\)\\)return null;` +
@@ -452,6 +676,9 @@ function installPortalBackend(source) {
   };
   const { getAccess, accessReady } = uniqueAnchor(new RegExp(`function (?<getAccess>${IDENT})\\(\\)\\{if\\(!(?<accessReady>${IDENT})\\)return\\{status:${literal("loading")}\\};let\\{codexLocalAccess:e,workCloudAccess:t,workLocalAccess:(?<local>${IDENT})\\}=${IDENT};return\\{status:${literal("ready")},codexLocalAccess:e,workCloudAccess:t,workLocalAccess:\\k<local>\\}\\}`, "u"),
     "application access readiness").groups;
+  const accessFactory = registrationOwner(patched).factory;
+  const accessDeclaration = one(codeMatches(accessFactory.body, new RegExp(`function ${escapeRegExp(getAccess)}\\(`, "gu"), true), "application access declaration");
+  if (!statementAt(accessFactory.body, accessDeclaration.index)) throw new Error("Application access getter is not a factory declaration");
   uniqueAnchor(new RegExp(`${escapeRegExp(accessReady)}&&\\(${IDENT}\\|\\|${IDENT}\\)&&${IDENT}\\.forEach\\((${IDENT})=>\\{\\1\\(\\)\\}\\),${IDENT}\\}`, "u"), "application access publication");
   patched = replaceUnique(patched,
     new RegExp(`${escapeRegExp(accessReady)}&&\\(${IDENT}\\|\\|${IDENT}\\)&&${IDENT}\\.forEach\\((${IDENT})=>\\{\\1\\(\\)\\}\\),${IDENT}\\}`, "u"),
@@ -498,15 +725,117 @@ function installPortalBackend(source) {
   uniqueAnchor(capture, "shortcut capture readiness");
   patched = replaceUnique(patched, capture,
     (_match, _window, Capture) => `async beginCapture(){if(this.origin.isDestroyed())return null;let e=${electron}.BrowserWindow.fromWebContents(this.origin);if(null==e||!e.isFocused())return null;let t=new ${Capture}(this.origin,e);try{await codexLinuxGlobalShortcutsCaptureReady;if(this.origin.isDestroyed()||e.isDestroyed()||!e.isFocused()){t[Symbol.dispose]();return null}return t}catch(n){t[Symbol.dispose]();console.warn("[linux-global-shortcuts] Unable to prepare shortcut capture",n);return null}}`, "shortcut capture readiness");
-  const functions = [codexLinuxGlobalShortcutsUsesWayland, codexLinuxGlobalShortcutsNativePath,
+  return insertBeforeRegistration(patched, portalHelperSource({ getAccess, depth, registry }));
+}
+
+function portalRuntimeFunctions() {
+  return [codexLinuxGlobalShortcutsUsesWayland, codexLinuxGlobalShortcutsNativePath,
     codexLinuxGlobalShortcutsLines, codexLinuxGlobalShortcutsRequested, codexLinuxGlobalShortcutsUnavailable,
     codexLinuxGlobalShortcutsPortalRegistration, codexLinuxGlobalShortcutsPortalPause, codexLinuxGlobalShortcutsPortalShutdown,
     codexLinuxGlobalShortcutsPortalSchedule, codexLinuxGlobalShortcutsPortalStart,
     codexLinuxGlobalShortcutsPaste, codexLinuxGlobalShortcutsActivate];
-  return insertBeforeRegistration(patched,
-    `var codexLinuxGlobalShortcutsPatch=${JSON.stringify(PATCH_MARKER)},codexLinuxGlobalShortcutsPortalRegistrations=new Set(),codexLinuxGlobalShortcutsPortalBackend=null,codexLinuxGlobalShortcutsPortalQueue=Promise.resolve(),codexLinuxGlobalShortcutsPortalScheduled=false,codexLinuxGlobalShortcutsShuttingDown=false,codexLinuxGlobalShortcutsQuitStopped=null,codexLinuxGlobalShortcutsCaptureReady=Promise.resolve();` +
+}
+
+function portalHelperSource({ getAccess, depth, registry }) {
+  return `var codexLinuxGlobalShortcutsPatch=${JSON.stringify(PATCH_MARKER)},codexLinuxGlobalShortcutsPortalRegistrations=new Set(),codexLinuxGlobalShortcutsPortalBackend=null,codexLinuxGlobalShortcutsPortalQueue=Promise.resolve(),codexLinuxGlobalShortcutsPortalScheduled=false,codexLinuxGlobalShortcutsShuttingDown=false,codexLinuxGlobalShortcutsQuitStopped=null,codexLinuxGlobalShortcutsCaptureReady=Promise.resolve();` +
     `function codexLinuxGlobalShortcutsAccessReady(){return"ready"===${getAccess}().status}function codexLinuxGlobalShortcutsIsSuspended(){return ${depth}>0}function codexLinuxGlobalShortcutsManagerHas(e){return ${registry}.has(e)}` +
-    functions.map(String).join(""));
+    portalRuntimeFunctions().map(String).join("");
+}
+
+function portalBlock(source) {
+  const owner = registrationOwner(source), factory = owner.factory;
+  const start = one(ownedMatches(source, /\bvar codexLinuxGlobalShortcutsPatch=/gu, factory)
+    .filter(match => statementAt(factory.body, match.index - factory.start)), "shared Portal declaration").index;
+  const last = one(ownedMatches(source, /\bfunction codexLinuxGlobalShortcutsActivate\(/gu, factory)
+    .filter(match => statementAt(factory.body, match.index - factory.start)), "shared Portal runtime tail");
+  const open = source.indexOf("{", last.index), end = findMatchingBrace(source, open) + 1;
+  if (start >= last.index || end > owner.start) throw new Error("Shared Portal runtime is outside its registration scope");
+  return { start, end, text: source.slice(start, end), owner };
+}
+
+function replaceCount(source, from, to, expected, description) {
+  if (source.split(from).length - 1 !== expected) throw new Error(`${description} is incomplete or ambiguous`);
+  return source.split(from).join(to);
+}
+
+function portalNames() {
+  return new Set([
+    ...portalRuntimeFunctions().map(fn => fn.name),
+    "codexLinuxGlobalShortcutsPatch", "codexLinuxGlobalShortcutsPortalRegistrations", "codexLinuxGlobalShortcutsPortalBackend",
+    "codexLinuxGlobalShortcutsPortalQueue", "codexLinuxGlobalShortcutsPortalScheduled", "codexLinuxGlobalShortcutsShuttingDown",
+    "codexLinuxGlobalShortcutsQuitStopped", "codexLinuxGlobalShortcutsCaptureReady", "codexLinuxGlobalShortcutsAccessReady",
+    "codexLinuxGlobalShortcutsIsSuspended", "codexLinuxGlobalShortcutsManagerHas",
+  ]);
+}
+
+function assertPortalBindings(source) {
+  const names = portalNames();
+  for (const token of source.matchAll(/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu)) {
+    if (!token[0].includes("\\u")) continue;
+    let decoded;
+    try { decoded = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16))); }
+    catch { continue; }
+    if (names.has(decoded) && codeAt(source, token.index)) throw new Error("Escaped shared Portal binding outside its runtime");
+  }
+  for (const name of names) {
+    for (const reference of source.matchAll(new RegExp(`(?<![\\w$.])${name}(?![\\w$])`, "gu"))) {
+      if (!codeAt(source, reference.index)) continue;
+      const end = reference.index + name.length;
+      const following = source.slice(end).replace(/^(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))*/u, "");
+      if (/^(?:\.|:|\?\.)/u.test(following)) continue;
+      const parses = replacement => {
+        try { new Script(source.slice(0, reference.index) + replacement + source.slice(end)); return true; }
+        catch { return false; }
+      };
+      if (!parses("(0)") && !parses(`${name}:(0)`)) throw new Error("Shared Portal binding is shadowed or reassigned");
+    }
+  }
+}
+
+function restoreCurrentPortalSource(source, block) {
+  let restored = source.slice(0, block.start) + source.slice(block.end);
+  const contract = registrationContract(restored), callbacks = contract.callbacks;
+  const entry = one([...contract.body.matchAll(new RegExp(`let (${IDENT})=\\{linuxCommandId:${escapeRegExp(callbacks)}\\.linuxCommandId,linuxCallbacks:\\{\\.\\.\\.(${IDENT}),onUnavailable:${escapeRegExp(callbacks)}\\.onUnavailable\\},onCancelled:`, "gu"))], "canonical Portal registration entry");
+  const electron = contract.body.match(new RegExp(`(${IDENT})\\.globalShortcut\\.unregister\\(`, "u"))?.[1];
+  const injectedEntry = `linuxCommandId:${callbacks}.linuxCommandId,linuxCallbacks:{...${entry[2]},onUnavailable:${callbacks}.onUnavailable},`;
+  restored = replaceCount(restored, injectedEntry, "", 1, "Portal registration callback capture");
+  restored = replaceCount(restored, `||null!=${entry[1]}.portalRegistration`, "", 1, "Portal release capability");
+  restored = replaceCount(restored, `null!=${entry[1]}.portalRegistration?${entry[1]}.portalRegistration.unregister():${electron}.globalShortcut.unregister(${entry[1]}.registrationHotkey)`,
+    `${electron}.globalShortcut.unregister(${entry[1]}.registrationHotkey)`, 1, "Portal registration disposal");
+  restored = replaceCount(restored, ",codexLinuxGlobalShortcutsPortalSchedule(),", ",", 1, "Portal access publication");
+  restored = replaceCount(restored, "codexLinuxGlobalShortcutsPortalShutdown();", "", 1, "Portal accepted quit initiation");
+  restored = replaceCount(restored, "codexLinuxGlobalShortcutsQuitStopped=codexLinuxGlobalShortcutsPortalShutdown(),", "", 2, "Portal quit drain initiation");
+  restored = replaceCount(restored, "Promise.allSettled([codexLinuxGlobalShortcutsQuitStopped,", "Promise.allSettled([", 2, "Portal quit drain completion");
+  restored = replaceCount(restored, "codexLinuxGlobalShortcutsCaptureReady=codexLinuxGlobalShortcutsPortalPause(),", "", 1, "Portal capture suspension");
+  const suspend = one([...restored.matchAll(new RegExp(`null==(${IDENT})\\.portalRegistration&&${escapeRegExp(electron)}\\.globalShortcut\\.unregister\\(\\1\\.registrationHotkey\\)`, "gu"))], "Portal suspended registration disposal");
+  restored = restored.slice(0, suspend.index) + suspend[0].replace(`null==${suspend[1]}.portalRegistration&&`, "") + restored.slice(suspend.index + suspend[0].length);
+  const adapter = one([...restored.matchAll(new RegExp(`if\\(codexLinuxGlobalShortcutsUsesWayland\\(\\)&&null!=(${IDENT})\\.linuxCommandId&&\\1\\.hotkey\\.includes\\("\\+"\\)\\)return codexLinuxGlobalShortcutsActivate\\(\\1,${IDENT}\\);`, "gu"))], "Portal activation adapter");
+  restored = restored.slice(0, adapter.index) + restored.slice(adapter.index + adapter[0].length);
+  const capture = one(codeMatches(restored, /async beginCapture\(\)\{/gu).map(head => {
+    const open = head.index + head[0].length - 1, close = findMatchingBrace(restored, open);
+    return { start: head.index, end: close + 1, text: restored.slice(head.index, close + 1) };
+  }).filter(span => span.text.includes("await codexLinuxGlobalShortcutsCaptureReady;")), "Portal asynchronous shortcut capture");
+  const constructor = one([...capture.text.matchAll(new RegExp(`let t=new (${IDENT})\\(this\\.origin,e\\);`, "gu"))], "Portal capture constructor")[1];
+  const originalCapture = `beginCapture(){if(this.origin.isDestroyed())return null;let e=${electron}.BrowserWindow.fromWebContents(this.origin);return null!=e&&e.isFocused()?new ${constructor}(this.origin,e):null}`;
+  restored = restored.slice(0, capture.start) + originalCapture + restored.slice(capture.end);
+  assertPortalBindings(restored);
+  return restored;
+}
+
+function installPortalBackend(source) {
+  const artifact = source.includes(PATCH_MARKER) || /(?:function |var |let |const )codexLinuxGlobalShortcuts/u.test(source) || source.includes("codexLinuxGlobalShortcutsQuitStopped") || source.includes("codexLinuxGlobalShortcutsPortalShutdown(");
+  if (!artifact) {
+    assertPortalBindings(source);
+    return applyCurrentPortalBackend(source);
+  }
+  if (source.split(PATCH_MARKER).length - 1 !== 1) throw new Error("Shared Portal marker is incomplete or duplicated");
+  const block = portalBlock(source), current = restoreCurrentPortalSource(source, block);
+  const expected = applyCurrentPortalBackend(current), expectedBlock = portalBlock(expected);
+  if (block.text !== expectedBlock.text ||
+      source.slice(0, block.start) + source.slice(block.end) !== expected.slice(0, expectedBlock.start) + expected.slice(expectedBlock.end)) {
+    throw new Error("Shared Portal payload or lifecycle hooks are incomplete");
+  }
+  return source;
 }
 
 module.exports = {

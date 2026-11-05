@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const vm = require("node:vm");
-const { fakeHelperChild, waylandPatchContext, registerPortal, mainBundleFixture } = require("./global-shortcuts-portal.test-helpers.js");
+const { fakeHelperChild, waylandPatchContext, registerPortal, mainBundleFixture, mainBundleFixtureBody } = require("./global-shortcuts-portal.test-helpers.js");
 const { installPortalBackend, registrationContract } = require("./global-shortcuts-portal.js");
 
 const tick = () => new Promise(setImmediate);
@@ -32,7 +32,7 @@ test("shared backend fails closed for missing and ambiguous lifecycle anchors", 
     source.replace("beginCapture()", "renamedCapture()"), source.replace("suspendDepth+=1", "suspendDepth+=2"),
     source.replace('status:"loading"', 'status:"pending"'), source.replace("flushAndDisposeContext:p", "flushContext:p"),
     source.replace("markAppQuitting:()=>", "markQuitting:()=>"),
-    source.replace('c.app.on("will-quit",', 'c.app.on("before-quit",'),
+    source.replace('ea.app.on("will-quit",', 'ea.app.on("before-quit",'),
     source.replaceAll("a.dispose(),o.dispose(),Promise.allSettled([", "o.dispose(),a.dispose(),Promise.allSettled([")]) {
     assert.throws(() => installPortalBackend(input));
   }
@@ -45,11 +45,11 @@ test("shared backend fails closed for missing and ambiguous lifecycle anchors", 
   assert.throws(() => registrationContract(retiredWithoutRegistrationCallback), /ownership callbacks drifted/);
   const retiredMinifier = source.replaceAll('"win32"===process.platform', "process.platform===`win32`")
     .replace("o=null==i?t:", "o=i==null?t:").replace("(e,t,r){var n;let i=r?.ownership", "(e,t,n){var q;let i=n?.ownership");
-  assert.throws(() => registrationContract(retiredMinifier), /registration function matched 0 times/);
+  assert.throws(() => registrationContract(retiredMinifier), /global shortcut registration owner matched 0 times/);
 });
 
 test("shared backend installs into the rspack module that owns the registration function", () => {
-  const source = mainBundleFixture();
+  const source = mainBundleFixtureBody();
   const chunk = (owner, other) => `exports.ids=[916],exports.modules={11(e,t,r){"use strict";${owner}},22(e,t,r){"use strict";${other}}};`;
   const patched = installPortalBackend(chunk(source, ""));
   const ownerStart = patched.indexOf('11(e,t,r){"use strict";');
