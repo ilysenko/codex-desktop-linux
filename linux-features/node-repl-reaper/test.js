@@ -221,8 +221,9 @@ async function waitForFileContent(file, predicate, timeoutMs = 2000) {
   assert.fail(`timed out waiting for complete content in ${file}`);
 }
 
-test("lifecycle hooks use exported app context instead of desktop arguments", async () => {
+test("lifecycle hooks use exported app context instead of desktop arguments", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-node-repl-hook-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const appDir = path.join(root, "app");
   const stateDir = path.join(root, "state");
   const callLog = path.join(root, "calls.log");
@@ -259,8 +260,6 @@ printf '%s %s\\n' "$1" "$2" >> "${callLog}"
   );
   assert.ok(calls.split("\n").includes(`${appDir} watch`));
   assert.ok(calls.split("\n").includes(`${appDir} once`));
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test("reaps an orphaned node_repl after its launching process exits", async () => {

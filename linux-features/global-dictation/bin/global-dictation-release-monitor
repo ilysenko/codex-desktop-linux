@@ -373,7 +373,7 @@ cleanup() {
     done
     wait "${monitor_pids[@]:-}" >/dev/null 2>&1 || true
     rm -f "$event_fifo"
-    rm -rf -- "$stdbuf_dir"
+    rm -rf -- "$stdbuf_dir" 2>/dev/null || true
     rmdir "$event_dir" 2>/dev/null || true
 }
 trap cleanup EXIT

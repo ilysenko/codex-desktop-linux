@@ -109,8 +109,9 @@ run_node_tests_in_fresh_tmpdir() {
             printf '  %s\n' "$name" >&2
         done <<<"$leftovers"
         [ "$status" -ne 0 ] || status=1
-    else
-        rmdir -- "$fresh"
+    elif ! rmdir -- "$fresh" 2>/dev/null; then
+        echo "Entries appeared in $fresh after the run; a test process may still be running." >&2
+        [ "$status" -ne 0 ] || status=1
     fi
     return "$status"
 }

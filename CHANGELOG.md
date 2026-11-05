@@ -283,10 +283,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - The launcher tests no longer send real counts to the production usage
   counter. The usage-reporting tests removed their test folder while the
-  launcher's background reporter still ran. The reporter then found the
-  test's fake curl gone and ran the curl on PATH, about two real counts per
-  run, and recreated up to two `codex-launcher-test-*/state` folders in
-  `TMPDIR`. The tests now wait for the reporter before cleanup, and kill the
+  launcher's background reporter still ran. The reporter then recreated up
+  to two `codex-launcher-test-*/state` folders in `TMPDIR`, found the test's
+  fake curl gone, and ran the curl on PATH, about two real counts per run.
+  The tests now wait for the reporter before cleanup, and kill the
   launcher's process group if it is still running after 10 seconds.
 - The AppShots bare modifier monitor and the global dictation release watcher
   no longer leave an empty `.tmpXXXXXX` directory in `TMPDIR` where `stdbuf`
@@ -299,8 +299,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   fixtures move to `XDG_RUNTIME_DIR` when a socket path would not fit under
   `TMPDIR`, so the suite passes with a long `TMPDIR` too; without
   `XDG_RUNTIME_DIR` they fail with the limit and the path.
-  `scripts/ci/run-node-checks.sh` runs the suite with a fresh `TMPDIR` and
-  fails, naming the entries, when a run leaves any.
+  `scripts/ci/run-node-checks.sh`, the local runner for every Node test, runs
+  the suite with a fresh `TMPDIR` and fails, naming the entries, when a run
+  leaves any. CI runs its own list of Node tests and does not use it.
 - Desktop entries no longer offer a "New Window" action. It relied on the
   retired multi-instance launcher (`--new-instance`, `CODEX_MULTI_LAUNCH`),
   which the official app ignores, so it did nothing while the app was running

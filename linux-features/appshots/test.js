@@ -380,7 +380,9 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     // While xinput runs, its stdbuf directory sits in the monitor's own directory.
-    assert.equal(stdbufLeftovers(tempDir).length, 1);
+    const running = stdbufLeftovers(tempDir);
+    assert.equal(running.length, 1, `${running}`);
+    assert.match(running[0], /^codex-appshots-stdbuf\./);
 
     // Only the monitor gets the signal, as when the app stops it.
     monitor.kill(signal);

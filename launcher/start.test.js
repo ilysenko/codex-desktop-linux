@@ -66,10 +66,10 @@ exit 7
 }
 
 // The launcher reports usage from a background subshell that outlives
-// start.sh. A reporter still running when the test removed its root found the
-// test's fake curl gone, ran the curl on PATH and sent a real count to the
-// production usage counter, then recreated
-// XDG_STATE_HOME/codex-desktop/usage-reporting under the removed root. The
+// start.sh. A reporter still running when the test removed its root recreated
+// XDG_STATE_HOME/codex-desktop/usage-reporting under the removed root, found
+// the test's fake curl gone, and ran the curl on PATH, which sent a real count
+// to the production usage counter. The
 // subshell inherits a spare pipe on fd 3, and spawnSync returns only once
 // every holder has closed it, so the reporter is done before cleanup. A holder
 // still open after 10 seconds fails the test with ETIMEDOUT. The launcher runs
