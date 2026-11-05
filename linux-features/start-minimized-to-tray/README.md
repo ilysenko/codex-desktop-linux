@@ -98,9 +98,22 @@ if the feature is enabled again.
 The short-lived launcher hook adds no background helper processes, extra
 package dependencies, or files to clean up in the user home directory.
 
-The patch uses unique semantic anchors and rejects an enabled-feature build
-if upstream settings or startup contracts drift. Disabled builds do not probe
-or patch these surfaces and continue to preserve the official ASAR.
+The patch follows the published native startup and its actual view-message
+owner. The preference route must remain inside that owner's `fetch` case,
+with the original request, profile state and inline response sender. Startup
+state and activation guards belong to that startup; delayed renderer mode
+updates use the same view owner and its real `electron-set-window-mode` case.
+Complete helper declarations and applied-state bindings are revalidated before
+an unchanged result is accepted. Other Linux routes may occur before or after
+the preference route inside the verified fetch prefix.
+
+The main patch prepares the complete chunk inventory before one transaction.
+Duplicate or incomplete copies with the same native factory identity, mixed
+states and orphaned feature artifacts reject the change without writing any
+chunk. Upstream settings or startup contract drift rejects an enabled-feature
+build. Disabling this feature leaves its startup and settings surfaces alone;
+overall ASAR byte preservation also depends on other enabled features and any
+required core patches.
 
 ## Testing
 

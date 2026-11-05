@@ -2,8 +2,10 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+const { Script } = require("node:vm");
+const { findWebviewAssetsContaining, findMainProcessChunks, patchWebviewAssets } = require("../../scripts/patches/lib/assets.js");
 const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
 
 const SETTINGS_KEY = "codex-linux-start-minimized-to-tray";
 const BOOT_ONLY_SETTINGS_KEY = "codex-linux-start-minimized-to-tray-only-on-boot";
@@ -23,9 +25,6 @@ const ID = "[A-Za-z_$][\\w$]*";
 // inline view-message sender (the channel the webview fetch client listens to).
 const ROUTE_URL = "vscode://codex/codex-linux-start-minimized-to-tray";
 const ROUTE_MARKER = "/*codex-linux-start-minimized-to-tray-route*/";
-const FETCH_FORWARD = new RegExp(`await this\\.fetchWrapper\\.handleRequest\\((${ID}),(${ID})\\);break;case"cancel-fetch":`, "g");
-const FETCH_CASE = 'case"fetch":';
-const VIEW_HANDLER_FIELDS = ["fetchWrapper;", "globalState;", "chunkedMessageSender;"];
 
 // Answers one webview fetch for the two owned preference keys.
 function codexLinuxStartMinimizedRoute(request, globalState, respond) {
@@ -62,42 +61,60 @@ function routeSource(webContents, request) {
   return `${ROUTE_MARKER}if(${JSON.stringify(ROUTE_URL)}===${request}?.url){codexLinuxStartMinimizedRoute(${request},this.globalState,codexLinuxStartMinimizedResponse=>this.chunkedMessageSender.sendInlineMessageForView(${webContents},codexLinuxStartMinimizedResponse));break}`;
 }
 
-// The "fetch" case belongs to exactly one view-message handler class: the one
-// declaring the fetch wrapper, profile global state and inline view-message
-// sender. Look it up by its declaration rather than the nearest "class "
-// keyword, because other Linux features inject helpers (some with their own
-// classes) into the handler's methods.
-const CLASS_OPEN = new RegExp(`class ${ID}(?: extends ${ID}(?:\\.${ID})*)?\\{`, "g");
-function viewHandlerOwnsIndex(source, caseIndex, endIndex) {
-  const owners = [...source.slice(0, caseIndex).matchAll(CLASS_OPEN)]
-    .map((match) => match.index + match[0].length - 1)
-    .filter((open) => {
-      const fields = source.slice(open, open + 1000).split(/[(=]/, 1)[0];
-      return VIEW_HANDLER_FIELDS.every((field) => fields.includes(field));
-    });
-  return owners.length === 1 && findMatchingBrace(source, owners[0]) >= endIndex;
+function outerDeclaration(source, text) {
+  if (source.split(text).length !== 2) return false;
+  const prefix = source.slice(0, source.indexOf(text));
+  if (findMatchingBrace("{" + prefix + "}", 0) !== prefix.length + 1) return false;
+  try { new Script(prefix + "const __startMinimizedDeclaration=0;"); return true; }
+  catch { return false; }
 }
 
-// Other Linux features may route their own URLs in the same "fetch" case
-// before this one; they are tolerated only as complete codex-linux routes.
-function fetchRoutePlan(source) {
-  const forwards = [...source.matchAll(FETCH_FORWARD)];
-  if (forwards.length !== 1) return null;
-  const forward = forwards[0];
-  const [, webContents, request] = forward;
-  const caseIndex = source.lastIndexOf(FETCH_CASE, forward.index);
-  const between = source.slice(caseIndex + FETCH_CASE.length, forward.index);
-  if (caseIndex === -1 || (between.length > 0 && !between.startsWith("/*codex-linux-"))) return null;
-  if (caseIndex === -1 || !viewHandlerOwnsIndex(source, caseIndex, forward.index)) return null;
-  const route = routeSource(webContents, request);
+function noLocalBinding(body, name, parameters = "", insertAt = null, async = true) {
+  const probe = insertAt == null ? body + `\n;let ${name};` : body.slice(0, insertAt) + `let ${name};` + body.slice(insertAt);
+  try { new Script(`${async ? "async " : ""}function __startMinimizedBinding(${parameters}){${probe}}`); return true; }
+  catch { return false; }
+}
+
+function completeHelperBindings(source, graph) {
+  const site = graph.viewFetch, scope = graph.scope;
+  const factory = source.slice(scope.factoryStart, scope.factoryEnd);
+  const startup = source.slice(scope.startupStart, scope.startupEnd);
+  const method = source.slice(site.methodBodyStart, site.methodBodyEnd);
+  for (const helper of [codexLinuxStartMinimizedRoute, codexLinuxStartMinimizedAutostart,
+    codexLinuxStartMinimizedPreference, codexLinuxStartMinimizedTrayReady]) {
+    if (!outerDeclaration(source, helper.toString()) ||
+        !noLocalBinding(factory, helper.name, "", null, false) || !noLocalBinding(startup, helper.name) ||
+        !noLocalBinding(method, helper.name, `${site.webContentsVar},${site.requestVar}`) ||
+        !noLocalBinding(method, helper.name, `${site.webContentsVar},${site.requestVar}`, site.prefixStart - site.methodBodyStart)) return false;
+    const writes = new RegExp(`(?<![\\w$.])${escapeRegExp(helper.name)}\\s*(?:\\+\\+|--|(?:\\?\\?|\\|\\||&&|[+*/%&|^\\-])?=(?!=|>))`, "gu");
+    for (const match of source.matchAll(writes)) {
+      const prefix = source.slice(0, match.index);
+      if (findMatchingBrace("{" + prefix + "}", 0) === prefix.length + 1) return false;
+    }
+  }
+  return true;
+}
+
+// The shared graph validates the real method/switch and every complete owned
+// prefix. Our route may precede or follow another feature inside that prefix.
+function fetchRoutePlan(source, graph) {
+  if (!graph.ok) return null;
+  const site = graph.viewFetch;
+  const route = routeSource(site.webContentsVar, site.requestVar);
   const routeCount = source.split(ROUTE_MARKER).length - 1;
   if (routeCount === 1) {
-    return source.slice(forward.index - route.length, forward.index) === route ? (patched) => patched : null;
+    return source.slice(site.prefixStart, site.prefixEnd).split(route).length === 2 && completeHelperBindings(source, graph)
+      ? (patched) => patched : null;
   }
   if (routeCount !== 0) return null;
   return (patched) => {
-    const index = patched.indexOf(forward[0]);
-    return patched.slice(0, index) + route + patched.slice(index);
+    const current = inspectMainRequestSites(patched);
+    if (!current.ok) {
+      console.warn("WARN: Start minimized to tray fetch route changed while preparing startup");
+      return source;
+    }
+    const currentSite = current.viewFetch, index = currentSite.nativeStart;
+    return patched.slice(0, index) + routeSource(currentSite.webContentsVar, currentSite.requestVar) + patched.slice(index);
   };
 }
 
@@ -147,8 +164,31 @@ async function codexLinuxStartMinimizedTrayReady(setup, isReady, timeoutMs = 300
 const EXPECTED_LAUNCH_PARTS = 8;
 
 function unique(source, pattern) {
-  const matches = [...source.matchAll(pattern)];
+  const matches = [...source.matchAll(pattern)].filter(match => {
+    const prefix = source.slice(0, match.index);
+    return findMatchingBrace("{" + prefix + "}".repeat(prefix.length + 2), 0) >= prefix.length + 1;
+  });
   return matches.length === 1 ? matches[0] : null;
+}
+
+function startupStatement(source, graph, match) {
+  if (!within(match, graph.scope.startupStart, graph.scope.startupEnd)) return false;
+  const prefix = source.slice(graph.scope.startupStart, match.index);
+  if (findMatchingBrace("{" + prefix + "}", 0) !== prefix.length + 1) return false;
+  try { new Script(`async function startup(){${prefix}const __startupStatement=0;}`); return true; }
+  catch { return false; }
+}
+
+function windowModeDeclarationIsOwned(source, graph, match) {
+  const site = graph.viewFetch;
+  if (!within(match, site.ownerStart, site.ownerEnd)) return false;
+  const open = source.indexOf("{", site.ownerStart), prefix = source.slice(open + 1, match.index);
+  return findMatchingBrace("{" + prefix + "}", 0) === prefix.length + 1 &&
+    (prefix.trim() === "" || /[};]$/u.test(prefix.trim()));
+}
+
+function within(match, start, end) {
+  return match != null && start <= match.index && match.index + match[0].length <= end;
 }
 
 function backgroundContract(source, first) {
@@ -171,14 +211,35 @@ function firstWindowContract(source, background) {
 // The startup window-services call passes upstream's tray readiness predicate;
 // the window-services factory destructures the same property name, so require
 // the passed value to be the tray readiness function declaration.
-function trayReadyContract(source, fromIndex) {
+function trayReadyContract(source, fromIndex, graph) {
+  const factory = source.slice(graph.scope.factoryStart, graph.scope.factoryEnd);
+  const startup = source.slice(graph.scope.startupStart, graph.scope.startupEnd);
   const matches = [...source.slice(fromIndex).matchAll(new RegExp(`canHideLastWindowToTray:(${ID}),isRemoteHostedPIPEnabled:`, "g"))]
-    .filter((match) => unique(source, new RegExp(`function ${escapeRegExp(match[1])}\\(\\)\\{return ${ID}&&${ID}\\?\\.isReady\\(\\)===!0\\}`, "g")));
+    .filter((match) => {
+      const absolute = { 0: match[0], index: fromIndex + match.index };
+      const declaration = unique(factory, new RegExp(`function ${escapeRegExp(match[1])}\\(\\)\\{return ${ID}&&${ID}\\?\\.isReady\\(\\)===!0\\}`, "g"));
+      return within(absolute, graph.scope.startupStart, graph.scope.startupEnd) && declaration &&
+        outerDeclaration(factory, declaration[0]) && noLocalBinding(startup, match[1]);
+    });
   return matches.length === 1 ? matches[0] : null;
 }
 
 function windowModeContract(source) {
   return unique(source, new RegExp(`setPrimaryWindowMode\\((${ID}),(${ID})\\)\\{let (${ID})=(${ID})\\.BrowserWindow\\.fromWebContents\\(\\1\\);if\\(!\\3\\|\\|\\3\\.isDestroyed\\(\\)\\)return;let (${ID})=this\\.windowManager\\.getPrimaryWindow\\(\\);if\\(!\\5\\|\\|\\5\\.isDestroyed\\(\\)\\|\\|\\5\\.id!==\\3\\.id\\)return;`, "g"));
+}
+
+function windowModeCallIsOwned(source, graph) {
+  const site = graph.viewFetch, body = source.slice(site.methodBodyStart, site.methodBodyEnd);
+  const dispatch = `switch(${site.requestVar}.type){`, start = body.indexOf(dispatch);
+  if (start < 0) return false;
+  const open = start + dispatch.length - 1, end = findMatchingBrace(body, open);
+  const cases = body.slice(open + 1, end);
+  const route = `case"electron-set-window-mode":this.setPrimaryWindowMode(${site.webContentsVar},{mode:${site.requestVar}.mode,onboardingVariant:${site.requestVar}.onboardingVariant});break;`;
+  const matches = [...cases.matchAll(new RegExp(escapeRegExp(route), "g"))].filter(match => {
+    const prefix = cases.slice(0, match.index);
+    return findMatchingBrace("{" + prefix + "}", 0) === prefix.length + 1;
+  });
+  return matches.length === 1;
 }
 
 function hiddenWindowModeBody(webContents, mode, window) {
@@ -193,14 +254,16 @@ function trayReadinessStatement(services, isReady) {
   return `if(codexLinuxStartMinimized){let ready=await ${MAIN_MARKER}(codexLinuxStartMinimizedTraySetup,${isReady});console.info(\`[start-minimized-to-tray] tray readiness\`,{ready});codexLinuxStartMinimized=codexLinuxStartMinimized&&ready}${services}.windowManager.codexLinuxStartMinimized=codexLinuxStartMinimized;`;
 }
 
-function hasCompleteMainPatch(source, state, startup) {
+function hasCompleteMainPatch(source, state, startup, graph) {
   const exactlyOnce = value => source.split(value).length === 2;
   const launchBackground = `(${startup[1]}.isBackgroundLaunch||codexLinuxStartMinimized)`;
   const first = firstWindowContract(source, launchBackground);
   const windowMode = windowModeContract(source);
-  const trayReady = trayReadyContract(source, state.index);
+  const trayReady = trayReadyContract(source, state.index, graph);
   const traySetup = unique(source, new RegExp(`let codexLinuxStartMinimizedTraySetup=\\((${ID})\\|\\|"linux"===process\\.platform\\)\\?(${ID})\\(\\):null;`, "g"));
-  if (!first || !windowMode || !trayReady || !traySetup) return false;
+  if (!within(first, graph.scope.startupStart, graph.scope.startupEnd) ||
+      !windowModeDeclarationIsOwned(source, graph, windowMode) || !windowModeCallIsOwned(source, graph) || !trayReady ||
+      !within(traySetup, graph.scope.startupStart, graph.scope.startupEnd) || !completeHelperBindings(source, graph)) return false;
   const clearHidden = `codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`;
   const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}try\\{${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}let ${ID}=await \\(async\\(${ID},${ID}\\)=>\\{if\\(!(${ID})&&\\(!codexLinuxStartMinimizedRequested\\|\\|${escapeRegExp(first[2])}\\.getPrimaryWindow\\(\\)==null\\)\\)return null;${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
@@ -219,13 +282,16 @@ function hasCompleteMainPatch(source, state, startup) {
 }
 
 function applyMainPatch(source) {
-  const installFetchRoute = fetchRoutePlan(source);
+  const graph = inspectMainRequestSites(source);
+  const installFetchRoute = fetchRoutePlan(source, graph);
   if (!installFetchRoute) {
     console.warn("WARN: Start minimized to tray fetch route owner missing or ambiguous");
     return source;
   }
-  const state = unique(source, new RegExp(`let (${ID})=await \\(0,${ID}\\.${ID}\\)\\(\\{moduleDir:__dirname\\}\\),`, "g"));
-  const startup = unique(source, new RegExp(`shouldShowPrimaryWindow:\\(\\)=>!\\(?(${ID})\\.isBackgroundLaunch`, "g"));
+  let state = unique(source, new RegExp(`let (${ID})=await \\(0,${ID}\\.${ID}\\)\\(\\{moduleDir:__dirname\\}\\),`, "g"));
+  let startup = unique(source, new RegExp(`shouldShowPrimaryWindow:\\(\\)=>!\\(?(${ID})\\.isBackgroundLaunch`, "g"));
+  if (!startupStatement(source, graph, state)) state = null;
+  if (!within(startup, graph.scope.startupStart, graph.scope.startupEnd)) startup = null;
   const owner = startup?.[1] ?? "__missing";
   const launchBackground = source.includes(`function ${MAIN_MARKER}(`)
     ? `(${owner}.isBackgroundLaunch||codexLinuxStartMinimized)`
@@ -233,7 +299,7 @@ function applyMainPatch(source) {
   const first = firstWindowContract(source, launchBackground);
   const background = backgroundContract(source, first);
   if (source.includes(`function ${MAIN_MARKER}(`)) {
-    if (!background || !state || !startup || !hasCompleteMainPatch(source, state, startup) ||
+    if (!background || !state || !startup || !hasCompleteMainPatch(source, state, startup, graph) ||
         source.split(ROUTE_MARKER).length !== 2) {
       console.warn("WARN: Start minimized to tray patched startup contract missing or ambiguous");
       return source;
@@ -245,7 +311,7 @@ function applyMainPatch(source) {
     return source;
   }
   const launchPattern = escapeRegExp(launchBackground);
-  const trayReady = trayReadyContract(source, state?.index ?? 0);
+  const trayReady = trayReadyContract(source, state?.index ?? 0, graph);
   const traySetup = unique(source, new RegExp(`;\\((${ID})\\|\\|"linux"===process\\.platform\\)&&(${ID})\\(\\);`, "g"));
   const last = unique(source, new RegExp(`(${ID})===(${ID})\\|\\|${launchPattern}\\|\\|(${ID})\\(\\1,!(${ID})\\)`, "g"));
   // The current upstream bundle already defers restored maximization until
@@ -253,6 +319,12 @@ function applyMainPatch(source) {
   const maximize = unique(source, new RegExp(`${ID}\\.once\\("ready-to-show",\\(\\)=>\\{(${ID})\\.isDestroyed\\(\\)\\|\\|\\(\\1\\.isVisible\\(\\)\\?(${ID})\\(\\):\\1\\.once\\("show",\\2\\)\\)\\}\\)`, "g"));
   const windowMode = windowModeContract(source);
   if (!background || !state || !startup || !trayReady || !traySetup || !first || !last || !maximize || !windowMode ||
+      !within(background, graph.scope.startupStart, graph.scope.startupEnd) ||
+      !within(first, graph.scope.startupStart, graph.scope.startupEnd) ||
+      !within(last, graph.scope.startupStart, graph.scope.startupEnd) ||
+      !within(traySetup, graph.scope.startupStart, graph.scope.startupEnd) ||
+      !within(maximize, graph.scope.factoryStart, graph.scope.factoryEnd) ||
+      !windowModeDeclarationIsOwned(source, graph, windowMode) || !windowModeCallIsOwned(source, graph) ||
       first[4] !== background[2] || first[5] !== background[1] ||
       last[2] !== first[1] || last[3] !== first[4] || last[4] !== first[5] ||
       source.split(launchBackground).length !== EXPECTED_LAUNCH_PARTS ||
@@ -277,6 +349,10 @@ function applyMainPatch(source) {
   const interactive = unique(source, new RegExp(`${escapeRegExp(owner)}\\.onInteractiveLaunch=\\(\\)=>\\{null==${first[1]}\\|\\|${first[1]}\\.isDestroyed\\(\\)\\|\\|${first[4]}\\(${first[1]}\\),`, "g"));
   if (!activations || !trayActivation || !queuedActivation || !interactive) {
     console.warn("WARN: Start minimized to tray activation contract missing or ambiguous");
+    return source;
+  }
+  if (![activations, trayActivation, queuedActivation, interactive].every(match => within(match, graph.scope.startupStart, graph.scope.startupEnd))) {
+    console.warn("WARN: Start minimized to tray activation owner missing or ambiguous");
     return source;
   }
   let patched = source.replace(state[0], state[0] +
@@ -305,7 +381,38 @@ function applyMainPatch(source) {
   patched = patched.replace(interactive[0], interactive[0].replace("=>{", `=>{${clearHidden}`));
   // rspack chunks are CommonJS files; these helpers become chunk-scoped
   // declarations visible to the startup module factory below them.
-  return installFetchRoute(`${codexLinuxStartMinimizedRoute.toString()}\n${codexLinuxStartMinimizedAutostart.toString()}\n${codexLinuxStartMinimizedPreference.toString()}\n${codexLinuxStartMinimizedTrayReady.toString()}\n${patched}`);
+  const helpers = `${codexLinuxStartMinimizedRoute.toString()}\n${codexLinuxStartMinimizedAutostart.toString()}\n${codexLinuxStartMinimizedPreference.toString()}\n${codexLinuxStartMinimizedTrayReady.toString()}\n`;
+  const prologue = ['"use strict";', "'use strict';"].find(value => patched.startsWith(value))?.length ?? 0;
+  return installFetchRoute(patched.slice(0, prologue) + helpers + patched.slice(prologue));
+}
+
+function applyMainToExtractedApp(extractedDir) {
+  const main = findMainProcessChunks(extractedDir);
+  if (main == null) throw Error("Start minimized to tray main-process inventory missing");
+  const rows = main.chunks.map(assetName => {
+    const source = fs.readFileSync(path.join(main.buildDir, assetName), "utf8");
+    return { assetName, source, graph: inspectMainRequestSites(source) };
+  });
+  const owners = rows.filter(row => row.graph.ok);
+  if (owners.length !== 1) throw Error("Start minimized to tray main request owner missing or ambiguous");
+  const factoryId = owners[0].graph.scope.factoryId;
+  const cohort = rows.filter(row => row.graph.factoryIds.includes(factoryId) || row.source.includes("codexLinuxStartMinimized"));
+  if (cohort.length !== 1 || cohort[0] !== owners[0]) throw Error("Start minimized to tray main cohort is duplicated, incomplete or mixed");
+  const owner = owners[0];
+  function prepare(source) {
+    const warnings = [], originalWarn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    let patched;
+    try { patched = applyMainPatch(source); } finally { console.warn = originalWarn; }
+    if (warnings.length) throw Error(warnings[0].replace(/^WARN:\s*/u, ""));
+    return patched;
+  }
+  const patchedSource = prepare(owner.source);
+  if (prepare(patchedSource) !== patchedSource) throw Error("Start minimized to tray main poststate is not canonical");
+  const result = patchWebviewAssets(main.buildDir, rows.map(row => ({
+    assetName: row.assetName, source: row.source, patchedSource: row === owner ? patchedSource : row.source,
+  })));
+  return { matched: 1, ...result };
 }
 
 const MEMBER = `${ID}(?:\\.${ID})*`;
@@ -475,12 +582,12 @@ function applySettingsPatch(extractedDir) {
 }
 
 module.exports = {
-  SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY, ROUTE_URL, applyMainPatch, applySettingsPatch, settingsContract, settingComponent,
+  SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY, ROUTE_URL, applyMainPatch, applyMainToExtractedApp, applySettingsPatch, settingsContract, settingComponent,
   settingsPostSource, codexLinuxStartMinimizedRoute,
   codexLinuxStartMinimizedTrayReady, codexLinuxStartMinimizedAutostart, codexLinuxStartMinimizedPreference,
   LABEL_IDS, LABEL_TRANSLATIONS, DESCRIPTION_IDS, DESCRIPTION_TRANSLATIONS,
   descriptors: [
-    { id: "startup", phase: "main-bundle", order: 20970, apply: applyMainPatch },
+    { id: "startup", phase: "extracted-app:pre-webview", order: 20970, apply: applyMainToExtractedApp },
     { id: "general-setting", phase: "extracted-app:post-webview", order: 20970, apply: applySettingsPatch },
   ],
 };

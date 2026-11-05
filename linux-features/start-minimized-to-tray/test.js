@@ -7,9 +7,14 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { spawnSync } = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const { graphBody, fixture: requestGraphFixture } = require("../../scripts/patches/lib/fixtures/main-request-graph.js");
+const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
+const { applyExtractedAppPatchDescriptors, normalizeDescriptor } = require("../../scripts/patches/engine.js");
+const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const { loadLinuxFeaturePatchDescriptors, stageEnabledLinuxFeatureInstall } = require("../../scripts/lib/linux-features.js");
 const {
-  SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY, ROUTE_URL, applyMainPatch, applySettingsPatch, settingComponent,
+  SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY, ROUTE_URL, applyMainPatch, applyMainToExtractedApp, applySettingsPatch, settingComponent,
   settingsPostSource, codexLinuxStartMinimizedRoute,
   codexLinuxStartMinimizedTrayReady, codexLinuxStartMinimizedAutostart,
   LABEL_IDS, LABEL_TRANSLATIONS, DESCRIPTION_IDS, DESCRIPTION_TRANSLATIONS,
@@ -22,7 +27,7 @@ const { applyMainBundlePatch: applyReadAloudMainBundlePatch } = require("../read
 // control flow and the preference route.
 const windowModeFixture = 'class MessageHandler{' + "setPrimaryWindowMode(e,t){let r=ea.BrowserWindow.fromWebContents(e);if(!r||r.isDestroyed())return;let n=this.windowManager.getPrimaryWindow();if(!n||n.isDestroyed()||n.id!==r.id)return;if(!this.shouldShowPrimaryWindow()&&!r.isVisible())return void r.once(\"show\",()=>this.setPrimaryWindowMode(e,t));let i=\"onboarding\"!==t.mode?null:\"v2\"===t.onboardingVariant?{width:1090,height:760}:{width:560,height:560};if(ra()(this.primaryWindowMode,t)){null!=i&&this.showPrimaryWindow(r);return}if(this.primaryWindowMode=t,null!=i){null==this.primaryWindowRestoreBounds&&(this.primaryWindowRestoreBounds={bounds:r.getNormalBounds(),wasMaximized:r.isMaximized(),wasFullScreen:r.isFullScreen()}),r.isFullScreen()&&r.setFullScreen(!1),r.isMaximized()&&r.unmaximize(),r.setResizable(!0);let e=ea.screen.getDisplayMatching(r.getNormalBounds()).workAreaSize,t=\"win32\"===process.platform?{width:Math.max(0,r.getBounds().width-r.getContentBounds().width),height:Math.max(0,r.getBounds().height-r.getContentBounds().height)}:{width:0,height:0},n={width:e.width-t.width,height:e.height-t.height},s={width:Math.min(i.width,n.width),height:Math.min(i.height,n.height)},a=\"win32\"===process.platform,o=a&&(s.width>=.9*n.width||s.height>=.9*n.height),l=this.windowManager.getPrimaryMinimumSize();r.setMaximizable(a),r.setFullScreenable(!1),r.setMinimumSize(Math.min(l.width,s.width),Math.min(l.height,s.height)),r.setSize(s.width,s.height),o||r.center(),this.showPrimaryWindow(r),o&&r.maximize();return}if(r.setResizable(!0),r.setMaximizable(!0),r.setFullScreenable(!0),this.primaryWindowRestoreBounds){let{bounds:e,wasMaximized:t,wasFullScreen:n}=this.primaryWindowRestoreBounds;this.primaryWindowRestoreBounds=null;let i=this.windowManager.getPrimaryMinimumSize();r.setMinimumSize(i.width,i.height);let s={...e,width:Math.max(e.width,i.width),height:Math.max(e.height,i.height)};r.isMaximized()&&r.unmaximize(),r.setBounds(s),t&&r.maximize(),n&&r.setFullScreen(!0)}this.windowManager.syncPrimaryMinimumSize(),this.showPrimaryWindow(r)}showPrimaryWindow(e){e.isVisible()||(e.show(),e.focus())}" + '}';
 
-function startupFixture() {
+function startupParts() {
   return windowModeFixture + `class FetchWrapper{options;constructor(e){this.options=e}async handleRequest(e,t){if("/codex/dictation-stream-connect-info"===t.url)return void await this.handleDictationStreamConnectInfoRequest(e,t);throw Error("HTTP requests must use the HTTP fetch service.")}async handleDictationStreamConnectInfoRequest(e,t){this.options.chunkedMessageSender.sendInlineMessageForView(e,{type:"fetch-response",responseType:"success",requestId:t.requestId,status:200,headers:{"content-type":"application/json"},bodyJsonString:"{}"})}cancelRequest(){}}
 class ViewMessageHandler{hostId;windowManager;chunkedMessageSender;fetchWrapper;globalState;constructor(e,t,r){this.fetchWrapper=e,this.globalState=t,this.chunkedMessageSender=r}async handleMessage(e,t){switch(t.type){case"mcp-response":break;case"fetch":await this.fetchWrapper.handleRequest(e,t);break;case"cancel-fetch":this.fetchWrapper.cancelRequest(e,t);break;case"show-diff":break}}}
 class WindowManager{install(F,x){if(x){this.pendingRestoredMaximization=new Set;this.pendingRestoredMaximization.add(F);let e=()=>{F.isDestroyed()||(F.maximize(),this.pendingRestoredMaximization.delete(F))};F.once("ready-to-show",()=>{F.isDestroyed()||(F.isVisible()?e():F.once("show",e))})}}}
@@ -39,16 +44,47 @@ xe=!0,w(e=>{let n=!1;if(We.deepLinks.queueProcessArgs(e)){n&&Je();return}n?Je():
 return {secondInstance:Je,trayOpen:Ye,interactive:e.onInteractiveLaunch,shouldShow:options.shouldShowPrimaryWindow,backfill:backfill.shouldShow,progress:progress.shouldShow};}`;
 }
 
+function startupFixture() {
+  const parts = startupParts(), head = "async function startup(e={isBackgroundLaunch:false}){";
+  const coldStart = parts.indexOf(head); assert.ok(coldStart > 0);
+  const supportStart = parts.indexOf("class WindowManager{"); assert.ok(supportStart > 0);
+  const support = parts.slice(supportStart, coldStart);
+  const coldBody = parts.slice(coldStart + head.length, -1);
+  const modeMethods = windowModeFixture.slice("class MessageHandler{".length, -1);
+  let body = graphBody().replace("class ViewHandler{", "class ViewHandler{" + modeMethods);
+  assert.ok(body.includes('case"show-diff":break'));
+  body = body.replace('case"show-diff":break', 'case"electron-set-window-mode":this.setPrimaryWindowMode(e,{mode:t.mode,onboardingVariant:t.onboardingVariant});break;case"show-diff":break');
+  body = body.replace("function runMainAppStartup(e){", "async function runMainAppStartup(e){");
+  assert.ok(body.includes("return created}require.d"));
+  body = body.replace("return created}require.d", coldBody + "}require.d");
+  return requestGraphFixture(support + body + "module.exports.MessageHandler=ViewHandler;module.exports.FetchWrapper=RequestWrapper;module.exports.ViewMessageHandler=ViewHandler;module.exports.WindowManager=WindowManager;");
+}
+
+function fixtureExports(source, globals = {}) {
+  const registry = {}, input = { Error, Promise, Map, JSON };
+  Object.defineProperties(input, Object.getOwnPropertyDescriptors(globals));
+  input.exports = registry;
+  const context = vm.createContext(input);
+  vm.runInContext(source, context);
+  const module = { exports: {} }, load = () => { throw Error("unexpected fixture import"); };
+  load.d = (target, getters) => { for (const [name, get] of Object.entries(getters)) Object.defineProperty(target, name, { get }); };
+  registry.modules[82820](module, module.exports, load);
+  return { exports: module.exports, context };
+}
+
 function viewMessageHarness(patched, values = new Map()) {
-  const { FetchWrapper, ViewMessageHandler } = new Function("require", "process",
-    `${patched};return{FetchWrapper,ViewMessageHandler};`)(require, { platform: "linux", env: {} });
+  const process = Object.assign(new EventEmitter(), { platform: "linux", env: {}, argv: ["ChatGPT"] });
+  const { exports: { FetchWrapper, ViewMessageHandler } } = fixtureExports(patched, {
+    process, require: name => { if (name === "electron") return { app: new EventEmitter() }; throw Error(`unexpected helper module ${name}`); },
+    setTimeout, clearTimeout,
+  });
   const responses = [], forwarded = [];
   const sender = { sendInlineMessageForView: (webContents, message) => responses.push({ webContents, message }) };
   const wrapper = new FetchWrapper({ chunkedMessageSender: sender });
   const handleRequest = wrapper.handleRequest.bind(wrapper);
   wrapper.handleRequest = async (webContents, request) => { forwarded.push(request.url); return handleRequest(webContents, request); };
   const globalState = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
-  const handler = new ViewMessageHandler(wrapper, globalState, sender);
+  const handler = new ViewMessageHandler(null, null, null, null, sender, null, null, wrapper, globalState);
   let serial = 0;
   const request = async (body, url = ROUTE_URL) => {
     const requestId = `request-${++serial}`, webContents = { id: serial };
@@ -97,12 +133,11 @@ function permutations(items) {
     permutations([...items.slice(0, index), ...items.slice(index + 1)]).map(rest => [item, ...rest]));
 }
 
-// account-switcher shape: a helper declaring its own class is injected into a
-// view-message handler method ahead of the "fetch" case, so the nearest
-// "class " keyword no longer names the handler.
+// Current account-switcher places its helper in an earlier MCP switch case.
+// A nested class there still makes the nearest textual class misleading.
 function injectHandlerHelperClass(source) {
   const helper = "this.codexLinuxFixtureHelper??=(function(){class SwitcherError extends Error{}return SwitcherError})();";
-  return source.includes(helper) ? source : source.replace("async handleMessage(e,t){", `async handleMessage(e,t){${helper}`);
+  return source.includes(helper) ? source : source.replace('case"mcp-response":', `case"mcp-request":{${helper}break;}case"mcp-response":`);
 }
 
 test("the preference route composes with other Linux fetch routes and handler helpers in every patch order", async () => {
@@ -129,8 +164,8 @@ test("main patch fails closed when the fetch route owner is missing, duplicated 
   const forward = 'case"fetch":await this.fetchWrapper.handleRequest(e,t);break;case"cancel-fetch":';
   for (const drift of [
     source.replace(forward, 'case"fetch":await this.fetchWrapper.handleRequest(e,t);break;case"other":'),
-    source + `class OtherHandler{fetchWrapper;globalState;chunkedMessageSender;handle(e,t){switch(t.type){${forward}}}}`,
-    source.replace("fetchWrapper;globalState;", "fetchWrapper;"),
+    source + source,
+    source.replace("this.globalState=state", "this.otherState=state"),
     source.replace(forward, 'case"fetch":log(t);await this.fetchWrapper.handleRequest(e,t);break;case"cancel-fetch":'),
   ]) {
     const result = captureWarnings(() => applyMainPatch(drift));
@@ -165,18 +200,20 @@ async function runStartup({ preference = true, onlyOnBoot = false, env = {}, cgr
     },
     hotkeyWindowLifecycleManager: { hide: () => calls.push("hideHotkey") },
   };
+  const globalState = { getStored: key => {
+    if (key === SETTINGS_KEY) return preference;
+    assert.equal(key, BOOT_ONLY_SETTINGS_KEY); return onlyOnBoot;
+  } };
   const context = {
     process: { platform, argv, env: { ...env, CODEX_ELECTRON_START_IN_BACKGROUND: background ? "1" : "0" } },
-    m: { O: async () => ({ globalState: { getStored: key => {
-      if (key === SETTINGS_KEY) return preference;
-      assert.equal(key, BOOT_ONLY_SETTINGS_KEY); return onlyOnBoot;
-    } } }) },
+    m: { O: async () => ({ globalState }) },
     require: name => { assert.equal(name, "node:fs"); return { readFileSync: (file, encoding) => {
       assert.equal(file, "/proc/self/cgroup"); assert.equal(encoding, "utf8");
       if (cgroup instanceof Error) throw cgroup;
       return cgroup;
     } }; },
-    U, eR5: true, eR2: { isReady: () => ready }, setup, beforeFinish, launch: { isBackgroundLaunch: upstreamBackground },
+    U, eR5: true, eR2: { isReady: () => ready }, setup, beforeFinish,
+    launch: { isBackgroundLaunch: upstreamBackground, globalState, chunkedMessageSender: { sendInlineMessageForView() {} }, cancelled: [] },
     We: { deepLinks: { isWakeOnlyLaunch: () => false, queueProcessArgs: () => true } }, eX: false,
     L: platform === "win32", xe: false, noop: () => {}, __dirname: "/bundle",
     Ce: async () => mockWindow, _e: { handleInitialWindowVisible: () => calls.push("attribution") },
@@ -185,7 +222,8 @@ async function runStartup({ preference = true, onlyOnBoot = false, env = {}, cgr
   };
   const patched = applyMainPatch(startupFixture());
   assert.notEqual(patched, startupFixture());
-  const handlers = await vm.runInNewContext(`${patched};startup(launch)`, context);
+  const { exports: entry } = fixtureExports(patched, context);
+  const handlers = await entry.runMainAppStartup(context.launch);
   return { calls, handlers, secondInstanceArgs: context.secondInstanceArgs };
 }
 
@@ -379,7 +417,7 @@ test("tray and second-instance activation reveal an existing hidden window befor
 });
 
 test("saved maximization waits for explicit reveal instead of showing a hidden startup window", () => {
-  const Manager = vm.runInNewContext(`${applyMainPatch(startupFixture())};WindowManager`, {setTimeout,clearTimeout});
+  const Manager = fixtureExports(applyMainPatch(startupFixture()), { setTimeout, clearTimeout }).exports.WindowManager;
   for (const hidden of [true, false]) {
     const events = new Map(), calls = [];
     const window = { once: (name, callback) => events.set(name, callback), isDestroyed:()=>false,
@@ -416,11 +454,11 @@ function windowModeHarness(hidden, initiallyVisible = !hidden) {
     ra: () => (a, b) => JSON.stringify(a) === JSON.stringify(b),
     process: { platform: "linux" }, setTimeout, clearTimeout,
   };
-  const Handler = vm.runInNewContext(`${applyMainPatch(startupFixture())};MessageHandler`, context);
+  const Handler = fixtureExports(applyMainPatch(startupFixture()), context).exports.MessageHandler;
   const handler = new Handler(); handler.windowManager = manager; handler.shouldShowPrimaryWindow = () => true;
   const emit = name => { const callbacks = events.get(name) ?? []; events.delete(name); callbacks.forEach(fn => fn()); };
   return { handler, calls, events,
-    setMode: mode => handler.setPrimaryWindowMode({}, mode),
+    setMode: mode => handler.handleMessage({}, { type: "electron-set-window-mode", mode: mode.mode, onboardingVariant: mode.onboardingVariant }),
     reveal: () => { manager.codexLinuxStartMinimized = false; visible = true; emit("show"); },
     close: () => { destroyed = true; emit("closed"); } };
 }
@@ -500,11 +538,13 @@ test("activation during startup cancels the hidden decision before final reveal"
   const patched = applyMainPatch(startupFixture()).replace("let codexLinuxStartMinimizedTraySetup=", "activate=()=>Je();let codexLinuxStartMinimizedTraySetup=");
   const calls = [];
   const window = { show:()=>calls.push("show"), focus:()=>{}, isMinimized:()=>false, isDestroyed:()=>false, once(){} };
-  const context = { process:{platform:"linux",argv:["ChatGPT"],env:{}},m:{O:async()=>({globalState:{getStored:key=>key===SETTINGS_KEY}})},
+  const globalState = { getStored: key => key === SETTINGS_KEY };
+  const context = { process:{platform:"linux",argv:["ChatGPT"],env:{}},m:{O:async()=>({globalState})},
     U:{windowManager:{getPersistenceWindowId:()=>"primary"},ensureWindow:async()=>window,getPrimaryWindow:()=>null,hotkeyWindowLifecycleManager:{hide(){}}},
     eR5:true,eR2:{isReady:()=>true},We:{deepLinks:{isWakeOnlyLaunch:()=>false,queueProcessArgs:()=>true}},eX:false,L:false,xe:false,setup,Ce:async()=>null,noop(){},__dirname:"/",_e:{handleInitialWindowVisible(){}},
     setTimeout,clearTimeout,beforeFinish:null,w(){},set activate(value){activate=value;} };
-  const running = vm.runInNewContext(`${patched};startup()`,context);
+  const running = fixtureExports(patched, context).exports.runMainAppStartup({ isBackgroundLaunch: false,
+    globalState, chunkedMessageSender: { sendInlineMessageForView() {} }, cancelled: [] });
   await new Promise(resolve=>setImmediate(resolve));
   await activate();
   finishTray();
@@ -940,15 +980,14 @@ test(
   { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
   () => {
     const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
-    const descriptor = (feature, id) => require(`../${feature}/patch.js`).descriptors.find(entry => entry.id === id);
     // account-switcher injects helpers declaring their own classes into the
-    // view-message handler; Chronicle and Read aloud route inside the fetch wrapper.
+    // earlier MCP case; Chronicle and Read aloud route inside the fetch wrapper.
     const patches = [
-      descriptor("account-switcher", "account-switcher-main"),
-      descriptor("agent-workspace", "main-bridge"),
-      descriptor("chronicle-skysight", "linux-chronicle-skysight-main-bridge"),
-      descriptor("read-aloud", "main-handler"),
-      descriptor("start-minimized-to-tray", "startup"),
+      { id: "account-switcher-main", apply: require("../account-switcher/patch.js").applyMain },
+      { id: "main-bridge", apply: applyAgentWorkspaceMainBridgePatch },
+      { id: "linux-chronicle-skysight-main-bridge", apply: require("../chronicle-skysight/patch.js").applyChronicleSkysightMainBridgePatch },
+      { id: "main-handler", apply: applyReadAloudMainBundlePatch },
+      { id: "startup", apply: applyMainPatch },
     ];
     const markers = ["start-minimized-to-tray", "agent-workspace", "chronicle-skysight", "read-aloud"]
       .map(id => `/*codex-linux-${id}-route*/`);
@@ -1000,3 +1039,138 @@ test(
     assert.deepEqual(applySettingsPatch(root), { changed: false });
   },
 );
+
+function normalMain(files, { failWrite = false, failRestore = false } = {}) {
+  const root = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), "start-minimized-main-"));
+  const build = path.join(root, ".vite/build"); fs.mkdirSync(build, { recursive: true });
+  for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(build, name), text);
+  const raw = require("./patch.js").descriptors.find(({ id }) => id === "startup");
+  const descriptor = normalizeDescriptor({ ...raw, sourceKind: "feature", featureId: "start-minimized-to-tray",
+    id: "feature:start-minimized-to-tray:startup" });
+  const report = createPatchReport(), warn = console.warn, write = fs.writeFileSync;
+  let attempted = false, error;
+  console.warn = () => {};
+  if (failWrite || failRestore) fs.writeFileSync = function(file, data, ...options) {
+    if (String(file) === path.join(build, "early-bootstrap.js") && (!attempted || failRestore)) {
+      attempted = true; write(file, Buffer.from(data).subarray(0, 9)); throw Error("controlled startup write failure");
+    }
+    return write(file, data, ...options);
+  };
+  try {
+    try { applyExtractedAppPatchDescriptors(root, [descriptor], {}, report, descriptor.phase); }
+    catch (caught) { error = caught; }
+    const output = Object.fromEntries(Object.keys(files).map(name => [name, fs.readFileSync(path.join(build, name), "utf8")]));
+    return { output, patch: report.patches[0], error, attempted };
+  } finally { fs.writeFileSync = write; console.warn = warn; fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+test("normal startup descriptor validates one main cohort and revalidates canonical state", () => {
+  assert.equal(require("./patch.js").descriptors.find(({ id }) => id === "startup").phase, "extracted-app:pre-webview");
+  const source = startupFixture(), unrelated = requestGraphFixture("return false;", "90000");
+  const first = normalMain({ "early-bootstrap.js": source, "early-bootstrap-904-aaaaaaaaaaaaaaaa.js": unrelated });
+  assert.equal(first.error, undefined); assert.equal(first.patch.status, "applied");
+  assert.notEqual(first.output["early-bootstrap.js"], source);
+  assert.equal(first.output["early-bootstrap-904-aaaaaaaaaaaaaaaa.js"], unrelated);
+  const second = normalMain(first.output);
+  assert.equal(second.patch.status, "already-applied"); assert.deepEqual(second.output, first.output);
+});
+
+test("normal startup descriptor rejects duplicate, incomplete, mixed and orphan main copies before any write", () => {
+  const source = startupFixture(), canonical = applyMainPatch(source);
+  const other = "early-bootstrap-904-aaaaaaaaaaaaaaaa.js";
+  const cases = [
+    { "early-bootstrap.js": requestGraphFixture("return false;", "90000") },
+    { "early-bootstrap.js": source, [other]: source },
+    { "early-bootstrap.js": source, [other]: canonical },
+    { "early-bootstrap.js": source, [other]: requestGraphFixture("return false;") },
+    { "early-bootstrap.js": source, [other]: requestGraphFixture("return false;", "8.282e4") },
+    { "early-bootstrap.js": source, [other]: requestGraphFixture("return false;", '"82820"') },
+    { "early-bootstrap.js": source, [other]: 'const codexLinuxStartMinimizedOrphan=true;' },
+  ];
+  for (const input of cases) {
+    const result = normalMain(input);
+    assert.equal(result.patch.status, "skipped-optional"); assert.deepEqual(result.output, input);
+  }
+});
+
+test("canonical startup rejects relocated helpers, callbacks and startup ownership", () => {
+  const source = applyMainPatch(startupFixture()), graph = inspectMainRequestSites(source); assert.equal(graph.ok, true);
+  const helper = codexLinuxStartMinimizedRoute.toString();
+  const prefix = source.slice(graph.viewFetch.prefixStart, graph.viewFetch.prefixEnd);
+  const damages = [
+    source.replace(helper, `function unusedStartupHelper(){${helper}}`),
+    source.replace(helper, `const unusedStartupHelper=${JSON.stringify(helper)};`),
+    source.replace(helper, helper.replace("Unsupported start minimized to tray action", "changed startup action")),
+    source.replace(prefix, "") + `function unusedStartupRoute(){switch(0){case 0:${prefix}}}`,
+    source.replace('case"mcp-response":break;', 'case"mcp-response":let codexLinuxStartMinimizedRoute;break;'),
+    source.replace("async function runMainAppStartup(e){", "async function runMainAppStartup(e){let codexLinuxStartMinimizedPreference;"),
+    source.replace('case"electron-set-window-mode":this.setPrimaryWindowMode', 'case"electron-set-window-mode":this.unusedWindowMode'),
+  ];
+  for (const damaged of damages) {
+    assert.notEqual(damaged, source); new vm.Script(damaged);
+    const result = normalMain({ "early-bootstrap.js": damaged });
+    assert.equal(result.patch.status, "skipped-optional"); assert.equal(result.output["early-bootstrap.js"], damaged);
+  }
+});
+
+test("startup and mode anchors must be executable declarations rather than same-owner strings", () => {
+  for (const canonical of [false, true]) {
+    const source = canonical ? applyMainPatch(startupFixture()) : startupFixture();
+    const anchor = /let [A-Za-z_$][\w$]*=await \(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\(\{moduleDir:__dirname\}\),/u.exec(source);
+    assert.ok(anchor);
+    const tail = source.indexOf("unused=0;", anchor.index); assert.ok(tail > anchor.index);
+    const block = source.slice(anchor.index, tail), getter = anchor[0].slice(0, -1);
+    const stateString = source.slice(0, anchor.index) + getter + ";const unusedStateAnchor=`" + block + "`;let " + source.slice(tail);
+    const graph = inspectMainRequestSites(source); assert.equal(graph.ok, true);
+    const method = /setPrimaryWindowMode\([^)]*\)\{/u.exec(source.slice(graph.viewFetch.ownerStart)); assert.ok(method);
+    const start = graph.viewFetch.ownerStart + method.index, end = require("../../scripts/patches/lib/minified-js.js").findMatchingBrace(source, source.indexOf("{", start));
+    const text = source.slice(start, end + 1);
+    const modeString = source.slice(0, start) + "unusedMode=" + JSON.stringify(text) + ";" + text.replace("setPrimaryWindowMode(", "unusedWindowMode(") + source.slice(end + 1);
+    for (const damaged of [stateString, modeString]) {
+      new vm.Script(damaged); assert.equal(inspectMainRequestSites(damaged).ok, true, "native transport graph remains coherent");
+      const result = normalMain({ "early-bootstrap.js": damaged });
+      assert.equal(result.patch.status, "skipped-optional"); assert.equal(result.output["early-bootstrap.js"], damaged);
+    }
+  }
+});
+
+test("startup helpers preserve an existing CommonJS strict directive and bare-call semantics", () => {
+  for (const directive of ['"use strict";', "'use strict';"]) {
+    const source = directive + startupFixture(), patched = applyMainPatch(source);
+    assert.notEqual(patched, source); assert.equal(patched.startsWith(directive), true);
+    const ctx = { exports: {} };
+    const result = vm.runInNewContext(patched + ';function untouchedStrictFunction(){return this}untouchedStrictFunction()', ctx);
+    assert.equal(result, undefined);
+    assert.equal(applyMainPatch(patched), patched);
+  }
+});
+
+test("main startup transaction restores a partial write and treats failed restoration as fatal", () => {
+  const input = { "early-bootstrap.js": startupFixture() };
+  const restored = normalMain(input, { failWrite: true });
+  assert.equal(restored.attempted, true); assert.deepEqual(restored.output, input);
+  assert.equal(restored.patch.status, "skipped-optional");
+  const fatal = normalMain(input, { failRestore: true });
+  assert.equal(fatal.error?.name, "PatchIntegrityError");
+  assert.match(fatal.error.message, /rollback/);
+});
+
+test("normal startup descriptor patches the actual full main inventory and rejects related malformed copies", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null,
+}, () => {
+  const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
+  const main = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP); assert.ok(main);
+  const files = Object.fromEntries(main.chunks.map(name => [name, fs.readFileSync(path.join(main.buildDir, name), "utf8")]));
+  const before = new Map(Object.entries(files));
+  const first = normalMain(files); assert.equal(first.error, undefined); assert.equal(first.patch.status, "applied");
+  const changed = Object.keys(files).filter(name => files[name] !== first.output[name]); assert.equal(changed.length, 1);
+  const second = normalMain(first.output); assert.equal(second.patch.status, "already-applied");
+  assert.deepEqual(second.output, first.output);
+  const name = changed[0], factoryId = inspectMainRequestSites(files[name]).scope.factoryId;
+  const spare = "early-bootstrap-999-aaaaaaaaaaaaaaaa.js"; assert.equal(Object.hasOwn(files, spare), false);
+  for (const duplicate of [files[name], first.output[name], requestGraphFixture("return false;", factoryId)]) {
+    const input = { ...files, [spare]: duplicate }, result = normalMain(input);
+    assert.equal(result.patch.status, "skipped-optional"); assert.deepEqual(result.output, input);
+  }
+  for (const [name, source] of before) assert.equal(fs.readFileSync(path.join(main.buildDir, name), "utf8"), source);
+});
