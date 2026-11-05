@@ -7,6 +7,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.47.
+  `setup_window_targeting` and `setup-window-targeting` install the user copy
+  of the Codex GNOME Shell extension in `$XDG_DATA_HOME/gnome-shell/extensions`,
+  where GNOME Shell loads user extensions, and fall back to `~/.local/share`
+  only when `XDG_DATA_HOME` is unset or empty, as GLib does. When GNOME Shell
+  already loaded a user copy, setup updates the copy the Shell reports. Before,
+  setup always wrote under `~/.local/share`, so with `XDG_DATA_HOME` set
+  elsewhere the Shell never loaded that copy, and the new login setup asked for
+  did not help. The app starts the backend with its own environment, so
+  `XDG_DATA_HOME` reaches it without a forwarding list. The
+  `setup-window-targeting` help names all five display-only metadata fields.
+  The crate's tests no longer leave D-Bus sockets in `/tmp`: each private bus
+  listens in its own fixture directory, which the test removes, has no service
+  directories, and a lint test fails on a bus started any other way.
+  `codex-computer-use-indicator` starts its error messages with its own name
+  instead of the standalone `computer-use-linux-indicator`.
 - Synchronize the embedded Computer Use backend to standalone v0.7.46.
   `codex-computer-use-cosmic` and `codex-computer-use-indicator` check their
   command line before they do anything, as `codex-computer-use-linux` does
