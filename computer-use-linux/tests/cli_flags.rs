@@ -1,12 +1,14 @@
-//! Every subcommand prints its help on `-h`/`--help` and refuses unknown
-//! flags before it touches the desktop. The embedded Chrome native-messaging
-//! host validates its command line the same way before it binds its socket.
+//! Every subcommand of every binary prints its help on `-h`/`--help` and
+//! refuses unknown flags before it touches the desktop. The embedded Chrome
+//! native-messaging host validates its command line the same way before it
+//! binds its socket.
 //!
 //! Each run gets a private sandbox: recording stand-ins for the desktop
 //! commands first on PATH, a D-Bus address with no bus behind it, display and
 //! compositor variables that point nowhere, and private HOME and XDG
 //! directories. A call to any stand-in, or a file written in the sandbox,
-//! counts as a side effect.
+//! counts as a side effect. With no compositor behind WAYLAND_DISPLAY, the
+//! indicator can never show anything on screen.
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -24,6 +26,15 @@ const BINARY: &str = env!("CARGO_BIN_EXE_codex-computer-use-linux");
 const CHROME_HOST: &str = env!("CARGO_BIN_EXE_codex-chrome-extension-host");
 /// The origin Chrome passes a native-messaging host on Linux.
 const EXTENSION_ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
+const INDICATOR: &str = env!("CARGO_BIN_EXE_codex-computer-use-indicator");
+const COSMIC: &str = env!("CARGO_BIN_EXE_codex-computer-use-cosmic");
+const COSMIC_SUBCOMMANDS: &[&str] = &[
+    "probe",
+    "list-windows",
+    "focused-window",
+    "monitor-layout",
+    "activate-window",
+];
 const SUBCOMMANDS: &[&str] = &[
     "mcp",
     "doctor",
@@ -123,11 +134,12 @@ impl Sandbox {
         sandbox
     }
 
-    /// The run's output, or why it failed to finish.
+    /// The main binary's output, or why it failed to finish.
     fn run(&self, arguments: &[&str]) -> Result<Output, String> {
         self.run_binary(BINARY, arguments)
     }
 
+    /// The output of `binary`, or why it failed to finish.
     fn run_binary(&self, binary: &str, arguments: &[&str]) -> Result<Output, String> {
         let dir = |name: &str| self.root.join(name);
         let mut child = Command::new(binary)
@@ -169,7 +181,7 @@ impl Sandbox {
                 child.kill().unwrap();
                 let output = child.wait_with_output().unwrap();
                 return Err(format!(
-                    "{arguments:?} still ran after {DEADLINE:?}; side effects: {:?}; stderr: {}",
+                    "{binary} {arguments:?} still ran after {DEADLINE:?}; side effects: {:?}; stderr: {}",
                     self.side_effects(),
                     String::from_utf8_lossy(&output.stderr)
                 ));
@@ -219,10 +231,18 @@ impl Drop for Sandbox {
 /// or followed by its arguments and summary. A substring match would let
 /// `setup-window-targeting` stand in for `setup`.
 fn has_usage_line(text: &str, name: &str) -> bool {
-    let usage = format!("codex-computer-use-linux {name}");
+    has_usage(text, &format!("codex-computer-use-linux {name}"))
+}
+
+/// True when a line of `text` is `usage`, alone or followed by more words.
+fn has_usage(text: &str, usage: &str) -> bool {
     text.lines()
         .map(str::trim)
         .any(|line| line == usage || line.starts_with(&format!("{usage} ")))
+}
+
+fn binary_name(binary: &str) -> &str {
+    Path::new(binary).file_name().unwrap().to_str().unwrap()
 }
 
 fn describe(arguments: &[&str], output: &Output, effects: &[String]) -> String {
@@ -413,4 +433,108 @@ fn chrome_extension_host_validates_its_command_line_before_it_binds() {
         "{}",
         describe(&[EXTENSION_ORIGIN], &output, &sandbox.side_effects())
     );
+}
+
+/// Runs a helper binary in a fresh sandbox and returns a failure description
+/// when `check` rejects the run or it had side effects.
+fn check_helper(
+    binary: &str,
+    arguments: &[&str],
+    check: impl Fn(&Output) -> bool,
+) -> Option<String> {
+    let sandbox = Sandbox::new("helper");
+    let shown: Vec<&str> = std::iter::once(binary_name(binary))
+        .chain(arguments.iter().copied())
+        .collect();
+    let output = match sandbox.run_binary(binary, arguments) {
+        Ok(output) => output,
+        Err(failure) => return Some(failure),
+    };
+    let effects = sandbox.side_effects();
+    (!check(&output) || !effects.is_empty()).then(|| describe(&shown, &output, &effects))
+}
+
+#[test]
+fn helper_binaries_print_help_without_side_effects() {
+    let mut cases: Vec<(&str, Vec<&str>, Vec<String>)> = Vec::new();
+    for flag in ["--help", "-h"] {
+        cases.push((
+            INDICATOR,
+            vec![flag],
+            vec!["codex-computer-use-indicator".to_string()],
+        ));
+        let every_command = COSMIC_SUBCOMMANDS
+            .iter()
+            .map(|name| format!("codex-computer-use-cosmic {name}"))
+            .collect::<Vec<_>>();
+        cases.push((COSMIC, vec![flag], every_command.clone()));
+        if flag == "--help" {
+            cases.push((COSMIC, vec![], every_command));
+        }
+        for name in COSMIC_SUBCOMMANDS {
+            cases.push((
+                COSMIC,
+                vec![name, flag],
+                vec![format!("codex-computer-use-cosmic {name}")],
+            ));
+        }
+    }
+    cases.push((
+        COSMIC,
+        vec!["activate-window", "--window-id", "1", "--help"],
+        vec!["codex-computer-use-cosmic activate-window --window-id ID".to_string()],
+    ));
+
+    let failures: Vec<String> = cases
+        .iter()
+        .filter_map(|(binary, arguments, usages)| {
+            check_helper(binary, arguments, |output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                output.status.code() == Some(0)
+                    && stdout.contains("Usage:")
+                    && usages.iter().all(|usage| has_usage(&stdout, usage))
+            })
+        })
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+#[test]
+fn helper_binaries_refuse_bad_command_lines_with_status_2_and_no_side_effects() {
+    let mut cases: Vec<(&str, Vec<&str>)> = vec![
+        (INDICATOR, vec!["--cul-no-such-flag"]),
+        (INDICATOR, vec!["extra"]),
+        (INDICATOR, vec!["--", "extra"]),
+        (COSMIC, vec!["--cul-no-such-flag"]),
+        (COSMIC, vec!["cul-no-such-command"]),
+        (COSMIC, vec!["probe", "extra"]),
+        (COSMIC, vec!["probe", "--", "--help"]),
+        (COSMIC, vec!["activate-window"]),
+        (COSMIC, vec!["activate-window", "--window-id"]),
+        (COSMIC, vec!["activate-window", "--window-id", "nope"]),
+        (COSMIC, vec!["activate-window", "--window-id", "1", "extra"]),
+        (
+            COSMIC,
+            vec!["activate-window", "--window-id", "1", "--window-id", "2"],
+        ),
+    ];
+    for name in COSMIC_SUBCOMMANDS {
+        cases.push((COSMIC, vec![name, "--cul-no-such-flag"]));
+    }
+
+    let failures: Vec<String> = cases
+        .iter()
+        .filter_map(|(binary, arguments)| {
+            check_helper(binary, arguments, |output| {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let named_flag = !arguments.contains(&"--cul-no-such-flag")
+                    || stderr.contains("unknown option '--cul-no-such-flag'");
+                output.status.code() == Some(2)
+                    && output.stdout.is_empty()
+                    && stderr.contains("--help")
+                    && named_flag
+            })
+        })
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }

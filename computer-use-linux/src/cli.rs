@@ -45,7 +45,7 @@ const SUBCOMMANDS: &[Subcommand] = &[
         required: 0,
         allowed: 0,
         summary: "Turn on desktop accessibility, then print a JSON report.",
-        details: "Sets the GNOME toolkit-accessibility key to true through gsettings when it is not already true, and requests org.a11y.Status IsEnabled at runtime. It never turns accessibility off. Restart running apps whose accessibility tree stays empty.",
+        details: "Sets the GNOME toolkit-accessibility key to true through gsettings when it is not already true, and reads it back. It requests org.a11y.Status IsEnabled at runtime only when the key does not read back true or the accessibility tree could not be built. It never turns accessibility off. Restart running apps whose accessibility tree stays empty.",
         hidden: false,
     },
     Subcommand {
@@ -63,7 +63,7 @@ const SUBCOMMANDS: &[Subcommand] = &[
         required: 0,
         allowed: 0,
         summary: "Install the GNOME Shell extension for window targeting.",
-        details: "Writes the extension into the user's GNOME Shell extensions directory, unless a system copy is installed, enables it, and prints a JSON report. GNOME may need a new login before it loads the extension.",
+        details: "Writes the extension into the user's GNOME Shell extensions directory, unless a system copy is installed, enables it, and prints a JSON report. GNOME may need a new login before it loads the extension. The report's requires_shell_reload says when GNOME Shell needs a new login. That is when the Shell does not serve the window API yet, or a system copy replaces the copy it loaded. It is also when extension.js, or a metadata field the Shell acts on, changed while the extension was enabled or its state was unknown. A change to the name, description or url alone needs no new login.",
         hidden: false,
     },
     Subcommand {

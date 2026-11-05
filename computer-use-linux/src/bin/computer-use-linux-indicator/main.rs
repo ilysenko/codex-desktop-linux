@@ -1447,7 +1447,74 @@ fn run_layer_shell() -> Result<(), String> {
     Ok(())
 }
 
+const BIN: &str = "codex-computer-use-indicator";
+/// Exit status for a command line with any argument. Nothing runs before the
+/// line is validated.
+const USAGE_EXIT: u8 = 2;
+const HELP: &str = "codex-computer-use-indicator: the on-screen overlay that shows an agent's actions.
+
+Usage:
+  codex-computer-use-indicator
+
+The codex-computer-use-linux server starts it on the first desktop action and sends it one event per action. It shows nothing until an event arrives and exits after ten idle minutes. One instance runs per session. It takes no arguments.
+
+Options:
+  -h, --help  Print this help and exit.
+";
+
+#[derive(Debug, PartialEq)]
+enum Invocation {
+    Run,
+    Help,
+}
+
+/// The indicator takes no arguments. As in the main CLI, `-h` or `--help`
+/// before `--` prints help, and any other argument is refused, before the
+/// overlay takes its locks or connects to the compositor.
+fn parse_invocation(arguments: &[String]) -> Result<Invocation, String> {
+    let options_end = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .unwrap_or(arguments.len());
+    let options = &arguments[..options_end];
+    if options
+        .iter()
+        .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
+    {
+        return Ok(Invocation::Help);
+    }
+    if let Some(option) = options
+        .iter()
+        .find(|argument| argument.len() > 1 && argument.starts_with('-'))
+    {
+        return Err(format!("unknown option '{option}'"));
+    }
+    match options
+        .iter()
+        .chain(arguments.iter().skip(options_end + 1))
+        .next()
+    {
+        Some(argument) => Err(format!("unexpected argument '{argument}'")),
+        None => Ok(Invocation::Run),
+    }
+}
+
 fn main() -> ExitCode {
+    let arguments: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect();
+    match parse_invocation(&arguments) {
+        Ok(Invocation::Run) => {}
+        Ok(Invocation::Help) => {
+            print!("{HELP}");
+            return ExitCode::SUCCESS;
+        }
+        Err(message) => {
+            eprint!("{BIN}: {message}\nUsage: {BIN}\nRun '{BIN} --help' for details.\n");
+            return ExitCode::from(USAGE_EXIT);
+        }
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -1463,6 +1530,28 @@ mod tests {
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect { x, y, w, h }
+    }
+
+    #[test]
+    fn only_an_empty_command_line_runs_the_overlay() {
+        let parse = |arguments: &[&str]| {
+            let arguments: Vec<String> = arguments.iter().map(|value| value.to_string()).collect();
+            parse_invocation(&arguments)
+        };
+        // The server spawns the overlay with no arguments.
+        assert_eq!(parse(&[]), Ok(Invocation::Run));
+        assert_eq!(parse(&["--"]), Ok(Invocation::Run));
+        assert_eq!(parse(&["--help"]), Ok(Invocation::Help));
+        assert_eq!(parse(&["x", "-h"]), Ok(Invocation::Help));
+        assert_eq!(
+            parse(&["--", "--help"]),
+            Err("unexpected argument '--help'".to_string())
+        );
+        assert_eq!(
+            parse(&["--version"]),
+            Err("unknown option '--version'".to_string())
+        );
+        assert_eq!(parse(&["-"]), Err("unexpected argument '-'".to_string()));
     }
 
     #[test]
