@@ -16,6 +16,7 @@ const {
   patchExtractedApp,
   requiredPatchNamesForProfile,
 } = require("./runner.js");
+const { findMainProcessChunks } = require("./lib/assets.js");
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
 
@@ -25,6 +26,72 @@ test("the official Linux baseline has no required compatibility patches", () => 
   assert.deepEqual(requiredPatchNamesForProfile("upstream-build", {
     featuresConfigPath: emptyConfig,
   }), []);
+});
+
+test("the signed baseline retains upstream replacements for retired core blockers", {
+  skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null,
+}, () => {
+  const mainProcess = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
+  assert.ok(mainProcess, "Expected the verified main-process chunks");
+  const chunks = mainProcess.chunks.map((name) => ({
+    name,
+    source: fs.readFileSync(path.join(mainProcess.buildDir, name), "utf8"),
+  }));
+  const uniqueOwner = (markers, description) => {
+    const owners = chunks.filter(({ source }) =>
+      markers.every((marker) => source.includes(marker)));
+    assert.equal(
+      owners.length,
+      1,
+      `Expected one ${description}; found ${owners.map(({ name }) => name).join(", ") || "none"}`,
+    );
+    return owners[0].source;
+  };
+
+  assert.equal(
+    chunks.filter(({ source }) => source.includes("desktop.quitConfirmation.quit")).length,
+    0,
+    "The retired synchronous quit-confirmation contract must remain absent",
+  );
+  const quitOwner = uniqueOwner([
+    "canQuitWithoutPrompt(){return this.allowQuitWithoutPrompt}",
+    "markQuitApproved(){this.allowQuitWithoutPrompt=!0}",
+  ], "upstream quit coordinator");
+  assert.equal(
+    quitOwner.match(/canQuitWithoutPrompt\(\)\{return this\.allowQuitWithoutPrompt\}/gu)?.length,
+    1,
+    "Expected one upstream no-prompt quit decision",
+  );
+  assert.equal(
+    quitOwner.match(/markQuitApproved\(\)\{this\.allowQuitWithoutPrompt=!0\}/gu)?.length,
+    1,
+    "Expected one upstream quit-approval transition",
+  );
+
+  const shellOwner = uniqueOwner([
+    "main app.whenReady resolved",
+    "shell environment hydrated",
+  ], "upstream shell-startup owner");
+  const identifier = "[A-Za-z_$][\\w$]*";
+  const readyPattern = new RegExp(
+    `await ${identifier}\\.app\\.whenReady\\(\\),${identifier}\\(` +
+      `"main app\\.whenReady resolved"`,
+    "gu",
+  );
+  const shellStartPattern = new RegExp(
+    `(?:let|const) ${identifier}=Date\\.now\\(\\),${identifier}=\\(0,` +
+      `${identifier}\\.${identifier}\\)\\(\\),${identifier}=${identifier}=>\\{` +
+      `${identifier}\\("shell environment hydrated"`,
+    "gu",
+  );
+  const readyMatches = [...shellOwner.matchAll(readyPattern)];
+  const shellStartMatches = [...shellOwner.matchAll(shellStartPattern)];
+  assert.equal(readyMatches.length, 1, "Expected one awaited main app readiness boundary");
+  assert.equal(shellStartMatches.length, 1, "Expected one shell-environment startup call");
+  assert.ok(
+    shellStartMatches[0].index > readyMatches[0].index,
+    "Shell-environment startup must follow awaited app readiness",
+  );
 });
 
 test("runner context exposes enabled feature IDs", () => {
@@ -87,7 +154,6 @@ test("missing main bundle records enabled feature drift", (t) => {
 });
 
 test("main-process chunks are the rspack early-bootstrap entry and its numbered chunks", () => {
-  const { findMainProcessChunks } = require("./lib/assets.js");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-rspack-chunks-"));
   try {
     const buildDir = path.join(root, ".vite", "build");

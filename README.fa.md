@@ -175,7 +175,7 @@ rm -rf -- ./codex-app
 | Nix flake | build دستی | `nix run github:ilysenko/codex-desktop-linux` |
 | update manager تراکنشی | بسته‌های native | به‌جز buildهای دارای `PACKAGE_WITH_UPDATER=0` داخل بسته است |
 | ادغام رسمی Browser و Chrome | Upstream | مستقیم از بسته رسمی Linux استفاده می‌شود؛ legacy port layer وجود ندارد |
-| راه‌اندازی قابل‌اعتماد محیط shell | همیشه | patch سازگاری ضروری، loader محیط shell لینوکس را تا پایان مقداردهی signal در Chromium به تعویق می‌اندازد |
+| راه‌اندازی قابل‌اعتماد محیط shell | همیشه | runtime تأییدشده upstream آن را مدیریت می‌کند؛ registry خالی patchهای اصلی هیچ patch سازگاری اعمال نمی‌کند |
 | framework مربوط به Linux featureهای اختیاری | غیرفعال | با `make setup-native` تنظیم می‌شود |
 | هویت متمایز دسکتاپ | همیشه | **ChatGPT Community** با آیکون `C` آبی و هویت بسته `codex-desktop` |
 

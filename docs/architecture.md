@@ -90,9 +90,9 @@ the official browser registry.
 ## Patches and features
 
 `scripts/patches/runner.js` composes required core compatibility patches with
-descriptors from enabled features. The current registry defers early
-shell-environment startup so browser initialization does not overwrite libuv's
-child-process signal handler. See the
+descriptors from enabled features. The current core registry is empty: the
+verified upstream runtime owns shell-environment startup, so a default build
+does not modify `resources/app.asar`. See the
 [core patch registry](../scripts/patches/core/README.md) for reproduction evidence
 and retirement criteria. Patch reports remain the candidate-acceptance contract.
 Enabled feature descriptors default to enforced acceptance even when their

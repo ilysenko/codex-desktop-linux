@@ -234,7 +234,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | Nix flake | 手动构建 | `nix run github:ilysenko/codex-desktop-linux` |
 | 事务式更新管理器 | 原生包 | 除非设置 `PACKAGE_WITH_UPDATER=0` |
 | 官方 Browser 和 Chrome 集成 | 上游提供 | 直接复用官方 Linux 实现，不保留旧移植层 |
-| 可靠的 shell 环境启动 | 始终启用 | 必要兼容性补丁会延迟 Linux shell loader，直到 Chromium 完成信号初始化 |
+| 可靠的 shell 环境启动 | 始终启用 | 由已验证的上游 runtime 负责；空的核心补丁注册表不会应用兼容性补丁 |
 | Linux 可选扩展框架 | 默认关闭 | 使用 `make setup-native` 配置 |
 | 独立桌面标识 | 始终启用 | **ChatGPT Community**、蓝色 `C` 图标、`codex-desktop` package identity |
 
