@@ -521,7 +521,79 @@ impl RolloutTracker {
     }
 }
 
+const BIN: &str = "codex-chrome-extension-host";
+
+/// Exit status for a command line with an unknown flag or an extra argument.
+/// Nothing runs before the line is validated.
+const USAGE_EXIT: i32 = 2;
+
+#[derive(Debug, PartialEq)]
+enum Invocation {
+    Help,
+    Run { extension_id: Option<String> },
+}
+
+/// Validates the whole command line before anything runs. On Linux, Chrome
+/// starts a native-messaging host with one argument: the caller's origin,
+/// `chrome-extension://ID/`. `-h` or `--help` before `--` prints help; any
+/// other flag is an error.
+fn parse_invocation(arguments: &[String]) -> Result<Invocation, String> {
+    let options_end = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .unwrap_or(arguments.len());
+    let options = &arguments[..options_end];
+    if options
+        .iter()
+        .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
+    {
+        return Ok(Invocation::Help);
+    }
+    if let Some(option) = options
+        .iter()
+        .find(|argument| argument.len() > 1 && argument.starts_with('-'))
+    {
+        return Err(format!("unknown option '{option}'"));
+    }
+    let positionals: Vec<&String> = options
+        .iter()
+        .chain(arguments.iter().skip(options_end + 1))
+        .collect();
+    if let Some(extra) = positionals.get(1) {
+        return Err(format!("unexpected argument '{extra}'"));
+    }
+    Ok(Invocation::Run {
+        extension_id: positionals
+            .first()
+            .and_then(|origin| extension_id_from_origin(origin)),
+    })
+}
+
+fn help_text() -> String {
+    format!(
+        "{BIN}: Chrome native-messaging host for the Codex browser extension.\n\n\
+         Usage:\n  {BIN} [ORIGIN]\n\n\
+         Chrome starts this host and passes ORIGIN, the calling extension's chrome-extension://ID/. \
+         It reads native messages on stdin, writes them on stdout, and serves Codex browser clients \
+         on a Unix socket in ${SOCKET_DIR_ENV}, or /tmp/{SOCKET_DIR_NAME}-UID when that is unset. \
+         It runs until stdin closes.\n\n\
+         Options:\n  -h, --help  Print this help and exit.\n"
+    )
+}
+
 fn main() -> Result<()> {
+    let arguments: Vec<String> = env::args().skip(1).collect();
+    let extension_id = match parse_invocation(&arguments) {
+        Ok(Invocation::Help) => {
+            print!("{}", help_text());
+            return Ok(());
+        }
+        Ok(Invocation::Run { extension_id }) => extension_id,
+        Err(message) => {
+            eprint!("{BIN}: {message}\nUsage: {BIN} [ORIGIN]\nRun '{BIN} --help' for details.\n");
+            process::exit(USAGE_EXIT);
+        }
+    };
     let effective_uid = unsafe { libc::geteuid() };
     let socket_dir = socket_dir(effective_uid);
     let socket_path = socket_path(&socket_dir)?;
@@ -535,7 +607,6 @@ fn main() -> Result<()> {
 
     let stdout: SharedChromeWriter = Arc::new(Mutex::new(Box::new(io::stdout())));
     let rollout_tracker = RolloutTracker::new(Arc::clone(&stdout));
-    let extension_id = extension_id_from_args();
     let runtime_manager = Arc::new(RuntimeManager::new(extension_id.clone()));
     let state = Arc::new(Mutex::new(HostState::new(
         stdout,
@@ -583,13 +654,12 @@ fn sessions_root() -> Option<PathBuf> {
         .map(|home| home.join(".codex").join("sessions"))
 }
 
-fn extension_id_from_args() -> Option<String> {
-    env::args().skip(1).find_map(|arg| {
-        arg.strip_prefix("chrome-extension://")
-            .and_then(|value| value.split('/').next())
-            .filter(|value| is_extension_id(value))
-            .map(ToString::to_string)
-    })
+fn extension_id_from_origin(origin: &str) -> Option<String> {
+    origin
+        .strip_prefix("chrome-extension://")
+        .and_then(|value| value.split('/').next())
+        .filter(|value| is_extension_id(value))
+        .map(ToString::to_string)
 }
 
 fn is_extension_id(value: &str) -> bool {

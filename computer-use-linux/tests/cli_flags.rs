@@ -1,5 +1,6 @@
 //! Every subcommand prints its help on `-h`/`--help` and refuses unknown
-//! flags before it touches the desktop.
+//! flags before it touches the desktop. The embedded Chrome native-messaging
+//! host validates its command line the same way before it binds its socket.
 //!
 //! Each run gets a private sandbox: recording stand-ins for the desktop
 //! commands first on PATH, a D-Bus address with no bus behind it, display and
@@ -14,7 +15,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Places the Chrome host's socket directory under the Unix path limit.
+#[allow(dead_code)]
+#[path = "../src/test_sockets.rs"]
+mod test_sockets;
+
 const BINARY: &str = env!("CARGO_BIN_EXE_codex-computer-use-linux");
+const CHROME_HOST: &str = env!("CARGO_BIN_EXE_codex-chrome-extension-host");
+/// The origin Chrome passes a native-messaging host on Linux.
+const EXTENSION_ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
 const SUBCOMMANDS: &[&str] = &[
     "mcp",
     "doctor",
@@ -69,6 +78,9 @@ const SANDBOX_DIRS: &[&str] = &["home", "config", "data", "cache", "state", "run
 
 struct Sandbox {
     root: PathBuf,
+    /// The Chrome host's socket directory. Creating it counts as a side
+    /// effect.
+    chrome_socket_dir: PathBuf,
 }
 
 impl Sandbox {
@@ -94,13 +106,31 @@ impl Sandbox {
             .unwrap();
             fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        Self { root }
+        Self {
+            chrome_socket_dir: root.join("runtime").join("browser-use"),
+            root,
+        }
+    }
+
+    /// A sandbox for the Chrome host. The sandbox path can be too long for a
+    /// socket, so its socket directory goes where the fixture helper puts it.
+    fn for_chrome_host(label: &str) -> Self {
+        let mut sandbox = Self::new(label);
+        sandbox.chrome_socket_dir = test_sockets::socket_fixture(
+            &format!("cul-chrome-host-{}", getrandom::u64().unwrap()),
+            "extension-4194304-1793849097374809876.sock",
+        );
+        sandbox
     }
 
     /// The run's output, or why it failed to finish.
     fn run(&self, arguments: &[&str]) -> Result<Output, String> {
+        self.run_binary(BINARY, arguments)
+    }
+
+    fn run_binary(&self, binary: &str, arguments: &[&str]) -> Result<Output, String> {
         let dir = |name: &str| self.root.join(name);
-        let mut child = Command::new(BINARY)
+        let mut child = Command::new(binary)
             .args(arguments)
             .env_clear()
             .env("PATH", dir("bin"))
@@ -127,6 +157,7 @@ impl Sandbox {
             .env("HYPRLAND_INSTANCE_SIGNATURE", "cul-test-no-hyprland")
             .env("NIRI_SOCKET", dir("no-niri"))
             .env("YDOTOOL_SOCKET", dir("no-ydotool"))
+            .env("CODEX_BROWSER_USE_SOCKET_DIR", &self.chrome_socket_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -170,6 +201,9 @@ impl Sandbox {
                 }
             }
         }
+        if !self.chrome_socket_dir.starts_with(&self.root) && self.chrome_socket_dir.exists() {
+            effects.push(format!("created {}", self.chrome_socket_dir.display()));
+        }
         effects
     }
 }
@@ -177,6 +211,7 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
+        let _ = fs::remove_dir_all(&self.chrome_socket_dir);
     }
 }
 
@@ -301,4 +336,81 @@ fn top_level_help_lists_every_command_and_bad_lines_exit_2() {
             describe(arguments, &output, &effects)
         );
     }
+}
+
+#[test]
+fn chrome_extension_host_validates_its_command_line_before_it_binds() {
+    let mut failures = Vec::new();
+    for arguments in [
+        &["--help"][..],
+        &["-h"][..],
+        &[EXTENSION_ORIGIN, "--help"][..],
+    ] {
+        let sandbox = Sandbox::for_chrome_host("chrome-help");
+        let output = match sandbox.run_binary(CHROME_HOST, arguments) {
+            Ok(output) => output,
+            Err(failure) => {
+                failures.push(failure);
+                continue;
+            }
+        };
+        let effects = sandbox.side_effects();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if output.status.code() != Some(0)
+            || !effects.is_empty()
+            || !stdout
+                .lines()
+                .any(|line| line.trim() == "codex-chrome-extension-host [ORIGIN]")
+        {
+            failures.push(describe(arguments, &output, &effects));
+        }
+    }
+
+    for (arguments, message) in [
+        (
+            &["--cul-no-such-flag"][..],
+            "unknown option '--cul-no-such-flag'",
+        ),
+        (
+            &[EXTENSION_ORIGIN, "--cul-no-such-flag"][..],
+            "unknown option '--cul-no-such-flag'",
+        ),
+        (
+            &[EXTENSION_ORIGIN, "extra"][..],
+            "unexpected argument 'extra'",
+        ),
+    ] {
+        let sandbox = Sandbox::for_chrome_host("chrome-bad");
+        let output = match sandbox.run_binary(CHROME_HOST, arguments) {
+            Ok(output) => output,
+            Err(failure) => {
+                failures.push(failure);
+                continue;
+            }
+        };
+        let effects = sandbox.side_effects();
+        if output.status.code() != Some(2)
+            || !effects.is_empty()
+            || !String::from_utf8_lossy(&output.stderr).contains(message)
+        {
+            failures.push(describe(arguments, &output, &effects));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+
+    // Chrome's own launch still runs: the host binds its socket, reads end of
+    // input on the closed stdin and exits.
+    let sandbox = Sandbox::for_chrome_host("chrome-run");
+    let output = sandbox
+        .run_binary(CHROME_HOST, &[EXTENSION_ORIGIN])
+        .unwrap();
+    let listening = format!(
+        "listening on {}/extension-",
+        sandbox.chrome_socket_dir.display()
+    );
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stderr).contains(&listening),
+        "{}",
+        describe(&[EXTENSION_ORIGIN], &output, &sandbox.side_effects())
+    );
 }
