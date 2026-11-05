@@ -146,26 +146,43 @@ active=0
 parent_pid="$PPID"
 monitor_pid=""
 event_fd=""
+stdbuf_dir=""
 cleanup_started=0
 
 cleanup() {
     [ "$cleanup_started" -eq 0 ] || return
     cleanup_started=1
 
-    [ -n "$monitor_pid" ] || return
-    kill "$monitor_pid" >/dev/null 2>&1 || true
-    sleep 0.05
-    kill -KILL "$monitor_pid" >/dev/null 2>&1 || true
-    wait "$monitor_pid" >/dev/null 2>&1 || true
+    if [ -n "$monitor_pid" ]; then
+        kill "$monitor_pid" >/dev/null 2>&1 || true
+        sleep 0.05
+        kill -KILL "$monitor_pid" >/dev/null 2>&1 || true
+        wait "$monitor_pid" >/dev/null 2>&1 || true
+    fi
+
+    # Only the directory this script made.
+    case "$stdbuf_dir" in
+        */codex-appshots-stdbuf.??????) rm -rf -- "$stdbuf_dir" 2>/dev/null || true ;;
+    esac
 }
 trap cleanup EXIT
 trap 'exit 143' INT TERM
 
+# uutils stdbuf makes a temporary directory in TMPDIR and then execs its
+# command, so nothing removes it (uutils/coreutils#13939). Give it a directory
+# this script removes on exit. GNU stdbuf writes nothing there.
+start_xinput() {
+    if command -v stdbuf >/dev/null 2>&1; then
+        [ -z "$stdbuf_dir" ] || export TMPDIR="$stdbuf_dir"
+        exec stdbuf -oL xinput test-xi2 --root 2>/dev/null
+    fi
+    exec xinput test-xi2 --root 2>/dev/null
+}
+
 if command -v stdbuf >/dev/null 2>&1; then
-    coproc APPSHOT_XINPUT { exec stdbuf -oL xinput test-xi2 --root 2>/dev/null; }
-else
-    coproc APPSHOT_XINPUT { exec xinput test-xi2 --root 2>/dev/null; }
+    stdbuf_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-appshots-stdbuf.XXXXXX" 2>/dev/null)" || stdbuf_dir=""
 fi
+coproc APPSHOT_XINPUT { start_xinput; }
 monitor_pid="$APPSHOT_XINPUT_PID"
 event_fd="${APPSHOT_XINPUT[0]}"
 

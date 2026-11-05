@@ -16,8 +16,11 @@ const INSTALL_SESSION_HOOK = path.join(FEATURE_DIR, "install-session-hook.sh");
 const COLD_START_HOOK = path.join(FEATURE_DIR, "cold-start-hook.sh");
 const LAUNCHER_TEMPLATE = path.join(REPO_ROOT, "launcher", "start.sh.template");
 
-function makeTempDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+// The fixture is removed after the test, also when it fails.
+function makeTempDir(t, prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
 }
 
 function writeExecutable(file, body) {
@@ -52,8 +55,8 @@ async function waitForFileContent(file, predicate, timeoutMs = 2000) {
   assert.fail(`timed out waiting for complete content in ${file}`);
 }
 
-test("stage hook installs the orphan reaper without wrapping node_repl", () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-stage-");
+test("stage hook installs the orphan reaper without wrapping node_repl", (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-stage-");
   const appDir = path.join(tempDir, "app");
   const workDir = path.join(tempDir, "work");
   const source = path.join(tempDir, "source", "codex-mcp-helper-reaper");
@@ -83,12 +86,10 @@ test("stage hook installs the orphan reaper without wrapping node_repl", () => {
   assert.match(fs.readFileSync(nodeRepl, "utf8"), /original node_repl/);
   assert.equal(fs.existsSync(path.join(appDir, "resources", "node_repl.codex-linux-original")), false);
   assert.equal(fs.existsSync(path.join(installedRoot, "mcp-helper-reaper", "node-repl-wrapper.sh")), false);
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("stage hook restores a node_repl wrapper left by the previous feature version", () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-refresh-");
+test("stage hook restores a node_repl wrapper left by the previous feature version", (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-refresh-");
   const appDir = path.join(tempDir, "app");
   const workDir = path.join(tempDir, "work");
   const source = path.join(tempDir, "source", "codex-mcp-helper-reaper");
@@ -116,12 +117,10 @@ test("stage hook restores a node_repl wrapper left by the previous feature versi
   assert.match(fs.readFileSync(nodeRepl, "utf8"), /original node_repl/);
   assert.doesNotMatch(fs.readFileSync(nodeRepl, "utf8"), /mcp-helper-reaper-node-repl-wrapper/);
   assert.equal(fs.existsSync(originalNodeRepl), false);
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("cleanup hook restores node_repl and removes staged hooks", () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-cleanup-");
+test("cleanup hook restores node_repl and removes staged hooks", (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-cleanup-");
   const appDir = path.join(tempDir, "app");
   const workDir = path.join(tempDir, "work");
   const source = path.join(tempDir, "source", "codex-mcp-helper-reaper");
@@ -170,12 +169,10 @@ test("cleanup hook restores node_repl and removes staged hooks", () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
   const commands = hooks.hooks.SessionStart.flatMap((entry) => entry.hooks ?? []).map((hook) => hook.command);
   assert.deepEqual(commands, ["existing mcp report # existing-session-hook"]);
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("session hook merge preserves existing SessionStart hook and deduplicates reaper hook", () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-hooks-");
+test("session hook merge preserves existing SessionStart hook and deduplicates reaper hook", (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-hooks-");
   const appDir = path.join(tempDir, "app");
   const codexHome = path.join(tempDir, "codex-home");
   const reaper = path.join(appDir, ".codex-linux", "mcp-helper-reaper", "codex-mcp-helper-reaper");
@@ -223,8 +220,6 @@ test("session hook merge preserves existing SessionStart hook and deduplicates r
   assert.match(reaperCommands[0], /--codex-parent "\$PPID"/);
   assert.match(reaperCommands[0], /--include-orphans/);
   assert.match(reaperCommands[0], /--app-dir /);
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
 function reaperHookCommand(codexHome) {
@@ -243,8 +238,8 @@ function writeLoggingReaper(appDir) {
   );
 }
 
-test("session hook command stays stable across AppImage mount paths", async () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-appimage-");
+test("session hook command stays stable across AppImage mount paths", async (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-appimage-");
   const codexHome = path.join(tempDir, "codex-home");
   const mountA = path.join(tempDir, ".mount_chatgptAAAAAA");
   const mountB = path.join(tempDir, ".mount_chatgptBBBBBB");
@@ -286,12 +281,10 @@ test("session hook command stays stable across AppImage mount paths", async () =
   assert.ok(calls.startsWith(`${appDirB}/.codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper `));
   assert.ok(calls.includes(`--app-dir ${appDirB} `));
   assert.match(calls, /--codex-parent \d+ --include-orphans/);
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("session hook command has no Nix store fallback", () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-nix-");
+test("session hook command has no Nix store fallback", (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-nix-");
   const codexHome = path.join(tempDir, "codex-home");
   const appDir = path.join(tempDir, "opt", "codex-desktop");
   writeLoggingReaper(appDir);
@@ -314,12 +307,10 @@ test("session hook command has no Nix store fallback", () => {
   const command = reaperHookCommand(codexHome);
   assert.doesNotMatch(command, /\/nix\/store/);
   assert.match(command, /\|\| codex_mcp_reaper_app=''; /);
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("native session hook falls back to its install directory outside the app", async () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-native-");
+test("native session hook falls back to its install directory outside the app", async (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-native-");
   const codexHome = path.join(tempDir, "codex-home");
   const appDir = path.join(tempDir, "opt", "codex-desktop");
   const callLog = path.join(tempDir, "calls.log");
@@ -336,12 +327,10 @@ test("native session hook falls back to its install directory outside the app", 
   const calls = await waitForFileContent(callLog, (content) => content.includes("--quiet"));
   assert.ok(calls.startsWith(`${appDir}/.codex-linux/mcp-helper-reaper/codex-mcp-helper-reaper `));
   assert.ok(calls.includes(`--app-dir ${appDir} `));
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("cold-start hook launches a short all-parent scan", async () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-cold-");
+test("cold-start hook launches a short all-parent scan", async (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-cold-");
   const appDir = path.join(tempDir, "app");
   const callLog = path.join(tempDir, "calls.log");
   const featureDir = path.join(appDir, ".codex-linux", "mcp-helper-reaper");
@@ -367,12 +356,10 @@ test("cold-start hook launches a short all-parent scan", async () => {
   assert.match(calls, /--all-codex-parents/);
   assert.match(calls, /--include-orphans/);
   assert.match(calls, /--app-dir /);
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("staged lifecycle hooks reach the reaper through the launcher", async () => {
-  const tempDir = makeTempDir("codex-mcp-helper-reaper-launcher-");
+test("staged lifecycle hooks reach the reaper through the launcher", async (t) => {
+  const tempDir = makeTempDir(t, "codex-mcp-helper-reaper-launcher-");
   const appDir = path.join(tempDir, "app");
   const workDir = path.join(tempDir, "work");
   const source = path.join(tempDir, "source", "codex-mcp-helper-reaper");
@@ -448,6 +435,4 @@ exit 7
     "codex://thread/123",
   ]);
   assert.match(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"), /codex-mcp-helper-reaper-session/);
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
 });

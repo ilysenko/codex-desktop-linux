@@ -355,6 +355,11 @@ max_seconds="${CODEX_GLOBAL_DICTATION_MAX_HOLD_SECONDS:-1800}"
 [[ "$max_seconds" =~ ^[1-9][0-9]*$ ]] || max_seconds=1800
 event_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-global-dictation.XXXXXX")"
 event_fifo="$event_dir/events"
+# uutils stdbuf makes a temporary directory in TMPDIR and then execs its
+# command, so nothing removes it (uutils/coreutils#13939). The per-keyboard
+# stdbuf runs get this directory as TMPDIR instead; cleanup removes it. GNU
+# stdbuf writes nothing there.
+stdbuf_dir="$event_dir/stdbuf"
 monitor_pids=()
 
 # shellcheck disable=SC2317 # Invoked through the EXIT trap.
@@ -367,7 +372,8 @@ cleanup() {
         kill "$pid" >/dev/null 2>&1 || true
     done
     wait "${monitor_pids[@]:-}" >/dev/null 2>&1 || true
-    rm -f "$event_fifo"
+    rm -f "$event_fifo" 2>/dev/null || true
+    rm -rf -- "$stdbuf_dir" 2>/dev/null || true
     rmdir "$event_dir" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -375,11 +381,15 @@ trap 'exit 143' INT TERM
 
 mkfifo "$event_fifo"
 exec 4<>"$event_fifo"
+if command -v stdbuf >/dev/null 2>&1; then
+    mkdir "$stdbuf_dir" 2>/dev/null || true
+fi
 
 for device_id in $keyboard_ids; do
     (
         xinput_cmd=(xinput test "$device_id")
         if command -v stdbuf >/dev/null 2>&1; then
+            [ ! -d "$stdbuf_dir" ] || export TMPDIR="$stdbuf_dir"
             xinput_cmd=(stdbuf -oL "${xinput_cmd[@]}")
         fi
         {

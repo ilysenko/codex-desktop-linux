@@ -2,7 +2,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { execFileSync, spawnSync } = require("node:child_process");
+const { execFileSync, spawn, spawnSync } = require("node:child_process");
+const { once } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -49,6 +50,23 @@ function writeExecutable(filePath, body) {
   fs.writeFileSync(filePath, body, { mode: 0o755 });
 }
 
+// Behaves like uutils stdbuf (uutils/coreutils#13939): it makes a temporary
+// directory in TMPDIR and execs its command, so nothing removes the directory.
+const LEAKY_STDBUF = `#!${hostBash}\nmktemp -d "\${TMPDIR:-/tmp}/.tmpXXXXXX" >/dev/null || exit 125\nshift\nexec "$@"\n`;
+
+// What the monitor's event dir and its stdbuf runs leave in TMPDIR.
+function monitorLeftovers(tempDir) {
+  return fs
+    .readdirSync(tempDir)
+    .filter((name) => name.startsWith("codex-global-dictation.") || name.startsWith(".tmp"));
+}
+
+// TMPDIR is the fixture here, so check it before the fixture's removal would
+// hide a leftover.
+function assertMonitorLeftNothing(tempDir) {
+  assert.deepEqual(monitorLeftovers(tempDir), []);
+}
+
 function runX11ReleaseMonitor({
   accelerator,
   xmodmapLines,
@@ -59,6 +77,7 @@ function runX11ReleaseMonitor({
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-x11-map-"));
   const binDir = path.join(tempDir, "bin");
   fs.mkdirSync(binDir);
+  writeExecutable(path.join(binDir, "stdbuf"), LEAKY_STDBUF);
   writeExecutable(
     path.join(binDir, "xmodmap"),
     `#!${hostBash}\nprintf '%s\\n' ${xmodmapLines.map((line) => JSON.stringify(line)).join(" ")}\n`,
@@ -77,7 +96,7 @@ function runX11ReleaseMonitor({
   );
 
   try {
-    return spawnSync(
+    const result = spawnSync(
       path.join(__dirname, "bin", "global-dictation-release-monitor"),
       ["--accelerator", accelerator],
       {
@@ -86,10 +105,14 @@ function runX11ReleaseMonitor({
           ...process.env,
           DISPLAY: ":99",
           PATH: `${binDir}${path.delimiter}${hostPath}`,
+          // The monitor keeps its event dir and stdbuf directory in the fixture.
+          TMPDIR: tempDir,
         },
         timeout,
       },
     );
+    assertMonitorLeftNothing(tempDir);
+    return result;
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -297,6 +320,7 @@ test("X11 release watcher exits when a required modifier is released", () => {
   const binDir = path.join(tempDir, "bin");
   const stateFile = path.join(tempDir, "state");
   fs.mkdirSync(binDir);
+  writeExecutable(path.join(binDir, "stdbuf"), LEAKY_STDBUF);
   fs.writeFileSync(stateFile, "0\n");
   fs.writeFileSync(
     path.join(binDir, "xmodmap"),
@@ -333,12 +357,15 @@ test("X11 release watcher exits when a required modifier is released", () => {
           ...process.env,
           DISPLAY: ":99",
           PATH: `${binDir}${path.delimiter}${hostPath}`,
+          // The monitor keeps its event dir and stdbuf directory in the fixture.
+          TMPDIR: tempDir,
           STATE_FILE: stateFile,
         },
         timeout: 2000,
       },
     );
     assert.equal(result.status, 0, result.stderr);
+    assertMonitorLeftNothing(tempDir);
     assert.equal(Number(fs.readFileSync(stateFile, "utf8")), 1);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -349,6 +376,7 @@ test("X11 release watcher exits when the primary key is released while the modif
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-primary-release-"));
   const binDir = path.join(tempDir, "bin");
   fs.mkdirSync(binDir);
+  writeExecutable(path.join(binDir, "stdbuf"), LEAKY_STDBUF);
   fs.writeFileSync(
     path.join(binDir, "xmodmap"),
     `#!${hostBash}\nprintf '%s\\n' 'keycode 37 = Control_L' 'keycode 65 = space'\n`,
@@ -376,11 +404,14 @@ test("X11 release watcher exits when the primary key is released while the modif
           ...process.env,
           DISPLAY: ":99",
           PATH: `${binDir}${path.delimiter}${hostPath}`,
+          // The monitor keeps its event dir and stdbuf directory in the fixture.
+          TMPDIR: tempDir,
         },
         timeout: X11_RELEASE_MONITOR_TEST_TIMEOUT_MS,
       },
     );
     assert.equal(result.status, 0, result.stderr);
+    assertMonitorLeftNothing(tempDir);
     assert.equal(result.signal, null);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -391,6 +422,7 @@ test("X11 release watcher prefers resolved keycodes over fallback codes", () => 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-remap-"));
   const binDir = path.join(tempDir, "bin");
   fs.mkdirSync(binDir);
+  writeExecutable(path.join(binDir, "stdbuf"), LEAKY_STDBUF);
   fs.writeFileSync(
     path.join(binDir, "xmodmap"),
     `#!${hostBash}\nprintf '%s\\n' 'keycode 90 = Control_L' 'keycode 38 = a A'\n`,
@@ -418,11 +450,14 @@ test("X11 release watcher prefers resolved keycodes over fallback codes", () => 
           ...process.env,
           DISPLAY: ":99",
           PATH: `${binDir}${path.delimiter}${hostPath}`,
+          // The monitor keeps its event dir and stdbuf directory in the fixture.
+          TMPDIR: tempDir,
         },
         timeout: X11_RELEASE_MONITOR_TEST_TIMEOUT_MS,
       },
     );
     assert.equal(result.status, 0, result.stderr);
+    assertMonitorLeftNothing(tempDir);
     assert.equal(result.signal, null);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -514,6 +549,75 @@ test("main patch reports a missing release watcher sentinel as an optional skip"
     },
   ]);
 });
+
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  test(`X11 release watcher removes its event and stdbuf directories on ${signal}`, { timeout: 15_000 }, async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-signal-"));
+    t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+    const binDir = path.join(tempDir, "bin");
+    const started = path.join(tempDir, "started");
+    fs.mkdirSync(binDir);
+    writeExecutable(path.join(binDir, "stdbuf"), LEAKY_STDBUF);
+    writeExecutable(
+      path.join(binDir, "xmodmap"),
+      `#!${hostBash}\nprintf '%s\\n' 'keycode 37 = Control_L' 'keycode 65 = space'\n`,
+    );
+    // Two keyboards: one stdbuf run, and one stdbuf directory, each.
+    writeExecutable(
+      path.join(binDir, "xinput"),
+      [
+        `#!${hostBash}`,
+        "if [ \"$1\" = list ]; then printf '%s\\n' 'Keyboard A id=12 [slave  keyboard (3)]' 'Keyboard B id=13 [slave  keyboard (3)]'; exit 0; fi",
+        "if [ \"$1\" = query-state ]; then printf '%s\\n' 'key[37]=down' 'key[65]=down'; exit 0; fi",
+        "if [ \"$1\" = test ]; then echo \"$2\" >> \"$STARTED_FILE\"; exec sleep 30; fi",
+        "exit 2",
+      ].join("\n"),
+    );
+
+    const monitor = spawn(
+      path.join(__dirname, "bin", "global-dictation-release-monitor"),
+      ["--accelerator", "Ctrl+Space"],
+      {
+        env: {
+          ...process.env,
+          DISPLAY: ":99",
+          PATH: `${binDir}${path.delimiter}${hostPath}`,
+          STARTED_FILE: started,
+          TMPDIR: tempDir,
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+        // Its own process group, so cleanup reaches the keyboard and watchdog
+        // children too if the test fails early.
+        detached: true,
+      },
+    );
+    t.after(() => {
+      try {
+        process.kill(-monitor.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    });
+    const exited = once(monitor, "exit");
+    const deadline = Date.now() + 5_000;
+    const startedKeyboards = () =>
+      fs.existsSync(started) ? fs.readFileSync(started, "utf8").trim().split("\n").length : 0;
+    while (startedKeyboards() < 2) {
+      assert.ok(Date.now() < deadline, "the monitor never started both keyboards");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    // While it runs, both stdbuf directories sit inside the event dir.
+    const [eventDir] = monitorLeftovers(tempDir);
+    assert.match(eventDir, /^codex-global-dictation\./);
+    assert.equal(fs.readdirSync(path.join(tempDir, eventDir, "stdbuf")).length, 2);
+
+    // Only the monitor gets the signal, as when the app stops it.
+    monitor.kill(signal);
+    const [code, exitSignal] = await exited;
+    assert.ok(code !== 0 || exitSignal !== null, "the monitor exited 0 on a signal");
+    assertMonitorLeftNothing(tempDir);
+  });
+}
 
 test("X11 release watcher fails closed without a display or modifier", () => {
   const monitor = path.join(__dirname, "bin", "global-dictation-release-monitor");

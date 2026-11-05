@@ -2,12 +2,14 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { execFileSync, spawnSync } = require("node:child_process");
+const { execFileSync, spawn, spawnSync } = require("node:child_process");
+const { once } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { makeSocketTempDir } = require("../../scripts/lib/unix-socket-dir.test-helpers.js");
 
 const {
   loadLinuxFeaturePatchDescriptors,
@@ -231,6 +233,21 @@ test("stages the Linux bare modifier monitor helper and Wayland portal hook", ()
   execFileSync("bash", ["-n", path.join(__dirname, "bin", "bare-modifier-monitor")]);
 });
 
+// Behaves like uutils stdbuf (uutils/coreutils#13939): it makes a temporary
+// directory in TMPDIR and execs its command, so nothing removes the directory.
+const LEAKY_STDBUF = '#!/bin/sh\nmktemp -d "${TMPDIR:-/tmp}/.tmpXXXXXX" >/dev/null || exit 125\nshift\nexec "$@"\n';
+
+// A stdbuf that only execs, like GNU stdbuf, for a test where a slower start
+// would race the monitor's startup check.
+const PLAIN_STDBUF = '#!/bin/sh\nshift\nexec "$@"\n';
+
+// What the bare modifier monitor's stdbuf run leaves in TMPDIR.
+function stdbufLeftovers(dir) {
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.startsWith(".tmp") || name.startsWith("codex-appshots-stdbuf."));
+}
+
 test("bare modifier monitor emits one transition from one XInput2 stream", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-"));
   const binDir = path.join(tempDir, "bin");
@@ -241,6 +258,7 @@ test("bare modifier monitor emits one transition from one XInput2 stream", () =>
     "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
     { mode: 0o755 },
   );
+  fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
   fs.writeFileSync(
     path.join(binDir, "xinput"),
     [
@@ -268,11 +286,14 @@ test("bare modifier monitor emits one transition from one XInput2 stream", () =>
         ...process.env,
         DISPLAY: ":99",
         PATH: `${binDir}:${process.env.PATH}`,
+        // The monitor makes its stdbuf directory in the fixture, where the test checks it is gone.
+        TMPDIR: tempDir,
       },
       timeout: 2_000,
     });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(result.stdout.trim().split("\n"), ["ready", "down", "up"]);
+    assert.deepEqual(stdbufLeftovers(tempDir), []);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -288,6 +309,8 @@ test("bare modifier monitor fails before ready when XInput2 exits during startup
     "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
     { mode: 0o755 },
   );
+  // The monitor still makes, and must remove, its own stdbuf directory.
+  fs.writeFileSync(path.join(binDir, "stdbuf"), PLAIN_STDBUF, { mode: 0o755 });
   fs.writeFileSync(
     path.join(binDir, "xinput"),
     "#!/bin/sh\n[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2\nexit 2\n",
@@ -301,15 +324,73 @@ test("bare modifier monitor fails before ready when XInput2 exits during startup
         ...process.env,
         DISPLAY: ":99",
         PATH: `${binDir}:${process.env.PATH}`,
+        // The monitor makes its stdbuf directory in the fixture, where the test checks it is gone.
+        TMPDIR: tempDir,
       },
       timeout: 2_000,
     });
     assert.notEqual(result.status, 0, result.stderr);
     assert.equal(result.stdout, "permission-denied\n");
+    assert.deepEqual(stdbufLeftovers(tempDir), []);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  test(`bare modifier monitor removes its stdbuf directory on ${signal}`, { timeout: 15_000 }, async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-signal-"));
+    t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+    const binDir = path.join(tempDir, "bin");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(
+      path.join(binDir, "xmodmap"),
+      "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(binDir, "xinput"),
+      "#!/bin/sh\n[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2\nexec sleep 30\n",
+      { mode: 0o755 },
+    );
+
+    const monitor = spawn(path.join(__dirname, "bin", "bare-modifier-monitor"), ["--key", "DoubleShift"], {
+      env: { ...process.env, DISPLAY: ":99", PATH: `${binDir}:${process.env.PATH}`, TMPDIR: tempDir },
+      stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so cleanup reaches xinput too if the test fails early.
+      detached: true,
+    });
+    t.after(() => {
+      try {
+        process.kill(-monitor.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    });
+    const exited = once(monitor, "exit");
+    let stdout = "";
+    monitor.stdout.setEncoding("utf8");
+    monitor.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    const deadline = Date.now() + 5_000;
+    while (!stdout.includes("ready\n")) {
+      assert.ok(Date.now() < deadline, `monitor never became ready: ${stdout}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    // While xinput runs, its stdbuf directory sits in the monitor's own directory.
+    const running = stdbufLeftovers(tempDir);
+    assert.equal(running.length, 1, `${running}`);
+    assert.match(running[0], /^codex-appshots-stdbuf\./);
+
+    // Only the monitor gets the signal, as when the app stops it.
+    monitor.kill(signal);
+    const [code, exitSignal] = await exited;
+    assert.ok(code !== 0 || exitSignal !== null, "the monitor exited 0 on a signal");
+    assert.deepEqual(stdbufLeftovers(tempDir), []);
+  });
+}
 
 test("enables AppShots availability atom on Linux", () => {
   const patched = applyPatchTwice(
@@ -1074,7 +1155,7 @@ test("AppShots focuses i3 and Sway windows the way the i3 backend reports them",
 test("AppShots finds the i3 or Sway socket in the backend's order", async (t) => {
   const net = require("node:net");
   const patched = applyLinuxAppshotMainProcessPatch(appshotMainProcessBundleFixture());
-  const runtime = fs.mkdtempSync(path.join(os.tmpdir(), "as-"));
+  const runtime = makeSocketTempDir("as-", "sway-ipc.1000.42.sock");
   const servers = [];
   t.after(async () => {
     await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));

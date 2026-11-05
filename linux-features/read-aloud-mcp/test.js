@@ -22,8 +22,9 @@ function applyPatchTwice(patchFn, source) {
   return patched;
 }
 
-test("read-aloud-mcp stays disabled until listed in features.json", () => {
+test("read-aloud-mcp stays disabled until listed in features.json", (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "read-aloud-mcp-feature-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
   const featuresRoot = path.join(tempDir, "features");
   fs.mkdirSync(path.join(featuresRoot, "read-aloud-mcp"), { recursive: true });
   fs.copyFileSync(
@@ -92,8 +93,9 @@ test("read-aloud-mcp plugin gate rejects a descriptor array missing current sema
   );
 });
 
-test("read-aloud-mcp stage hook records marketplace entry", () => {
+test("read-aloud-mcp stage hook records marketplace entry", (t) => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "read-aloud-mcp-stage-"));
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const installDir = path.join(workspace, "install");
   const fakeBackend = path.join(workspace, "codex-read-aloud-linux");
   const marketplace = path.join(

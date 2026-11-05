@@ -301,6 +301,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The launcher tests no longer send real counts to the production usage
+  counter. The usage-reporting tests removed their test folder while the
+  launcher's background reporter still ran. The reporter then recreated up
+  to two `codex-launcher-test-*/state` folders in `TMPDIR`, found the test's
+  fake curl gone, and ran the curl on PATH, about two real counts per run.
+  The tests now wait for the reporter before cleanup, and kill the
+  launcher's process group if it is still running after 10 seconds.
+- The AppShots bare modifier monitor and the global dictation release watcher
+  no longer leave an empty `.tmpXXXXXX` directory in `TMPDIR` where `stdbuf`
+  is uutils coreutils. That `stdbuf` makes a temporary directory and then
+  execs `xinput`, so nothing removed it (uutils/coreutils#13939): one per
+  AppShots monitor start, and one per keyboard per global dictation hold.
+  Each monitor now gives `stdbuf` a directory of its own and removes it when it
+  exits, also on SIGHUP, SIGINT and SIGTERM. GNU `stdbuf` writes nothing there.
+- The Node tests leave nothing in `TMPDIR`, also when a test fails. Socket
+  fixtures move to `XDG_RUNTIME_DIR` when a socket path would not fit under
+  `TMPDIR`, so the suite passes with a long `TMPDIR` too; without
+  `XDG_RUNTIME_DIR` they fail with the limit and the path.
+  `scripts/ci/run-node-checks.sh`, a standalone script that runs the
+  `*.test.js` files and the feature `test.js` files, now runs them with a
+  fresh `TMPDIR` and fails, naming the entries, when a run leaves any. CI and
+  `scripts/ci-local.sh` run their own lists of Node tests and do not use it.
 - Desktop entries no longer offer a "New Window" action. It relied on the
   retired multi-instance launcher (`--new-instance`, `CODEX_MULTI_LAUNCH`),
   which the official app ignores, so it did nothing while the app was running
