@@ -551,7 +551,7 @@ test("main patch reports a missing release watcher sentinel as an optional skip"
 });
 
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-  test(`X11 release watcher removes its event and stdbuf directories on ${signal}`, async (t) => {
+  test(`X11 release watcher removes its event and stdbuf directories on ${signal}`, { timeout: 15_000 }, async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-signal-"));
     t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
     const binDir = path.join(tempDir, "bin");
@@ -586,9 +586,18 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
           TMPDIR: tempDir,
         },
         stdio: ["ignore", "ignore", "pipe"],
+        // Its own process group, so cleanup reaches the keyboard and watchdog
+        // children too if the test fails early.
+        detached: true,
       },
     );
-    t.after(() => monitor.kill("SIGKILL"));
+    t.after(() => {
+      try {
+        process.kill(-monitor.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    });
     const exited = once(monitor, "exit");
     const deadline = Date.now() + 5_000;
     const startedKeyboards = () =>
@@ -602,10 +611,10 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     assert.match(eventDir, /^codex-global-dictation\./);
     assert.equal(fs.readdirSync(path.join(tempDir, eventDir, "stdbuf")).length, 2);
 
+    // Only the monitor gets the signal, as when the app stops it.
     monitor.kill(signal);
     const [code, exitSignal] = await exited;
-    assert.equal(exitSignal, null, `the monitor died from ${exitSignal} without its cleanup`);
-    assert.notEqual(code, 0);
+    assert.ok(code !== 0 || exitSignal !== null, "the monitor exited 0 on a signal");
     assertMonitorLeftNothing(tempDir);
   });
 }

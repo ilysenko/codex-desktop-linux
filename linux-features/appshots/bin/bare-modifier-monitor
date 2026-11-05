@@ -166,8 +166,6 @@ cleanup() {
     esac
 }
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 141' PIPE
 trap 'exit 143' INT TERM
 
 # uutils stdbuf makes a temporary directory in TMPDIR and then execs its

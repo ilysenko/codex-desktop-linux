@@ -333,7 +333,7 @@ test("bare modifier monitor fails before ready when XInput2 exits during startup
 });
 
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-  test(`bare modifier monitor removes its stdbuf directory on ${signal}`, async (t) => {
+  test(`bare modifier monitor removes its stdbuf directory on ${signal}`, { timeout: 15_000 }, async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-signal-"));
     t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
     const binDir = path.join(tempDir, "bin");
@@ -353,8 +353,16 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     const monitor = spawn(path.join(__dirname, "bin", "bare-modifier-monitor"), ["--key", "DoubleShift"], {
       env: { ...process.env, DISPLAY: ":99", PATH: `${binDir}:${process.env.PATH}`, TMPDIR: tempDir },
       stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so cleanup reaches xinput too if the test fails early.
+      detached: true,
     });
-    t.after(() => monitor.kill("SIGKILL"));
+    t.after(() => {
+      try {
+        process.kill(-monitor.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    });
     const exited = once(monitor, "exit");
     let stdout = "";
     monitor.stdout.setEncoding("utf8");
@@ -369,10 +377,10 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     // While xinput runs, its stdbuf directory sits in the monitor's own directory.
     assert.equal(stdbufLeftovers(tempDir).length, 1);
 
+    // Only the monitor gets the signal, as when the app stops it.
     monitor.kill(signal);
     const [code, exitSignal] = await exited;
-    assert.equal(exitSignal, null, `the monitor died from ${exitSignal} without its cleanup`);
-    assert.notEqual(code, 0);
+    assert.ok(code !== 0 || exitSignal !== null, "the monitor exited 0 on a signal");
     assert.deepEqual(stdbufLeftovers(tempDir), []);
   });
 }

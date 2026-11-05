@@ -29,7 +29,9 @@ run_node_tests() {
     local -a node_test_args=(--test)
     local -a test_files=()
 
-    node scripts/ci/manage-labels.js --check
+    # The guard below calls this function on the left of ||, where errexit is
+    # off, so every step that can fail returns its status itself.
+    node scripts/ci/manage-labels.js --check || return
 
     if node --help | grep -q -- "--test-force-exit"; then
         # All assertions must finish, but a leaked worker handle must not hold CI open.
@@ -90,7 +92,8 @@ run_node_tests() {
 }
 
 # Every test removes what it creates, also when it fails. The suite runs with a
-# fresh TMPDIR, and anything left there fails the run and is named.
+# fresh TMPDIR, and anything left there fails the run and is named. The
+# directory stays for inspection then; an empty one is removed.
 run_node_tests_in_fresh_tmpdir() {
     local fresh
     local leftovers
@@ -101,13 +104,14 @@ run_node_tests_in_fresh_tmpdir() {
     TMPDIR="$fresh" run_node_tests || status=$?
     leftovers="$(find "$fresh" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
     if [ -n "$leftovers" ]; then
-        echo "Node tests left $(printf '%s\n' "$leftovers" | wc -l) entries in their TMPDIR; each test must remove what it creates:" >&2
+        echo "Node tests left these entries in $fresh; each test must remove what it creates:" >&2
         while IFS= read -r name; do
             printf '  %s\n' "$name" >&2
         done <<<"$leftovers"
         [ "$status" -ne 0 ] || status=1
+    else
+        rmdir -- "$fresh"
     fi
-    rm -rf -- "$fresh"
     return "$status"
 }
 

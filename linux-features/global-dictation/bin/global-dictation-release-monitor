@@ -377,8 +377,6 @@ cleanup() {
     rmdir "$event_dir" 2>/dev/null || true
 }
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 141' PIPE
 trap 'exit 143' INT TERM
 
 mkfifo "$event_fifo"

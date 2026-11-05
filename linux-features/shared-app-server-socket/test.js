@@ -11,6 +11,7 @@ const path = require("node:path");
 const { PassThrough } = require("node:stream");
 const test = require("node:test");
 const vm = require("node:vm");
+const { makeSocketTempDir: makeUnixSocketTempDir } = require("../../scripts/lib/unix-socket-dir.test-helpers.js");
 
 const {
   loadLinuxFeaturePatchDescriptors,
@@ -25,7 +26,6 @@ const {
 const socketEnvHook = path.join(__dirname, "socket-env.sh");
 const orphanReaper = path.join(__dirname, "orphan-reaper.js");
 const attachedCli = path.join(__dirname, "attached-cli.sh");
-const unixSocketPathMaxBytes = 107;
 const testRuntimeRoot = fs.mkdtempSync(
   path.join(os.tmpdir(), "shared-app-server-socket-test-runtime-"),
 );
@@ -41,15 +41,10 @@ test.after(() => {
   fs.rmSync(testRuntimeRoot, { recursive: true, force: true });
 });
 
+// XDG_RUNTIME_DIR now names this file's own runtime root under TMPDIR, so the
+// fallback for a long TMPDIR is the host's runtime dir.
 function makeSocketTempDir(prefix, socketRelativePath = "app-server.sock") {
-  for (const root of [...new Set([os.tmpdir(), "/tmp"])]) {
-    const template = path.join(root, prefix);
-    const longestGeneratedPath = path.join(`${template}XXXXXX`, socketRelativePath);
-    if (Buffer.byteLength(longestGeneratedPath) <= unixSocketPathMaxBytes) {
-      return fs.mkdtempSync(template);
-    }
-  }
-  throw new Error("could not create a temporary directory with room for a Unix socket path");
+  return makeUnixSocketTempDir(prefix, socketRelativePath, { runtimeDir: originalRuntimeDir });
 }
 
 function createProcessSnapshotFs(processesByPid) {
