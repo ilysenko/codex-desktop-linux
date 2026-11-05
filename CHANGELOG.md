@@ -236,9 +236,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- The launcher's usage-reporting tests wait for the background reporter before
-  they remove their test folder. The reporter used to run after the cleanup and
-  recreate `codex-launcher-test-*/state` in `TMPDIR`, two folders per run.
 - A successful pixelflux click, scroll or drag in a Selkies container
   notifies the Codex avatar cursor, as the other pointer routes do. These
   routes had skipped it since the pixelflux backend arrived.
@@ -284,6 +281,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The launcher tests no longer send real counts to the production usage
+  counter. The usage-reporting tests removed their test folder while the
+  launcher's background reporter still ran. The reporter then found the
+  test's fake curl gone and ran the curl on PATH, about two real counts per
+  run, and recreated up to two `codex-launcher-test-*/state` folders in
+  `TMPDIR`. The tests now wait for the reporter before cleanup, and kill the
+  launcher's process group if it is still running after 10 seconds.
 - Desktop entries no longer offer a "New Window" action. It relied on the
   retired multi-instance launcher (`--new-instance`, `CODEX_MULTI_LAUNCH`),
   which the official app ignores, so it did nothing while the app was running

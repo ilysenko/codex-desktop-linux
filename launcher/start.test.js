@@ -61,18 +61,29 @@ exit 7
 }
 
 // The launcher reports usage from a background subshell that outlives
-// start.sh and creates XDG_STATE_HOME/codex-desktop/usage-reporting. Under a
-// test root, a reporter still running at cleanup recreates the root after it
-// was removed. The subshell inherits a spare pipe on fd 3, and spawnSync
-// returns only once every holder has closed it, so the reporter is done. The
-// reporter's curl gives up after 3 seconds. A holder that outlives the
-// timeout fails the test (ETIMEDOUT) instead of hanging the suite.
+// start.sh. A reporter still running when the test removed its root found the
+// test's fake curl gone, ran the curl on PATH and sent a real count to the
+// production usage counter, then recreated
+// XDG_STATE_HOME/codex-desktop/usage-reporting under the removed root. The
+// subshell inherits a spare pipe on fd 3, and spawnSync returns only once
+// every holder has closed it, so the reporter is done before cleanup. A holder
+// still open after 10 seconds fails the test with ETIMEDOUT. The launcher runs
+// in its own process group, and the whole group is killed then, so nothing it
+// started outlives the test.
 function runLauncherWithReporting(root, args, options) {
   const result = childProcess.spawnSync(path.join(root, "start.sh"), args, {
     ...options,
+    detached: true,
     stdio: ["pipe", "pipe", "pipe", "pipe"],
     timeout: 10_000,
   });
+  if (result.error && result.pid) {
+    try {
+      process.kill(-result.pid, "SIGKILL");
+    } catch {
+      // The group has already exited.
+    }
+  }
   assert.ifError(result.error);
   return result;
 }
