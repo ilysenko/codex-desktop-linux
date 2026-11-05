@@ -1,0 +1,9 @@
+{
+  "id": "usage-limit-send-attempt",
+  "title": "Attempt Sends After Usage Limit",
+  "description": "Keeps the local Codex composer send action available when the signed-in ChatGPT account reports exhausted usage.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
