@@ -3347,12 +3347,11 @@ mod tests {
     }
 
     fn test_root(_name: &str) -> PathBuf {
-        // Leave room for app-server socket names under a private TMPDIR.
-        env::temp_dir().join(format!(
-            "cr-{}-{}",
-            std::process::id(),
-            random_hex(4).unwrap()
-        ))
+        // The deepest socket: an app-server socket under a `runtime` root.
+        crate::test_sockets::socket_fixture(
+            &format!("cr-{}-{}", std::process::id(), random_hex(4).unwrap()),
+            "runtime/a-0000000000000000.sock",
+        )
     }
 
     fn test_executable(name: &str) -> PathBuf {
@@ -3533,11 +3532,10 @@ while True:
             for case in ["present", "absent", "empty"] {
                 let root = test_root(&format!("npm-shebang-trusted-node-{case}"));
                 let ambient_dir = root.join("ambient-bin");
-                let runtime_root = PathBuf::from("/tmp").join(format!(
-                    "cdx-npm-{}-{}",
-                    std::process::id(),
-                    random_hex(4).unwrap()
-                ));
+                let runtime_root = crate::test_sockets::socket_fixture(
+                    &format!("cdx-npm-{}-{}", std::process::id(), random_hex(4).unwrap()),
+                    "a-0000000000000000.sock",
+                );
                 fs::create_dir_all(&ambient_dir).unwrap();
                 fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
                 fs::set_permissions(&ambient_dir, fs::Permissions::from_mode(0o700)).unwrap();

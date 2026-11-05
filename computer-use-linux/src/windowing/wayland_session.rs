@@ -198,7 +198,10 @@ mod tests {
 
     #[test]
     fn failed_connect_keeps_the_os_error() {
-        let missing = std::env::temp_dir().join(format!("cul-missing-{}.sock", std::process::id()));
+        let missing = crate::test_sockets::socket_fixture(
+            &format!("cul-missing-{}.sock", std::process::id()),
+            "",
+        );
         let error = connect_nonblocking(&missing).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     }

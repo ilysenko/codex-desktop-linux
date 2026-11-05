@@ -52,8 +52,8 @@ const FORCE_PORTAL_POINTER_ENV_KEYS: &[&str] = &[
 ];
 const PORTAL_DEVICE_KEYBOARD: u32 = 1;
 const PORTAL_DEVICE_POINTER: u32 = 2;
-const PORTAL_CURSOR_MODE_HIDDEN: u32 = 1;
 const PORTAL_SOURCE_MONITOR: u32 = 1;
+/// ScreenCast version that added `AvailableCursorModes` and `cursor_mode`.
 const SCREENCAST_CURSOR_MODE_VERSION: u32 = 2;
 const REMOTE_DESKTOP_KEYBOARD_METHODS: &[&str] = &[
     "CreateSession",
@@ -954,7 +954,7 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
             "A window listing backend is available for list_windows, focused_window, and targeted input verification."
         }
     } else {
-        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session. On niri, export the session's NIRI_SOCKET or expose an unambiguous matching socket in XDG_RUNTIME_DIR; the niri binary is optional. On labwc, the Selkies IPC socket labwc.sock lists windows. On other wlroots compositors, zwlr_foreign_toplevel_manager_v1 lists windows."
+        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session. On niri, ensure the session exposes NIRI_SOCKET so the niri IPC socket is reachable. On labwc, the session socket labwc.sock lists windows. On other wlroots compositors, zwlr_foreign_toplevel_manager_v1 lists windows."
     }
     .to_string();
 
@@ -1329,11 +1329,13 @@ fn should_advertise_wtype(
     force_xdotool: bool,
     force_portal_keyboard: bool,
 ) -> bool {
+    // The server routes keyboard input to xdotool before wtype only when
+    // xdotool can run, and to the portal whenever it is forced.
     platform_is_wayland(platform)
         && wtype_compatible_wayland_desktop(platform.xdg_current_desktop.as_deref())
         && input.wtype.ok
         && !force_ydotool
-        && !force_xdotool
+        && !should_advertise_xdotool(platform, input, force_ydotool, force_xdotool)
         && !force_portal_keyboard
 }
 
@@ -1578,7 +1580,7 @@ fn remote_desktop_pointer_check_from(
             Ok(cursor_modes) => cursor_modes,
             Err(detail) => return Check::fail(detail),
         };
-        if cursor_modes & PORTAL_CURSOR_MODE_HIDDEN == 0 {
+        if cursor_modes & crate::remote_desktop::CURSOR_MODE_HIDDEN == 0 {
             return Check::fail(format!(
                 "ScreenCast AvailableCursorModes={cursor_modes} does not include hidden cursor mode"
             ));
@@ -2073,7 +2075,7 @@ pub(crate) mod tests {
             cosmic_helper: Check::fail("missing"),
             kwin: Check::fail("not a KWin session"),
             hyprland: Check::fail("not a Hyprland session"),
-            niri: Check::fail("not a Niri session"),
+            niri: Check::fail("not a niri session"),
             backends: BTreeMap::new(),
             can_list_windows,
             can_focus_apps: true,
@@ -3062,7 +3064,10 @@ pub(crate) mod tests {
 
     #[test]
     fn ydotool_socket_check_rejects_legacy_stream_socket() {
-        let dir = std::env::temp_dir().join(format!("cd-{}", std::process::id()));
+        let dir = crate::test_sockets::socket_fixture(
+            &format!("cul-diag-stream-{}", std::process::id()),
+            "ydotool.sock",
+        );
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create temp diagnostics dir");
         let socket = dir.join("ydotool.sock");
@@ -3078,7 +3083,10 @@ pub(crate) mod tests {
 
     #[test]
     fn ydotool_socket_check_accepts_datagram_socket() {
-        let dir = std::env::temp_dir().join(format!("cd-dgram-{}", std::process::id()));
+        let dir = crate::test_sockets::socket_fixture(
+            &format!("cul-diag-dgram-{}", std::process::id()),
+            "ydotool.sock",
+        );
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create temp diagnostics dir");
         let socket = dir.join("ydotool.sock");
@@ -3115,8 +3123,18 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn desktop_env_hydration_includes_niri_socket() {
-        assert!(DESKTOP_ENV_KEYS.contains(&"NIRI_SOCKET"));
+    fn desktop_env_hydration_imports_the_niri_socket() {
+        let current_env = HashMap::new();
+        let session_env = HashMap::from([(
+            "NIRI_SOCKET".to_string(),
+            "/run/user/1000/niri.wayland-1.42.sock".to_string(),
+        )]);
+
+        let updates = desktop_env_hydration_updates(&current_env, &session_env);
+
+        assert!(updates.iter().any(|(key, value)| {
+            *key == "NIRI_SOCKET" && value == "/run/user/1000/niri.wayland-1.42.sock"
+        }));
     }
 
     #[test]
@@ -3135,10 +3153,21 @@ pub(crate) mod tests {
             &platform, &input, true, false, false
         ));
         assert!(!should_advertise_wtype(
+            &platform, &input, false, false, true
+        ));
+
+        // Forcing xdotool hides wtype only when xdotool can run: installed,
+        // with DISPLAY set, as the server's keyboard routing requires.
+        assert!(should_advertise_wtype(
             &platform, &input, false, true, false
         ));
+        input.xdotool = Check::ok("xdotool");
         assert!(!should_advertise_wtype(
-            &platform, &input, false, false, true
+            &platform, &input, false, true, false
+        ));
+        platform.display = None;
+        assert!(should_advertise_wtype(
+            &platform, &input, false, true, false
         ));
     }
 
@@ -3200,10 +3229,7 @@ pub(crate) mod tests {
         let mut portals = portal_report(Check::fail("missing"));
         portals.screenshot = Check::ok(".Screenshot method sa{sv} o -");
         let accessibility = accessibility_report(Check::ok("bus"), Check::ok("true"));
-        let mut windowing = windowing_report(true, true);
-        // The embedded fixture enables the Codex extension screenshot route with
-        // window focus; switch it off so this test isolates the routes it names.
-        windowing.codex_gnome_shell_extension_screenshot = Check::fail("missing");
+        let windowing = windowing_report(true, true);
         let input = input_report(true);
 
         let readiness = readiness_report(&platform, &portals, &accessibility, &windowing, &input);

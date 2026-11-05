@@ -41,7 +41,9 @@ const INPUT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEVICE_KEYBOARD: u32 = 1;
 const DEVICE_POINTER: u32 = 2;
 const SOURCE_MONITOR: u32 = 1;
-const CURSOR_MODE_HIDDEN: u32 = 1;
+/// The ScreenCast `cursor_mode` that pointer sessions request; doctor
+/// checks the portal offers it.
+pub(crate) const CURSOR_MODE_HIDDEN: u32 = 1;
 
 const KEY_RELEASED: u32 = 0;
 const KEY_PRESSED: u32 = 1;
@@ -82,7 +84,10 @@ pub struct PortalKeyboardSession {
     valid: Arc<AtomicBool>,
 }
 
-#[derive(Clone)]
+/// The server's cross-backend input lock, held by a portal release guard so
+/// no other backend sends input until a cancelled portal action's release
+/// cleanup has finished. Clones share the one lock.
+#[derive(Clone, Debug)]
 pub(crate) struct InputOperationGuard {
     _guard: Arc<OwnedMutexGuard<()>>,
 }
@@ -339,6 +344,15 @@ pub(crate) async fn kwin_desktop_layout() -> Option<Vec<LogicalMonitor>> {
 }
 
 pub(crate) async fn logical_desktop_layout() -> Option<Vec<LogicalMonitor>> {
+    match compositor_desktop_layout().await {
+        Some(layout) => Some(layout),
+        None => xrandr_desktop_layout().await,
+    }
+}
+
+/// The layout from the desktop's own interfaces, without RandR. On Wayland
+/// an X client such as xrandr can make the compositor start Xwayland.
+pub(crate) async fn compositor_desktop_layout() -> Option<Vec<LogicalMonitor>> {
     if env_token_contains("XDG_CURRENT_DESKTOP", "gnome") {
         if let Some(layout) = crate::windowing::backends::gnome::extension_monitor_layout()
             .await
@@ -430,16 +444,9 @@ pub(crate) async fn logical_desktop_layout() -> Option<Vec<LogicalMonitor>> {
             }
         }
     }
-
     if env_token_contains("XDG_CURRENT_DESKTOP", "niri") {
-        let mut command = Command::new("niri");
-        command.args(["msg", "--json", "outputs"]);
-        if let Ok(output) = command_runner::output(command, "query Niri output layout").await {
-            if output.status.success() {
-                if let Some(layout) = parse_niri_monitor_layout(&output.stdout) {
-                    return Some(layout);
-                }
-            }
+        if let Some(layout) = crate::windowing::backends::niri::monitor_layout().await {
+            return Some(layout);
         }
     }
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
@@ -447,7 +454,10 @@ pub(crate) async fn logical_desktop_layout() -> Option<Vec<LogicalMonitor>> {
             return Some(layout);
         }
     }
+    None
+}
 
+async fn xrandr_desktop_layout() -> Option<Vec<LogicalMonitor>> {
     let mut command = Command::new("xrandr");
     command.arg("--listactivemonitors");
     let output = command_runner::output(command, "query XRandR monitor layout")
@@ -599,42 +609,6 @@ pub(crate) fn parse_sway_monitor_layout(json: &[u8]) -> Option<Vec<LogicalMonito
                     scale,
                 },
             )
-        })
-        .collect::<Option<Vec<_>>>()?;
-    (!layout.is_empty()).then_some(layout)
-}
-
-#[derive(serde::Deserialize)]
-struct NiriMonitorLayout {
-    logical: Option<NiriLogicalMonitor>,
-}
-
-#[derive(serde::Deserialize)]
-struct NiriLogicalMonitor {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    scale: f64,
-}
-
-fn parse_niri_monitor_layout(json: &[u8]) -> Option<Vec<LogicalMonitor>> {
-    let outputs: HashMap<String, NiriMonitorLayout> = serde_json::from_slice(json).ok()?;
-    let layout = outputs
-        .into_values()
-        .filter_map(|output| output.logical)
-        .map(|monitor| {
-            (monitor.scale.is_finite()
-                && monitor.scale > 0.0
-                && monitor.width > 0
-                && monitor.height > 0)
-                .then_some(LogicalMonitor {
-                    x: monitor.x,
-                    y: monitor.y,
-                    width: monitor.width,
-                    height: monitor.height,
-                    scale: monitor.scale,
-                })
         })
         .collect::<Option<Vec<_>>>()?;
     (!layout.is_empty()).then_some(layout)
@@ -813,6 +787,7 @@ fn env_token_contains(key: &str, needle: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Map a semantic scroll direction to `(axis, signed_steps)` for the portal.
 pub(crate) fn portal_scroll_axis_steps(
     direction: ScrollDirection,
     steps: i32,
@@ -896,7 +871,7 @@ pub(crate) async fn drag(
 pub(crate) async fn type_text_with_keysyms(
     session: &PortalKeyboardSession,
     keysyms: &[i32],
-    operation_guard: Option<InputOperationGuard>,
+    operation_guard: InputOperationGuard,
 ) -> Result<()> {
     let input_guard = Arc::clone(&session.input_lock).lock_owned().await;
     session.ensure_valid()?;
@@ -917,7 +892,7 @@ pub(crate) async fn press_keycode_chord(
     session: &PortalKeyboardSession,
     modifiers: &[i32],
     keycode: i32,
-    operation_guard: Option<InputOperationGuard>,
+    operation_guard: InputOperationGuard,
 ) -> Result<()> {
     let modifiers: Vec<PortalKey> = modifiers.iter().copied().map(PortalKey::Keycode).collect();
     press_key_chord(
@@ -936,7 +911,7 @@ pub(crate) async fn press_key_chord(
     session: &PortalKeyboardSession,
     modifiers: &[PortalKey],
     key: PortalKey,
-    operation_guard: Option<InputOperationGuard>,
+    operation_guard: InputOperationGuard,
 ) -> Result<()> {
     let input_guard = Arc::clone(&session.input_lock).lock_owned().await;
     session.ensure_valid()?;
@@ -1021,7 +996,7 @@ impl KeyboardReleaseGuard {
     fn new(
         session: &PortalKeyboardSession,
         input_guard: OwnedMutexGuard<()>,
-        operation_guard: Option<InputOperationGuard>,
+        operation_guard: InputOperationGuard,
     ) -> Self {
         Self {
             ei: session.ei.clone(),
@@ -1029,7 +1004,7 @@ impl KeyboardReleaseGuard {
             session_handle: session.session_handle.clone(),
             pressed: Vec::new(),
             input_guard: Some(input_guard),
-            operation_guard,
+            operation_guard: Some(operation_guard),
             valid: Arc::clone(&session.valid),
         }
     }
@@ -1160,6 +1135,11 @@ impl PortalPointerSession {
             bail!("desktop monitor layout changed after the remote desktop portal session started");
         }
         Ok(())
+    }
+
+    /// The monitor layout the session checks every point against.
+    pub(crate) fn monitor_layout(&self) -> Option<&[LogicalMonitor]> {
+        self.desktop_layout.as_deref()
     }
 
     pub(crate) fn logical_point_from_capture(
@@ -2835,13 +2815,6 @@ mod tests {
             br#"[{"rect":{"x":0,"y":0,"width":1920,"height":1080},"scale":1.0}]"#,
         )
         .is_none());
-        assert!(parse_niri_monitor_layout(
-            br#"{
-                "eDP-1":{"logical":{"x":0,"y":0,"width":1920,"height":1080,"scale":1.0}},
-                "DP-1":{"logical":{"x":1920,"y":0,"width":1920,"height":1080,"scale":0.0}}
-            }"#,
-        )
-        .is_none());
         assert!(parse_xrandr_monitor_layout(
             "Monitors: 2\n 0: +*eDP-1 1920/344x1080/194+0+0 eDP-1\n"
         )
@@ -2864,37 +2837,6 @@ mod tests {
         changed[0].width = 1600;
         assert!(!same_monitor_layout(&original, &changed));
         assert!(same_monitor_layout(&original, &original));
-    }
-
-    #[test]
-    fn parses_niri_logical_output_layout() {
-        let layout = parse_niri_monitor_layout(
-            br#"{
-                "eDP-1":{"logical":{"x":0,"y":0,"width":1920,"height":1080,"scale":2.0}},
-                "DP-1":{"logical":{"x":1920,"y":0,"width":2560,"height":1440,"scale":1.0}}
-            }"#,
-        )
-        .expect("Niri layout should parse");
-
-        assert_eq!(layout.len(), 2);
-        assert!(layout.iter().any(|monitor| {
-            (
-                monitor.x,
-                monitor.y,
-                monitor.width,
-                monitor.height,
-                monitor.scale,
-            ) == (0, 0, 1920, 1080, 2.0)
-        }));
-        assert!(layout.iter().any(|monitor| {
-            (
-                monitor.x,
-                monitor.y,
-                monitor.width,
-                monitor.height,
-                monitor.scale,
-            ) == (1920, 0, 2560, 1440, 1.0)
-        }));
     }
 
     #[test]
@@ -3345,7 +3287,7 @@ mod tests {
         #[zbus::interface(name = "org.freedesktop.portal.RemoteDesktop")]
         impl RemoteDesktop {}
 
-        let dir = TempState::new();
+        let dir = TempState::with_bus();
         let socket = dir.path.join("bus");
         let address = format!("unix:path={}", socket.display());
         let probe = || remote_desktop_portal_missing_at(address.parse().unwrap());
@@ -3640,9 +3582,18 @@ mod tests {
 
     impl TempState {
         fn new() -> Self {
+            Self::create(|name| std::env::temp_dir().join(name))
+        }
+
+        /// A state dir that also holds a private bus's `bus` socket.
+        fn with_bus() -> Self {
+            Self::create(|name| crate::test_sockets::bus_fixture(name, "bus"))
+        }
+
+        fn create(place: impl FnOnce(&str) -> PathBuf) -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(1);
             let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
+            let path = place(&format!(
                 "cul-rd-persist-{}-{}-{nonce}",
                 std::process::id(),
                 std::time::SystemTime::now()

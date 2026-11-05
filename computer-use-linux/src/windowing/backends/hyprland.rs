@@ -940,9 +940,10 @@ mod tests {
         use std::io::{Read, Write};
         let mut random = [0u8; 8];
         getrandom::fill(&mut random).unwrap();
-        let dir = SocketDir(
-            std::env::temp_dir().join(format!("hypr-test-{}", u64::from_ne_bytes(random))),
-        );
+        let dir = SocketDir(crate::test_sockets::socket_fixture(
+            &format!("hypr-test-{}", u64::from_ne_bytes(random)),
+            ".socket.sock",
+        ));
         fs::create_dir(&dir.0).unwrap();
         let path = dir.0.join(".socket.sock");
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();

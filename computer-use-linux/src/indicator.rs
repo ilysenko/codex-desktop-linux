@@ -773,12 +773,11 @@ mod tests {
         }
     }
 
-    fn scratch_dir(_name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ci-{}-{:016x}",
-            std::process::id(),
-            getrandom::u64().unwrap()
-        ));
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = crate::test_sockets::socket_fixture(
+            &format!("cul-{}-{name}", std::process::id()),
+            SOCKET_NAME,
+        );
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

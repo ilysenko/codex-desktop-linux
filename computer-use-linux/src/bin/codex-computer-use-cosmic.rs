@@ -21,7 +21,10 @@ use wayland_protocols_wlr::output_management::v1::client::{
     zwlr_output_head_v1, zwlr_output_manager_v1, zwlr_output_mode_v1,
 };
 
-const HELP: &str = "codex-computer-use-cosmic\n\nUsage:\n  codex-computer-use-cosmic probe\n  codex-computer-use-cosmic list-windows\n  codex-computer-use-cosmic focused-window\n  codex-computer-use-cosmic monitor-layout\n  codex-computer-use-cosmic activate-window --window-id <id>";
+const BIN: &str = "codex-computer-use-cosmic";
+/// Exit status for a command line that names an unknown command, flag or
+/// argument. Nothing runs before the line is validated.
+const USAGE_EXIT: i32 = 2;
 const BACKEND: &str = "cosmic-wayland";
 /// Bounded waits keep the helper inside the main crate's 2s command timeout:
 /// ~0.8s for initial cosmic state + ~0.8s for post-activation verification.
@@ -182,7 +185,22 @@ struct AppData {
 }
 
 fn main() -> Result<()> {
-    match Command::parse(std::env::args().skip(1).collect())? {
+    let arguments: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect();
+    let command = match parse_invocation(&arguments) {
+        Ok(Invocation::Run(command)) => command,
+        Ok(Invocation::Help(subcommand)) => {
+            print!("{}", help_text(subcommand));
+            return Ok(());
+        }
+        Err(error) => {
+            eprint!("{}", usage_error_text(&error));
+            std::process::exit(USAGE_EXIT);
+        }
+    };
+    match command {
         Command::Probe => print_json(&probe()?),
         Command::ListWindows => print_json(&collect_windows()?),
         Command::FocusedWindow => print_json(&focused_window()?),
@@ -200,29 +218,235 @@ enum Command {
     ActivateWindow { window_id: u64 },
 }
 
-impl Command {
-    fn parse(args: Vec<String>) -> Result<Self> {
-        match args.as_slice() {
-            [command] if command == "probe" => Ok(Self::Probe),
-            [command] if command == "list-windows" => Ok(Self::ListWindows),
-            [command] if command == "focused-window" => Ok(Self::FocusedWindow),
-            [command] if command == "monitor-layout" => Ok(Self::MonitorLayout),
-            [command, flag, value] if command == "activate-window" && flag == "--window-id" => {
-                Ok(Self::ActivateWindow {
-                    window_id: value
-                        .parse::<u64>()
-                        .with_context(|| format!("invalid window id {value}"))?,
-                })
+struct Subcommand {
+    name: &'static str,
+    /// Arguments after the subcommand name, as shown in its usage line.
+    arguments: &'static str,
+    summary: &'static str,
+    details: &'static str,
+    /// Option lines for the help, before `-h, --help`.
+    options: &'static [(&'static str, &'static str)],
+}
+
+const SUBCOMMANDS: &[Subcommand] = &[
+    Subcommand {
+        name: "probe",
+        arguments: "",
+        summary: "Report whether COSMIC window listing and activation work, as JSON.",
+        details: "Connects to the Wayland display and reads COSMIC's toplevel protocols. Reads state only.",
+        options: &[],
+    },
+    Subcommand {
+        name: "list-windows",
+        arguments: "",
+        summary: "List COSMIC windows as JSON.",
+        details: "Reads COSMIC's toplevel protocols. Bounds are global logical coordinates when xdg-output gives the output position. Reads state only.",
+        options: &[],
+    },
+    Subcommand {
+        name: "focused-window",
+        arguments: "",
+        summary: "Print the focused COSMIC window as JSON, or null.",
+        details: "Reads COSMIC's toplevel protocols. Reads state only.",
+        options: &[],
+    },
+    Subcommand {
+        name: "monitor-layout",
+        arguments: "",
+        summary: "Print the logical position, size and scale of each enabled output as JSON.",
+        details: "Reads wlr-output-management. Reads state only.",
+        options: &[],
+    },
+    Subcommand {
+        name: "activate-window",
+        arguments: "--window-id ID",
+        summary: "Activate a COSMIC window and print whether it took focus, as JSON.",
+        details: "ID is a window_id from list-windows. The helper waits up to 0.8 seconds for the window to report focus.",
+        options: &[("--window-id ID", "Window id from list-windows.")],
+    },
+];
+
+enum Invocation {
+    Help(Option<&'static Subcommand>),
+    Run(Command),
+}
+
+struct UsageError {
+    message: String,
+    subcommand: Option<&'static Subcommand>,
+}
+
+fn is_help_flag(argument: &str) -> bool {
+    matches!(argument, "-h" | "--help")
+}
+
+/// Validates the whole command line before anything runs, with the main
+/// CLI's rules: `-h` or `--help` anywhere before `--` prints help, any other
+/// flag the command does not take is an error, and so is any argument.
+fn parse_invocation(arguments: &[String]) -> std::result::Result<Invocation, UsageError> {
+    let Some(name) = arguments.first() else {
+        return Ok(Invocation::Help(None));
+    };
+    if is_help_flag(name) {
+        return Ok(Invocation::Help(None));
+    }
+    let Some(subcommand) = SUBCOMMANDS
+        .iter()
+        .find(|subcommand| subcommand.name == name)
+    else {
+        let message = if name.starts_with('-') {
+            format!("unknown option '{name}'")
+        } else {
+            format!("unknown command '{name}'")
+        };
+        return Err(UsageError {
+            message,
+            subcommand: None,
+        });
+    };
+    let rest = &arguments[1..];
+    let options_end = rest
+        .iter()
+        .position(|argument| argument == "--")
+        .unwrap_or(rest.len());
+    let options = &rest[..options_end];
+    if options.iter().any(|argument| is_help_flag(argument)) {
+        return Ok(Invocation::Help(Some(subcommand)));
+    }
+    let error = |message: String| UsageError {
+        message,
+        subcommand: Some(subcommand),
+    };
+    let takes_window_id = subcommand.name == "activate-window";
+    let mut window_id = None;
+    let mut index = 0;
+    while index < options.len() {
+        let argument = &options[index];
+        index += 1;
+        let value = if takes_window_id && argument == "--window-id" {
+            let Some(value) = options.get(index) else {
+                return Err(error("'--window-id' needs a value".to_string()));
+            };
+            index += 1;
+            value.as_str()
+        } else if let Some(value) = argument
+            .strip_prefix("--window-id=")
+            .filter(|_| takes_window_id)
+        {
+            value
+        } else if argument.len() > 1 && argument.starts_with('-') {
+            return Err(error(format!(
+                "unknown option '{argument}' for '{}'",
+                subcommand.name
+            )));
+        } else {
+            return Err(error(format!(
+                "unexpected argument '{argument}' for '{}'",
+                subcommand.name
+            )));
+        };
+        if window_id.is_some() {
+            return Err(error("'--window-id' given more than once".to_string()));
+        }
+        window_id = Some(
+            value
+                .parse::<u64>()
+                .map_err(|_| error(format!("'{value}' is not a window id")))?,
+        );
+    }
+    if let Some(argument) = rest.get(options_end + 1) {
+        return Err(error(format!(
+            "unexpected argument '{argument}' for '{}'",
+            subcommand.name
+        )));
+    }
+    let command = match subcommand.name {
+        "probe" => Command::Probe,
+        "list-windows" => Command::ListWindows,
+        "focused-window" => Command::FocusedWindow,
+        "monitor-layout" => Command::MonitorLayout,
+        _ => Command::ActivateWindow {
+            window_id: window_id.ok_or_else(|| {
+                error(format!(
+                    "'{}' needs {}",
+                    subcommand.name, subcommand.arguments
+                ))
+            })?,
+        },
+    };
+    Ok(Invocation::Run(command))
+}
+
+fn usage_line(subcommand: &Subcommand) -> String {
+    if subcommand.arguments.is_empty() {
+        format!("{BIN} {}", subcommand.name)
+    } else {
+        format!("{BIN} {} {}", subcommand.name, subcommand.arguments)
+    }
+}
+
+fn help_text(subcommand: Option<&Subcommand>) -> String {
+    match subcommand {
+        Some(subcommand) => {
+            let mut options = subcommand.options.to_vec();
+            options.push(("-h, --help", "Print this help and exit."));
+            let width = options
+                .iter()
+                .map(|(flag, _)| flag.len())
+                .max()
+                .unwrap_or(0);
+            let options: String = options
+                .iter()
+                .map(|(flag, text)| format!("  {flag:width$}  {text}\n"))
+                .collect();
+            format!(
+                "{}\n\nUsage:\n  {}\n\n{}\n\nOptions:\n{options}",
+                subcommand.summary,
+                usage_line(subcommand),
+                subcommand.details
+            )
+        }
+        None => {
+            let width = SUBCOMMANDS
+                .iter()
+                .map(|subcommand| usage_line(subcommand).len())
+                .max()
+                .unwrap_or(0);
+            let mut text =
+                format!("{BIN}: COSMIC window helper for codex-computer-use-linux.\n\nUsage:\n");
+            for subcommand in SUBCOMMANDS {
+                text.push_str(&format!(
+                    "  {:width$}  {}\n",
+                    usage_line(subcommand),
+                    subcommand.summary
+                ));
             }
-            [command] if command == "--help" || command == "-h" => {
-                println!("{HELP}");
-                std::process::exit(0);
-            }
-            [] => {
-                println!("{HELP}");
-                std::process::exit(0);
-            }
-            _ => bail!("unknown arguments. Expected one of: probe, list-windows, focused-window, monitor-layout, activate-window --window-id <id>"),
+            text.push_str(&format!(
+                "\nThe codex-computer-use-linux server runs these commands on COSMIC. Run '{BIN} COMMAND --help' for what a command does. Every command takes -h and --help.\n"
+            ));
+            text
+        }
+    }
+}
+
+fn usage_error_text(error: &UsageError) -> String {
+    match error.subcommand {
+        Some(subcommand) => format!(
+            "{BIN}: {}\nUsage: {}\nRun '{BIN} {} --help' for details.\n",
+            error.message,
+            usage_line(subcommand),
+            subcommand.name
+        ),
+        None => {
+            let names: Vec<&str> = SUBCOMMANDS
+                .iter()
+                .map(|subcommand| subcommand.name)
+                .collect();
+            format!(
+                "{BIN}: {}. Expected one of: {}\nRun '{BIN} --help' for usage.\n",
+                error.message,
+                names.join(", ")
+            )
         }
     }
 }
@@ -1029,25 +1253,77 @@ fn print_json<T: Serialize>(value: &T) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_activate_window_args_requires_numeric_id() {
-        let error = Command::parse(vec![
-            "activate-window".to_string(),
-            "--window-id".to_string(),
-            "nope".to_string(),
-        ])
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("invalid window id"));
+    fn parse(arguments: &[&str]) -> String {
+        let arguments: Vec<String> = arguments.iter().map(|value| value.to_string()).collect();
+        match parse_invocation(&arguments) {
+            Ok(Invocation::Help(None)) => "help".to_string(),
+            Ok(Invocation::Help(Some(subcommand))) => format!("help {}", subcommand.name),
+            Ok(Invocation::Run(command)) => format!("run {command:?}"),
+            Err(error) => format!("error: {}", error.message),
+        }
     }
 
     #[test]
-    fn parses_monitor_layout_command() {
-        assert!(matches!(
-            Command::parse(vec!["monitor-layout".to_string()]).unwrap(),
-            Command::MonitorLayout
-        ));
+    fn command_lines_follow_the_main_cli_rules() {
+        assert_eq!(parse(&[]), "help");
+        assert_eq!(parse(&["-h"]), "help");
+        assert_eq!(parse(&["monitor-layout"]), "run MonitorLayout");
+        assert_eq!(parse(&["probe", "--help"]), "help probe");
+        assert_eq!(
+            parse(&["probe", "--", "--help"]),
+            "error: unexpected argument '--help' for 'probe'"
+        );
+        assert_eq!(
+            parse(&["activate-window", "--window-id", "7"]),
+            "run ActivateWindow { window_id: 7 }"
+        );
+        assert_eq!(
+            parse(&["activate-window", "--window-id=7", "--"]),
+            "run ActivateWindow { window_id: 7 }"
+        );
+        assert_eq!(
+            parse(&["activate-window", "--window-id", "-h"]),
+            "help activate-window"
+        );
+        assert_eq!(
+            parse(&["activate-window", "--window-id", "nope"]),
+            "error: 'nope' is not a window id"
+        );
+        assert_eq!(
+            parse(&["activate-window", "--window-id", "--", "7"]),
+            "error: '--window-id' needs a value"
+        );
+        assert_eq!(
+            parse(&["activate-window", "--window-id", "1", "--window-id", "2"]),
+            "error: '--window-id' given more than once"
+        );
+        assert_eq!(
+            parse(&["activate-window"]),
+            "error: 'activate-window' needs --window-id ID"
+        );
+        assert_eq!(
+            parse(&["probe", "--window-id", "7"]),
+            "error: unknown option '--window-id' for 'probe'"
+        );
+        assert_eq!(
+            parse(&["probe", "-"]),
+            "error: unexpected argument '-' for 'probe'"
+        );
+        assert_eq!(parse(&["--version"]), "error: unknown option '--version'");
+        assert_eq!(parse(&["windows"]), "error: unknown command 'windows'");
+    }
+
+    #[test]
+    fn helper_calls_from_the_server_parse() {
+        // The argument lists src/cosmic_helper.rs passes.
+        assert_eq!(parse(&["probe"]), "run Probe");
+        assert_eq!(parse(&["list-windows"]), "run ListWindows");
+        assert_eq!(parse(&["focused-window"]), "run FocusedWindow");
+        assert_eq!(parse(&["monitor-layout"]), "run MonitorLayout");
+        assert_eq!(
+            parse(&["activate-window", "--window-id", &u64::MAX.to_string()]),
+            format!("run ActivateWindow {{ window_id: {} }}", u64::MAX)
+        );
     }
 
     #[test]

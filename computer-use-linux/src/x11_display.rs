@@ -735,17 +735,24 @@ mod tests {
     #[test]
     fn unix_connect_fails_promptly_when_listen_queue_is_full() {
         use std::os::unix::net::UnixListener;
-        let path = format!(
-            "/tmp/computer-use-linux-x11-deadline-{}-{}",
-            std::process::id(),
-            getrandom::u64().unwrap()
+        let path = crate::test_sockets::socket_fixture(
+            &format!(
+                "cul-x11-deadline-{}-{}",
+                std::process::id(),
+                getrandom::u64().unwrap()
+            ),
+            "",
         );
         let listener = UnixListener::bind(&path).unwrap();
         // SAFETY: listener owns a valid listening socket; shrink its backlog.
         assert_eq!(unsafe { libc::listen(listener.as_raw_fd(), 0) }, 0);
         let queued = UnixStream::connect(&path).unwrap();
+        // Like its X11 and Wayland callers, connect_unix takes UTF-8 paths.
+        let text = path
+            .to_str()
+            .expect("connect_unix needs a UTF-8 TMPDIR or XDG_RUNTIME_DIR");
         let started = Instant::now();
-        assert!(connect_unix(&path, started + Duration::from_millis(70)).is_err());
+        assert!(connect_unix(text, started + Duration::from_millis(70)).is_err());
         assert!(started.elapsed() < Duration::from_millis(500));
         drop(queued);
         drop(listener);

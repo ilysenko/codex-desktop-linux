@@ -17,6 +17,14 @@ pub const UUID: &str = identity::GNOME_EXTENSION_UUID;
 const METADATA_JSON: &str = include_str!("../gnome-shell-extension/metadata.json");
 const EXTENSION_JS: &str = include_str!("../gnome-shell-extension/extension.js");
 const SYSTEM_EXTENSIONS_DIR: &str = "/usr/share/gnome-shell/extensions";
+/// metadata.json fields whose values GNOME Shell only displays. The Shell
+/// reads metadata.json when it loads an extension and imports extension.js
+/// once per session. It requires name and description to be strings and acts
+/// on uuid, shell-version, session-modes and version. The Extension base
+/// class reads uuid and gettext-domain, and name only as the getLogger
+/// prefix, which extension.js does not use. A change to these fields alone
+/// needs no reload.
+const DISPLAY_ONLY_METADATA: &[&str] = &["name", "description", "url", "version-name", "donations"];
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct WindowTargetingSetupReport {
@@ -50,6 +58,7 @@ pub async fn setup_window_targeting_report() -> WindowTargetingSetupReport {
     let extension_was_enabled = gnome_extension_enabled();
     let mut wrote_files = false;
     let mut changed_files = false;
+    let mut display_metadata_changed = false;
     let mut file_error = None;
     let mut removed_user_copy = false;
     if system_installed {
@@ -63,6 +72,7 @@ pub async fn setup_window_targeting_report() -> WindowTargetingSetupReport {
             Ok(report) => {
                 wrote_files = report.wrote_files;
                 changed_files = report.changed_files;
+                display_metadata_changed = report.display_metadata_changed;
             }
             Err(error) => file_error = Some(error),
         }
@@ -109,10 +119,13 @@ pub async fn setup_window_targeting_report() -> WindowTargetingSetupReport {
         "Codex GNOME Shell extension files are available, but enabling the extension failed. Enable it with gnome-extensions after GNOME Shell sees the new extension."
             .to_string()
     } else if system_reload_pending {
-        "GNOME Shell must reload before the computer-use-linux system extension is active. Log out and back in so that GNOME Shell loads the system extension."
+        "GNOME Shell must reload before the Codex GNOME Shell extension is active. Log out and back in so that GNOME Shell loads the system extension."
             .to_string()
     } else if windows_error.is_none() && requires_shell_reload {
         shell_reload_message(extension_was_enabled).to_string()
+    } else if windows_error.is_none() && display_metadata_changed {
+        "Codex GNOME Shell extension is active and window targeting is available. Only its display metadata changed, which needs no reload."
+            .to_string()
     } else if windows_error.is_none() {
         "Codex GNOME Shell extension is active and window targeting is available.".to_string()
     } else {
@@ -134,7 +147,11 @@ pub async fn setup_window_targeting_report() -> WindowTargetingSetupReport {
 
 struct ExtensionWriteReport {
     wrote_files: bool,
+    /// extension.js changed, or a metadata.json field GNOME Shell acts on.
+    /// The running Shell keeps the old copy until it loads the extension again.
     changed_files: bool,
+    /// metadata.json changed in display-only fields and nothing else did.
+    display_metadata_changed: bool,
 }
 
 fn write_extension_files(extension_dir: &Path) -> Result<ExtensionWriteReport, String> {
@@ -142,8 +159,14 @@ fn write_extension_files(extension_dir: &Path) -> Result<ExtensionWriteReport, S
         .map_err(|error| format!("failed to create {}: {error}", extension_dir.display()))?;
     let metadata_json = render_extension_asset(METADATA_JSON);
     let extension_js = render_extension_asset(EXTENSION_JS);
-    let changed_files = file_content_changed(&extension_dir.join("metadata.json"), &metadata_json)
-        || file_content_changed(&extension_dir.join("extension.js"), &extension_js);
+    let installed_metadata = fs::read_to_string(extension_dir.join("metadata.json")).ok();
+    let metadata_changed = installed_metadata.as_deref() != Some(metadata_json.as_str());
+    let changed_files = file_content_changed(&extension_dir.join("extension.js"), &extension_js)
+        || (metadata_changed
+            && installed_metadata
+                .as_deref()
+                .is_none_or(|installed| metadata_needs_reload(installed, &metadata_json)));
+    let display_metadata_changed = metadata_changed && !changed_files;
 
     fs::write(extension_dir.join("metadata.json"), metadata_json).map_err(|error| {
         format!(
@@ -160,7 +183,26 @@ fn write_extension_files(extension_dir: &Path) -> Result<ExtensionWriteReport, S
     Ok(ExtensionWriteReport {
         wrote_files: true,
         changed_files,
+        display_metadata_changed,
     })
+}
+
+/// Whether two metadata.json texts differ outside the display-only fields.
+/// Text that is not a JSON object counts as a change.
+fn metadata_needs_reload(installed: &str, expected: &str) -> bool {
+    let load_fields = |text: &str| match serde_json::from_str(text) {
+        Ok(serde_json::Value::Object(mut fields)) => {
+            for field in DISPLAY_ONLY_METADATA {
+                fields.remove(*field);
+            }
+            Some(fields)
+        }
+        _ => None,
+    };
+    match (load_fields(installed), load_fields(expected)) {
+        (Some(installed), Some(expected)) => installed != expected,
+        _ => true,
+    }
 }
 
 fn remove_user_copy(extension_dir: &Path) -> Result<bool, String> {
@@ -343,6 +385,7 @@ fn enabled_extensions_literal(current: &str) -> Option<String> {
     if enabled_extensions_contains_uuid(trimmed) {
         return Some(trimmed.to_string());
     }
+
     let quoted = format!("'{UUID}'");
     let list = if trimmed == "@as []" { "[]" } else { trimmed };
     if list == "[]" {
@@ -487,6 +530,67 @@ mod tests {
         let third = write_extension_files(&extension_dir.0).unwrap();
         assert!(third.wrote_files);
         assert!(third.changed_files);
+        assert!(!third.display_metadata_changed);
+    }
+
+    #[test]
+    fn only_display_metadata_changes_skip_the_reload() {
+        let expected = render_extension_asset(METADATA_JSON);
+        let fields: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&expected).unwrap();
+        let with = |edit: &dyn Fn(&mut serde_json::Map<String, serde_json::Value>)| {
+            let mut edited = fields.clone();
+            edit(&mut edited);
+            serde_json::to_string(&edited).unwrap()
+        };
+        // 0.7.43 had no url; key order and layout do not matter either.
+        assert!(!metadata_needs_reload(
+            &with(&|m| {
+                m.remove("url");
+            }),
+            &expected
+        ));
+        assert!(!metadata_needs_reload(
+            &with(&|m| {
+                m.insert("name".into(), "Old name".into());
+                m.insert("description".into(), "Old text".into());
+                m.insert("version-name".into(), "0.1".into());
+            }),
+            &expected
+        ));
+        assert!(metadata_needs_reload(
+            &with(&|m| {
+                m.insert("shell-version".into(), serde_json::json!(["45"]));
+            }),
+            &expected
+        ));
+        assert!(metadata_needs_reload(
+            &with(&|m| {
+                m.insert("session-modes".into(), serde_json::json!(["user"]));
+            }),
+            &expected
+        ));
+        assert!(metadata_needs_reload(
+            &with(&|m| {
+                m.insert("version".into(), 2.into());
+            }),
+            &expected
+        ));
+        assert!(metadata_needs_reload("{", &expected));
+        assert!(metadata_needs_reload("[]", &expected));
+    }
+
+    #[test]
+    fn extension_reads_no_display_metadata() {
+        // DISPLAY_ONLY_METADATA holds only while extension.js reads no
+        // metadata itself and never logs through getLogger, whose prefix is
+        // the name.
+        for reader in ["metadata", "getLogger"] {
+            assert!(
+                !EXTENSION_JS.contains(reader),
+                "extension.js uses {reader}; check DISPLAY_ONLY_METADATA"
+            );
+        }
     }
 
     #[test]
@@ -498,6 +602,8 @@ mod tests {
         assert!(!extension_dir.0.exists());
         assert!(!remove_user_copy(&extension_dir.0).unwrap());
     }
+
+    const PRIVATE_BUS_CONFIG: &str = "<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><policy context=\"default\"><allow own=\"*\"/><allow send_destination=\"*\"/><allow receive_sender=\"*\"/></policy></busconfig>";
 
     struct FakeShellExtensions {
         path: std::sync::Arc<std::sync::Mutex<PathBuf>>,
@@ -528,9 +634,17 @@ mod tests {
                 let _ = self.0.wait();
             }
         }
+        // No service directories, so nothing on this bus can activate a
+        // real desktop service.
+        let bus_dir = TestExtensionDirectory::new();
+        fs::create_dir_all(&bus_dir.0).unwrap();
+        let config = bus_dir.0.join("bus.conf");
+        fs::write(&config, PRIVATE_BUS_CONFIG).unwrap();
         let mut bus = PrivateBus(
             Command::new("dbus-daemon")
-                .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+                .arg(format!("--config-file={}", config.display()))
+                .args(["--nofork", "--nopidfile", "--print-address=1"])
+                .env_clear()
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap(),

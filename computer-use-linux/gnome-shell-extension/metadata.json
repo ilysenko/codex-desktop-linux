@@ -2,6 +2,7 @@
   "uuid": "codex-window-control@openai.com",
   "name": "Codex Window Control",
   "description": "Local GNOME Shell window control and agent activity indicator for Codex Computer Use on Linux.",
+  "url": "https://github.com/ilysenko/codex-desktop-linux",
   "shell-version": [
     "45",
     "46",
