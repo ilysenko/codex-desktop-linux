@@ -86,6 +86,8 @@ function runX11ReleaseMonitor({
           ...process.env,
           DISPLAY: ":99",
           PATH: `${binDir}${path.delimiter}${hostPath}`,
+          // stdbuf (uutils) leaves an empty .tmpXXXXXX in TMPDIR; keep it in the fixture.
+          TMPDIR: tempDir,
         },
         timeout,
       },
@@ -333,6 +335,8 @@ test("X11 release watcher exits when a required modifier is released", () => {
           ...process.env,
           DISPLAY: ":99",
           PATH: `${binDir}${path.delimiter}${hostPath}`,
+          // stdbuf (uutils) leaves an empty .tmpXXXXXX in TMPDIR; keep it in the fixture.
+          TMPDIR: tempDir,
           STATE_FILE: stateFile,
         },
         timeout: 2000,
@@ -376,6 +380,8 @@ test("X11 release watcher exits when the primary key is released while the modif
           ...process.env,
           DISPLAY: ":99",
           PATH: `${binDir}${path.delimiter}${hostPath}`,
+          // stdbuf (uutils) leaves an empty .tmpXXXXXX in TMPDIR; keep it in the fixture.
+          TMPDIR: tempDir,
         },
         timeout: X11_RELEASE_MONITOR_TEST_TIMEOUT_MS,
       },
@@ -418,6 +424,8 @@ test("X11 release watcher prefers resolved keycodes over fallback codes", () => 
           ...process.env,
           DISPLAY: ":99",
           PATH: `${binDir}${path.delimiter}${hostPath}`,
+          // stdbuf (uutils) leaves an empty .tmpXXXXXX in TMPDIR; keep it in the fixture.
+          TMPDIR: tempDir,
         },
         timeout: X11_RELEASE_MONITOR_TEST_TIMEOUT_MS,
       },
