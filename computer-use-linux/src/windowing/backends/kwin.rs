@@ -2561,10 +2561,9 @@ mod callback_tests {
 #[cfg(test)]
 mod transaction_tests {
     use super::*;
+    use crate::test_sockets::PrivateBus;
     use std::{
         future::pending,
-        io::{BufRead, BufReader},
-        process::{Child, Command, Stdio},
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
@@ -2612,44 +2611,12 @@ mod transaction_tests {
         }
     }
 
-    struct TestSessionBus {
-        child: Child,
-        address: String,
-    }
-
-    impl TestSessionBus {
-        fn start() -> Self {
-            let mut child = Command::new("dbus-daemon")
-                .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .expect("start private dbus-daemon");
-            let mut address = String::new();
-            BufReader::new(child.stdout.take().expect("private bus stdout"))
-                .read_line(&mut address)
-                .expect("read private bus address");
-            assert!(!address.trim().is_empty(), "private bus emitted no address");
-            Self {
-                child,
-                address: address.trim().to_string(),
-            }
-        }
-    }
-
-    impl Drop for TestSessionBus {
-        fn drop(&mut self) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-
     async fn assert_transaction_timeout_cleans_up(behavior: FakeKwinBehavior) {
-        let bus = TestSessionBus::start();
+        let bus = PrivateBus::start("cul-kwin-bus");
         let load_calls = Arc::new(AtomicUsize::new(0));
         let start_calls = Arc::new(AtomicUsize::new(0));
         let unload_calls = Arc::new(AtomicUsize::new(0));
-        let service_connection = zbus::connection::Builder::address(bus.address.as_str())
+        let service_connection = zbus::connection::Builder::address(bus.address())
             .unwrap()
             .name(KWIN_SCRIPTING_SERVICE)
             .unwrap()
@@ -2666,7 +2633,7 @@ mod transaction_tests {
             .build()
             .await
             .unwrap();
-        let client_connection = zbus::connection::Builder::address(bus.address.as_str())
+        let client_connection = zbus::connection::Builder::address(bus.address())
             .unwrap()
             .build()
             .await
@@ -2726,11 +2693,11 @@ mod transaction_tests {
 
     #[tokio::test]
     async fn duplicate_callback_path_fails_without_disturbing_its_owner() {
-        let bus = TestSessionBus::start();
+        let bus = PrivateBus::start("cul-kwin-bus");
         let load_calls = Arc::new(AtomicUsize::new(0));
         let start_calls = Arc::new(AtomicUsize::new(0));
         let unload_calls = Arc::new(AtomicUsize::new(0));
-        let service_connection = zbus::connection::Builder::address(bus.address.as_str())
+        let service_connection = zbus::connection::Builder::address(bus.address())
             .unwrap()
             .name(KWIN_SCRIPTING_SERVICE)
             .unwrap()
@@ -2747,7 +2714,7 @@ mod transaction_tests {
             .build()
             .await
             .unwrap();
-        let client_connection = zbus::connection::Builder::address(bus.address.as_str())
+        let client_connection = zbus::connection::Builder::address(bus.address())
             .unwrap()
             .build()
             .await

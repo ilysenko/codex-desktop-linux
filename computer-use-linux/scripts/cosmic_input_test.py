@@ -18,7 +18,7 @@ import threading
 import time
 import zlib
 
-from socket_fixture import INDICATOR_SOCKET, socket_tempdir
+from socket_fixture import INDICATOR_SOCKET, private_bus_config, socket_tempdir
 
 BINARY = str(Path(sys.argv[1]).resolve())
 
@@ -284,12 +284,15 @@ if __name__ == '__main__':
     if len(sys.argv) > 2 and sys.argv[2] == '--private':
         run_private(sys.argv[3])
     else:
-        # The directory is the server's runtime dir.
-        with socket_tempdir('cul-portal-', [INDICATOR_SOCKET],
+        # The directory is the server's runtime dir and the private bus's.
+        with socket_tempdir('cul-portal-', [INDICATOR_SOCKET], bus_dir='',
                             dir=Path.home()/'.cache') as directory:
             env = dict(os.environ, XDG_RUNTIME_DIR=directory, XDG_CONFIG_HOME=directory+'/config')
-            proc = subprocess.Popen(['dbus-run-session', '--', '/usr/bin/python3', __file__,
-                                     BINARY, '--private', directory], env=env, start_new_session=True)
+            # No service directories: the fixture owns the portal name itself.
+            config = private_bus_config(Path(directory)/'bus.conf', directory)
+            proc = subprocess.Popen(['dbus-run-session', '--config-file', str(config), '--',
+                                     '/usr/bin/python3', __file__, BINARY, '--private', directory],
+                                    env=env, start_new_session=True)
             try:
                 raise SystemExit(proc.wait(timeout=120))
             finally:

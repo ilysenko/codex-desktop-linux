@@ -1598,40 +1598,11 @@ fn object_ref_id(object_ref: &ObjectRefOwned) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        io::{BufRead, BufReader},
-        process::{Child, Command, Stdio},
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc, Mutex,
-        },
+    use crate::test_sockets::PrivateBus;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
     };
-
-    struct PrivateBus(Child);
-
-    impl PrivateBus {
-        fn start() -> (Self, String) {
-            let mut bus = Self(
-                Command::new("dbus-daemon")
-                    .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
-                    .stdout(Stdio::piped())
-                    .spawn()
-                    .unwrap(),
-            );
-            let mut address = String::new();
-            BufReader::new(bus.0.stdout.take().unwrap())
-                .read_line(&mut address)
-                .unwrap();
-            (bus, address.trim().to_string())
-        }
-    }
-
-    impl Drop for PrivateBus {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
 
     const EDITABLE_FIXTURE_PATH: &str = "/editable";
 
@@ -1854,12 +1825,13 @@ mod tests {
         zbus::Connection,
         Arc<Mutex<FakeEditableState>>,
     ) {
-        let (bus, address) = PrivateBus::start();
+        let bus = PrivateBus::start("cul-atspi-bus");
+        let address = bus.address();
         let state = Arc::new(Mutex::new(FakeEditableState {
             contents: initial_contents.to_string(),
             ..Default::default()
         }));
-        let mut builder = zbus::connection::Builder::address(address.as_str())
+        let mut builder = zbus::connection::Builder::address(address)
             .unwrap()
             .serve_at(EDITABLE_FIXTURE_PATH, FakeEditableAccessible(config))
             .unwrap()
@@ -1889,7 +1861,7 @@ mod tests {
                 .unwrap();
         }
         let peer = builder.build().await.unwrap();
-        let client = zbus::connection::Builder::address(address.as_str())
+        let client = zbus::connection::Builder::address(address)
             .unwrap()
             .build()
             .await
@@ -2403,15 +2375,16 @@ mod tests {
 
     #[tokio::test]
     async fn qt_action_names_do_not_depend_on_localized_names() {
-        let (_bus, address) = PrivateBus::start();
-        let peer = zbus::connection::Builder::address(address.as_str())
+        let bus = PrivateBus::start("cul-atspi-bus");
+        let address = bus.address();
+        let peer = zbus::connection::Builder::address(address)
             .unwrap()
             .serve_at("/actions/qt", FakeQtAction)
             .unwrap()
             .build()
             .await
             .unwrap();
-        let client = zbus::connection::Builder::address(address.as_str())
+        let client = zbus::connection::Builder::address(address)
             .unwrap()
             .build()
             .await
@@ -2441,11 +2414,12 @@ mod tests {
 
     #[tokio::test]
     async fn indexed_children_resolve_webkit_names_on_the_accessibility_bus() {
-        let (_bus, address) = PrivateBus::start();
+        let bus = PrivateBus::start("cul-atspi-bus");
+        let address = bus.address();
 
         let webkit_name = "org.webkit.MockWebProcess";
         let child_path = "/org/a11y/webkit/accessible/child";
-        let webkit = zbus::connection::Builder::address(address.trim())
+        let webkit = zbus::connection::Builder::address(address)
             .unwrap()
             .name(webkit_name)
             .unwrap()
@@ -2464,7 +2438,7 @@ mod tests {
             .await
             .unwrap();
         let owner = webkit.unique_name().unwrap().to_string();
-        let gtk = zbus::connection::Builder::address(address.trim())
+        let gtk = zbus::connection::Builder::address(address)
             .unwrap()
             .serve_at(
                 "/org/a11y/atspi/accessible/root",
@@ -2486,7 +2460,7 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let client = zbus::connection::Builder::address(address.trim())
+        let client = zbus::connection::Builder::address(address)
             .unwrap()
             .build()
             .await
@@ -2539,7 +2513,8 @@ mod tests {
 
     #[tokio::test]
     async fn indexed_actions_bound_untrusted_counts_before_reading_indices() {
-        let (_bus, address) = PrivateBus::start();
+        let bus = PrivateBus::start("cul-atspi-bus");
+        let address = bus.address();
         let name_reads = Arc::new(AtomicUsize::new(0));
         let counts = [
             -1,
@@ -2548,7 +2523,7 @@ mod tests {
             0,
             MAX_ACTIONS_PER_OBJECT,
         ];
-        let mut builder = zbus::connection::Builder::address(address.as_str()).unwrap();
+        let mut builder = zbus::connection::Builder::address(address).unwrap();
         for (index, count) in counts.iter().enumerate() {
             builder = builder
                 .serve_at(
@@ -2562,7 +2537,7 @@ mod tests {
                 .unwrap();
         }
         let peer = builder.build().await.unwrap();
-        let client = zbus::connection::Builder::address(address.as_str())
+        let client = zbus::connection::Builder::address(address)
             .unwrap()
             .build()
             .await
@@ -2597,9 +2572,10 @@ mod tests {
 
     #[tokio::test]
     async fn indexed_actions_time_out_the_entire_read() {
-        let (_bus, address) = PrivateBus::start();
+        let bus = PrivateBus::start("cul-atspi-bus");
+        let address = bus.address();
         let name_reads = Arc::new(AtomicUsize::new(0));
-        let peer = zbus::connection::Builder::address(address.as_str())
+        let peer = zbus::connection::Builder::address(address)
             .unwrap()
             .serve_at(
                 "/actions/stalled",
@@ -2613,7 +2589,7 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let client = zbus::connection::Builder::address(address.as_str())
+        let client = zbus::connection::Builder::address(address)
             .unwrap()
             .build()
             .await

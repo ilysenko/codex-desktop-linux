@@ -7,7 +7,9 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    env, fs, io,
+    env,
+    ffi::OsString,
+    fs, io,
     path::{Path, PathBuf},
     process::Command,
     time::Duration,
@@ -24,7 +26,8 @@ const SYSTEM_EXTENSIONS_DIR: &str = "/usr/share/gnome-shell/extensions";
 /// class reads uuid and gettext-domain, and name only as the getLogger
 /// prefix, which extension.js does not use. A change to these fields alone
 /// needs no reload.
-const DISPLAY_ONLY_METADATA: &[&str] = &["name", "description", "url", "version-name", "donations"];
+pub(crate) const DISPLAY_ONLY_METADATA: &[&str] =
+    &["name", "description", "url", "version-name", "donations"];
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct WindowTargetingSetupReport {
@@ -47,7 +50,15 @@ pub struct SetupCommandReport {
 pub async fn setup_window_targeting_report() -> WindowTargetingSetupReport {
     hydrate_session_bus_env();
 
-    let user_dir = extension_dir();
+    // A per-user copy GNOME Shell loaded names the Shell's own user
+    // extension dir. The host may set XDG_DATA_HOME differently, so this
+    // process's value is only the fallback.
+    let loaded = loaded_extension().await;
+    let user_dir = loaded
+        .as_ref()
+        .filter(|extension| extension.per_user)
+        .map(|extension| extension.path.clone())
+        .unwrap_or_else(extension_dir);
     let system_dir = Path::new(SYSTEM_EXTENSIONS_DIR).join(UUID);
     let system_installed = system_dir.join("metadata.json").is_file();
     let extension_dir = if system_installed {
@@ -98,10 +109,9 @@ pub async fn setup_window_targeting_report() -> WindowTargetingSetupReport {
 
     // Enabling an extension does not replace the object cached by GNOME Shell.
     let system_reload_pending = if system_installed {
-        let loaded_path = loaded_extension_path().await;
         system_extension_requires_shell_reload(
             removed_user_copy,
-            loaded_path.as_deref(),
+            loaded.as_ref().map(|extension| extension.path.as_path()),
             &extension_dir,
         )
     } else {
@@ -216,10 +226,22 @@ fn remove_user_copy(extension_dir: &Path) -> Result<bool, String> {
     }
 }
 
-async fn loaded_extension_path() -> Option<PathBuf> {
+/// The copy of the extension GNOME Shell loaded.
+#[derive(Debug, PartialEq)]
+struct LoadedExtension {
+    path: PathBuf,
+    /// The Shell found it in its user extension dir, not a system one.
+    per_user: bool,
+}
+
+/// `ExtensionType.PER_USER` in GNOME Shell's `js/misc/extensionUtils.js`.
+/// `GetExtensionInfo` sends numbers as doubles.
+const PER_USER_EXTENSION: f64 = 2.0;
+
+async fn loaded_extension() -> Option<LoadedExtension> {
     tokio::time::timeout(Duration::from_secs(2), async {
         let connection = zbus::Connection::session().await.ok()?;
-        loaded_extension_path_on_connection(&connection)
+        loaded_extension_on_connection(&connection)
             .await
             .ok()
             .flatten()
@@ -229,9 +251,9 @@ async fn loaded_extension_path() -> Option<PathBuf> {
     .flatten()
 }
 
-async fn loaded_extension_path_on_connection(
+async fn loaded_extension_on_connection(
     connection: &zbus::Connection,
-) -> Result<Option<PathBuf>, zbus::Error> {
+) -> Result<Option<LoadedExtension>, zbus::Error> {
     let proxy = zbus::Proxy::new(
         connection,
         "org.gnome.Shell",
@@ -241,10 +263,15 @@ async fn loaded_extension_path_on_connection(
     .await?;
     let info: HashMap<String, zbus::zvariant::OwnedValue> =
         proxy.call("GetExtensionInfo", &(UUID,)).await?;
+    let per_user =
+        info.get("type").and_then(|value| f64::try_from(value).ok()) == Some(PER_USER_EXTENSION);
     Ok(info
         .get("path")
         .and_then(|value| <&str>::try_from(value).ok())
-        .map(PathBuf::from))
+        .map(|path| LoadedExtension {
+            path: PathBuf::from(path),
+            per_user,
+        }))
 }
 
 fn system_extension_requires_shell_reload(
@@ -441,10 +468,20 @@ fn output_detail(stdout: &[u8], stderr: &[u8], fallback: &str) -> String {
     fallback.to_string()
 }
 
+/// The user copy GNOME Shell loads: `extensions/UUID` under
+/// `g_get_user_data_dir()/gnome-shell`.
 fn extension_dir() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".local/share/gnome-shell/extensions")
+    user_extension_dir(env::var_os("XDG_DATA_HOME"), env::var_os("HOME"))
+}
+
+/// GLib's user data dir is `XDG_DATA_HOME` when it is set and not empty,
+/// else `HOME/.local/share`.
+fn user_extension_dir(data_home: Option<OsString>, home: Option<OsString>) -> PathBuf {
+    data_home
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(home.unwrap_or_else(|| ".".into())).join(".local/share"))
+        .join("gnome-shell/extensions")
         .join(UUID)
 }
 
@@ -603,7 +640,17 @@ mod tests {
         assert!(!remove_user_copy(&extension_dir.0).unwrap());
     }
 
-    const PRIVATE_BUS_CONFIG: &str = "<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><policy context=\"default\"><allow own=\"*\"/><allow send_destination=\"*\"/><allow receive_sender=\"*\"/></policy></busconfig>";
+    #[test]
+    fn user_copy_falls_back_to_home_when_xdg_data_home_is_unset_or_empty() {
+        let home = || Some(OsString::from("/home/u"));
+        let fallback = Path::new("/home/u/.local/share/gnome-shell/extensions").join(UUID);
+        assert_eq!(user_extension_dir(None, home()), fallback);
+        assert_eq!(user_extension_dir(Some("".into()), home()), fallback);
+        assert_eq!(
+            user_extension_dir(Some("/data".into()), home()),
+            Path::new("/data/gnome-shell/extensions").join(UUID)
+        );
+    }
 
     struct FakeShellExtensions {
         path: std::sync::Arc<std::sync::Mutex<PathBuf>>,
@@ -624,40 +671,12 @@ mod tests {
 
     #[tokio::test]
     async fn system_migration_keeps_reload_warning_until_shell_changes_loaded_path() {
-        use std::io::{BufRead, BufReader};
-        use std::process::Stdio;
-
-        struct PrivateBus(std::process::Child);
-        impl Drop for PrivateBus {
-            fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
-            }
-        }
-        // No service directories, so nothing on this bus can activate a
-        // real desktop service.
-        let bus_dir = TestExtensionDirectory::new();
-        fs::create_dir_all(&bus_dir.0).unwrap();
-        let config = bus_dir.0.join("bus.conf");
-        fs::write(&config, PRIVATE_BUS_CONFIG).unwrap();
-        let mut bus = PrivateBus(
-            Command::new("dbus-daemon")
-                .arg(format!("--config-file={}", config.display()))
-                .args(["--nofork", "--nopidfile", "--print-address=1"])
-                .env_clear()
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap(),
-        );
-        let mut address = String::new();
-        BufReader::new(bus.0.stdout.take().unwrap())
-            .read_line(&mut address)
-            .unwrap();
+        let bus = crate::test_sockets::PrivateBus::start("cul-ext-bus");
         let user_dir = TestExtensionDirectory::new();
         write_extension_files(&user_dir.0).unwrap();
         let system_dir = Path::new(SYSTEM_EXTENSIONS_DIR).join(UUID);
         let path = std::sync::Arc::new(std::sync::Mutex::new(user_dir.0.clone()));
-        let _service = zbus::connection::Builder::address(address.trim())
+        let _service = zbus::connection::Builder::address(bus.address())
             .unwrap()
             .name("org.gnome.Shell")
             .unwrap()
@@ -669,14 +688,17 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let client = zbus::connection::Builder::address(address.trim())
+        let client = zbus::connection::Builder::address(bus.address())
             .unwrap()
             .build()
             .await
             .unwrap();
 
         let removed = remove_user_copy(&user_dir.0).unwrap();
-        let loaded = loaded_extension_path_on_connection(&client).await.unwrap();
+        let loaded = loaded_extension_on_connection(&client)
+            .await
+            .unwrap()
+            .map(|extension| extension.path);
         assert_eq!(loaded.as_deref(), Some(user_dir.0.as_path()));
         assert!(system_extension_requires_shell_reload(
             removed,
@@ -686,14 +708,20 @@ mod tests {
 
         let removed = remove_user_copy(&user_dir.0).unwrap();
         assert!(!removed);
-        let loaded = loaded_extension_path_on_connection(&client).await.unwrap();
+        let loaded = loaded_extension_on_connection(&client)
+            .await
+            .unwrap()
+            .map(|extension| extension.path);
         assert!(
             system_extension_requires_shell_reload(removed, loaded.as_deref(), &system_dir),
             "a second setup before Shell restarts must retain the reload warning"
         );
 
         *path.lock().unwrap() = system_dir.clone();
-        let loaded = loaded_extension_path_on_connection(&client).await.unwrap();
+        let loaded = loaded_extension_on_connection(&client)
+            .await
+            .unwrap()
+            .map(|extension| extension.path);
         assert!(!system_extension_requires_shell_reload(
             false,
             loaded.as_deref(),
