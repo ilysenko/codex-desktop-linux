@@ -38,9 +38,10 @@ run_node_tests() {
         node_test_args+=(--test-force-exit)
     fi
 
+    # Every *.test.js and every test.js; a git pathspec * also matches /.
     while IFS= read -r file; do
         test_files+=("$file")
-    done < <(git ls-files '*.test.js' 'linux-features/*/test.js')
+    done < <(git ls-files '*.test.js' '*/test.js')
 
     if [ "${#test_files[@]}" -eq 0 ]; then
         return 0
