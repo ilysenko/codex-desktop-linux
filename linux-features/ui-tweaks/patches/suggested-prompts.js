@@ -149,7 +149,7 @@ function suggestedPromptsFeatureSyncContract(source) {
   return "drifted";
 }
 
-function suggestedPromptsAppPageContract(source) {
+function suggestedPromptsAppPageContract(source,snapshot) {
   if (typeof source !== "string") {
     return "drifted";
   }
@@ -164,7 +164,7 @@ function suggestedPromptsAppPageContract(source) {
     cleanEligibility.length === 1 &&
     cleanEligibility[0][2] === cleanRollouts[0][1]
   ) {
-    return require("./suggested-prompts-app-page.js").inspectPage(source) ? "current" : "drifted";
+    return require("./suggested-prompts-app-page.js").inspectPage(source,snapshot) ? "current" : "drifted";
   }
   if (
     markerOccurrenceCount(source, RUNTIME_MARKER) === 1 &&
@@ -178,12 +178,12 @@ function suggestedPromptsAppPageContract(source) {
     patchedEligibility[0][2] === patchedRollouts[0][1] &&
     completePatchedGateCount(source, RUNTIME_MARKER) === 1
   ) {
-    return require("./suggested-prompts-app-page.js").inspectPage(source) ? "patched" : "drifted";
+    return require("./suggested-prompts-app-page.js").inspectPage(source,snapshot) ? "patched" : "drifted";
   }
   return "drifted";
 }
 
-function suggestedPromptsWorkPageContract(source) {
+function suggestedPromptsWorkPageContract(source,snapshot) {
   if (typeof source !== "string") {
     return "drifted";
   }
@@ -198,7 +198,7 @@ function suggestedPromptsWorkPageContract(source) {
     cleanEligibility.length === 1 &&
     cleanEligibility[0][1] === cleanRollouts[0][1]
   ) {
-    return require("./suggested-prompts-work-page.js").inspectPage(source) ? "current" : "drifted";
+    return require("./suggested-prompts-work-page.js").inspectPage(source,snapshot) ? "current" : "drifted";
   }
   if (
     markerOccurrenceCount(source, RUNTIME_MARKER) === 1 &&
@@ -212,7 +212,7 @@ function suggestedPromptsWorkPageContract(source) {
     patchedEligibility[0][1] === patchedRollouts[0][1] &&
     completePatchedGateCount(source, RUNTIME_MARKER) === 1
   ) {
-    return require("./suggested-prompts-work-page.js").inspectPage(source) ? "patched" : "drifted";
+    return require("./suggested-prompts-work-page.js").inspectPage(source,snapshot) ? "patched" : "drifted";
   }
   return "drifted";
 }
@@ -309,9 +309,9 @@ function applySuggestedPromptsFeatureSyncPatch(source) {
   }
 }
 
-function applySuggestedPromptsAppPagePatch(source) {
+function applySuggestedPromptsAppPagePatch(source,snapshot) {
   try {
-    const contract = suggestedPromptsAppPageContract(source);
+    const contract = suggestedPromptsAppPageContract(source,snapshot);
     if (contract === "patched") {
       return source;
     }
@@ -333,9 +333,9 @@ function applySuggestedPromptsAppPagePatch(source) {
   }
 }
 
-function applySuggestedPromptsWorkPagePatch(source) {
+function applySuggestedPromptsWorkPagePatch(source,snapshot) {
   try {
-    const contract = suggestedPromptsWorkPageContract(source);
+    const contract = suggestedPromptsWorkPageContract(source,snapshot);
     if (contract === "patched") {
       return source;
     }

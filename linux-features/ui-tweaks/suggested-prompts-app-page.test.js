@@ -304,7 +304,8 @@ test("signed native rollout hook and account predicate retain their independent 
     const module=dependencies.find(m=>m.moduleId===target.moduleId);assert.ok(module);
     const requireStub=()=>namespace;requireStub.j=entry.entryId;
     requireStub.d=(exports,getters,values={})=>{for(const[key,get]of Object.entries(getters))Object.defineProperty(exports,key,{get});Object.assign(exports,values)};
-    return vm.runInNewContext(`(function(${module.params.join(",")}){${module.moduleSource};return ${target.functionName}})`,{} )({}, {},requireStub);
+    const expression = target.exportName == null ? target.functionName : `${module.params[1]}[${JSON.stringify(target.exportName)}]`;
+    return vm.runInNewContext(`(function(${module.params.join(",")}){${module.moduleSource};return ${expression}})`,{} )({}, {},requireStub);
   }
   const gate=execute(roles.rolloutTargets[0]),account=execute(roles.accountTargets[0]);
   assert.equal(gate("2425897452"),false);gateValue=true;assert.equal(gate("2425897452"),true);assert.equal(reads.length,2);

@@ -104,7 +104,7 @@ test("signed Work page resolves native callers/provider and patches through prod
   assert.ok(roles.callers.preparation.callback);assert.ok(roles.providerRoles.every(role=>role.query.exportName==="ki"));
 });
 test("signed Work JSX forwards mode callback and current host/project/run-location without invoking it",signedOnly,()=>{
-  const {owners}=signedFixture(),patched=applySource(owners[0].moduleSource),info=work.inspectModule({...owners[0],moduleSource:patched}),object=info.consumer.text,calls=[];
+  const {owners}=signedFixture(),patched=applySource(owners[0].moduleSource,owners[0]),info=work.inspectModule({...owners[0],moduleSource:patched}),object=info.consumer.text,calls=[];
   for(const label of["alpha","beta"]){const callback=mode=>calls.push([label,mode]),a=info.accountCall,context={[info.rollout]:true,[a.namespace]:{[a.member]:()=>false},[a.auth]:"chatgpt",[a.info]:{email:`${label}@test`},[a.email]:"fallback",[a.plan]:"free",[info.fields.host]:`host-${label}`,[info.fields.selection]:callback,[info.fields.state]:{composerProps:{projectId:`project-${label}`},runLocationState:{effectiveLocation:label==="alpha"?"local":"cloud"}}};
     const props=vm.runInNewContext(`(${object})`,context);assert.equal(props.generatedSuggestionsEnabled,true);assert.equal(props.hostId,`host-${label}`);assert.equal(props.projectId,`project-${label}`);assert.equal(props.mode,"work");assert.equal(props.onSelect,callback);assert.equal(calls.length,label==="alpha"?0:1);props.onSelect(label==="alpha"?"chat":"work");}
   assert.deepEqual(calls,[["alpha","chat"],["beta","work"]]);

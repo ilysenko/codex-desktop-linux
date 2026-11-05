@@ -55,16 +55,12 @@ function inspectModule(module) {
   if(!props||!host||!state||writes(leaf.body,fields.state).length!==1||!leaf.body.includes(`{homeComposerController:`)||!leaf.body.includes('homeComposerMode:"work"}'))return null;
   return {module,graph:{entry:entry.name,leaf:leaf.name},component:leaf,consumer:object,rollout,rolloutCall:{namespace:gate[1]??gate[3],member:gate[2]??gate[4]},accountCall:account,provider:object.provider,fields};
 }
-function inspectPage(source) {
+function inspectPage(source,snapshot) {
   if(typeof source!=="string")return null;
   try {
     let modules;
     if(source.includes("__webpack_modules__"))modules=[...rspackModuleFactories(source,"work-page.js")];
-    else {
-      const module={moduleSource:source,moduleId:"WorkPageOwner",start:0,end:source.length},exported=exportGetter(module,"ChatGptWorkHomePage");
-      if(!exported)return null;
-      module.params=["__codexWorkModule",exported.exportsName,exported.requireName];modules=[module];
-    }
+    else modules=snapshot?.params?[{...snapshot,moduleSource:source}]:[];
     return one(modules.map(inspectModule).filter(Boolean));
   }catch{return null;}
 }
@@ -181,12 +177,12 @@ function applyToExtractedApp(extractedDir) {
   const copies=findUniqueRspackModuleCopies(assetsDir,{description:"Work Home page",sourceMatch:s=>s.includes("ChatGptWorkHomePage:"),matchModule:isCandidate});
   for(const copy of copies) {
     const info=inspectModule(copy);
-    if(!info||central.suggestedPromptsWorkPageContract(copy.moduleSource)==="drifted")throw Error("Incomplete Work Home page contract");
+    if(!info||central.suggestedPromptsWorkPageContract(copy.moduleSource,copy)==="drifted")throw Error("Incomplete Work Home page contract");
     validateDependencies(assetsDir,info,cache,entry.entryId);
   }
-  return patchRspackModuleCopies(assetsDir,copies,body=>{
-    const patched=central.applySuggestedPromptsWorkPagePatch(body);
-    if(central.suggestedPromptsWorkPageContract(patched)!=="patched")throw Error("Work Home page poststate failed");return patched;
+  return patchRspackModuleCopies(assetsDir,copies,(body,copy)=>{
+    const patched=central.applySuggestedPromptsWorkPagePatch(body,copy);
+    if(central.suggestedPromptsWorkPageContract(patched,copy)!=="patched")throw Error("Work Home page poststate failed");return patched;
   });
 }
 module.exports={applyToExtractedApp,inspectPage,inspectModule,isCandidate,validateDependencies,providerRole,queryRole,valueExport,shellRole,preparationRole};

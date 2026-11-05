@@ -6,6 +6,7 @@ const {
   findUniqueRspackModuleCopies, patchRspackModuleCopies, rspackModuleFactories, findRspackRequireBinding,
 } = require("../../../scripts/patches/lib/rspack-module-assets.js");
 const { findMatchingBrace, escapeRegExp } = require("../../../scripts/patches/lib/minified-js.js");
+const { findRspackExportPublication } = require("../../../scripts/patches/lib/rspack-export-publication.js");
 const ID = "[A-Za-z_$][\\w$]*";
 const MARKER = "codexLinuxUiTweaksSuggestedPromptsAppPageEligible";
 const ROLLOUT = "codexLinuxUiTweaksSuggestedPromptsEnabled";
@@ -52,13 +53,7 @@ function homeObjects(body) {
   return found;
 }
 function exportGetter(module, key) {
-  const body=module.moduleSource,req=module.params?.[2],exports=module.params?.[1];
-  const registrations=matches(body,new RegExp(`(?<![\\w$.])(${ID})\\.d\\((${ID}),\\{`,"gu"))
-    .filter(m=>(!req||m[1]===req)&&(!exports||m[2]===exports)&&statementAt(body,m.index));
-  const registration=one(registrations);if(!registration)return null;
-  const open=registration.index+registration[0].length-1,end=findMatchingBrace(body,open);
-  const getter=one([...body.slice(open+1,end).matchAll(new RegExp(`(?:^|,)${escapeRegExp(key)}:\\(\\)=>(${ID}(?:\\.${ID})?)(?=,|$)`,"gu"))]);
-  return getter?{expression:getter[1],requireName:registration[1],exportsName:registration[2]}:null;
+  return findRspackExportPublication(module, key);
 }
 // The current entry either returns its page directly (the compact fixture),
 // or memoizes the ordinary/work choice and returns a scope provider containing
@@ -91,7 +86,7 @@ function returnedHomeEntry(entry, link) {
   catch{return false;}
 }
 function graph(module, defs, leaf) {
-  const exported=exportGetter(module,"Z");if(!exported||exported.expression.includes("."))return null;
+  const exported=exportGetter(module,"Z");if(!exported||typeof exported.expression!=="string"||exported.expression.includes("."))return null;
   const entry=defs.find(f=>f.name===exported.expression);if(!entry||!liveFunction(entry)||!liveFunction(leaf))return null;
   const entryLinks=matches(entry.body,new RegExp(`\\(0,${ID}\\.jsx\\)\\((${ID}),\\{\\.\\.\\.(${ID}),hideHeaderUpgrade:!1,prepareTaskSuggestionDestination:${ID}\\}\\)`,"gu"));
   const link=one(entryLinks);if(!link||!returnedHomeEntry(entry,link))return null;
@@ -129,10 +124,10 @@ function inspectModule(module) {
   const chain=graph(module,defs,leaf);if(!chain)return null;
   return {moduleId:module.moduleId,graph:chain,fields,consumer:object,component:leaf,rollout,rolloutCall:{namespace:gate[1]??gate[3],member:gate[2]??gate[4]},account,accountCall:{namespace:memo[9],member:memo[10],auth:memo[3],email:memo[7],plan:memo[5]},view:{namespace:object.view,member:object.viewExport},navigation:{callback:navigation[1],args:callback.slice(1,4)},module};
 }
-function inspectPage(source) {
+function inspectPage(source,snapshot) {
   if(typeof source!=="string")return null;
   try {
-    const modules=source.includes("__webpack_modules__")?[...rspackModuleFactories(source,"app-page.js")]:[{moduleSource:source,moduleId:"PageOwner",start:0,end:source.length}];
+    const modules=source.includes("__webpack_modules__")?[...rspackModuleFactories(source,"app-page.js")]:snapshot?.params?[{...snapshot,moduleSource:source}]:[];
     return one(modules.map(inspectModule).filter(Boolean));
   }catch{return null;}
 }
@@ -179,6 +174,7 @@ function resolveFunction(assetsDir,id,key,cache,entryId,seen=new Set()) {
   const next=new Set(seen).add(token),resolved=[];
   for(const module of dependencyCopies(assetsDir,id,cache)) {
     const getter=exportGetter(module,key);if(!getter)throw Error("Missing ordinary Home dependency export");
+    if(getter.fn){resolved.push({module,fn:getter.fn,exportName:getter.exportName});continue;}
     const parts=getter.expression.split(".");
     if(parts.length===2) {
       const binding=availableBinding(module,parts[0],entryId);if(!binding)throw Error("Unbound ordinary Home re-export");
@@ -233,7 +229,7 @@ function validateDependencies(assetsDir,info,cache,entryId) {
   const targets=[];
   for(const facade of dependencyCopies(assetsDir,view.moduleId,cache)) {
     const getter=exportGetter(facade,info.view.member);
-    if(!getter||getter.expression.includes("."))throw Error("Missing ordinary Home lazy consumer");
+    if(!getter||typeof getter.expression!=="string"||getter.expression.includes("."))throw Error("Missing ordinary Home lazy consumer");
     const init=one(matches(facade.moduleSource,new RegExp(
       `(?<![\\w$.])${escapeRegExp(getter.expression)}=\\(0,${ID}\\.${ID}\\)\\(async\\(\\)=>\\(await ${escapeRegExp(facade.params[2])}\\.e\\(\\d+\\)\\.then\\(${escapeRegExp(facade.params[2])}\\.bind\\(${escapeRegExp(facade.params[2])},"([^"]+)"\\)\\)\\)\\.HomeAmbientSuggestionsContent,\\{propagateLoadError:!0\\}\\)`,"gu")));
     if(!init||writes(facade.moduleSource,getter.expression).length!==1)throw Error("Ordinary Home lazy provider binding changed");
@@ -243,7 +239,7 @@ function validateDependencies(assetsDir,info,cache,entryId) {
   for(const provider of dependencyCopies(assetsDir,targets[0],cache)) {
     if(!isContentProvider(provider))throw Error("Ordinary Home native provider role changed");
   }
-  const target=({module,fn})=>({moduleId:module.moduleId,functionName:fn.name});
+  const target=({module,fn,exportName})=>({moduleId:module.moduleId,functionName:fn.name,...exportName?{exportName}:{}});
   return {rolloutModule:rollout.moduleId,rolloutExport:info.rolloutCall.member,rolloutTargets:gates.map(target),accountModule:account.moduleId,accountExport:info.accountCall.member,accountTargets:predicates.map(target),viewModule:view.moduleId,viewExport:info.view.member,providerModule:targets[0],providerExport:"HomeAmbientSuggestionsContent"};
 }
 function applyToExtractedApp(extractedDir) {
@@ -252,12 +248,12 @@ function applyToExtractedApp(extractedDir) {
   // Resolve every live caller/dependency before preparing any file write.
   for(const copy of copies) {
     const info=inspectModule(copy);
-    if(!info||central.suggestedPromptsAppPageContract(copy.moduleSource)==="drifted")throw Error("Incomplete ordinary Home page contract");
+    if(!info||central.suggestedPromptsAppPageContract(copy.moduleSource,copy)==="drifted")throw Error("Incomplete ordinary Home page contract");
     validateDependencies(assetsDir,info,cache,entry.entryId);
   }
-  return patchRspackModuleCopies(assetsDir,copies,(body)=>{
-    const patched=central.applySuggestedPromptsAppPagePatch(body);
-    if(central.suggestedPromptsAppPageContract(patched)!=="patched")throw Error("Ordinary Home page poststate failed");
+  return patchRspackModuleCopies(assetsDir,copies,(body,copy)=>{
+    const patched=central.applySuggestedPromptsAppPagePatch(body,copy);
+    if(central.suggestedPromptsAppPageContract(patched,copy)!=="patched")throw Error("Ordinary Home page poststate failed");
     return patched;
   });
 }
