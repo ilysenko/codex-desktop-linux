@@ -23,7 +23,7 @@ const PATCHED_READY_PATTERN = new RegExp(
 // being mistaken for the application network owner.
 const FETCH_PREFIX =
   `if\\(null==${JS_IDENT}\\)\\{let (?<options>${JS_IDENT})=\\{method:(?<method>${JS_IDENT}),` +
-  `(?:cache:${JS_IDENT},)?headers:${JS_IDENT},body:${JS_IDENT}\\(\\),redirect:[^,{}]{1,120},signal:${JS_IDENT},` +
+  `cache:${JS_IDENT},headers:${JS_IDENT},body:${JS_IDENT}\\(\\),redirect:[^,{}]{1,120},signal:${JS_IDENT},` +
   `credentials:(?<cookies>${JS_IDENT})\\?"include":"same-origin"\\};` +
   `\\(${JS_IDENT}\\|\\|!\\k<cookies>&&\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\((?<url>${JS_IDENT}),\\k<method>\\)\\)&&` +
   `\\(\\k<options>\\.credentials="omit"\\),(?<response>${JS_IDENT})=await `;
