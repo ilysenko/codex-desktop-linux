@@ -2,9 +2,28 @@
 
 const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
+const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
+const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
+
 const ID = "[A-Za-z_$][\\w$]*";
 
 function enclosingOwner(source, index) {
+  if (source.includes("__webpack_modules__")) {
+    try {
+      const owners = [];
+      for (const module of rspackModuleFactories(source, "computer-use-host-platform.js")) {
+        if (index < module.start || index >= module.end) continue;
+        for (const member of module.moduleSource.matchAll(new RegExp(`(${ID}):function\\(`, "gu"))) {
+          const publication = findRspackExportPublication(module, member[1]);
+          const fn = publication?.fn;
+          if (fn && module.start + fn.start <= index && index < module.start + fn.end) {
+            owners.push(module.moduleSource.slice(fn.start, fn.end));
+          }
+        }
+      }
+      return owners.length === 1 ? owners[0] : null;
+    } catch { return null; }
+  }
   let owner = null;
   for (const match of source.matchAll(/function [A-Za-z_$][\w$]*\([^)]*\)\{/g)) {
     if (match.index > index) break;

@@ -134,3 +134,17 @@ test("host production descriptor patches the current signed inline owner on an i
   assert.equal(run().status, "already-applied");
   assert.equal(fs.readFileSync(path.join(upstream, assetName), "utf8"), actual);
 });
+
+
+test("host platform accepts the current inline export only with its real publication authority", t => {
+  t.mock.method(console,"warn",()=>{});
+  const body = `n.d(t,{},{gate:${source.replace("function owner", "function")}})`;
+  const chunk = text => `export const __rspack_esm_ids=[1];export const __webpack_modules__={Host(e,t,n){${text}}};`;
+  const original = chunk(body), changed = patch(original);
+  assert.notEqual(changed,original);
+  assert.equal(patch(changed),changed);
+  assert.equal(changed.replace('"linux"===platform||',""),original);
+  for (const text of [body.replace("n.d(t,","n.d(other,"),body.replace("n.d(t,","other.d(t,"),"({n}=other);"+body,"({t}=other);"+body]) {
+    const input=chunk(text);assert.equal(matches(input),false);assert.throws(()=>patch(input),/host-platform contract/);
+  }
+});
