@@ -260,7 +260,7 @@ state.
 | Nix flake | Manual build | `nix run github:ilysenko/codex-desktop-linux` |
 | Transactional update manager | Native packages | Included unless built with `PACKAGE_WITH_UPDATER=0` |
 | Official Browser and Chrome integrations | Upstream | Reused from the official Linux package; no legacy port layer |
-| Focusable Quit confirmation | Always | Required compatibility patch parents the upstream confirmation on Linux |
+| Reliable shell environment startup | Always | Required compatibility patch defers the Linux shell loader until Chromium signal initialization completes |
 | Optional Linux feature framework | Disabled | Configure with `make setup-native` |
 | Distinct desktop identity | Always | **ChatGPT Community**, blue `C` icon, `codex-desktop` package identity |
 

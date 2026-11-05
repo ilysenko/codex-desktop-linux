@@ -11,14 +11,9 @@ test without it. Every descriptor needs reproduction evidence and a required
 regression test. Remove the patch, its tests, and this record when upstream
 resolves the blocker.
 
-## `quit-confirmation-focus`
+## `shell-env-startup`
 
-The current signed stable package has two reproduced mandatory Linux blockers.
-One required descriptor validates both contracts before writing either module,
-so the clean-build policy has one auditable compound core mutation rather than
-independent partial repairs.
-
-### Shell environment startup
+The current signed stable package has one reproduced mandatory Linux blocker.
 
 On Fedora 44 with KDE, the current signed stable package starts its shell
 environment subprocess before Chromium's POSIX startup replaces SIGCHLD with a
@@ -41,18 +36,3 @@ distribution from the machine that runs them, the required descriptor is
 applied to every portable payload. The injected deferral is guarded by the
 runtime platform and is safe on other targets. Retire this patch when upstream
 orders these startup operations correctly.
-
-### Quit confirmation focus
-
-The current signed stable package opens its synchronous Quit confirmation
-without a parent window. On affected Linux desktops the modal can appear
-behind the application and leave Quit blocked with no focusable prompt. The
-required patch selects the focused visible window, then the visible primary
-window, then another visible live window; it opens a parented asynchronous
-dialog and guards duplicate `before-quit` events until the user responds.
-
-The adjacent regression tests cover approval, cancellation, reentrancy,
-window selection, shell deferral, compound fail-closed semantic matching, and
-application to the signed campaign bundle. Retire the relevant repair when the
-signed stable bundle resolves its blocker; split the descriptor only if the
-clean-build policy explicitly approves multiple required core mutations.

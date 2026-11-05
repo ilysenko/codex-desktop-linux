@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -10,11 +11,45 @@ const {
   applyShellEnvironmentStartup,
   matchesShellEnvironment,
 } = require("./shell-env.js");
+const {
+  descriptors,
+  patchRequiredShellEnvironmentStartup,
+} = require("./patch.js");
 
 // Independent reduced fixture of the signed shell loader contract.
-const FIXTURE = "async function load(caller,timeout){let started=Date.now();electron.app.isPackaged||clean();" +
+const FIXTURE = "let load=async function(caller,timeout){let started=Date.now();electron.app.isPackaged||clean();" +
   "let abort=new AbortController;let result=await spawnShell(abort.signal);" +
   "logger(\"Failed to load shell env\",{resultSource:\"load\"});return result}";
+
+test("the required descriptor owns the portable shell startup repair", () => {
+  assert.equal(descriptors.length, 1);
+  assert.equal(descriptors[0].id, "shell-env-startup");
+  assert.equal(descriptors[0].phase, "extracted-app:pre-webview");
+  assert.equal(descriptors[0].ciPolicy, "required-upstream");
+  assert.equal(Object.hasOwn(descriptors[0], "appliesTo"), false);
+});
+
+test("required descriptor finds one semantic module and fails closed", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "required-shell-env-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const buildDir = path.join(root, ".vite", "build");
+  fs.mkdirSync(buildDir, { recursive: true });
+  const shell = path.join(buildDir, "renamed-shell.js");
+  fs.writeFileSync(shell, FIXTURE);
+
+  assert.deepEqual(patchRequiredShellEnvironmentStartup(root), { changed: true });
+  assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
+  assert.deepEqual(patchRequiredShellEnvironmentStartup(root), { changed: false });
+
+  const duplicate = path.join(buildDir, "unrelated-name.js");
+  fs.copyFileSync(shell, duplicate);
+  const before = fs.readFileSync(shell);
+  assert.throws(
+    () => patchRequiredShellEnvironmentStartup(root),
+    /exactly one official shell environment module/,
+  );
+  assert.deepEqual(fs.readFileSync(shell), before);
+});
 
 test("deferral prevents browser initialization from losing child completion", async () => {
   async function startup(source) {
@@ -93,7 +128,7 @@ test("patch is idempotent and rejects changed, duplicate, or partial contracts",
 });
 
 test("matches renamed minified bindings without depending on the original identifiers", () => {
-  const renamed = FIXTURE.replace("load(caller,timeout)", "$x(a,b)")
+  const renamed = FIXTURE.replace("load=async function(caller,timeout)", "$x=async function(a,b)")
     .replaceAll("started", "$s").replaceAll("electron", "$e");
   const patched = applyShellEnvironmentStartup(renamed);
   assert.equal(patched.replace(DEFER, ""), renamed);
@@ -113,4 +148,14 @@ test("applies to the signed official shell environment module", {
   assert.equal(patched.replace(DEFER, ""), sources[0]);
   new vm.Script(patched);
   assert.equal(applyShellEnvironmentStartup(patched), patched);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "signed-shell-env-"));
+  try {
+    const buildDir = path.join(root, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "renamed-signed-module.js"), sources[0]);
+    assert.deepEqual(patchRequiredShellEnvironmentStartup(root), { changed: true });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

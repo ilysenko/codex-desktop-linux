@@ -216,7 +216,7 @@ node - <<'NODE'
 const { corePatchDescriptors } = require("./scripts/patches/runner.js");
 const descriptors = corePatchDescriptors();
 if (descriptors.length !== 1 ||
-    descriptors[0].id !== "quit-confirmation-focus" ||
+    descriptors[0].id !== "shell-env-startup" ||
     descriptors[0].ciPolicy !== "required-upstream" ||
     descriptors[0].phase !== "extracted-app:pre-webview") {
   throw new Error(`Unexpected default core patch registry: ${descriptors.map(({ id }) => id).join(", ")}`);

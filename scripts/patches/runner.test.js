@@ -19,13 +19,9 @@ const {
 } = require("./runner.js");
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
-const officialQuitBundle =
-  "let qrt=function({isWindows:e,disableQuitConfirmationPrompt:d,quitState:r,windows:i,settingsStore:x}){" +
-  "let S=!1;l.app.on(\"before-quit\",o=>{if(e||r.canQuitWithoutPrompt()||d){S=!0,i.markAppQuitting();return}" +
-  "let c={formatMessage:e=>e.defaultMessage};0!==l.dialog.showMessageBoxSync({type:\"warning\",message:\"Quit?\"," +
-  "buttons:[c.formatMessage({messageId:\"desktop.quitConfirmation.quit\",defaultMessage:\"Quit\"}),\"Cancel\"]," +
-  "detail:function({answer:e}){return e}({answer:\"Stop chats?\"})})?o.preventDefault():" +
-  "(r.markQuitApproved(),S=!0,i.markAppQuitting())})};function next(){}";
+const officialShellBundle =
+  "let load=async function(a,b){let start=Date.now();e.app.isPackaged||clean();" +
+  "let abort=new AbortController;log(\"Failed to load shell env\",{resultSource:\"load\"})}";
 
 function linuxTarget(id, versionId, desktop) {
   return detectLinuxTargetContext({
@@ -48,7 +44,7 @@ test("the official Linux baseline registers required compatibility patches", () 
   assert.deepEqual(
     corePatchDescriptors().map(({ id, ciPolicy, phase }) => ({ id, ciPolicy, phase })),
     [{
-      id: "quit-confirmation-focus",
+      id: "shell-env-startup",
       ciPolicy: "required-upstream",
       phase: "extracted-app:pre-webview",
     }],
@@ -56,7 +52,7 @@ test("the official Linux baseline registers required compatibility patches", () 
   assert.deepEqual(
     allPatchPolicies({ featuresConfigPath: emptyConfig }),
     [{
-      name: "quit-confirmation-focus",
+      name: "shell-env-startup",
       ciPolicy: "required-upstream",
       phase: "extracted-app:pre-webview",
     }],
@@ -66,14 +62,14 @@ test("the official Linux baseline registers required compatibility patches", () 
       featuresConfigPath: emptyConfig,
       linuxTarget: fedoraKde,
     }),
-    ["quit-confirmation-focus"],
+    ["shell-env-startup"],
   );
   assert.deepEqual(
     requiredPatchNamesForProfile("upstream-build", {
       featuresConfigPath: emptyConfig,
       linuxTarget: ubuntuGnome,
     }),
-    ["quit-confirmation-focus"],
+    ["shell-env-startup"],
   );
 });
 
@@ -89,19 +85,16 @@ test("runner context exposes enabled feature IDs", () => {
   }
 });
 
-test("the default core registry repairs Quit and shell startup without changing webview assets", () => {
+test("the default core registry repairs shell startup without changing webview assets", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-baseline-"));
   try {
     const mainDir = path.join(root, ".vite", "build");
     const webviewDir = path.join(root, "webview", "assets");
     fs.mkdirSync(mainDir, { recursive: true });
     fs.mkdirSync(webviewDir, { recursive: true });
-    const main = path.join(mainDir, "main.js");
     const webview = path.join(webviewDir, "app-initial-A.js");
-    fs.writeFileSync(main, officialQuitBundle);
     const shell = path.join(mainDir, "shell-env-fixture.js");
-    fs.writeFileSync(shell, "async function load(a,b){let start=Date.now();e.app.isPackaged||clean();" +
-      "let abort=new AbortController;log(\"Failed to load shell env\",{resultSource:\"load\"})}");
+    fs.writeFileSync(shell, officialShellBundle);
     fs.writeFileSync(webview, "official-webview\n");
     const report = createPatchReport();
     patchExtractedApp(root, {
@@ -109,11 +102,10 @@ test("the default core registry repairs Quit and shell startup without changing 
       featuresConfigPath: emptyConfig,
       linuxTarget: fedoraKde,
     });
-    assert.match(fs.readFileSync(main, "utf8"), /function codexLinuxQuitDialogParent\(/);
     assert.equal(fs.readFileSync(webview, "utf8"), "official-webview\n");
     assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
     assert.equal(report.patches.length, 1);
-    assert.equal(report.patches[0].name, "quit-confirmation-focus");
+    assert.equal(report.patches[0].name, "shell-env-startup");
     assert.equal(report.patches[0].status, "applied");
     assert.equal(report.patches[0].ciPolicy, "required-upstream");
     assert.equal(report.patches[0].sourceKind, "core");
@@ -127,12 +119,8 @@ test("portable artifacts include the shell repair when built on Ubuntu GNOME", (
   try {
     const mainDir = path.join(root, ".vite", "build");
     fs.mkdirSync(mainDir, { recursive: true });
-    const main = path.join(mainDir, "main.js");
     const shell = path.join(mainDir, "shell-env-fixture.js");
-    const shellSource = "async function load(a,b){let start=Date.now();e.app.isPackaged||clean();" +
-      "let abort=new AbortController;log(\"Failed to load shell env\",{resultSource:\"load\"})}";
-    fs.writeFileSync(main, officialQuitBundle);
-    fs.writeFileSync(shell, shellSource);
+    fs.writeFileSync(shell, officialShellBundle);
     const report = createPatchReport();
 
     patchExtractedApp(root, {
@@ -141,11 +129,10 @@ test("portable artifacts include the shell repair when built on Ubuntu GNOME", (
       linuxTarget: ubuntuGnome,
     });
 
-    assert.match(fs.readFileSync(main, "utf8"), /function codexLinuxQuitDialogParent\(/);
     assert.match(fs.readFileSync(shell, "utf8"), /await new Promise\(setImmediate\)/);
     assert.deepEqual(
       report.patches.map(({ name, status }) => ({ name, status })),
-      [{ name: "quit-confirmation-focus", status: "applied" }],
+      [{ name: "shell-env-startup", status: "applied" }],
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -164,7 +151,7 @@ test("missing main bundle records enabled feature drift", (t) => {
   const entry = report.patches.find((patch) =>
     patch.name === "feature:frameless-titlebar:main-process");
   const coreEntry = report.patches.find((patch) =>
-    patch.name === "quit-confirmation-focus");
+    patch.name === "shell-env-startup");
   assert.ok(entry);
   assert.ok(coreEntry);
   assert.equal(coreEntry.status, "failed-required");

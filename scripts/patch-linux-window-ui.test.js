@@ -52,7 +52,7 @@ test("official Linux baseline has required compatibility descriptors", () => {
   assert.deepEqual(
     corePatchDescriptors().map(({ id, ciPolicy, phase }) => ({ id, ciPolicy, phase })),
     [{
-      id: "quit-confirmation-focus",
+      id: "shell-env-startup",
       ciPolicy: "required-upstream",
       phase: "extracted-app:pre-webview",
     }],

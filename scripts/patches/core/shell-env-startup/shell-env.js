@@ -6,7 +6,7 @@ const MARKER = "/* codex-linux-shell-env-startup */";
 const DEFER = `${MARKER}if(process.platform===\`linux\`)await new Promise(setImmediate);`;
 const IDENT = "[A-Za-z_$][\\w$]*";
 const START = new RegExp(
-  `async function ${IDENT}\\(${IDENT},${IDENT}\\)\\{(?=let ${IDENT}=Date\\.now\\(\\);${IDENT}\\.app\\.isPackaged)`,
+  `async function\\(${IDENT},${IDENT}\\)\\{(?=let ${IDENT}=Date\\.now\\(\\);${IDENT}\\.app\\.isPackaged)`,
   "g",
 );
 const FAILURE_ANCHOR = /(["'`])Failed to load shell env\1/;
