@@ -619,6 +619,90 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
   });
 }
 
+// The parent check runs sleep 1 in a loop. Here its sleep ignores SIGTERM and
+// lasts 0.4 s, and pkill takes 1 s after it signals, so the loop forks its next
+// sleep after pkill -P has listed the children and before kill reaches the
+// subshell. That sleep must not outlive the watcher.
+test("X11 release watcher leaves no child that a helper forks during cleanup", { timeout: 20_000 }, (t) => {
+  let realPkill;
+  try {
+    realPkill = findHostExecutable("pkill");
+  } catch {
+    t.skip("pkill is unavailable");
+    return;
+  }
+  const realSleep = findHostExecutable("sleep");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "global-dictation-cleanup-race-"));
+  const sleepPids = path.join(tempDir, "sleep-pids");
+  const recordedPids = () =>
+    fs.existsSync(sleepPids) ? fs.readFileSync(sleepPids, "utf8").trim().split("\n").map(Number) : [];
+  const running = (pid) => {
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z";
+    } catch {
+      return false;
+    }
+  };
+  t.after(() => {
+    for (const pid of recordedPids()) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+  const binDir = path.join(tempDir, "bin");
+  fs.mkdirSync(binDir);
+  writeExecutable(
+    path.join(binDir, "xmodmap"),
+    `#!${hostBash}\nprintf '%s\\n' 'keycode 37 = Control_L' 'keycode 65 = space'\n`,
+  );
+  writeExecutable(
+    path.join(binDir, "xinput"),
+    [
+      `#!${hostBash}`,
+      "if [ \"$1\" = list ]; then printf '%s\\n' 'Virtual keyboard id=12 [slave  keyboard (3)]'; exit 0; fi",
+      "if [ \"$1\" = query-state ]; then printf '%s\\n' 'key[37]=down' 'key[65]=down'; exit 0; fi",
+      `if [ "$1" = test ]; then ${realSleep} 0.5; printf '%s\\n' 'key release 37'; exec ${realSleep} 30; fi`,
+      "exit 2",
+    ].join("\n"),
+  );
+  writeExecutable(
+    path.join(binDir, "pkill"),
+    `#!${hostBash}\n${realPkill} "$@"\nstatus=$?\n${realSleep} 1\nexit "$status"\n`,
+  );
+  writeExecutable(
+    path.join(binDir, "sleep"),
+    [
+      `#!${hostBash}`,
+      'echo "$$" >> "$SLEEP_PIDS"',
+      `if [ "$1" = 1 ]; then trap '' TERM; exec ${realSleep} 0.4; fi`,
+      `exec ${realSleep} "$@"`,
+    ].join("\n"),
+  );
+
+  const result = spawnSync(
+    path.join(__dirname, "bin", "global-dictation-release-monitor"),
+    ["--accelerator", "Ctrl+Space"],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DISPLAY: ":99",
+        PATH: `${binDir}${path.delimiter}${hostPath}`,
+        SLEEP_PIDS: sleepPids,
+        TMPDIR: tempDir,
+      },
+      timeout: 15_000,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(recordedPids().length > 1, "the parent check never looped");
+  assert.deepEqual(recordedPids().filter(running), []);
+  assertMonitorLeftNothing(tempDir);
+});
+
 test("X11 release watcher fails closed without a display or modifier", () => {
   const monitor = path.join(__dirname, "bin", "global-dictation-release-monitor");
   const withoutDisplay = spawnSync(monitor, ["--accelerator", "Ctrl+Space"], {

@@ -319,8 +319,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   fixtures move to `XDG_RUNTIME_DIR` when a socket path would not fit under
   `TMPDIR`, so the suite passes with a long `TMPDIR` too; without
   `XDG_RUNTIME_DIR` they fail with the limit and the path.
-  `scripts/ci/run-node-checks.sh` runs every `*.test.js` and `test.js` with a
-  fresh `TMPDIR` and fails, naming the entries, when a run leaves any. CI's
+  `scripts/ci/run-node-checks.sh all` syntax-checks every tracked `.js` file,
+  then runs every `*.test.js` and `test.js` with a fresh `TMPDIR` and fails,
+  naming the entries, when a run leaves any. CI's
   Node step runs it, so CI runs exactly the files the guard checks;
   `scripts/ci-local.sh` still runs its own list. The GNOME dictation tests
   keep their scratch under `TMPDIR` too, and the shared app-server tests bind
@@ -330,9 +331,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   server cannot be reached or has no XInput 2. Before, it judged the stream
   by whether it still ran 0.1 s after the start, so under load a failing
   `xinput` could print `ready` and then stop.
-- The global dictation release watcher stops its helper subshells before it
-  signals their children. A child that a subshell forked between `pkill -P`
+- The global dictation release watcher stops each helper subshell before it
+  signals its children. A child that a subshell forked between `pkill -P`
   and `kill`, such as the watchdog's `sleep`, no longer outlives the watcher.
+  A second SIGINT, SIGTERM or SIGHUP during cleanup no longer cuts it short,
+  which left the helpers running.
 - The embedded Computer Use crate's
   `editable_text_normalization_mismatch_is_not_verified` test accepts
   `ReadbackTimedOut` as well as `MismatchAfterDeadline`, like the two other

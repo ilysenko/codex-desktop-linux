@@ -365,15 +365,16 @@ monitor_pids=()
 # shellcheck disable=SC2317 # Invoked through the EXIT trap.
 cleanup() {
     local pid
+    # A second signal must not cut cleanup short: it would leave a subshell
+    # stopped below for good.
+    trap '' INT TERM HUP
     # A monitor subshell can fork a child, such as the watchdog's sleep or the
     # parent check's sleep 1, after pkill -P has listed its children and
     # before kill reaches it. That child would outlive the watcher. A stopped
-    # subshell cannot fork, so stop each one first, signal its children and
-    # itself, then let it run into the pending SIGTERM.
+    # subshell cannot fork, so stop each one, signal its children and itself,
+    # then let it run into the pending SIGTERM.
     for pid in "${monitor_pids[@]:-}"; do
         kill -STOP "$pid" >/dev/null 2>&1 || true
-    done
-    for pid in "${monitor_pids[@]:-}"; do
         if command -v pkill >/dev/null 2>&1; then
             pkill -TERM -P "$pid" >/dev/null 2>&1 || true
         fi

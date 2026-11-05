@@ -33,7 +33,7 @@ function trackedTestFiles() {
 // The files scripts/ci/run-node-checks.sh runs.
 function guardedTestFiles() {
   const runner = read("scripts/ci/run-node-checks.sh");
-  const match = runner.match(/done < <\(git ls-files ((?:'[^']+' ?)+)\)\n\n    if \[ "\$\{#test_files\[@\]\}"/);
+  const match = runner.match(/git ls-files ((?:'[^']*test\.js' ?)+)\)/);
   assert.ok(match, "run-node-checks.sh lists its test files with git ls-files");
   const pathspecs = match[1].trim().split(/\s+/).map((spec) => spec.slice(1, -1));
   return execFileSync("git", ["ls-files", ...pathspecs], { cwd: repoRoot, encoding: "utf8" })

@@ -2673,18 +2673,19 @@ test("orphan reaper refuses two live listener inodes for the same pathname", asy
 test("injected transport rejects an existing socket without unlinking it", async () => {
   const tempDir = makeSocketTempDir("shared-app-server-existing-");
   const socketPath = path.join(tempDir, "app-server.sock");
-  const server = await listenUnix(socketPath);
-  let spawnCalls = 0;
-  const { Transport } = loadInjectedTransport({
-    spawnImpl() {
-      spawnCalls += 1;
-      return fakeChild();
-    },
-  });
-  const transport = new Transport(socketPath);
   const originalCli = process.env.CODEX_CLI_PATH;
-  process.env.CODEX_CLI_PATH = "/fake/codex";
+  let server;
   try {
+    server = await listenUnix(socketPath);
+    let spawnCalls = 0;
+    const { Transport } = loadInjectedTransport({
+      spawnImpl() {
+        spawnCalls += 1;
+        return fakeChild();
+      },
+    });
+    const transport = new Transport(socketPath);
+    process.env.CODEX_CLI_PATH = "/fake/codex";
     await assert.rejects(transport.ensureAuthority(), /path already exists/);
     assert.equal(spawnCalls, 0);
     assert.equal(fs.lstatSync(socketPath).isSocket(), true);

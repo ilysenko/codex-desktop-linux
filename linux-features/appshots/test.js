@@ -301,7 +301,7 @@ test("bare modifier monitor emits one transition from one XInput2 stream", () =>
   }
 });
 
-test("bare modifier monitor fails before ready when XInput2 exits during startup", () => {
+test("bare modifier monitor fails closed before ready when xinput cannot reach the X server", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-startup-"));
   const binDir = path.join(tempDir, "bin");
   const helper = path.join(__dirname, "bin", "bare-modifier-monitor");
@@ -389,6 +389,9 @@ test("bare modifier monitor removes its stdbuf directory when the stream dies af
     timeout: 5_000,
   });
   assert.ok(["permission-denied\n", "ready\n"].includes(result.stdout), result.stdout);
+  // A refusal exits non-zero; after ready, the end of the stream is a normal stop.
+  if (result.stdout === "permission-denied\n") assert.notEqual(result.status, 0, result.stderr);
+  else assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(stdbufLeftovers(tempDir), []);
 });
 
