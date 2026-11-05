@@ -391,11 +391,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `TMPDIR`, so the suite passes with a long `TMPDIR` too; without
   `XDG_RUNTIME_DIR` they fail with the limit and the path.
   `scripts/ci/run-node-checks.sh all` syntax-checks every tracked `.js` file,
-  then runs every `*.test.js` and `test.js` with a fresh `TMPDIR` and fails,
-  naming the entries, when a run leaves any. CI's Node step runs it, so CI
-  runs exactly the files the guard checks; `scripts/ci-local.sh` still runs
-  its own list. The GNOME dictation and package permission tests keep their
-  scratch under `TMPDIR` too, and the shared app-server tests bind their
+  then runs the complete tracked Node test inventory, including CommonJS and
+  ESM tests, with a fresh `TMPDIR`. It fails, naming the entries, when a run
+  leaves any. CI's Node step and the `scripts/ci-local.sh` container entrypoint
+  use this same guarded test runner. The GNOME dictation and package permission
+  tests keep their scratch under `TMPDIR` too, and the shared app-server tests bind their
   sockets inside the `try` that removes them. The host-service tests wait for
   their detached bridge to exit and kill it if it still runs after 3 s. The
   Dock icon lock test's holder keeps the lock only while the test holds its
