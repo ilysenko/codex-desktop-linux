@@ -584,7 +584,11 @@ function createReadAloudBuilderFixture(t, enabled, installer = true) {
 
 function assertReadAloudFile(file, expected) {
   assert.deepEqual(fs.readFileSync(file), expected.bytes, file);
-  assert.equal(fs.statSync(file).mode & 0o777, expected.mode, file);
+  const mode = fs.statSync(file).mode & 0o777;
+  // Packaging retains owner access and read/execute bits, while removing
+  // group/other write access from executable hooks and runners.
+  assert.equal(mode & 0o022, 0, `${file}: group/other write access`);
+  assert.equal(mode, expected.mode & ~0o022, `${file}: packaged permissions`);
 }
 
 function stageReadAloudApp(source, app, env) {
