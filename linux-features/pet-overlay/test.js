@@ -11,6 +11,8 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+// Historical geometry model for helper regressions. Signed tests separately
+// execute the latest native outer layout method with inert draw collaborators.
 const nativeLayout = require("./fixtures/native-layout.js");
 const nativeWindowGeometry = require("./fixtures/native-window-geometry.js");
 const nativeInputPolicy = require("./fixtures/native-input-policy.js");
@@ -79,7 +81,7 @@ function currentAvatarOverlayBundleFixture() {
     "setElementSize(e,{elementSizeRevision:t,isTrayVisible:n,mascot:r,nativeCompositionEnabled:a,tray:o}){let i=this.window;i==null||i.isDestroyed()||i.webContents.id!==e||(this.cancelMomentum(),this.layoutMode=n==null?`native`:`legacy`,this.mascotSize=r,this.traySize=o,this.applyLatestElementSizes(i),this.stageWindowForNativePresentation(i),this.showWindowIfReady(i))}",
     "applyLatestElementSizes(e){this.anchor={...this.anchor,width:this.mascotSize.width,height:this.mascotSize.height},this.applyLayout(e)}",
     "async createWindow(e){let t=await this.windowManager.createWindow({title:a.app.getName(),width:zB.width,height:zB.height,appearance:\"avatarOverlay\",supportsWindowTiling:!1,focusable:!1,show:!1,initialRoute:rV});return this.window=t,this.compositionHost.setOverlayWindow(t),this.rendererReady=this.windowManager.isWebContentsReady(t.webContents.id),this.displayBounds=null,this.displayId=null,this.dragState=null,this.layout=null,this.mascotSize=oV,this.mousePassthroughEnabled=!1,this.traySize=null,t.on(`closed`,()=>{this.window===t&&(this.cancelMomentum(),this.window=null,this.dragState=null,this.layout=null,this.rendererReady=!1,this.pointerInteractive=!1,this.mousePassthroughEnabled=!1,this.compositionHost.setOverlayWindow(null),this.broadcastOpenState())}),t}",
-    "applyLayout(e,t=this.getCurrentDisplay(),n=!1){if(e.isDestroyed())return;if(this.nativeWindowDragActive||this.movedWindowPersistTimer!=null){this.hasDeferredLayout=!0,this.handleNativeWindowDragMove(e);return}let r=this.getLayoutForDisplay(t);this.quickChatResizeDrawAnchor!=null&&(this.quickChatDrawOffset={x:this.quickChatResizeDrawAnchor.x-r.anchor.x,y:this.quickChatResizeDrawAnchor.y-r.anchor.y}),this.displayId=t.id,this.resolutionKey=Np(t.bounds),this.displayBounds=t.bounds,this.anchor={...r.anchor,y:this.realtimeCaptionAboveMascotPx>0?this.anchor.y:r.anchor.y},this.layout=r,this.placement=r.placement,this.setWindowBounds(e,r.windowBounds,n),this.publishRemoteHostedPIPContentHost(),this.sendLayoutToRenderer(e),this.computerUseCursorLocation!=null&&this.dragState==null&&this.sendComputerUseCursorLocationToRenderer(e)}getLayoutForDisplay(e,t=this.anchor){let l=a.screen.getAllDisplays(),n=function({anchor:e,constrainNativeDrawWindowToDisplay:t=!1,...r}){return UB({anchor:e,constrainNativeDrawWindowToDisplay:t,...r})}({anchor:t,constrainNativeDrawWindowToDisplay:\"win32\"===process.platform,nativeDrawWindowBounds:process.platform===`darwin`&&l.length>1?e.bounds:void 0,displayBounds:this.layoutMode===`native`?e.workArea:e.bounds,mode:this.layoutMode,mascotSize:this.mascotSize,nativeMaterialAttached:this.compositionHost.isNativeMaterialAttached(),previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?k2:O2)});return n}getLayout(e){if(this.layout??this.applyLayout(e),this.layout==null)throw Error(`Expected avatar overlay layout`);return this.layout}",
+    "applyLayout(e,t=this.getCurrentDisplay(),n=!1){if(e.isDestroyed())return;if(this.nativeWindowDragActive||this.movedWindowPersistTimer!=null){this.hasDeferredLayout=!0,this.handleNativeWindowDragMove(e);return}let r=this.getLayoutForDisplay(t);this.quickChatResizeDrawAnchor!=null&&(this.quickChatDrawOffset={x:this.quickChatResizeDrawAnchor.x-r.anchor.x,y:this.quickChatResizeDrawAnchor.y-r.anchor.y}),this.displayId=t.id,this.resolutionKey=Np(t.bounds),this.displayBounds=t.bounds,this.anchor={...r.anchor,y:this.realtimeCaptionAboveMascotPx>0?this.anchor.y:r.anchor.y},this.layout=r,this.placement=r.placement,this.setWindowBounds(e,r.windowBounds,n),this.publishRemoteHostedPIPContentHost(),this.sendLayoutToRenderer(e),this.computerUseCursorLocation!=null&&this.dragState==null&&this.sendComputerUseCursorLocationToRenderer(e)}getLayoutForDisplay(e,t=this.anchor){return function({display:e,displays:l,platform:r,requestedAnchor:t,layoutMode:i,mascotSize:s,nativeMaterialAttached:m,previousPlacement:p,traySize:f}){let n=function({anchor:e,constrainNativeDrawWindowToDisplay:t=!1,...r}){return UB({anchor:e,constrainNativeDrawWindowToDisplay:t,...r})}({anchor:t,constrainNativeDrawWindowToDisplay:\"win32\"===r,nativeDrawWindowBounds:\"darwin\"===r&&l.length>1?e.bounds:void 0,displayBounds:i===`native`?e.workArea:e.bounds,mode:i,mascotSize:s,nativeMaterialAttached:m,previousPlacement:p,traySize:f});return n}({display:e,displays:a.screen.getAllDisplays(),platform:process.platform,requestedAnchor:t,layoutMode:this.layoutMode,mascotSize:this.mascotSize,nativeMaterialAttached:this.compositionHost.isNativeMaterialAttached(),previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?k2:O2)})}getLayout(e){if(this.layout??this.applyLayout(e),this.layout==null)throw Error(`Expected avatar overlay layout`);return this.layout}",
     "showWindow(e){if(e.isDestroyed())return;let t=this.isOpen();this.windowStagedForNativePresentation&&=(e.setOpacity(1),!1),e.moveTop(),e.showInactive(),t||\"on-demand\"!==this.visibilityMode||null!=this.nativeAppearanceBridge||(this.handleQuickChatKeyboardInteraction(!0),e.setFocusable(!0),this.windowManager.setPendingAuxiliaryActivationTarget(e),e.focus()),!t&&this.isOpen()&&(this.finishPendingPresentation(),this.broadcastOpenState())}showWindowIfReady(e){!this.rendererReady||this.initialPresentationState!==`ready`||(this.showWindow(e),this.applyPointerInteractivityPolicy())}stageWindowForNativePresentation(e){e.isDestroyed()||this.applyPointerInteractivityPolicy()}broadcastOpenState(){this.windowManager.sendMessageToAllRegisteredWindows({type:`avatar-overlay-open-state-changed`,isOpen:this.isOpen()})}",
     "publishRemoteHostedPIPContentHost(){}isOverlayWindowPointerDragActive(){return!1}applyPointerInteractivityPolicy(){return null}cancelMomentum(){}clearMovedWindowPersist(){this.movedWindowPersistTimer!=null&&(clearTimeout(this.movedWindowPersistTimer),this.movedWindowPersistTimer=null)}clearDetachedDisplayRestore(){}clearNativeWindowDragCompletionTimer(){}finishPendingPresentation(){}handleNativeWindowDragMove(e,t){let n=this.layout;if(e.isDestroyed()||n==null)return;let r=t??e.getContentBounds();this.anchor={...this.anchor,x:r.x+n.mascot.left,y:r.y+n.mascot.top};let i=D.screen.getDisplayNearestPoint(Pp(this.anchor));this.dragState?.recordMove(i.bounds),this.displayBounds=i.bounds,this.displayId=i.id,this.resolutionKey=Np(i.bounds),this.placement=Kp(this.anchor,i.workArea);let a=this.getLayoutForDisplay(i);this.layout={...a,anchor:this.anchor,mascot:n.mascot,quickChat:a.quickChat==null?void 0:{...a.quickChat,workArea:Gp(r,i.workArea)},tray:a.tray==null?null:{...a.tray,left:a.windowBounds.x+a.tray.left-r.x,top:a.windowBounds.y+a.tray.top-r.y},viewport:{width:r.width,height:r.height},visibleBounds:Gp(r,Wp(i,this.layoutMode)),windowBounds:r},this.placement=a.placement,this.publishRemoteHostedPIPContentHost(),this.sendLayoutToRenderer(e)}logger(){return{info(){}}}moveDragToPointer(){}persistWindowBounds(e,t=this.getCurrentDisplay()){if(this.isNotchEnabled||e.isDestroyed())return;let n=t.bounds,r={x:this.anchor.x+this.presentationOffset.x,y:this.anchor.y+this.presentationOffset.y,displayBounds:n,displayId:t.id,placement:this.placement,isFreelyPositioned:this.isFreelyPositioned,snapPosition:this.snapPosition},i=this.globalState.get(u.v),a=Np(n);this.displayId=t.id,this.resolutionKey=a;let o={...r,byDisplayId:{...i?.byDisplayId,[String(t.id)]:r},byResolution:{...i?.byResolution,[a]:r}};(0,Fe.default)(i,o)||this.isNotchManager||this.globalState.set(u.v,o)}reclampWindowToVisibleDisplay({shouldPersist:e}){let t=this.window;if(t==null||t.isDestroyed())return;let n=this.getCurrentDisplay();this.applyLayout(t,n),e&&this.persistWindowBounds(t,n)}rememberMovedWindow(e,t){if(e.isDestroyed()||this.layout==null)return;let n=t??e.getContentBounds();this.anchor={...this.anchor,x:n.x+this.layout.mascot.left,y:n.y+this.layout.mascot.top};let r=D.screen.getDisplayNearestPoint(Pp(this.anchor));this.displayBounds=r.bounds,this.displayId=r.id,this.resolutionKey=Np(r.bounds),this.isOverlayWindowPointerDragActive()&&this.clearDetachedDisplayRestore(),this.clearMovedWindowPersist(),this.movedWindowPersistTimer=setTimeout(()=>{(this.movedWindowPersistTimer=null,this.isOverlayWindowPointerDragActive())?this.rememberMovedWindow(e):(this.hasDeferredLayout&&(this.hasDeferredLayout=!1,this.applyLatestElementSizes(e)),this.applyPointerInteractivityPolicy(),this.reclampWindowToVisibleDisplay({shouldPersist:!0}))},jle)}sendLayoutToRenderer(){}setQuickChatStashed(){}setWindowBounds(e,t,n){if(!(e.isDestroyed()||Fe.default(e.getContentBounds(),t))){this.isSettingWindowBounds=!0;try{e.setContentBounds(t,n)}finally{this.isSettingWindowBounds=!1}}}snapQuickChatToPosition(){}getCurrentDisplay(){if(this.windowPresentation!=null)return this.windowPresentation.getDisplay();if(this.displayId!=null){let e=Op(this.displayId);if(e!=null)return e}return D.screen.getDisplayNearestPoint(Pp(this.anchor))}};",
     "function L9({platform:e,appearance:t,opaqueWindowSurfaceEnabled:n,prefersDarkColors:r}){return n?{backgroundColor:r?_ne:vne,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`?{backgroundColor:k9,backgroundMaterial:`mica`}:{backgroundColor:k9,backgroundMaterial:null}}",
@@ -287,7 +289,7 @@ test("pet-overlay is discoverable and disabled until listed in features.json", (
       descriptors.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
       [
         ["feature:pet-overlay:pet-overlay-kwin-gesture", "webview-asset", "optional"],
-        [`feature:pet-overlay:${DESCRIPTOR_ID}`, "main-bundle", "optional"],
+        [`feature:pet-overlay:${DESCRIPTOR_ID}`, "extracted-app:pre-webview", "optional"],
         ["feature:pet-overlay:pet-overlay-hidden-focus", "webview-asset", "optional"],
       ],
     );
@@ -677,7 +679,7 @@ for (const lockPosition of [false, true]) test(`native geometry keeps the pet in
 });
 
 for (const variant of ["missing", "duplicate", "foreign-owner"]) test(`native draw-constraint anchor fails closed: ${variant}`, () => {
-  const anchor = 'constrainNativeDrawWindowToDisplay:"win32"===process.platform';
+  const anchor = 'constrainNativeDrawWindowToDisplay:"win32"===r';
   let source = currentAvatarOverlayBundleFixture().replace(
     anchor,
     variant === "duplicate" ? `${anchor},${anchor}` : "otherConstraint:!1",
@@ -4585,3 +4587,258 @@ test(
     assert.match(patched, /await codexPetOverlayConfirmRendererDrag\([\w$]+,[\w$]+\.appServices\.avatarOverlay,/);
   },
 );
+
+const nativeLayoutMethod = require("./fixtures/native-layout-method.js");
+const { normalizePatchDescriptors, applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+const mainPetDescriptor = petOverlayDescriptors.find(descriptor => descriptor.id === DESCRIPTOR_ID);
+
+function petMainWorkspace(t, files) {
+  const cache = path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "codex-desktop-dev");
+  fs.mkdirSync(cache, { recursive: true });
+  const root = fs.mkdtempSync(path.join(cache, "pet-main-cohort-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const build = path.join(root, ".vite", "build");
+  fs.mkdirSync(build, { recursive: true });
+  for (const [name, source] of files) fs.writeFileSync(path.join(build, name), source);
+  return { root, build };
+}
+
+function normalPetMain(root, descriptor = mainPetDescriptor) {
+  const report = createPatchReport();
+  const context = { feature: { manifest: {}, settings: {} } };
+  const { warnings } = captureWarnings(() => applyExtractedAppPatchDescriptors(root,
+    normalizePatchDescriptors([descriptor]), context, report, "extracted-app:pre-webview"));
+  return { status: report.patches[0]?.status, warnings };
+}
+
+function assertPetMainFiles(build, files) {
+  for (const [name, source] of files) assert.equal(fs.readFileSync(path.join(build, name), "utf8"), source, name);
+}
+
+function mainCarrier(source, id = 101) {
+  return `exports.ids=[${id}],exports.modules={${id}(e,t,n){${source}}};`;
+}
+
+const syntheticMainName = "early-bootstrap-1-aaaaaaaaaaaaaaaa.js";
+const syntheticReplicaName = "early-bootstrap-2-bbbbbbbbbbbbbbbb.js";
+
+test("native layout binds the current outer pure function to its manager and regenerates canonical state", () => {
+  const original = currentAvatarOverlayBundleFixture(), patched = applyPatchTwice(original);
+  const before = nativeLayoutMethod.method(original).text, after = nativeLayoutMethod.method(patched).text;
+  assert.notEqual(after, before);
+  assert.equal(nativeLayoutMethod.innerFunction(after).text, nativeLayoutMethod.innerFunction(before).text);
+  assert.match(after, /^getLayoutForDisplay\(e,t=this\.anchor\)\{return this\.codexPetOverlayKWinLayout\(e,function/);
+  assert.match(after, /\.call\(this,\{display:e,/);
+  for (const mutate of [
+    text => text.replace(".call(this,{display:", ".call(null,{display:"),
+    text => text.replace("return this.codexPetOverlayKWinLayout(e,", "return this.codexPetOverlayKWinLayout(t,"),
+    text => text.replace("this.codexPetOverlayKWinLayoutOptions(", "this.otherLayoutOptions("),
+  ]) {
+    const damagedMethod = mutate(after);
+    assert.notEqual(damagedMethod, after);
+    const owner = nativeLayoutMethod.method(patched);
+    const damaged = patched.slice(0, owner.start) + damagedMethod + patched.slice(owner.end);
+    const result = captureWarnings(() => applyPetOverlayPatch(damaged));
+    assert.equal(result.result, damaged);
+    assert.match(result.warnings.join("\n"), /Pet overlay patch is incomplete/);
+  }
+});
+
+test("native layout refuses a new outer this dependency and the retired direct draw call", () => {
+  const original = currentAvatarOverlayBundleFixture();
+  const variants = [
+    original.replace("traySize:f}){let n=function", "traySize:f}){this.nativeDependency;let n=function"),
+    original.replace('constrainNativeDrawWindowToDisplay:"win32"===r', 'constrainNativeDrawWindowToDisplay:"win32"===process.platform'),
+    original.replace("return n}({display:e,", "return null}({display:e,"),
+  ];
+  for (const source of variants) {
+    assert.notEqual(source, original);
+    assert.equal(captureWarnings(() => applyPetOverlayPatch(source)).result, source);
+  }
+});
+
+test("registered Pet main cohort applies its one current owner and repeats", t => {
+  const source = mainCarrier(currentAvatarOverlayBundleFixture());
+  const { root, build } = petMainWorkspace(t, new Map([[syntheticMainName, source]]));
+  assert.equal(normalPetMain(root).status, "applied");
+  const output = fs.readFileSync(path.join(build, syntheticMainName), "utf8");
+  assert.notEqual(output, source);
+  assert.equal(normalPetMain(root).status, "already-applied");
+  assert.equal(fs.readFileSync(path.join(build, syntheticMainName), "utf8"), output);
+});
+
+for (const state of ["raw", "canonical"]) test(`registered Pet main cohort rejects hidden and duplicate owners before writes in ${state} state`, t => {
+  const raw = mainCarrier(currentAvatarOverlayBundleFixture());
+  const source = state === "raw" ? raw : applyPetOverlayPatch(raw);
+  for (const replica of [raw, source, mainCarrier("return null;")]) {
+    const files = new Map([[syntheticMainName, source], [syntheticReplicaName, replica]]);
+    const { root, build } = petMainWorkspace(t, files);
+    assert.equal(normalPetMain(root).status, "skipped-optional");
+    assertPetMainFiles(build, files);
+  }
+});
+
+test("registered Pet main cohort rejects missing and marker-only owners before writes", t => {
+  for (const source of [mainCarrier("return null;"), mainCarrier('const note=\'appearance:"avatarOverlay"\';')]) {
+    const files = new Map([[syntheticMainName, source]]), { root, build } = petMainWorkspace(t, files);
+    assert.equal(normalPetMain(root).status, "skipped-optional");
+    assertPetMainFiles(build, files);
+  }
+});
+
+test("registered Pet main cohort restores a truncated write", t => {
+  const source = mainCarrier(currentAvatarOverlayBundleFixture());
+  const files = new Map([[syntheticMainName, source]]), { root, build } = petMainWorkspace(t, files);
+  const target = path.join(build, syntheticMainName), write = fs.writeFileSync;
+  let attempts = 0;
+  fs.writeFileSync = function (file, bytes, ...args) {
+    if (file === target && ++attempts === 1) return write.call(this, file, Buffer.from(bytes).subarray(0, 32), ...args);
+    return write.call(this, file, bytes, ...args);
+  };
+  try { assert.equal(normalPetMain(root).status, "skipped-optional"); }
+  finally { fs.writeFileSync = write; }
+  assert.equal(attempts, 2);
+  assertPetMainFiles(build, files);
+});
+
+test("disabled Pet main descriptor performs no inventory discovery", () => {
+  const readdir = fs.readdirSync;
+  fs.readdirSync = () => { throw Error("disabled descriptor discovered files"); };
+  try { assert.equal(normalPetMain("/unused", { ...mainPetDescriptor, enabled: () => false }).status, "skipped-disabled"); }
+  finally { fs.readdirSync = readdir; }
+});
+
+function signedPetMain() {
+  const build = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
+  const files = new Map(fs.readdirSync(build).filter(name => /^early-bootstrap(?:-\d+-[0-9a-f]+)?\.js$/u.test(name))
+    .map(name => [name, fs.readFileSync(path.join(build, name), "utf8")]));
+  const owners = [...files].filter(([, source]) => source.includes('appearance:"avatarOverlay"'));
+  assert.equal(owners.length, 1);
+  return { files, name: owners[0][0], source: owners[0][1] };
+}
+
+test("signed outer native layout preserves options and post-processing through manager-owned hooks",
+  { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, () => {
+    const { source } = signedPetMain(), patched = applyPetOverlayPatch(source);
+    assert.notEqual(patched, source);
+    const before = nativeLayoutMethod.method(source).text, after = nativeLayoutMethod.method(patched).text;
+    assert.equal(nativeLayoutMethod.innerFunction(after).text, nativeLayoutMethod.innerFunction(before).text);
+    const display = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1200 }, workArea: { x: 40, y: 30, width: 1880, height: 1170 } };
+    const displays = [display, { id: 2, bounds: { x: 1920, y: 0, width: 1600, height: 1000 }, workArea: { x: 1920, y: 0, width: 1600, height: 960 } }];
+    for (const scenario of [
+      { platform: "linux", ozone: "wayland", kwin: false },
+      { platform: "linux", ozone: "wayland", kwin: true },
+      { platform: "linux", ozone: "x11", kwin: true },
+      { platform: "win32" },
+      { platform: "darwin", kwin: true, dragging: true },
+      { platform: "darwin", quickChat: true, dragging: true },
+      { platform: "linux", ozone: "wayland", kwin: true, quickChat: true },
+      { platform: "linux", ozone: "wayland", kwin: true, mode: "legacy" },
+      { platform: "linux", ozone: "wayland", quickChat: true, stashed: "left" },
+    ]) {
+      const manager = {
+        anchor: { x: 600, y: 300, width: 112, height: 87 }, layoutMode: scenario.mode ?? "native",
+        isQuickChatPresentation: Boolean(scenario.quickChat), quickChatControls: scenario.quickChat ? { hasNotifications: true, hasOrbPicker: true } : null,
+        quickChatStashedEdge: scenario.stashed ?? null, momentumActive: false, dragState: scenario.dragging ? {} : null,
+        mascotSize: { width: 112, height: 87 }, quickChatResizeDrawAnchor: null, quickChatDrawOffset: { x: 3, y: 4 },
+        placement: "top-end", realtimeCaptionAboveMascotPx: 24, showsPetControls: true,
+        traySize: null, snapPosition: "bottom-right", remoteHostedPIPContentLayoutState: {},
+      };
+      const native = nativeLayoutMethod.runtime(before, before, { ...scenario, manager, displays });
+      const modified = nativeLayoutMethod.runtime(before, after, { ...scenario, manager, displays });
+      const expected = native.controller.getLayoutForDisplay(display), actual = modified.controller.getLayoutForDisplay(display);
+      const nativeKWin = scenario.platform === "linux" && scenario.ozone === "wayland" && scenario.kwin;
+      const originalOptions = native.options[0], currentOptions = modified.options[0];
+      assert.deepEqual(Object.keys(currentOptions), Object.keys(originalOptions));
+      const expectedOptions = { ...originalOptions,
+        constrainNativeDrawWindowToDisplay: originalOptions.constrainNativeDrawWindowToDisplay ||
+          scenario.platform === "linux" && scenario.ozone === "wayland" && !nativeKWin,
+        nativeDrawWindowBounds: nativeKWin ? modified.kwinBounds : originalOptions.nativeDrawWindowBounds,
+      };
+      assert.deepEqual(JSON.parse(JSON.stringify(currentOptions)), JSON.parse(JSON.stringify(expectedOptions)), JSON.stringify(scenario));
+      assert.deepEqual(JSON.parse(JSON.stringify(actual)), JSON.parse(JSON.stringify(expected)), JSON.stringify(scenario));
+      assert.equal(modified.finalLayout(), actual);
+      assert.equal(modified.events.at(-1), "layout-final");
+      assert.equal(modified.options.length, 1);
+    }
+  });
+
+test("signed registered Pet main cohort changes its one native chunk and rejects a markerless same-ID peer",
+  { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, t => {
+    const { files, name, source } = signedPetMain();
+    const { mainProcessFactories } = require("../../scripts/patches/lib/main-process-factories.js");
+    const factory = mainProcessFactories(source).find(factory => factory.body.includes('appearance:"avatarOverlay"'));
+    assert.ok(factory);
+    const { root, build } = petMainWorkspace(t, files);
+    assert.equal(normalPetMain(root).status, "applied");
+    const output = fs.readFileSync(path.join(build, name), "utf8");
+    assert.equal(output, applyPetOverlayPatch(source));
+    assert.equal(normalPetMain(root).status, "already-applied");
+    for (const [asset, original] of files) assert.equal(fs.readFileSync(path.join(build, asset), "utf8"), asset === name ? output : original);
+    for (const canonical of [false, true]) {
+      const inputs = new Map(files);
+      if (canonical) inputs.set(name, output);
+      inputs.set(syntheticReplicaName, mainCarrier("return null;", factory.identity));
+      const workspace = petMainWorkspace(t, inputs);
+      assert.equal(normalPetMain(workspace.root).status, "skipped-optional");
+      assertPetMainFiles(workspace.build, inputs);
+    }
+  });
+
+function returnedLayoutAuthorityControls(source) {
+  const { findMatchingBrace: closeBrace } = require("../../scripts/patches/lib/minified-js.js");
+  const method = nativeLayoutMethod.method(source), text = method.text;
+  const outerStart = text.indexOf("function({display:");
+  assert.ok(outerStart >= 0);
+  const paramsEnd = closeBrace(text, outerStart + "function(".length), bodyOpen = paramsEnd + 2;
+  assert.equal(text[bodyOpen], "{");
+  const head = /^getLayoutForDisplay\([^{}]*\)\{/u.exec(text)[0];
+  const replacements = new Map([
+    ["outer root early return", text.slice(0, bodyOpen + 1) + "return null;" + text.slice(bodyOpen + 1)],
+    ["nested unused layout member", `codexUnusedLayout(){return {${text}}}${head}return null}`],
+    ["duplicate direct layout member", `${text}${head}return null}`],
+  ]);
+  return [...replacements].map(([name, replacement]) => [name,
+    source.slice(0, method.start) + replacement + source.slice(method.end)]);
+}
+
+for (const canonical of [false, true]) test(`native returned-layout authority rejects unreachable and non-authoritative members in ${canonical ? "canonical" : "raw"} state`, t => {
+  const original = currentAvatarOverlayBundleFixture();
+  const source = canonical ? applyPetOverlayPatch(original) : original;
+  for (const [name, damaged] of returnedLayoutAuthorityControls(source)) {
+    assert.doesNotThrow(() => new vm.Script(damaged), name);
+    assert.equal(captureWarnings(() => applyPetOverlayPatch(damaged)).result, damaged, name);
+    const files = new Map([[syntheticMainName, mainCarrier(damaged)]]);
+    const workspace = petMainWorkspace(t, files);
+    assert.equal(normalPetMain(workspace.root).status, "skipped-optional", name);
+    assertPetMainFiles(workspace.build, files);
+  }
+});
+
+test("native layout resolves its direct member beside an unrelated nested lookalike", () => {
+  const original = currentAvatarOverlayBundleFixture(), method = nativeLayoutMethod.method(original);
+  const source = original.slice(0, method.start) +
+    "codexUnusedLayout(){return {getLayoutForDisplay(){return null}}}" + original.slice(method.start);
+  const result = captureWarnings(() => applyPetOverlayPatch(source));
+  assert.notEqual(result.result, source);
+  assert.deepEqual(result.warnings, []);
+  const repeated = captureWarnings(() => applyPetOverlayPatch(result.result));
+  assert.equal(repeated.result, result.result);
+  assert.deepEqual(repeated.warnings, []);
+});
+
+test("signed returned-layout authority rejects both counterexample families through the full main cohort",
+  { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, t => {
+    const { files, name, source } = signedPetMain();
+    const patched = applyPetOverlayPatch(source);
+    assert.notEqual(patched, source);
+    for (const original of [source, patched]) for (const [label, damaged] of returnedLayoutAuthorityControls(original)) {
+      assert.doesNotThrow(() => new vm.Script(damaged), label);
+      assert.equal(captureWarnings(() => applyPetOverlayPatch(damaged)).result, damaged, label);
+      const inputs = new Map(files);
+      inputs.set(name, damaged);
+      const workspace = petMainWorkspace(t, inputs);
+      assert.equal(normalPetMain(workspace.root).status, "skipped-optional", label);
+      assertPetMainFiles(workspace.build, inputs);
+    }
+  });
