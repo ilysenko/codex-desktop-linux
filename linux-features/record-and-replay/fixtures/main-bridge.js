@@ -10,7 +10,7 @@ function currentChronicleMainFixture() {
     .replace('function runMainAppStartup(e){', 'function runMainAppStartup(e){let N="darwin"===process.platform,xe=null;')
     .replace('windowManager:window}){let host;', 'windowManager:window,getSkysightRecorderController:getController}){let host;')
     .replace('windowManager:window}));return host}', 'windowManager:window,getSkysightRecorderController:getController}));return host}')
-    .replace('windowManager:e.windowManager});return created}', 'windowManager:e.windowManager,getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null});N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{null!=await archive({codexHome:V.codexHome,reason:"skysight_gate_enabled"})&&U.broadcastQueryCacheInvalidation(["skills"])}}));globalThis.controller=xe;return created}');
+    .replace('windowManager:e.windowManager});return created}', 'windowManager:e.windowManager,getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null});N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{null!=await async function({codexHome:e,reason:t}){return globalThis.archiveLegacyChronicleSkill({codexHome:e,reason:t})}({codexHome:V.codexHome,reason:"skysight_gate_enabled"})&&U.broadcastQueryCacheInvalidation(["skills"])}}));globalThis.controller=xe;return created}');
   return requestGraphFixture(CHRONICLE_NATIVE_BUSINESS+body);
 }
 
