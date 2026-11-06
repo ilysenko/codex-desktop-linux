@@ -1,31 +1,26 @@
 "use strict";
 
-const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const path = require("node:path");
+const { findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
+const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
+const { escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 const { runtimeVisibility, withRuntime } = require("./runtime.js");
 
-const ID = "[A-Za-z_$][\\w$]*";
+const { inspectActivityPartition } = require("../../scripts/patches/lib/activity-partition.js");
+const ACTIVITY_NEEDLES = ["collapsibleUnits:", "persistentUnits:", "keepMcpAppEntriesPersistent:"];
 const MARKER = "/*community-reasoning-visibility-persistent*/";
 const ENABLED = "codexLinuxReasoningVisibilityEnabled()";
 
 function persistenceState(source) {
-  const header = new RegExp(
-    `function\\(\\{unit:(?<unit>${ID}),hasFollowingFinalAnswer:(?<following>${ID}),` +
-    `keepMcpAppEntriesPersistent:(?<keepMcp>${ID}),mcpServerStatuses:(?<statuses>${ID}),renderMcpApps:(?<renderMcp>${ID})\\}\\)\\{` +
-    `if\\("standalone"!==\\k<unit>\\.kind\\)return!1;let (?<item>${ID})=\\k<unit>\\.item\\.item;return` +
-    `"user-input-response"===\\k<item>\\.type\\?!\\k<item>\\.completed:`, "g");
-  const starts = [...source.matchAll(/function\(\{unit:[\w$]+,hasFollowingFinalAnswer:[\w$]+,keepMcpAppEntriesPersistent:/g)];
-  const matches = [...source.matchAll(header)];
-  if (starts.length !== 1 || matches.length !== 1) return { kind: "invalid" };
-  const match = matches[0];
-  const open = source.indexOf("){", match.index) + 1;
-  const end = findMatchingBrace(source, open);
-  const body = source.slice(open + 1, end);
-  if (end < open || !body.includes(`"user-message"===${match.groups.item}.type`) ||
-      !body.includes(`"mcp-tool-call"===${match.groups.item}.type`) ||
-      !body.includes(`"dynamic-tool-call"===${match.groups.item}.type`)) return { kind: "invalid" };
-  const call = new RegExp(`^\\(\\{unit:(?<unit>${ID}),hasFollowingFinalAnswer:`).exec(source.slice(end + 1));
-  if (call == null) return { kind: "invalid" };
-  const unit = call.groups.unit;
+  const owner = inspectActivityPartition(source);
+  if (!owner.ok) return { kind: "invalid" };
+  const { expression, nativeExpression, names } = owner;
+  const authoredPrefix = `/*codex-linux-authored-message-visibility*/"assistant-message"===${names.item}.type||"user-message"===${names.item}.type||(`;
+  const authored = expression.source === authoredPrefix + nativeExpression.source + ")";
+  if (source.split("/*codex-linux-authored-message-visibility*/").length - 1 !== Number(authored) ||
+      !authored && expression.source !== nativeExpression.source) return { kind: "invalid" };
+  const unit = owner.call.unit;
+  const match = { index: owner.classifier.start };
   const addition = `${ENABLED}&&"standalone"===${unit}.kind&&"reasoning"===${unit}.item.item.type||${MARKER}`;
   const prefix = source.slice(0, match.index);
   const patched = prefix.endsWith(addition);
@@ -48,20 +43,49 @@ function applyPersistentPatch(source) {
   }
   if (state.kind === "patched") return source;
   const { match, addition } = state;
-  // Keep the complete shared classifier unchanged: authored-message-visibility
-  // owns its user/assistant clauses and must still recognize both applied states.
+  // Preserve the complete current native expression and any complete authored
+  // wrapper. The preference only adds the existing standalone reasoning case.
   return withRuntime(source.slice(0, match.index) + ` ${addition}` + source.slice(match.index), match.index + 1);
+}
+
+function patchPersistentAssets(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const ownsActivity = source => ACTIVITY_NEEDLES.every(needle => source.includes(needle));
+  const copies = findUniqueRspackModuleCopies(assets, {
+    matchModule: ownsActivity,
+    sourceMatch: ownsActivity,
+    description: "reasoning activity partition",
+  });
+  const edits = copies.map(copy => {
+    const owner = inspectActivityPartition(copy.source);
+    if (!ownsActivity(copy.moduleSource) || !owner.ok ||
+        owner.classifier.start < copy.start || owner.classifier.end > copy.end ||
+        persistenceState(copy.source).kind === "invalid") {
+      throw new Error(`Incomplete reasoning activity owner in ${copy.assetName}`);
+    }
+    // The pure API also verifies program-level runtimes created by earlier
+    // builds. Plan complete assets so that helper scope and bytes stay intact.
+    const patchedSource = applyPersistentPatch(copy.source);
+    if (applyPersistentPatch(patchedSource) !== patchedSource) {
+      throw new Error(`Incomplete reasoning activity result in ${copy.assetName}`);
+    }
+    return { assetName: copy.assetName, source: copy.source, patchedSource };
+  });
+  const changed = edits.map(edit => edit.source !== edit.patchedSource);
+  if (changed.some(Boolean) && !changed.every(Boolean)) throw new Error("Partially applied reasoning activity copies");
+  return { matched: copies.length, ...commitAssetEdits(assets, edits),
+    reason: `Reasoning activity module ${copies[0].moduleId}: ${copies.length} copies` };
 }
 
 const persistentDescriptor = {
   id: "persistent",
-  phase: "webview-asset",
+  phase: "extracted-app:pre-webview",
   order: 20_745,
   ciPolicy: "optional",
   assetNeedles: ["collapsibleUnits:", "persistentUnits:"],
   assetMatch: source => source.includes("collapsibleUnits:") && source.includes("persistentUnits:"),
   missingDescription: "current reasoning visibility inline persistence contract",
-  apply: applyPersistentPatch,
+  apply: patchPersistentAssets,
 };
 
-module.exports = { applyPersistentPatch, persistentDescriptor, persistenceState };
+module.exports = { applyPersistentPatch, patchPersistentAssets, persistentDescriptor, persistenceState };

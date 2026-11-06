@@ -10,11 +10,11 @@ const { applyPersistentPatch: apply, persistentDescriptor: descriptor } = requir
 const { RUNTIME } = require("./runtime.js");
 const { applyAuthoredMessageVisibilityPatch: authored, descriptors: authoredDescriptors } = require("../authored-message-visibility/patch.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
-const { applyWebviewAssetPatchDescriptors } = require("../../scripts/patches/engine.js");
+const { applyWebviewAssetPatchDescriptors, applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { listWebviewAssetFiles } = require("../../scripts/patches/lib/assets.js");
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 
-const fixture = fs.readFileSync(path.join(__dirname, "fixtures/current-persistent-partition.js"), "utf8");
+const fixture = fs.readFileSync(path.join(__dirname, "../../scripts/patches/lib/fixtures/current-activity-partition.js"), "utf8");
 const ids = units => Array.from(units, unit => unit.item?.item.id ?? unit.id);
 function unit(type, id, extra = {}) {
   return { kind: "standalone", item: { item: { type, id, completed: true,
@@ -23,10 +23,10 @@ function unit(type, id, extra = {}) {
 function partition(source, enabled = true) {
   return vm.runInNewContext(`${source};partition`, {
     localStorage: { getItem: () => enabled ? "1" : null },
-    g: { o: item => item.persist },
-    p: { Yr: item => item.final, rt: item => item.final },
-    h: { Q1: item => item.interactive },
-    f: { i$: ({ toolResult }) => toolResult?.interactive ? {} : null },
+    f: { o: item => item.persist },
+    m: { Yr: item => item.final, rt: item => item.final },
+    p: { Q1: item => item.interactive },
+    h: { i$: ({ toolResult }) => toolResult?.interactive ? {} : null },
   });
 }
 
@@ -89,7 +89,7 @@ test("persistence composes in both orders and repeatedly with authored-message v
   assert.equal(authored(first), first);
   assert.deepEqual(ids(partition(first, false)(items).persistentUnits), ["user", "commentary"]);
   const { write, runAll } = workspace(t);
-  write("async/shared-partition.js", fixture);
+  write("async/shared-partition.js", `export const __webpack_modules__={QypQ(e,t,n){${fixture}}};`);
   const selected = [...authoredDescriptors, descriptor];
   assert.ok(runAll(selected).every(patch => patch.status === "applied"));
   assert.ok(runAll(selected).every(patch => patch.status === "already-applied"));
@@ -100,12 +100,12 @@ test("persistent contract rejects missing, duplicate, mixed, and damaged prefere
   const patched = apply(fixture);
   for (const source of [
     "const unrelated=true;", fixture + fixture, patched + fixture, patched + patched,
-    patched.replace('"reasoning"===m.item.item.type', '"reasoning"===other.item.item.type'),
+    patched.replace('"reasoning"===x.item.item.type', '"reasoning"===other.item.item.type'),
     patched.replace("/*community-reasoning-visibility-persistent*/", ""),
     patched.replace(RUNTIME, ""), RUNTIME + patched,
     fixture + ";function orphan(){return codexLinuxReasoningVisibilityEnabled()}",
     fixture.replace('if("standalone"!==e.kind)', 'if(e.kind!==`standalone`)'),
-    fixture.replace("i=e.item.item", "i=e.item.other"),
+    fixture.replace("l=e.item.item", "l=e.item.other"),
   ]) {
     assert.notEqual(source, fixture);
     assert.equal(apply(source), source);
@@ -128,7 +128,7 @@ test("applied persistence rejects helpers hidden in sibling factories or ordinar
     const { write, run } = workspace(t);
     const file = write("async/misplaced-runtime.js", source);
     assert.equal(run().status, "skipped-optional");
-    assert.equal(fs.readFileSync(file, "utf8"), source);
+    assert.equal(fs.readFileSync(file, "utf8"), asChunk(source));
   }
 });
 
@@ -145,9 +145,14 @@ test("complete persistence accepts a helper in its own factory with legitimate o
     const { write, run } = workspace(t);
     const file = write("async/own-factory-runtime.js", source);
     assert.equal(run().status, "already-applied");
-    assert.equal(fs.readFileSync(file, "utf8"), source);
+    assert.equal(fs.readFileSync(file, "utf8"), asChunk(source));
   }
 });
+
+function asChunk(source) {
+  return source.includes("export const __webpack_modules__=") ? source :
+    `export const __rspack_esm_ids=[101];export const __webpack_modules__={QypQ(e,t,n){${source}}};`;
+}
 
 function workspace(t) {
   const base = path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "codex-desktop-dev");
@@ -157,11 +162,12 @@ function workspace(t) {
   const write = (name, source) => {
     const file = path.join(root, "webview", "assets", name);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, source);
+    fs.writeFileSync(file, asChunk(source));
     return file;
   };
   const runAll = selected => {
     const report = createPatchReport();
+    applyExtractedAppPatchDescriptors(root, selected, {}, report, "extracted-app:pre-webview");
     applyWebviewAssetPatchDescriptors(root, selected, {}, report);
     return report.patches;
   };
@@ -175,7 +181,7 @@ test("production descriptor finds numeric async owners and preserves ambiguous/p
   assert.equal(run().status, "applied");
   const patched = fs.readFileSync(first, "utf8");
   assert.equal(run().status, "already-applied");
-  const partial = patched.replace('"reasoning"===m.item.item.type', '"reasoning"===other.item.item.type');
+  const partial = patched.replace('"reasoning"===x.item.item.type', '"reasoning"===other.item.item.type');
   const second = write("other/366297.hash.js", partial);
   assert.equal(run().status, "skipped-optional");
   assert.equal(fs.readFileSync(first, "utf8"), patched);
@@ -198,5 +204,152 @@ test("current signed owner contains the verbatim partition and patches through t
   assert.equal(javascriptSourceParses(patched), true);
   assert.equal(authored(patched), apply(authored(owner.source)));
   assert.equal(run().status, "already-applied");
+  for (const header of ["async function({unit:", "async/*gap*/function({unit:", "async\tfunction({unit:",
+    "async function\n({unit:", "function*({unit:", "async function*({unit:"]) {
+    const mutant = owner.source.replace("function({unit:", header);
+    assert.ok(javascriptSourceParses(mutant));
+    assert.equal(apply(mutant), mutant);
+    const invalid = workspace(t);
+    const target = invalid.write(owner.assetName, mutant);
+    assert.equal(invalid.run().status, "skipped-optional");
+    assert.equal(fs.readFileSync(target, "utf8"), mutant);
+  }
+  const nativeOwner = require("../../scripts/patches/lib/activity-partition.js").inspectActivityPartition(owner.source);
+  const renamed = owner.source.replaceAll("collapsibleUnits:", "missingCollapsible:").replaceAll("persistentUnits:", "missingPersistent:");
+  const resultOnly = owner.source.slice(0, nativeOwner.result.start) + nativeOwner.result.source
+    .replace("collapsibleUnits:", "missingCollapsible:").replace("persistentUnits:", "missingPersistent:") + owner.source.slice(nativeOwner.result.end);
+  const decoy = resultOnly.slice(0, nativeOwner.loop.start) + 'const note="collapsibleUnits:persistentUnits:";' + resultOnly.slice(nativeOwner.loop.start);
+  const failures = require("../../scripts/lib/patch-report.js").enabledFeatureFailuresFromReport;
+  for (const mutant of [renamed, renamed.replaceAll("keepMcpAppEntriesPersistent:", "missingKeepMcp:"), decoy]) {
+    assert.ok(javascriptSourceParses(mutant));
+    const invalid = registeredWorkspace(t, { "async/good.js": owner.source, "async/hidden.js": mutant });
+    assert.equal(failures(invalid.run()).length, 1);
+    for (const { file, source: before } of invalid.files) assert.equal(fs.readFileSync(file, "utf8"), before);
+  }
   assert.equal(fs.readFileSync(path.join(assets, owner.assetName), "utf8"), owner.source);
+});
+
+test("reasoning persistence preserves current native plain-async delivery cases", () => {
+  const source = apply(fixture);
+  const before = partition(fixture);
+  const enabled = partition(source);
+  const disabled = partition(source, false);
+  for (const plainAsyncMessageIds of [undefined, new Set(), new Set(["ticket"])]) {
+    for (const delivery of ["async", "sync"]) {
+      for (const searchItemId of [undefined, "ticket", "other"]) {
+        const items = [unit("assistant-message", "message", { delivery, searchItemId }), unit("exec", "tool")];
+        const options = { hasFollowingFinalAnswer: true, plainAsyncMessageIds };
+        const expected = JSON.stringify(before(items, options));
+        assert.equal(JSON.stringify(enabled(items, options)), expected);
+        assert.equal(JSON.stringify(disabled(items, options)), expected);
+      }
+    }
+  }
+});
+
+test("reasoning persistence refuses drifted async Set and complete caller mapping", t => {
+  t.mock.method(console, "warn", () => {});
+  for (const source of [
+    fixture.replace("plainAsyncMessageIds:s,renderMcpApps:i", "renderMcpApps:i"),
+    fixture.replace("s?.has(l.searchItemId)", "wrong?.has(l.searchItemId)"),
+    fixture.replace("plainAsyncMessageIds:i,renderMcpApps:l})", "plainAsyncMessageIds:wrong,renderMcpApps:l})"),
+    fixture.replace("hasFollowingFinalAnswer:t<g", "hasFollowingFinalAnswer:t<wrong"),
+  ]) {
+    assert.notEqual(source, fixture);
+    assert.equal(apply(source), source);
+    const project = workspace(t);
+    const file = project.write("async/bad-current-binding.js", source);
+    assert.equal(project.run().status, "skipped-optional");
+    assert.equal(fs.readFileSync(file, "utf8"), asChunk(source));
+  }
+});
+
+test("non-current activity callable kinds remain parseable and byte-identical after refusal", t => {
+  t.mock.method(console, "warn", () => {});
+  for (const header of ["async function({unit:", "async/*gap*/function({unit:", "async\tfunction({unit:",
+    "async function\n({unit:", "function*({unit:", "async function*({unit:", "new function({unit:"]) {
+    const source = fixture.replace("function({unit:", header);
+    assert.doesNotThrow(() => new vm.Script(source));
+    assert.equal(apply(source), source);
+    const project = workspace(t);
+    const file = project.write("async/current.js", source);
+    assert.equal(project.run().status, "skipped-optional");
+    assert.equal(fs.readFileSync(file, "utf8"), asChunk(source));
+    assert.ok(javascriptSourceParses(fs.readFileSync(file, "utf8")));
+  }
+});
+
+function registeredWorkspace(t, sources, enabled = true) {
+  const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "reasoning-cohort-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(root, "features.json");
+  fs.writeFileSync(config, JSON.stringify({ enabled: enabled ? ["reasoning-visibility"] : [] }));
+  const loaded = loadLinuxFeaturePatchDescriptors({ featuresRoot: path.join(__dirname, ".."), featuresConfigPath: config })
+    .filter(item => item.id === "feature:reasoning-visibility:persistent");
+  const files = Object.entries(sources).map(([name, source]) => {
+    const file = path.join(root, "webview/assets", name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, asChunk(source));
+    return { file, source: asChunk(source) };
+  });
+  const run = () => {
+    const report = createPatchReport();
+    report.enabledFeatures = enabled ? ["reasoning-visibility"] : [];
+    applyExtractedAppPatchDescriptors(root, loaded, {}, report, "extracted-app:pre-webview");
+    return report;
+  };
+  return { files, loaded, run };
+}
+
+test("registered reasoning cohort patches all complete copies and recognizes their repeated state", t => {
+  const project = registeredWorkspace(t, { "async/a.js": fixture, "async/b.js": fixture });
+  assert.equal(project.loaded[0].phase, "extracted-app:pre-webview");
+  assert.equal(project.run().patches[0].status, "applied");
+  for (const { file } of project.files) assert.equal(fs.readFileSync(file, "utf8"), apply(asChunk(fixture)));
+  assert.equal(project.run().patches[0].status, "already-applied");
+  const previous = registeredWorkspace(t, { "async/previous-build.js": apply(asChunk(fixture)) });
+  assert.equal(previous.run().patches[0].status, "already-applied");
+  assert.equal(fs.readFileSync(previous.files[0].file, "utf8"), previous.files[0].source);
+});
+
+test("registered reasoning cohort rejects missing-needle, decoy, damaged and mixed copies before writes", t => {
+  t.mock.method(console, "warn", () => {});
+  const { enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
+  const missing = fixture.replace("collapsibleUnits:", "missingCollapsible:").replace("persistentUnits:", "missingPersistent:");
+  const owner = require("../../scripts/patches/lib/activity-partition.js").inspectActivityPartition(fixture);
+  const decoy = missing.slice(0, owner.loop.start) + 'const note="collapsibleUnits:persistentUnits:";' + missing.slice(owner.loop.start);
+  for (const other of [missing, decoy, fixture.replace("s?.has(l.searchItemId)", "wrong?.has(l.searchItemId)"),
+    apply(fixture), asChunk(fixture).replace("QypQ(e,t,n)", "Other(e,t,n)")]) {
+    const project = registeredWorkspace(t, { "async/good.js": fixture, "async/other.js": other });
+    assert.equal(enabledFeatureFailuresFromReport(project.run()).length, 1);
+    for (const { file, source } of project.files) assert.equal(fs.readFileSync(file, "utf8"), source);
+  }
+});
+
+test("registered reasoning cohort rolls back a later truncated copy write", t => {
+  t.mock.method(console, "warn", () => {});
+  const project = registeredWorkspace(t, { "async/a.js": fixture, "async/b.js": fixture });
+  const originalWrite = fs.writeFileSync;
+  let failed = false;
+  t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+    if (file === project.files[1].file && !failed) {
+      failed = true;
+      originalWrite(file, "truncated");
+      throw new Error("injected later reasoning copy write failure");
+    }
+    return originalWrite(file, bytes, ...args);
+  });
+  assert.equal(project.run().patches[0].status, "skipped-optional");
+  assert.equal(failed, true);
+  for (const { file, source } of project.files) assert.equal(fs.readFileSync(file, "utf8"), source);
+});
+
+test("disabled reasoning cohort performs no asset discovery", t => {
+  const project = registeredWorkspace(t, {}, false);
+  assert.deepEqual(project.loaded, []);
+  let discovered = false;
+  t.mock.method(fs, "readdirSync", () => { discovered = true; throw new Error("unexpected discovery"); });
+  assert.deepEqual(project.run().patches, []);
+  assert.equal(discovered, false);
 });
