@@ -57,6 +57,15 @@ cadence-limited `*-6h-*.md` rollups. Exclusion rules suppress matching
 window/app/accessibility evidence and record suppression counts instead of
 copying excluded content into resources.
 
+Summary inputs are bounded by capture time: ten-minute summaries use frames
+from the preceding ten minutes, and six-hour rollups use frames and summary
+resources from the preceding six hours. Unknown or future timestamps are
+excluded. Frame selection ignores symlinks, deduplicates latest/sparse copies
+of a capture, and samples up to eight captures across the available window.
+Rollups include up to 360 timestamped summary resources, sampled across the
+window if necessary. Missing captures remain gaps; sampled screen observations
+do not establish continuous activity or completed work.
+
 ## Local OCR
 
 Linux Chronicle OCR is local-only and optional. In `auto` backend mode,
