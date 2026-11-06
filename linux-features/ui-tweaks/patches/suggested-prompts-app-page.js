@@ -119,10 +119,16 @@ function inspectModule(module) {
   if(!callback||writes(body,navigation[1]).length!==2)return null;
   const callbackEnd=findMatchingBrace(body,callback.index+callback[0].length-1),callbackBody=body.slice(callback.index+callback[0].length,callbackEnd);
   if(!callbackBody.includes(`conversationId:${callback[1]},draftThreadLocationId:`)||!callbackBody.includes(`"background"===${callback[3]}`))return null;
-  const route=one(matches(callbackBody,new RegExp(`let (${ID})=${ID}\\?\\(0,${escapeRegExp(memo[9])}\\.${ID}\\)\\(${escapeRegExp(callback[1])}\\):\\(0,${escapeRegExp(memo[9])}\\.${ID}\\)\\(${escapeRegExp(callback[1])}\\);await (${ID})\\(\\1,\\{replace:!0,state:\\{\\.\\.\\.${escapeRegExp(callback[2])},preserveSidebarScroll:!0\\}\\}\\)`,"gu")));
-  if(!route)return null;
+  const route=one(matches(callbackBody,new RegExp(
+    `let (${ID})=${ID}\\?\\(0,${escapeRegExp(memo[9])}\\.${ID}\\)\\(${escapeRegExp(callback[1])}\\):\\(0,${escapeRegExp(memo[9])}\\.${ID}\\)\\(${escapeRegExp(callback[1])}\\),`+
+    `(?<transition>${ID})="new"===(?<scope>${ID})\\.value\\.kind&&"preview"===\\k<scope>\\.value\\.entrypoint&&\\(0,(?<previewNs>${ID})\\.(?<previewMethod>${ID})\\)\\(\\k<scope>,\\1,(?<draft>${ID})\\);`+
+    `await (${ID})\\(\\1,\\{replace:!0,viewTransition:\\k<transition>,state:\\{\\.\\.\\.${escapeRegExp(callback[2])},preserveSidebarScroll:!0\\}\\}\\)`,"gu")));
+  if(!route||!findRspackRequireBinding(module,route.groups.previewNs)||
+      !callbackBody.includes(`conversationId:${callback[1]},draftThreadLocationId:${route.groups.draft}}`))return null;
   const chain=graph(module,defs,leaf);if(!chain)return null;
-  return {moduleId:module.moduleId,graph:chain,fields,consumer:object,component:leaf,rollout,rolloutCall:{namespace:gate[1]??gate[3],member:gate[2]??gate[4]},account,accountCall:{namespace:memo[9],member:memo[10],auth:memo[3],email:memo[7],plan:memo[5]},view:{namespace:object.view,member:object.viewExport},navigation:{callback:navigation[1],args:callback.slice(1,4)},module};
+  const bodyStart=leaf.end-1-body.length;
+  const site=(match,patched)=>({start:bodyStart+match.index,end:bodyStart+match.index+match[0].length,source:match[0],patched});
+  return {moduleId:module.moduleId,graph:chain,fields,eligibility:site(eligible,eligible[3]!=null),rolloutSite:site(gate,gate[3]!=null),consumer:object,component:leaf,rollout,rolloutCall:{namespace:gate[1]??gate[3],member:gate[2]??gate[4]},account,accountCall:{namespace:memo[9],member:memo[10],auth:memo[3],email:memo[7],plan:memo[5]},view:{namespace:object.view,member:object.viewExport},navigation:{callback:navigation[1],args:callback.slice(1,4)},module};
 }
 function inspectPage(source,snapshot) {
   if(typeof source!=="string")return null;

@@ -67,6 +67,7 @@ function evaluate(source) {
     if(id==="JSX")return {jsx:(component,props)=>({component,props})};
     if(id==="Hooks")return {cache:()=>memo,gate:(id)=>{calls.gate.push(id);return false}};
     if(id==="Domain")return {internal:()=>false};
+    if(id==="Transition")return {start:()=>true};
     if(id==="Lazy")return {_:(fn)=>({load:fn})};
     if(!modules[id])throw Error("Unknown fixture module "+id);
     const target={};cache[id]=target;modules[id]({},target,load);
@@ -371,30 +372,57 @@ test("signed native provider keeps runtime-off gating and current host/project t
   assert.equal(result.props.generatedSuggestionsEnabled,false);assert.equal(queries.length,2);
 });
 
-test("signed native onLocalConversationCreated performs navigation with current draft context",{
+test("signed native navigation retains current draft context and preview transitions",{
   skip:process.env.CODEX_SIGNED_EXTRACTED_APP==null,
 },async()=>{
   const {info}=signedFixture(),body=info.component.body;
   const assignment=`${info.navigation.callback}=async(`,start=body.indexOf(assignment);assert.ok(start>=0);
   const open=body.indexOf("{",start),end=findMatchingBrace(body,open),source=body.slice(start+info.navigation.callback.length+1,end+1);
-  const route=/let ([\w$]+)=([\w$]+)\?\(0,([\w$]+)\.([\w$]+)\)\(([\w$]+)\):\(0,\3\.([\w$]+)\)\(\5\);await ([\w$]+)\(\1,/u.exec(source);assert.ok(route);
-  const scope=/if\(([\w$]+)\.set\(/u.exec(source)?.[1],section=/null!=([\w$]+)&&/u.exec(source)?.[1];assert.ok(scope);assert.ok(section);
-  const draft=/conversationId:[\w$]+,draftThreadLocationId:([\w$]+)/u.exec(source)?.[1];assert.ok(draft);
+  const route=/let (?<destination>[\w$]+)=(?<cloud>[\w$]+)\?\(0,(?<namespace>[\w$]+)\.(?<cloudMethod>[\w$]+)\)\((?<id>[\w$]+)\):\(0,\k<namespace>\.(?<localMethod>[\w$]+)\)\(\k<id>\),(?<transition>[\w$]+)="new"===(?<scope>[\w$]+)\.value\.kind&&"preview"===\k<scope>\.value\.entrypoint&&\(0,(?<previewNamespace>[\w$]+)\.(?<previewMethod>[\w$]+)\)\(\k<scope>,\k<destination>,(?<draft>[\w$]+)\);await (?<navigate>[\w$]+)\(\k<destination>,/u.exec(source)?.groups;
+  assert.ok(route);
+  const section=/null!=([\w$]+)&&/u.exec(source)?.[1];assert.ok(section);
   const reset=/\(0,([\w$]+)\.([\w$]+)\)\([\w$]+,\{conversationId:[\w$]+,draftThreadLocationId:/u.exec(source);assert.ok(reset);
   const pass=new Proxy(()=>true,{get:()=>pass}),globals=Object.fromEntries([...new Set(source.match(/\b[A-Za-z_$][\w$]*\b/gu))].map(key=>[key,pass]));
-  const navigations=[],resets=[];
-  globals[scope]={value:{clientThreadId:"current-client"},set:()=>{},get:()=>"conversation-b"};globals[section]=null;
-  globals[route[3]]=new Proxy({}, {get:(_target,key)=>id=>`${key===route[4]?"cloud":"local"}/${id}`});
-  globals[route[7]]=async(...args)=>navigations.push(args);
+  const navigations=[],resets=[],previews=[];
+  globals[section]=null;
+  globals[route.namespace]=new Proxy({}, {get:(_target,key)=>id=>`${key===route.cloudMethod?"cloud":"local"}/${id}`});
+  globals[route.navigate]=async(...args)=>navigations.push(args);
+  globals[route.previewNamespace]={[route.previewMethod]:(...args)=>{previews.push(args);return true}};
   globals[reset[1]]=new Proxy({}, {get:(_target,key)=>key===reset[2]?(_scope,context)=>resets.push(context):()=>false});
-  for(const [id,location,cloud]of[["conversation-a","draft-alpha",false],["conversation-b","draft-beta",true]]) {
-    globals[draft]=location;globals[route[2]]=cloud;
-    const callback=vm.runInNewContext(`(${source})`,globals);
-    await callback(id,{entry:location},"foreground");
-    const [destination,options]=navigations.at(-1);
-    assert.equal(destination,`${cloud?"cloud":"local"}/${id}`);assert.equal(options.replace,true);assert.equal(options.state.entry,location);assert.equal(options.state.preserveSidebarScroll,true);
-    assert.equal(resets.at(-1).conversationId,id);assert.equal(resets.at(-1).draftThreadLocationId,location);
+  for(const [kind,entrypoint] of [["new","preview"],["new","standard"],["existing","preview"]]) {
+    for(const cloud of [false,true]) {
+      const id=`${kind}-${entrypoint}-${cloud}`,location=`draft-${id}`;
+      globals[route.scope]={value:{kind,entrypoint,clientThreadId:"current-client"},set:()=>{},get:()=>"background-other"};
+      globals[route.draft]=location;globals[route.cloud]=cloud;
+      const before=previews.length,callback=vm.runInNewContext(`(${source})`,globals);
+      await callback(id,{entry:location},"foreground");
+      const [destination,options]=navigations.at(-1),expectedPreview=kind==="new"&&entrypoint==="preview";
+      assert.equal(destination,`${cloud?"cloud":"local"}/${id}`);
+      assert.equal(options.replace,true);assert.equal(options.state.entry,location);assert.equal(options.state.preserveSidebarScroll,true);
+      assert.equal(options.viewTransition,expectedPreview);
+      assert.equal(previews.length,before+Number(expectedPreview));
+      if(expectedPreview)assert.deepEqual(previews.at(-1),[globals[route.scope],destination,location]);
+      assert.equal(resets.at(-1).conversationId,id);assert.equal(resets.at(-1).draftThreadLocationId,location);
+    }
   }
-  const callback=vm.runInNewContext(`(${source})`,globals);await callback("conversation-b",{},"background");
-  assert.equal(navigations.length,2);assert.deepEqual(resets.slice(0,2).map(value=>value.draftThreadLocationId),["draft-alpha","draft-beta"]);
+  const callback=vm.runInNewContext(`(${source})`,globals);await callback("background-skipped",{},"background");
+  assert.equal(navigations.length,6);
 });
+
+test("ordinary Home edits only its proved owner ranges across long memo regions and sibling aliases", () => {
+  const long=fixture().replace("enabled=rollout&&eligible;return", "enabled=rollout&&eligible;"+"void 0;".repeat(250)+"return");
+  assert.notEqual(long,fixture());
+  const sibling='Sibling(module,exports,require){let enabled=rollout&&eligible;return {generatedSuggestionsEnabled:enabled}}';
+  const source=fixtures.chunk(long,sibling),patched=applySource(source);
+  assert.equal(contract(source),"current");assert.equal(contract(patched),"patched");
+  assert.ok(patched.includes(sibling));assert.equal(applySource(patched),patched);
+});
+
+for(const field of ["viewTransition:transition",'"preview"===scope.value.entrypoint']) {
+  test(`ordinary Home rejects changed native preview binding ${field}`, t => {
+    const source=chunk(fixture()),damaged=source.replace(field,field==="viewTransition:transition"?"viewTransition:other":'"preview"===other.value.entrypoint');
+    assert.notEqual(damaged,source);
+    const root=workspace(t,{"async/owner.js":damaged}),file=path.join(root,"webview/assets/async/owner.js");
+    assert.throws(()=>descriptor.apply(root));assert.equal(fs.readFileSync(file,"utf8"),damaged);
+  });
+}
