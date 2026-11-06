@@ -22,7 +22,7 @@ desktop app against that home while changing accounts.
 ## Behavior and storage
 
 - Switching does not quit or relaunch Electron. It reconnects the local
-  app server and reloads desktop windows so account-specific UI caches refresh.
+  app server; upstream then recreates the desktop windows for the new account.
 - Pending app-server requests in this app and active loaded local/remote tasks
   block switching. Local/remote task checks use upstream's ready-checked request
   wrapper with `thread/loaded/list` and `thread/read` before starting OAuth.

@@ -73,10 +73,10 @@ electron.app.whenReady().then(async () => {
   };
   for (let attempt = 0; attempt < 2; attempt++) {
     // A fresh instance must retrieve the persisted key and decrypt the vault.
-    await createAccountSwitcher({ electron: api, clients: () => [client, lazy], home, reload() {} }).open(client);
+    await createAccountSwitcher({ electron: api, clients: () => [client, lazy], home }).open(client);
   }
   selectAdd = true;
-  await createAccountSwitcher({ electron: api, clients: () => [client, lazy], home, reload() {} }).open(client);
+  await createAccountSwitcher({ electron: api, clients: () => [client, lazy], home }).open(client);
   const vault = path.join(home, ".community-account-switcher/accounts.json");
   const encryptedVault = fs.existsSync(vault) && !fs.readFileSync(vault, "utf8").includes("synthetic-probe-secret");
   const cloudUntouched = lazy.connection === null && lazy.getPendingRequestCount() === 0;
