@@ -20,8 +20,14 @@ const {
 const {
   applySharedAppServerSocketPatch,
   descriptors,
+  findTransportSymbols,
   sharedTransportClassSource,
 } = require("./patch.js");
+
+const { mainTransportGraph, callbackSource } = require("./fixtures/main-transport-graph.js");
+const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+const { createPatchReport, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
+const { inspectMainLocalConfigSite } = require("../../scripts/patches/lib/main-local-config-sites.js");
 
 const socketEnvHook = path.join(__dirname, "socket-env.sh");
 const orphanReaper = path.join(__dirname, "orphan-reaper.js");
@@ -863,24 +869,7 @@ function stopOrphanAuthority(orphan) {
   }
 }
 
-// Mirrors the rspack/SWC-minified 26.1027 main-process chunk: double-quoted
-// strings, literal-first comparisons, `(0,ns.fn)(...)` calls, and handshake
-// constants inlined into the SSH method.
-function syntheticBundle() {
-  return [
-    'class gC{options;kind="websocket";logger=(0,i.i)("AppServerTransportSshWebsocket");proxyStreams=new Set;hasConnected=!1;supportsReconnect(){return!0}',
-    'async connectToRemoteAppServer(e,t){return this.runWithSshStartupGate(async()=>{let t={current:null},h=(0,n.hd)(),r=new w.kn("ws://codex-app-server/rpc",{perMessageDeflate:!1,headers:h,createConnection:()=>',
-    "(t.current=this.createSshProxyStream(),t.current)}),o={current:null},a=e=>{o.current=o.current??e};r.on(\"error\",a);",
-    'let s=64;r.once("upgrade",e=>{let t=Number(e.headers["frame-limit"]);Number.isSafeInteger(t)&&t>0&&(s=t)});let c=new n.Codec(r,null!=h);r.once("close",()=>{t.current?.destroy()});',
-    "try{if(await opened(r),null!=o.current)throw o.current}catch(e){throw t.current?.destroy(),r.terminate(),e}",
-    'let i=new n.On(r,void 0,s,c);return r.off("error",a),this.logger.info("app_server_connection.compression_negotiated",{safe:{compression:c.compression}}),(0,n.Dn)(r,{onPongTimeout:()=>{i.terminationReason="pong_timeout",r.terminate()}}),this.hasConnected=!0,i})}}',
-    'let v5=(0,i.i)("WindowContext");function b5(e){let t=_C(e.hostConfig);if(t)return v5.info("[ssh-websocket-v0] selected app-server transport"),new gC(t);',
-    'if("remote-control"===e.transportKind)return new Remote(e);',
-    'if((0,n.no)(e.hostConfig))return new hoe({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator});',
-    'let r=x5(e.hostConfig);if(r){e.desktopAuthAppServerClient;let t=vbe(e.hostConfig,r);return new n.Tn({hostConfig:e.hostConfig,websocketUrl:r,getWebsocketProtocols:void 0,...null==t?{}:{socksProxyUrl:t}})}',
-    'return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:async()=>[...await Ope(e)]})}function afterFactory(){}',
-  ].join("");
-}
+function syntheticBundle() { return mainTransportGraph(); }
 
 test("shared-app-server-socket stays disabled until explicitly enabled", () => {
   withFeatureConfig([], (featuresRoot) => {
@@ -1764,13 +1753,10 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.deepEqual(warnings, [], "an already applied patch must not report drift");
   assert.match(patched, /CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET/);
   assert.match(patched, /hostConfig\.kind===`local`/);
-  assert.match(
-    patched,
-    /CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async\(\)=>\[\.\.\.await Ope\(e\)\]\)/,
-  );
+  assert.ok(patched.includes(`CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${callbackSource})`));
   assert.match(patched, /app-server`,\s*`proxy`,\s*`--sock`/);
   assert.match(patched, /flatMap\(e=>\[`-c`,e\]\).*app-server`,\s*`--listen`,\s*`unix:\/\//);
-  assert.doesNotMatch(patched, /mcp_servers\.codex_app/);
+  assert.equal(patched.split(callbackSource).length - 1, 2, "copy the native opaque callback intact");
   assert.match(patched, /await this\.ensureAuthority\(\)/);
   assert.match(patched, /e\.once\(`close`,t\);try\{e\.kill\(\)/);
   assert.match(patched, /openSync\(this\.lockPath,`wx`,384\)/);
@@ -1999,17 +1985,19 @@ test("patch rejects ambiguous or disconnected codec and adapter lifecycles", () 
 
 test("durable hosts retain their upstream transport even when kind is local", () => {
   const patched = applySharedAppServerSocketPatch(syntheticBundle());
-  const factory = patched.slice(patched.indexOf("function b5(e)"), patched.indexOf("function afterFactory"));
+  const site = inspectMainLocalConfigSite(patched);
+  assert.equal(site.ok, true, site.reason);
+  const factory = patched.slice(site.scope.selectorStart, site.scope.selectorEnd);
   class Bridge {}
   class Cloud {}
   class Local {}
   const context = {
     process: { env: { CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET: "/test/socket" } },
     CodexLinuxSharedAppServerSocketTransport: Bridge,
-    _C: () => null,
-    n: { no: () => false, Tn: Cloud, Cn: Local },
-    x5: config => config.id === "durable" ? "wss://example.test" : null,
-    vbe: () => null,
+    ei: { $S6: () => false, ZJQ: () => false },
+    ed: { bvG: Cloud, Lu0: Local },
+    evB: config => config.id === "durable" ? "wss://example.test" : null,
+    evW: undefined, URL,
   };
   vm.runInNewContext(`${factory};globalThis.create=b5`, context);
   assert.ok(context.create({ hostConfig: { kind: "local", id: "local" } }) instanceof Bridge);
@@ -2068,7 +2056,7 @@ test("patch rejects a current transport whose semantic SSH anchor is missing", (
 
 test("patch leaves a current transport with no config override callback byte-identical", () => {
   const source = syntheticBundle().replace(
-    ",getConfigOverrides:async()=>[...await Ope(e)]",
+    `,getConfigOverrides:${callbackSource}`,
     "",
   );
   const warnings = [];
@@ -2079,13 +2067,14 @@ test("patch leaves a current transport with no config override callback byte-ide
   } finally {
     console.warn = originalWarn;
   }
-  assert.match(warnings.join("\n"), /config override callback.*found 0/i);
+  assert.match(warnings.join("\n"), /native.*config site/i);
 });
 
 test("patch leaves an ambiguous config override callback byte-identical", () => {
-  const callbackTransport =
-    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:async()=>[...await Ope(e)]})";
-  const source = syntheticBundle().replace(callbackTransport, `${callbackTransport};${callbackTransport}`);
+  const original = syntheticBundle(), site = inspectMainLocalConfigSite(original);
+  assert.equal(site.ok, true, site.reason);
+  const callbackTransport = original.slice(site.localReturn.start, site.localReturn.end);
+  const source = original.replace(callbackTransport, `${callbackTransport};${callbackTransport}`);
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (...args) => warnings.push(args.join(" "));
@@ -2094,7 +2083,7 @@ test("patch leaves an ambiguous config override callback byte-identical", () => 
   } finally {
     console.warn = originalWarn;
   }
-  assert.match(warnings.join("\n"), /config override callback.*found 2/i);
+  assert.match(warnings.join("\n"), /native.*config site/i);
 });
 
 test("injected transport requires the captured config override callback", () => {
@@ -2105,20 +2094,175 @@ test("injected transport requires the captured config override callback", () => 
   );
 });
 
+function quietShared(callback) {
+  const original = console.warn, warnings = [];
+  console.warn = (...values) => warnings.push(values.join(" "));
+  try { return { value: callback(), warnings }; }
+  finally { console.warn = original; }
+}
+
+function mainWorkspace(t, files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "shared-socket-main-contract-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const build = path.join(root, ".vite", "build");
+  fs.mkdirSync(build, { recursive: true });
+  for (const [name, source] of Object.entries(files)) fs.writeFileSync(path.join(build, name), source);
+  return { root, build, read: name => fs.readFileSync(path.join(build, name), "utf8") };
+}
+
+function normalShared(root, context = {}) {
+  return withFeatureConfig(["shared-app-server-socket"], featuresRoot => {
+    const registered = loadLinuxFeaturePatchDescriptors({ featuresRoot });
+    const report = createPatchReport(); report.enabledFeatures = ["shared-app-server-socket"];
+    quietShared(() => applyExtractedAppPatchDescriptors(root, registered, context, report, descriptors[0].phase));
+    assert.equal(report.patches.length, 1);
+    return { patch: report.patches[0], report };
+  });
+}
+
+function sharedOwnedParts(source) {
+  const site = inspectMainLocalConfigSite(source); assert.equal(site.ok, true, site.reason);
+  const callback = source.slice(site.overrides.start, site.overrides.end);
+  const classSource = sharedTransportClassSource(findTransportSymbols(source));
+  const classStart = site.scope.selectorStart - classSource.length;
+  assert.equal(source.slice(classStart, site.scope.selectorStart), classSource);
+  const branch = `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&${site.optionsVar}.hostConfig.kind===\`local\`&&${site.optionsVar}.hostConfig.id===\`local\`)return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${callback});`;
+  const branchStart = source.indexOf(branch, site.scope.selectorStart);
+  assert(branchStart > site.scope.selectorStart && branchStart < site.scope.selectorEnd);
+  return { site, callback, classSource, classStart, branch, branchStart };
+}
+
+function nineteenMainFiles(source) {
+  const files = { "early-bootstrap-45-aaaaaaaaaaaaaaaa.js": source };
+  for (let index = 0; index < 18; index++) {
+    files[`early-bootstrap-${100 + index}-bbbbbbbbbbbbbbbb.js`] = `exports.ids=[${100 + index}],exports.modules={${90000 + index}(e,t,r){return false}};`;
+  }
+  return files;
+}
+
+test("registered shared socket Adapter validates nineteen chunks and complete same-ID cohort", t => {
+  const current = syntheticBundle(), patched = applySharedAppServerSocketPatch(current);
+  const owner = "early-bootstrap-45-aaaaaaaaaaaaaaaa.js", extra = "early-bootstrap-46-cccccccccccccccc.js";
+  for (const source of [
+    current, patched,
+    'exports.ids=[46],exports.modules={82820(e,t,r){return false}};',
+    current.replace("globalState:this.appState", "globalState:this.scopedState"),
+    "/*CodexLinuxSharedAppServerSocketTransport*/const orphan=true;",
+  ]) {
+    const files = { ...nineteenMainFiles(current), [extra]: source }, app = mainWorkspace(t, files);
+    const { patch, report } = normalShared(app.root);
+    assert.equal(patch.status, "skipped-optional");
+    assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
+    for (const [name, before] of Object.entries(files)) assert.equal(app.read(name), before);
+  }
+  const files = nineteenMainFiles(current), app = mainWorkspace(t, files);
+  assert.equal(Object.keys(files).length, 19);
+  assert.equal(normalShared(app.root).patch.status, "applied");
+  assert.equal(normalShared(app.root).patch.status, "already-applied");
+  assert.equal(app.read(owner), patched);
+  for (const [name, before] of Object.entries(files)) if (name !== owner) assert.equal(app.read(name), before);
+});
+
+test("shared socket canonical state owns exact class, branch location and callback copy", () => {
+  const current = syntheticBundle(), patched = applySharedAppServerSocketPatch(current), own = sharedOwnedParts(patched);
+  const stripped = patched.slice(0, own.branchStart) + patched.slice(own.branchStart + own.branch.length);
+  assert.equal(stripped.slice(0, own.classStart) + stripped.slice(own.classStart + own.classSource.length), current);
+  const movedBranch = patched.replace(own.branch, "");
+  const movedSite = inspectMainLocalConfigSite(movedBranch); assert.equal(movedSite.ok, true, movedSite.reason);
+  const variants = [
+    patched.replace(own.classSource, ""), patched.replace(own.branch, ""),
+    patched.replace(own.classSource, `function unused(){${own.classSource}}`),
+    patched.replace(own.classSource, own.classSource + "const unrelated=0;"),
+    patched.replace(own.branch, own.branch.replace('id===`local`', 'id===`durable`')),
+    patched.replace(own.branch, own.branch.replace("plugins.codex-app-tools@openai-bundled", "stale-copy@other")),
+    movedBranch.slice(0, movedSite.scope.selectorBodyStart) + own.branch + movedBranch.slice(movedSite.scope.selectorBodyStart),
+    current + own.classSource,
+  ];
+  for (const source of variants) {
+    assert.doesNotThrow(() => new vm.Script(source));
+    const result = quietShared(() => applySharedAppServerSocketPatch(source));
+    assert.equal(result.value, source); assert.equal(result.warnings.length, 1);
+  }
+});
+
+test("shared socket class authority rejects literal and encoded bindings while ignoring inert data", () => {
+  const raw = syntheticBundle(), canonical = applySharedAppServerSocketPatch(raw);
+  const name = "CodexLinuxSharedAppServerSocketTransport";
+  for (const source of [raw, canonical]) {
+    const site = inspectMainLocalConfigSite(source); assert.equal(site.ok, true, site.reason);
+    for (const binding of [name, String.raw`\u0043odexLinuxSharedAppServerSocketTransport`, String.raw`\u{43}odexLinuxSharedAppServerSocketTransport`]) {
+      const at = site.scope.selectorEnd, insertion = `{${binding}=class{};}`;
+      const damaged = source.slice(0, at) + insertion + source.slice(at);
+      assert.doesNotThrow(() => new vm.Script(damaged));
+      const result = quietShared(() => applySharedAppServerSocketPatch(damaged));
+      assert.equal(result.value, damaged, binding); assert.equal(result.warnings.length, 1, binding);
+    }
+    for (const insertion of [
+      `void ${JSON.stringify(name + "=class{};")};`,
+      String.raw`/* \u0043odexLinuxSharedAppServerSocketTransport=class{}; */`,
+      `void({${name}:0});`, String.raw`void({\u0043odexLinuxSharedAppServerSocketTransport:0});`,
+      `void other.${name};`, String.raw`void other.\u0043odexLinuxSharedAppServerSocketTransport;`,
+    ]) {
+      const at = site.scope.selectorEnd, benign = source.slice(0, at) + insertion + source.slice(at);
+      assert.doesNotThrow(() => new vm.Script(benign));
+      const result = quietShared(() => applySharedAppServerSocketPatch(benign));
+      assert.equal(result.warnings.length, 0, insertion);
+      assert.equal(result.value === benign, source === canonical, insertion);
+    }
+  }
+});
+
+test("shared socket copies source-owned native callback suffix and awaits exact inert inputs", async () => {
+  const original = syntheticBundle(), site = inspectMainLocalConfigSite(original);
+  assert.equal(site.ok, true, site.reason);
+  const contribution = ',...(e.hostConfig.id===`local`?[`cli_auth_credentials_store="file"`,`features.secret_auth_storage=false`]:[])';
+  const source = original.slice(0, site.overrides.arrayEnd - 1) + contribution + original.slice(site.overrides.arrayEnd - 1);
+  const patched = applySharedAppServerSocketPatch(source), own = sharedOwnedParts(patched);
+  assert.equal(quietShared(() => applySharedAppServerSocketPatch(patched)).value, patched);
+  assert.equal(patched.split(own.callback).length - 1, 2);
+  for (const rejectSecret of [false, true]) {
+    const calls = [], expectedError = Error("inert secret failure");
+    const options = { globalState: {}, hostConfig: { id: "local", kind: "local" }, resourcesPath: "/inert/resources" };
+    Object.defineProperty(options, "secretAuthStorageConfigOverrides", { get() { calls.push("secret"); return rejectSecret ? Promise.reject(expectedError) : Promise.resolve(["native-secret"]); } });
+    const context = { e: options, KS: { s1(state, host) { assert.equal(state, options.globalState); assert.equal(host, options.hostConfig); calls.push("global"); return ["native-global"]; } },
+      ed: { cPM: () => false }, async sd(input) { assert.equal(input.resourcesPath, options.resourcesPath); calls.push("tools"); return "/inert/tools"; } };
+    const callback = vm.runInNewContext(`(${own.callback})`, context);
+    if (rejectSecret) { await assert.rejects(callback(), error => error === expectedError); assert.deepEqual(calls, ["global", "secret"]); }
+    else {
+      assert.deepEqual(Array.from(await callback()), ["native-global", "native-secret", "plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=true", 'cli_auth_credentials_store="file"', "features.secret_auth_storage=false"]);
+      assert.deepEqual(calls, ["global", "secret", "tools"]);
+    }
+  }
+});
+
+test("registered shared socket transaction restores partial writes and retries", t => {
+  const source = syntheticBundle(), owner = "early-bootstrap-45-aaaaaaaaaaaaaaaa.js", app = mainWorkspace(t, nineteenMainFiles(source));
+  let writes = 0;
+  const { patch, report } = normalShared(app.root, { writeFileSync(file, bytes) {
+    if (++writes === 1) { fs.writeFileSync(file, "partial chunk"); throw Error("interrupted shared socket write"); }
+    fs.writeFileSync(file, bytes);
+  } });
+  assert.equal(patch.status, "skipped-optional"); assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
+  assert.equal(app.read(owner), source);
+  assert.equal(normalShared(app.root).patch.status, "applied");
+});
+
+for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
 test(
-  "patch applies to exactly one current signed main-process chunk",
-  { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
-  () => {
-    const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
+  `patch applies to exactly one current signed main-process chunk (${variable})`,
+  { skip: process.env[variable] == null },
+  t => {
+    const buildDir = path.join(process.env[variable], ".vite", "build");
     const chunks = fs.readdirSync(buildDir)
       .filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name));
     assert.ok(chunks.length > 0);
-    const results = [];
+    const results = [], originals = {};
     const originalWarn = console.warn;
     console.warn = () => {};
     try {
       for (const name of chunks) {
         const source = fs.readFileSync(path.join(buildDir, name), "utf8");
+        originals[name] = source;
         const patched = applySharedAppServerSocketPatch(source);
         if (patched !== source) results.push({ name, patched });
       }
@@ -2141,13 +2285,25 @@ test(
     );
     assert.match(patched, /return new CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async\(\)=>\[/);
     new vm.Script(patched, { filename: "patched-chunk.js" });
+    assert.equal(chunks.length, 19);
+    const app = mainWorkspace(t, originals);
+    assert.equal(normalShared(app.root).patch.status, "applied");
+    assert.equal(normalShared(app.root).patch.status, "already-applied");
+    const own = sharedOwnedParts(patched);
+    const withoutBranch = patched.slice(0, own.branchStart) + patched.slice(own.branchStart + own.branch.length);
+    assert.equal(withoutBranch.slice(0, own.classStart) + withoutBranch.slice(own.classStart + own.classSource.length), originals[results[0].name]);
+    for (const name of chunks) {
+      assert.equal(fs.readFileSync(path.join(buildDir, name), "utf8"), originals[name]);
+      assert.equal(app.read(name), name === results[0].name ? patched : originals[name]);
+    }
   },
 );
+}
 
-test("descriptor is optional and targets the main bundle", () => {
+test("descriptor is optional and validates the extracted main cohort", () => {
   assert.deepEqual(
     descriptors.map(({ id, phase, ciPolicy }) => [id, phase, ciPolicy]),
-    [["main-process-shared-app-server-socket", "main-bundle", "optional"]],
+    [["main-process-shared-app-server-socket", "extracted-app:pre-webview", "optional"]],
   );
 });
 

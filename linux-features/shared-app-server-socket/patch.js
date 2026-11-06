@@ -1,5 +1,11 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+const { inspectMainLocalConfigSite } = require("../../scripts/patches/lib/main-local-config-sites.js");
+const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
+const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
+const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
 const { readSocketPath } = require("./socket-path.js");
 const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
@@ -158,79 +164,132 @@ function sharedTransportClassSource(symbols) {
   );
 }
 
-function applySharedAppServerSocketPatch(source) {
-  const markerCount = source.split("class CodexLinuxSharedAppServerSocketTransport").length - 1;
+const TRANSPORT_NAME = "CodexLinuxSharedAppServerSocketTransport";
+
+function ownedReferences(source) {
+  if (!source.includes(TRANSPORT_NAME) && !source.includes("\\u")) return [];
+  const lexical = createJavaScriptLexicalIndex(source);
+  const tokens = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[A-Za-z_$])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])*/gu;
+  const result = [];
+  for (const token of source.matchAll(tokens)) {
+    if (!lexical.isCode(token.index)) continue;
+    const name = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => {
+      const point = parseInt(braced || fixed, 16);
+      return point <= 0x10ffff ? String.fromCodePoint(point) : "\0";
+    });
+    if (name !== TRANSPORT_NAME) continue;
+    let before = token.index - 1, after = token.index + token[0].length;
+    while (before >= 0 && !lexical.isCode(before)) before--;
+    while (after < source.length && !lexical.isCode(after)) after++;
+    if ([".", "#"].includes(source[before]) || source[after] === ":") continue;
+    result.push(token);
+  }
+  return result;
+}
+
+function transportBranch(options, callback) {
+  return `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&${options}.hostConfig.kind===\`local\`&&${options}.hostConfig.id===\`local\`)return new ${TRANSPORT_NAME}(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${callback});`;
+}
+
+function insertionPoint(selector, options) {
+  const name = escapeRegExp(options);
+  const fields = `\\{hostConfig:${name}\\.hostConfig,repoRoot:${name}\\.repoRoot,` +
+    `resourcesPath:${name}\\.resourcesPath,defaultOriginator:${name}\\.defaultOriginator`;
+  const pattern = new RegExp(
+    `(if\\(\\(0,${MEMBER}\\)\\(${name}\\.hostConfig\\)\\)return new ${IDENT}\\(${fields}\\}\\);)` +
+      `(?=let (${IDENT})=${IDENT}\\(${name}\\.hostConfig\\);if\\(\\2\\)\\{)`, "gu");
+  const matches = [...selector.matchAll(pattern)];
+  return matches.length === 1 ? matches[0].index + matches[0][0].length : null;
+}
+
+// The shared Module owns native graph facts. This Adapter owns its complete
+// generated declaration, conditional branch, callback copy and physical cohort.
+function sharedTransportState(source) {
+  const site = inspectMainLocalConfigSite(source);
   const symbols = findTransportSymbols(source);
-  if (markerCount === 1 && symbols != null) return source;
-  if (markerCount !== 0) {
-    console.warn("WARN: Found incomplete or ambiguous shared app-server socket patch state");
-    return source;
-  }
-  if (symbols == null) {
-    console.warn("WARN: Could not find SSH WebSocket transport for shared app-server socket patch");
-    return source;
-  }
-
-  const selectionLogIndex = source.indexOf("selected app-server transport");
-  const factoryStart = source.lastIndexOf("function ", selectionLogIndex);
-  const factoryHead = factoryStart < 0
-    ? null
-    : source.slice(factoryStart).match(new RegExp(`^function ${IDENT}\\((${IDENT})\\)\\{`));
-  const factoryEnd = factoryHead == null
-    ? -1
-    : findMatchingBrace(source, factoryStart + factoryHead[0].length - 1) + 1;
-  if (selectionLogIndex < 0 || factoryHead == null || factoryEnd <= selectionLogIndex) {
-    console.warn("WARN: Could not find local transport factory for shared app-server socket patch");
-    return source;
-  }
-  const options = escapeRegExp(factoryHead[1]);
-  const factorySource = source.slice(factoryStart, factoryEnd);
-  const optionFields =
-    `\\{hostConfig:${options}\\.hostConfig,repoRoot:${options}\\.repoRoot,` +
-    `resourcesPath:${options}\\.resourcesPath,defaultOriginator:${options}\\.defaultOriginator`;
-  const insertionPattern = new RegExp(
-    `(if\\(\\(0,${MEMBER}\\)\\(${options}\\.hostConfig\\)\\)return new ${IDENT}\\(${optionFields}\\}\\);)` +
-      `(?=let (${IDENT})=${IDENT}\\(${options}\\.hostConfig\\);if\\(\\2\\)\\{)`,
-    "g",
-  );
-  const insertionMatches = [...factorySource.matchAll(insertionPattern)];
-  if (insertionMatches.length !== 1) {
-    console.warn(
-      `WARN: Expected one local transport insertion point for shared app-server socket patch, found ${insertionMatches.length}`,
-    );
-    return source;
-  }
-  const configOverridesPattern = new RegExp(
-    `return new ${MEMBER}\\(${optionFields},getConfigOverrides:(async\\(\\)=>\\[[\\s\\S]{1,2000}?\\])\\}\\)`,
-    "g",
-  );
-  const configOverridesMatches = [...factorySource.matchAll(configOverridesPattern)];
-  if (configOverridesMatches.length !== 1) {
-    console.warn(
-      `WARN: Expected one local transport config override callback for shared app-server socket patch, found ${configOverridesMatches.length}`,
-    );
-    return source;
-  }
-  const [insertionMatch] = insertionMatches;
-  const getConfigOverrides = configOverridesMatches[0][1];
-
+  const invalid = reason => ({ kind: "invalid", site, reason });
+  if (symbols == null) return invalid("Could not find SSH WebSocket transport for shared app-server socket patch");
+  if (!site.ok) return invalid(`Could not qualify native shared app-server socket config site: ${site.reason}`);
+  const callback = source.slice(site.overrides.start, site.overrides.end);
+  const selector = source.slice(site.scope.selectorStart, site.scope.selectorEnd);
   const classSource = sharedTransportClassSource(symbols);
+  const branch = transportBranch(site.optionsVar, callback);
+  const references = ownedReferences(source);
+  if (references.length === 0) {
+    const insertion = insertionPoint(selector, site.optionsVar);
+    return insertion == null ? invalid("Could not qualify the native shared app-server socket insertion point") :
+      { kind: "current", site, classSource, branch, insertion: site.scope.selectorStart + insertion };
+  }
+  const classStart = site.scope.selectorStart - classSource.length;
+  if (references.length !== 2 || classStart < site.scope.factoryStart ||
+      source.slice(classStart, site.scope.selectorStart) !== classSource ||
+      references[0].index !== classStart + "class ".length) {
+    return invalid("Found incomplete, stale or misplaced shared app-server socket declaration");
+  }
+  const branchStart = selector.indexOf(branch);
+  if (branchStart < 0 || selector.indexOf(branch, branchStart + branch.length) >= 0 ||
+      references[1].index !== site.scope.selectorStart + branchStart + branch.indexOf(TRANSPORT_NAME)) {
+    return invalid("Found incomplete or stale shared app-server socket callback/branch");
+  }
+  const nativeSelector = selector.slice(0, branchStart) + selector.slice(branchStart + branch.length);
+  if (insertionPoint(nativeSelector, site.optionsVar) !== branchStart) {
+    return invalid("Found shared app-server socket branch outside its native insertion point");
+  }
+  return { kind: "applied", site, classSource, branch, classStart,
+    insertion: site.scope.selectorStart + branchStart };
+}
 
-  const insertionIndex = insertionMatch.index + insertionMatch[0].length;
-  const patchedFactory =
-    factorySource.slice(0, insertionIndex) +
-    `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&${factoryHead[1]}.hostConfig.kind===\`local\`&&${factoryHead[1]}.hostConfig.id===\`local\`)return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${getConfigOverrides});` +
-    factorySource.slice(insertionIndex);
-  return source.slice(0, factoryStart) + classSource + patchedFactory + source.slice(factoryEnd);
+function patchedTransportSource(source, state) {
+  if (state.kind === "applied") return source;
+  const withBranch = source.slice(0, state.insertion) + state.branch + source.slice(state.insertion);
+  const complete = withBranch.slice(0, state.site.scope.selectorStart) + state.classSource +
+    withBranch.slice(state.site.scope.selectorStart);
+  if (sharedTransportState(complete).kind !== "applied") throw Error("Incomplete shared app-server socket poststate");
+  return complete;
+}
+
+function applySharedAppServerSocketPatch(source) {
+  const state = sharedTransportState(source);
+  if (state.kind === "invalid") {
+    console.warn(`WARN: ${state.reason}`);
+    return source;
+  }
+  return patchedTransportSource(source, state);
+}
+
+function patchSharedAppServerSocketAssets(extractedDir, context = {}) {
+  const main = findMainProcessChunks(extractedDir);
+  const chunks = main == null ? [] : main.chunks.map(assetName => {
+    const source = fs.readFileSync(path.join(main.buildDir, assetName), "utf8");
+    return { assetName, source, state: sharedTransportState(source) };
+  });
+  const owners = chunks.filter(row => row.state.site.ok);
+  const factoryId = owners.length === 1 ? owners[0].state.site.scope.factoryId : null;
+  const candidates = chunks.filter(({ source, state }) => state.site.ok || source.includes(TRANSPORT_NAME) ||
+    (factoryId != null && state.site.factoryIds.includes(factoryId)) ||
+    (state.site.factoryIds.length === 0 && source.includes("selected app-server transport")));
+  if (owners.length !== 1 || candidates.length !== 1 || candidates[0].state.kind === "invalid") {
+    const reason = `Expected one complete shared app-server socket native owner; found ${candidates.length} candidate(s)`;
+    console.warn(`WARN: ${reason}`);
+    return { matched: 0, changed: 0, reason };
+  }
+  const [{ assetName, source, state }] = candidates;
+  const patchedSource = patchedTransportSource(source, state);
+  const result = commitAssetEdits(main.buildDir, [{ assetName, source, patchedSource }], context);
+  if (result.changed !== Number(state.kind === "current")) throw Error("Shared app-server socket transaction did not commit the prepared change");
+  return { ...result, matched: 1, assetName: `.vite/build/${assetName}` };
 }
 
 const descriptors = [
   {
     id: "main-process-shared-app-server-socket",
-    phase: "main-bundle",
+    phase: "extracted-app:pre-webview",
     order: 140,
     ciPolicy: "optional",
-    apply: applySharedAppServerSocketPatch,
+    apply: patchSharedAppServerSocketAssets,
+    status: result => result?.matched !== 1
+      ? { status: "skipped-optional", reason: result?.reason ?? "missing native main owner" }
+      : result.changed > 0 ? "applied" : "already-applied",
   },
 ];
 

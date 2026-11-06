@@ -35,6 +35,17 @@ only authority owner. Other clients attach through the stock proxy and use the
 configuration of that Desktop-owned authority; they do not supply a second
 override list.
 
+The patch qualifies the current signed main-process caller, selector and final
+local transport through the shared local-config Interface. It copies the whole
+native async callback inside the same selector scope, including source-owned
+configuration suffixes. The insertion follows the native WSL branch and
+precedes the cloud branch. Before committing edits, the registered extracted-app
+descriptor inventories every main-process chunk, includes same-factory copies
+that have lost their discovery text, and validates its complete declaration and
+branch. Repeated application verifies the callback copy and exact insertion
+location. Source tests exercise raw and canonical states, partial writes,
+rollback, and inert callback ordering/error propagation.
+
 The launcher uses the official CLI bundled in `resources/codex` by default.
 An explicit `CODEX_CLI_PATH` remains supported and is preserved by the feature
 hook.
@@ -164,7 +175,7 @@ not run independently of Desktop.
 Run focused tests with:
 
 ```bash
-node --test linux-features/shared-app-server-socket/test.js
+env -u CODEX_CLI_PATH node --test linux-features/shared-app-server-socket/test.js
 ```
 
 Set `CODEX_CLI_PATH` to include the stock authority/socket/proxy lifecycle test:
