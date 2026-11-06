@@ -59,8 +59,9 @@ content, not by file name:
   rerun revalidates the native owner, exact route, reply callback and helper
   payload before reporting an already-applied patch. Missing, duplicate, mixed
   or incomplete copies of its native factory are rejected before the one-owner
-  asset transaction writes anything. Only the two read-aloud
-  settings keys can be read or written through it.
+  asset transaction writes anything. Its `get-setting` and `set-setting`
+  actions only accept the enabled and speed keys. Interactive `setup` actions
+  separately persist the model and voices paths selected by the user.
 - `webview-runtime` appends the self-contained click, setup, and settings
   runtime to the rspack runtime entry chunks (main and detached windows).
 - `assistant-runtime` wraps the two assistant message render calls of the

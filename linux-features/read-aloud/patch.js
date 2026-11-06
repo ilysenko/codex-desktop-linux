@@ -4,7 +4,7 @@ const { Script } = require("node:vm");
 const fs = require("node:fs");
 const path = require("node:path");
 const { findMainProcessChunks, patchWebviewAssets: commitMainEdits } = require("../../scripts/patches/lib/assets.js");
-const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { createJavaScriptLexicalIndex, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
 
 const SETTINGS_KEY = "codex-linux-read-aloud-enabled";
@@ -147,13 +147,31 @@ function helperAtOuterStatement(source, helper) {
   try { new Script(prefix + "const __codexReadAloudOwnedHelper=0;"); return true; }
   catch { return false; }
 }
+function hasOwnedMainReferences(source) {
+  if (source.includes("codexLinuxReadAloud")) return true;
+  if (!source.includes("\\u")) return false;
+  let lexical;
+  const tokens = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[A-Za-z_$])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])*/gu;
+  for (const token of source.matchAll(tokens)) {
+    if (!token[0].includes("\\u")) continue;
+    const decoded = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => {
+      const point = parseInt(braced ?? fixed, 16);
+      return point <= 0x10ffff ? String.fromCodePoint(point) : "\0";
+    });
+    if (!decoded.startsWith("codexLinuxReadAloud")) continue;
+    lexical ??= createJavaScriptLexicalIndex(source);
+    if (lexical.isCode(token.index)) return true;
+  }
+  return false;
+}
+
 function completeMainPatch(source, site, helper, route) {
   if (count(source, FETCH_ROUTE_MARKER) !== 1 || count(source, route) !== 1 ||
       !helperAtOuterStatement(source, helper) ||
       !source.slice(site.prefixStart, site.prefixEnd).includes(route)) return false;
   // A helper definition/reference outside our exact block and exact route can
   // override or hide the runtime binding. The namespace is feature-local.
-  return !source.replace(helper, "").replace(route, "").includes("codexLinuxReadAloud");
+  return !hasOwnedMainReferences(source.replace(helper, "").replace(route, ""));
 }
 function applyMainBundlePatch(source) {
   const graph = inspectMainRequestSites(source);
@@ -162,7 +180,7 @@ function applyMainBundlePatch(source) {
     return source;
   }
   const site = graph.wrapperRequest, helper = mainHelperSource(), route = fetchRouteSource(site);
-  if (source.includes("codexLinuxReadAloud") || source.includes(FETCH_ROUTE_MARKER)) {
+  if (hasOwnedMainReferences(source) || source.includes(FETCH_ROUTE_MARKER)) {
     if (!completeMainPatch(source, site, helper, route)) warn("Found incomplete read aloud route/helper ownership", "read aloud main-bundle patch");
     return source;
   }
@@ -191,11 +209,11 @@ function applyMainToExtractedApp(extractedDir, options = {}) {
   const owner = verified[0], identity = owner.graph.scope.factoryId;
   if (typeof identity !== "string") throw Error("Missing read aloud native factory identity");
   const candidates = snapshots.filter(({ source, graph }) => graph.factoryIds?.includes(identity) ||
-    source.includes("codexLinuxReadAloud") ||
+    hasOwnedMainReferences(source) ||
     source.includes(FETCH_ROUTE_MARKER) || source.includes(MAIN_HELPER_START));
   if (candidates.length !== 1 || candidates[0] !== owner) throw Error("Missing or ambiguous read aloud main request cohort");
   const helper = mainHelperSource(), route = fetchRouteSource(owner.graph.wrapperRequest);
-  const hasArtifacts = owner.source.includes("codexLinuxReadAloud") || owner.source.includes(FETCH_ROUTE_MARKER);
+  const hasArtifacts = hasOwnedMainReferences(owner.source) || owner.source.includes(FETCH_ROUTE_MARKER);
   if (hasArtifacts && !completeMainPatch(owner.source, owner.graph.wrapperRequest, helper, route)) {
     throw Error("Incomplete read aloud main route/helper ownership");
   }

@@ -136,6 +136,30 @@ test("canonical main patch requires the native graph and exact owned prefix whil
   assert.equal(normal(detached).patch.status, "skipped-optional");
 });
 
+test("normal main route rejects Unicode-equivalent helper shadows and preserves encoded data", () => {
+  const raw = fixture(), canonical = applyMainBundlePatch(raw), head = "82820(module,exports,require){";
+  for (const name of ["codexLinuxReadAloudFetch", String.raw`codexLinuxReadAlou\u0064Fetch`,
+    String.raw`codexLinuxReadAlou\u{64}Fetch`, String.raw`\u0063odexLinuxReadAloudFetch`]) {
+    for (const source of [raw, canonical]) {
+      const invalid = source.replace(head, head + `var ${name}=async()=>{};`);
+      assert.notEqual(invalid, source); new vm.Script(invalid);
+      const warnings = [], warn = console.warn; console.warn = message => warnings.push(String(message));
+      try { assert.ok(applyMainBundlePatch(invalid) === invalid, name); }
+      finally { console.warn = warn; }
+      assert.equal(warnings.length, 1);
+      const result = normal(invalid);
+      assert.equal(result.patch.status, "skipped-optional");
+      assert.ok(result.source === invalid);
+    }
+  }
+  for (const data of [String.raw`const encodedNote="codexLinuxReadAlou\u0064Fetch";`,
+    String.raw`/* codexLinuxReadAlou\u0064Fetch */`]) {
+    const valid = raw.replace(head, head + data), result = normal(valid);
+    assert.equal(result.patch.status, "applied");
+    assert.equal(normal(result.source).patch.status, "already-applied");
+  }
+});
+
 test("main inventory rejects duplicate, mixed and stray canonical cohorts before any write", () => {
   const good = fixture(), applied = applyMainBundlePatch(good);
   for (const other of [good, applied, '/*codex-linux-read-aloud-route*/', 'function codexLinuxReadAloudFetch(){}']) {
