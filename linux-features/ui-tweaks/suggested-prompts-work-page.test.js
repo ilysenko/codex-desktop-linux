@@ -66,6 +66,16 @@ const mutations={
   "wrong editor setter":s=>s.replace('editor.setPromptText(text','other.setPromptText(text'),
   "missing focus":s=>s.replace('editor.focus()','record()'),
   "wrong list callback":s=>s.replace('let click=action;','let click=record;'),
+  "reassigned provider outer":s=>s.replace('function Inner(e){','Outer=()=>null;function Inner(e){'),
+  "reassigned provider inner":s=>s.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})','Inner=()=>null;require.d(exports,{HomeTaskSuggestions:()=>Outer})'),
+  "reassigned selection callback":s=>s.replace('let click=action;','action=()=>null;let click=action;'),
+  "encoded reassigned provider outer":s=>s.replace('function Inner(e){',String.raw`Oute\u0072=()=>null;function Inner(e){`),
+  "encoded reassigned provider inner":s=>s.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})',String.raw`Inne\u0072=()=>null;require.d(exports,{HomeTaskSuggestions:()=>Outer})`),
+  "encoded reassigned selection callback":s=>s.replace('let click=action;',String.raw`actio\u006e=()=>null;let click=action;`),
+  "reassigned list alias":s=>s.replace('let click=action;','let click=action;click=()=>null;'),
+  "encoded reassigned list alias":s=>s.replace('let click=action;',String.raw`let click=action;clic\u006b=()=>null;`),
+  "reassigned query value":s=>s.replace('require.d(exports,{},{ki:query})','query=()=>null;require.d(exports,{},{ki:query})'),
+  "encoded reassigned query value":s=>s.replace('require.d(exports,{},{ki:query})',String.raw`quer\u0079=()=>null;require.d(exports,{},{ki:query})`),
   "wrong lazy target":s=>s.replace('require.bind(require,"WorkPage")','require.bind(require,"OtherPage")'),
   "wrong lazy export":s=>s.replace(').ChatGptWorkHomePage',').OtherPage'),
   "wrong preparation forwarding":s=>s.replace('onChatGptTaskSuggestionSelected:callback','onChatGptTaskSuggestionSelected:change'),
@@ -128,37 +138,133 @@ test("signed native preparation changes mode or awaits a valid chat destination"
   globals[can]=false;assert.throws(()=>callback()("chat"),/Suggestion destination is unavailable/);
 });
 test("signed Work roles reject altered exports, query aliases, preparation and real editor bindings",signedOnly,t=>{
-  const {owners,dependencies,roles,files,index,info}=signedFixture(),provider=dependencies.find(m=>m.moduleId===roles.providerModule),query=dependencies.find(m=>m.moduleId===roles.providerRoles[0].query.moduleId),shell=dependencies.find(m=>m.moduleId===roles.callers.shellModule),prep=dependencies.find(m=>m.moduleId===roles.callers.preparationModule);
+  const {owners,dependencies,roles,files,info}=signedFixture(),provider=dependencies.find(m=>m.moduleId===roles.providerModule),role=roles.providerRoles[0],query=dependencies.find(m=>m.moduleId===role.query.moduleId),shell=dependencies.find(m=>m.moduleId===roles.callers.shellModule),prep=dependencies.find(m=>m.moduleId===roles.callers.preparationModule);
+  const {functions}=require("./patches/suggested-prompts-app-page.js").roleHelpers;
+  const shellInfo=work.shellRole(shell,info.module.moduleId);
+  const action=(body,change)=>body.replace(role.selection.source,change(role.selection.source));
+  const encoded=name=>`${name.slice(0,-1)}\\u${name.charCodeAt(name.length-1).toString(16).padStart(4,"0")}`;
+  const queryValue=work.valueExport(query,role.query.exportName);
+  const nullReturn=(body,name,moduleId)=>{
+    if(body.includes("__webpack_modules__")){
+      const copy=[...rspackModuleFactories(body,"mutant.js")].find(copy=>copy.moduleId===moduleId);assert.ok(copy);
+      return body.slice(0,copy.start)+nullReturn(copy.moduleSource,name)+body.slice(copy.end);
+    }
+    const fn=functions(body,name)[0];assert.ok(fn);
+    const returned=require("./patches/suggested-prompts-app-page.js").roleHelpers.matches(fn.body,/\breturn\b/gu).at(-1);assert.ok(returned);
+    return body.slice(0,fn.start)+`function ${fn.name}(${fn.params}){${fn.body.slice(0,returned.index)}return null}`+body.slice(fn.end);
+  };
   const mutations=[
     [owners[0],body=>body.replace(`onSelect:${info.fields.selection}`,`onSelect:${info.fields.state}`)],
     [owners[0],body=>body.replace(`(0,${info.rolloutCall.namespace}.${info.rolloutCall.member})("2425897452")`,`(0,${info.accountCall.namespace}.${info.accountCall.member})("2425897452")`)],
-    [owners[0],body=>body.replace('ChatGptWorkHomePage:()=>ew','ChatGptWorkHomePage:()=>eC')],
-    [provider,body=>body.replace('HomeTaskSuggestions:()=>n_','HomeTaskSuggestions:()=>nA')],
-    [provider,body=>body.replace('eb.ki,d,_','eb.Pe,d,_')],
-    [provider,body=>body.replace('eb.ki,d,_','eb.ki,_,d')],
-    [provider,body=>body.replace('s=eJ?.(t);','s=eJ?.(c);')],
-    [provider,body=>body.replace('null!=s&&await s,','null!=s&&s,')],
-    [provider,body=>body.replace('tr.setPromptText(c,','other.setPromptText(c,')],
-    [provider,body=>body.replace('T(),tr.focus(),n','T(),T(),n')],
-    [provider,body=>body.replace('let nr=Q;','let nr=J;')],
-    [query,body=>body.replace(/ki:([\w$]+)/u,'ki:unknown')],
+    [owners[0],body=>body.replace(`ChatGptWorkHomePage:()=>${info.graph.entry}`,`ChatGptWorkHomePage:()=>${info.graph.leaf}`)],
+    [provider,body=>body.replace(`HomeTaskSuggestions:()=>${role.outer}`,`HomeTaskSuggestions:()=>${role.inner}`)],
+    [provider,body=>body.replace(role.query.source,role.query.source.replace(`.${role.query.exportName},`,'.unknown,'))],
+    [provider,body=>body.replace(role.query.source,role.query.source.replace(`,${role.query.args},${role.query.options})`,`,${role.query.options},${role.query.args})`))],
+    [provider,body=>action(body,text=>text.replace(`${role.selection.prepared}=${role.fields.selection}?.(${role.selection.mode})`,`${role.selection.prepared}=${role.fields.selection}?.(${role.selection.prompt})`))],
+    [provider,body=>action(body,text=>text.replace(`null!=${role.selection.prepared}&&await ${role.selection.prepared}`,`null!=${role.selection.prepared}&&${role.selection.prepared}`))],
+    [provider,body=>action(body,text=>text.replace(`${role.selection.editor}.setPromptText(`,'other.setPromptText('))],
+    [provider,body=>action(body,text=>text.replace(`${role.selection.editor}.focus()`,'record()'))],
+    [provider,body=>body.replace(`let ${role.selection.alias}=${role.selection.callback}`,`let ${role.selection.alias}=other`)],
+    [provider,body=>body+`;${role.outer}=()=>null;`],
+    [provider,body=>body+`;${role.inner}=()=>null;`],
+    [provider,body=>body.replace(`let ${role.selection.alias}=${role.selection.callback}`,`${role.selection.callback}=()=>null;let ${role.selection.alias}=${role.selection.callback}`)],
+    [provider,body=>body+`;${encoded(role.outer)}=()=>null;`],
+    [provider,body=>body+`;${encoded(role.inner)}=()=>null;`],
+    [provider,body=>body.replace(`let ${role.selection.alias}=${role.selection.callback}`,`${encoded(role.selection.callback)}=()=>null;let ${role.selection.alias}=${role.selection.callback}`)],
+    [query,body=>body+`;${queryValue}=()=>null;`],
+    [query,body=>body+`;${encoded(queryValue)}=()=>null;`],
+    [provider,body=>body.replace(`let ${role.selection.alias}=${role.selection.callback}`,`let ${role.selection.alias}=${role.selection.callback};${role.selection.alias}=()=>null`)],
+    [provider,body=>body.replace(`let ${role.selection.alias}=${role.selection.callback}`,`let ${role.selection.alias}=${role.selection.callback};${encoded(role.selection.alias)}=()=>null`)],
+    [query,body=>body.replace(`${role.query.exportName}:${work.valueExport(query,role.query.exportName)}`,`${role.query.exportName}:unknown`)],
     [query,body=>body.replace('.vU)','.vP)')],
-    [provider,body=>body.replace('(0,g._U)(eb.ki,d,_)','(0,g.Ul)(eb.ki,d,_)')],
-    [owners[0],body=>body.replace('children:(0,r.jsx)(eC,{...e})',`children:null,unused:'(0,r.jsx)(eC,{...e})'`)],
-    [owners[0],body=>body.replace('children:(0,r.jsx)(eC,{...e})','children:null,unused:()=>(0,r.jsx)(eC,{...e})')],
-    [owners[0],body=>body.replace('function ew(e){','function ew(e){let unused=(0,r.jsx)(eC,{...e});').replace('children:(0,r.jsx)(eC,{...e})','children:null')],
+    [provider,body=>body.replace(role.query.source,role.query.source.replace(`(0,${role.query.readNamespace}._U)`,`(0,${role.query.readNamespace}.Ul)`))],
     [shell,body=>body.replace('.ChatGptWorkHomePage)', '.OtherPage)')],
-    [shell,body=>body.replace('onTaskSuggestionSelected:h.onChatGptTaskSuggestionSelected','onTaskSuggestionSelected:h.other')],
-    [prep,body=>body.replace('onChatGptTaskSuggestionSelected:eo','onChatGptTaskSuggestionSelected:ea')],
-    [owners[0],body=>body.replace('):o=t[1],o}','):o=t[1],null}')],
-    [owners[0],body=>body.replace(':eF=eH[116],eF}',':eF=eH[116],null}')],
-    [prep,body=>body.replace(':ei=es[114],ei}',':ei=es[114],null}')],
-    [provider,body=>body.replace(':ey=eN[165],ey}',':ey=eN[165],null}')],
+    [prep,body=>body.replace(`onChatGptTaskSuggestionSelected:${roles.callers.preparation.callback}`,`onChatGptTaskSuggestionSelected:other`)],
+    [owners[0],body=>nullReturn(body,info.graph.entry,owners[0].moduleId)],
+    [prep,body=>nullReturn(body,roles.callers.preparation.component)],
+    [provider,body=>nullReturn(body,role.outer)],
+    [provider,body=>nullReturn(body,role.inner)],
+    [shell,body=>nullReturn(body,shellInfo.entry)],
   ];
   for(const canonical of[false,true])for(const[module,mutate]of mutations){
     const damaged=mutate(module.moduleSource);assert.notEqual(damaged,module.moduleSource);
     const overrides={...files};if(canonical)overrides[owners[0].assetName]=applySource(owners[0].source);
     let full=module.source.slice(0,module.start)+damaged+module.source.slice(module.end);if(canonical&&module.moduleId===owners[0].moduleId){full=mutate(applySource(module.source));assert.notEqual(full,applySource(module.source));}
-    overrides[module.assetName]=full;const root=workspace(t,overrides,index);assert.throws(()=>descriptor.apply(root));unchanged(root,overrides);
+    overrides[module.assetName]=full;const root=workspace(t,overrides,signedFixture().index);assert.throws(()=>descriptor.apply(root));unchanged(root,overrides);
+  }
+});
+
+test("signed provider preserves native runtime and preference gates", signedOnly, () => {
+  const { roles } = signedFixture();
+  const role = roles.providerRoles[0], policy = role.policy, query = role.queryEnabled;
+  const identifiers = [...new Set((policy.expression + query.expression).match(/[A-Za-z_$][\w$]*/gu))];
+  const globals = Object.fromEntries(identifiers.map(name => [name, false]));
+  globals[policy.native] = true;
+  globals[policy.generated] = true;
+  globals[policy.preference] = true;
+  globals[policy.typed] = true;
+  globals[policy.status] = { status: "enabled" };
+  globals[query.account] = "account";
+  globals[role.fields.mode] = "work";
+  const read = () => {
+    globals[policy.policy] = vm.runInNewContext(policy.expression, globals);
+    return { policy: globals[policy.policy], query: vm.runInNewContext(query.expression, globals) };
+  };
+  assert.deepEqual(read(), { policy: true, query: true });
+  globals[policy.status] = { status: "disabled" };
+  assert.deepEqual(read(), { policy: false, query: false });
+  globals[policy.status] = { status: "enabled" };
+  globals[policy.preference] = false;
+  assert.deepEqual(read(), { policy: false, query: false });
+  globals[policy.preference] = true;
+  globals[policy.generated] = false;
+  assert.deepEqual(read(), { policy: false, query: false });
+  globals[policy.generated] = true;
+  globals[policy.hidden] = true;
+  assert.deepEqual(read(), { policy: false, query: false });
+});
+
+test("signed native selection awaits mode preparation and keeps stale contexts from pasting", signedOnly, async () => {
+  const role = signedFixture().roles.providerRoles[0];
+  const create = require("./fixtures/native-work-selection.js").runtime;
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const active = create(role, { select: () => pending });
+  active.invoke("chat");
+  await active.settle();
+  assert.deepEqual(active.modeCalls, ["chat"]);
+  assert.equal(active.writes.length, 0);
+  release();
+  await active.settle();
+  assert.equal(active.warnings.length, 0);
+  assert.equal(active.writes.length, 1);
+  assert.equal(active.focused.length, 1);
+  assert.equal(active.writes[0].text, "当前建议文字");
+  assert.equal(active.pending(), 0);
+  for (const change of ["changeDocument", "changeAccount"]) {
+    let finish;
+    const wait = new Promise(resolve => { finish = resolve; });
+    const stale = create(role, { select: () => wait });
+    stale.invoke("chat");
+    await stale.settle();
+    stale[change]();
+    finish();
+    await stale.settle();
+    assert.deepEqual(stale.modeCalls, ["chat"]);
+    assert.equal(stale.warnings.length, 0);
+    assert.equal(stale.writes.length, 0);
+    assert.equal(stale.focused.length, 0);
+    assert.equal(stale.pending(), 0);
+  }
+  for (const change of ["changeAccount", "changeConversation", "changeInstructions"]) {
+    const automatic = create(role, { autoSend: true });
+    automatic.invoke("chat");
+    await automatic.settle();
+    assert.equal(automatic.warnings.length, 0);
+    assert.equal(automatic.writes.length, 1);
+    assert.equal(automatic.queued.length, 1);
+    assert.equal(automatic.queued[0](), true);
+    automatic[change]();
+    assert.equal(automatic.queued[0](), false);
   }
 });

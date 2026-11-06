@@ -3,8 +3,8 @@
 const path = require("node:path");
 const { Script } = require("node:vm");
 const { findUniqueRspackModuleCopies, patchRspackModuleCopies, rspackModuleFactories, findRspackRequireBinding } = require("../../../scripts/patches/lib/rspack-module-assets.js");
-const { findMatchingBrace, escapeRegExp } = require("../../../scripts/patches/lib/minified-js.js");
-const { roleHelpers: { ID, one, matches, writes, functions, liveFunction, statementAt, exportGetter, dependencyCopies, resolveFunction, isAccountPredicate, isRolloutHook, entryContext } } = require("./suggested-prompts-app-page.js");
+const { findMatchingBrace, escapeRegExp, createJavaScriptLexicalIndex } = require("../../../scripts/patches/lib/minified-js.js");
+const { roleHelpers: { ID, one, matches, writes, functions, liveFunction, exportGetter, dependencyCopies, resolveFunction, isAccountPredicate, isRolloutHook, entryContext } } = require("./suggested-prompts-app-page.js");
 const MARKER="codexLinuxUiTweaksSuggestedPromptsWorkPageEligible";
 const ROLLOUT="codexLinuxUiTweaksSuggestedPromptsEnabled";
 function importedIn(module,fn,name) {
@@ -69,57 +69,137 @@ function isCandidate(body) { try{return workObjects(body).length>0;}catch{return
 // Work's query is a direct value export in the third require.d argument, not
 // the getter exports used by the page/account facades.
 function valueExport(module,key) {
-  const {moduleSource:body,params}=module,req=params?.[2],target=params?.[1];if(!req||!target)return null;
-  const call=one(matches(body,new RegExp(`(?<![\\w$.])${escapeRegExp(req)}\\.d\\(${escapeRegExp(target)},\\{`,"gu")).filter(m=>statementAt(body,m.index)));
-  if(!call)return null;
-  const open=call.index+call[0].length-1,end=findMatchingBrace(body,open);
-  if(body.slice(end+1,end+3)!==",{")return null;
-  const valuesEnd=findMatchingBrace(body,end+2),values=body.slice(end+3,valuesEnd);
-  const found=one([...values.matchAll(new RegExp(`(?:^|,)${escapeRegExp(key)}:(${ID})(?=,|$)`,"gu"))]);return found?.[1]??null;
+  const publication=exportGetter(module,key);
+  return typeof publication?.expression==="string"?publication.expression:null;
 }
 function queryRole(module,key) {
   const value=valueExport(module,key);if(!value)return false;
   const body=module.moduleSource;
   const definition=one(matches(body,new RegExp(`(?<![\\w$.])${escapeRegExp(value)}=\\(0,(${ID})\\.(${ID})\\)\\((${ID})\\.${ID},\\(\\{hostId:(${ID}),mode:(${ID}),supportsHomeFeed:(${ID})=!1\\},\\{get:(${ID})\\}\\)=>\\{`,"gu")));
   if(!definition||definition[2]!=="vU"||!findRspackRequireBinding(module,definition[1])||!findRspackRequireBinding(module,definition[3]))return false;
+  const valueWrites=bindingWrites(body,value);
+  if(valueWrites.length!==1||valueWrites[0]!==definition.index)return false;
   const open=definition.index+definition[0].length-1,end=findMatchingBrace(body,open),query=body.slice(open+1,end);
   const keyMatch=one(matches(query,new RegExp(`queryKey:\\["chatgpt-task-suggestions",(${ID}),${escapeRegExp(definition[4])},${escapeRegExp(definition[5])},${escapeRegExp(definition[6])}\\]`,"gu"),false));
   const fetch=one(matches(query,new RegExp(`(${ID})\\.appServices\\.ambientSuggestions\\?\\.getChatGptComposerItems\\(\\{entrypoint:${escapeRegExp(definition[5])},hostId:${escapeRegExp(definition[4])}\\}\\)`,"gu"),false));
   return Boolean(keyMatch&&fetch&&findRspackRequireBinding(module,fetch[1])&&!query.includes("projectId:"));
 }
+function objectFields(text) {
+  try {new Script(`const fields={${text}};`);}catch{return null;}
+  const commas=[];
+  for(const comma of matches(text,/,/gu)) {
+    try {new Script(`const fields={${text.slice(0,comma.index)}};`);commas.push(comma.index);}catch{}
+  }
+  const fields=new Map();let start=0;
+  for(const end of [...commas,text.length]) {
+    const member=text.slice(start,end).trim();start=end+1;
+    if(!member)continue;
+    const head=new RegExp(String.raw`^(${ID}):([\s\S]+)$`,"u").exec(member);
+    if(!head||fields.has(head[1]))return null;
+    fields.set(head[1],head[2]);
+  }
+  return fields;
+}
+function componentProps(fn) {
+  if(!new RegExp(`^${ID}$`,"u").test(fn.params))return null;
+  const object=one(matches(fn.body,new RegExp(String.raw`\{([^{}]*generatedSuggestionsEnabled:[^{}]*workRunLocation:[^{}]*)\}=${escapeRegExp(fn.params)}(?=[,;])`,"gu")));
+  const fields=object&&objectFields(object[1]);
+  return fields&&[...fields.values()].every(value=>new RegExp(`^${ID}$`,"u").test(value))?fields:null;
+}
+function returnedProvider(fn,call,propsEnd) {
+  const returned=one(matches(fn.body,/\breturn\b/gu));
+  if(!returned||call.index<=returned.index)return false;
+  const expression=fn.body.slice(returned.index+6).trim().replace(/;$/u,"");
+  if(expression===fn.body.slice(call.index,propsEnd+2))return true;
+  if(matches(expression,/=>/gu).length)return false;
+  const child=one(matches(fn.body.slice(0,call.index),new RegExp(`(?<![\\w$.])(${ID})=${ID}\\|\\|${ID}\\|\\|${ID}\\?$`,"gu")));
+  const fragment=one(matches(fn.body,new RegExp(`(?<![\\w$.])(${ID})=\\(0,(${ID})\\.jsxs\\)\\(\\2\\.Fragment,\\{children:\\[(${ID}(?:,${ID})*)\\]\\}\\)`,"gu")));
+  if(!child||!fragment||fragment.index<call.index||fragment[3].split(",").filter(name=>name===child[1]).length!==1)return false;
+  const result=escapeRegExp(fragment[1]);
+  return writes(fn.body,child[1]).length===2&&writes(fn.body,fragment[1]).length===2&&
+    new RegExp(`:${result}=${ID}\\[\\d+\\],${result}\\)?$`,"u").test(expression);
+}
+// Use the shared lexer to inspect actual root identifier tokens, including
+// escaped spellings and comments between a binding and its write operator.
+function bindingWrites(body,name) {
+  const lexical=createJavaScriptLexicalIndex(body);
+  const projection=body.split("").map((character,index)=>lexical.isCode(index)?character:" ").join("");
+  const identifiers=/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[A-Za-z_$])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])*/gu;
+  const found=[];
+  for(const token of projection.matchAll(identifiers)) {
+    if(!lexical.isRoot(token.index))continue;
+    const decoded=token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu,
+      (_match,braced,fixed)=>String.fromCodePoint(parseInt(braced||fixed,16)));
+    if(decoded!==name)continue;
+    const before=projection.slice(0,token.index).trimEnd();
+    if(/[.#]$/u.test(before))continue;
+    const after=projection.slice(token.index+token[0].length);
+    if(/^\s*(?:\+\+|--|(?:\?\?|\|\||&&|[+*/%&|^\-])?=(?!=|>))/u.test(after)||
+      /(?:\+\+|--)$/u.test(before))found.push(token.index);
+  }
+  return found;
+}
 function providerRole(module) {
   const exported=exportGetter(module,"HomeTaskSuggestions"),defs=functions(module.moduleSource),outer=exported&&one(defs.filter(fn=>fn.name===exported.expression));
-  if(!outer||!liveFunction(outer)||!returnedView(outer))return null;
-  const props=one(matches(outer.body,new RegExp(`generatedSuggestionsEnabled:(${ID}),generatedSuggestionsLoading:(${ID}),hostId:(${ID}),mode:(${ID}),onSelect:(${ID}),projectId:(${ID}),prepareDestination:(${ID}),unifiedModelPickerEnabled:(${ID}),workRunLocation:(${ID})`,"gu"),false));
-  if(!props)return null;
-  const innerCall=one(matches(outer.body,new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${ID}),\\{mobileFeedContent:`,"gu")));
-  const inner=innerCall&&one(defs.filter(fn=>fn.name===innerCall[2]));if(!inner||!returnedView(inner)||!importedIn(module,outer,innerCall[1]))return null;
-  const page=one(matches(outer.body,new RegExp(`(?<![\\w$.])(${ID})=void 0===${escapeRegExp(props[1])}\\|\\|${escapeRegExp(props[1])}`,"gu")));
-  const forwarded=one(matches(outer.body,new RegExp(`hostId:${escapeRegExp(props[3])},mode:${escapeRegExp(props[4])},onOpenHomeFeed:[\\s\\S]+?onSelect:${ID}\\|\\|!${ID}\\?${escapeRegExp(props[5])}:void 0,projectId:${escapeRegExp(props[6])},prepareDestination:${escapeRegExp(props[7])},workRunLocation:${escapeRegExp(props[9])}\\}`,"gu"),false));
-  if(!page||!forwarded||!outer.body.includes(`&&${page[1]}&&!`))return null;
-  const fields=one(matches(inner.body,new RegExp(`generatedSuggestionsEnabled:(${ID}),generatedSuggestionsLoading:${ID},suggestionsDisabled:${ID},fileSuggestionsEnabled:(${ID}),hostId:(${ID}),mode:(${ID}),onOpenHomeFeed:${ID},onSelect:(${ID}),projectId:(${ID}),prepareDestination:${ID},workRunLocation:${ID}\\}=${escapeRegExp(inner.params)}`,"gu"),false));
-  if(!fields)return null;
+  if(!outer||!liveFunction(outer)||!returnedView(outer)||bindingWrites(module.moduleSource,outer.name).length!==0)return null;
+  const props=componentProps(outer);if(!props)return null;
+  const required=["generatedSuggestionsEnabled","generatedSuggestionsLoading","hostId","mode","onSelect","projectId","prepareDestination","unifiedModelPickerEnabled","workRunLocation","showGenericSuggestions"];
+  if(!required.every(key=>props.has(key)))return null;
+  const innerCall=one(matches(outer.body,new RegExp(String.raw`\(0,(${ID})\.jsx\)\((${ID}),\{mobileFeedContent:`,"gu")));
+  const inner=innerCall&&one(defs.filter(fn=>fn.name===innerCall[2]));
+  if(!inner||!returnedView(inner)||!importedIn(module,outer,innerCall[1])||bindingWrites(module.moduleSource,inner.name).length!==0)return null;
+  const propsStart=innerCall.index+innerCall[0].indexOf("{"),propsEnd=findMatchingBrace(outer.body,propsStart),forwarded=objectFields(outer.body.slice(propsStart+1,propsEnd));
+  if(!forwarded||!returnedProvider(outer,innerCall,propsEnd))return null;
+  const page=one(matches(outer.body,new RegExp(`(?<![\\w$.])(${ID})=void 0===${escapeRegExp(props.get("generatedSuggestionsEnabled"))}\\|\\|${escapeRegExp(props.get("generatedSuggestionsEnabled"))}`,"gu")));
+  const generic=one(matches(outer.body,new RegExp(`(?<![\\w$.])(${ID})=void 0===${escapeRegExp(props.get("showGenericSuggestions"))}\\|\\|${escapeRegExp(props.get("showGenericSuggestions"))}`,"gu")));
+  const unified=one(matches(outer.body,new RegExp(`(?<![\\w$.])(${ID})=void 0!==${escapeRegExp(props.get("unifiedModelPickerEnabled"))}&&${escapeRegExp(props.get("unifiedModelPickerEnabled"))}`,"gu")));
+  if(!page||!generic||!unified)return null;
+  const eligibility=new RegExp(`^!(${ID})&&${escapeRegExp(generic[1])}&&${escapeRegExp(page[1])}&&!(${ID})$`,"u").exec(forwarded.get("generatedSuggestionsEnabled")??"");
+  if(!eligibility||forwarded.get("clinicalStartersTakePriority")!==eligibility[2])return null;
+  for(const key of ["hostId","mode","projectId","prepareDestination","workRunLocation"])if(forwarded.get(key)!==props.get(key))return null;
+  if(forwarded.get("onSelect")!==`${eligibility[1]}||!${unified[1]}?${props.get("onSelect")}:void 0`||!new RegExp(`^${ID}$`,"u").test(forwarded.get("onStartConversation")??""))return null;
+  const fieldMap=componentProps(inner),fieldKeys=["generatedSuggestionsEnabled","fileSuggestionsEnabled","hostId","mode","onSelect","projectId","prepareDestination","workRunLocation","onStartConversation"];
+  if(!fieldMap||!fieldKeys.every(key=>fieldMap.has(key)))return null;
+  const fields=[null,fieldMap.get("generatedSuggestionsEnabled"),fieldMap.get("fileSuggestionsEnabled"),fieldMap.get("hostId"),fieldMap.get("mode"),fieldMap.get("onSelect"),fieldMap.get("projectId")];
   const args=one(matches(inner.body,new RegExp(`(?<![\\w$.])(${ID})=\\{hostId:${escapeRegExp(fields[3])},mode:${escapeRegExp(fields[4])},supportsHomeFeed:(${ID})\\}`,"gu")));
   const query=args&&one(matches(inner.body,new RegExp(`\\(0,(${ID})\\._U\\)\\((${ID})\\.(${ID}),${escapeRegExp(args[1])},(${ID})\\)`,"gu")));
   const options=query&&one(matches(inner.body,new RegExp(`(?<![\\w$.])${escapeRegExp(query[4])}=\\{enabled:(${ID})\\}`,"gu")));
   if(!query||!options||!findRspackRequireBinding(module,query[1])||!findRspackRequireBinding(module,query[2]))return null;
   const setting=one(matches(inner.body,new RegExp(`(?<![\\w$.])(${ID})=\\(0,(${ID})\\.${ID}\\)\\((${ID})\\.${ID}\\)`,"gu")).filter(m=>inner.body.includes(`"enabled"===${m[1]}.status`)));
   if(!setting||!findRspackRequireBinding(module,setting[2])||!findRspackRequireBinding(module,setting[3]))return null;
-  const runtime=one(matches(inner.body,new RegExp(`(?<![\\w$.])(${ID})=!${ID}&&!${ID}&&\\(${ID}\\?${ID}:${escapeRegExp(fields[1])}&&${ID}&&"enabled"===${escapeRegExp(setting[1])}\\.status&&\\(${ID}\\|\\|${escapeRegExp(fields[2])}&&${ID}\\)\\)`,"gu")));
-  if(!runtime||!new RegExp(`${escapeRegExp(options[1])}=!${ID}&&\\(${escapeRegExp(runtime[1])}\\|\\|${ID}\\)&&null!=${ID}&&\\("chat"!==${escapeRegExp(fields[4])}\\|\\|!${ID}\\)`,"u").test(inner.body))return null;
-  const aliases=one(matches(inner.body,new RegExp(`let (${ID})=(${ID});`,"gu")).filter(m=>inner.body.includes(`onClick:()=>${m[1]}(`)));
+  const runtime=one(matches(inner.body,new RegExp(`(?<![\\w$.])(?<policy>${ID})=!(?<hidden>${ID})&&!(?<disabled>${ID})&&\\((?<external>${ID})\\?(?<externalValue>${ID}):(?<native>${ID})&&${escapeRegExp(fields[1])}&&(?<preference>${ID})&&"enabled"===${escapeRegExp(setting[1])}\\.status&&\\((?<typed>${ID})\\|\\|${escapeRegExp(fields[2])}&&(?<hasFiles>${ID})\\)\\)`,"gu")));
+  const queryEnabled=runtime&&one(matches(inner.body,new RegExp(`${escapeRegExp(options[1])}=!${escapeRegExp(runtime.groups.external)}&&\\(${escapeRegExp(runtime[1])}\\|\\|(?<fallback>${ID})\\)&&null!=(?<account>${ID})&&\\("chat"!==${escapeRegExp(fields[4])}\\|\\|!(?<loading>${ID})\\)`,"gu")));
+  if(!runtime||!queryEnabled)return null;
+  const aliases=one(matches(inner.body,new RegExp(`(?:let |,)(${ID})=(${ID})(?=[,;])`,"gu")).filter(m=>inner.body.includes(`onClick:()=>${m[1]}(`)));
   const action=aliases&&one(matches(inner.body,new RegExp(`(?<![\\w$.])${escapeRegExp(aliases[2])}=\\((${ID}),(${ID}),(${ID})\\)=>\\{`,"gu")));
-  if(!action||writes(inner.body,aliases[1]).length!==1)return null;
+  if(!action||bindingWrites(inner.body,aliases[1]).length!==1)return null;
   const actionOpen=action.index+action[0].length-1,actionEnd=findMatchingBrace(inner.body,actionOpen),actionBody=inner.body.slice(actionOpen+1,actionEnd);
-  const prompt=one(matches(actionBody,new RegExp(`(?<![\\w$.])(${ID})=${ID}\\?\\.prompt\\?\\?${escapeRegExp(action[1])}\\.prompt`,"gu")));
+  const actionWrites=bindingWrites(inner.body,aliases[2]);
+  if(actionWrites[0]!==action.index)return null;
+  if(actionWrites.length!==1) {
+    const callback=escapeRegExp(aliases[2]),alias=escapeRegExp(aliases[1]);
+    const memo=one(matches(inner.body,new RegExp(
+      `(?<cache>${ID})\\[(?<slot>\\d+)\\]=${callback}\\):${callback}=\\k<cache>\\[\\k<slot>\\];let ${alias}=${callback}(?=[,;])`,"gu")));
+    if(actionWrites.length!==2||!memo||inner.body.slice(0,action.index).slice(-2)!=="?("||
+      actionWrites[1]!==memo.index+memo[0].indexOf(`:${aliases[2]}=`)+1)return null;
+  }
+  const input=one(matches(actionBody,new RegExp(`^let\\{connected:(${ID}),quickAction:(${ID})\\}=void 0===${escapeRegExp(action[3])}\\?\\{\\}:${escapeRegExp(action[3])}`,"gu")));
+  if(!input)return null;
+  const prompt=one(matches(actionBody,new RegExp(`(?<![\\w$.])(${ID})=${escapeRegExp(input[2])}\\?\\.prompt\\?\\?${escapeRegExp(action[1])}\\.prompt`,"gu")));
   const target=one(matches(actionBody,new RegExp(`let (${ID})=(${ID})\\?\\.type==="prompt"\\?\\2\\.entrypoint\\?\\?${escapeRegExp(fields[4])}:${escapeRegExp(fields[4])};`,"gu"),false));
+  const auto=target&&one(matches(actionBody,new RegExp(`let (${ID})=${escapeRegExp(target[2])}\\?\\.type==="prompt"&&!0===${escapeRegExp(target[2])}\\.auto_send;`,"gu"),false));
   const preparation=target&&one(matches(actionBody,new RegExp(`(${ID})=${escapeRegExp(fields[5])}\\?\\.\\(${escapeRegExp(target[1])}\\);if\\(null!=\\1&&await \\1,`,"gu"),false));
   const editor=one(matches(inner.body,new RegExp(`(?<![\\w$.])(${ID})=\\(0,(${ID})\\.a\\)\\(\\)`,"gu")).filter(m=>actionBody.includes(`${m[1]}.setPromptText(`)));
-  if(!prompt||!preparation||!editor||!findRspackRequireBinding(module,editor[2]))return null;
+  if(!prompt||!auto||!preparation||!editor||!findRspackRequireBinding(module,editor[2]))return null;
   const setter=one(matches(actionBody,new RegExp(`\\(0,(${ID})\\.flushSync\\)\\(\\(\\)=>\\{${escapeRegExp(editor[1])}\\.setPromptText\\(${escapeRegExp(prompt[1])},\\{preserveLibraryFileMentions:${escapeRegExp(fields[2])}\\}\\)`,"gu"),false));
-  if(!setter||!findRspackRequireBinding(module,setter[1])||!new RegExp(`\\}\\),${ID}\\(\\),${escapeRegExp(editor[1])}\\.focus\\(\\),${escapeRegExp(action[3])}`,"u").test(actionBody))return null;
+  if(!setter||!findRspackRequireBinding(module,setter[1])||!new RegExp(`\\}\\),${ID}\\(\\),${escapeRegExp(editor[1])}\\.focus\\(\\),${escapeRegExp(auto[1])}`,"u").test(actionBody))return null;
   if(![query[1],query[2],setting[2],setting[3],editor[2],setter[1]].every(name=>importedIn(module,inner,name)))return null;
-  return {outer:outer.name,inner:inner.name,query:{moduleId:findRspackRequireBinding(module,query[2]).moduleId,exportName:query[3]},selection:{callback:aliases[2],alias:aliases[1],source:actionBody},fields:{host:fields[3],mode:fields[4],selection:fields[5],project:fields[6]}};
+  return {outer:outer.name,inner:inner.name,
+    query:{moduleId:findRspackRequireBinding(module,query[2]).moduleId,exportName:query[3],readNamespace:query[1],namespace:query[2],args:args[1],options:query[4],source:query[0]},
+    policy:{...runtime.groups,generated:fields[1],files:fields[2],status:setting[1],source:runtime[0],expression:runtime[0].slice(runtime[1].length+1)},
+    queryEnabled:{...queryEnabled.groups,source:queryEnabled[0],expression:queryEnabled[0].slice(options[1].length+1)},
+    selection:{callback:aliases[2],alias:aliases[1],source:actionBody,item:action[1],index:action[2],options:action[3],prompt:prompt[1],mode:target[1],destination:target[2],prepared:preparation[1],editor:editor[1],flushNamespace:setter[1],autoSend:auto[1]},
+    fields:{host:fields[3],mode:fields[4],selection:fields[5],project:fields[6],prepareDestination:fieldMap.get("prepareDestination"),workRunLocation:fieldMap.get("workRunLocation")}};
 }
 
 function shellRole(module,pageId) {
@@ -137,12 +217,14 @@ function preparationRole(module,shellId) {
   for(const fn of defs) {
     if(!returnedView(fn))continue;
     const props=one(matches(fn.body,new RegExp(`canSwitchMode:(${ID}),showPendingModeToggle:${ID},unifiedModelPickerEnabled:(${ID}),workspaceAgent:${ID},mode:(${ID}),routeProjectId:${ID},preservePendingInput:${ID},workModeAllowed:(${ID}),workModeLoading:${ID},workModeUpgradePlan:${ID},onModeChange:${ID}\\}=${escapeRegExp(fn.params)}`,"gu"),false));
-    if(!props)continue;
+    const input=one(matches(fn.body,new RegExp(`\\{([^{}]*submitOptions:[^{}]*onModeChange:[^{}]*)\\}=${escapeRegExp(fn.params)}(?=[,;])`,"gu")));
+    const inputFields=input&&objectFields(input[1]),submitOptions=inputFields?.get("submitOptions");
+    if(!props||!new RegExp(`^${ID}$`,"u").test(submitOptions??""))continue;
     const callback=one(matches(fn.body,new RegExp(`(?<![\\w$.])(${ID})=${escapeRegExp(props[4])}\\?(${ID})=>\\{if\\(\\2!==${escapeRegExp(props[3])}\\)\\{if\\(!${escapeRegExp(props[1])}\\)throw Error\\("Suggestion destination is unavailable"\\);if\\(${escapeRegExp(props[2])}\\)\\{if\\("chat"!==\\2\\)throw Error\\("Suggestion destination is unavailable"\\);return\\(0,(${ID})\\.(${ID})\\)\\((${ID}),\\5\\.get\\((${ID})\\.${ID},null\\),(${ID})\\)\\.then\\((${ID})\\)\\}(${ID})\\(\\2,void 0,"task_suggestion"\\)\\}\\}:void 0`,"gu")));
     if(!callback||!findRspackRequireBinding(module,callback[3])||!findRspackRequireBinding(module,callback[6]))continue;
     const no=one(functions(module.moduleSource,callback[7])),assert=one(functions(module.moduleSource,callback[8]));
     if(!no||no.body!=="return!1"||!assert||assert.body!==`if(!${assert.params})throw Error("Suggestion destination is unavailable")`)continue;
-    const forwarded=one(matches(fn.body,new RegExp(`\\(0,${ID}\\.jsx\\)\\((${ID})\\.Z,\\{preservePendingInput:${ID},workspaceAgent:${ID},homeComposerController:${ID},homeComposerMode:${escapeRegExp(props[3])},unifiedModelPickerEnabled:${escapeRegExp(props[2])},homeComposerModeToggle:${ID},onTemporaryChatToggle:${ID},taskSuggestionsLoading:${ID},onChatGptTaskSuggestionSelected:${escapeRegExp(callback[1])},projectId:${ID}\\}\\)`,"gu")));
+    const forwarded=one(matches(fn.body,new RegExp(`\\(0,${ID}\\.jsx\\)\\((${ID})\\.Z,\\{submitOptions:${escapeRegExp(submitOptions)},preservePendingInput:${ID},workspaceAgent:${ID},homeComposerController:${ID},homeComposerMode:${escapeRegExp(props[3])},unifiedModelPickerEnabled:${escapeRegExp(props[2])},homeComposerModeToggle:${ID},onTemporaryChatToggle:${ID},taskSuggestionsLoading:${ID},onChatGptTaskSuggestionSelected:${escapeRegExp(callback[1])},projectId:${ID}\\}\\)`,"gu")));
     if(!forwarded||findRspackRequireBinding(module,forwarded[1])?.moduleId!==shellId||!entry.body.includes(`)(`+fn.name+",{"))continue;
     candidates.push({entry:entry.name,component:fn.name,callback:callback[1],expression:callback[0].slice(callback[1].length+1),helpers:[no,assert].map(fn=>({name:fn.name,params:fn.params,body:fn.body}))});
   }
