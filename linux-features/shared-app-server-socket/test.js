@@ -199,7 +199,7 @@ function startOrphanReaperWithChangedAdopter() {
     },
     readdirSync(filePath) {
       if (filePath === "/proc") {
-        return [{ name: String(authority.pid), isDirectory: () => true }];
+        return [String(authority.pid)];
       }
       if (filePath === `/proc/${authority.pid}/fd`) return ["5"];
       throw new Error(`unexpected directory read: ${filePath}`);
@@ -2638,6 +2638,34 @@ for (const alias of [false, true]) {
   });
 
 }
+
+test("orphan reaper tolerates an unrelated proc entry disappearing during enumeration", async t => {
+  const tempDir = makeSocketTempDir("shared-orphan-proc-race-");
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const socketPath = path.join(tempDir, "app-server.sock"), lockPath = `${socketPath}.lock`;
+  const shim = path.join(tempDir, "proc-dirents.cjs");
+  fs.writeFileSync(shim, `const fs=require("node:fs"),original=fs.readdirSync;
+fs.readdirSync=function(dir,options){
+  if(dir==="/proc"&&options?.withFileTypes){
+    const error=new Error("ENOENT: unrelated proc entry disappeared during Dirent lstat");
+    error.code="ENOENT";error.syscall="lstat";error.path="/proc/vanished-fixture";throw error;
+  }
+  return original.apply(this,arguments);
+};\n`);
+  let orphan;
+  try {
+    orphan = await spawnOrphanAuthority(socketPath);
+    fs.writeFileSync(lockPath, `99999999 1 ${orphan.pid} ${orphan.startTime}\n`, { mode: 0o600 });
+    const result = spawnSync(process.execPath, ["--require", shim, orphanReaper, socketPath], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /Stopped orphaned shared app-server authority/);
+    await waitForCondition(() => processStartTime(orphan.pid) !== orphan.startTime, "verified orphan authority to exit");
+    assert.equal(fs.existsSync(socketPath), false);
+    assert.equal(fs.existsSync(lockPath), false);
+  } finally {
+    stopOrphanAuthority(orphan);
+  }
+});
 
 test("orphan reaper refuses two live listener inodes for the same pathname", async () => {
   const tempDir = makeSocketTempDir("shared-app-server-rebind-reaper-");

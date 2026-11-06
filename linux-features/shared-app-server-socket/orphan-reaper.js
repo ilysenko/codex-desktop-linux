@@ -79,9 +79,11 @@ function listenerInodes(targetPath = socketPath) {
 function listenerProcesses(inode) {
   const target = `socket:[${inode}]`;
   const listeners = [];
-  for (const entry of fs.readdirSync("/proc", { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
-    const pid = Number(entry.name);
+  // Dirent conversion can lstat an unrelated PID after it exits. Read names
+  // first and let the per-process checks below handle disappearing entries.
+  for (const entry of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    const pid = Number(entry);
     let processInfo;
     try {
       processInfo = readProcess(pid);
