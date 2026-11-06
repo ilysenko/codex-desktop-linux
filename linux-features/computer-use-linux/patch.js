@@ -14,7 +14,7 @@ const {
   applyNativeSettingsVisibilityAssets,
 } = require("./settings.js");
 const { patchUnifiedComputerUseAssets } = require("./unified.js");
-const { applyNativeApplicationsPatch } = require("./native-applications.js");
+const { patchNativeApplicationsAssets } = require("./native-applications.js");
 const { applyLinuxComputerUseHostPlatformPatch, matchesLinuxComputerUseHostPlatformContract } = require("./host-platform.js");
 
 module.exports = [
@@ -45,10 +45,11 @@ module.exports = [
     ciPolicy: "optional",
     apply: applyLinuxComputerUsePluginGatePatch,
   }),
-  mainBundlePatch({
+  extractedAppPatch({
     id: "native-applications",
+    phase: "extracted-app:pre-webview",
     order: 20_130,
-    apply: applyNativeApplicationsPatch,
+    apply: patchNativeApplicationsAssets,
   }),
   webviewAssetPatch({
     id: "ui-availability",

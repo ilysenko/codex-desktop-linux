@@ -6,6 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const descriptors = require("./patch.js");
+const { applyNativeApplicationsPatch } = require("./native-applications.js");
 const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
 
 function signedChunks() {
@@ -32,18 +33,18 @@ test("native metadata stays feature-owned without retired core IPC helpers", () 
   assert.doesNotMatch(source, /linuxNativeDesktopAppsHelper|applyLinuxNativeDesktopAppsHandlerPatch/);
   const descriptor = descriptors.find(({ id }) => id === "native-applications");
   assert(descriptor);
-  assert.equal(descriptor.phase, "main-bundle");
+  assert.equal(descriptor.phase, "extracted-app:pre-webview");
 });
 
 test("current signed native metadata factory patches without changing the trusted input", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, () => {
-  // Locate the chunk holding the fetch handler semantically, not by chunk id.
+  // Locate the current desktop-services exposure semantically.
   const owners = signedChunks().filter(({ source }) =>
     source.includes("nativeApplications:this.desktopServices.nativeApplications"));
   assert.equal(owners.length, 1, "Expected one chunk exposing native Applications metadata");
   const [{ file, source: actual }] = owners;
-  const patch = descriptors.find(({ id }) => id === "native-applications").apply;
+  const patch = applyNativeApplicationsPatch;
   const patched = patch(actual);
   assert.notEqual(patched, actual);
   assert.equal(patch(patched), patched);
