@@ -195,13 +195,13 @@ function parameterProjection(body, name) {
       blank(start, start + name.length, name === "_" ? "$" : "_");
     }
   }
-  const objectMethods = new RegExp(`[{,]\\s*(${ID})\\s*\\(`, "gu");
+  const objectMethods = new RegExp(`[{,]\\s*(?:async\\s+)?(${ID})\\s*\\(`, "gu");
   for (const head of matches(body, objectMethods, false)) {
     if (hidden(head.index) || ["if", "for", "while", "switch", "catch", "with", "function"].includes(head[1])) continue;
     const scope = callableScope(body, head.index + head[0].length - 1);
     if (!scope) continue;
     if (head[1] === name) {
-      const keyStart = head.index + head[0].indexOf(head[1], 1);
+      const keyStart = head.index + head[0].lastIndexOf(head[1]);
       blank(keyStart, keyStart + name.length, name === "_" ? "$" : "_");
     }
     if (!contextBinding(body, scope.end, scope.end, name, probeName)) continue;

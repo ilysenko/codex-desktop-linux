@@ -242,6 +242,41 @@ test("object method projection retains factory writes in bodies, defaults and co
   }
 });
 
+test("native async object methods keep their local parameters separate from factory authority", () => {
+  const publication = 'n.d(o,{DilResponse:()=>nR});function nR(){return null}';
+  for (const local of [
+    '(function(e,{getContext:t,applyState:n,openGrid:i}){let r;return{async open(a,o){o=e.parse(o);return o}}})(source,{});',
+    'const methods={async open(n,o){n=other;o=other;return n+o}};',
+    'const methods={async open({value:n},{value:o}){n=other;o=other}};',
+    'const methods={async open(value){let n,o;n=other;o=other}};',
+    'const methods={async o(value){return value},async n(value){return value}};',
+  ]) {
+    const moduleSource = local + publication;
+    new Script(`function nativeFactory(e,o,n){${moduleSource}}`);
+    assert.deepEqual(findRspackExportPublication({ moduleSource, params: ["e", "o", "n"] }, "DilResponse"),
+      { requireName: "n", exportsName: "o", expression: "nR" }, local);
+  }
+});
+
+test("async object method defaults and nested free writes remain visible to factory authority", () => {
+  const publication = 'n.d(o,{DilResponse:()=>nR});function nR(){return null}';
+  for (const local of [
+    'const methods={async open(value){o=other}};',
+    'const methods={async open(o){n=other}};',
+    'const methods={async open(value=(o=other)){let o;return o}};',
+    'const methods={async open(value=(n=other)){let n;return n}};',
+    'const methods={async open(n=other,value=(o=other)){return n+value}};',
+    'const methods={async [(n=other)](o){return o}};',
+    'const methods={async [(o=other)](n){return n}};',
+    'const methods={async open(n,o){n=other;o=other}};o=other;',
+    'const methods={async open(o){o=other},async close(value){n=other}};',
+  ]) {
+    const moduleSource = local + publication;
+    new Script(`function nativeFactory(e,o,n){${moduleSource}}`);
+    assert.equal(findRspackExportPublication({ moduleSource, params: ["e", "o", "n"] }, "DilResponse"), null, local);
+  }
+});
+
 for (const inputVariable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
   test(`full native entry publication and imported plugin field (${inputVariable})`, { skip: !process.env[inputVariable] }, () => {
     const entryPath = path.join(process.env[inputVariable], ".vite", "build", "early-bootstrap.js");
