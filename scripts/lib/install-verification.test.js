@@ -192,7 +192,17 @@ test("real transactional install and rebuild forward explicit verification flags
     fs.mkdirSync(features);
     fs.writeFileSync(path.join(app, "previous-app"), "preserve me");
     const config = path.join(features, "features.example.json");
-    fs.writeFileSync(config, '{"enabled":[]}');
+    const feature = path.join(features, "transactional-probe");
+    fs.mkdirSync(feature);
+    fs.writeFileSync(config, '{"enabled":["transactional-probe"]}');
+    fs.writeFileSync(path.join(feature, "README.md"), "# Transactional probe\n");
+    fs.writeFileSync(path.join(feature, "feature.json"), JSON.stringify({
+      id: "transactional-probe",
+      entrypoints: { patchDescriptors: "./patch.js" },
+    }));
+    fs.writeFileSync(path.join(feature, "patch.js"), `
+      module.exports = [{ id: "force-asar-tool", apply(source) { return source + "\\n"; } }];
+    `);
     const asar = path.join(f.root, "asar");
     fs.writeFileSync(asar, "#!/bin/sh\nexit 73\n", { mode: 0o755 });
     const result = terminal({ ...f, runner: path.join(repo, entrypoint), env: {

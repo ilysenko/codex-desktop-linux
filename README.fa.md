@@ -175,7 +175,8 @@ rm -rf -- ./codex-app
 | Nix flake | build دستی | `nix run github:ilysenko/codex-desktop-linux` |
 | update manager تراکنشی | بسته‌های native | به‌جز buildهای دارای `PACKAGE_WITH_UPDATER=0` داخل بسته است |
 | ادغام رسمی Browser و Chrome | Upstream | مستقیم از بسته رسمی Linux استفاده می‌شود؛ legacy port layer وجود ندارد |
-| تأیید Quit با focus صحیح | همیشه | patch سازگاری ضروری، confirmation بالادستی را روی Linux به window صحیح parent می‌کند |
+| راه‌اندازی قابل‌اعتماد محیط shell | همیشه | runtime تأییدشده upstream آن را مدیریت می‌کند؛ هیچ patch اصلی برای راه‌اندازی shell اعمال نمی‌شود |
+| تکمیل قابل‌اعتماد خروج تأییدشده | همیشه | patch اصلی الزامی، تأیید خروج upstream را در owner یکتای `before-quit` مصرف می‌کند تا پاک‌سازی به `will-quit` برسد |
 | framework مربوط به Linux featureهای اختیاری | غیرفعال | با `make setup-native` تنظیم می‌شود |
 | هویت متمایز دسکتاپ | همیشه | **ChatGPT Community** با آیکون `C` آبی و هویت بسته `codex-desktop` |
 

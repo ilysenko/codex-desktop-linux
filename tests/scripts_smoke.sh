@@ -218,7 +218,7 @@ const descriptors = corePatchDescriptors();
 if (descriptors.length !== 1 ||
     descriptors[0].id !== "quit-confirmation-focus" ||
     descriptors[0].ciPolicy !== "required-upstream" ||
-    descriptors[0].phase !== "extracted-app:pre-webview") {
+    descriptors[0].phase !== "main-bundle") {
   throw new Error(`Unexpected default core patch registry: ${descriptors.map(({ id }) => id).join(", ")}`);
 }
 NODE

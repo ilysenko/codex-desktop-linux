@@ -201,7 +201,7 @@ function applySharedAppServerSocketPatch(source) {
     return source;
   }
   const configOverridesPattern = new RegExp(
-    `return new ${MEMBER}\\(${optionFields},getConfigOverrides:(async\\(\\)=>\\[[^\\]]{1,1000}\\])\\}\\)`,
+    `return new ${MEMBER}\\(${optionFields},getConfigOverrides:(async\\(\\)=>\\[[\\s\\S]{1,2000}?\\])\\}\\)`,
     "g",
   );
   const configOverridesMatches = [...factorySource.matchAll(configOverridesPattern)];

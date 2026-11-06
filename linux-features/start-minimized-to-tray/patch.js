@@ -203,7 +203,7 @@ function hasCompleteMainPatch(source, state, startup) {
   if (!first || !windowMode || !trayReady || !traySetup) return false;
   const clearHidden = `codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`;
   const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}try\\{${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
-  const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}if\\(!(${ID})&&\\(!codexLinuxStartMinimizedRequested\\|\\|${escapeRegExp(first[2])}\\.getPrimaryWindow\\(\\)==null\\)\\)return null;${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
+  const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}let ${ID}=await \\(async\\(${ID},${ID}\\)=>\\{if\\(!(${ID})&&\\(!codexLinuxStartMinimizedRequested\\|\\|${escapeRegExp(first[2])}\\.getPrimaryWindow\\(\\)==null\\)\\)return null;${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   if (!activations || !trayActivation || !unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{\\(${ID}\\|\\|codexLinuxStartMinimizedRequested\\)&&${escapeRegExp(activations[1])}\\(\\);return\\}`, "g"))) return false;
   return [
     codexLinuxStartMinimizedRoute.toString(),
@@ -272,7 +272,7 @@ function applyMainPatch(source) {
     return source;
   }
   const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{try\\{${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
-  const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{if\\(!(${ID})\\)return null;${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
+  const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{let ${ID}=await \\(async\\(${ID},${ID}\\)=>\\{if\\(!(${ID})\\)return null;${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
   const queuedActivation = unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{(${ID})&&${activations?.[1] ?? "__missing"}\\(\\);return\\}`, "g"));
   const interactive = unique(source, new RegExp(`${escapeRegExp(owner)}\\.onInteractiveLaunch=\\(\\)=>\\{null==${first[1]}\\|\\|${first[1]}\\.isDestroyed\\(\\)\\|\\|${first[4]}\\(${first[1]}\\),`, "g"));
   if (!activations || !trayActivation || !queuedActivation || !interactive) {

@@ -16,7 +16,7 @@ const PATCHED_READY_PATTERN = new RegExp(
   "g",
 );
 const FETCH_TAIL =
-  `\\{let ${JS_IDENT}=\\{method:${JS_IDENT},headers:${JS_IDENT},body:${JS_IDENT}\\(\\),` +
+  `\\{let ${JS_IDENT}=\\{method:${JS_IDENT},(?:cache:${JS_IDENT},)?headers:${JS_IDENT},body:${JS_IDENT}\\(\\),` +
   `redirect:[^,{}]{1,120},signal:${JS_IDENT},credentials:(?<credentialsFlag>${JS_IDENT})\\?"include":"same-origin"\\};` +
   `!\\k<credentialsFlag>&&\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${JS_IDENT},${JS_IDENT}\\)&&\\(${JS_IDENT}\\.credentials="omit"\\),` +
   `${JS_IDENT}=await this\\.options\\.applicationNetwork\\.fetch\\(`;

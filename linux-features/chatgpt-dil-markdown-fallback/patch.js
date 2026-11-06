@@ -71,7 +71,7 @@ function replyContract(source) {
     `errorFallback:(${IDENT})\\?null:\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}(?:\\.${IDENT})?),\\{([^{}]{0,200})\\}\\),diagnostics:`, "g",
   ))];
   const owners = [...source.matchAll(new RegExp(
-    `function ${IDENT}\\(\\{assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},`, "g",
+    `function ${IDENT}\\(\\{(?:${IDENT}:${IDENT},)*assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},`, "g",
   ))];
   if (fallbacks.length !== 1 || owners.length !== 1) return null;
   const [fallback] = fallbacks;
@@ -92,7 +92,7 @@ function replyContract(source) {
 // The current reply chunk also requires the native Markdown module from a
 // sibling renderer (`N=require("id")` … `N.ChatGptMarkdown`), which proves that
 // the module is loaded with this chunk.
-function chunkRequiresMarkdownModule(source, markdownModule) {
+function chunkRequiresMarkdownModule(source, markdownModule, markdownChunk) {
   const modules = chunkModules(source) ?? [];
   return modules.some((module) => {
     const requireName = module.params[2];
@@ -102,10 +102,11 @@ function chunkRequiresMarkdownModule(source, markdownModule) {
       `(?<![\\w$.])(${IDENT})=${escapeRegExp(requireName)}\\("${escapeRegExp(markdownModule)}"\\)`,
     ));
     return binding != null && body.includes(`${binding[1]}.ChatGptMarkdown`);
-  });
+  }) || (Number.isSafeInteger(markdownChunk) &&
+    new RegExp(`${IDENT}\\.e\\(${markdownChunk}\\)`).test(source));
 }
 
-function applyDilMarkdownFallback(source, markdownModule) {
+function applyDilMarkdownFallback(source, markdownModule, markdownChunk) {
   if (!MODULE_ID.test(markdownModule)) throw new Error("Invalid native ChatGPT Markdown module id");
   const markerCount = source.split(MARKER).length - 1;
   if (markerCount > 0) {
@@ -117,7 +118,7 @@ function applyDilMarkdownFallback(source, markdownModule) {
   }
   const contract = replyContract(source);
   if (contract == null) throw new Error("ChatGPT interactive reply fallback contract changed");
-  if (!chunkRequiresMarkdownModule(source, markdownModule)) {
+  if (!chunkRequiresMarkdownModule(source, markdownModule, markdownChunk)) {
     throw new Error("Native ChatGPT Markdown module is not loaded with the interactive reply chunk");
   }
   const { module, requireName, fallback, preparing, jsx, failure, failureProps, reference } = contract;
@@ -150,6 +151,19 @@ function findMarkdownModule(extractedDir) {
   return [...ids];
 }
 
+function findMarkdownChunk(extractedDir, markdownModule) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const chunks = new Set();
+  for (const assetName of findWebviewAssetsContaining(extractedDir, [MARKDOWN_EXPORT_NEEDLE])) {
+    const source = fs.readFileSync(path.join(assets, assetName), "utf8");
+    const modules = chunkModules(source);
+    if (!modules?.some((module) => module.id === markdownModule)) continue;
+    const header = source.match(/^export const __rspack_esm_ids=\[(\d+)\];/);
+    if (header != null) chunks.add(Number(header[1]));
+  }
+  return [...chunks];
+}
+
 function patchDilMarkdownFallback(extractedDir) {
   const assets = path.join(extractedDir, "webview", "assets");
   const responses = findWebviewAssetsContaining(extractedDir, RESPONSE_NEEDLES).map((file) => ({
@@ -157,11 +171,17 @@ function patchDilMarkdownFallback(extractedDir) {
     source: fs.readFileSync(path.join(assets, file), "utf8"),
   })).filter(({ source }) => source.includes(MARKER) || replyContract(source) != null);
   const markdown = findMarkdownModule(extractedDir);
+  const markdownChunks = markdown.length === 1 ? findMarkdownChunk(extractedDir, markdown[0]) : [];
   if (responses.length === 0 || markdown.length !== 1) {
     throw new Error(`Expected interactive reply modules and one native Markdown module; found ${responses.length} and ${markdown.length}`);
   }
+  // Older reply chunks synchronously require the Markdown factory, while the
+  // current bundle reaches it through one uniquely identified async chunk.
+  // Duplicate exporter chunks are harmless for the synchronous contract but
+  // must not be guessed for the async one.
+  const markdownChunk = markdownChunks.length === 1 ? markdownChunks[0] : undefined;
   // Validate every copy of the reply module before writing any of them.
-  const outputs = responses.map(({ file, source }) => ({ file, source, output: applyDilMarkdownFallback(source, markdown[0]) }));
+  const outputs = responses.map(({ file, source }) => ({ file, source, output: applyDilMarkdownFallback(source, markdown[0], markdownChunk) }));
   const changed = outputs.filter(({ source, output }) => output !== source);
   for (const { file, output } of changed) fs.writeFileSync(path.join(assets, file), output, "utf8");
   return { changed: changed.length > 0 };
@@ -171,6 +191,7 @@ module.exports = {
   fallbackSource,
   applyDilMarkdownFallback,
   findMarkdownModule,
+  findMarkdownChunk,
   patchDilMarkdownFallback,
   descriptors: [{
     id: "chatgpt-dil-markdown-fallback",

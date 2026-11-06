@@ -186,7 +186,7 @@ function chronicleServiceClassMatches(source) {
 
 const LINUX_PLATFORM_CHECK = "\"linux\"===process.platform";
 const LINUX_PLATFORM_PATTERN = '"linux"===process\\.platform';
-const GATE_REASON_LOOKAHEAD = `(?=async\\(\\)=>\\{[\\s\\S]{0,300}?reason:${literal("skysight_gate_enabled")})`;
+const GATE_REASON_LOOKAHEAD = `(?=async\\(\\)=>\\{[\\s\\S]{0,1500}?reason:${literal("skysight_gate_enabled")})`;
 
 function chronicleControllerInitMatches(source, patched) {
   const pattern = patched

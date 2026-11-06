@@ -900,7 +900,7 @@ function patchKWinDragCleanup(source) {
 // call that same pure function repeatedly, so bind it once and hand it to the
 // options helper before the real layout call.
 function inlineLayoutCall(text) {
-  const signatures = [...text.matchAll(/function\(\{anchor:[A-Za-z_$][\w$]*,constrainNativeDrawWindowToDisplay:/g)];
+  const signatures = [...text.matchAll(/function\(\{anchor:[A-Za-z_$][\w$]*,constrainNativeDrawWindowToDisplay:[A-Za-z_$][\w$]*(?:=!1)?,/g)];
   if (signatures.length !== 1) return null;
   const start = signatures[0].index;
   const paramsOpen = start + "function(".length;
@@ -925,7 +925,11 @@ function patchNativeDrawBounds(source) {
     return source;
   }
   const call = method == null ? null : inlineLayoutCall(method.text);
-  if (call == null || call.options.split(UPSTREAM_NATIVE_DRAW_CONSTRAINT).length !== 2) {
+  const constraints = call == null ? [] : [
+    ...call.options.matchAll(/constrainNativeDrawWindowToDisplay:(?:"win32"===[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*==="win32")/gu),
+  ];
+  const constraint = constraints.length === 1 ? constraints[0] : null;
+  if (call == null || constraint == null) {
     console.warn("WARN: Could not identify avatar overlay native drawing constraint - skipping pet overlay bounds patch");
     return source;
   }
@@ -933,12 +937,17 @@ function patchNativeDrawBounds(source) {
   const anchor = call.options.match(/^\{anchor:([A-Za-z_$][\w$]*),constrainNativeDrawWindowToDisplay:/)?.[1];
   const draw = call.options.match(/nativeDrawWindowBounds:([^,]+),displayBounds:/);
   const result = method.text.match(/return ([A-Za-z_$][\w$]*)\}$/)?.[1];
-  if (!display || !anchor || !draw || !result) return source;
-  const options = call.options.replace(UPSTREAM_NATIVE_DRAW_CONSTRAINT, NATIVE_DRAW_CONSTRAINT)
+  const directReturn = method.text.startsWith(`${method.match[0]}return `);
+  if (!display || !anchor || !draw || (!result && !directReturn)) return source;
+  const options = call.options.replace(constraint[0], NATIVE_DRAW_CONSTRAINT)
     .replace(draw[0], `nativeDrawWindowBounds:this.codexPetOverlayIsNativeKWin()?this.codexPetOverlayKWinDrawBounds(${display},${anchor}):${draw[1]},displayBounds:`);
-  const text = method.text.slice(0, call.start) +
+  let text = method.text.slice(0, call.start) +
     `(codexPetOverlayLayout=>codexPetOverlayLayout(this.codexPetOverlayKWinLayoutOptions(${options},codexPetOverlayLayout)))(${call.fn})` +
     method.text.slice(call.end).replace(new RegExp(`return ${result}\\}$`), `return this.codexPetOverlayKWinLayout(${display},${result})}`);
+  if (!result) {
+    const prefix = `${method.match[0]}return `;
+    text = `${prefix}this.codexPetOverlayKWinLayout(${display},${text.slice(prefix.length, -1)})}`;
+  }
   return replaceMethodText(source, method, text);
 }
 

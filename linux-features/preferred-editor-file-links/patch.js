@@ -7,7 +7,7 @@ const marker = "/*preferred-editor-file-links*/";
 // `…:!panel||browser||modified?!modified||preview(path)&&panel?open({…,modifiedClick:modified,openInSidePanel:panel,…}):copy():open({…side panel…})`.
 const I = "[$\\w]+";
 const anchor = new RegExp(
-  String.raw`:!(${I})\|\|(${I})\|\|(${I})\?!\3\|\|\(0,${I}\.${I}\)\((${I})\)&&\1\?(\(0,${I}\.openWorkspaceFile\))` +
+  String.raw`:!(${I})\|\|(${I})\|\|(${I})\?!\3\|\|\(0,${I}\.${I}\)\((${I})\)&&\1\?((?:\(0,${I}\.openWorkspaceFile\)|${I}))` +
     String.raw`\(\{[^()]*?modifiedClick:\3,openInSidePanel:\1,onOpenTargetResolved:${I}\}\):${I}\(\):\5` +
     String.raw`\(\{(scope:${I},activatePresentationAnnotationOnboarding:!0,artifactNavigationTarget:${I},path:\4,line:${I},column:${I},cwd:${I},hostConfig:${I},hostId:${I},endLine:${I},isPreview:${I},openInSidePanel:\1,onOpenTargetResolved:${I})\}\)`,
   "g",

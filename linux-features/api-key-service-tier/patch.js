@@ -108,7 +108,7 @@ const PATCHED_MODEL_MARKER = new RegExp(`${MODEL_MARKER}:"apikey"===${JS_IDENT}\
 
 function modelListPattern() {
   return new RegExp(
-    `(function ${JS_IDENT}\\(\\{additionalAvailableModels:${JS_IDENT},apiKeyDaybreakSupported:${JS_IDENT}=!1,` +
+    `(function(?: ${JS_IDENT})?\\(\\{additionalAvailableModels:${JS_IDENT},apiKeyDaybreakSupported:${JS_IDENT}=!1,` +
       `authMethod:(${JS_IDENT}),availableModels:${JS_IDENT},defaultModel:${JS_IDENT},` +
       `enabledReasoningEfforts:${JS_IDENT},hasConfiguredModelCatalog:${JS_IDENT},` +
       `includeUltraReasoningEffort:${JS_IDENT},isCustomModelProvider:${JS_IDENT}=!1,` +
@@ -206,8 +206,8 @@ function applyApiKeyServiceTierResolverPatch(source) {
 
 function fallbackOptionsPattern() {
   return new RegExp(
-    `(?<helper>${escapeRegExp(FALLBACK_FAST_TIER_HELPER)})?` +
-      `function (?<wrapper>${JS_IDENT})\\((?<model>${JS_IDENT})\\)\\{return (?<options>${JS_IDENT})` +
+    `(?:function (?<wrapper>${JS_IDENT})|${JS_IDENT}:function)\\((?<model>${JS_IDENT})\\)\\{` +
+      `(?<helper>${escapeRegExp(FALLBACK_FAST_TIER_HELPER)})?return (?<options>${JS_IDENT})` +
       `\\(\\k<model>\\?\\.model,(?:\\k<model>\\?\\.serviceTiers|(?<fallback>\\k<model>\\?\\.serviceTiers\\?\\.length` +
       `\\?\\k<model>\\.serviceTiers:\\[${PATCH_MARKER}\\(\\k<model>\\)\\]\\.filter\\(Boolean\\)))\\)\\}`,
     "g",
@@ -249,7 +249,8 @@ function applyFallbackFastTierPatch(source) {
         `[${PATCH_MARKER}(${model})].filter(Boolean))}`,
     );
     if (replacement != null) {
-      const patched = spliceMatch(source, state.match, FALLBACK_FAST_TIER_HELPER + replacement);
+      const withHelper = replacement.replace("{return ", `{${FALLBACK_FAST_TIER_HELPER}return `);
+      const patched = spliceMatch(source, state.match, withHelper);
       if (fallbackFastTierState(patched).kind === "patched") return patched;
     }
   }

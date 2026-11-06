@@ -260,7 +260,7 @@ test("model list marker rejects the superseded pre-Daybreak signature byte-ident
 test("speed options and resolver round-trip synthetic fast for an API-key model without tiers", () => {
   const patchedOptions = applyPatchTwice(applyFallbackFastTierPatch, currentOptionsFixture());
   const patchedResolver = applyPatchTwice(applyApiKeyServiceTierResolverPatch, currentResolverFixture());
-  assert.match(patchedOptions, /function codexLinuxApiKeyFastTier\(e\)\{[^}]*\}\}function u\(e\)\{return d\(e\?\.model,e\?\.serviceTiers\?\.length\?e\.serviceTiers:\[codexLinuxApiKeyFastTier\(e\)\]\.filter\(Boolean\)\)\}/);
+  assert.match(patchedOptions, /function u\(e\)\{function codexLinuxApiKeyFastTier\(e\)\{[^}]*\}\}return d\(e\?\.model,e\?\.serviceTiers\?\.length\?e\.serviceTiers:\[codexLinuxApiKeyFastTier\(e\)\]\.filter\(Boolean\)\)\}/);
   assert.match(patchedResolver, /function codexLinuxApiKeyFastTier\(e\)\{[^}]*\}\}function c\(e,t\)\{return null==t\?null:t===a\?u\(e\)\?\?codexLinuxApiKeyFastTier\(e\):/);
 
   const pg = (id, name) => (id === "fast" || id === "priority" || name?.trim().toLowerCase() === "fast" ? "fast" : null);
