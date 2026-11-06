@@ -17,18 +17,32 @@ const {
   requiredPatchNamesForProfile,
 } = require("./runner.js");
 const { findMainProcessChunks } = require("./lib/assets.js");
+const {
+  findQuitLifecycleContract,
+} = require("./core/quit-confirmation-focus/patch.js");
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
 
-test("the official Linux baseline has no required compatibility patches", () => {
-  assert.deepEqual(corePatchDescriptors(), []);
-  assert.deepEqual(allPatchPolicies({ featuresConfigPath: emptyConfig }), []);
+test("the official Linux baseline registers the required quit compatibility patch", () => {
+  assert.deepEqual(
+    corePatchDescriptors().map(({ id, phase, ciPolicy }) => ({ id, phase, ciPolicy })),
+    [{
+      id: "quit-confirmation-focus",
+      phase: "main-bundle",
+      ciPolicy: "required-upstream",
+    }],
+  );
+  assert.deepEqual(allPatchPolicies({ featuresConfigPath: emptyConfig }), [{
+    name: "quit-confirmation-focus",
+    ciPolicy: "required-upstream",
+    phase: "main-bundle",
+  }]);
   assert.deepEqual(requiredPatchNamesForProfile("upstream-build", {
     featuresConfigPath: emptyConfig,
-  }), []);
+  }), ["quit-confirmation-focus"]);
 });
 
-test("the signed baseline retains upstream replacements for retired core blockers", {
+test("the signed baseline needs one quit repair and retains the retired shell replacement", {
   skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null,
 }, () => {
   const mainProcess = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
@@ -48,24 +62,43 @@ test("the signed baseline retains upstream replacements for retired core blocker
     return owners[0].source;
   };
 
+  const quitOwners = chunks
+    .map((chunk) => ({ ...chunk, contract: findQuitLifecycleContract(chunk.source) }))
+    .filter(({ contract }) => contract != null);
+  assert.equal(quitOwners.length, 1, "Expected one signed before-quit owner tied to quit state");
   assert.equal(
-    chunks.filter(({ source }) => source.includes("desktop.quitConfirmation.quit")).length,
-    0,
-    "The retired synchronous quit-confirmation contract must remain absent",
+    quitOwners[0].contract.approvalConsumed,
+    false,
+    "The signed before-quit owner must reproduce the missing approval consumption",
   );
-  const quitOwner = uniqueOwner([
-    "canQuitWithoutPrompt(){return this.allowQuitWithoutPrompt}",
-    "markQuitApproved(){this.allowQuitWithoutPrompt=!0}",
-  ], "upstream quit coordinator");
-  assert.equal(
-    quitOwner.match(/canQuitWithoutPrompt\(\)\{return this\.allowQuitWithoutPrompt\}/gu)?.length,
-    1,
-    "Expected one upstream no-prompt quit decision",
+
+  const quitPatch = corePatchDescriptors().find(({ id }) => id === "quit-confirmation-focus");
+  assert.ok(quitPatch, "Expected the required quit patch descriptor");
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let patchedChunks;
+  try {
+    patchedChunks = chunks.map((chunk) => ({
+      ...chunk,
+      source: quitPatch.apply(chunk.source),
+    }));
+  } finally {
+    console.warn = originalWarn;
+  }
+  const changed = patchedChunks.filter(({ source }, index) => source !== chunks[index].source);
+  assert.deepEqual(
+    changed.map(({ name }) => name),
+    [quitOwners[0].name],
+    "The required quit patch must change only the unique signed before-quit owner",
   );
+  const patchedQuitOwners = patchedChunks
+    .map((chunk) => findQuitLifecycleContract(chunk.source))
+    .filter((contract) => contract != null);
+  assert.equal(patchedQuitOwners.length, 1, "Expected one patched signed before-quit owner");
   assert.equal(
-    quitOwner.match(/markQuitApproved\(\)\{this\.allowQuitWithoutPrompt=!0\}/gu)?.length,
-    1,
-    "Expected one upstream quit-approval transition",
+    patchedQuitOwners[0].approvalConsumed,
+    true,
+    "The patched signed before-quit owner must consume the coordinator approval",
   );
 
   const shellOwner = uniqueOwner([
@@ -106,7 +139,7 @@ test("runner context exposes enabled feature IDs", () => {
   }
 });
 
-test("the default core registry leaves official application assets unchanged", () => {
+test("required core drift fails closed without changing unmatched application assets", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-baseline-"));
   try {
     const mainDir = path.join(root, ".vite", "build");
@@ -126,7 +159,9 @@ test("the default core registry leaves official application assets unchanged", (
     });
     assert.deepEqual(fs.readFileSync(main), mainBefore);
     assert.deepEqual(fs.readFileSync(webview), webviewBefore);
-    assert.deepEqual(report.patches, []);
+    assert.equal(report.patches.length, 1);
+    assert.equal(report.patches[0].name, "quit-confirmation-focus");
+    assert.equal(report.patches[0].status, "failed-required");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
