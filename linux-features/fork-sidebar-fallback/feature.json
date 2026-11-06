@@ -1,0 +1,9 @@
+{
+  "id": "fork-sidebar-fallback",
+  "title": "Fork Sidebar Fallback",
+  "description": "Allow chat forks when the optional app-server sidebar rollout client is unavailable.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

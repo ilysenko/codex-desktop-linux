@@ -1,0 +1,162 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const test = require("node:test");
+const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
+const { createPatchReport, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
+const { applyMainProcessChunkPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
+const { applyForkSidebarFallback, descriptors } = require("./patch.js");
+
+// Reduced background settings owner from the current official Linux package.
+const READER = 'read:e=>(p(),"sidebarCustomSectionsEnabled"===e)?null!=d():' +
+  'i.getReadyClient()?.checkGate("codex-app-server-custom-sections")';
+const FIXTURE = `function settings(){return{readExperimentPersonality(){return null},${READER}}}`;
+
+function settings(source, { client, accountId = null, assertCurrent = () => {} } = {}) {
+  return Function("p", "d", "i", `${source};return settings()`)(
+    assertCurrent, () => accountId, { getReadyClient: () => client },
+  );
+}
+
+function captureWarnings(fn) {
+  const original = console.warn;
+  const warnings = [];
+  console.warn = (message) => warnings.push(message);
+  try {
+    return { value: fn(), warnings };
+  } finally {
+    console.warn = original;
+  }
+}
+
+test("an unavailable sidebar rollout no longer leaves fork placement not-ready", () => {
+  const forkStatus = (reader) => reader.read("sidebarCustomSectionsEnabled") === undefined ||
+    reader.read("useAppServerCustomSections") === undefined
+    ? "execution-config-loading" : "ready";
+  assert.equal(forkStatus(settings(FIXTURE)), "execution-config-loading");
+  const patched = settings(applyForkSidebarFallback(FIXTURE));
+  assert.equal(patched.read("useAppServerCustomSections"), false);
+  assert.equal(forkStatus(patched), "ready");
+});
+
+test("ready rollout values and local section eligibility retain their meaning", () => {
+  for (const enabled of [false, true]) {
+    for (const accountId of [null, "account-1"]) {
+      const gateCalls = [];
+      const reader = settings(applyForkSidebarFallback(FIXTURE), {
+        accountId,
+        client: { checkGate: (key) => { gateCalls.push(key); return enabled; } },
+      });
+      assert.equal(reader.read("sidebarCustomSectionsEnabled"), accountId != null);
+      assert.deepEqual(gateCalls, []);
+      assert.equal(reader.read("useAppServerCustomSections"), enabled);
+      assert.deepEqual(gateCalls, ["codex-app-server-custom-sections"]);
+    }
+  }
+});
+
+test("the same reader observes a rollout client becoming ready later", () => {
+  let client;
+  const reader = Function("p", "d", "i", `${applyForkSidebarFallback(FIXTURE)};return settings()`)(
+    () => {}, () => "account-1", { getReadyClient: () => client },
+  );
+  assert.equal(reader.read("useAppServerCustomSections"), false);
+  client = { checkGate: () => true };
+  assert.equal(reader.read("useAppServerCustomSections"), true);
+  client = { checkGate: () => false };
+  assert.equal(reader.read("useAppServerCustomSections"), false);
+});
+
+test("retired-owner and rollout errors still propagate", () => {
+  const failure = new Error("owner retired");
+  const reader = settings(applyForkSidebarFallback(FIXTURE), {
+    assertCurrent: () => { throw failure; },
+  });
+  assert.throws(() => reader.read("useAppServerCustomSections"), (error) => error === failure);
+  const gateFailure = new Error("rollout failed");
+  const failingGate = settings(applyForkSidebarFallback(FIXTURE), {
+    client: { checkGate() { throw gateFailure; } },
+  });
+  assert.throws(() => failingGate.read("useAppServerCustomSections"), (error) => error === gateFailure);
+});
+
+test("patch changes only the fallback, survives renamed bindings, and is idempotent", () => {
+  const renamed = FIXTURE.replaceAll("p()", "$assert()").replaceAll("d()", "$account()")
+    .replaceAll("i.getReadyClient", "$rollout.getReadyClient").replaceAll("read:e", "read:$key")
+    .replaceAll('===e)', '===$key)');
+  for (const source of [FIXTURE, renamed]) {
+    const patched = applyForkSidebarFallback(source);
+    assert.equal(patched.replace("??!1", ""), source);
+    assert.deepEqual(captureWarnings(() => applyForkSidebarFallback(patched)), {
+      value: patched, warnings: [],
+    });
+  }
+});
+
+test("missing, ambiguous, partial, and drifted readers are preserved with a warning", () => {
+  const patched = applyForkSidebarFallback(FIXTURE);
+  for (const source of [
+    "function unrelated(){}", FIXTURE + FIXTURE, patched + FIXTURE,
+    patched.replace("??!1", "??!0"),
+    FIXTURE.replace("codex-app-server-custom-sections", "other-gate"),
+    FIXTURE.replace("getReadyClient()", "getClient()"),
+    FIXTURE.replace("null!=d()", "d()"),
+  ]) {
+    const result = captureWarnings(() => applyForkSidebarFallback(source));
+    assert.equal(result.value, source);
+    assert.equal(result.warnings.length, 1);
+  }
+});
+
+test("feature is disabled by default and integrates with chunk reports and drift enforcement", (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "fork-sidebar-fallback-"));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const config = path.join(temp, "features.json");
+  const options = { featuresRoot: path.resolve(__dirname, ".."), featuresConfigPath: config };
+  fs.writeFileSync(config, JSON.stringify({ enabled: [] }));
+  assert.equal(loadLinuxFeaturePatchDescriptors(options).some((item) =>
+    item.id === "feature:fork-sidebar-fallback:sidebar-settings"), false);
+  fs.writeFileSync(config, JSON.stringify({ enabled: ["fork-sidebar-fallback"] }));
+  const enabled = normalizePatchDescriptors(loadLinuxFeaturePatchDescriptors(options));
+  assert.equal(enabled.length, 1);
+  const report = createPatchReport();
+  const chunks = [
+    { name: "early-bootstrap-renamed.js", source: FIXTURE },
+    { name: "unrelated.js", source: "function other(){}" },
+  ];
+  const patched = applyMainProcessChunkPatchDescriptors(chunks, enabled, {}, report);
+  assert.equal(patched[0].source, applyForkSidebarFallback(FIXTURE));
+  assert.equal(patched[1].source, chunks[1].source);
+  assert.equal(report.patches[0].status, "applied");
+  assert.deepEqual(report.patches[0].chunks, [chunks[0].name]);
+  const repeated = createPatchReport();
+  applyMainProcessChunkPatchDescriptors(patched, enabled, {}, repeated);
+  assert.equal(repeated.patches[0].status, "already-applied");
+  const drift = createPatchReport();
+  drift.enabledFeatures = ["fork-sidebar-fallback"];
+  captureWarnings(() => applyMainProcessChunkPatchDescriptors([chunks[1]], enabled, {}, drift));
+  assert.equal(enabledFeatureFailuresFromReport(drift).length, 1);
+});
+
+test("current signed official owner patches once and the complete chunk still parses", {
+  skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
+}, () => {
+  const dir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
+  const owners = fs.readdirSync(dir).filter((name) => name.endsWith(".js"))
+    .map((name) => ({ name, source: fs.readFileSync(path.join(dir, name), "utf8") }))
+    .filter(({ source }) => source.includes('"codex-app-server-custom-sections"'));
+  assert.equal(owners.length, 1);
+  const [{ source }] = owners;
+  const { value: patched, warnings } = captureWarnings(() => descriptors[0].apply(source));
+  assert.deepEqual(warnings, []);
+  assert.notEqual(patched, source);
+  assert.equal(patched.replace('checkGate("codex-app-server-custom-sections")??!1',
+    'checkGate("codex-app-server-custom-sections")'), source);
+  assert.equal(applyForkSidebarFallback(patched), patched);
+  const syntax = spawnSync(process.execPath, ["--check"], { input: patched, encoding: "utf8" });
+  assert.equal(syntax.status, 0, syntax.stderr);
+});
