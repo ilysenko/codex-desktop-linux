@@ -665,3 +665,281 @@ test("paste timeout retires its helper before another paste can consume a late r
   await retry;
   await cleanup(ctx);
 });
+
+function delayedExitChild() {
+  const child = fakeHelperChild();
+  child.signals = [];
+  child.kill = signal => { child.signals.push(signal); return true; };
+  child.finish = (code = 0, signal = null) => child.emit("exit", code, signal);
+  return child;
+}
+
+function controlledTimers(ctx) {
+  const timers = new Set();
+  ctx.setTimeout = (callback, milliseconds) => {
+    const timer = { callback, milliseconds, unref() {} };
+    timers.add(timer);
+    return timer;
+  };
+  ctx.clearTimeout = timer => timers.delete(timer);
+  return timers;
+}
+
+test("paste aborted before write leaves its ready helper and clipboard transport untouched", async t => {
+  const child = fakeHelperChild(), ctx = context([child]);
+  t.after(() => cleanup(ctx));
+  registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+  await spawned(ctx, 1); child.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  const signal = new AbortController(), reason = new Error("cancel before paste");
+  signal.abort(reason);
+  await assert.rejects(ctx.codexLinuxGlobalShortcutsPaste(signal.signal), error => error === reason);
+  assert.deepEqual(child.stdin.writes, []);
+  assert.deepEqual(child.signals ?? [], []);
+  assert.equal(ctx.codexLinuxGlobalShortcutsPortalBackend.ready, true);
+});
+
+test("soft paste abort joins normal stop and capture until observed exit without a hard timer", async t => {
+  const first = delayedExitChild(), fresh = fakeHelperChild(), ctx = context([first, fresh]);
+  const timers = controlledTimers(ctx);
+  t.after(async () => { first.finish(); await cleanup(ctx); });
+  let cancelled = 0;
+  registerPortal(ctx, "Ctrl+Alt+G", { onCancelled: () => cancelled++ }, "hotkeyWindow");
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  first.stdout.emit("data", Buffer.from("down\n"));
+  const controller = new AbortController(), reason = new Error("cancel pending paste");
+  let settled = false;
+  const paste = ctx.codexLinuxGlobalShortcutsPaste(controller.signal);
+  paste.then(() => { settled = true; }, () => { settled = true; });
+  const rejected = assert.rejects(paste, error => error === reason);
+  const oldTimeout = [...timers].find(timer => timer.milliseconds === 35000);
+  controller.abort(reason);
+  let pauseFinished = false;
+  const paused = ctx.codexLinuxGlobalShortcutsPortalPause().then(() => { pauseFinished = true; });
+  const ordinaryStop = ctx.codexLinuxGlobalShortcutsPortalBackend.stop(new Error("normal reconfigure"));
+  oldTimeout.callback();
+  await tick();
+  first.stdout.emit("data", Buffer.from("paste-ok\n"));
+  await tick();
+  assert.deepEqual(first.signals, ["SIGINT"]);
+  assert.equal([...timers].some(timer => timer.milliseconds === 2000), false);
+  assert.equal(settled, false);
+  assert.equal(pauseFinished, false);
+  assert.equal(cancelled, 1);
+  assert.equal(ctx.__spawns.length, 1);
+  await assert.rejects(ctx.codexLinuxGlobalShortcutsPaste(), /No ready/);
+  first.finish();
+  await rejected; await paused; assert.equal(await ordinaryStop, true);
+  await spawned(ctx, 2); fresh.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  let replacementFinished = false;
+  const replacement = ctx.codexLinuxGlobalShortcutsPaste().then(() => { replacementFinished = true; });
+  first.stdout.emit("data", Buffer.from("paste-ok\n"));
+  controller.signal.dispatchEvent(new Event("abort"));
+  await tick();
+  assert.equal(replacementFinished, false);
+  assert.deepEqual(first.signals, ["SIGINT"]);
+  fresh.stdout.emit("data", Buffer.from("paste-ok\n"));
+  await replacement;
+});
+
+test("soft paste retirement restores all current intent including unbound and new actions", async t => {
+  const first = delayedExitChild(), fresh = fakeHelperChild(), ctx = context([first, fresh]);
+  controlledTimers(ctx);
+  t.after(async () => { first.finish(); await cleanup(ctx); });
+  const unavailable = [];
+  const add = (key, id) => registerPortal(ctx, key, { onUnavailable: () => unavailable.push(id) }, id);
+  const approved = add("Ctrl+Alt+A", "hotkeyWindow");
+  const unbound = add("Ctrl+Alt+B", "meetings");
+  const withdrawn = add("Ctrl+Alt+D", "openAvatarOverlay");
+  await spawned(ctx, 1); first.ready([0, 2]); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  assert.equal(unbound.ready(), false);
+  const controller = new AbortController(), reason = new Error("replace paste helper");
+  const paste = ctx.codexLinuxGlobalShortcutsPaste(controller.signal);
+  const rejected = assert.rejects(paste, error => error === reason);
+  controller.abort(reason);
+  const added = add("Ctrl+Alt+C", "realtimeVoice");
+  withdrawn.unregister();
+  await tick();
+  assert.equal(ctx.__spawns.length, 1);
+  first.finish(); await rejected;
+  await spawned(ctx, 2);
+  assert.deepEqual(Array.from(ctx.__spawns[1][1]).filter((_, index) => index >= 2 && (index - 2) % 4 === 0),
+    ["hotkeyWindow", "meetings", "realtimeVoice"]);
+  fresh.ready([0, 2]); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  assert.equal(approved.ready(), true);
+  assert.equal(added.ready(), true);
+  assert.equal(unbound.ready(), false);
+  assert.equal(unbound.failed, false);
+  assert.equal(ctx.codexLinuxGlobalShortcutsPortalRegistrations.has(unbound), true);
+  assert.deepEqual(unavailable, []);
+});
+
+test("failed soft SIGINT keeps safe completion fenced until a later real exit", async t => {
+  const first = delayedExitChild(), fresh = fakeHelperChild(), ctx = context([first, fresh]);
+  const timers = controlledTimers(ctx);
+  first.kill = signal => { first.signals.push(signal); throw new Error("signal denied"); };
+  t.after(async () => { first.finish(); await cleanup(ctx); });
+  registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  const controller = new AbortController(), reason = new Error("cancel while stuck");
+  let completed = false;
+  const paste = ctx.codexLinuxGlobalShortcutsPaste(controller.signal);
+  paste.then(() => { completed = true; }, () => { completed = true; });
+  const rejected = assert.rejects(paste, error => error === reason);
+  controller.abort(reason);
+  let stopped = false;
+  const joined = ctx.codexLinuxGlobalShortcutsPortalBackend.stop(new Error("ordinary stop"))
+    .then(value => { stopped = true; return value; });
+  await tick();
+  assert.equal(completed, false);
+  assert.equal(stopped, false);
+  assert.equal(ctx.__spawns.length, 1);
+  assert.equal([...timers].some(timer => timer.milliseconds === 2000), false);
+  assert.equal(ctx.__warnings.some(args => String(args[0]).includes("no observed exit")), true);
+  first.finish(); await rejected; assert.equal(await joined, true);
+  await spawned(ctx, 2); fresh.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+});
+
+test("false ordinary stop status cannot settle a written paste before observed exit", async t => {
+  const first = delayedExitChild(), fresh = fakeHelperChild(), ctx = context([first, fresh]);
+  controlledTimers(ctx);
+  first.kill = signal => { first.signals.push(signal); throw new Error("stop failed"); };
+  t.after(async () => { first.finish(); await cleanup(ctx); });
+  registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  let completed = false;
+  const paste = ctx.codexLinuxGlobalShortcutsPaste();
+  paste.then(() => { completed = true; }, () => { completed = true; });
+  const rejected = assert.rejects(paste, /test stop/);
+  const status = await ctx.codexLinuxGlobalShortcutsPortalBackend.stop(new Error("test stop"));
+  assert.equal(status, false);
+  await tick();
+  assert.equal(completed, false);
+  assert.equal(ctx.__spawns.length, 1);
+  first.finish(); await rejected;
+  await spawned(ctx, 2); fresh.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+});
+
+test("only real shutdown upgrades a soft retirement to the existing hard watchdog", async t => {
+  const first = delayedExitChild(), ctx = context([first]);
+  const timers = controlledTimers(ctx);
+  t.after(async () => { first.finish(); await cleanup(ctx); });
+  let cancelled = 0;
+  registerPortal(ctx, "Ctrl+Alt+G", { onCancelled: () => cancelled++ }, "hotkeyWindow");
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  first.stdout.emit("data", Buffer.from("down\n"));
+  const controller = new AbortController(), reason = new Error("cancel before quit");
+  let completed = false;
+  const paste = ctx.codexLinuxGlobalShortcutsPaste(controller.signal);
+  paste.then(() => { completed = true; }, () => { completed = true; });
+  const rejected = assert.rejects(paste, error => error === reason);
+  controller.abort(reason);
+  const shutdown = ctx.codexLinuxGlobalShortcutsPortalShutdown();
+  assert.equal(ctx.codexLinuxGlobalShortcutsPortalShutdown(), shutdown);
+  const hardTimers = [...timers].filter(timer => timer.milliseconds === 2000);
+  assert.equal(hardTimers.length, 1);
+  assert.deepEqual(first.signals, ["SIGINT"]);
+  hardTimers[0].callback();
+  await tick();
+  assert.deepEqual(first.signals, ["SIGINT", "SIGKILL"]);
+  assert.equal(completed, false);
+  assert.equal(cancelled, 1);
+  first.finish(null, "SIGKILL");
+  await rejected; assert.equal(await shutdown, true);
+  await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  assert.equal(ctx.__spawns.length, 1);
+  assert.equal(ctx.__warnings.some(args => String(args[0]).includes("input may already")), true);
+});
+
+test("abort reentered during stdin write takes the sent-request exit barrier", async t => {
+  const first = delayedExitChild(), fresh = fakeHelperChild(), ctx = context([first, fresh]);
+  controlledTimers(ctx);
+  t.after(async () => { first.finish(); await cleanup(ctx); });
+  registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  const controller = new AbortController();
+  const write = first.stdin.write;
+  first.stdin.write = function(value, callback) {
+    const result = write.call(this, value, callback);
+    controller.abort(null);
+    return result;
+  };
+  let completed = false;
+  const paste = ctx.codexLinuxGlobalShortcutsPaste(controller.signal);
+  paste.then(() => { completed = true; }, () => { completed = true; });
+  const rejected = assert.rejects(paste, error => error === null);
+  await tick();
+  assert.deepEqual(first.stdin.writes, ["paste\n"]);
+  assert.deepEqual(first.signals, ["SIGINT"]);
+  assert.equal(completed, false);
+  first.finish(); await rejected;
+  await spawned(ctx, 2); fresh.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+});
+
+test("a completed paste removes its old abort listener", async t => {
+  const child = fakeHelperChild(), ctx = context([child]);
+  t.after(() => cleanup(ctx));
+  registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+  await spawned(ctx, 1); child.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  const controller = new AbortController();
+  const paste = ctx.codexLinuxGlobalShortcutsPaste(controller.signal);
+  child.stdout.emit("data", Buffer.from("paste-ok\n"));
+  await paste;
+  controller.abort(); await tick();
+  assert.deepEqual(child.signals ?? [], []);
+  assert.equal(ctx.codexLinuxGlobalShortcutsPortalBackend.ready, true);
+  assert.equal(ctx.__spawns.length, 1);
+});
+
+test("soft retirement rechecks account access before restoring current intent", async t => {
+  const first = delayedExitChild(), fresh = fakeHelperChild(), ctx = context([first, fresh]);
+  controlledTimers(ctx);
+  t.after(async () => { first.finish(); await cleanup(ctx); });
+  const registration = registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  const controller = new AbortController();
+  const paste = ctx.codexLinuxGlobalShortcutsPaste(controller.signal);
+  const rejected = assert.rejects(paste);
+  controller.abort();
+  ctx.accessReady = false;
+  first.finish(); await rejected; await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  assert.equal(ctx.__spawns.length, 1);
+  assert.equal(ctx.codexLinuxGlobalShortcutsPortalRegistrations.has(registration), true);
+  ctx.publishAccess({});
+  await spawned(ctx, 2); fresh.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  assert.equal(registration.ready(), true);
+});
+
+test("native shortcut capture joins an existing soft paste retirement", async t => {
+  const first = delayedExitChild(), fresh = fakeHelperChild(), ctx = context([first, fresh]);
+  const timers = controlledTimers(ctx);
+  const handle = vm.runInNewContext('eA("Ctrl+Alt+G",{linuxCommandId:"hotkeyWindow",onPressed(){}})', ctx);
+  let pendingCapture;
+  t.after(async () => {
+    first.finish();
+    const capture = pendingCapture ? await pendingCapture : null;
+    capture?.[Symbol.dispose]();
+    handle.unregister();
+    await cleanup(ctx);
+  });
+  await spawned(ctx, 1); first.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  const controller = new AbortController();
+  const paste = ctx.codexLinuxGlobalShortcutsPaste(controller.signal);
+  const rejected = assert.rejects(paste);
+  controller.abort();
+  ctx.origin = captureOrigin();
+  let returned = false;
+  pendingCapture = vm.runInNewContext("new CaptureService(origin).beginCapture()", ctx)
+    .then(capture => { returned = true; return capture; });
+  await tick();
+  assert.equal(returned, false);
+  assert.equal(ctx.suspendDepth, 1);
+  assert.deepEqual(first.signals, ["SIGINT"]);
+  assert.equal([...timers].some(timer => timer.milliseconds === 2000), false);
+  first.finish(); await rejected;
+  const capture = await pendingCapture;
+  assert.ok(capture);
+  assert.equal(ctx.__spawns.length, 1);
+  capture[Symbol.dispose]();
+  await spawned(ctx, 2); fresh.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  assert.equal(ctx.suspendDepth, 0);
+});

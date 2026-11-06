@@ -46,7 +46,7 @@ No RemoteDesktop session is opened in GNOME mode; GlobalShortcuts may still
 request shortcut approval. The optional `global-dictation-gnome` feature only
 ships/installs the companion, not selects the backend: manually installed
 compatible companions are detected too. Restart the app/helper after enabling
-the extension. X11 paste is unchanged.
+the extension. X11 paste continues to use `xdotool`.
 
 Portal shortcut IDs key the compositor's saved bindings and never change.
 Hold-to-talk keeps `global-dictation`, the ID used before the shared backend, so
@@ -72,6 +72,17 @@ Windows forced-exit policy. This preserves KDE's saved choices across ordinary
 restarts and update exits.
 Session replacement can briefly interrupt global shortcuts. The helper's
 registration timeout is 30 seconds.
+
+Linux clipboard operations run in order through the native clipboard bridge,
+including its clipboard-fingerprint checks and restoration delay. Canceling a
+pending Wayland paste requests graceful helper exit. Confirmed exit allows the
+bridge to finish its fingerprint-protected restoration and the backend to
+rebuild the complete current action set. This briefly interrupts the shared
+shortcuts and cancels held gestures. If helper exit cannot be confirmed, the clipboard bridge
+and later Linux clipboard operations remain suspended. Actual app shutdown keeps
+the existing bounded helper-stop policy. Committed input can finish during
+cancellation, and a submitted GNOME Paste call retains its existing no-retry
+and possible-submission semantics.
 
 The compositor controls the actual global bindings. On KDE, edit saved bindings
 under **System Settings > Keyboard > Shortcuts > ChatGPT Community**. A preferred

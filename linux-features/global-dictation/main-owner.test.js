@@ -48,7 +48,7 @@ test("normal descriptor refuses fake marker, unused class, damaged callbacks and
     logicalReassignedController: source.replace(";return{windowManager:D", ";L&&={};return{windowManager:D"),
     destructuredController: source.replace(";return{windowManager:D", ";[L]=[{}];return{windowManager:D"),
     objectDestructuredController: source.replace(";return{windowManager:D", ";({value:L}={value:{}});return{windowManager:D"),
-    shadowedController: source.replace("{let O,L=new H7", "{let H7=class{};let O,L=new H7"),
+    shadowedController: source.replace("let L=new H7", "let H7=class{};let L=new H7"),
     staticRegistration: source.replace("registerHotkeyOrThrow(e,t){", "static registerHotkeyOrThrow(e,t){"),
     commentedStaticRegistration: source.replace("registerHotkeyOrThrow(e,t){", "static/*inert*/registerHotkeyOrThrow(e,t){"),
     generatorRegistration: source.replace("registerHotkeyOrThrow(e,t){", "*registerHotkeyOrThrow(e,t){"),
@@ -57,7 +57,7 @@ test("normal descriptor refuses fake marker, unused class, damaged callbacks and
     staticGeneratorRegistration: source.replace("registerHotkeyOrThrow(e,t){", "static/*inert*/*registerHotkeyOrThrow(e,t){"),
     damagedPrimaryGate: canonical.replace('this.setupWindowFocused||this.shortcutGestures.release("primary")', 'this.shortcutGestures.release("primary")'),
     noopOwnHelper: canonical.replace("function codexLinuxGlobalDictationReleaseWatcher(accelerator, onReleased)", "function unrelatedReleaseWatcher(accelerator, onReleased)"),
-    wrongPasteRoute: canonical.replace("await codexLinuxGlobalDictationPasteX11()", "await unrelatedPaste()"),
+    wrongPasteRoute: canonical.replace(/await codexLinuxGlobalDictationPasteX11\([^)]*\)/u, "await unrelatedPaste()"),
   };
   for (const [name, variant] of Object.entries(variants)) {
     const original = ["damagedPrimaryGate", "noopOwnHelper", "wrongPasteRoute"].includes(name) ? canonical : source;
@@ -97,5 +97,134 @@ test("dictation owner transaction restores partial writes and treats failed rest
       else assert.equal(quiet(() => production(root)).status, "skipped-optional");
     } finally { fs.writeFileSync = originalWrite; }
     assert.equal(attempted, true); if (!fatal) unchanged(root, files);
+  }
+});
+
+test("anonymous clipboard authority protects arguments, abort, timing and native completion", t => {
+  const source = mainBundleFixture(), native = inspect(source).plan, canonical = apply(source);
+  const signal = native.bridge.parameterNames[3];
+  const wrongPasteSignal = source.slice(0, native.paste.end + 1) + "void 0" +
+    source.slice(native.paste.end + 1 + signal.length);
+  const variants = {
+    wrongFifoController: canonical.replace("codexLinuxGlobalDictationClipboard(this,async function", "codexLinuxGlobalDictationClipboard({},async function"),
+    nonAwaitedClipboard: source.replace("let o=await async function", "let o=async function"),
+    wrongFourthArgument: source.replace('`${s} `,n,i,a.signal', '`${s} `,n,i,other.signal'),
+    wrongStopFingerprint: source.replace("i=this.clipboardFingerprintAtStop", "i=this.otherClipboardFingerprint"),
+    wrongSessionCompletion: source.replace("this.pendingPasteSessionId===e&&(", "this.pendingPasteSessionId!==e&&("),
+    changedInitialAbort: source.replace("if(i?.aborted)return null;", "if(i?.aborted)return{text:e};"),
+    changedHandoff: source.replace("Math.max(0,150-n)", "Math.max(0,250-n)"),
+    changedRestoreWait: source.replace("(700)}catch", "(250)}catch"),
+    wrongPasteSignal,
+    missingNativeAccessibility: source.replace("AXUIElementPerformAction", "MissingNativeAccessibilityAction"),
+    partialFifoHelper: canonical.replace("const previous = codexLinuxGlobalDictationClipboardQueues.get(controller)", "const previous = unrelatedQueues.get(controller)"),
+  };
+  for (const [name, variant] of Object.entries(variants)) {
+    assert.notEqual(variant, name.startsWith("wrongFifo") || name === "partialFifoHelper" ? canonical : source, name);
+    assert.doesNotThrow(() => new Script(variant), name);
+    assert.equal(inspect(variant).state, "drifted", name);
+    const files = { "early-bootstrap-45-abc.js": variant }, root = fixture(t, files);
+    assert.equal(quiet(() => production(root)).status, "skipped-optional", name);
+    unchanged(root, files);
+  }
+});
+
+test("foreign factory and inert clipboard text do not become a consumed transcript owner", t => {
+  const source = mainBundleFixture(), native = inspect(source).plan;
+  const inert = source.replace('"use strict";', '"use strict";const clipboardDocumentation=' + JSON.stringify(native.bridge.text) + ';');
+  const foreign = mainBundleFixture({ extra: ',99999(){return ' + JSON.stringify(native.bridge.text) + '}' });
+  for (const value of [inert, foreign]) {
+    const files = { "early-bootstrap-45-abc.js": value }, root = fixture(t, files);
+    assert.equal(production(root).status, "applied");
+    const output = fs.readFileSync(path.join(root, ".vite/build/early-bootstrap-45-abc.js"), "utf8");
+    assert.equal(inspect(output).state, "patched");
+    assert.equal(production(root).status, "already-applied");
+  }
+});
+
+test("named function fields cannot impersonate the native constructor or registration method", t => {
+  const source = mainBundleFixture(), plan = inspect(source).plan;
+  for (const name of ["constructor", "registerHotkeyOrThrow", "ensureHotkeyReleaseWatchers"]) {
+    const method = plan.methods[name];
+    const variant = source.slice(0, method.start) + `fieldFor${name}=function ` + method.text + ";" + source.slice(method.end);
+    assert.doesNotThrow(() => new Script(variant), name);
+    assert.equal(inspect(variant).state, "drifted", name);
+    const files = { "early-bootstrap-45-abc.js": variant }, root = fixture(t, files);
+    assert.equal(quiet(() => production(root)).status, "skipped-optional", name);
+    unchanged(root, files);
+  }
+});
+
+test("native in-app Escape stop/cancel policy cannot be flattened in raw or canonical source", t => {
+  const source = mainBundleFixture(), canonical = apply(source);
+  for (const input of [source, canonical]) {
+    const variant = input.replace('this.activeSession?.type!=="inApp"||this.shortcutGestures.hasPendingStart?this.shortcutGestures.cancel():this.stopRecording(this.activeSession.id)', 'this.shortcutGestures.cancel()');
+    assert.notEqual(variant, input);
+    assert.doesNotThrow(() => new Script(variant));
+    assert.equal(inspect(variant).state, "drifted");
+    const files = { "early-bootstrap-45-abc.js": variant }, root = fixture(t, files);
+    assert.equal(quiet(() => production(root)).status, "skipped-optional");
+    unchanged(root, files);
+  }
+});
+
+test("protected native instance methods reject public own-field shadows in raw and canonical states", t => {
+  const raw = mainBundleFixture(), canonical = apply(raw);
+  const fields = {
+    transcript: 'handleTranscript=async()=>{};',
+    holdRegistration: 'registerHotkeyOrThrow=()=>{};',
+    toggleRegistration: 'registerToggleHotkeyOrThrow=()=>{};',
+    unregisterHold: 'unregisterHotkey=()=>{};',
+    releaseWatchers: 'ensureHotkeyReleaseWatchers=()=>{};',
+    escape: 'updateEscapeRegistration=()=>{};',
+    quoted: '"handleTranscript"=async()=>{};',
+    computedQuoted: '["handleTranscript"]=async()=>{};',
+    computedHex: "['handleTranscr\\x69pt']=async()=>{};",
+    computedTemplate: '[`handleTranscript`]=async()=>{};',
+    computedComments: '[/*key*/"handleTranscript"/*end*/]/*value*/=async()=>{};',
+    unicodeIdentifier: 'handl\\u0065Transcript=async()=>{};',
+    unicodeQuoted: '"handl\\u0065Transcript"=async()=>{};',
+    noInitializer: 'handleTranscript;',
+    asi: 'handleTranscript=async()=>{}\n',
+    commentAsi: 'handleTranscript=async()=>{}/*\nASI*/',
+    unknownComputed: '[unprovenKey]=async()=>{};',
+    computedExpression: '["handle"+"Transcript"]=async()=>{};',
+  };
+  for (const [state, input] of [["raw", raw], ["canonical", canonical]]) {
+    const controller = inspect(input).plan.controller;
+    for (const [name, field] of Object.entries(fields)) {
+      const variant = input.slice(0, controller.bodyStart) + field + input.slice(controller.bodyStart);
+      assert.doesNotThrow(() => new Script(variant), `${state}/${name}`);
+      assert.equal(inspect(variant).state, "drifted", `${state}/${name}`);
+      const files = { "early-bootstrap-45-abc.js": variant }, root = fixture(t, files);
+      assert.equal(quiet(() => production(root)).status, "skipped-optional", `${state}/${name}`);
+      unchanged(root, files);
+    }
+  }
+});
+
+test("static, private and unrelated class members preserve the selected native instance method", t => {
+  const raw = mainBundleFixture(), canonical = apply(raw);
+  const fields = {
+    staticField: 'static handleTranscript=async()=>{};',
+    staticQuoted: 'static ["registerHotkeyOrThrow"]=()=>{};',
+    staticMethod: 'static handleTranscript(){}',
+    privateField: '#handleTranscript=async()=>{};',
+    privateMethod: '#registerHotkeyOrThrow(){}',
+    unrelatedField: 'unrelatedField="handleTranscript";',
+    unrelatedTemplate: '[`unrelatedField`]=1;',
+    inertData: 'documentation="[\\"handleTranscript\\"]=async()=>{}";',
+  };
+  for (const [state, input] of [["raw", raw], ["canonical", canonical]]) {
+    const controller = inspect(input).plan.controller;
+    for (const [name, field] of Object.entries(fields)) {
+      const variant = input.slice(0, controller.bodyStart) + field + input.slice(controller.bodyStart);
+      assert.doesNotThrow(() => new Script(variant), `${state}/${name}`);
+      assert.equal(inspect(variant).state, state === "raw" ? "current" : "patched", `${state}/${name}`);
+      const files = { "early-bootstrap-45-abc.js": variant }, root = fixture(t, files);
+      assert.equal(production(root).status, state === "raw" ? "applied" : "already-applied", `${state}/${name}`);
+      const output = fs.readFileSync(path.join(root, ".vite/build/early-bootstrap-45-abc.js"), "utf8");
+      assert.equal(inspect(output).state, "patched", `${state}/${name}`);
+      assert.equal(production(root).status, "already-applied", `${state}/${name}`);
+    }
   }
 });

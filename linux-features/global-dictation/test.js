@@ -17,7 +17,7 @@ const {
   normalizePatchDescriptors,
 } = require("../../scripts/patches/engine.js");
 const {
-  descriptors, applyLinuxGlobalDictationMainProcessPatch,
+  descriptors, applyLinuxGlobalDictationMainProcessPatch, inspectGlobalDictationMainProcess,
 } = require("./patch.js");
 
 const hostPathEntries = (process.env.PATH ?? "")
@@ -158,7 +158,7 @@ test("main patch installs into exactly one signed main-process chunk", { skip: !
       assert.equal(applyLinuxGlobalDictationMainProcessPatch(patched), patched, name);
       assert.doesNotThrow(() => new vm.Script(patched, { filename: name }), name);
       for (const marker of ['linuxCommandId:"globalDictationHold"', 'linuxCommandId:"globalDictationSingleTap"',
-        "codexLinuxGlobalDictationReleaseWatcher(", "await codexLinuxGlobalDictationPasteX11()",
+        "codexLinuxGlobalDictationReleaseWatcher(", "await codexLinuxGlobalDictationPasteX11(",
         "Modifier-only shortcuts are not supported for global dictation on Linux.", "codex-linux-global-shortcuts-portal-v1"]) {
         assert.ok(patched.includes(marker), `${name}: ${marker}`);
       }
@@ -171,18 +171,19 @@ test("main patch installs into exactly one signed main-process chunk", { skip: !
   assert.equal(patchedChunks.length, 1, patchedChunks.join(","));
 });
 
-test("main patch enables Linux and preserves the other platform gates", () => {
-  const patched = applyPatchTwice(mainBundleFixture());
-  assert.match(
-    patched,
-    /function W7\(\)\{return"darwin"===process\.platform\|\|"win32"===process\.platform\|\|"linux"===process\.platform\}/,
-  );
-  assert.match(patched, /return;case"linux":if\(codexLinuxGlobalShortcutsUsesWayland\(\)\)/);
-  assert.match(patched, /return;case"aix":case"android":case"cygwin":case"freebsd":case"haiku":case"netbsd":case"openbsd":case"sunos":throw Error\("Global dictation paste is not supported on this OS\."\)/);
-  assert.match(
-    patched,
-    /await codexLinuxGlobalDictationPasteX11\(\)/,
-  );
+test("main patch enables Linux and preserves the native clipboard and other platform bodies", () => {
+  const source = mainBundleFixture(), patched = applyPatchTwice(source);
+  const before = inspectGlobalDictationMainProcess(source).plan;
+  const after = inspectGlobalDictationMainProcess(patched).plan;
+  assert.match(after.capability.text, /return"darwin"===process\.platform\|\|"win32"===process\.platform\|\|"linux"===process\.platform/u);
+  const signal = after.paste.parameters;
+  const guard = `if("linux"===process.platform){if(codexLinuxGlobalShortcutsUsesWayland()){await codexLinuxGlobalShortcutsPaste(${signal});return}await codexLinuxGlobalDictationPasteX11(${signal});return}`;
+  assert.ok(after.paste.text.includes(guard));
+  assert.equal(after.paste.text.replace(guard, ""), before.paste.text);
+  assert.equal(after.bridge.text.replace(guard, ""), before.bridge.text);
+  assert.equal(after.accessibility.text, before.accessibility.text);
+  assert.deepEqual(after.bridge.invocation.arguments, before.bridge.invocation.arguments);
+  assert.equal(after.bridge.invocation.wrapped, true);
   assert.doesNotMatch(patched, /return _A\(n,t\)/);
   assert.doesNotMatch(patched, /await k7\(`xdotool`/);
 });
@@ -220,7 +221,7 @@ test("main patch rejects retired, partial, duplicate, and ambiguous toggle regis
     retired: fixture.replace(current, retired),
     partial: fixture.replace(',onCancelled:()=>{this.setupWindowFocused||this.shortcutGestures.cancelPress("single-tap")}', ""),
     duplicate: fixture.replace(current, `${current},${current}`),
-    ambiguous: fixture + `function duplicate(e,t){return ${current}}`,
+    ambiguous: fixture.replace("let L=new H7({windowManager:D,globalState:G});", "let L=new H7({windowManager:D,globalState:G}),other=new H7({windowManager:D,globalState:G});"),
   };
 
   for (const [name, source] of Object.entries(variants)) {
@@ -260,7 +261,7 @@ test("X11 paste uses xdotool with fixed arguments", async () => {
     callback();
   };
 
-  await context.P7();
+  await context.codexLinuxGlobalDictationPasteX11();
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
     ["xdotool", ["key", "--clearmodifiers", "ctrl+v"], { windowsHide: true }],
   ]);
@@ -273,18 +274,18 @@ test("X11 paste propagates xdotool failures", async () => {
     callback(new Error("xdotool failed"));
   };
 
-  await assert.rejects(context.P7(), /xdotool failed/);
+  await assert.rejects(context.codexLinuxGlobalDictationPasteX11(), /xdotool failed/);
 });
 
-test("X11 hold mode starts the bounded release watcher", () => {
-  const patched = applyPatchTwice(mainBundleFixture());
-  assert.match(patched, /function codexLinuxGlobalDictationReleaseWatcher\(/);
-  assert.match(patched, /return r\}case"linux":\{let n=codexLinuxGlobalDictationReleaseWatcher\(e,t\);if\(null==n\)throw Error\("Global dictation hotkey release watching is not supported\."\);return n\}case"win32":case"aix":/);
-  assert.doesNotMatch(patched, /case"haiku":case"linux":/);
-  assert.match(
-    patched,
-    /"linux"===process\.platform&&Rk\(e\)\)return"Modifier-only shortcuts are not supported for global dictation on Linux\."/,
-  );
+test("X11 hold mode adds only its Linux release watcher guard", () => {
+  const source = mainBundleFixture(), patched = applyPatchTwice(source);
+  const before = inspectGlobalDictationMainProcess(source).plan;
+  const after = inspectGlobalDictationMainProcess(patched).plan;
+  const [accelerator, released] = after.watcher.parameters.split(",");
+  const guard = `if("linux"===process.platform){let codexLinuxGlobalDictationWatcher=codexLinuxGlobalDictationReleaseWatcher(${accelerator},${released});if(null==codexLinuxGlobalDictationWatcher)throw Error("Global dictation hotkey release watching is not supported.");return codexLinuxGlobalDictationWatcher}`;
+  assert.ok(after.watcher.text.includes(guard));
+  assert.equal(after.watcher.text.replace(guard, ""), before.watcher.text);
+  assert.match(patched, /"linux"===process\.platform&&Rk\(e\)\)return"Modifier-only shortcuts are not supported for global dictation on Linux\."/u);
 });
 
 test("X11 hold watcher exposes a disposable and releases once", async () => {
@@ -828,4 +829,117 @@ test("stage hook requires a release artifact and never invokes Cargo", () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("Linux clipboard FIFO waits for the complete predecessor and skips a queued aborted body", async () => {
+  const context = waylandPatchContext([]), owner = {}, events = [];
+  let finishFirst;
+  const first = context.codexLinuxGlobalDictationClipboard(owner, async (...args) => {
+    events.push(["snapshot-first", ...args]);
+    await new Promise(resolve => { finishFirst = resolve; });
+    events.push(["restore-first"]);
+    return "first-result";
+  }, "first", 11, "fingerprint-first", new AbortController().signal);
+  await Promise.resolve();
+  const cancelled = new AbortController();
+  let argumentReads = 0, secondFinished = false;
+  const text = () => { argumentReads++; return "second"; };
+  const second = context.codexLinuxGlobalDictationClipboard(owner, async (_text, _time, _fingerprint, signal) => {
+    if (signal.aborted) return null;
+    events.push(["snapshot-second"]);
+    return "unexpected";
+  }, text(), 22, "fingerprint-second", cancelled.signal);
+  second.then(() => { secondFinished = true; });
+  const third = context.codexLinuxGlobalDictationClipboard(owner, async (...args) => {
+    events.push(["snapshot-third", ...args]);
+    return "third-result";
+  }, "third", 33, "fingerprint-third", new AbortController().signal);
+  cancelled.abort();
+  await new Promise(setImmediate);
+  assert.equal(argumentReads, 1, "Original argument expressions are evaluated at the native call site");
+  assert.equal(secondFinished, false);
+  assert.deepEqual(events.map(event => event[0]), ["snapshot-first"]);
+  finishFirst();
+  assert.equal(await first, "first-result");
+  assert.equal(await second, null);
+  assert.equal(await third, "third-result");
+  assert.deepEqual(events.map(event => event[0]), ["snapshot-first", "restore-first", "snapshot-third"]);
+  assert.deepEqual(events[2].slice(1, 4), ["third", 33, "fingerprint-third"]);
+  await new Promise(setImmediate);
+  assert.equal(context.codexLinuxGlobalDictationClipboardQueues.has(owner), false);
+});
+
+test("Linux clipboard FIFO preserves rejection and lets the next native operation run", async () => {
+  const context = waylandPatchContext([]), owner = {}, reason = new Error("native bridge failed");
+  let rejectFirst;
+  const first = context.codexLinuxGlobalDictationClipboard(owner,
+    () => new Promise((_resolve, reject) => { rejectFirst = reject; }), "first", 1, "one", new AbortController().signal);
+  const rejected = assert.rejects(first, error => error === reason);
+  await Promise.resolve();
+  let secondStarted = false;
+  const second = context.codexLinuxGlobalDictationClipboard(owner, () => {
+    secondStarted = true;
+    return Promise.resolve("second");
+  }, "second", 2, "two", new AbortController().signal);
+  await new Promise(setImmediate);
+  assert.equal(secondStarted, false);
+  rejectFirst(reason);
+  await rejected;
+  assert.equal(await second, "second");
+  await new Promise(setImmediate);
+  assert.equal(context.codexLinuxGlobalDictationClipboardQueues.has(owner), false);
+});
+
+for (const platform of ["darwin", "win32"]) {
+  test(`clipboard dispatcher preserves the immediate native Promise and arguments on ${platform}`, () => {
+    const context = waylandPatchContext([]), owner = {}, signal = new AbortController().signal;
+    context.process.platform = platform;
+    const nativePromise = Promise.resolve("native result");
+    let called = false;
+    const result = context.codexLinuxGlobalDictationClipboard(owner, (...args) => {
+      called = true;
+      assert.deepEqual(args, ["text", 123, "fingerprint", signal]);
+      return nativePromise;
+    }, "text", 123, "fingerprint", signal);
+    assert.equal(called, true);
+    assert.equal(result, nativePromise);
+    assert.equal(context.codexLinuxGlobalDictationClipboardQueues.has(owner), false);
+  });
+}
+
+test("X11 abort before the key command sends no input", async () => {
+  const context = waylandPatchContext([]), controller = new AbortController(), reason = new Error("cancel before xdotool");
+  context.process.env = { DISPLAY: ":1", XDG_SESSION_TYPE: "x11" };
+  context.__execFile = () => assert.fail("Aborted paste must not spawn xdotool");
+  controller.abort(reason);
+  await assert.rejects(context.codexLinuxGlobalDictationPasteX11(controller.signal), error => error === reason);
+});
+
+test("X11 abort after key submission waits for its release command to finish", async () => {
+  const context = waylandPatchContext([]), controller = new AbortController(), reason = new Error("cancel committed xdotool");
+  context.process.env = { DISPLAY: ":1", XDG_SESSION_TYPE: "x11" };
+  let finish, completed = false;
+  const calls = [];
+  context.__execFile = (file, args, options, callback) => {
+    calls.push([file, Array.from(args), options]);
+    finish = callback;
+    return { kill() { assert.fail("A committed Ctrl+V command must finish its releases"); } };
+  };
+  const paste = context.codexLinuxGlobalDictationPasteX11(controller.signal);
+  paste.then(() => { completed = true; }, () => { completed = true; });
+  const rejected = assert.rejects(paste, error => error === reason);
+  controller.abort(reason);
+  await new Promise(setImmediate);
+  assert.equal(completed, false);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 2), ["xdotool", ["key", "--clearmodifiers", "ctrl+v"]]);
+  assert.equal(calls[0][2].signal, undefined);
+  finish();
+  await rejected;
+});
+
+test("a detached callback outside the native factory cannot create a second live toggle owner", () => {
+  const source = mainBundleFixture() + 'function unrelated(){return eA("Ctrl+Alt+X",{onPressed(){}})}';
+  const patched = applyPatchTwice(source);
+  assert.ok(patched.endsWith('function unrelated(){return eA("Ctrl+Alt+X",{onPressed(){}})}'));
 });

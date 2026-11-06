@@ -322,7 +322,7 @@ function codexLinuxGlobalShortcutsPortalSchedule() {
         if (codexLinuxGlobalShortcutsShuttingDown) return;
         let current = codexLinuxGlobalShortcutsRequested();
         if (codexLinuxGlobalShortcutsIsSuspended()) {
-          if (previous) await previous.stop(new Error("Global shortcuts suspended"));
+          if (previous && !await previous.stop(new Error("Global shortcuts suspended"))) return;
           codexLinuxGlobalShortcutsPortalBackend = null;
           return;
         }
@@ -335,7 +335,7 @@ function codexLinuxGlobalShortcutsPortalSchedule() {
               codexLinuxGlobalShortcutsUnavailable(registration, previous.error);
             }
           }
-          await previous.stop(previous.error);
+          if (!await previous.stop(previous.error)) return;
           if (codexLinuxGlobalShortcutsShuttingDown) return;
           if (codexLinuxGlobalShortcutsIsSuspended()) continue;
           const restore = fallback.filter((r) => codexLinuxGlobalShortcutsRequested().includes(r));
@@ -351,6 +351,7 @@ function codexLinuxGlobalShortcutsPortalSchedule() {
           codexLinuxGlobalShortcutsPortalBackend = null;
           if (codexLinuxGlobalShortcutsShuttingDown) return;
           if (codexLinuxGlobalShortcutsIsSuspended()) continue;
+          if (!codexLinuxGlobalShortcutsAccessReady()) return;
           current = codexLinuxGlobalShortcutsRequested();
           if (current.length) {
             codexLinuxGlobalShortcutsPortalBackend = codexLinuxGlobalShortcutsPortalStart(current, fallback, false);
@@ -368,42 +369,93 @@ function codexLinuxGlobalShortcutsPortalSchedule() {
 
 function codexLinuxGlobalShortcutsPortalStart(registrations, fallback, recovery) {
   let child, closed = false, stderr = "", timer, killTimer, gone = false;
-  let finishRegistration, finishExit, pasteResolve, pasteReject, pasteTimer;
+  let finishRegistration, finishExit, confirmObservedExit;
+  let stopMode = "active", interruptSent = false, pendingPaste = null;
   let reported = new Map();
   const registrationFinished = new Promise((resolve) => { finishRegistration = resolve; });
-  // Resolves true once no helper process can hold a portal session: the portal
-  // closes a session with its D-Bus connection, so any exit or signal releases it.
   const exited = new Promise((resolve) => { finishExit = resolve; });
+  // Unlike the ordinary stop status, this never resolves from a failed signal.
+  const observedExit = new Promise((resolve) => { confirmObservedExit = resolve; });
+  const softReleased = observedExit.then(() => true);
   const released = () => child?.pid === undefined || gone;
-  const finishPaste = (error) => {
-    if (pasteTimer) clearTimeout(pasteTimer);
-    pasteTimer = null;
-    const resolve = pasteResolve, reject = pasteReject;
-    pasteResolve = pasteReject = null;
-    if (error) reject?.(error); else resolve?.();
+  const finishPaste = (request, error, afterObservedExit = false) => {
+    if (!request || pendingPaste !== request) return;
+    if (request.awaitExit && !afterObservedExit) return;
+    if (request.timer) clearTimeout(request.timer);
+    request.signal?.removeEventListener("abort", request.onAbort);
+    pendingPaste = null;
+    if (error !== undefined) request.reject(error); else request.resolve();
   };
-  const stop = (error) => {
-    if (closed) return exited;
+  const finishPasteAfterExit = (request, error) => {
+    if (!request || pendingPaste !== request || request.awaitExit) return;
+    request.awaitExit = true;
+    if (request.timer) clearTimeout(request.timer);
+    observedExit.then((exit) => {
+      if (!exit.neverStarted && (exit.signal || exit.code !== 0)) {
+        console.warn("[linux-global-shortcuts] Paste helper terminated; input may already have been submitted", exit);
+      }
+      finishPaste(request, error, true);
+      if (!codexLinuxGlobalShortcutsShuttingDown) {
+        codexLinuxGlobalShortcutsPortalSchedule();
+      }
+    });
+  };
+  const closeRegistrations = () => {
+    if (closed) return;
     closed = true;
     backend.ready = false;
     finishRegistration();
     if (timer) clearTimeout(timer);
-    for (const r of registrations) {
-      r.callbacks.onReady?.(false);
-      if (r.pressed) {
-        r.pressed = false;
-        if (!codexLinuxGlobalShortcutsIsSuspended()) r.callbacks.onCancelled?.();
+    for (const registration of registrations) {
+      try { registration.callbacks.onReady?.(false); }
+      catch (error) { console.warn("[linux-global-shortcuts] Readiness callback failed during stop", error); }
+      if (registration.pressed) {
+        registration.pressed = false;
+        try {
+          if (!codexLinuxGlobalShortcutsIsSuspended()) registration.callbacks.onCancelled?.();
+        } catch (error) { console.warn("[linux-global-shortcuts] Gesture cancellation failed during stop", error); }
       }
     }
-    finishPaste(error);
+  };
+  const signalStop = (hard) => {
     try {
-      if (released()) finishExit(true);
-      else {
+      if (released()) {
+        finishExit(true);
+        return;
+      }
+      if (!interruptSent) {
         child.kill("SIGINT");
-        killTimer = setTimeout(() => child.kill("SIGKILL"), 2000);
+        interruptSent = true;
+      }
+      if (hard && !killTimer) {
+        killTimer = setTimeout(() => {
+          if (gone) return;
+          try { child.kill("SIGKILL"); }
+          catch (error) {
+            finishExit(false);
+            console.warn("[linux-global-shortcuts] Helper forced stop failed", error);
+          }
+        }, 2000);
         killTimer.unref?.();
       }
-    } catch { finishExit(false); }
+    } catch (error) {
+      if (hard) finishExit(false);
+      console.warn("[linux-global-shortcuts] Helper stop has no observed exit", error);
+    }
+  };
+  const stop = (error) => {
+    if (stopMode === "softPasteAbort") {
+      if (!codexLinuxGlobalShortcutsShuttingDown) return softReleased;
+      stopMode = "hardShutdown";
+      signalStop(true);
+      return exited;
+    }
+    if (closed) return gone ? softReleased : exited;
+    stopMode = "hardShutdown";
+    closeRegistrations();
+    if (pendingPaste?.writeAttempted) finishPasteAfterExit(pendingPaste, error);
+    else finishPaste(pendingPaste, error);
+    signalStop(true);
     return exited;
   };
   const fail = (error) => {
@@ -412,21 +464,55 @@ function codexLinuxGlobalShortcutsPortalStart(registrations, fallback, recovery)
     stop(error);
     codexLinuxGlobalShortcutsPortalSchedule();
   };
+  const abortPaste = (request) => {
+    if (pendingPaste !== request || request.awaitExit) return;
+    const reason = request.signal.reason === undefined
+      ? new Error("Wayland paste was aborted") : request.signal.reason;
+    if (!request.writeAttempted) {
+      finishPaste(request, reason);
+      return;
+    }
+    finishPasteAfterExit(request, reason);
+    if (stopMode !== "active") return;
+    stopMode = "softPasteAbort";
+    closeRegistrations();
+    signalStop(false);
+    codexLinuxGlobalShortcutsPortalSchedule();
+  };
   const backend = { registrations, fallback, recovery, registrationFinished, bound: new Map(),
     ready: false, everReady: false, error: null, stop,
-    paste: () => new Promise((resolve, reject) => {
+    paste: (signal) => new Promise((resolve, reject) => {
       if (!backend.ready || closed) return reject(new Error("Wayland global shortcuts helper is not ready"));
-      if (pasteReject) return reject(new Error("A Wayland paste request is already pending"));
-      pasteResolve = resolve; pasteReject = reject;
-      pasteTimer = setTimeout(() => fail(new Error("Wayland paste timed out")), 35000);
-      pasteTimer.unref?.();
-      try { child.stdin.write("paste\n", (error) => { if (error) fail(error); }); } catch (error) { fail(error); }
+      if (pendingPaste) return reject(new Error("A Wayland paste request is already pending"));
+      try { signal?.throwIfAborted(); }
+      catch (error) { reject(error); return; }
+      const request = { resolve, reject, signal, timer: null, onAbort: null, writeAttempted: false, awaitExit: false };
+      request.onAbort = () => abortPaste(request);
+      pendingPaste = request;
+      signal?.addEventListener("abort", request.onAbort, { once: true });
+      if (signal?.aborted || pendingPaste !== request) {
+        abortPaste(request);
+        return;
+      }
+      request.timer = setTimeout(() => {
+        if (pendingPaste === request && !request.awaitExit) fail(new Error("Wayland paste timed out"));
+      }, 35000);
+      request.timer.unref?.();
+      request.writeAttempted = true;
+      try {
+        child.stdin.write("paste\n", (error) => {
+          if (error && pendingPaste === request && !request.awaitExit) fail(error);
+        });
+      } catch (error) {
+        if (pendingPaste === request && !request.awaitExit) fail(error);
+      }
     }),
   };
   try {
     child = require("node:child_process").spawn(codexLinuxGlobalShortcutsNativePath("codex-global-dictation-linux"),
-      ["portal", ...registrations.flatMap((r) => ["--shortcut", r.id, r.description, r.accelerator])],
+      ["portal", ...registrations.flatMap((registration) => ["--shortcut", registration.id, registration.description, registration.accelerator])],
       { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    child.stdin.on?.("error", (error) => { if (!closed) fail(error); });
     timer = setTimeout(() => fail(new Error("Global shortcuts portal registration timed out")), 30000);
     timer.unref?.();
     codexLinuxGlobalShortcutsLines(child.stdout, (line) => {
@@ -441,52 +527,62 @@ function codexLinuxGlobalShortcutsPortalStart(registrations, fallback, recovery)
         backend.bound = reported;
         backend.ready = backend.everReady = true;
         if (timer) clearTimeout(timer);
-        for (const r of registrations) {
-          if (!codexLinuxGlobalShortcutsPortalRegistrations.has(r)) continue;
-          if (reported.has(r)) {
-            r.notified = false;
-            r.callbacks.onReady?.(true, reported.get(r));
+        for (const registration of registrations) {
+          if (!codexLinuxGlobalShortcutsPortalRegistrations.has(registration)) continue;
+          if (reported.has(registration)) {
+            registration.notified = false;
+            registration.callbacks.onReady?.(true, reported.get(registration));
           } else {
-            if (r.pressed) { r.pressed = false; r.callbacks.onCancelled?.(); }
-            // Keep unbound actions available for reassignment in desktop settings.
-            r.callbacks.onReady?.(false);
+            if (registration.pressed) { registration.pressed = false; registration.callbacks.onCancelled?.(); }
+            registration.callbacks.onReady?.(false);
           }
         }
         finishRegistration();
-      } else if (line === "paste-ok") finishPaste();
-      else if (line.startsWith("paste-error:")) finishPaste(new Error(line.slice(12)));
+      } else if (line === "paste-ok") finishPaste(pendingPaste);
+      else if (line.startsWith("paste-error:")) finishPaste(pendingPaste, new Error(line.slice(12)));
       else {
         const event = /^(down|up)(?::(\d+))?$/.exec(line);
-        const r = event && registrations[Number(event[2] ?? 0)];
-        if (r?.ready() && !codexLinuxGlobalShortcutsIsSuspended()) {
-          if (event[1] === "down" && !r.pressed) { r.pressed = true; r.callbacks.onPressed?.(); }
-          else if (event[1] === "up" && r.pressed) { r.pressed = false; r.callbacks.onReleased?.(); }
+        const registration = event && registrations[Number(event[2] ?? 0)];
+        if (registration?.ready() && !codexLinuxGlobalShortcutsIsSuspended()) {
+          if (event[1] === "down" && !registration.pressed) { registration.pressed = true; registration.callbacks.onPressed?.(); }
+          else if (event[1] === "up" && registration.pressed) { registration.pressed = false; registration.callbacks.onReleased?.(); }
         }
       }
     });
     child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString("utf8")).slice(-4096); });
     child.once("error", (error) => {
-      if (released()) finishExit(true);
+      if (child.pid === undefined) {
+        gone = true;
+        finishExit(true);
+        confirmObservedExit({ neverStarted: true });
+      }
       fail(error);
     });
     child.once("exit", (code, signal) => {
       gone = true;
       if (killTimer) clearTimeout(killTimer);
       finishExit(true);
+      confirmObservedExit({ code, signal });
       if (!closed) fail(new Error(stderr.trim() || `Global shortcuts helper exited with ${signal ?? `code ${code}`}`));
+      else if (!codexLinuxGlobalShortcutsShuttingDown) codexLinuxGlobalShortcutsPortalSchedule();
     });
   } catch (error) {
-    if (released()) finishExit(true);
+    if (released()) {
+      gone = true;
+      finishExit(true);
+      confirmObservedExit({ neverStarted: true });
+    }
     fail(error);
   }
   return backend;
 }
 
-async function codexLinuxGlobalShortcutsPaste() {
+async function codexLinuxGlobalShortcutsPaste(signal) {
+  signal?.throwIfAborted();
   if (![...codexLinuxGlobalShortcutsPortalRegistrations].some((r) => r.ready())) {
     throw new Error("No ready Wayland global shortcuts helper is available");
   }
-  return codexLinuxGlobalShortcutsPortalBackend.paste();
+  return codexLinuxGlobalShortcutsPortalBackend.paste(signal);
 }
 
 function codexLinuxGlobalShortcutsActivate(entry, generation) {
