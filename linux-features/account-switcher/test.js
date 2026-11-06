@@ -12,6 +12,12 @@ const { createAccountSwitcher } = require("./runtime");
 const { applyMain, applyUi } = require("./patch");
 const { loadLinuxFeaturePatchDescriptors, enabledLinuxFeaturePackagePlan } = require("../../scripts/lib/linux-features");
 const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
+const { inspectMainLocalConfigSite } = require("../../scripts/patches/lib/main-local-config-sites.js");
+const { localConfigGraph, localConfigFixture } = require("../../scripts/patches/lib/fixtures/main-local-config-graph.js");
+const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+const { createPatchReport, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 
 function credentials(name) {
   const token = claims => `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
@@ -42,7 +48,7 @@ function fixture(t, options = {}) {
     },
   };
   const dialogs = [], menus = [], choices = [], calls = [];
-  let notification, active = "first", restartFails = false;
+  let reloaded = 0, notification, active = "first", restartFails = false;
   let ready = options.lazyConnection !== true;
   const dialog = { showMessageBox: async settings => {
     dialogs.push(settings);
@@ -113,7 +119,7 @@ function fixture(t, options = {}) {
     return { code: savedKey ? 0 : 1, stdout: options.malformedKey ? "invalid" : savedKey ?? "" };
   };
   const clients = [client];
-  const runtime = createAccountSwitcher({ electron, clients: () => clients, home, runSecretTool });
+  const runtime = createAccountSwitcher({ electron, clients: () => clients, home, reload: () => { reloaded++; return options.reload?.(); }, runSecretTool });
   return {
     home, authPath, vault, cipher, keyringCalls, dialogs, menus, choices, calls, runtime, client, clients,
     open: async response => { choices.push(response); await runtime.open(client); },
@@ -125,6 +131,7 @@ function fixture(t, options = {}) {
       fs.writeFileSync(vault, JSON.stringify(stored));
     },
     failSecondRestart: () => { restartFails = true; },
+    reloaded: () => reloaded,
   };
 }
 
@@ -147,6 +154,7 @@ for (const options of [{ keyringUnavailable: true }, { keyInitiallyMissing: true
     await f.open(1);
     assert.equal(fs.existsSync(f.vault), false);
     assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
+    assert.equal(f.reloaded(), 0);
     assert.match(f.dialogs.at(-1).detail, /keyring/);
   });
 }
@@ -154,6 +162,7 @@ for (const options of [{ keyringUnavailable: true }, { keyInitiallyMissing: true
 test("cancel stores only encrypted tokens, with private permissions", async t => {
   const f = fixture(t);
   await f.open(3);
+  assert.equal(f.reloaded(), 0);
   assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
   const stored = fs.readFileSync(f.vault, "utf8");
   assert.ok(!stored.includes("private-refresh-first"));
@@ -209,7 +218,7 @@ test("missing key never replaces an existing vault; corrupted ciphertext is reje
 test("missing secret-tool reports the dependency without touching login credentials", t => {
   const f = fixture(t);
   const program = `const {createAccountSwitcher}=require(${JSON.stringify(path.join(__dirname, "runtime.js"))});
-    const dialogs=[];const runtime=createAccountSwitcher({home:process.argv[1],clients:()=>[],
+    const dialogs=[];const runtime=createAccountSwitcher({home:process.argv[1],clients:()=>[],reload(){},
       electron:{dialog:{showMessageBox:async o=>dialogs.push(o.detail)},Menu:{},shell:{}}});
     runtime.open({}).then(()=>process.stdout.write(JSON.stringify(dialogs)));`;
   const result = execFileSync(process.execPath, ["-e", program, f.home], { env: { ...process.env, PATH: "" }, timeout: 5_000 });
@@ -238,23 +247,10 @@ test("switches to a saved account and restores refreshed current credentials lat
   fs.writeFileSync(f.authPath, refreshed);
   await f.open(1);
   assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
+  assert.equal(f.reloaded(), 1);
   await f.open(0);
   assert.equal(fs.readFileSync(f.authPath, "utf8"), refreshed);
-});
-
-test("switching waits for the principal invalidated by the reconnect", async t => {
-  const f = fixture(t);
-  await f.open(3); f.seedSecond();
-  const settled = f.client.getAuthenticatedPrincipal;
-  let lookupsAfterRestart = 0;
-  f.client.getAuthenticatedPrincipal = async () => {
-    if (!f.calls.includes("restart")) return settled();
-    return ++lookupsAfterRestart < 3 ? null : settled();
-  };
-  await f.open(1);
-  assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
-  assert.equal(f.calls.filter(c => c === "restart").length, 1);
-  assert.equal(lookupsAfterRestart, 3);
+  assert.equal(f.reloaded(), 2);
 });
 
 test("failed selected-account restart rolls back without exposing upstream errors", async t => {
@@ -262,6 +258,7 @@ test("failed selected-account restart rolls back without exposing upstream error
   await f.open(3); f.seedSecond(); f.failSecondRestart();
   await f.open(1);
   assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
+  assert.equal(f.reloaded(), 0);
   assert.equal(f.calls.filter(c => c === "restart").length, 2);
   assert.match(f.dialogs.at(-1).detail, /previous account was restored/);
   assert.ok(!f.dialogs.at(-1).detail.includes("secret"));
@@ -274,6 +271,7 @@ for (const options of [{ activeTask: true }, { pending: 1 }, { rpcFails: true }]
     await f.open(1);
     assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
     assert.equal(f.calls.includes("restart"), false);
+    assert.equal(f.reloaded(), 0);
     assert.equal(f.dialogs.at(-1).type, "error");
   });
 }
@@ -283,6 +281,7 @@ test("cancelled browser login returns to the remembered account", async t => {
   await f.open(1);
   assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
   assert.ok(f.calls.includes("account/login/cancel"));
+  assert.equal(f.reloaded(), 0);
 });
 
 test("successful official login remembers the new account without logging out the old one", async t => {
@@ -290,20 +289,8 @@ test("successful official login remembers the new account without logging out th
   await f.open(1);
   assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
   assert.equal(JSON.parse(fs.readFileSync(f.vault)).accounts.length, 2);
+  assert.equal(f.reloaded(), 1);
   assert.ok(!f.calls.includes("account/logout"));
-});
-
-test("login completion waits for the principal invalidated by upstream account notifications", async t => {
-  const f = fixture(t, { login: "second" });
-  const settled = f.client.getAuthenticatedPrincipal;
-  let lookupsAfterLogin = 0;
-  f.client.getAuthenticatedPrincipal = async () => {
-    if (!fs.readFileSync(f.authPath, "utf8").includes("account-second")) return settled();
-    return ++lookupsAfterLogin < 3 ? null : settled();
-  };
-  await f.open(1);
-  assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
-  assert.equal(JSON.parse(fs.readFileSync(f.vault)).accounts.length, 2);
 });
 
 test("adding an account initializes a lazy backend before checking tasks and starting OAuth", async t => {
@@ -337,10 +324,11 @@ for (const action of ["add", "switch"]) {
       if (pending === 0) {
         assert.equal(f.dialogs.filter(dialog => dialog.type === "error").length, 0);
         if (action === "add") assert.ok(f.calls.includes("account/login/start"));
-        else assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
+        else assert.equal(f.reloaded(), 1);
       } else {
         assert.equal(f.calls.includes("account/login/start"), false);
         assert.equal(f.calls.includes("restart"), false);
+        assert.equal(f.reloaded(), 0);
         assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
         assert.match(f.dialogs.at(-1).detail, /pending requests/);
       }
@@ -439,8 +427,229 @@ function loadProfile(source, context, imports) {
   return exports.Profile;
 }
 
+const NATIVE_MCP_CASE = "case\"mcp-request\":{ze().debug(\"app_server.bridge_received\",{safe:{messageType:\"mcp-request\",requestId:String(t.request.id),method:t.request.method,originWebcontentsId:e.id,originHostId:t.hostId},sensitive:{}});let r=t.request;if((0,ei.ZJQ)(t.hostId)){let n=Ew.send(t.request);if(\"response\"===n.type){this.sendAppServerResponseToView(e,t.hostId,t.request.method,n.response,t.request.trace,t.priority);break}r=n.request}try{let n=()=>this.getAppServerConnection(t.hostId).handleClientRequest(new QR(e,this.chunkedMessageSender),r,{coalesce:t.coalesce,priority:t.priority,source:t.source,timeoutMs:t.timeoutMs,expiresAtMs:t.expiresAtMs,widget:t.widget},t.retainResponse,t.savedEnvironmentConfig,t.threadAccess,t.environmentDraftReplacement,t.persistentSideConversation,t.executorAccess);null==r.trace?await n():await (0,ei.f5g)({attributes:{\"app_server.method\":r.method},name:\"electron.ipc_request_delivery\",op:\"codex.app_server.ipc_request_delivery\",startTimeMs:t.dispatchedAtMs,trace:r.trace},n)}catch(r){if(t.retainResponse){this.sendMessageToView(e,{type:\"mcp-request-delivery\",hostId:t.hostId,update:{type:\"failed\",delivery:{requestId:t.request.id,method:t.request.method,stage:\"not-sent\"},message:r instanceof Error?r.message:\"Desktop app server request failed\"}});break}this.sendAppServerResponseToView(e,t.hostId,t.request.method,{id:t.request.id,error:{code:-32e3,message:r instanceof Error?r.message:\"Desktop app server request failed\"}},t.request.trace,t.priority)}break}";
+
+function accountMainFixture() {
+  const body = localConfigGraph()
+    .replace('case"mcp-response":break;', 'case"mcp-response":break;' + NATIVE_MCP_CASE)
+    .replace('this.options=e,this.scopedState=e.globalState', 'this.options=e,this.appState=e.appGlobalState,this.scopedState=e.globalState')
+    .replace('this.seen=[]', 'let appViews=e.appViewsByWebContentsId;this.seen=[]');
+  return localConfigFixture(body);
+}
+function quietMain(callback) {
+  const original = console.warn, warnings = [];
+  console.warn = (...values) => warnings.push(values.join(" "));
+  try { return { value: callback(), warnings }; }
+  finally { console.warn = original; }
+}
+function mainCallback(source) {
+  const site = inspectMainLocalConfigSite(source); assert.equal(site.ok, true, site.reason);
+  return { site, text: source.slice(site.overrides.start, site.overrides.end) };
+}
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+function accountOwnedParts(source) {
+  const graph = inspectMainRequestSites(source), config = mainCallback(source);
+  assert.equal(graph.ok, true, graph.reason);
+  const routeStart = source.indexOf("/*codexLinuxAccountSwitcherMain*/", graph.viewFetch.methodBodyStart);
+  assert(routeStart >= graph.viewFetch.methodBodyStart && routeStart < graph.viewFetch.methodBodyEnd);
+  const routeOpen = source.indexOf("{", routeStart), routeEnd = findMatchingBrace(source, routeOpen) + 1;
+  const producer = ",this.messageHandler.codexLinuxAccountSwitcherMainCtx={windowManager:this.options.windowManager,getAppViews:()=>this.options.appViewsByWebContentsId}";
+  const producerStart = source.indexOf(producer, graph.scope.hostStart); assert(producerStart < graph.scope.hostEnd && producerStart > graph.scope.hostStart);
+  const suffixStart = config.site.overrides.nativePrefixEnd, suffixEnd = config.site.overrides.arrayEnd - 1;
+  return { graph, config, routeStart, routeEnd, route: source.slice(routeStart, routeEnd), producer, producerStart,
+    suffix: source.slice(suffixStart, suffixEnd), edits: [
+      { start: routeStart, end: routeEnd }, { start: producerStart, end: producerStart + producer.length },
+      { start: suffixStart, end: suffixEnd },
+    ] };
+}
+function currentReload(source = applyMain(accountMainFixture())) {
+  const start = source.indexOf("async function reloadCurrentAppViews("); assert(start > 0);
+  const open = source.indexOf("{", start), end = findMatchingBrace(source, open) + 1;
+  return vm.runInNewContext(`(${source.slice(start, end)})`);
+}
+function accountMainWorkspace(t, files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "account-main-contract-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const build = path.join(root, ".vite", "build"); fs.mkdirSync(build, { recursive: true });
+  for (const [name, source] of Object.entries(files)) fs.writeFileSync(path.join(build, name), source);
+  return { root, build, read: name => fs.readFileSync(path.join(build, name), "utf8") };
+}
+function normalAccountMain(root, context = {}) {
+  const config = path.join(root, "features.json"); fs.writeFileSync(config, JSON.stringify({ enabled: ["account-switcher"] }));
+  const all = loadLinuxFeaturePatchDescriptors({ featuresRoot: path.resolve(__dirname, ".."), featuresConfigPath: config });
+  const descriptor = all.find(item => item.id.endsWith(":account-switcher-main")); assert(descriptor);
+  assert.equal(descriptor.phase, "extracted-app:pre-webview");
+  const report = createPatchReport(); report.enabledFeatures = ["account-switcher"];
+  quietMain(() => applyExtractedAppPatchDescriptors(root, [descriptor], context, report, descriptor.phase));
+  assert.equal(report.patches.length, 1); return { patch: report.patches[0], report };
+}
+function nineteenAccountChunks(source) {
+  const files = { "early-bootstrap-45-aaaaaaaaaaaaaaaa.js": source };
+  for (let index = 0; index < 18; index++) files[`early-bootstrap-${100 + index}-bbbbbbbbbbbbbbbb.js`] =
+    `exports.ids=[${100 + index}],exports.modules={${90000 + index}(e,t,r){return false}};`;
+  return files;
+}
+
+test("main account Adapter preserves three native ranges and binds live native context", () => {
+  const original = accountMainFixture(), patched = applyMain(original), own = accountOwnedParts(patched);
+  let recovered = patched;
+  for (const edit of [...own.edits].sort((a, b) => b.start - a.start)) recovered = recovered.slice(0, edit.start) + recovered.slice(edit.end);
+  assert.equal(recovered, original);
+  const before = mainCallback(original);
+  assert.equal(patched.slice(own.config.site.overrides.arrayStart + 1, own.config.site.overrides.nativePrefixEnd),
+    original.slice(before.site.overrides.arrayStart + 1, before.site.overrides.nativePrefixEnd));
+  const firstViews = new Map(), nextViews = new Map(), manager = {};
+  const host = { options: { windowManager: manager, appViewsByWebContentsId: firstViews }, messageHandler: {} };
+  const attach = vm.runInNewContext(`(function(){${own.producer.slice(1)};return this.messageHandler.codexLinuxAccountSwitcherMainCtx;})`);
+  const context = attach.call(host); assert.equal(context.windowManager, manager); assert.equal(context.getAppViews(), firstViews);
+  host.options.appViewsByWebContentsId = nextViews; assert.equal(context.getAppViews(), nextViews);
+  const renamed = original.replace(/\be\b/gu, "viewInput").replace(/\bt\b/gu, "requestInput");
+  assert.notEqual(quietMain(() => applyMain(renamed)).value, renamed);
+  const opaque = original.replace("plugins.codex-app-tools@openai-bundled", "codexLinuxAccountSwitcherMain-opaque-source-data");
+  assert.notEqual(quietMain(() => applyMain(opaque)).value, opaque);
+});
+
+test("main account community action uses actual local host fields and current registered sender", async () => {
+  const own = accountOwnedParts(applyMain(accountMainFixture())), site = own.graph.viewFetch;
+  for (const testCase of [
+    { kind: "local", id: "local", allowed: true }, { kind: "local", id: "durable" },
+    { kind: "local", id: "local", busy: true, method: "thread/read" },
+    { kind: "ssh", id: "local" }, { kind: "ssh", id: "remote" }, { kind: "remote-control", id: "local" },
+    { kind: "local", id: "local", covered: true }, { kind: "local", id: "local", unregistered: true },
+    { kind: "local", id: "local", destroyed: true }, { kind: "local", id: "local", replaced: true },
+  ]) {
+    const origin = { id: 11, isDestroyed: () => Boolean(testCase.destroyed) }, trace = {}, window = {};
+    const method = testCase.method ?? "community/accountSwitcher";
+    const replies = [], opened = []; let lookups = 0;
+    const client = { id: testCase.allowed ? "durable" : "local", hostConfig: { kind: testCase.kind, id: testCase.id } };
+    const electron = { webContents: { fromId: () => testCase.replaced ? {} : origin }, BrowserWindow: { fromWebContents: () => window } };
+    const receiver = {
+      codexLinuxAccountSwitcherMainCtx: { windowManager: { hasRegisteredWebContents: () => !testCase.unregistered,
+        accountWindows: { isCovered: () => Boolean(testCase.covered) } }, getAppViews: () => new Map() },
+      codexLinuxAccountSwitcher: { isBusy: () => Boolean(testCase.busy), async open(...args) { opened.push(args); } },
+      getAppServerConnection() { lookups++; return client; },
+      sendAppServerResponseToView(...args) { replies.push(args); },
+    };
+    const run = vm.runInNewContext(`(async function(${site.webContentsVar},${site.requestVar}){switch(${site.requestVar}.type){case"mcp-request":{${own.route}}}})`, { require: name => { assert.equal(name, "electron"); return electron; } });
+    await run.call(receiver, origin, { type: "mcp-request", hostId: testCase.id, priority: "high", request: { id: 42, method, trace, params: { locale: "zh-CN" } } });
+    assert.equal(replies.length, 1); assert.equal(replies[0][0], origin); assert.equal(replies[0][1], testCase.id);
+    assert.equal(replies[0][2], method); assert.equal(replies[0][3].id, 42);
+    assert.equal(replies[0][4], trace); assert.equal(replies[0][5], "high");
+    assert.equal(opened.length, testCase.allowed ? 1 : 0, JSON.stringify(testCase));
+    if (testCase.allowed) { assert.equal(opened[0][0], client); assert.equal(opened[0][1], window); assert.equal(opened[0][2], "zh-CN"); }
+    else assert.equal(replies[0][3].error.code, -32000);
+    if (testCase.busy || testCase.covered || testCase.unregistered || testCase.destroyed || testCase.replaced) assert.equal(lookups, 0);
+  }
+});
+
+test("native pending reload selects current registered app views including inactive tabs", async () => {
+  const run = currentReload(), calls = [], contents = new Map(), views = new Map(), registered = new Set([1, 2, 3, 4, 6]);
+  const state = { generation: 0, pending: undefined, isCovered: item => item.id === 6 };
+  for (const id of [1, 2, 3, 4, 5, 6, 8]) contents.set(id, { id, isDestroyed: () => id === 4,
+    reload() { calls.push(id); if (id === 2) views.set(3, {}); } });
+  for (const id of [1, 2, 3, 4, 5, 6, 7]) views.set(id, { active: id !== 2 });
+  const ctx = { windowManager: { accountWindows: state, hasRegisteredWebContents: item => registered.has(item.id) }, getAppViews: () => views };
+  await run(ctx, { webContents: { fromId: id => contents.get(id) } });
+  assert.deepEqual(calls, [1, 2]);
+  const first = deferred(), second = deferred(); state.pending = first.promise;
+  let done = false; const waiting = run(ctx, { webContents: { fromId: id => contents.get(id) } }).then(() => { done = true; });
+  state.pending = second.promise; state.generation++;
+  first.resolve(); await Promise.resolve(); await Promise.resolve(); assert.equal(done, false);
+  state.pending = undefined; second.resolve(); await waiting; assert.equal(done, true);
+  const failure = Error("inert native restore failure"); state.pending = Promise.reject(failure);
+  await assert.rejects(run(ctx, { webContents: { fromId: id => contents.get(id) } }), error => error === failure);
+  state.pending = undefined; calls.length = 0;
+  contents.get(1).reload = () => { calls.push(1); state.generation++; };
+  await run(ctx, { webContents: { fromId: id => contents.get(id) } }); assert.deepEqual(calls, [1]);
+  calls.length = 0; const next = deferred();
+  contents.get(1).reload = () => { calls.push(1); state.pending = next.promise; };
+  await run(ctx, { webContents: { fromId: id => contents.get(id) } }); assert.deepEqual(calls, [1]);
+  state.pending = undefined; next.resolve();
+});
+
+for (const action of ["switch", "add"]) {
+  test(`runtime awaits ${action} reload and keeps accepted credentials after reload rejection`, async t => {
+    for (const reject of [false, true]) {
+      const entered = deferred(), finished = deferred();
+      const f = fixture(t, { ...(action === "add" ? { login: "second" } : {}), reload: () => { entered.resolve(); return finished.promise; } });
+      if (action === "switch") { await f.open(3); f.seedSecond(); }
+      let settled = false; const opening = f.open(1).then(() => { settled = true; });
+      await entered.promise; assert.equal(f.runtime.isBusy(), true); assert.equal(settled, false);
+      assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
+      if (reject) finished.reject(Error("inert renderer failure")); else finished.resolve();
+      await opening; assert.equal(f.runtime.isBusy(), false); assert.equal(settled, true);
+      assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
+      assert.equal(f.calls.filter(call => call === "restart").length, action === "switch" ? 1 : 0);
+      assert.equal(f.calls.includes("account/login/cancel"), false);
+      if (reject) assert.equal(f.dialogs.at(-1).type, "error");
+    }
+  });
+}
+
+test("main account Adapter rejects partial context, source-role and suffix drift before writing", () => {
+  const raw = accountMainFixture(), patched = applyMain(raw), own = accountOwnedParts(patched);
+  const config = mainCallback(raw);
+  const unknownSuffix = raw.slice(0, config.site.overrides.arrayEnd - 1) + ',"unknown.policy=true"' + raw.slice(config.site.overrides.arrayEnd - 1);
+  const broken = [
+    raw.replace("this.appState=e.appGlobalState", "this.appState=e.globalState"),
+    raw.replace("let appViews=e.appViewsByWebContentsId", "let appViews=e.otherViews"),
+    raw.replace("originWebcontentsId:e.id", "originWebcontentsId:other.id"),
+    raw.replace("n.response,t.request.trace,t.priority", "n.response,t.request.trace,t.otherPriority"),
+    unknownSuffix,
+    patched.slice(0, own.routeStart) + patched.slice(own.routeEnd),
+    patched.replace(own.producer, ""),
+    patched.replace(own.suffix, ""),
+    patched.replace(own.producer, own.producer.replace("this.options.windowManager", "this.otherWindowManager")),
+    patched.replace(own.producer, own.producer.replace("this.options.appViewsByWebContentsId", "this.options.otherViews")),
+    patched.replace(own.suffix, own.suffix.replace('id===`local`', 'id===`durable`')),
+    patched.replace("await reload();", "reload();"),
+  ];
+  const afterProducer = own.producerStart + own.producer.length;
+  for (const setter of [
+    ',this.messageHandler.codexLinuxAccountSwitcherMainCtx={}',
+    String.raw`,this.messageHandler.\u0063odexLinuxAccountSwitcherMainCtx={}`,
+    ',this.messageHandler["codexLinuxAccountSwitcherMainCtx"]={}',
+    String.raw`,this.messageHandler["\u0063odexLinuxAccountSwitcherMainCtx"]={}`,
+  ]) broken.push(patched.slice(0, afterProducer) + setter + patched.slice(afterProducer));
+  for (const source of broken) {
+    assert.doesNotThrow(() => new vm.Script(source));
+    const result = quietMain(() => applyMain(source));
+    assert.equal(result.value, source); assert.equal(result.warnings.length, 1);
+  }
+});
+
+test("registered account main Adapter validates all nineteen same-ID copies atomically", t => {
+  const current = accountMainFixture(), canonical = applyMain(current), owner = "early-bootstrap-45-aaaaaaaaaaaaaaaa.js";
+  for (const peer of [
+    current, canonical, 'exports.ids=[46],exports.modules={82820(e,t,r){return false}};',
+    current.replace("globalState:this.appState", "globalState:this.scopedState"),
+    "/*codexLinuxAccountSwitcherMain*/const orphan=true;",
+  ]) {
+    const files = { ...nineteenAccountChunks(current), "early-bootstrap-46-cccccccccccccccc.js": peer }, app = accountMainWorkspace(t, files);
+    const { patch, report } = normalAccountMain(app.root);
+    assert.equal(patch.status, "skipped-optional"); assert.equal(enabledFeatureFailuresFromReport(report).length, 1);
+    for (const [name, source] of Object.entries(files)) assert.equal(app.read(name), source);
+  }
+  const files = nineteenAccountChunks(current), app = accountMainWorkspace(t, files); assert.equal(Object.keys(files).length, 19);
+  let writes = 0;
+  const failed = normalAccountMain(app.root, { writeFileSync(file, bytes) {
+    if (++writes === 1) { fs.writeFileSync(file, "partial account main"); throw Error("interrupted account main write"); }
+    fs.writeFileSync(file, bytes);
+  } });
+  assert.equal(failed.patch.status, "skipped-optional"); assert.equal(enabledFeatureFailuresFromReport(failed.report).length, 1);
+  for (const [name, source] of Object.entries(files)) assert.equal(app.read(name), source);
+  assert.equal(normalAccountMain(app.root).patch.status, "applied");
+  assert.equal(normalAccountMain(app.root).patch.status, "already-applied");
+  for (const [name, source] of Object.entries(files)) assert.equal(app.read(name), name === owner ? canonical : source);
+});
+
 test("semantic contracts preserve renamed symbols, reject partial drift, and route the Polish menu action", async () => {
-  const main = 'async function handle(view,message){switch(message.type){case"mcp-request":{log().debug("app_server.bridge_received",{safe:{messageType:"mcp-request",requestId:String(message.request.id),method:message.request.method,originWebcontentsId:view.id,originHostId:message.hostId}});this.sendAppServerResponseToView();this.appServerConnectionRegistry.getAllHostIds();break}}}async function config(options){return[...(0,helpers.computeConfig)(options.globalState,options.hostConfig),...await options.secretAuthStorageConfigOverrides,...await extras(options)]}';
+  const main = accountMainFixture();
   for (const [source, apply, drift] of [[main, applyMain, "secretAuthStorageConfigOverrides"], [UI_CHUNK, applyUi, "accountSwitcher"]]) {
     const patched = apply(source);
     assert.notEqual(patched, source);
@@ -449,17 +658,21 @@ test("semantic contracts preserve renamed symbols, reject partial drift, and rou
     assert.equal(apply(source + source), source + source);
     assert.equal(apply(source.replace(drift, "retired")), source.replace(drift, "retired"));
   }
-  const config = vm.runInNewContext(applyMain(main) + ";config", {
-    helpers: { computeConfig: () => ["base"] }, extras: async () => ["extras"],
-  });
+  const { text: callback } = mainCallback(applyMain(main));
   for (const id of ["local", "ssh-test", "durable"]) {
-    const overrides = await config({ hostConfig: { id }, globalState: {}, secretAuthStorageConfigOverrides: ["policy"] });
-    assert.deepEqual(Array.from(overrides), ["base", "policy", "extras",
+    const options = { hostConfig: { id, kind: id === "ssh-test" ? "ssh" : "local" }, globalState: {}, secretAuthStorageConfigOverrides: ["policy"] };
+    const config = vm.runInNewContext(`(${callback})`, {
+      e: options, KS: { s1: () => ["base"] }, ed: { cPM: () => false }, sd: async () => null,
+    });
+    assert.deepEqual(Array.from(await config()), ["base", "policy",
+      ...(id === "ssh-test" ? [] : ["plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=false"]),
       ...(id === "local" ? ['cli_auth_credentials_store="file"', "features.secret_auth_storage=false"] : [])]);
   }
-  // The retired pre-26.1021 config list with a trailing call is no longer accepted.
-  const retiredConfig = main.replace("await extras(options)]", "await extras(options),mode(options)]");
-  assert.equal(applyMain(retiredConfig), retiredConfig);
+  const raw = mainCallback(main), iife = raw.text.indexOf("...await async function");
+  const retiredCallback = raw.text.slice(0, iife) + "...await extras(e)]";
+  const retired = main.slice(0, raw.site.overrides.start) + retiredCallback + main.slice(raw.site.overrides.end);
+  assert.equal(quietMain(() => applyMain(retired)).value, retired);
+
   const invalid = {
     unboundMenuModule: UI_CHUNK.replace('Menu=n("menu"),', ""),
     unboundBus: UI_CHUNK.replace(',Bus=n("bus")', ""),
@@ -684,4 +897,32 @@ test("official Owl reaches OAuth and reopens an encrypted vault without querying
     stdio: "pipe", timeout: 20_000,
   });
   assert.deepEqual(JSON.parse(fs.readFileSync(result)), { menus: 3, encryptedVault: true, errors: [], openedLogin: 1, readyChecks: 4, cloudUntouched: true });
+});
+
+test("switching waits for the principal invalidated by the reconnect", async t => {
+  const f = fixture(t);
+  await f.open(3); f.seedSecond();
+  const settled = f.client.getAuthenticatedPrincipal;
+  let lookupsAfterRestart = 0;
+  f.client.getAuthenticatedPrincipal = async () => {
+    if (!f.calls.includes("restart")) return settled();
+    return ++lookupsAfterRestart < 3 ? null : settled();
+  };
+  await f.open(1);
+  assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
+  assert.equal(f.calls.filter(c => c === "restart").length, 1);
+  assert.equal(lookupsAfterRestart, 3);
+});
+
+test("login completion waits for the principal invalidated by upstream account notifications", async t => {
+  const f = fixture(t, { login: "second" });
+  const settled = f.client.getAuthenticatedPrincipal;
+  let lookupsAfterLogin = 0;
+  f.client.getAuthenticatedPrincipal = async () => {
+    if (!fs.readFileSync(f.authPath, "utf8").includes("account-second")) return settled();
+    return ++lookupsAfterLogin < 3 ? null : settled();
+  };
+  await f.open(1);
+  assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
+  assert.equal(JSON.parse(fs.readFileSync(f.vault)).accounts.length, 2);
 });

@@ -21,8 +21,10 @@ desktop app against that home while changing accounts.
 
 ## Behavior and storage
 
-- Switching does not quit or relaunch Electron. It reconnects the local
-  app server; upstream then recreates the desktop windows for the new account.
+- Switching reconnects the native local app server and waits for the native
+  account-window transition to finish. It then reloads the current registered
+  app-view contents, including inactive tabs, while respecting native generation,
+  retirement, registration, and view identity. Electron stays in the session.
 - Pending app-server requests in this app and active loaded local/remote tasks
   block switching. Local/remote task checks use upstream's ready-checked request
   wrapper with `thread/loaded/list` and `thread/read` before starting OAuth.
@@ -33,9 +35,13 @@ desktop app against that home while changing accounts.
   failed local/remote checks block switching.
   New renderer requests are rejected during the credential change.
   This is not an interprocess lock for external CLI clients or automation.
-- Local chats, projects, settings, and plugin configuration remain shared in
-  the same profile. Cloud chats, usage, and account permissions follow the login.
-  This is credential switching, not account-specific local data isolation.
+- The encrypted account vault and `CODEX_HOME` keep their existing profile
+  location. Upstream owns account-specific renderer state and restores the
+  selected account's saved renderer state. Chats, usage, and permissions follow
+  the current account and upstream app-server behavior.
+- The community action requires the native host's `hostConfig.kind` and
+  `hostConfig.id` to both be `local`. A cloud host with local-kind metadata
+  keeps its own account connection.
 - Only ChatGPT OAuth accounts are supported. API keys, Copilot, Bedrock,
   ephemeral access-token logins, and remote-host login switching are excluded.
 - The local server explicitly uses `cli_auth_credentials_store="file"` and
@@ -86,7 +92,9 @@ this version. This feature does not clear system keyring entries when disabled.
 ```bash
 test_tmp="${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop-dev/tmp"
 mkdir -p "$test_tmp"
-TMPDIR="$test_tmp" node --test linux-features/account-switcher/test.js
+TMPDIR="$test_tmp" env -u CODEX_CLI_PATH -u CODEX_ACCOUNT_SWITCHER_CLI \
+  -u CODEX_ACCOUNT_SWITCHER_NATIVE_APP -u CODEX_ACCOUNT_SWITCHER_ASAR_CLI \
+  node --test linux-features/account-switcher/test.js
 ```
 
 Set `CODEX_ACCOUNT_SWITCHER_NATIVE_APP` to an extracted official application

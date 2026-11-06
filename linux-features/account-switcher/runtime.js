@@ -2,7 +2,7 @@
 
 // Self-contained: the patch embeds this function in the official main bundle.
 // Nothing here runs until a user opens the account switcher.
-function createAccountSwitcher({ electron, clients, home, runSecretTool }) {
+function createAccountSwitcher({ electron, clients, home, reload, runSecretTool }) {
   const fs = require("node:fs");
   const path = require("node:path");
   const crypto = require("node:crypto");
@@ -280,6 +280,7 @@ function createAccountSwitcher({ electron, clients, home, runSecretTool }) {
       catch { throw new SwitcherError("Switch failed and the previous account needs recovery. Your saved accounts are retained."); }
       throw new SwitcherError("Could not switch accounts. The previous account was restored; try signing in again.");
     }
+    await reload();
   }
 
   async function add(client, accounts) {
@@ -314,6 +315,7 @@ function createAccountSwitcher({ electron, clients, home, runSecretTool }) {
       client.clearAuthTokenCache();
       remember(accounts, await readCurrent(client, PRINCIPAL_SETTLE_ATTEMPTS));
       completed = true;
+      await reload();
     } catch (error) {
       // Preserve the failing phase before rollback performs other operations.
       if (error instanceof SwitcherError) throw error;
