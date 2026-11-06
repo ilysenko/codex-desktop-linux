@@ -65,7 +65,7 @@
     },
     "ui-tweaks/annotation-submit": {
       "title": "批注提交快捷键",
-      "description": "用 Ctrl+Enter 发送当前选中文本的批注，避免被常规输入框拦截。"
+      "description": "用 Ctrl+Enter 按原生保存／直接提交策略处理当前批注文字，避免被常规输入框拦截。"
     },
     "ui-tweaks/sidebar-project-name": {
       "title": "侧栏项目名称样式",

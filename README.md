@@ -365,8 +365,10 @@ flags as your normal desktop entry, including any required `--proxy-server=...`
 argument. Quick Chat becomes available after ChatGPT account initialization.
 
 The optional `ui-tweaks` sub-option `tweaks.selection.annotationSubmit.enabled`
-makes Ctrl+Enter send the active selected-text annotation editor's text without
-being intercepted by the regular composer; it is disabled by default.
+gives Ctrl+Enter to the active native annotation editor and retains its
+save/direct policy. The latest native editor saves by default and uses direct
+submission when that native state selects it. The sub-option is independently
+disabled by default.
 See the [annotation submit configuration](linux-features/ui-tweaks/README.md#selectionannotationsubmit).
 
 ## Configure optional features

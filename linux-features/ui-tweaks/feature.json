@@ -144,7 +144,7 @@
     {
       "id": "annotation-submit",
       "title": "Annotation submit shortcut",
-      "description": "Send the active selected-text annotation with Ctrl+Enter without the regular composer intercepting it.",
+      "description": "Let the active native annotation editor handle Ctrl+Enter using its save/direct policy without regular composer interception.",
       "settingPath": "tweaks.selection.annotationSubmit.enabled",
       "nullishFallback": true
     },

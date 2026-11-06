@@ -331,9 +331,10 @@ ChatGPT account rollout 和 server-side 功能仍由 OpenAI 控制。重新构�
 Electron 参数，包括需要的 `--proxy-server=...`。ChatGPT 账号初始化完成后，
 Quick Chat 入口才会可用。
 
-`ui-tweaks` 的可选子选项 `tweaks.selection.annotationSubmit.enabled` 默认关闭：
-选中文字后，当前有活动的批注文字编辑器时，Ctrl+Enter 发送批注文字，不被常规输入框拦截。
-详见[批注发送配置](linux-features/ui-tweaks/README.md#selectionannotationsubmit)。
+`ui-tweaks` 的可选子选项 `tweaks.selection.annotationSubmit.enabled` 默认关闭。
+选中文字后，Ctrl+Enter 交由活动的原生批注编辑器按保存／直接提交策略处理当前文字。
+最新原生编辑器默认保存批注，原生状态选择直接提交时保留该路径。
+详见[批注提交配置](linux-features/ui-tweaks/README.md#selectionannotationsubmit)。
 
 ## 配置可选扩展
 
