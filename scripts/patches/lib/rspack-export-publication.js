@@ -77,6 +77,36 @@ function parameterProjection(body, name) {
     blank(open + 1, end);
     hiddenScopes.push([head.index, end + 1]);
   }
+  const classes = new RegExp(`\\bclass(?:\\s+(${ID}))?(?: extends ${ID}(?:\\.${ID})*)?\\{`, "gu");
+  for (const head of matches(body, classes, false)) {
+    if (hidden(head.index)) continue;
+    const open = head.index + head[0].length - 1, end = findMatchingBrace(body, open);
+    if (end < open) continue;
+    if (head[1] === name) {
+      const nameStart = head.index + head[0].indexOf(name, "class".length);
+      blank(nameStart, nameStart + name.length);
+      blank(open + 1, end);
+      hiddenScopes.push([head.index, end + 1]);
+      continue;
+    }
+    const members = body.slice(open + 1, end);
+    const methods = new RegExp(`(?:(?:static|async|get|set)\\s+)?(${ID})\\(([^()]*)\\)\\s*\\{`, "gu");
+    for (const method of matches(members, methods)) {
+      const start = open + 1 + method.index;
+      if (hidden(start)) continue;
+      const methodOpen = start + method[0].length - 1, methodEnd = findMatchingBrace(body, methodOpen);
+      if (methodEnd < methodOpen || !localBinding(body.slice(methodOpen + 1, methodEnd), method[2], name)) continue;
+      blank(start + method[0].indexOf("(") + 1, start + method[0].lastIndexOf(")"));
+      blank(methodOpen + 1, methodEnd);
+      hiddenScopes.push([start, methodEnd + 1]);
+    }
+    for (const property of matches(members, new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?=\\s*[=(;])`, "gu"))) {
+      try { new Script(`"use strict";class publicationPropertyProbe{${members.slice(0, property.index)}\n__propertyProbe(){}\n}`); }
+      catch { continue; }
+      const start = open + 1 + property.index;
+      blank(start, start + name.length, name === "_" ? "$" : "_");
+    }
+  }
   const arrows = /(?:\(([^()]*)\)|([A-Za-z_$][\w$]*))\s*=>\s*/gu;
   for (const head of matches(body, arrows, false)) {
     if (hidden(head.index)) continue;
@@ -115,7 +145,7 @@ function stableParameter(body, name) {
   for (const token of projection.matchAll(tokens)) {
     const decoded = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu,
       (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)));
-    if (decoded !== name || projection[token.index - 1] === "." ||
+    if (decoded !== name || [".", "#"].includes(projection[token.index - 1]) ||
         /^\s*:/u.test(projection.slice(token.index + token[0].length)) || !code(projection, token.index)) continue;
     const probe = projection.slice(0, token.index) + "(0)" + projection.slice(token.index + token[0].length);
     if (!scopeParses(probe, "")) return false;

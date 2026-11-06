@@ -88,3 +88,22 @@ test("complete lexical state rejects writes in template substitutions and ignore
   const valid = snapshot('const pattern=/require=other/g;require.d(exports,{},{gate:function(e){return e}})');
   assert.ok(findRspackExportPublication(valid,"gate"));
 });
+
+test("class methods keep native local parameters and property names separate from outer writes", () => {
+  const publish = 'require.d(exports,{},{gate:function(e){return e}})';
+  for (const source of [
+    'class Local{begin(event,require){require=other}}',
+    'class Local{begin({get:require}){require=other}}',
+    'class Local{require(){return exports}}',
+    'class Local{exports=1}',
+    'class Local{#require;write(){this.#require=other}}',
+    'const Local=class require{read(){return require}};',
+  ]) assert.ok(findRspackExportPublication(snapshot(source+publish),"gate"),source);
+  for (const source of [
+    'class Local{begin(exports){require=other}}',
+    'class Local{begin(require){exports=other}}',
+    'class Local{field=(require=other)}',
+    'class Local{static{({require}=other)}}',
+    'class Local{#exports;write(){require=other}}',
+  ]) assert.equal(findRspackExportPublication(snapshot(source+publish),"gate"),null,source);
+});
