@@ -7,9 +7,10 @@ const vm = require("node:vm");
 const test = require("node:test");
 const { inspectMainRequestSites: inspect } = require("./main-request-sites.js");
 const { findMainProcessChunks } = require("./assets.js");
-const { findMatchingBrace } = require("./minified-js.js");
+const { findMatchingBrace, createJavaScriptLexicalIndex, escapeRegExp } = require("./minified-js.js");
+const { mainProcessFactories } = require("./main-process-factories.js");
 
-const { graphBody, fixture } = require("./fixtures/main-request-graph.js");
+const { graphBody, currentGraphBody, nativePrelude, fixture } = require("./fixtures/main-request-graph.js");
 
 function declarationRange(source, head) {
   const start = source.indexOf(head); assert.ok(start >= 0, head);
@@ -59,15 +60,18 @@ function add(source, siteName, render, helper) {
   }
   return helper + "\n" + source.slice(0, site.nativeStart) + route + source.slice(site.nativeStart);
 }
-function runtime(source) {
-  const exports = {}, context = vm.createContext({ exports, Error, JSON, Promise });
+function runtime(source, avatarOptions = {}) {
+  const exports = {}, context = vm.createContext({ exports, Error, JSON, Promise, _P: () => null });
   vm.runInContext(source, context);
   const module = { exports: {} }, load = () => { throw Error("unexpected import"); };
   load.d = (target, getters) => { for (const [name, get] of Object.entries(getters)) Object.defineProperty(target, name, { get }); };
   exports.modules[82820](module, module.exports, load);
   const messages = [], cancelled = [], values = new Map(), sender = { sendInlineMessageForView(view, message) { assert.equal(this, sender); messages.push({ view, message }); } };
   const state = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
-  const host = module.exports.runMainAppStartup({ globalState: state, chunkedMessageSender: sender, cancelled });
+  const windowManager = { sendMessageToWebContents(view, message) { assert.equal(this, windowManager); messages.push({ view, message }); } };
+  const host = module.exports.runMainAppStartup({ globalState: state, chunkedMessageSender: sender, cancelled, windowManager,
+    avatarOverlayManager: avatarOptions.avatarOverlayManager,
+    getOverlayManagerForOrigin: avatarOptions.getOverlayManagerForOrigin ?? (() => null) });
   return { host, messages, cancelled, state, async request(url, body = {}, extra = {}) {
     const view = { id: "real-view" }, request = { type: "fetch", requestId: `request-${messages.length}`, url, body: JSON.stringify(body), ...extra };
     await host.handleMessage(view, request); return { view, request, response: messages.at(-1)?.message };
@@ -252,45 +256,259 @@ test("prefix structure rejects broken, unused, mismatched or duplicate owned sta
   }
 });
 
+function replaceRequired(source, from, to, start = 0, end = source.length) {
+  const before = source.slice(start, end), after = before.replace(from, to);
+  assert.notEqual(after, before, `expected current source anchor ${from}`);
+  return source.slice(0, start) + after + source.slice(end);
+}
+function currentPrelude(source, graph) {
+  const start = graph.viewFetch.methodBodyStart, body = source.slice(start, graph.viewFetch.methodBodyEnd);
+  const lexical = createJavaScriptLexicalIndex(body);
+  const dispatches = [...body.matchAll(new RegExp(`switch\\(${escapeRegExp(graph.viewFetch.requestVar)}\\.type\\)\\{`, "gu"))]
+    .filter(match => lexical.isRoot(match.index));
+  assert.equal(dispatches.length, 1);
+  return { start, end: start + dispatches[0].index, text: body.slice(0, dispatches[0].index) };
+}
+function preludeCorruptions(source, graph) {
+  const prelude = currentPrelude(source, graph), text = prelude.text;
+  const view = graph.viewFetch.webContentsVar, request = graph.viewFetch.requestVar;
+  const bodyOpen = text.indexOf("{switch("), bodyEnd = findMatchingBrace(text, bodyOpen);
+  assert(bodyOpen > 0 && bodyEnd > bodyOpen);
+  const body = text.slice(bodyOpen + 1, bodyEnd);
+  const changes = [
+    ["wrong origin lookup view", `getOverlayManagerForOrigin?.(${view})`, "getOverlayManagerForOrigin?.(otherView)"],
+    ["wrong manager fallback", "??this.avatarOverlayManager", "??this.otherManager"],
+    ["wrong forwarded view", `,${view},${request},`, `,otherView,${request},`],
+    ["wrong forwarded request", `,${view},${request},`, `,${view},otherRequest,`],
+    ["wrong callback view", `sendMessageToWebContents(${view},`, "sendMessageToWebContents(otherView,"],
+    ["wrong async generator kind", "async function(", "async function*("],
+    ["lost native await", "return void await async function(", "return void async function("],
+    ["uninvoked native function", "}(this.getOverlayManagerForOrigin", "};const unusedOptions=(this.getOverlayManagerForOrigin"],
+    ["wrong inner request discriminator", "switch(r.type)", "switch(other.type)"],
+    ["unconsumed manager parameter", "async function(e,t,r,n=()=>{})", "async function(otherManager,t,r,n=()=>{})"],
+    ["unconsumed view parameter", "async function(e,t,r,n=()=>{})", "async function(e,otherView,r,n=()=>{})"],
+    ["unconsumed reply parameter", "async function(e,t,r,n=()=>{})", "async function(e,t,r,otherReply=()=>{})"],
+    ["unbound native this dependency", 'case"avatar-overlay-close":e.dismiss()', 'case"avatar-overlay-close":this.unqualifiedNativeDependency();e.dismiss()'],
+    ["callback shadows captured view", `${request}=>{this.windowManager.sendMessageToWebContents(${view},${request})}`,
+      `${view}=>{this.windowManager.sendMessageToWebContents(${view},${view})}`],
+  ].map(([name, from, to]) => [name, replaceRequired(source, from, to, prelude.start, prelude.end)]);
+  for (const [name, replacement] of [
+    ["early inner return", "return null;" + body],
+    ["unused nested dispatcher", `const unused=async()=>{${body}};return null;`],
+    ["native call continuation", null],
+  ]) {
+    const changed = replacement == null ? text.slice(0, -1) + "&&other();" :
+      text.slice(0, bodyOpen + 1) + replacement + text.slice(bodyEnd);
+    changes.push([name, source.slice(0, prelude.start) + changed + source.slice(prelude.end)]);
+  }
+  return changes;
+}
+
+test("current native inline Avatar prelude preserves per-origin manager and reply view identity", async () => {
+  const source = fixture(currentGraphBody()), graph = inspect(source);
+  assert.equal(graph.ok, true, graph.reason);
+  assert.equal(currentPrelude(source, graph).text, nativePrelude);
+  const selected = [], views = [{ id: "first" }, { id: "second" }, { id: "fallback" }];
+  const first = { isOpen: () => true, async toggle(view) { assert.equal(this, first); assert.equal(view, views[0]); throw Error("avatar native failure"); } };
+  const second = { isOpen: () => false }, fallback = { isOpen: () => false };
+  const run = runtime(source, { avatarOverlayManager: fallback,
+    getOverlayManagerForOrigin(view) { selected.push({ receiver: this, view }); return view === views[0] ? first : view === views[1] ? second : null; } });
+  for (const view of views) {
+    await run.host.handleMessage(view, { type: "avatar-overlay-open-state-request" });
+    const message = run.messages.at(-1);
+    assert.equal(message.view, view);
+    assert.equal(message.message.type, "avatar-overlay-open-state-changed");
+    assert.equal(message.message.isOpen, view === views[0]);
+  }
+  assert(selected.every(call => call.receiver === run.host.messageHandler));
+  await assert.rejects(run.host.handleMessage(views[0], { type: "avatar-overlay-open" }), /avatar native failure/u);
+});
+
+test("current inline prelude requires its active ordinary async call, dispatcher and correlated arguments", () => {
+  const source = fixture(currentGraphBody()), graph = inspect(source);
+  assert.equal(graph.ok, true, graph.reason);
+  for (const [name, damaged] of preludeCorruptions(source, graph)) {
+    assert.doesNotThrow(() => new vm.Script(damaged), name);
+    const result = inspect(damaged);
+    assert.equal(result.ok, false, name);
+    assert.deepEqual(result.factoryIds, graph.factoryIds, name);
+  }
+  const oldNamed = replaceRequired(source, currentPrelude(source, graph).text,
+    'if(t.type.startsWith("avatar-overlay-"))return void await oldAvatar(this.getOverlayManagerForOrigin?.(e)??this.avatarOverlayManager,e,t,t=>{this.windowManager.sendMessageToWebContents(e,t)});');
+  assert.equal(inspect(oldNamed).ok, false, "retired named dispatcher is outside the latest native contract");
+  const current = currentPrelude(source, graph), fnStart = current.text.indexOf("async function("), open = current.text.indexOf("{switch(", fnStart), end = findMatchingBrace(current.text, open);
+  let renamed = current.text.slice(fnStart, end + 1);
+  for (const [from, to] of [["e", "nativeManager"], ["t", "nativeView"], ["n", "nativeReply"]]) {
+    renamed = renamed.replace(new RegExp(`(?<![\\w$.])${from}(?![\\w$])`, "gu"), to);
+  }
+  const aliasPrelude = current.text.slice(0, fnStart) + renamed + current.text.slice(end + 1);
+  const aliasSource = source.slice(0, current.start) + aliasPrelude + source.slice(current.end);
+  assert.doesNotThrow(() => new vm.Script(aliasSource));
+  assert.equal(inspect(aliasSource).ok, true, "correlated native parameter aliases remain supported");
+});
+
+function classNameAt(source, start) {
+  const found = /^class ([\w$]+)/u.exec(source.slice(start)); assert.ok(found); return found[1];
+}
+function constructorRange(source, ownerStart, ownerEnd) {
+  const open = source.indexOf("{", ownerStart), body = source.slice(open + 1, ownerEnd - 1);
+  const lexical = createJavaScriptLexicalIndex(body);
+  const heads = [...body.matchAll(/\bconstructor\(/gu)].filter(match => lexical.isRoot(match.index));
+  assert.equal(heads.length, 1);
+  const paramsOpen = heads[0].index + heads[0][0].length - 1;
+  let depth = 1, end = paramsOpen + 1;
+  for (; end < body.length; end++) {
+    if (!lexical.isCode(end)) continue;
+    if (body[end] === "(") depth++;
+    if (body[end] === ")" && --depth === 0) break;
+  }
+  assert.equal(body[end + 1], "{");
+  return { start: open + end + 3, end: open + 1 + findMatchingBrace(body, end + 1), params: body.slice(paramsOpen + 1, end) };
+}
+function protectedBindings(source, graph) {
+  const classes = [graph.wrapperRequest.ownerStart, graph.viewFetch.ownerStart, graph.scope.hostStart]
+    .map(start => { const name = classNameAt(source, start); return { name, head: `class ${name}{` }; });
+  const startup = /((?:async )?function ([\w$]+)\([^(){}]*\)\{)$/u.exec(source.slice(graph.scope.factoryStart, graph.scope.startupStart));
+  assert.ok(startup);
+  return [...classes, { name: startup[2], head: startup[1].slice(0, -1) }]
+    .map(binding => ({ ...binding, end: declarationRange(source, binding.head).end }));
+}
+function bindingReplacementCases(source, graph) {
+  return protectedBindings(source, graph).flatMap(({ name, end }) => {
+    const code = name.charCodeAt(name.length - 1).toString(16);
+    const spellings = [name, name.slice(0, -1) + "\\u" + code.padStart(4, "0"), name.slice(0, -1) + "\\u{" + code + "}"];
+    return spellings.map(binding => [`replaced binding ${binding}`, source.slice(0, end) + `;${binding}=class{};` + source.slice(end)]);
+  });
+}
+
+test("protected root class and startup bindings reject encoded replacements while lexical data stays inert", () => {
+  const source = fixture(currentGraphBody()), graph = inspect(source);
+  assert.equal(graph.ok, true, graph.reason);
+  for (const [name, damaged] of bindingReplacementCases(source, graph)) {
+    assert.doesNotThrow(() => new vm.Script(damaged), name);
+    const result = inspect(damaged);
+    assert.equal(result.ok, false, name);
+    assert.deepEqual(result.factoryIds, graph.factoryIds, name);
+  }
+  for (const { name, end } of protectedBindings(source, graph)) {
+    const encoded = name.slice(0, -1) + "\\u" + name.charCodeAt(name.length - 1).toString(16).padStart(4, "0");
+    for (const inert of [`;const codexBindingNote=${JSON.stringify(name + "=class{};" + encoded + "=class{};")};`,
+      `;/* ${name}=class{};${encoded}=class{}; */`, `;const codexHolder={};codexHolder.${encoded}=class{};`]) {
+      const current = source.slice(0, end) + inert + source.slice(end);
+      assert.doesNotThrow(() => new vm.Script(current));
+      assert.equal(inspect(current).ok, true, inert);
+    }
+  }
+});
+
+function nativeWiringCorruptions(source, graph) {
+  const hostName = classNameAt(source, graph.scope.hostStart), wrapperName = classNameAt(source, graph.wrapperRequest.ownerStart), viewName = classNameAt(source, graph.viewFetch.ownerStart);
+  const ctor = constructorRange(source, graph.scope.hostStart, graph.scope.hostEnd);
+  assert.match(ctor.params, /^[\w$]+$/u);
+  const input = ctor.params;
+  const wrapperHead = `this.fetchWrapper=new ${wrapperName}({`, wrapperAt = source.indexOf(wrapperHead, ctor.start);
+  assert(wrapperAt >= ctor.start && wrapperAt < ctor.end);
+  const optionsOpen = wrapperAt + wrapperHead.length - 1, optionsEnd = findMatchingBrace(source, optionsOpen) + 1;
+  const viewCall = new RegExp(`this\\.messageHandler=new ${escapeRegExp(viewName)}\\((?<args>[\\w$.]+(?:,[\\w$.]+){8})`, "u").exec(source.slice(ctor.start, ctor.end));
+  assert.ok(viewCall);
+  const viewAt = ctor.start + viewCall.index, viewEnd = viewAt + viewCall[0].length;
+  const startupPrefix = source.slice(graph.scope.factoryStart, graph.scope.startupStart);
+  const startup = /((?:async )?function ([\w$]+)\([^(){}]*\)\{)$/u.exec(startupPrefix); assert.ok(startup);
+  const factory = mainProcessFactories(source).find(item => item.identity === graph.scope.factoryId); assert.ok(factory);
+  const [, target, loader] = factory.parameters;
+  const publication = `${loader}.d(${target},{runMainAppStartup:()=>${startup[2]}})`;
+  return [
+    ["wrong scoped state ownership", replaceRequired(source, `this.scopedState=${input}.globalState`, `this.scopedState=${input}.otherState`, ctor.start, ctor.end)],
+    ["wrong wrapper sender", replaceRequired(source, `chunkedMessageSender:${input}.chunkedMessageSender`, `chunkedMessageSender:${input}.otherSender`, optionsOpen, optionsEnd)],
+    ["wrong view sender", replaceRequired(source, `${input}.chunkedMessageSender`, `${input}.otherSender`, viewAt, viewEnd)],
+    ["wrong wrapper argument", replaceRequired(source, "this.fetchWrapper", "this.otherWrapper", viewAt, viewEnd)],
+    ["wrong view state argument", replaceRequired(source, "this.scopedState", "this.otherState", viewAt, viewEnd)],
+    ["unused view construction", replaceRequired(source, `this.messageHandler=new ${viewName}`, `this.unused=()=>this.messageHandler=new ${viewName}`, ctor.start, ctor.end)],
+    ["unused wrapper entry", replaceRequired(source, `async handleRequest(${graph.wrapperRequest.webContentsVar},${graph.wrapperRequest.requestVar}){`, `async unusedHandleRequest(${graph.wrapperRequest.webContentsVar},${graph.wrapperRequest.requestVar}){`, graph.wrapperRequest.ownerStart, graph.wrapperRequest.ownerEnd)],
+    ["wrong fetch continuation", replaceRequired(source, `await this.fetchWrapper.handleRequest(${graph.viewFetch.webContentsVar},${graph.viewFetch.requestVar});break;case"cancel-fetch":`, `await this.otherWrapper.handleRequest(${graph.viewFetch.webContentsVar},${graph.viewFetch.requestVar});break;case"cancel-fetch":`, graph.viewFetch.methodBodyStart, graph.viewFetch.methodBodyEnd)],
+    ["wrong publication target", replaceRequired(source, publication, `${loader}.d(otherExports,{runMainAppStartup:()=>${startup[2]}})`)],
+    ["unused host construction", replaceRequired(source, `new ${hostName}({`, "new OtherHost({", graph.scope.startupStart, graph.scope.startupEnd)],
+    ["unused dictation responder", replaceRequired(source, `async handleDictationStreamConnectInfoRequest(${graph.wrapperRequest.webContentsVar},${graph.wrapperRequest.requestVar}){try`, `async handleDictationStreamConnectInfoRequest(${graph.wrapperRequest.webContentsVar},${graph.wrapperRequest.requestVar}){return;try`, graph.wrapperRequest.ownerStart, graph.wrapperRequest.ownerEnd)],
+    ["wrapper class expression", unusedExpression(source, `class ${wrapperName}{`)],
+    ["startup function expression", unusedExpression(source, startup[1].slice(0, -1))],
+    ["reassigned wrapper", reassignedDeclaration(source, `class ${wrapperName}{`, wrapperName)],
+    ["reassigned startup", reassignedDeclaration(source, startup[1].slice(0, -1), startup[2])],
+    ["nonempty sender override spread", replaceRequired(source, `chunkedMessageSender:${input}.chunkedMessageSender`, `chunkedMessageSender:${input}.chunkedMessageSender,...{chunkedMessageSender:${input}.otherSender}`, optionsOpen, optionsEnd)],
+    ["quoted sender override", replaceRequired(source, `chunkedMessageSender:${input}.chunkedMessageSender`, `chunkedMessageSender:${input}.chunkedMessageSender,"chunkedMessageSender":${input}.otherSender`, optionsOpen, optionsEnd)],
+  ];
+}
+
+function nativeFragments(source) {
+  const graph = inspect(source); assert.equal(graph.ok, true, graph.reason);
+  const messages = [], cancelled = [], state = new Map();
+  const sender = { sendInlineMessageForView(view, message) { assert.equal(this, sender); messages.push({ view, message }); } };
+  const windowManager = { sendMessageToWebContents(view, message) { assert.equal(this, windowManager); messages.push({ view, message }); } };
+  const originCalls = [], manager = { isOpen: () => true };
+  const context = vm.createContext({ Error, JSON, Promise, _P: () => null });
+  vm.runInContext(STATE_HELPER + ASYNC_HELPER + WRAPPER_HELPER + SELECTOR_HELPER, context);
+  const method = site => vm.runInContext(`(async function(${site.webContentsVar},${site.requestVar}){${source.slice(site.methodBodyStart, site.methodBodyEnd)}})`, context);
+  const wrapper = { options: { chunkedMessageSender: sender },
+    async handleDictationStreamConnectInfoRequest(view, request) { sender.sendInlineMessageForView(view, { type: "fetch-response", requestId: request.requestId, responseType: "success" }); },
+    cancelRequest(view, request) { cancelled.push({ receiver: this, view, request }); } };
+  wrapper.handleRequest = method(graph.wrapperRequest);
+  const viewOwner = { chunkedMessageSender: sender, fetchWrapper: wrapper, globalState: { get: key => state.get(key), set: (key, value) => state.set(key, value) }, windowManager,
+    avatarOverlayManager: { isOpen: () => false }, getOverlayManagerForOrigin(view) { originCalls.push({ receiver: this, view }); return manager; } };
+  viewOwner.handleMessage = method(graph.viewFetch);
+  return { graph, messages, cancelled, state, wrapper, viewOwner, originCalls, async request(url, body = {}, extra = {}) {
+    const view = { id: "actual-fragment-view" }, request = { type: "fetch", requestId: `request-${messages.length}`, url, body: JSON.stringify(body), ...extra };
+    await viewOwner.handleMessage(view, request);
+    return { view, request, response: messages.at(-1)?.message };
+  } };
+}
+
 for (const envName of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
-  test(`actual signed main graph and precise corruption rejection (${envName})`, { skip: process.env[envName] == null }, () => {
-    const app = process.env[envName], inventory = findMainProcessChunks(app); assert.ok(inventory);
-    const candidates = inventory.chunks.map(name => ({ name, source: fs.readFileSync(path.join(inventory.buildDir, name), "utf8") }))
-      .filter(({ source }) => source.includes("HTTP requests must use the HTTP fetch service.") && source.includes("this.fetchWrapper.handleRequest("));
+  test(`actual signed main graph, bounded rejection and inert method execution (${envName})`, { skip: process.env[envName] == null }, async () => {
+    const inventory = findMainProcessChunks(process.env[envName]); assert.ok(inventory);
+    const candidates = inventory.chunks.map(name => ({ name, source: fs.readFileSync(path.join(inventory.buildDir, name), "utf8") }));
     const owners = candidates.map(candidate => ({ ...candidate, graph: inspect(candidate.source) })).filter(({ graph }) => graph.ok);
-    assert.equal(owners.length, 1); const { source, graph } = owners[0];
-    assert.deepEqual(inspect(source), graph); assert.equal(graph.viewFetch.globalStateExpr, "this.globalState");
-    const mutations = [
-      text => text.replace("this.scopedState=e.globalState", "this.scopedState=e.appGlobalState"),
-      text => text.replace("chunkedMessageSender:e.chunkedMessageSender,pluginServicePreviewEnabled", "chunkedMessageSender:e.otherSender,pluginServicePreviewEnabled"),
-      text => text.replace("e.windowManager,e.chunkedMessageSender,e.avatarOverlayManager,this.appServerConnectionRegistry,this.fetchWrapper,this.scopedState", "e.windowManager,e.otherSender,e.avatarOverlayManager,this.appServerConnectionRegistry,this.fetchWrapper,this.scopedState"),
-      text => text.replace("this.fetchWrapper,this.scopedState,this.projectsManager", "this.fetchWrapper,this.otherState,this.projectsManager"),
-      text => text.replace("this.messageHandler=new ee9", "this.unused=()=>this.messageHandler=new ee9"),
-      text => text.replace("async handleRequest(e,t){if(\"/codex/dictation-stream-connect-info\"", "async unusedHandleRequest(e,t){if(\"/codex/dictation-stream-connect-info\""),
-      text => text.replace("await this.fetchWrapper.handleRequest(e,t);break;case\"cancel-fetch\":", "await this.other.handleRequest(e,t);break;case\"cancel-fetch\":"),
-      text => text.replace("r.d(t,{runMainAppStartup:()=>eE0})", "r.d(J,{runMainAppStartup:()=>eE0})"),
-      text => text.replace("}}({app:ea.app,applicationNetwork:W,quitState:e4", "}};let codexUnusedOptions=({app:ea.app,applicationNetwork:W,quitState:e4"),
-      text => text.replace("q=new e_3({appViewsByWebContentsId", "codexUnused=()=>q=new e_3({appViewsByWebContentsId"),
-      text => text.replace("async handleDictationStreamConnectInfoRequest(e,t){try", "async handleDictationStreamConnectInfoRequest(e,t){return;try"),
-      text => unusedExpression(text, "class Ra{"),
-      text => unusedExpression(text, "async function eE0("),
-      text => reassignedDeclaration(text, "class Ra{", "Ra"),
-      text => reassignedDeclaration(text, "async function eE0(", "eE0"),
-      text => text.replace("chunkedMessageSender:e.chunkedMessageSender,pluginServicePreviewEnabled", "chunkedMessageSender:e.chunkedMessageSender,...{chunkedMessageSender:e.otherSender},pluginServicePreviewEnabled"),
-      text => text.replace("chunkedMessageSender:e.chunkedMessageSender,pluginServicePreviewEnabled", 'chunkedMessageSender:e.chunkedMessageSender,"chunkedMessageSender":e.otherSender,pluginServicePreviewEnabled'),
-    ];
-    for (const mutate of mutations) {
-      const damaged = mutate(source); assert.notEqual(damaged, source);
-      assert.doesNotThrow(() => new vm.Script(damaged), "native counterexample remains valid JavaScript");
-      assert.equal(inspect(damaged).ok, false);
+    assert.equal(owners.length, 1);
+    const { source, graph } = owners[0];
+    assert.deepEqual(inspect(source), graph);
+    assert.equal(graph.viewFetch.globalStateExpr, "this.globalState");
+    assert.equal(currentPrelude(source, graph).text, nativePrelude);
+    for (const [name, damaged] of [...nativeWiringCorruptions(source, graph), ...preludeCorruptions(source, graph), ...bindingReplacementCases(source, graph)]) {
+      assert.doesNotThrow(() => new vm.Script(damaged), name);
+      const failed = inspect(damaged);
+      assert.equal(failed.ok, false, name);
+      assert.deepEqual(failed.factoryIds, graph.factoryIds, name);
     }
-    let combined = add(source, "viewFetch", stateRoute, STATE_HELPER); combined = add(combined, "wrapperRequest", wrapperRoute, WRAPPER_HELPER);
-    assert.equal(inspect(combined).ok, true); assert.equal(add(combined, "viewFetch", stateRoute, STATE_HELPER), combined);
-    for (const key of ["viewFetch", "wrapperRequest"]) {
-      const site = graph[key], render = key === "viewFetch" ? stateRoute : wrapperRoute;
-      const normal = render(site), shadow = normal.replace(`reply=>${site.senderExpr}(${site.webContentsVar},reply)`, `${site.webContentsVar}=>${site.senderExpr}(${site.webContentsVar},${site.webContentsVar})`);
-      assert.notEqual(shadow, normal); const damaged = source.slice(0, site.insertAt) + shadow + source.slice(site.insertAt);
-      assert.doesNotThrow(() => new vm.Script(damaged)); assert.equal(inspect(damaged).ok, false);
+    const host = protectedBindings(source, graph).find(binding => binding.name === classNameAt(source, graph.scope.hostStart));
+    const encoded = host.name.slice(0, -1) + "\\u" + host.name.charCodeAt(host.name.length - 1).toString(16).padStart(4, "0");
+    for (const inert of [`;const codexBindingNote=${JSON.stringify(host.name + "=class{};" + encoded + "=class{};")};`, `;/* ${encoded}=class{}; */`]) {
+      assert.equal(inspect(source.slice(0, host.end) + inert + source.slice(host.end)).ok, true);
     }
+    const { applyUnifiedComputerUsePatch } = require("../../../linux-features/computer-use-linux/unified.js");
+    const { applyNativeApplicationsPatch } = require("../../../linux-features/computer-use-linux/native-applications.js");
+    const { applyPetOverlayPatch } = require("../../../linux-features/pet-overlay/patch.js");
+    const lower = applyNativeApplicationsPatch(applyUnifiedComputerUsePatch(applyPetOverlayPatch(source)));
+    for (const base of [source, lower]) for (const order of [["state", "wrapper"], ["wrapper", "state"]]) {
+      let combined = base;
+      for (const name of order) combined = name === "state" ? add(combined, "viewFetch", stateRoute, STATE_HELPER) : add(combined, "wrapperRequest", wrapperRoute, WRAPPER_HELPER);
+      const run = nativeFragments(combined);
+      const written = await run.request("vscode://codex/foundation-state", { action: "set", key: "owned", value: "scoped" });
+      assert.equal(written.response.requestId, written.request.requestId);
+      assert.equal(JSON.parse(written.response.bodyJsonString).value, "scoped");
+      const reply = await run.request("vscode://codex/foundation-wrapper", { value: "native fragment" });
+      assert.equal(reply.response.requestId, reply.request.requestId);
+      assert.equal(JSON.parse(reply.response.bodyJsonString).value, "native fragment");
+      await assert.rejects(run.request("vscode://codex/foundation-wrapper", {}, { fail: true }), /async bridge failed/u);
+      const native = await run.request("/codex/dictation-stream-connect-info");
+      assert.equal(native.response.requestId, native.request.requestId);
+      const cancel = await run.request("", {}, { type: "cancel-fetch" });
+      assert.equal(run.cancelled[0].receiver, run.wrapper); assert.equal(run.cancelled[0].view, cancel.view); assert.equal(run.cancelled[0].request, cancel.request);
+      const avatar = await run.request("", {}, { type: "avatar-overlay-open-state-request" });
+      assert.equal(avatar.response.type, "avatar-overlay-open-state-changed");
+      assert.equal(run.messages.at(-1).view, avatar.view);
+      assert.equal(run.originCalls.at(-1).view, avatar.view); assert.equal(run.originCalls.at(-1).receiver, run.viewOwner);
+      await assert.rejects(run.request("/unsupported-http"), /HTTP requests must use the HTTP fetch service/u);
+      assert.equal(add(combined, "viewFetch", stateRoute, STATE_HELPER), combined);
+      assert.equal(add(combined, "wrapperRequest", wrapperRoute, WRAPPER_HELPER), combined);
+    }
+    for (const candidate of candidates) assert.equal(fs.readFileSync(path.join(inventory.buildDir, candidate.name), "utf8"), candidate.source);
   });
 }

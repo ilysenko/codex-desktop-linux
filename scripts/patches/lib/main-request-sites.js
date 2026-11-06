@@ -1,7 +1,7 @@
 "use strict";
 
 const { Script } = require("node:vm");
-const { escapeRegExp, findMatchingBrace } = require("./minified-js.js");
+const { escapeRegExp, findMatchingBrace, createJavaScriptLexicalIndex } = require("./minified-js.js");
 
 const ID = "[A-Za-z_$][\\w$]*";
 const MEMBER = `${ID}(?:\\.${ID})*`;
@@ -39,7 +39,26 @@ function matches(body, pattern, root = true) {
 }
 function stableBinding(body, name) {
   const identifier = escapeRegExp(name);
-  return matches(body, new RegExp(`(?<![\\w$.])(?:${identifier}\\s*(?:\\+\\+|--|(?:\\?\\?|\\|\\||&&|[+*/%&|^\\-])?=(?!=|>))|(?:\\+\\+|--)${identifier}\\b)`, "gu")).length === 0;
+  if (matches(body, new RegExp(`(?<![\\w$.])(?:${identifier}\\s*(?:\\+\\+|--|(?:\\?\\?|\\|\\||&&|[+*/%&|^\\-])?=(?!=|>))|(?:\\+\\+|--)${identifier}\\b)`, "gu")).length) return false;
+  const tokens = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[A-Za-z_$])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])*/gu;
+  let lexical;
+  for (const token of body.matchAll(tokens)) {
+    if (!token[0].includes("\\u")) continue;
+    const decoded = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => {
+      const point = parseInt(braced || fixed, 16);
+      return point <= 0x10ffff ? String.fromCodePoint(point) : "\0";
+    });
+    if (decoded !== name) continue;
+    lexical ??= createJavaScriptLexicalIndex(body);
+    if (!lexical.isCode(token.index) || !lexical.isRoot(token.index)) continue;
+    let previous = token.index - 1;
+    while (previous >= 0 && !lexical.isCode(previous)) previous--;
+    if ([".", "#"].includes(body[previous])) continue;
+    // The latest native declarations use literal identifiers. An encoded
+    // protected root reference cannot silently replace that binding authority.
+    return false;
+  }
+  return true;
 }
 
 // Current main chunks use CommonJS method-style Rspack factories. Unlike the
@@ -275,6 +294,28 @@ function wrapper(factory, entryIndex) {
     prefixStart: factory.start + entry.bodyStart, prefixEnd: factory.start + entry.bodyStart + nativeStart,
     webContentsVar: entry.view, requestVar: entry.request, senderExpr } };
 }
+function nativeAvatarPrelude(prelude, entry) {
+  if (prelude === "") return true;
+  const prefix = `if(${entry.request}.type.startsWith("avatar-overlay-"))return void await `;
+  if (!prelude.startsWith(prefix)) return false;
+  const head = new RegExp(`^async function\\((?<manager>${ID}),(?<view>${ID}),(?<request>${ID}),(?<reply>${ID})=\\(\\)=>\\{\\}\\)\\{`, "u")
+    .exec(prelude.slice(prefix.length));
+  if (!head || new Set(Object.values(head.groups)).size !== 4) return false;
+  const open = prefix.length + head[0].length - 1, end = findMatchingBrace(prelude, open);
+  if (end < open) return false;
+  const body = prelude.slice(open + 1, end), dispatch = `switch(${head.groups.request}.type){`;
+  if (!body.startsWith(dispatch) || findMatchingBrace(body, dispatch.length - 1) !== body.length - 1 ||
+      matches(body, /\bthis\b/gu, false).length) return false;
+  const manager = escapeRegExp(head.groups.manager), nativeView = escapeRegExp(head.groups.view), reply = escapeRegExp(head.groups.reply);
+  if (!matches(body, new RegExp(`(?<![\\w$.])${manager}\\.${ID}\\(`, "gu"), false).length ||
+      !matches(body, new RegExp(`(?<![\\w$.])${nativeView}\\.id(?![\\w$])`, "gu"), false).length ||
+      !matches(body, new RegExp(`(?<![\\w$.])${reply}\\(\\{`, "gu"), false).length) return false;
+  const view = escapeRegExp(entry.view), request = escapeRegExp(entry.request);
+  const call = new RegExp(`^\\(this\\.getOverlayManagerForOrigin\\?\\.\\(${view}\\)\\?\\?this\\.avatarOverlayManager,${view},${request},(?<reply>${ID})=>\\{this\\.windowManager\\.sendMessageToWebContents\\(${view},\\k<reply>\\)\\}\\);$`, "u")
+    .exec(prelude.slice(end + 1));
+  return call != null && call.groups.reply !== entry.view;
+}
+
 function view(factory, forwardIndex) {
   const owner = owningClass(factory, forwardIndex), entry = owner && method(owner, "handleMessage"), ctor = owner && constructor(owner);
   if (!entry || !ctor) return null;
@@ -284,8 +325,7 @@ function view(factory, forwardIndex) {
   const open = dispatch.index + dispatch[0].length - 1, end = findMatchingBrace(entry.body, open);
   if (entry.body.slice(end + 1).trim() !== "") return null;
   const prelude = entry.body.slice(0, dispatch.index);
-  const avatar = new RegExp(`^if\\(${escapeRegExp(entry.request)}\\.type\\.startsWith\\("avatar-overlay-"\\)\\)return void await ${ID}\\(this\\.getOverlayManagerForOrigin\\?\\.\\(${escapeRegExp(entry.view)}\\)\\?\\?this\\.avatarOverlayManager,${escapeRegExp(entry.view)},${escapeRegExp(entry.request)},(${ID})=>\\{this\\.windowManager\\.sendMessageToWebContents\\(${escapeRegExp(entry.view)},\\1\\)\\}\\);$`, "u");
-  if (prelude !== "" && !avatar.test(prelude)) return null;
+  if (!nativeAvatarPrelude(prelude, entry)) return null;
   const switchBody = entry.body.slice(open + 1, end);
   const fetchCase = one(matches(switchBody, /case"fetch":/gu));
   const native = `await this.fetchWrapper.handleRequest(${entry.view},${entry.request});break;case"cancel-fetch":this.fetchWrapper.cancelRequest(${entry.view},${entry.request});break;`;
