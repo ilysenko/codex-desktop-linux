@@ -47,7 +47,8 @@ function currentPartitionCall(source, start, end, lexical) {
   if (!source.startsWith(expected, end + 1)) return null;
   const partitionEnd = lexical.matchingBrace(owner.index + owner[0].length - 1);
   return {
-    partition: { start: owner.index, end: partitionEnd + 1, bindings: { ...names } },
+    partition: { start: owner.index, end: partitionEnd + 1,
+      body: { start: owner.index + owner[0].length, end: partitionEnd }, bindings: { ...names } },
     loop: { start: loopStart, end: lexical.matchingBrace(loopOpen) + 1 },
     call: { start: end + 1, end: end + 1 + expected.length, source: expected, unit: loop.unit },
   };
@@ -97,6 +98,18 @@ function inspectActivityPartition(source) {
   if (nativeStart < 0 || nativeStart !== expression.lastIndexOf(prefix)) return failed("missing or ambiguous native activity expression", 1);
   const native = nativeActivityExpression(expression.slice(nativeStart), head.groups);
   if (!native) return failed("current native activity policy drifted", 1);
+  const partitionSource = source.slice(owner.partition.start, owner.partition.end);
+  const result = new RegExp(String.raw`return\{collapsibleUnits:(?<collapsible>${identifier}),expandedUnits:(?<expanded>${identifier}),` +
+    String.raw`persistentUnits:(?<persistent>${identifier}),preToggleUnits:(?<preToggle>${identifier}),workedForItem:(?<workedFor>${identifier})\}\}$`, "u").exec(partitionSource);
+  if (!result) return failed("current native partition result drifted", 1);
+  const roles = result.groups;
+  const declarations = `let ${roles.collapsible}=[],${roles.expanded}=[],${roles.persistent}=[],${roles.preToggle}=[],${roles.workedFor}=null,`;
+  const routing = `?${roles.persistent}.push(${owner.call.unit}):${roles.collapsible}.push(${owner.call.unit})`;
+  if (!source.startsWith(declarations, owner.partition.body.start) ||
+      !source.startsWith(routing, owner.call.end) || owner.call.end + routing.length !== owner.loop.end - 1) {
+    return failed("current native partition collections are disconnected", 1);
+  }
+  const resultStart = owner.partition.start + result.index;
   return {
     ok: true,
     candidateCount: 1,
@@ -105,6 +118,9 @@ function inspectActivityPartition(source) {
     classifier: { start: head.index, end: end + 1 },
     expression: { start, end, source: expression },
     nativeExpression: { start: start + nativeStart, end: start + nativeStart + native.length, source: native },
+    result: { start: resultStart, end: owner.partition.end - 1,
+      source: source.slice(resultStart, owner.partition.end - 1), bindings: { ...roles } },
+    routing: { start: owner.call.end, end: owner.call.end + routing.length, source: routing },
   };
 }
 

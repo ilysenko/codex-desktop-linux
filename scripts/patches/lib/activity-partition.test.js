@@ -99,3 +99,18 @@ test("activity predicate requires the current ordinary function token and direct
   assert.doesNotThrow(() => new Script(ordinary));
   assertRanges(ordinary, inspectActivityPartition(ordinary));
 });
+
+test("activity snapshot proves native result collections and rejects marker-string decoys", () => {
+  const original = inspectActivityPartition(fixture);
+  assert.equal(fixture.slice(original.result.start, original.result.end), original.result.source);
+  assert.equal(fixture.slice(original.routing.start, original.routing.end), original.routing.source);
+  assert.deepEqual(original.result.bindings, { collapsible: "o", expanded: "r", persistent: "c", preToggle: "d", workedFor: "u" });
+  const missing = fixture.replace("collapsibleUnits:", "missingCollapsible:").replace("persistentUnits:", "missingPersistent:");
+  const decoy = missing.slice(0, original.loop.start) + 'const note="collapsibleUnits:persistentUnits:";' + missing.slice(original.loop.start);
+  for (const source of [missing, decoy, fixture.replace("persistentUnits:c", "persistentUnits:o"),
+    fixture.replace("?c.push(x):o.push(x)", "?o.push(x):c.push(x)")]) {
+    assert.notEqual(source, fixture);
+    assert.doesNotThrow(() => new (require("node:vm").Script)(source));
+    assert.equal(inspectActivityPartition(source).ok, false);
+  }
+});
