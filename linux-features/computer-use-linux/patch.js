@@ -13,15 +13,16 @@ const {
   applyNativeSettingsAvailabilityPatch,
   applyNativeSettingsVisibilityAssets,
 } = require("./settings.js");
-const { applyUnifiedComputerUsePatch } = require("./unified.js");
+const { patchUnifiedComputerUseAssets } = require("./unified.js");
 const { applyNativeApplicationsPatch } = require("./native-applications.js");
 const { applyLinuxComputerUseHostPlatformPatch, matchesLinuxComputerUseHostPlatformContract } = require("./host-platform.js");
 
 module.exports = [
-  mainBundlePatch({
+  extractedAppPatch({
     id: "unified-runtime",
+    phase: "extracted-app:pre-webview",
     order: 20_115,
-    apply: applyUnifiedComputerUsePatch,
+    apply: patchUnifiedComputerUseAssets,
   }),
   mainBundlePatch({
     id: "avatar-cursor",
