@@ -54,6 +54,8 @@ test("CI runs every Node test through the TMPDIR guard", () => {
 test("CI runs the complete workflow regression suite", () => {
   const workflow = read(".github/workflows/ci.yml");
   assert.ok(guardedTestFiles().includes("scripts/ci/github-actions-workflows.test.js"));
+  // node-runner.test.js also executes the actual runner against tracked
+  // fixtures, verifying discovery and execution of nested test basenames.
   const nixBuild = job(workflow, "nix-build");
   assert.match(nixBuild, /system: x86_64-linux/);
   assert.match(nixBuild, /system: aarch64-linux/);
