@@ -30,8 +30,7 @@ function applyMain(source) {
     `let client=this.getAppServerConnection(${request}.hostId);if(client.hostConfig.kind!==\`local\`)throw Error(\`Account switching is only available on this computer.\`);` +
     `this.codexLinuxAccountSwitcher??=(${createAccountSwitcher.toString()})({` +
     `electron:require(\`electron\`),home:await client.codexHome(),` +
-    `clients:()=>this.appServerConnectionRegistry.getAllHostIds().map(id=>this.getAppServerConnection(id)),` +
-    `reload:()=>{for(let window of require(\`electron\`).BrowserWindow.getAllWindows())if(!window.isDestroyed())window.webContents.reload()}});` +
+    `clients:()=>this.appServerConnectionRegistry.getAllHostIds().map(id=>this.getAppServerConnection(id))});` +
     `await this.codexLinuxAccountSwitcher.open(client,require(\`electron\`).BrowserWindow.fromWebContents(${view}),${request}.request.params?.locale);response={id:${request}.request.id,result:{}}` +
     `}catch{response={id:${request}.request.id,error:{code:-32000,message:\`Account switching is unavailable.\`}}}` +
     `this.sendAppServerResponseToView(${view},${request}.hostId,${request}.request.method,response,${request}.request.trace,${request}.priority);break}`;
