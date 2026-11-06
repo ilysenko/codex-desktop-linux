@@ -12,6 +12,8 @@ const {
   isPatchIntegrityError,
 } = require("../../scripts/patches/integrity-error.js");
 
+const { normalizeLinuxTargetArchitecture } = require("../../scripts/lib/linux-target-context.js");
+
 const bufferEquals = Function.call.bind(Buffer.prototype.equals);
 
 function readTrustedBytes(readFileSync, filePath) {
@@ -1930,12 +1932,13 @@ function patchWorker(extractedDir, context = {}, io = {}) {
   };
 }
 
-function stageWatchbound(extractedDir) {
+function stageWatchbound(extractedDir, context) {
+  const architecture = normalizeLinuxTargetArchitecture(context?.linux?.arch ?? context?.linuxTarget?.arch);
   const helper = path.join(__dirname, "watchbound-package.js");
   try {
     const output = childProcess.execFileSync(
       process.execPath,
-      [helper, "--stage", extractedDir],
+      [helper, "--stage", extractedDir, architecture],
       {
         encoding: "utf8",
         env: process.env,

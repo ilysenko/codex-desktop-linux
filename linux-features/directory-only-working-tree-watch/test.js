@@ -1212,7 +1212,7 @@ test("the package helper subprocess preserves failed-integrity reporting", (t) =
       () => applyExtractedAppPatchDescriptors(
         extractedDir,
         [descriptor],
-        {},
+        { linux: { arch: "x64" } },
         report,
         descriptor.phase,
       ),
@@ -1894,7 +1894,8 @@ test("controlled source staging rejects installed wrapper and loader inventory d
   }
 });
 
-test("Watchbound package staging selects the ARM64 target", async (t) => {
+test("Watchbound package staging selects target-specific x64 and ARM64 ELF bindings without loading them", async (t) => {
+  t.mock.method(process, "dlopen", () => { throw new Error("staging must inspect native ELF bytes without loading the binding"); });
   const fixture = packageFixtureManifest(t);
   const materializePackage = async (request) => ({
     packageDir: fixture.packages.get(request.name),
@@ -1903,7 +1904,7 @@ test("Watchbound package staging selects the ARM64 target", async (t) => {
     sha256: request.sha256,
     source: "fixture",
   });
-  for (const arch of ["arm64"]) {
+  for (const arch of ["x64", "arm64"]) {
     const extractedDir = tempDirectory(t, `watchbound-${arch}-app-`);
     writeExtractedAppRuntime(extractedDir);
     await stageWatchboundPackages(packageStageOptions(extractedDir, fixture, {
@@ -1916,6 +1917,9 @@ test("Watchbound package staging selects the ARM64 target", async (t) => {
         candidate === arch,
       );
     }
+    const selected = fixture.manifest.packages.targets[arch];
+    const binding = fs.readFileSync(path.join(packageTarget(extractedDir, selected.name), selected.nativeBinding.path));
+    assert.equal(binding.readUInt16LE(18), arch === "arm64" ? 183 : 62);
   }
 
   await assert.rejects(
@@ -6398,4 +6402,63 @@ test("the durable historical Owl acceptance record is passing and sanitized", ()
   );
   assert.doesNotMatch(runtimeHarness, /42\.3\.0/u);
   assert.doesNotMatch(runtimeHarness, /process\.report/u);
+});
+
+
+test("Watchbound descriptor passes its canonical context target to the staging CLI", t => {
+  const calls = [];
+  t.mock.method(childProcess, "execFileSync", (executable, args, options) => {
+    calls.push({ executable, args, options });
+    return JSON.stringify({ changed: true });
+  });
+  const descriptor = descriptors.find(item => item.id === "watchbound-package");
+  for (const [arch, expected] of [["arm64", "arm64"], ["aarch64", "arm64"], ["x64", "x64"], ["amd64", "x64"]]) {
+    assert.equal(descriptor.apply("/inert-extracted-app", { linux: { arch } }).changed, true);
+    const call = calls.at(-1);
+    assert.equal(call.executable, process.execPath);
+    assert.equal(call.options.env, process.env);
+    assert.deepEqual(call.args, [path.join(__dirname, "watchbound-package.js"), "--stage", "/inert-extracted-app", expected]);
+  }
+  const before = calls.length;
+  for (const context of [{}, { linux: {} }, { linux: { arch: "unknown" } }]) {
+    assert.throws(() => descriptor.apply("/inert-extracted-app", context), /Unsupported Linux target architecture/u);
+  }
+  assert.equal(calls.length, before);
+});
+
+test("Watchbound staging CLI requires an own supported explicit target before materialization or writes", t => {
+  const root = tempDirectory(t, "watchbound-cli-target-");
+  const app = path.join(root, "app"), bin = path.join(root, "bin"), calls = path.join(root, "npm-calls");
+  fs.mkdirSync(app);
+  fs.mkdirSync(bin);
+  writeExtractedAppRuntime(app);
+  writeFile(path.join(app, "original-marker"), "preserved");
+  writeFile(path.join(bin, "npm"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$WATCHBOUND_MATERIALIZER_LOG"\nexit 37\n', 0o755);
+  const before = new Map(fs.readdirSync(app).map(name => [name, fs.readFileSync(path.join(app, name))]));
+  for (const architecture of [undefined, "ppc64", "constructor", "toString", "__proto__"]) {
+    const result = childProcess.spawnSync(process.execPath,
+      [path.join(__dirname, "watchbound-package.js"), "--stage", app, ...(architecture == null ? [] : [architecture])],
+      { encoding: "utf8", env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH,
+        WATCHBOUND_MATERIALIZER_LOG: calls, CODEX_TARGET_ARCH: "arm64", CODEX_LINUX_TARGET_ARCH: "arm64" } });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, architecture == null ? /Usage:/u : /no Linux GNU target/u);
+    assert.equal(fs.existsSync(calls), false, "unsupported targets must not invoke the package materializer");
+    assert.deepEqual(fs.readdirSync(app), [...before.keys()]);
+    for (const [name, bytes] of before) assert.equal(fs.readFileSync(path.join(app, name)).equals(bytes), true);
+  }
+});
+
+test("Watchbound staging requires an own target entry in the artifact manifest", async t => {
+  const fixture = packageFixtureManifest(t), targets = fixture.manifest.packages.targets;
+  fixture.manifest.packages.targets = Object.assign(Object.create({ x64: targets.x64 }), { arm64: targets.arm64 });
+  const app = tempDirectory(t, "watchbound-inherited-target-");
+  writeExtractedAppRuntime(app);
+  const before = fs.readFileSync(path.join(app, "package.json"));
+  let materialized = false;
+  await assert.rejects(stageWatchboundPackages(packageStageOptions(app, fixture, {
+    arch: "x64", materializePackage: async () => { materialized = true; throw new Error("must not materialize"); },
+  })), /no Linux GNU target/u);
+  assert.equal(materialized, false);
+  assert.deepEqual(fs.readdirSync(app), ["package.json"]);
+  assert.equal(fs.readFileSync(path.join(app, "package.json")).equals(before), true);
 });

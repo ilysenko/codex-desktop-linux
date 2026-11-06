@@ -1613,7 +1613,9 @@ function commitPreparedPackages(extractedDir, prepared, options = {}) {
 async function stageWatchboundPackages(options) {
   const targetContract = WATCHBOUND_TARGET_CONTRACTS[options.arch];
   const selectedTarget = options.manifest.packages?.targets?.[options.arch];
-  if (targetContract == null || selectedTarget == null) {
+  if (!Object.hasOwn(WATCHBOUND_TARGET_CONTRACTS, options.arch) ||
+      !Object.hasOwn(options.manifest.packages?.targets ?? {}, options.arch) ||
+      targetContract == null || selectedTarget == null) {
     throw new Error(
       `Watchbound ${options.manifest.version} has no Linux GNU target for ${options.arch}`,
     );
@@ -1765,9 +1767,9 @@ async function main() {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
-  if (process.argv[2] !== "--stage" || !process.argv[3]) {
+  if (process.argv[2] !== "--stage" || !process.argv[3] || !process.argv[4] || process.argv[5] != null) {
     console.error(
-      "Usage: watchbound-package.js --stage <extracted-app-dir> | " +
+      "Usage: watchbound-package.js --stage <extracted-app-dir> <architecture> | " +
         "--verify-controlled-package-root <node-modules-dir> <arch>",
     );
     process.exitCode = 1;
@@ -1782,7 +1784,7 @@ async function main() {
   }
   const result = await stageWatchboundPackages({
     extractedDir: process.argv[3],
-    arch: process.arch,
+    arch: process.argv[4],
     manifest: currentArtifactManifest(),
     sourcePackageRoot,
   });

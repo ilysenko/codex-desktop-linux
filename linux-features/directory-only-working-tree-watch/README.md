@@ -73,6 +73,11 @@ one target for the build architecture. Musl, ARMv7/armhf, and
 non-Linux targets are rejected by Watchbound's runtime qualification. The
 selected `.node` file is unpacked by the existing ASAR native-file rule.
 
+ASAR staging passes the normalized target architecture to the Watchbound helper
+as an explicit CLI argument. Target selection follows the validated upstream
+package during cross-architecture builds. Missing or unsupported stage targets
+are rejected before package writes.
+
 Normal builds fetch the pinned npm packages. The manifest pins four archives in
 total; a fully offline build provides the three selected for its architecture:
 
