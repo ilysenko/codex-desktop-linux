@@ -2628,8 +2628,11 @@ function actualNativeBridgeHarness(source, temp) {
   const method = (site, name) => `async ${name}(${site.webContentsVar},${site.requestVar}){${source.slice(site.methodBodyStart, site.methodBodyEnd)}}`;
   const wrapperClass = source.slice(wrapper.ownerStart, wrapper.ownerEnd), responderStart = wrapperClass.indexOf("async handleDictationStreamConnectInfoRequest("); assert.ok(responderStart >= 0);
   const responseOpen = wrapperClass.indexOf("{", responderStart), responseEnd = findMatchingBrace(wrapperClass, responseOpen) + 1;
+  const responseSource = wrapperClass.slice(responderStart, responseEnd);
+  const localHost = /this\.getAppServerConnection\(([\w$]+)\.([\w$]+)\)\.getBackendRequestAuth/.exec(responseSource);
+  assert.ok(localHost, "expected the validated native responder's local-host dependency");
   const responses = [], execCalls = [], delegated = [], cancelled = [], values = new Map([[SETTINGS_COMMAND_KEY, "/fixture/agent-workspace-linux"]]);
-  const context = vm.createContext({ an: { n: "fixture-local" }, Buffer, Error, JSON, Promise, setTimeout, clearTimeout,
+  const context = vm.createContext({ [localHost[1]]: { [localHost[2]]: "fixture-local" }, Buffer, Error, JSON, Promise, setTimeout, clearTimeout,
     process: { env: { HOME: path.join(temp, "home"), XDG_DATA_HOME: path.join(temp, "data"), XDG_RUNTIME_DIR: temp, TMPDIR: temp } },
     require(name) {
       if (name === "node:fs") return fs;
@@ -2642,7 +2645,7 @@ function actualNativeBridgeHarness(source, temp) {
   vm.runInContext(helpers, context);
   const handleView = vm.runInContext(`({${method(view, "handleMessage")}}).handleMessage`, context);
   const handleWrapper = vm.runInContext(`({${method(wrapper, "handleRequest")}}).handleRequest`, context);
-  const handleResponse = vm.runInContext(`({${wrapperClass.slice(responderStart, responseEnd)}}).handleDictationStreamConnectInfoRequest`, context);
+  const handleResponse = vm.runInContext(`({${responseSource}}).handleDictationStreamConnectInfoRequest`, context);
   const sender = { sendInlineMessageForView(webContents, message) { assert.equal(this, sender); responses.push({ webContents, message }); } };
   let currentView, currentRequest;
   const wrapperOwner = { options: { chunkedMessageSender: sender }, handleDictationStreamConnectInfoRequest: handleResponse,
