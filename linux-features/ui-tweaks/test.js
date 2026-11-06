@@ -151,12 +151,12 @@ function simplifiedChineseLocaleFixture() {
   const members = Object.entries(labels)
     .map(([key, value]) => `"${key}":"${value}"`)
     .join(",");
-  return "export const __rspack_esm_id=216360;export const __rspack_esm_ids=[216360];" +
+  return "export const __rspack_esm_ids=[216360];" +
     `export const __webpack_modules__={wrpI(e){e.exports=JSON.parse('{"/+SIoK":"升级至 Plus",${members},"zaMBO4":"升级"}')}};`;
 }
 
 function localeLoaderFixture(entries) {
-  return "export const __rspack_esm_id=496175;export const __rspack_esm_ids=[496175];" +
+  return "export const __rspack_esm_ids=[496175];" +
     "export const __webpack_modules__={abcd(e,t,i){let n={" +
     entries.map(([locale, chunk, moduleId]) =>
       `"../locales/${locale}.json":function(){return i.e(${chunk}).then(i.t.bind(i,"${moduleId}",19))}`).join(",") +
