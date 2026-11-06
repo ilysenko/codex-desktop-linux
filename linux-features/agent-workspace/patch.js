@@ -9,7 +9,7 @@ const {
   listWebviewScriptAssets,
   patchWebviewAssets,
 } = require("../../scripts/patches/lib/assets.js");
-const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { createJavaScriptLexicalIndex, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
 const SETTINGS_ASSET = "agent-workspaces-linux.js";
 const SETTINGS_SLUG = "agent-workspaces";
@@ -191,7 +191,21 @@ function agentWorkspaceFetchSource() {
 }
 
 function bindingReferences(source, name) {
-  return [...source.matchAll(new RegExp(`(?<![\\w$])${name}(?![\\w$])`, "gu"))].length;
+  let count = [...source.matchAll(new RegExp(`(?<![\\w$])${name}(?![\\w$])`, "gu"))].length;
+  if (!source.includes("\\u")) return count;
+  let lexical;
+  const tokens = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[A-Za-z_$])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])*/gu;
+  for (const token of source.matchAll(tokens)) {
+    if (!token[0].includes("\\u")) continue;
+    const decoded = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => {
+      const point = parseInt(braced ?? fixed, 16);
+      return point <= 0x10ffff ? String.fromCodePoint(point) : "\0";
+    });
+    if (decoded !== name) continue;
+    lexical ??= createJavaScriptLexicalIndex(source);
+    if (lexical.isCode(token.index)) count++;
+  }
+  return count;
 }
 
 function hasOwnedMainReferences(source) {

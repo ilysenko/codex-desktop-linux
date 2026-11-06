@@ -2495,6 +2495,33 @@ test("canonical bridge rechecks native wiring, exact route/payload, outer bindin
   assert.deepEqual(captureWarns(() => applyAgentWorkspaceMainBridgePatch(unrelated)), { value: unrelated, warnings: [] });
 });
 
+test("main bridge rejects Unicode-equivalent owned helper bindings and keeps encoded data inert", t => {
+  const raw = syntheticMainBundle(), canonical = applyAgentWorkspaceMainBridgePatch(raw);
+  const head = "82820(module,exports,require){";
+  for (const name of ["codexLinuxAgentWorkspaceFetch", String.raw`codexLinuxAgentWorkspac\u0065Fetch`,
+    String.raw`codexLinuxAgentWorkspac\u{65}Fetch`, String.raw`\u0063odexLinuxAgentWorkspaceFetch`,
+    String.raw`codexLinuxAgentWorkspaceHandl\u0065rs`]) {
+    for (const source of [raw, canonical]) {
+      const invalid = source.replace(head, head + `var ${name}=async()=>true;`);
+      assert.notEqual(invalid, source);
+      new vm.Script(invalid);
+      const result = captureWarns(() => applyAgentWorkspaceMainBridgePatch(invalid));
+      assert.ok(result.value === invalid, name);
+      assert.equal(result.warnings.length, 1);
+      const app = mainBridgeWorkspace(t, { "early-bootstrap-45-aa.js": invalid });
+      assert.equal(normalMainBridge(app.root).patch.status, "skipped-optional");
+      assert.ok(app.read("early-bootstrap-45-aa.js") === invalid);
+    }
+  }
+  for (const data of [String.raw`const encodedNote="codexLinuxAgentWorkspac\u0065Fetch";`,
+    String.raw`/* codexLinuxAgentWorkspac\u0065Fetch */`, String.raw`const codexLinuxAgentWorkspaceFetchC\u006flor="kept";`]) {
+    const valid = raw.replace(head, head + data), result = captureWarns(() => applyAgentWorkspaceMainBridgePatch(valid));
+    assert.ok(result.value !== valid);
+    assert.deepEqual(result.warnings, []);
+    assert.equal(applyAgentWorkspaceMainBridgePatch(result.value), result.value);
+  }
+});
+
 test("main transaction restores partial writes, retries, and propagates unverifiable rollback as fatal", t => {
   const original = syntheticMainBundle();
   for (const fatal of [false, true]) {
