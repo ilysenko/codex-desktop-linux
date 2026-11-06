@@ -325,14 +325,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   runs exactly the files the guard checks; `scripts/ci-local.sh` still runs
   its own list. The GNOME dictation and package permission tests keep their
   scratch under `TMPDIR` too, and the shared app-server tests bind their
-  sockets inside the `try` that removes them.
-- `scripts/ci/run-node-checks.sh` reports every Node test again. It ran
-  `node --test` with `--test-force-exit`, which can drop finished tests from
-  the report and still exit 0 (nodejs/node#64833). With the flag, 8 of 11
-  local runs on Node 24 and 26 reported up to 47 fewer tests than ran. Every
-  test file now exits on its own, so the flag is gone. Where `timeout` exists,
-  and CI requires it, the watchdog still ends a run that a leaked handle holds
-  open.
+  sockets inside the `try` that removes them. The host-service tests wait for
+  their detached bridge to exit and kill it if it still runs after 3 s. The
+  Dock icon lock test's holder keeps the lock only while the test holds its
+  stdin open. The runner does not pass `--test-force-exit`. That flag can drop
+  finished tests from the report and still exit 0 (nodejs/node#64833). With
+  it, 8 of 11 local runs on Node 24 and 26 reported up to 47 fewer tests than
+  ran. A file that a leaked handle holds open fails the run with status 124
+  when the runner's 300 s `timeout` watchdog ends it. CI requires `timeout`; a
+  local run without it has no limit.
 - The AppShots bare modifier monitor waits for `xinput --version` before it
   starts its XInput 2 stream, and reports `permission-denied` when the X
   server cannot be reached or has no XInput 2. Before, it judged the stream

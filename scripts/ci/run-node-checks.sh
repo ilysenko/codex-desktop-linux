@@ -34,8 +34,8 @@ run_node_tests() {
     node scripts/ci/manage-labels.js --check || return
 
     # No --test-force-exit: it can drop finished tests from the report and still
-    # exit 0 (nodejs/node#64833). The timeout watchdog below bounds a leaked
-    # handle.
+    # exit 0 (nodejs/node#64833). Where timeout exists, the watchdog below ends
+    # a run that a leaked handle holds open; without it the run has no limit.
 
     # Every *.test.js and every test.js; a git pathspec * also matches /.
     while IFS= read -r file; do

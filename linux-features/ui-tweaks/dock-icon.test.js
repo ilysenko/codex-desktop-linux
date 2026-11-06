@@ -943,8 +943,10 @@ test("desktop synchronization serializes the per-app launcher transaction with a
     assert.equal(sync.exitCode, 0);
     assert.equal(fs.readFileSync(fixture.managedIcon("chatgpt"), "utf8"), "first-icon");
 
-    holder = childProcess.spawn("flock", [applicationsDir, "bash", "-c", "printf locked; sleep 7"], {
-      stdio: ["ignore", "pipe", "ignore"],
+    // flock's child holds the lock until its stdin closes or 7 s pass. The
+    // test closes stdin, and so does the test process dying.
+    holder = childProcess.spawn("flock", [applicationsDir, "bash", "-c", "printf locked; read -r -t 7 _"], {
+      stdio: ["pipe", "pipe", "ignore"],
     });
     await new Promise((resolve, reject) => {
       holder.stdout.once("data", resolve);
@@ -957,6 +959,7 @@ test("desktop synchronization serializes the per-app launcher transaction with a
     assert.ok(Date.now() - started >= 4500);
     assert.ok(Date.now() - started < 6500);
   } finally {
+    holder?.stdin?.end();
     holder?.kill();
     sync?.kill();
     fs.rmSync(fixture.tempDir, { recursive: true, force: true });
