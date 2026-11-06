@@ -372,9 +372,9 @@ function nativeTransport(t, { preloadSource = NATIVE_PRELOAD_FIXTURE, reply } = 
       pending.add(result); result.then(() => pending.delete(result), () => pending.delete(result)); return result;
     },
   };
-  const window = { ...eventTarget(), location: { origin: "app://-" }, postMessage() {} };
+  const window = { ...eventTarget(), location: { origin: "app://-", href: "app://-/index.html" }, postMessage() {} };
   const preload = vm.createContext({
-    window, document: { documentElement: { dataset: {} } }, performance: { timeOrigin: 1 },
+    URL, window, document: { documentElement: { dataset: {} } }, performance: { timeOrigin: 1 },
     module: { exports: {} }, process: { platform: "linux", arch: "x64" }, console,
     require(name) { assert.equal(name, "electron"); return { ipcRenderer, contextBridge: { exposeInMainWorld(name, value) { assert.equal(exposed.has(name), false); exposed.set(name, value); } }, webUtils: { getPathForFile: () => "" } }; },
   });
