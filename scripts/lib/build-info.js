@@ -258,7 +258,16 @@ function packageProfile(target) {
 function sha256File(filePath) {
   const crypto = require("node:crypto");
   const hasher = crypto.createHash("sha256");
-  hasher.update(fs.readFileSync(filePath));
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(1024 * 1024);
+    let bytesRead;
+    while ((bytesRead = fs.readSync(fd, buffer, 0, buffer.length)) > 0) {
+      hasher.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
   return hasher.digest("hex");
 }
 
