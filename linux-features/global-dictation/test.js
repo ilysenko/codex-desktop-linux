@@ -231,10 +231,9 @@ test("main patch rejects retired, partial, duplicate, and ambiguous toggle regis
 
 test("main patch handles dollar signs in minified identifiers", () => {
   const source = mainBundleFixture()
-    .split("eA")
-    .join("e$A")
-    .split("Lk")
-    .join("L$k");
+    .replace(/(?<![\w$])eA(?![\w$])/g, () => "e$A")
+    .replace(/(?<![\w$])Lk(?![\w$])/g, () => "L$k");
+  assert.ok(source.includes("loadNativeAddon:"), "Renaming a symbol preserves native parameter roles");
   const patched = applyPatchTwice(source);
   assert.match(patched, /function e\$A\(e,t,r\)/);
   assert.match(patched, /e\$A\(e,\{linuxCommandId:"globalDictationHold",onRegistrationChanged:/);
