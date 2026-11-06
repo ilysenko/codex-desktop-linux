@@ -7,6 +7,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { descriptors, applyStandalonePatch, applyTranscriptPatch } = require("./patch.js");
+const { applyPersistentPatch } = require("./persistent.js");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const { findWebviewAssetsContaining, patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
 const { patchBreaksJavaScriptSyntax } = require("../../scripts/patches/lib/javascript-syntax.js");
@@ -16,7 +17,9 @@ const { MESSAGE_IDS, translations, settingsContract, settingComponent, catalogPa
 // Current signed rspack/SWC shapes: double-quoted strings, literal-first
 // comparisons and the transcript key as the only template literal.
 const standaloneSource = 'function classify(e,{includeGeneratedImages:n=!1}={}){switch(e.type){case"exec":return wrap(e,"groupable");case"generated-image":return n?wrap(e,"standalone"):null;case"worktree-init":return wrap(e,"standalone");case"reasoning":case"automation-update":case"todo-list":return null}}function wrap(e,t){return{item:e,grouping:t}}';
-const persistentSource = 'var g={o:e=>e.mcpPersistent},p={Yr:e=>e.important},h={Q1:e=>e.dynamicPersistent},f={i$:()=>null};function persistent(input){let inputUnit=input.unit;return function({unit:e,hasFollowingFinalAnswer:t,keepMcpAppEntriesPersistent:n,mcpServerStatuses:s,renderMcpApps:a}){if("standalone"!==e.kind)return!1;let i=e.item.item;return"user-input-response"===i.type?!i.completed:!!("mcp-tool-call"===i.type&&(0,g.o)(i)||"assistant-message"===i.type&&(0,p.Yr)(i)||"dynamic-tool-call"===i.type&&(0,h.Q1)(i)||n&&a&&"mcp-tool-call"===i.type&&function({item:e,mcpServerStatuses:t}){let n=e.result?.type==="success"?e.result.raw:null;return(!e.completed||null!=e.result)&&(null!=e.mcpAppResourceUri||null!=(0,f.i$)({mcpServerStatuses:t,server:e.invocation.server,tool:e.invocation.tool,toolResult:n}))}({item:i,mcpServerStatuses:s}))||"user-message"===i.type&&("pending"===i.steeringStatus||!0===i.followsInterruptedFinalAnswer||!0===i.wasInHistoryPreview||"not-sent"===i.deliveryStatus||!0===i.hookFeedback||!t)}({unit:inputUnit,hasFollowingFinalAnswer:input.hasFollowingFinalAnswer,keepMcpAppEntriesPersistent:input.keepMcpAppEntriesPersistent,mcpServerStatuses:input.mcpServerStatuses,renderMcpApps:input.renderMcpApps})}const partition={collapsibleUnits:[],persistentUnits:[]};';
+const persistentSource = 'var f={o:e=>e.mcpPersistent},m={Yr:e=>e.important,rt:e=>e.important},p={Q1:e=>e.dynamicPersistent},h={i$:()=>null};' +
+  fs.readFileSync(path.join(__dirname,"../../scripts/patches/lib/fixtures/current-activity-partition.js"),"utf8") +
+  'function persistent(input){return partition([input.unit],input).persistentUnits.includes(input.unit)}';
 const transcriptSource = 'const classifier={c:item=>({grouping:item.grouping})};function key(item,fallback){return item.id??fallback}function transcript(items,n){let i=[],a=[],s=()=>{a.length&&(i.push({type:"agent-activity",items:a,collapseWhenPossible:!0}),a=[])};for(let[index,o]of items.entries()){let turn=0;let l="reasoning"===o.type||"automatic-approval-review"===o.type||"subagent-activity"===o.type?null:(0,classifier.c)(o);if(l?.grouping==="standalone"||n?.has(o)===!0){s(),i.push({type:"activity-item",key:`transcript-activity-item-${key(o,`${turn}-${index}`)}`,item:o});continue}a.push(o)}s();return i}';
 const summariesSource = 'function options(client,mode){return{reasoningSummaryOverride:!0===client.getDefaultFeatureOverride("concurrent_reasoning_summaries")||mode?"detailed":null,getRequestModel:e=>e,getRequestCollaborationMode(e){return e}}}function resolve(options,config,turn){let summary="none";null!=options.reasoningSummaryOverride&&(summary=options.reasoningSummaryOverride);summary=config.model_reasoning_summary??summary;void 0!==turn.summary&&(summary=turn.summary);return summary}';
 const expandedSource = 'function reasoning(e){let{item:n}=e,l=!n.completed,f=n.content,[h,g]=(0,React.useState)(!1),_=!l&&!!f;let y=n.content,q=null,b=l?!!y&&(null==q||"resumed"===q):h,x=l?y:f,markdown={children:x},disclosure={expanded:h,onToggle:()=>{g(toggle)}},scroll={items:[{key:"reasoning-markdown",node:markdown}],autoScrollToBottom:l,viewState:"expanded"};return{visible:b,disclosure,scroll}}function toggle(e){return!e}';
@@ -29,7 +32,7 @@ function warnings(fn) {
   try { return { value: fn(), messages }; } finally { console.warn = saved; }
 }
 
-const sourceApply = index => index === 0 ? applyStandalonePatch : index === 2 ? applyTranscriptPatch : descriptors[index].apply;
+const sourceApply = index => index === 0 ? applyStandalonePatch : index === 1 ? applyPersistentPatch : index === 2 ? applyTranscriptPatch : descriptors[index].apply;
 
 function patched(index, source = sources[index]) {
   const result = sourceApply(index)(source);
