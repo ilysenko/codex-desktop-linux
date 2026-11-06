@@ -37,7 +37,7 @@ const NATIVE_SETTINGS_VISIBILITY_NEEDLES = ['"built by openai"', '"chatgpt offic
 
 function nativeSettingsVisibilityState(source) {
   const marker = NATIVE_SETTINGS_VISIBILITY_MARKER;
-  const pattern = /function (?<fn>[\w$]+)\((?<plugins>[\w$]+),(?<hidden>[\w$]+),(?<restrictedMode>[\w$]+)\)\{(?:if\(0===\k<hidden>\.length&&!\k<restrictedMode>\)return \k<plugins>;|(?<patched>\/\* linux-native-settings-component \*\/))let (?<set>[\w$]+)=new Set\(\k<hidden>\);return \k<plugins>\.filter\((?<entry>[\w$]+)=>(?<exclusion>!\("openai-bundled"===\k<entry>\.marketplaceName&&"computer-use"===\k<entry>\.plugin\.name\)&&)?\(!\k<restrictedMode>\|\|!(?<restricted>\(0,[\w$]+\.[\w$]+\))\(\k<entry>\.plugin\.id\)\)&&!\k<set>\.has\(\k<entry>\.plugin\.id\)\)\}/g;
+  const pattern = /(?:(?<property>[\w$]+):function|function (?<fn>[\w$]+))\((?<plugins>[\w$]+),(?<hidden>[\w$]+),(?<restrictedMode>[\w$]+)\)\{(?:if\(0===\k<hidden>\.length&&!\k<restrictedMode>\)return \k<plugins>;|(?<patched>\/\* linux-native-settings-component \*\/))let (?<set>[\w$]+)=new Set\(\k<hidden>\);return \k<plugins>\.filter\((?<entry>[\w$]+)=>(?<exclusion>!\("openai-bundled"===\k<entry>\.marketplaceName&&"computer-use"===\k<entry>\.plugin\.name\)&&)?\(!\k<restrictedMode>\|\|!(?<restricted>\(0,[\w$]+\.[\w$]+\))\(\k<entry>\.plugin\.id\)\)&&!\k<set>\.has\(\k<entry>\.plugin\.id\)\)\}/g;
   const matches = [...source.matchAll(pattern)];
   const markerCount = source.split(marker).length - 1;
   const patchedCount = matches.filter((match) => match.groups.patched != null).length;
@@ -63,8 +63,9 @@ function applyNativeSettingsVisibilityPatch(source) {
   }
   if (state.kind === "patched") return source;
   const { match, marker } = state;
-  const { fn, plugins, hidden, restrictedMode, set, entry, restricted } = match.groups;
-  const replacement = `function ${fn}(${plugins},${hidden},${restrictedMode}){${marker}let ${set}=new Set(${hidden});return ${plugins}.filter(${entry}=>!("openai-bundled"===${entry}.marketplaceName&&"computer-use"===${entry}.plugin.name)&&(!${restrictedMode}||!${restricted}(${entry}.plugin.id))&&!${set}.has(${entry}.plugin.id))}`;
+  const { property, fn, plugins, hidden, restrictedMode, set, entry, restricted } = match.groups;
+  const head = property == null ? `function ${fn}` : `${property}:function`;
+  const replacement = `${head}(${plugins},${hidden},${restrictedMode}){${marker}let ${set}=new Set(${hidden});return ${plugins}.filter(${entry}=>!("openai-bundled"===${entry}.marketplaceName&&"computer-use"===${entry}.plugin.name)&&(!${restrictedMode}||!${restricted}(${entry}.plugin.id))&&!${set}.has(${entry}.plugin.id))}`;
   const patched = source.slice(0, match.index) + replacement +
     source.slice(match.index + match[0].length);
   if (nativeSettingsVisibilityState(patched).kind !== "patched") {

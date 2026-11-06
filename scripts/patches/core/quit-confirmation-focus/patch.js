@@ -1,173 +1,123 @@
 "use strict";
 
-const fs = require("node:fs");
-const path = require("node:path");
+const { mainBundlePatch } = require("../../descriptor.js");
+const { escapeRegExp, findMatchingBrace } = require("../../lib/minified-js.js");
 
-const {
-  applyShellEnvironmentStartup,
-  matchesShellEnvironment,
-} = require("../shell-env-startup/shell-env.js");
-
-const HELPER_NAME = "codexLinuxQuitDialogParent";
-const HELPER_SOURCE =
-  "let codexLinuxQuitPromptPending=!1;" +
-  `function ${HELPER_NAME}(e){` +
-  "let t=require(`electron`).BrowserWindow,n=t.getFocusedWindow();" +
-  "if(n!=null&&!n.isDestroyed()&&n.isVisible())return n;" +
-  "n=e.windowManager.getPrimaryWindow();" +
-  "if(n!=null&&!n.isDestroyed()&&n.isVisible())return n;" +
-  "return t.getAllWindows().find(e=>!e.isDestroyed()&&e.isVisible())??null}";
-
-const IDENT = "[A-Za-z_$][\\w$]*";
-const QUIT_ANCHOR = /messageId:(["'`])desktop\.quitConfirmation\.quit\1/g;
-const QUIT_COORDINATOR = new RegExp(
-  `function\\(\\{isWindows:(${IDENT}),disableQuitConfirmationPrompt:(${IDENT}),` +
-    `quitState:(${IDENT}),windows:(${IDENT}),`,
-  "g",
+const IDENTIFIER = "[A-Za-z_$][\\w$]*";
+const QUIT_STATE_METHOD = "canQuitWithoutPrompt(){return this.allowQuitWithoutPrompt}";
+const QUIT_APPROVAL_METHOD = "markQuitApproved(){this.allowQuitWithoutPrompt=!0}";
+const LIFECYCLE_HEADER = new RegExp(
+  String.raw`function\(\{isWindows:${IDENTIFIER},quitState:(?<quitState>${IDENTIFIER}),` +
+    String.raw`windows:(?<windows>${IDENTIFIER}),applicationMenuManager:${IDENTIFIER},` +
+    String.raw`ensureWindow:${IDENTIFIER},hotkeyWindowLifecycleManager:${IDENTIFIER},` +
+    String.raw`globalDictationLifecycleManager:${IDENTIFIER},globalState:${IDENTIFIER},` +
+    String.raw`settingsStore:${IDENTIFIER},stopCodexMicro:${IDENTIFIER},` +
+    String.raw`flushTracingBeforeQuit:${IDENTIFIER},flushAndDisposeContext:${IDENTIFIER},` +
+    String.raw`disposables:${IDENTIFIER},appEvent:${IDENTIFIER},onAppEntrySource:${IDENTIFIER},` +
+    String.raw`canAttributeAppReactivation:${IDENTIFIER}\}\)\{`,
+  "gu",
 );
 
-function quitConfirmationMarkers(source) {
-  QUIT_ANCHOR.lastIndex = 0;
-  return [...source.matchAll(QUIT_ANCHOR)];
+function allMatches(source, pattern) {
+  pattern.lastIndex = 0;
+  return [...source.matchAll(pattern)];
 }
 
-function matchesQuitConfirmationModule(source) {
-  return quitConfirmationMarkers(source).length === 1;
-}
-
-function quitCoordinator(source) {
-  const markers = quitConfirmationMarkers(source);
-  if (markers.length !== 1) {
-    throw new Error("Expected exactly one official Quit confirmation anchor");
+function findQuitLifecycleContract(source) {
+  if (source.split(QUIT_STATE_METHOD).length !== 2 ||
+      source.split(QUIT_APPROVAL_METHOD).length !== 2) {
+    return null;
   }
 
-  QUIT_COORDINATOR.lastIndex = 0;
-  const coordinators = [...source.matchAll(QUIT_COORDINATOR)]
-    .filter((match) => match.index < markers[0].index);
-  if (coordinators.length !== 1) {
-    throw new Error("Expected exactly one official Quit coordinator");
-  }
-  const [coordinator] = coordinators;
-  return {
-    anchorIndex: markers[0].index,
-    bodyStart: coordinator.index + coordinator[0].length,
-    quitState: coordinator[3],
-    windows: coordinator[4],
-  };
-}
-
-function applyQuitConfirmationFocus(source) {
-  const { anchorIndex, bodyStart, quitState, windows } = quitCoordinator(source);
-  const helperPresent = source.includes(`function ${HELPER_NAME}(`);
-  if (helperPresent) {
-    const guard = source.indexOf("if(codexLinuxQuitPromptPending){", bodyStart);
-    const asyncDialog = source.indexOf(
-      `dialog.showMessageBox(codexLinuxParent,codexLinuxOptions)`,
-      bodyStart,
-    );
-    if (guard >= 0 && guard < anchorIndex && asyncDialog >= 0) {
-      return source;
-    }
-    throw new Error("Incomplete Quit confirmation focus patch");
-  }
+  const owners = allMatches(source, LIFECYCLE_HEADER);
+  if (owners.length !== 1) return null;
+  const [owner] = owners;
+  const ownerOpen = owner.index + owner[0].length - 1;
+  const ownerClose = findMatchingBrace(source, ownerOpen);
+  if (ownerClose < 0) return null;
+  const ownerBody = source.slice(ownerOpen, ownerClose + 1);
 
   const beforeQuitPattern = new RegExp(
-    `(${IDENT})\\.app\\.on\\((["'\\\`])before-quit\\2,(${IDENT})=>\\{`,
-    "g",
+    String.raw`${IDENTIFIER}\.app\.on\("before-quit",(?<event>${IDENTIFIER})=>\{`,
+    "gu",
   );
-  const beforeQuit = [...source.slice(bodyStart, anchorIndex).matchAll(beforeQuitPattern)];
-  if (beforeQuit.length !== 1) {
-    throw new Error("Expected one official before-quit handler");
-  }
-  const beforeQuitIndex = bodyStart + beforeQuit[0].index;
-  const [, appAlias, , eventName] = beforeQuit[0];
-  const confirmation = new RegExp(
-    `${appAlias}\\.dialog\\.showMessageBoxSync\\((\\{[\\s\\S]*?\\})\\)` +
-      `\\?${eventName}\\.preventDefault\\(\\):\\(` +
-      `${quitState}\\.markQuitApproved\\(\\),${IDENT}=!0,` +
-      `${windows}\\.markAppQuitting\\(\\)\\)`,
-    "g",
+  const beforeQuitHandlers = allMatches(ownerBody, beforeQuitPattern);
+  if (beforeQuitHandlers.length !== 1) return null;
+  const [beforeQuit] = beforeQuitHandlers;
+  const handlerOpenInOwner = beforeQuit.index + beforeQuit[0].length - 1;
+  const handlerCloseInOwner = findMatchingBrace(ownerBody, handlerOpenInOwner);
+  if (handlerCloseInOwner < 0) return null;
+  const handlerBody = ownerBody.slice(handlerOpenInOwner, handlerCloseInOwner + 1);
+
+  const { event } = beforeQuit.groups;
+  const { quitState, windows } = owner.groups;
+  const acceptedPattern = new RegExp(
+    String.raw`(?<quitting>${IDENTIFIER})=!0,${escapeRegExp(windows)}` +
+      String.raw`\.markAppQuitting\(\)\):${escapeRegExp(event)}\.preventDefault\(\)`,
+    "gu",
   );
-  const confirmations = [...source.slice(beforeQuitIndex).matchAll(confirmation)]
-    .filter((match) => beforeQuitIndex + match.index < anchorIndex &&
-      beforeQuitIndex + match.index + match[0].length > anchorIndex);
-  if (confirmations.length !== 1) {
-    throw new Error("Expected one official synchronous Quit confirmation");
+  const accepted = allMatches(handlerBody, acceptedPattern);
+  if (accepted.length !== 1) return null;
+  const [acceptedMatch] = accepted;
+  const acceptedAction = `${acceptedMatch.groups.quitting}=!0,${windows}.markAppQuitting()`;
+  const approvalBranch =
+    `${quitState}.canQuitWithoutPrompt()?(${acceptedAction}):${event}.preventDefault()`;
+  const approvalCount = handlerBody.split(approvalBranch).length - 1;
+  if (approvalCount > 1 ||
+      (approvalCount === 0 && handlerBody.includes(`${quitState}.canQuitWithoutPrompt()`))) {
+    return null;
   }
-  const confirmationIndex = beforeQuitIndex + confirmations[0].index;
 
-  const patchedConfirmation = confirmations[0][0].replace(confirmation, (_match, options) =>
-    `${eventName}.preventDefault();codexLinuxQuitPromptPending=!0;` +
-    `let codexLinuxParent=${HELPER_NAME}(${windows});` +
-    `let codexLinuxOptions=${options};` +
-    `Promise.resolve().then(()=>codexLinuxParent?` +
-    `${appAlias}.dialog.showMessageBox(codexLinuxParent,codexLinuxOptions):` +
-    `${appAlias}.dialog.showMessageBox(codexLinuxOptions)).then(e=>{` +
-    `codexLinuxQuitPromptPending=!1;if(e.response===0){` +
-    `${quitState}.markQuitApproved();${appAlias}.app.quit()}}).catch(e=>{` +
-    "codexLinuxQuitPromptPending=!1;" +
-    "console.error(`[codex-desktop] Quit confirmation failed`,e)});return");
-  let patched = source.slice(0, confirmationIndex) + patchedConfirmation +
-    source.slice(confirmationIndex + confirmations[0][0].length);
-  patched = patched.slice(0, beforeQuitIndex) +
-    `${beforeQuit[0][0]}if(codexLinuxQuitPromptPending){` +
-      `${eventName}.preventDefault();return}` +
-    patched.slice(beforeQuitIndex + beforeQuit[0][0].length);
-
-  return HELPER_SOURCE + patched;
-}
-
-function patchRequiredCoreBlockers(extractedDir) {
-  const buildDir = path.join(extractedDir, ".vite", "build");
-  const modules = fs.readdirSync(buildDir)
-    .filter((name) => name.endsWith(".js"))
-    .sort()
-    .map((name) => ({
-      file: path.join(buildDir, name),
-      source: fs.readFileSync(path.join(buildDir, name), "utf8"),
-    }));
-  const mainCandidates = modules.filter(({ source }) => matchesQuitConfirmationModule(source));
-  if (mainCandidates.length !== 1) {
-    throw new Error("Expected exactly one official main-process Quit module");
-  }
-  const [{ file: mainPath, source: mainSource }] = mainCandidates;
-  const patchedMain = applyQuitConfirmationFocus(mainSource);
-  const shellCandidates = modules.filter(({ source }) => matchesShellEnvironment(source));
-  if (shellCandidates.length !== 1) {
-    throw new Error("Expected exactly one official shell environment module");
-  }
-  const [{ file: shellPath, source: shellSource }] = shellCandidates;
-  const sameModule = mainPath === shellPath;
-  const patchedShell = applyShellEnvironmentStartup(
-    sameModule ? patchedMain : shellSource,
-  );
-
-  // Resolve both semantic contracts before writing either file. The required
-  // core repair is one fail-closed transaction and one patch-report entry.
-  if (sameModule) {
-    if (patchedShell !== mainSource) fs.writeFileSync(mainPath, patchedShell, "utf8");
-  } else {
-    if (patchedMain !== mainSource) fs.writeFileSync(mainPath, patchedMain, "utf8");
-    if (patchedShell !== shellSource) fs.writeFileSync(shellPath, patchedShell, "utf8");
-  }
+  const handlerStart = ownerOpen + handlerOpenInOwner;
   return {
-    changed: sameModule
-      ? patchedShell !== mainSource
-      : patchedMain !== mainSource || patchedShell !== shellSource,
+    acceptedAction,
+    acceptedMatch,
+    approvalBranch,
+    approvalConsumed: approvalCount === 1,
+    event,
+    handlerBody,
+    handlerStart,
+    quitState,
+    windows,
   };
 }
 
-const descriptors = [{
+function applyQuitConfirmationFocusPatch(source) {
+  const contract = findQuitLifecycleContract(source);
+  if (contract == null) {
+    console.warn(
+      "WARN: Could not uniquely prove the current quit-state before-quit owner - " +
+      "skipping quit confirmation focus patch",
+    );
+    return source;
+  }
+  if (contract.approvalConsumed) return source;
+
+  const original = contract.acceptedMatch[0];
+  const replacement =
+    `${contract.acceptedAction}):${contract.approvalBranch}`;
+  const patchedHandler = contract.handlerBody.replace(original, replacement);
+  if (patchedHandler === contract.handlerBody ||
+      patchedHandler.split(contract.approvalBranch).length !== 2) {
+    console.warn(
+      "WARN: Could not uniquely wire the current quit approval into before-quit - " +
+      "skipping quit confirmation focus patch",
+    );
+    return source;
+  }
+  return source.slice(0, contract.handlerStart) + patchedHandler +
+    source.slice(contract.handlerStart + contract.handlerBody.length);
+}
+
+const descriptors = [mainBundlePatch({
   id: "quit-confirmation-focus",
-  phase: "extracted-app:pre-webview",
+  order: 100,
   ciPolicy: "required-upstream",
-  apply: patchRequiredCoreBlockers,
-}];
+  apply: applyQuitConfirmationFocusPatch,
+})];
 
 module.exports = {
-  HELPER_SOURCE,
-  applyQuitConfirmationFocus,
-  matchesQuitConfirmationModule,
-  patchRequiredCoreBlockers,
+  applyQuitConfirmationFocusPatch,
   descriptors,
+  findQuitLifecycleContract,
 };

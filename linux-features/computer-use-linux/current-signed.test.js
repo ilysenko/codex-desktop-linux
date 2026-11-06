@@ -40,7 +40,7 @@ test("current signed native metadata factory patches without changing the truste
 }, () => {
   // Locate the chunk holding the fetch handler semantically, not by chunk id.
   const owners = signedChunks().filter(({ source }) =>
-    source.includes("nativeApplications:this.fetchHandler.nativeApplications"));
+    source.includes("nativeApplications:this.desktopServices.nativeApplications"));
   assert.equal(owners.length, 1, "Expected one chunk exposing native Applications metadata");
   const [{ file, source: actual }] = owners;
   const patch = descriptors.find(({ id }) => id === "native-applications").apply;

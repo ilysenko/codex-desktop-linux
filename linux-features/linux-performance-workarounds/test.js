@@ -20,9 +20,9 @@ const {
   matchesLinuxMarkdownAnimationPerformanceContract,
 } = require("./implementation.js");
 
-// Shapes below follow the signed 26.1029.61003 rspack webview.
+// Shapes below follow the signed 26.1103.31037 rspack webview.
 function currentAppShellTabLayoutFixture() {
-  return 'function tabs(){let map=new Map,Qe=(e,t)=>{let{key:n}=e,r=map.get(n);return null==r?null:(0,a.jsx)(t_.i,{...t,activateOnClick:!0,animateLayout:!r.isWorkspaceHome&&t.animateLayout,animateExit:!r.isWorkspaceHome&&t.animateExit,closeButtonTabIndex:-1,controller:x.It,dragActivator:"tab",tab:r,shortcutHint:null})};return Qe}';
+  return 'function tabs(){let e8=!0,ez=!0,eN=!1,t$=ew.map((e,t)=>{let n=t===eW,i=e.render({disabled:e.disabled,isActive:n,isClosable:e.isClosable,isPresented:!!e.presentedContent,isRenaming:e.renameState.active,animateLayout:e8,animateExit:ez&&!eN,animatePosition:ez&&eN,animateWidth:tA,closeButtonTabIndex:-1,controller:eF,dragActivator:"tab",shortcutHint:null});return i});return t$}';
 }
 
 function currentSidebarFixture() {
@@ -104,7 +104,7 @@ test("current app-shell tab workaround disables tab layout animation", () => {
   assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), true);
   const patched = applyLinuxAppShellTabLayoutPerformancePatch(source);
   assert.notEqual(patched, source);
-  assert.match(patched, /animateLayout:!1,animateExit:!r\.isWorkspaceHome&&t\.animateExit,closeButtonTabIndex:-1,controller:x\.It,dragActivator:"tab"/u);
+  assert.match(patched, /animateLayout:!1,animateExit:ez&&!eN,animatePosition:ez&&eN,animateWidth:tA/u);
   assert.doesNotThrow(() => new Function(patched));
   assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(patched), true);
   assert.equal(applyLinuxAppShellTabLayoutPerformancePatch(patched), patched);
@@ -115,10 +115,10 @@ test("app-shell tab workaround fails closed for missing, duplicate, mixed, and p
   const patched = applyLinuxAppShellTabLayoutPerformancePatch(owner);
   const renamed = owner.replaceAll("Qe", "Xe").replaceAll("map", "tabsById");
   const cases = [
-    owner.replace('dragActivator:"tab"', 'dragActivator:"panel"'),
+    owner.replace("disabled:e.disabled", "disabled:!1"),
     owner + renamed,
     patched + renamed,
-    owner.replace("animateExit:!r.isWorkspaceHome&&t.animateExit", "animateExit:t.animateExit"),
+    owner.replace("animateWidth:tA", "layoutWidth:tA"),
   ];
   for (const source of cases) {
     assert.equal(matchesLinuxAppShellTabLayoutPerformanceContract(source), false);

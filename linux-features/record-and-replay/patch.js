@@ -40,6 +40,10 @@ function hasRecordReplayPluginGate(source) {
     return false;
   }
 
+  if (upstreamRecordReplayDescriptorState(pluginGateArray) === "patched") {
+    return true;
+  }
+
   const expectedDescriptor = buildRecordReplayDescriptor();
   const sourceNameCount = [...source.matchAll(recordReplayPluginNamePattern("g"))].length;
   const arrayNameCount = [
@@ -49,6 +53,24 @@ function hasRecordReplayPluginGate(source) {
     && arrayNameCount === 1
     && source.split(expectedDescriptor).length - 1 === 1
     && pluginGateArray.text.split(expectedDescriptor).length - 1 === 1;
+}
+
+function upstreamRecordReplayDescriptorState(pluginGateArray) {
+  const namespace = escapeRegExp(pluginGateArray.descriptorNamespace);
+  const current = new RegExp(
+    String.raw`\{\.\.\.${namespace}\.recordAndReplay,isAvailable:\(\{features:([A-Za-z_$][\w$]*),platform:([A-Za-z_$][\w$]*)\}\)=>"darwin"===\2&&\1\.recordAndReplay\}`,
+    "g",
+  );
+  const patched = new RegExp(
+    String.raw`\{\.\.\.${namespace}\.recordAndReplay,isAvailable:\(\{features:([A-Za-z_$][\w$]*),platform:([A-Za-z_$][\w$]*)\}\)=>\("darwin"===\2\|\|"linux"===\2\)&&\1\.recordAndReplay\}`,
+    "g",
+  );
+  const currentMatches = [...pluginGateArray.text.matchAll(current)];
+  const patchedMatches = [...pluginGateArray.text.matchAll(patched)];
+  if (currentMatches.length === 1 && patchedMatches.length === 0) return { kind: "current", match: currentMatches[0] };
+  if (currentMatches.length === 0 && patchedMatches.length === 1) return "patched";
+  if (currentMatches.length === 0 && patchedMatches.length === 0) return "missing";
+  return "ambiguous";
 }
 
 function hasAnyRecordReplayPluginName(source) {
@@ -91,10 +113,10 @@ function findBundledPluginGateArray(source) {
   const markerPattern = /\.\.\.([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.computerUse\b/g;
   for (const marker of source.matchAll(markerPattern)) {
     const markerIndex = marker.index;
-    const openIndex = source.lastIndexOf("[", markerIndex);
-    if (openIndex === -1) continue;
-    const closeIndex = findMatchingBracket(source, openIndex);
-    if (closeIndex !== -1 && markerIndex < closeIndex) {
+    let openIndex = source.lastIndexOf("[", markerIndex);
+    while (openIndex !== -1 && markerIndex - openIndex < 100_000) {
+      const closeIndex = findMatchingBracket(source, openIndex);
+      if (closeIndex !== -1 && markerIndex < closeIndex) {
       const text = source.slice(openIndex + 1, closeIndex);
       const descriptorNamespace = marker[1];
       if (
@@ -105,6 +127,8 @@ function findBundledPluginGateArray(source) {
       ) {
         return { start: openIndex + 1, end: closeIndex, text, descriptorNamespace };
       }
+      }
+      openIndex = source.lastIndexOf("[", openIndex - 1);
     }
   }
   return null;
@@ -129,6 +153,17 @@ function applyRecordReplayPluginGatePatch(currentSource) {
   const pluginGateArray = findBundledPluginGateArray(currentSource);
   if (pluginGateArray == null) {
     throw new Error("Optional Record & Replay plugin gate patch drift: could not find expected upstream .computerUse plugin descriptor array");
+  }
+  const upstream = upstreamRecordReplayDescriptorState(pluginGateArray);
+  if (upstream === "patched") return currentSource;
+  if (upstream?.kind === "current") {
+    const replacement = upstream.match[0].replace(
+      `"darwin"===${upstream.match[2]}`,
+      `("darwin"===${upstream.match[2]}||"linux"===${upstream.match[2]})`,
+    );
+    const index = pluginGateArray.start + upstream.match.index;
+    return currentSource.slice(0, index) + replacement +
+      currentSource.slice(index + upstream.match[0].length);
   }
   const match = findAlwaysOnBundledDescriptor(pluginGateArray);
   if (match == null) {
@@ -286,7 +321,10 @@ function recordReplayActiveSpeechContextExpression(dispatchVar, transcriptVar) {
 
 function recordReplayCurrentChatGptBlocks(source) {
   const id = String.raw`[A-Za-z_$][\w$]*`;
-  const starts = source.matchAll(new RegExp(String.raw`if\((?<transcript>${id})\.length>0\|\|null!=(?<handlers>${id})\.chatgpt\)\{`, "g"));
+  const starts = source.matchAll(new RegExp(
+    String.raw`if\((?<transcript>${id})\.length>0\|\|null!=(?:(?<handlers>${id})\.chatgpt|${id})\)\{`,
+    "g",
+  ));
   const blocks = [];
   for (const start of starts) {
     const openBrace = start.index + start[0].length - 1;

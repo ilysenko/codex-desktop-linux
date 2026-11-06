@@ -54,7 +54,7 @@ test("official Linux baseline has required compatibility descriptors", () => {
     [{
       id: "quit-confirmation-focus",
       ciPolicy: "required-upstream",
-      phase: "extracted-app:pre-webview",
+      phase: "main-bundle",
     }],
   );
   assert.equal(featurePatchDescriptors({

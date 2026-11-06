@@ -3812,9 +3812,14 @@ test(
         patchedAssets.set(name, result.value);
       }
     }
-    // The mobile setup flag the revoke reset clears is still a global-state key.
+    // The mobile setup flag the revoke reset clears is still a global-state
+    // key. Rspack may carry the same key registry in multiple chunks.
     const keys = findWebviewAssetsContaining(SIGNED_APP, ['CODEX_MOBILE_SETUP_COMPLETED:"codex-mobile-has-connected-device"']);
-    assert.equal(keys.length, 1);
+    assert.ok(keys.length > 0);
+    for (const name of keys) {
+      const source = fs.readFileSync(path.join(assetsDir, name), "utf8");
+      assert.equal(source.split('CODEX_MOBILE_SETUP_COMPLETED:"codex-mobile-has-connected-device"').length - 1, 1, name);
+    }
     for (const [name, patched] of patchedAssets) {
       execFileSyncForModuleCheck(patched, name);
     }

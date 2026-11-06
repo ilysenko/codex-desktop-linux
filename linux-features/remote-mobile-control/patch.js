@@ -41,9 +41,11 @@ const REMOTE_CONTROL_FEATURE_SYNC_MARKER = "codexLinuxRemoteControlFeatureSyncEn
 // The remote-control environment loader asks a Statsig gate hook, reached
 // through a module import binding: `function p(){return(0,o.Zj)("1042620455")}`.
 const REMOTE_CONTROL_LOAD_GATE_NEEDLE =
-  /function ([A-Za-z_$][\w$]*)\(\)\{return\(0,([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\("1042620455"\)\}/gu;
+  /(?<prefix>(?:[A-Za-z_$][\w$]*:)?function)(?: (?<functionName>[A-Za-z_$][\w$]*))?\(\)\{return\(0,(?<gateHook>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\("1042620455"\)\}/gu;
 const REMOTE_CONTROL_LOAD_GATE_PATCHED =
-  /function ([A-Za-z_$][\w$]*)\(\)\{return codexLinuxRemoteControlLoadGateEnabled\(\)\|\|\(0,([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\("1042620455"\)\}function codexLinuxRemoteControlLoadGateEnabled\(\)\{/gu;
+  /(?<prefix>(?:[A-Za-z_$][\w$]*:)?function)(?: (?<functionName>[A-Za-z_$][\w$]*))?\(\)\{return codexLinuxRemoteControlLoadGateEnabled\(\)\|\|\(0,(?<gateHook>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\("1042620455"\)\}function codexLinuxRemoteControlLoadGateEnabled\(\)\{/gu;
+const REMOTE_CONTROL_LOAD_GATE_PATCHED_INLINE =
+  /(?<prefix>[A-Za-z_$][\w$]*:function)\(\)\{return codexLinuxRemoteControlLoadGateEnabled\(\)\|\|\(0,(?<gateHook>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\("1042620455"\);function codexLinuxRemoteControlLoadGateEnabled\(\)\{/gu;
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
   "codexLinuxRemoteMobileConversationHydration";
@@ -572,8 +574,14 @@ function validateLinuxRemoteControlAutoConnectContract(extractedDir) {
     listWebviewScriptAssets(extractedDir),
     /async function [A-Za-z_$][\w$]*\((?<choice>[A-Za-z_$][\w$]*)\)\{let (?<service>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\.appServices\.remoteConnections;if\(null==\k<service>\)throw Error\("Remote connections are unavailable"\);return \k<service>\.setAutoConnect\(\k<choice>\)\}/u,
   );
-  if (serviceMatches.length !== 1 || callerMatches.length !== 1) {
-    const reason = `could not uniquely resolve upstream auto-connect service and caller (service=${serviceMatches.length}, caller=${callerMatches.length})`;
+  const currentServiceOwnerMatches = findSemanticMatches(
+    buildDir,
+    fs.existsSync(buildDir) ? fs.readdirSync(buildDir).filter((name) => name.endsWith(".js")).sort() : [],
+    /async setRemoteControlEnabled\([A-Za-z_$][\w$]*\)\{[\s\S]{0,1000}?"Remote control connections are unavailable"[\s\S]{0,1000}?\}getState\([A-Za-z_$][\w$]*\)\{return this\.[A-Za-z_$][\w$]*\.appServerConnectionState\([A-Za-z_$][\w$]*\)\}setAutoConnect\((?<params>[A-Za-z_$][\w$]*)\)\{return this\.(?<service>[A-Za-z_$][\w$]*)\.setRemoteConnectionAutoConnect\(\k<params>\.hostId,\k<params>\.autoConnect\)\}/u,
+  );
+  const callerCount = callerMatches.length + currentServiceOwnerMatches.length;
+  if (serviceMatches.length !== 1 || callerCount !== 1) {
+    const reason = `could not uniquely resolve upstream auto-connect service and caller (service=${serviceMatches.length}, caller=${callerCount})`;
     console.warn(`WARN: ${reason}`);
     return { matched: false, changed: false, reason };
   }
@@ -582,12 +590,16 @@ function validateLinuxRemoteControlAutoConnectContract(extractedDir) {
 
 function matchesLinuxRemoteControlLoadGateContract(source) {
   return [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_NEEDLE)].length +
-    [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED)].length === 1;
+    [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED)].length +
+    [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED_INLINE)].length === 1;
 }
 
 function applyLinuxRemoteControlLoadGatePatch(source) {
   const pristine = [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_NEEDLE)];
-  const patched = [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED)];
+  const patched = [
+    ...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED),
+    ...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED_INLINE),
+  ];
   const markers = source.split(REMOTE_CONTROL_LOAD_GATE_MARKER).length - 1;
   if (pristine.length === 0 && patched.length === 1 && markers === 2) return source;
   if (pristine.length !== 1 || patched.length !== 0 || markers !== 0) {
@@ -595,10 +607,12 @@ function applyLinuxRemoteControlLoadGatePatch(source) {
     return source;
   }
   const [match] = pristine;
-  const [, functionName, gateHook] = match;
-  const replacement =
-    `function ${functionName}(){return ${REMOTE_CONTROL_LOAD_GATE_MARKER}()||(0,${gateHook})("1042620455")}` +
-    `function ${REMOTE_CONTROL_LOAD_GATE_MARKER}(){return"undefined"!=typeof navigator&&navigator.userAgent.includes("Linux")}`;
+  const { prefix, functionName, gateHook } = match.groups;
+  const declaration = `${prefix}${functionName == null ? "" : ` ${functionName}`}`;
+  const helper = `function ${REMOTE_CONTROL_LOAD_GATE_MARKER}(){return"undefined"!=typeof navigator&&navigator.userAgent.includes("Linux")}`;
+  const replacement = functionName == null
+    ? `${declaration}(){return ${REMOTE_CONTROL_LOAD_GATE_MARKER}()||(0,${gateHook})("1042620455");${helper}}`
+    : `${declaration}(){return ${REMOTE_CONTROL_LOAD_GATE_MARKER}()||(0,${gateHook})("1042620455")}${helper}`;
   return source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
 }
 
@@ -774,21 +788,26 @@ function applyLinuxRemoteConnectionsRefreshPatch(source) {
 
   const effectPattern =
     /([A-Za-z_$][\w$]*)=\(\)=>\{let ([A-Za-z_$][\w$]*)=null,([A-Za-z_$][\w$]*)=!1,([A-Za-z_$][\w$]*)=async\(\)=>\{\3\|\|\(\3=!0,\2=new AbortController,await \(async\(\)=>\{await ([A-Za-z_$][\w$]*)\(\2\.signal\)\}\)\(\)\.finally\(\(\)=>\{\2=null,\3=!1\}\)\)\},([A-Za-z_$][\w$]*)=window\.setInterval\(\(\)=>\{\4\(\)\},15e3\);return\(\)=>\{\2\?\.abort\(\),window\.clearInterval\(\6\)\}\}/gu;
-  const matches = [...source.matchAll(effectPattern)];
+  let matches = [...source.matchAll(effectPattern)];
+  let modern = false;
+  if (matches.length === 0) {
+    const modernEffectPattern =
+      /([A-Za-z_$][\w$]*)=\(\)=>\{let ([A-Za-z_$][\w$]*)=null,([A-Za-z_$][\w$]*)=!1,([A-Za-z_$][\w$]*)=window\.setInterval\(\(\)=>\{\(async\(\)=>\{\3\|\|\(\3=!0,\2=new AbortController,await \(async\(\)=>\{await ([A-Za-z_$][\w$]*)\(\2\.signal\)\}\)\(\)\.finally\(\(\)=>\{\2=null,\3=!1\}\)\)\}\)\(\)\},15e3\);return\(\)=>\{\2\?\.abort\(\),window\.clearInterval\(\4\)\}\}/gu;
+    matches = [...source.matchAll(modernEffectPattern)];
+    modern = matches.length === 1;
+  }
   if (matches.length !== 1) {
     console.warn("WARN: Could not find unique remote-connections auto-refresh effect - skipping Linux remote-connections refresh patch");
     return source;
   }
 
-  const [
-    needle,
-    effectVar,
-    abortVar,
-    pendingVar,
-    refreshVar,
-    refreshEventVar,
-    intervalVar,
-  ] = matches[0];
+  const needle = matches[0][0];
+  const effectVar = matches[0][1];
+  const abortVar = matches[0][2];
+  const pendingVar = matches[0][3];
+  const refreshVar = modern ? "codexLinuxRemoteConnectionsRefresh" : matches[0][4];
+  const intervalVar = modern ? matches[0][4] : matches[0][6];
+  const refreshEventVar = modern ? matches[0][5] : matches[0][5];
   const replacement =
     `${effectVar}=()=>{let ${abortVar}=null,${pendingVar}=!1,${refreshVar}=async()=>{${pendingVar}||(${pendingVar}=!0,${abortVar}=new AbortController,await(async()=>{await ${refreshEventVar}(${abortVar}.signal)})().finally(()=>{${abortVar}=null,${pendingVar}=!1}))},` +
     `codexLinuxRemoteConnectionsRefreshTimer=null,codexLinuxRemoteConnectionsRefreshLast=0,${REMOTE_CONNECTIONS_REFRESH_MARKER}=()=>{if(document.visibilityState===\`hidden\`)return;let e=Date.now(),t=()=>{codexLinuxRemoteConnectionsRefreshLast=Date.now(),codexLinuxRemoteConnectionsRefreshTimer=null,${refreshVar}()};if(e-codexLinuxRemoteConnectionsRefreshLast<1e3){codexLinuxRemoteConnectionsRefreshTimer!=null&&window.clearTimeout(codexLinuxRemoteConnectionsRefreshTimer),codexLinuxRemoteConnectionsRefreshTimer=window.setTimeout(t,1e3-(e-codexLinuxRemoteConnectionsRefreshLast));return}t()},` +
@@ -943,6 +962,61 @@ function applyLinuxRemoteControlStatusReadGuardPatch(source) {
   const markerCount = source.split(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER).length - 1;
   if (pristine.length === 0 && patched.length === 1 && helperCount === 1 && markerCount === 2) {
     return source;
+  }
+  if (
+    pristine.length === 0 && patched.length === 0 && helperCount === 1 && markerCount === 2 &&
+    countText(source, 'sendRequest("remoteControl/status/read",void 0)') === 1 &&
+    countText(source, 'methods:"remoteControl/status/changed"') === 1 &&
+    source.includes(`${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(`) &&
+    new RegExp(`[A-Za-z_$][\\w$]*:function\\([^)]*\\)\\{function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}\\(`, "u").test(source) &&
+    source.includes('{status:`disabled`,available:!1,accessRequired:!1}')
+  ) {
+    return source;
+  }
+  if (pristine.length === 0 && patched.length === 0 && markerCount === 0) {
+    const candidates = [];
+    for (const log of source.matchAll(/"Failed to read remote-control status"/gu)) {
+      const headers = [...source.slice(0, log.index).matchAll(
+        /[A-Za-z_$][\w$]*:function\((?<store>[A-Za-z_$][\w$]*),(?<host>[A-Za-z_$][\w$]*),(?<client>[A-Za-z_$][\w$]*),(?<current>[A-Za-z_$][\w$]*)\)\{/gu,
+      )];
+      const header = headers.at(-1) ?? null;
+      const start = header?.index ?? -1;
+      const open = start === -1 ? -1 : start + header[0].length - 1;
+      const end = open === -1 ? -1 : findMatchingBrace(source, open);
+      if (end < log.index) continue;
+      const owner = source.slice(start, end + 1);
+      const listener = /listener:\(\{params:(?<params>[A-Za-z_$][\w$]*)\}\)=>\{(?<active>[A-Za-z_$][\w$]*)\(\)&&(?<setter>[A-Za-z_$][\w$]*)\((?<listenerStore>[A-Za-z_$][\w$]*),(?<listenerHost>[A-Za-z_$][\w$]*),\k<params>\)\}/u.exec(owner);
+      const cleanup = /,([A-Za-z_$][\w$]*)=\(\)=>\{[\s\S]{0,300}?\};return /u.exec(owner);
+      const readStart = /\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\([A-Za-z_$][\w$]*\.sendRequest\("remoteControl\/status\/read",void 0\),[A-Za-z_$][\w$]*\.signal\)/u.exec(owner);
+      const readEnd = cleanup == null ? -1 : owner.lastIndexOf(`,${cleanup[1]}}`);
+      const readText = readStart == null || readEnd <= readStart.index ? null : owner.slice(readStart.index, readEnd);
+      const read = readText == null || !readText.endsWith("})") ||
+        countText(readText, '"Failed to read remote-control status"') !== 1
+        ? null
+        : { 0: readText, index: readStart.index, groups: { read: readText } };
+      if (
+        header != null && listener != null && read != null &&
+        listener.groups.listenerStore === header.groups.store &&
+        listener.groups.listenerHost === header.groups.host &&
+        countText(owner, 'methods:"remoteControl/status/changed"') === 1 &&
+        countText(owner, 'sendRequest("remoteControl/status/read",void 0)') === 1 &&
+        countText(owner, "new AbortController") === 1 &&
+        countText(owner, ".onRpcBroken(") === 2
+      ) {
+        candidates.push({ start, openOffset: open - start, owner, header, listener, read });
+      }
+    }
+    if (candidates.length === 1) {
+      const { start, openOffset, owner, header, listener, read } = candidates[0];
+      const { store, host } = header.groups;
+      const { active, setter } = listener.groups;
+      const guardedRead = `${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${host})?${read.groups.read}:` +
+        `(${active}()&&${setter}(${store},${host},{status:\`disabled\`,available:!1,accessRequired:!1}),void 0)`;
+      let replacedOwner = owner.slice(0, read.index) + guardedRead + owner.slice(read.index + read[0].length);
+      replacedOwner = replacedOwner.slice(0, openOffset + 1) + REMOTE_CONTROL_STATUS_READ_HELPER +
+        replacedOwner.slice(openOffset + 1);
+      return source.slice(0, start) + replacedOwner + source.slice(start + owner.length);
+    }
   }
   if (pristine.length !== 1 || patched.length !== 0 || markerCount !== 0) {
     console.warn("WARN: Could not find unique complete remote-control status subscription - skipping Linux remote-control status guard patch");
@@ -1163,6 +1237,60 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
 
   const [summaryMatch] = summaryMatches;
   const { request: requestVar, summary: summaryVar } = summaryMatch.groups;
+  const modernResolverHeader =
+    /async function\(\{manager:(?<manager>[A-Za-z_$][\w$]*),conversationId:(?<conversation>[A-Za-z_$][\w$]*),operation:(?<operation>[A-Za-z_$][\w$]*),capabilities:/gu;
+  const modernPatchedResolverHeader =
+    /async function\(\{manager:(?<manager>[A-Za-z_$][\w$]*),conversationId:(?<conversation>[A-Za-z_$][\w$]*),operation:(?<operation>[A-Za-z_$][\w$]*),codexLinuxRemoteMobileHost:(?<mobile>[A-Za-z_$][\w$]*),capabilities:/gu;
+  const modernCaller =
+    /(?<prefix>[A-Za-z_$][\w$]*=\{manager:(?<manager>[A-Za-z_$][\w$]*),conversationId:(?<conversation>[A-Za-z_$][\w$]*),operation:[A-Za-z_$][\w$]*,)(?=turnStarts:)/gu;
+  const modernPatchedCaller =
+    /(?<prefix>[A-Za-z_$][\w$]*=\{manager:(?<manager>[A-Za-z_$][\w$]*),conversationId:(?<conversation>[A-Za-z_$][\w$]*),operation:[A-Za-z_$][\w$]*,)codexLinuxRemoteMobileHost:"local"===\k<manager>\.getHostId\(\)&&"durable"===\k<manager>\.getConversation\(\k<conversation>\)\?\.mode,(?=turnStarts:)/gu;
+  const modernHeaders = [...turnStartPrefix.matchAll(modernResolverHeader)];
+  const modernPatchedHeaders = [...turnStartPrefix.matchAll(modernPatchedResolverHeader)];
+  const modernCallers = [...source.matchAll(modernCaller)];
+  const modernPatchedCallers = [...source.matchAll(modernPatchedCaller)];
+  if (modernHeaders.length + modernPatchedHeaders.length > 0 || modernCallers.length + modernPatchedCallers.length > 0) {
+    const absoluteMatchStart = functionStart + summaryMatch.index;
+    const absoluteMatchEnd = absoluteMatchStart + summaryMatch[0].length;
+    const modernSuffix =
+      `/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
+      `navigator.userAgent.includes("Linux")&&codexLinuxRemoteMobileHost&&void 0===${requestVar}.summary&&(${summaryVar}="none");`;
+    const resolverIsPatched = source.startsWith(modernSuffix, absoluteMatchEnd);
+    if (
+      resolverIsPatched && modernHeaders.length === 0 && modernPatchedHeaders.length === 1 &&
+      modernCallers.length === 0 && modernPatchedCallers.length === 1
+    ) {
+      return source;
+    }
+    if (
+      resolverIsPatched || modernHeaders.length !== 1 || modernPatchedHeaders.length !== 0 ||
+      modernCallers.length !== 1 || modernPatchedCallers.length !== 0 ||
+      source.includes(REMOTE_MOBILE_REASONING_SUMMARY_MARKER)
+    ) {
+      console.warn(
+        "WARN: Found ambiguous or incomplete reasoning-summary resolver/caller contract - skipping Linux remote mobile summary patch",
+      );
+      return source;
+    }
+    const header = modernHeaders[0];
+    const caller = modernCallers[0];
+    const headerReplacement = header[0].replace(
+      `operation:${header.groups.operation},capabilities:`,
+      `operation:${header.groups.operation},codexLinuxRemoteMobileHost:codexLinuxRemoteMobileHost,capabilities:`,
+    );
+    const callerReplacement =
+      `${caller.groups.prefix}codexLinuxRemoteMobileHost:"local"===${caller.groups.manager}.getHostId()&&` +
+      `"durable"===${caller.groups.manager}.getConversation(${caller.groups.conversation})?.mode,`;
+    const edits = [
+      { index: absoluteMatchEnd, length: 0, replacement: modernSuffix },
+      { index: functionStart + header.index, length: header[0].length, replacement: headerReplacement },
+      { index: caller.index, length: caller[0].length, replacement: callerReplacement },
+    ].sort((left, right) => right.index - left.index);
+    return edits.reduce(
+      (patched, edit) => patched.slice(0, edit.index) + edit.replacement + patched.slice(edit.index + edit.length),
+      source,
+    );
+  }
   const functionHeader = turnStartPrefix.match(/async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)[,)]/u);
   const helperName = functionHeader?.[1];
   if (helperName == null) {
