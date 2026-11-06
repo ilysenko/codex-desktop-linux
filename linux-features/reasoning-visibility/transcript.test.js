@@ -17,27 +17,45 @@ const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript
 
 const fixture = fs.readFileSync(path.join(__dirname, "fixtures/current-transcript-module.js"), "utf8").trim();
 const classifierFixture = fs.readFileSync(path.join(__dirname, "fixtures/current-standalone-module.js"), "utf8").trim();
-const chunk = (body, id = "Projection") => `export const __webpack_modules__={${id}(e,t,n){${body}}};`;
+const fixtureParams = ["e", "t", "n"];
+const classifierParams = ["e", "t", "a"];
+const chunk = (body, id = "Projection") => `export const __webpack_modules__={${id}(${fixtureParams.join(",")}){${body}}};`;
 
-function instantiate(context, source, name, load) {
-  const imported = /var [\w$]+=([\w$]+)\("/.exec(source);
-  const exported = /[\w$]+\.d\(([\w$]+),\{/.exec(source);
-  assert.ok(imported && exported, "expected the current module import/export bindings");
-  load.d = () => {};
-  return vm.runInContext(`(function(${imported[1]},${exported[1]}){${source};return ${name}})`, context)(load, {});
+function publishExports(target, getters, values = {}) {
+  for (const [name, get] of Object.entries(getters)) Object.defineProperty(target, name, { enumerable: true, get });
+  for (const [name, value] of Object.entries(values)) Object.defineProperty(target, name, { enumerable: true, value });
 }
 
-function harness(source, enabled = true) {
+function instantiate(context, source, params, load) {
+  load.d = publishExports;
+  const published = {};
+  vm.runInContext(`(function(${params.join(",")}){${source}\n})`, context)({}, published, load);
+  return published;
+}
+
+function harness(source, enabled = true, params = fixtureParams) {
   const localStorage = { getItem: () => enabled ? "1" : null };
   const context = vm.createContext({ localStorage });
-  const classifier = /function ([\w$]+)\([\w$]+,\{dynamicToolCallRenderer:/.exec(classifierFixture)[1];
-  const classify = instantiate(context, applyStandalonePatch(classifierFixture), classifier, () => ({
+  const classify = instantiate(context, applyStandalonePatch(classifierFixture), classifierParams, () => ({
     Pi: () => false, X: () => false, mw: () => null, FR: () => false,
     LS: item => Boolean(item.standalone), o: item => Boolean(item.persist),
     kT: ({ item }) => Boolean(item.interactive), $: value => value, rF: item => item.renderer,
-  }));
-  const projection = /function ([\w$]+)\([\w$]+,[\w$]+=!0,[\w$]+,[\w$]+\)/.exec(source)[1];
-  return { project: instantiate(context, source, projection, () => ({ c: classify, i: items => items })), localStorage };
+  })).c;
+  assert.equal(typeof classify, "function");
+  const project = instantiate(context, source, params, () => ({ c: classify, i: items => items })).j;
+  assert.equal(typeof project, "function", "expected the published transcript projection export");
+  return { project, localStorage };
+}
+
+function replaceRequired(source, from, to) {
+  const changed = source.replace(from, to);
+  assert.notEqual(changed, source, `expected current fixture anchor ${from}`);
+  return changed;
+}
+
+function wrongPersistentItem(source) {
+  const { persistent, item } = transcriptState(source).match.groups;
+  return replaceRequired(source, `${persistent}?.has(${item})`, `${persistent}?.has(other)`);
 }
 
 function events() {
@@ -108,12 +126,17 @@ test("disabled preference and non-reasoning projection keep their original nativ
 
 test("transcript contract rejects wrong item/flush bindings and incomplete runtime states", t => {
   t.mock.method(console, "warn", () => {});
-  const patched = apply(fixture);
+  const patched = apply(fixture), contract = transcriptState(fixture).match;
+  const { item } = contract.groups;
+  const branch = /^([\w$]+)\(\),([\w$]+)\.push\(/.exec(fixture.slice(contract.index + contract[0].length));
+  assert.ok(branch, "expected the current flush and output bindings");
+  const [, flush, output] = branch;
   for (const current of [
     "const unrelated=true;", fixture + fixture, patched + fixture, patched + patched,
-    fixture.replace("n?.has(s)", "n?.has(other)"), fixture.replace(",item:s});continue", ",item:other});continue"),
-    fixture.replace("c(),u.push", "c(),other.push"),
-    patched.replace('"reasoning"===s.type||/*community-reasoning-visibility-transcript*/',
+    wrongPersistentItem(fixture),
+    replaceRequired(fixture, `,item:${item}});continue`, ",item:other});continue"),
+    replaceRequired(fixture, `${flush}(),${output}.push`, `${flush}(),other.push`),
+    replaceRequired(patched, `"reasoning"===${item}.type||/*community-reasoning-visibility-transcript*/`,
       '"reasoning"===other.type||/*community-reasoning-visibility-transcript*/'),
     patched.replace("/*community-reasoning-visibility-transcript*/", ""), patched.replace(RUNTIME, ""), RUNTIME + patched,
   ]) {
@@ -125,13 +148,14 @@ test("transcript contract rejects wrong item/flush bindings and incomplete runti
 test("applied transcript rejects sibling/nested helpers and pristine orphan calls without writes", t => {
   t.mock.method(console, "warn", () => {});
   const body = apply(fixture).replace(RUNTIME + "\n", "");
-  const projectionName = /function ([\w$]+)\([\w$]+,[\w$]+=!0,[\w$]+,[\w$]+\)/.exec(body)[1];
-  const sibling = `export const __webpack_modules__={Owner(e,t,n){${body};return ${projectionName}},Sibling(e,t,n){${RUNTIME}}};`;
+  const sibling = `export const __webpack_modules__={Owner(${fixtureParams.join(",")}){${body}},Sibling(${fixtureParams.join(",")}){${RUNTIME}}};`;
   const nested = `${body};function unused(){${RUNTIME}}`;
   const load = () => ({ i: items => items });
-  load.d = () => {};
-  const siblingProject = vm.runInNewContext(sibling.replace("export const __webpack_modules__=", "const modules=") + ";modules.Owner({}, {}, load)", { load });
-  const nestedProject = vm.runInNewContext(`(function(e,t,n){${nested};return ${projectionName}})` )({}, {}, load);
+  load.d = publishExports;
+  const siblingProject = vm.runInNewContext(sibling.replace("export const __webpack_modules__=", "const modules=") + ";modules.Owner({}, published, load);published.j", { load, published: {} });
+  const nestedPublished = {};
+  vm.runInNewContext(`(function(${fixtureParams.join(",")}){${nested}})` )({}, nestedPublished, load);
+  const nestedProject = nestedPublished.j;
   const input = [{ type: "activity", items: [{ type: "reasoning", id: "scope-summary" }] }];
   assert.throws(() => siblingProject(input), /codexLinuxReasoningVisibilityEnabled is not defined/);
   assert.throws(() => nestedProject(input), /codexLinuxReasoningVisibilityEnabled is not defined/);
@@ -149,14 +173,13 @@ test("applied transcript rejects sibling/nested helpers and pristine orphan call
 
 test("transcript accepts its own factory helper with legitimate outer and sibling copies", t => {
   const body = apply(fixture).replace(RUNTIME + "\n", "");
-  const projectionName = /function ([\w$]+)\([\w$]+,[\w$]+=!0,[\w$]+,[\w$]+\)/.exec(body)[1];
   const load = () => ({ i: items => items });
-  load.d = () => {};
+  load.d = publishExports;
   for (const outer of ["", RUNTIME]) {
-    const current = `${outer}export const __webpack_modules__={Owner(e,t,n){${RUNTIME}${body};return ${projectionName}},Sibling(e,t,n){${RUNTIME}}};`;
+    const current = `${outer}export const __webpack_modules__={Owner(${fixtureParams.join(",")}){${RUNTIME}${body}},Sibling(${fixtureParams.join(",")}){${RUNTIME}}};`;
     assert.equal(apply(current), current);
-    const project = vm.runInNewContext(current.replace("export const __webpack_modules__=", "const modules=") + ";modules.Owner({}, {}, load)", {
-      load, localStorage: { getItem: () => "1" },
+    const project = vm.runInNewContext(current.replace("export const __webpack_modules__=", "const modules=") + ";modules.Owner({}, published, load);published.j", {
+      load, published: {}, localStorage: { getItem: () => "1" },
     });
     const summary = { type: "reasoning", id: "own-factory-summary" };
     assert.equal(project([{ type: "activity", items: [summary] }])[0].item, summary);
@@ -188,7 +211,7 @@ function workspace(t) {
 
 test("normal transcript descriptor composes idempotently with standalone scoped helpers in the same chunk", t => {
   const { write, runAll } = workspace(t);
-  const source = `export const __webpack_modules__={Classifier(e,t,n){${classifierFixture}},Projection(e,t,n){${fixture}}};`;
+  const source = `export const __webpack_modules__={Classifier(${classifierParams.join(",")}){${classifierFixture}},Projection(${fixtureParams.join(",")}){${fixture}}};`;
   const files = [write("async/1.hash.js", source), write("async/2.hash.js", source)];
   const selected = [standaloneDescriptor, descriptor];
   assert.ok(runAll(selected).every(patch => patch.status === "applied"));
@@ -204,7 +227,7 @@ test("transcript descriptor rejects different identities and mixed/damaged copie
   t.mock.method(console, "warn", () => {});
   for (const [secondBody, id] of [
     [fixture, "DifferentIdentity"], [apply(fixture), "Projection"],
-    [fixture.replace("n?.has(s)", "n?.has(other)"), "Projection"], ["const damaged=true;", "Projection"],
+    [wrongPersistentItem(fixture), "Projection"], ["const damaged=true;", "Projection"],
   ]) {
     const { write, run } = workspace(t);
     const firstSource = chunk(fixture), secondSource = chunk(secondBody, id);
@@ -225,12 +248,14 @@ test("actual signed transcript module copies execute native projection and patch
     description: "current transcript projection",
   });
   assert.ok(copies.length > 1);
-  assert.ok(copies.some(copy => copy.moduleSource === fixture), "fixture must match one actual current factory body");
+  const fixtureCopy = copies.find(copy => copy.moduleSource === fixture);
+  assert.ok(fixtureCopy, "fixture must match one actual current factory body");
+  assert.deepEqual(fixtureCopy.params, fixtureParams, "fixture execution must use the actual factory parameters");
   const { first, second, input } = events();
   const { write, run } = workspace(t);
   const files = copies.map(copy => ({ copy, file: write(copy.assetName, copy.source) }));
   for (const copy of copies) {
-    const result = harness(apply(copy.moduleSource)).project(input);
+    const result = harness(apply(copy.moduleSource), true, copy.params).project(input);
     assert.equal(result.filter(entry => entry.type === "activity-item" && entry.item === first).length, 1);
     assert.equal(result.filter(entry => entry.type === "activity-item" && entry.item === second).length, 1);
   }
