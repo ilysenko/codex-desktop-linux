@@ -161,7 +161,7 @@ function slashStartsRegex(previous) {
 // literals (including nested substitutions), comments, and regular expression
 // literals, whose quotes and braces are not code. Minified bundles contain
 // regexes such as /[`"']+/ that a quote-only scanner misreads.
-function findMatchingBrace(source, openIndex) {
+function walkMatchingBrace(source, openIndex, visit) {
   if (!Number.isInteger(openIndex) || openIndex < 0) {
     return -1;
   }
@@ -178,6 +178,7 @@ function findMatchingBrace(source, openIndex) {
       return -1;
     }
     if (chunk.substitution) {
+      visit?.(chunk.end, chunk.end + 1, depth, "{");
       templateDepths.push(depth);
       depth += 1;
       previous = { kind: "punct", value: "{" };
@@ -205,9 +206,11 @@ function findMatchingBrace(source, openIndex) {
         return -1;
       }
     } else if (char === "{") {
+      visit?.(i, i + 1, depth, "{");
       depth += 1;
       previous = { kind: "punct", value: "{" };
     } else if (char === "}") {
+      visit?.(i, i + 1, depth, "}");
       depth -= 1;
       if (templateDepths.length > 0 && templateDepths[templateDepths.length - 1] === depth) {
         templateDepths.pop();
@@ -234,6 +237,7 @@ function findMatchingBrace(source, openIndex) {
     } else if (char === "/") {
       const close = slashStartsRegex(previous) ? regexLiteralEnd(source, i) : -1;
       if (close === -1) {
+        visit?.(i, i + 1, depth);
         previous = { kind: "punct", value: "/" };
       } else {
         i = close;
@@ -247,27 +251,59 @@ function findMatchingBrace(source, openIndex) {
       while (i + 1 < source.length && isWordChar(source[i + 1])) {
         i += 1;
       }
+      visit?.(start, i + 1, depth);
       const property = previous.kind === "punct" && previous.value === "." &&
         source[start - 2] !== ".";
       previous = { kind: "word", value: source.slice(start, i + 1), property };
     } else if (char === "(") {
+      visit?.(i, i + 1, depth);
       parenthesesAreConditions.push(
         previous.kind === "word" && !previous.property && CONDITION_KEYWORDS.has(previous.value),
       );
       previous = { kind: "punct", value: "(" };
     } else if (char === ")") {
+      visit?.(i, i + 1, depth);
       previous = parenthesesAreConditions.pop()
         ? { kind: "punct", value: "condition)" }
         : { kind: "punct", value: ")" };
     } else if ((char === "+" || char === "-") && source[i - 1] === char && previous.value === char) {
       // A postfix ++/-- ends an operand, so a following slash divides.
+      visit?.(i, i + 1, depth);
       previous = { kind: "value" };
     } else {
+      visit?.(i, i + 1, depth);
       previous = { kind: "punct", value: char };
     }
   }
 
   return -1;
+}
+
+function findMatchingBrace(source, openIndex) {
+  return walkMatchingBrace(source, openIndex);
+}
+
+// Index the same lexical walk used by findMatchingBrace once. Token queries
+// and original-source brace ranges then avoid rescanning every source prefix.
+function createJavaScriptLexicalIndex(source) {
+  const code = new Uint8Array(source.length), depths = new Uint32Array(source.length);
+  const opened = [], pairs = new Map();
+  walkMatchingBrace("{" + source + "\n}", 0, (start, end, depth, brace) => {
+    const originalStart = start - 1, originalEnd = Math.min(end - 1, source.length);
+    if (originalStart < 0 || originalStart >= source.length) return;
+    code.fill(1, originalStart, originalEnd);
+    depths.fill(depth - 1, originalStart, originalEnd);
+    if (brace === "{") opened.push(originalStart);
+    else if (brace === "}") {
+      const open = opened.pop();
+      if (open != null) pairs.set(open, originalStart);
+    }
+  });
+  return {
+    isCode: index => code[index] === 1,
+    isRoot: index => code[index] === 1 && depths[index] === 0,
+    matchingBrace: open => pairs.get(open) ?? -1,
+  };
 }
 
 function findLastRegexMatch(source, regex) {
@@ -352,6 +388,7 @@ module.exports = {
   findLastRegexMatch,
   findLinuxGlobalStateExpression,
   findMatchingBrace,
+  createJavaScriptLexicalIndex,
   inferModuleAlias,
   requireName,
 };

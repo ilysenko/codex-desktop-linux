@@ -71,3 +71,20 @@ test("publication requires three real factory parameters and preserves native lo
     assert.ok(findRspackExportPublication(module,"gate"),local);
   }
 });
+
+test("large getter barrels remain bounded and source changes invalidate lexical views", { timeout: 15000 }, () => {
+  const entries = Array.from({ length: 1000 }, (_, index) => `item${index}:()=>binding${index}`).join(",");
+  const module = snapshot(`require.d(exports,{${entries}})`);
+  assert.equal(findRspackExportPublication(module, "item999").expression, "binding999");
+  module.moduleSource = '({require}=other);' + module.moduleSource;
+  assert.equal(findRspackExportPublication(module, "item999"), null);
+  module.moduleSource = module.moduleSource.slice('({require}=other);'.length);
+  assert.equal(findRspackExportPublication(module, "item999").expression, "binding999");
+});
+
+test("complete lexical state rejects writes in template substitutions and ignores regex text", () => {
+  const broken = snapshot('const note=`${require=other}`;require.d(exports,{},{gate:function(e){return e}})');
+  assert.equal(findRspackExportPublication(broken,"gate"),null);
+  const valid = snapshot('const pattern=/require=other/g;require.d(exports,{},{gate:function(e){return e}})');
+  assert.ok(findRspackExportPublication(valid,"gate"));
+});

@@ -1,10 +1,22 @@
 "use strict";
 
 const { Script } = require("node:vm");
-const { escapeRegExp, findMatchingBrace } = require("./minified-js.js");
+const { escapeRegExp, createJavaScriptLexicalIndex } = require("./minified-js.js");
 const ID = "[A-Za-z_$][\\w$]*";
-function own(body, index) { return findMatchingBrace("{" + body.slice(0, index) + "}", 0) === index + 1; }
-function code(body, index) { return findMatchingBrace("{" + body.slice(0, index) + "}".repeat(index + 2), 0) >= index + 1; }
+// Bound the string-keyed lexical views. Callers may pass changed snapshots,
+// so caching by exact source text never reuses a stale proof.
+const lexicalViews = new Map();
+function lexical(body) {
+  let view = lexicalViews.get(body);
+  if (view) return view;
+  view = createJavaScriptLexicalIndex(body);
+  if (lexicalViews.size === 12) lexicalViews.delete(lexicalViews.keys().next().value);
+  lexicalViews.set(body, view);
+  return view;
+}
+function own(body, index) { return lexical(body).isRoot(index); }
+function code(body, index) { return lexical(body).isCode(index); }
+function findMatchingBrace(body, open) { return lexical(body).matchingBrace(open); }
 function matches(body, pattern, root = true) {
   return [...body.matchAll(pattern)].filter(match => code(body, match.index) && (!root || own(body, match.index)));
 }
@@ -32,8 +44,12 @@ function localBinding(body, parameters, name) {
 }
 function arrowExpressionEnd(body, start) {
   const stack = [], pairs = { ")": "(", "]": "[", "}": "{" };
-  for (const token of matches(body.slice(start), /[()[\]{},;]/gu, false)) {
-    const index = start + token.index, value = token[0];
+  const tokens = /[()[\]{},;]/gu;
+  tokens.lastIndex = start;
+  let token;
+  while ((token = tokens.exec(body)) != null) {
+    const index = token.index, value = token[0];
+    if (!code(body, index)) continue;
     if ("([{".includes(value)) { stack.push(value); continue; }
     if (stack.length && pairs[value] === stack.at(-1)) { stack.pop(); continue; }
     if (stack.length === 0 && scopeParses(`return (${body.slice(start, index)});`, "")) return index;
@@ -116,7 +132,7 @@ function exportMembers(body, start, end) {
   const text = body.slice(start, end), separators = [];
   try { new Script(`const exportMapProbe={${text}};`); }
   catch { return null; }
-  for (const comma of matches(text, /,/gu, false)) {
+  for (const comma of matches(text, /,/gu)) {
     try { new Script(`const exportMembersProbe={${text.slice(0, comma.index)}};`); separators.push(comma.index); }
     catch { /* A nested expression has not finished its member value. */ }
   }
