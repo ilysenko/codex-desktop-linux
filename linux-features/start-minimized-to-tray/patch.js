@@ -254,6 +254,25 @@ function trayReadinessStatement(services, isReady) {
   return `if(codexLinuxStartMinimized){let ready=await ${MAIN_MARKER}(codexLinuxStartMinimizedTraySetup,${isReady});console.info(\`[start-minimized-to-tray] tray readiness\`,{ready});codexLinuxStartMinimized=codexLinuxStartMinimized&&ready}${services}.windowManager.codexLinuxStartMinimized=codexLinuxStartMinimized;`;
 }
 
+function trayActivationContract(source, services, clearHidden = "") {
+  const service = escapeRegExp(services), clear = escapeRegExp(clearHidden);
+  const exception = clearHidden ? `&&\\(!codexLinuxStartMinimizedRequested\\|\\|${service}\\.getPrimaryWindow\\(\\)==null\\)` : "";
+  const found = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${clear}let (${ID})=await \\(async\\((${ID}),(${ID})\\)=>\\{if\\(!(${ID})${exception}\\)return null;${service}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
+  if (!found || found[2] === found[3] || found[5] === found[6]) return null;
+  const outerOpen = found.index + found[0].indexOf("=>{") + 2;
+  const innerOpen = found.index + found[0].lastIndexOf("=>{") + 2;
+  const outerEnd = findMatchingBrace(source, outerOpen), innerEnd = findMatchingBrace(source, innerOpen);
+  if (innerEnd < innerOpen || outerEnd <= innerEnd) return null;
+  const tail = new RegExp(`^\\)\\(${escapeRegExp(found[2])},${escapeRegExp(found[3])}\\);null!=${escapeRegExp(found[4])}&&${ID}\\(\\{channel:"shortcut",source:"shortcut"\\},${service}\\.windowManager\\.getActiveWebContents\\(${escapeRegExp(found[4])}\\)\\)$`, "u");
+  if (!tail.test(source.slice(innerEnd + 1, outerEnd))) return null;
+  // Keep the established tuple used by startup edits: name, two arguments,
+  // readiness flag. The complete native inner body and post-await attribution
+  // remain untouched, including the current active-webContents selection.
+  const result = [found[0], found[1], found[2], found[3], found[7]];
+  result.index = found.index;
+  return result;
+}
+
 function hasCompleteMainPatch(source, state, startup, graph) {
   const exactlyOnce = value => source.split(value).length === 2;
   const launchBackground = `(${startup[1]}.isBackgroundLaunch||codexLinuxStartMinimized)`;
@@ -266,7 +285,7 @@ function hasCompleteMainPatch(source, state, startup, graph) {
       !within(traySetup, graph.scope.startupStart, graph.scope.startupEnd) || !completeHelperBindings(source, graph)) return false;
   const clearHidden = `codexLinuxStartMinimized=!1;${first[2]}.windowManager.codexLinuxStartMinimized=!1;`;
   const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}try\\{${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
-  const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{${escapeRegExp(clearHidden)}let ${ID}=await \\(async\\(${ID},${ID}\\)=>\\{if\\(!(${ID})&&\\(!codexLinuxStartMinimizedRequested\\|\\|${escapeRegExp(first[2])}\\.getPrimaryWindow\\(\\)==null\\)\\)return null;${escapeRegExp(first[2])}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
+  const trayActivation = trayActivationContract(source, first[2], clearHidden);
   if (!activations || !trayActivation || !unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{\\(${ID}\\|\\|codexLinuxStartMinimizedRequested\\)&&${escapeRegExp(activations[1])}\\(\\);return\\}`, "g"))) return false;
   return [
     codexLinuxStartMinimizedRoute.toString(),
@@ -344,7 +363,7 @@ function applyMainPatch(source) {
     return source;
   }
   const activations = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{try\\{${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
-  const trayActivation = unique(source, new RegExp(`(${ID})=async\\((${ID}),(${ID})\\)=>\\{let ${ID}=await \\(async\\(${ID},${ID}\\)=>\\{if\\(!(${ID})\\)return null;${first[2]}\\.hotkeyWindowLifecycleManager\\.hide\\(\\)`, "g"));
+  const trayActivation = trayActivationContract(source, first[2]);
   const queuedActivation = unique(source, new RegExp(`if\\(${ID}\\.deepLinks\\.queueProcessArgs\\(${ID}\\)\\)\\{(${ID})&&${activations?.[1] ?? "__missing"}\\(\\);return\\}`, "g"));
   const interactive = unique(source, new RegExp(`${escapeRegExp(owner)}\\.onInteractiveLaunch=\\(\\)=>\\{null==${first[1]}\\|\\|${first[1]}\\.isDestroyed\\(\\)\\|\\|${first[4]}\\(${first[1]}\\),`, "g"));
   if (!activations || !trayActivation || !queuedActivation || !interactive) {
