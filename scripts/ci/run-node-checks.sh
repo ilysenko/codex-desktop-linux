@@ -40,7 +40,10 @@ run_node_tests() {
     # Tracked Node test entrypoints; a git pathspec * also matches /.
     while IFS= read -r file; do
         test_files+=("$file")
-    done < <(git ls-files '*.test.js' '*.test.cjs' '*.test.mjs' '*/test.js')
+    done < <(git ls-files \
+        '*.test.js' '*.test.cjs' '*.test.mjs' \
+        'test.js' 'test.cjs' 'test.mjs' \
+        '**/test.js' '**/test.cjs' '**/test.mjs')
 
     if [ "${#test_files[@]}" -eq 0 ]; then
         return 0

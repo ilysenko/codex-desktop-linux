@@ -49,6 +49,32 @@ test("the tracked Node runner reports a completed healthy inventory", t => {
   assert.equal(fs.readFileSync(app.marker, "utf8"), "done");
 });
 
+test("the runner executes tracked nested test basenames and every module format once", t => {
+  const app = fixture(t, 'require("node:test")("original probe",()=>{});');
+  const names = [
+    "test.js", "test.cjs", "test.mjs",
+    "scripts/automation/watchdog/test.js", "scripts/patches/core/startup/test.js",
+    "linux-features/probe/test.js", "lib/test.cjs", "lib/test.mjs",
+    "lib/runtime.test.js", "lib/runtime.test.cjs", "lib/runtime.test.mjs",
+  ];
+  for (const name of names) {
+    const filename = path.join(app.root, name);
+    fs.mkdirSync(path.dirname(filename), { recursive: true });
+    const imports = name.endsWith(".mjs")
+      ? 'import test from "node:test";import fs from "node:fs";'
+      : 'const test=require("node:test"),fs=require("node:fs");';
+    fs.writeFileSync(filename, `${imports}\ntest(${JSON.stringify(name)},()=>{fs.appendFileSync(process.env.ASSERTIONS_RAN_MARKER,${JSON.stringify(name + "\n")})});\n`);
+  }
+  const staged = spawnSync("git", ["add", "--", ...names], { cwd: app.root, encoding: "utf8" });
+  assert.equal(staged.status, 0, staged.stderr);
+  fs.mkdirSync(path.join(app.root, "untracked"));
+  fs.writeFileSync(path.join(app.root, "untracked/test.js"), 'throw new Error("untracked tests must not run");');
+  const result = run(app, 20);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`# tests ${names.length + 1}\\b`));
+  assert.deepEqual(fs.readFileSync(app.marker, "utf8").trim().split("\n").sort(), [...names].sort());
+});
+
 test("leaked worker handles fail the watchdog after assertions finish", t => {
   const app = fixture(t, `const test=require("node:test"),fs=require("node:fs");
     test("completed assertions",()=>{fs.writeFileSync(process.env.ASSERTIONS_RAN_MARKER,"done")});
