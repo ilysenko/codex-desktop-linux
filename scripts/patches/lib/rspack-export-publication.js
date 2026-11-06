@@ -42,6 +42,85 @@ function scopeParses(body, parameters, suffix = "") {
 function localBinding(body, parameters, name) {
   return scopeParses(body, parameters) && !scopeParses(body, parameters, `let ${name};`);
 }
+function delimiterEnd(body, open) {
+  const pairs = { "(": ")", "[": "]", "{": "}" }, stack = [];
+  if (!pairs[body[open]] || !code(body, open)) return -1;
+  for (let index = open; index < body.length; index++) {
+    if (!code(body, index)) continue;
+    if (pairs[body[index]]) stack.push(pairs[body[index]]);
+    else if (")]}".includes(body[index])) {
+      if (stack.pop() !== body[index]) return -1;
+      if (stack.length === 0) return index;
+    }
+  }
+  return -1;
+}
+function nextCode(body, index) {
+  while (index < body.length && !code(body, index)) index++;
+  return index;
+}
+function callableScope(body, parametersOpen) {
+  const parametersEnd = delimiterEnd(body, parametersOpen);
+  if (parametersEnd < parametersOpen) return null;
+  const open = nextCode(body, parametersEnd + 1), end = findMatchingBrace(body, open);
+  return body[open] === "{" && end > open ? { parametersOpen, parametersEnd, open, end } : null;
+}
+function contextBinding(body, start, end, name, probeName) {
+  const prefix = body.slice(0, start), suffix = body.slice(end);
+  const parses = binding => scopeParses(`${prefix}\nlet ${binding};\n${suffix}`, "");
+  return parses(probeName) && !parses(name);
+}
+function loopDeclaration(header) {
+  const declaration = /^\s*(?:let|const)\b\s*/u.exec(header);
+  if (!declaration) return null;
+  for (let index = declaration[0].length; index < header.length; index++) {
+    if (!code(header, index)) continue;
+    if ("([{".includes(header[index])) {
+      index = delimiterEnd(header, index);
+      if (index < 0) return null;
+      continue;
+    }
+    const parameters = header.slice(declaration[0].length, index).trim();
+    if (header[index] === ";") return parameters;
+    if (/^(?:in|of)\b/u.test(header.slice(index)) && !/[\w$.]/u.test(header[index - 1]) &&
+        parameters && scopeParses("", parameters)) return parameters;
+  }
+  return null;
+}
+function loopBodyEnd(body, start) {
+  if (body[start] === "{") {
+    const end = findMatchingBrace(body, start);
+    return end > start ? end + 1 : -1;
+  }
+  const conditional = /^if\s*\(/u.exec(body.slice(start));
+  if (conditional) {
+    const close = delimiterEnd(body, start + conditional[0].length - 1);
+    if (close < start) return -1;
+    const end = loopBodyEnd(body, nextCode(body, close + 1));
+    if (end < 0) return -1;
+    const following = nextCode(body, end);
+    return /^else\b/u.test(body.slice(following)) ? loopBodyEnd(body, nextCode(body, following + 4)) : end;
+  }
+  // Native single-statement loops use expressions or an if/return branch.
+  // Balance the entire expression so a function/object value cannot end it.
+  const jump = /^(?:return|throw)\b/u.exec(body.slice(start));
+  const expressionStart = start + (jump?.[0].length ?? 0);
+  const trivia = /^(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*)*/u.exec(body.slice(expressionStart))[0];
+  if (jump?.[0] === "return" && /[\r\n\u2028\u2029]/u.test(trivia)) {
+    return expressionStart;
+  }
+  let end = start;
+  for (; end < body.length; end++) {
+    if (!code(body, end)) continue;
+    if ("([{".includes(body[end])) {
+      end = delimiterEnd(body, end);
+      if (end < 0) return -1;
+    } else if (body[end] === ";" || body[end] === "}") break;
+  }
+  const expression = body.slice(expressionStart, end);
+  if (!(jump?.[0] === "return" && expression.trim() === "") && !scopeParses(`return (${expression});`, "")) return -1;
+  return end + Number(body[end] === ";");
+}
 function arrowExpressionEnd(body, start) {
   const stack = [], pairs = { ")": "(", "]": "[", "}": "{" };
   const tokens = /[()[\]{},;]/gu;
@@ -57,25 +136,31 @@ function arrowExpressionEnd(body, start) {
   return scopeParses(`return (${body.slice(start)});`, "") ? body.length : -1;
 }
 function parameterProjection(body, name) {
+  if (!scopeParses(body, "")) return body;
   const projected = body.split(""), hiddenScopes = [];
+  let probeName = "__codexPublicationScopeProbe";
+  while (body.includes(probeName)) probeName += "$";
   const hidden = index => hiddenScopes.some(([start, end]) => start <= index && index < end);
   function blank(start, end, replacement = "") {
     for (let index = start; index < end; index++) if (!/[\r\n]/u.test(projected[index])) projected[index] = " ";
     for (let index = 0; index < replacement.length; index++) projected[start + index] = replacement[index];
   }
-  const functions = /(?:async )?function(?:\s+([A-Za-z_$][\w$]*))?\s*\(([^()]*)\)\s*\{/gu;
+  const functions = new RegExp(`\\b(?:async\\s+)?function\\b\\s*(?:\\*\\s*)?(?:(${ID})\\s*)?\\(`, "gu");
   for (const head of matches(body, functions, false)) {
     if (hidden(head.index)) continue;
-    const open = head.index + head[0].length - 1, end = findMatchingBrace(body, open);
-    if (end < open || head[1] !== name && !localBinding(body.slice(open + 1, end), head[2], name)) continue;
-    const parametersEnd = head.index + head[0].lastIndexOf(")");
-    blank(head.index + head[0].indexOf("(") + 1, parametersEnd);
+    const scope = callableScope(body, head.index + head[0].length - 1);
+    if (!scope || head[1] !== name && !contextBinding(body, scope.end, scope.end, name, probeName)) continue;
+    // Body declarations do not bind a parameter default initializer. Preserve
+    // those expressions unless the parameter list itself owns this name.
+    if (head[1] === name || contextBinding(body, scope.open + 1, scope.end, name, probeName)) {
+      blank(scope.parametersOpen + 1, scope.parametersEnd);
+    }
     if (head[1] === name) {
       const nameStart = head.index + head[0].indexOf(name, head[0].indexOf("function") + "function".length);
-      blank(nameStart, nameStart + name.length);
+      blank(nameStart, nameStart + name.length, name === "_" ? "$" : "_");
     }
-    blank(open + 1, end);
-    hiddenScopes.push([head.index, end + 1]);
+    blank(scope.open + 1, scope.end);
+    hiddenScopes.push([scope.open + 1, scope.end + 1]);
   }
   const classes = new RegExp(`\\bclass(?:\\s+(${ID}))?(?: extends ${ID}(?:\\.${ID})*)?\\{`, "gu");
   for (const head of matches(body, classes, false)) {
@@ -90,15 +175,18 @@ function parameterProjection(body, name) {
       continue;
     }
     const members = body.slice(open + 1, end);
-    const methods = new RegExp(`(?:(?:static|async|get|set)\\s+)?(${ID})\\(([^()]*)\\)\\s*\\{`, "gu");
+    const methods = new RegExp(`(?:(?:static|async|get|set)\\s+)?\\*?(${ID})\\s*\\(`, "gu");
     for (const method of matches(members, methods)) {
       const start = open + 1 + method.index;
       if (hidden(start)) continue;
-      const methodOpen = start + method[0].length - 1, methodEnd = findMatchingBrace(body, methodOpen);
-      if (methodEnd < methodOpen || !localBinding(body.slice(methodOpen + 1, methodEnd), method[2], name)) continue;
-      blank(start + method[0].indexOf("(") + 1, start + method[0].lastIndexOf(")"));
-      blank(methodOpen + 1, methodEnd);
-      hiddenScopes.push([start, methodEnd + 1]);
+      const scope = callableScope(body, start + method[0].length - 1);
+      if (!scope || !contextBinding(body, scope.end, scope.end, name, probeName)) continue;
+      // Keep the declaring class and its private names in both syntax probes.
+      if (contextBinding(body, scope.open + 1, scope.end, name, probeName)) {
+        blank(scope.parametersOpen + 1, scope.parametersEnd);
+      }
+      blank(scope.open + 1, scope.end);
+      hiddenScopes.push([scope.open + 1, scope.end + 1]);
     }
     for (const property of matches(members, new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?=\\s*[=(;])`, "gu"))) {
       try { new Script(`"use strict";class publicationPropertyProbe{${members.slice(0, property.index)}\n__propertyProbe(){}\n}`); }
@@ -122,14 +210,16 @@ function parameterProjection(body, name) {
     else blank(start, end, "0");
     hiddenScopes.push([head.index, end + Number(block)]);
   }
-  for (const head of matches(body, /for\((?:let|const) ([A-Za-z_$][\w$]*)\b[^{}]*\)\{/gu, false)) {
+  for (const head of matches(body, /\bfor(?:\s+await)?\s*\(/gu, false)) {
     if (hidden(head.index)) continue;
-    if (head[1] !== name) continue;
-    const open = head.index + head[0].length - 1, end = findMatchingBrace(body, open);
-    if (end < open) continue;
-    blank(head.index, open, "for(;;)");
-    blank(open + 1, end);
-    hiddenScopes.push([head.index, end + 1]);
+    const open = head.index + head[0].length - 1, close = delimiterEnd(body, open);
+    if (close < open) continue;
+    const declaration = loopDeclaration(body.slice(open + 1, close));
+    if (!declaration || !localBinding("", declaration, name)) continue;
+    const start = nextCode(body, close + 1), end = loopBodyEnd(body, start);
+    if (end < start) continue;
+    blank(head.index, end, ";");
+    hiddenScopes.push([head.index, end]);
   }
   for (const open of matches(body, /\{/gu, false)) {
     if (hidden(open.index)) continue;
