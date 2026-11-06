@@ -37,26 +37,151 @@ function matches(body, pattern, root = true) {
     return code && (!root || rootAt(body, match.index));
   });
 }
+function bindingDecode(value) {
+  return value.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => {
+    const point = parseInt(braced || fixed, 16);
+    return point <= 0x10ffff ? String.fromCodePoint(point) : "\0";
+  });
+}
+function bindingNext(body, at) {
+  for (;;) {
+    while (/\s/u.test(body[at] ?? "") && at < body.length) at++;
+    if (body.startsWith("/*", at)) { const end = body.indexOf("*/", at + 2); at = end < 0 ? body.length : end + 2; }
+    else if (body.startsWith("//", at)) { while (at < body.length && !/[\r\n\u2028\u2029]/u.test(body[at])) at++; }
+    else return at;
+  }
+}
+function bindingParses(body, suffix = "") {
+  try { new Script(`function nativeRequestBindingProbe(){${body}\n${suffix}\n}`); return true; }
+  catch { return false; }
+}
+function bindingDelimiters(body, lexical, references) {
+  const stack = [], pairs = new Map(), paths = new Map(), targets = new Set(references.map(ref => ref.start));
+  const closing = { ")": "(", "]": "[", "}": "{" };
+  for (let at = 0; at < body.length; at++) {
+    if (!lexical.isCode(at)) continue;
+    if (targets.has(at)) paths.set(at, [...stack]);
+    const value = body[at];
+    if ("([{".includes(value)) stack.push(at);
+    else if (closing[value]) {
+      const open = stack.pop();
+      if (body[open] !== closing[value]) throw Error("unbalanced native binding delimiters");
+      pairs.set(open, at); pairs.set(at, open);
+    }
+  }
+  return { pairs, paths };
+}
+function bindingExpressionEnd(body, lexical, pairs, start) {
+  for (let at = start; at < body.length; at++) {
+    if (!lexical.isCode(at)) continue;
+    if ("([{".includes(body[at])) { at = pairs.get(at); continue; }
+    if (",;)]}".includes(body[at])) return at;
+  }
+  return body.length;
+}
+function bindingDeferredScopes(body, lexical, pairs, lastTarget) {
+  const scopes = [], addBody = (start, parametersOpen) => {
+    const parametersEnd = pairs.get(parametersOpen), open = bindingNext(body, parametersEnd + 1);
+    if (body[open] === "{") scopes.push([start, pairs.get(open) + 1]);
+  };
+  for (const head of body.matchAll(new RegExp(`\\b(?:async\\s+)?function\\b\\s*(?:\\*\\s*)?(?:${ID}\\s*)?\\(`, "gu"))) {
+    if (head.index > lastTarget) break;
+    if (lexical.isCode(head.index)) addBody(head.index, head.index + head[0].length - 1);
+  }
+  for (const head of body.matchAll(new RegExp(`\\bclass(?:\\s+${ID})?(?:\\s+extends ${MEMBER})?\\s*\\{`, "gu"))) {
+    if (head.index > lastTarget) break;
+    if (lexical.isCode(head.index)) scopes.push([head.index, pairs.get(head.index + head[0].length - 1) + 1]);
+  }
+  for (const arrow of body.matchAll(/=>/gu)) {
+    if (arrow.index > lastTarget) break;
+    if (!lexical.isCode(arrow.index)) continue;
+    const start = bindingNext(body, arrow.index + 2);
+    const end = body[start] === "{" ? pairs.get(start) + 1 : bindingExpressionEnd(body, lexical, pairs, start);
+    scopes.push([arrow.index + 2, end]);
+    // Parameter defaults belong to the deferred callable too.
+    let before = arrow.index - 1;
+    while (before >= 0 && !lexical.isCode(before)) before--;
+    if (body[before] === ")") scopes.push([pairs.get(before), arrow.index]);
+  }
+  return scopes;
+}
 function stableBinding(body, name) {
-  const identifier = escapeRegExp(name);
-  if (matches(body, new RegExp(`(?<![\\w$.])(?:${identifier}\\s*(?:\\+\\+|--|(?:\\?\\?|\\|\\||&&|[+*/%&|^\\-])?=(?!=|>))|(?:\\+\\+|--)${identifier}\\b)`, "gu")).length) return false;
+  const lexical = createJavaScriptLexicalIndex(body), references = [];
   const tokens = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[A-Za-z_$])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])*/gu;
-  let lexical;
+  const operator = /^(?:\+\+|--|(?:\?\?|\|\||&&|\*\*|<<|>>>|>>|[+*/%&|^\-])?=(?!=|>))/u;
   for (const token of body.matchAll(tokens)) {
-    if (!token[0].includes("\\u")) continue;
-    const decoded = token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => {
-      const point = parseInt(braced || fixed, 16);
-      return point <= 0x10ffff ? String.fromCodePoint(point) : "\0";
-    });
-    if (decoded !== name) continue;
-    lexical ??= createJavaScriptLexicalIndex(body);
-    if (!lexical.isCode(token.index) || !lexical.isRoot(token.index)) continue;
+    if (bindingDecode(token[0]) !== name || !lexical.isCode(token.index)) continue;
     let previous = token.index - 1;
     while (previous >= 0 && !lexical.isCode(previous)) previous--;
     if ([".", "#"].includes(body[previous])) continue;
-    // The latest native declarations use literal identifiers. An encoded
-    // protected root reference cannot silently replace that binding authority.
-    return false;
+    // Keep the accepted literal-only root binding authority policy.
+    if (token[0].includes("\\u") && lexical.isRoot(token.index)) return false;
+    const end = token.index + token[0].length, after = bindingNext(body, end);
+    const direct = operator.test(body.slice(after)) || ["++", "--"].includes(body.slice(previous - 1, previous + 1));
+    if (direct || ",}])".includes(body[after])) references.push({ start: token.index, end, raw: token[0], direct });
+  }
+  if (references.length === 0) return true;
+  const { pairs, paths } = bindingDelimiters(body, lexical, references);
+  const code = (start, end) => {
+    let result = "";
+    for (let at = start; at < end; at++) if (lexical.isCode(at)) result += body[at];
+    return result;
+  };
+  const candidates = references.filter(ref => ref.direct || paths.get(ref.start).some(open => {
+    const close = pairs.get(open), after = bindingNext(body, close + 1);
+    if (!operator.test(body.slice(after))) return false;
+    if (body[open] !== "(") return true;
+    let expression = code(open + 1, close);
+    while (expression.startsWith("(") && expression.endsWith(")")) expression = expression.slice(1, -1);
+    return bindingDecode(expression) === name;
+  }));
+  if (candidates.length === 0) return true;
+  const scopes = bindingDeferredScopes(body, lexical, pairs, candidates.at(-1).start);
+  let probe = "__nativeRequestBlockBinding";
+  while (body.includes(probe)) probe += "$";
+  const statementBlocks = new Map(), ownedBlocks = new Map();
+  const insert = (end, binding) => body.slice(0, end) + `\n;let ${binding};\n` + body.slice(end);
+  function statementBlock(open) {
+    if (!statementBlocks.has(open)) statementBlocks.set(open, bindingParses(insert(pairs.get(open), probe)));
+    return statementBlocks.get(open);
+  }
+  function blockOwns(open) {
+    if (ownedBlocks.has(open)) return ownedBlocks.get(open);
+    const end = pairs.get(open), content = body.slice(open + 1, end);
+    const parses = binding => {
+      try { new Script(`"use strict";async function* nativeRequestBlock(){while(true){${content}\n;var ${binding};\n}}`); return true; }
+      catch { return false; }
+    };
+    const owned = statementBlock(open) && parses(probe) && !parses(name);
+    ownedBlocks.set(open, owned); return owned;
+  }
+  function header(open) {
+    let before = open - 1;
+    while (before >= 0 && !lexical.isCode(before)) before--;
+    if (body[before] !== ")") return null;
+    const parametersOpen = pairs.get(before), parameters = body.slice(parametersOpen + 1, before);
+    const word = /([A-Za-z_$][\w$]*)\s*$/u.exec(body.slice(0, parametersOpen));
+    return word == null ? null : { word: word[1], parameters };
+  }
+  for (const ref of candidates) {
+    if (scopes.some(([start, end]) => start <= ref.start && ref.start < end)) continue;
+    const braces = paths.get(ref.start).filter(open => body[open] === "{");
+    let shadowed = false, deferred = false;
+    for (const [index, open] of braces.entries()) {
+      const head = header(open);
+      if (head?.word === "catch") {
+        const parameterProbe = binding => {
+          try { new Script(`function nativeCatchBinding(${head.parameters}){let ${binding};}`); return true; }
+          catch { return false; }
+        };
+        if (parameterProbe(probe) && !parameterProbe(name)) shadowed = true;
+      } else if (head && !["if", "for", "while", "switch", "with"].includes(head.word)) {
+        const parent = braces[index - 1];
+        if (parent != null && !statementBlock(parent)) deferred = true;
+      }
+      if (blockOwns(open)) shadowed = true;
+    }
+    if (!shadowed && !deferred) return false;
   }
   return true;
 }

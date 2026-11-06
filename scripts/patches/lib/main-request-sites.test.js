@@ -401,6 +401,46 @@ test("protected root class and startup bindings reject encoded replacements whil
   }
 });
 
+function blockBindingReplacementCases(source, graph) {
+  return protectedBindings(source, graph).flatMap(({ name, end }) => {
+    const encoded = name.slice(0, -1) + "\\u" + name.charCodeAt(name.length - 1).toString(16).padStart(4, "0");
+    return [name, encoded].flatMap(binding => [
+      `;{${binding}=class{}};`, `;if(true){${binding}=class{}};`,
+      `;{({value:${binding}}=otherBindings)};`, `;if(true){[${binding}]=otherBindings};`,
+      `;{({outer:[{value:${binding}}]}=otherBindings)};`, `;{(${binding})=class{}};`,
+      `;const functionHolder=()=>{};functionHolder()\n{${binding}=class{}};`,
+    ].map(insertion => [insertion, source.slice(0, end) + insertion + source.slice(end)]));
+  });
+}
+
+test("protected factory bindings reject ordinary-block writes while preserving lexical and deferred ownership", () => {
+  const source = fixture(currentGraphBody()), graph = inspect(source); assert.equal(graph.ok, true, graph.reason);
+  for (const [name, damaged] of blockBindingReplacementCases(source, graph)) {
+    assert.doesNotThrow(() => new vm.Script(damaged), name);
+    const rejected = inspect(damaged); assert.equal(rejected.ok, false, name);
+    assert.deepEqual(rejected.factoryIds, graph.factoryIds, name); assert.equal(Object.hasOwn(rejected, "scope"), false, name);
+  }
+  for (const { name, end } of protectedBindings(source, graph)) {
+    const local = [
+      `;{let ${name}=class{};${name}=class{}};`,
+      `;if(true){const ${name}=class{};${name}=class{}};`,
+      `;{class ${name}{};({value:${name}}=otherBindings)};`,
+      `;function codexUnusedBinding(){${name}=class{}}`,
+      `;const codexUnusedBinding=function(){${name}=class{}};`,
+      `;const codexUnusedBinding=()=>{${name}=class{}};`,
+      `;try{throw null}catch(${name}){${name}=class{}}`,
+      `;const codexBindingNote=${JSON.stringify(`{${name}=class{}}`)};`,
+      `;/* {${name}=class{}} */`, `;{const codexHolder={};codexHolder.${name}=class{}};`,
+    ];
+    if (name !== protectedBindings(source, graph).at(-1).name) local.push(`;{function ${name}(){};${name}=class{}};`);
+    for (const insertion of local) {
+      const current = source.slice(0, end) + insertion + source.slice(end);
+      assert.doesNotThrow(() => new vm.Script(current), insertion);
+      assert.equal(inspect(current).ok, true, insertion);
+    }
+  }
+});
+
 function nativeWiringCorruptions(source, graph) {
   const hostName = classNameAt(source, graph.scope.hostStart), wrapperName = classNameAt(source, graph.wrapperRequest.ownerStart), viewName = classNameAt(source, graph.viewFetch.ownerStart);
   const ctor = constructorRange(source, graph.scope.hostStart, graph.scope.hostEnd);
