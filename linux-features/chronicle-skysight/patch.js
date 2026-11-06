@@ -266,14 +266,24 @@ function controllerInitPlans(source, scope, patched) {
   const requestPrefix = patched ? `${platform}\\?codexLinuxChronicleRequest:` : "";
   const reconcilePrefix = patched ? `${platform}\\?\\(\\)=>\\{\\}:` : "";
   const archivePrefix = patched ? `${platform}\\?async\\(\\)=>\\{\\}:` : "";
-  const shape = new RegExp(`^\\{request:${requestPrefix}(?<worker>${IDENTIFIER})\\.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:${reconcilePrefix}(?<param>${IDENTIFIER})=>\\{(?<manager>${IDENTIFIER})\\.reconcileComputerHistoryPluginInstallation\\(\\k<param>\\)\\},archiveLegacyChronicleSkill:${archivePrefix}async\\(\\)=>\\{null!=await (?<archive>${IDENTIFIER})\\(\\{codexHome:(?<home>${IDENTIFIER})\\.codexHome,reason:${literal("skysight_gate_enabled")}\\}\\)&&(?<cache>${IDENTIFIER})\\.broadcastQueryCacheInvalidation\\(\\[${literal("skills")}\\]\\)\\}\\}$`, "u");
+  // The native archival operation is now an inline async function. Keep its
+  // complete body opaque; only the current callback and call arguments own
+  // this controller dependency. Linux still chooses the existing no-op branch.
+  const shape = new RegExp(`^\\{request:${requestPrefix}(?<worker>${IDENTIFIER})\\.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:${reconcilePrefix}(?<param>${IDENTIFIER})=>\\{(?<manager>${IDENTIFIER})\\.reconcileComputerHistoryPluginInstallation\\(\\k<param>\\)\\},archiveLegacyChronicleSkill:${archivePrefix}async\\(\\)=>\\{null!=await async function\\(\\{codexHome:(?<archiveHome>${IDENTIFIER}),reason:(?<archiveReason>${IDENTIFIER})\\}\\)\\{`, "u");
+  const archiveCall = new RegExp(`^\\(\\{codexHome:(?<home>${IDENTIFIER})\\.codexHome,reason:${literal("skysight_gate_enabled")}\\}\\)&&(?<cache>${IDENTIFIER})\\.broadcastQueryCacheInvalidation\\(\\[${literal("skills")}\\]\\)\\}\\}$`, "u");
   const body = source.slice(scope.startupStart, scope.startupEnd), plans = [];
   for (const match of scopedMatches(source, new RegExp(head, "gu"), scope.startupStart, scope.startupEnd)) {
     if (!activeExpressionAt(body, match.index - scope.startupStart)) continue;
     const open = match.index + match[0].length - 1, end = findMatchingBrace(source, open);
     if (end < open || source.slice(end + 1, end + 3) !== "))") continue;
-    const object = source.slice(open, end + 1), fields = shape.exec(object)?.groups;
-    if (!fields) continue;
+    const object = source.slice(open, end + 1), header = shape.exec(object);
+    if (!header || header.groups.archiveHome === header.groups.archiveReason) continue;
+    const archiveOpen = header[0].length - 1, archiveEnd = findMatchingBrace(object, archiveOpen);
+    if (archiveEnd < archiveOpen) continue;
+    const called = archiveCall.exec(object.slice(archiveEnd + 1));
+    if (!called) continue;
+    const fields = { ...header.groups, ...called.groups, archive: null,
+      archiveFunction: { start: open + header[0].lastIndexOf("async function("), end: open + archiveEnd + 1 } };
     const nativeObject = patched ? object
       .replace(`request:${LINUX_PLATFORM_CHECK}?codexLinuxChronicleRequest:`, "request:")
       .replace(`reconcileComputerHistoryPluginInstallation:${LINUX_PLATFORM_CHECK}?()=>{}:`, "reconcileComputerHistoryPluginInstallation:")

@@ -31,7 +31,12 @@ function nativeRuntime(original, patched, onCommand = null) {
   let state = "stopped";
   const profileState = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
   const sender = { sendInlineMessageForView(view, message) { assert.equal(this, sender); messages.push({ view, message }); } };
-  const context = vm.createContext({ console, JSON, Promise, String, Error, AggregateError, an: { n: "inert-local-host" },
+  const responseSite = plan.graph.wrapperRequest;
+  const response = methodBody(patched, { open: patched.indexOf("{", responseSite.ownerStart), end: responseSite.ownerEnd }, "handleDictationStreamConnectInfoRequest");
+  const localHost = /this\.getAppServerConnection\(([\w$]+)\.([\w$]+)\)\.getBackendRequestAuth/.exec(response.body);
+  assert.ok(localHost, "current native responder local-host dependency");
+  const context = vm.createContext({ console, JSON, Promise, String, Error, AggregateError,
+    [localHost[1]]: { [localHost[2]]: "inert-local-host" },
     process: { platform: "linux", env: { CODEX_RECORD_REPLAY_LINUX_BIN: "/inert/never-executed" }, cwd: () => "/inert" },
     require(id) {
       if (id === "node:fs") return fs;
@@ -60,7 +65,8 @@ function nativeRuntime(original, patched, onCommand = null) {
   context[init.gate] = false;
   context[init.worker] = { requestComputerUseWorker() { throw Error("Unexpected macOS worker on Linux"); } };
   context[init.manager] = { reconcileComputerHistoryPluginInstallation() { throw Error("Unexpected Linux plugin migration"); } };
-  context[init.archive] = () => { throw Error("Unexpected Linux archive migration"); };
+  assert.equal(init.archive, null, "the current native migration has no named helper binding");
+  assert.ok(patched.slice(init.archiveFunction.start, init.archiveFunction.end).startsWith("async function({codexHome:"));
   context[init.home] = { codexHome: "/inert" };
   context[init.cache] = { broadcastQueryCacheInvalidation() { throw Error("Unexpected Linux migration broadcast"); } };
   context[native.getter.feature] = () => ({ skysight: false });
@@ -71,8 +77,7 @@ function nativeRuntime(original, patched, onCommand = null) {
   assert.equal(context.getController(), context.controller); assert.equal(calls.length, 0);
   assert.equal(context.controller.desiredState, "stopped"); assert.equal(context.controller.shouldReconcileAfterServiceRespawn(), false);
 
-  const site = plan.graph.wrapperRequest, owner = { open: patched.indexOf("{", site.ownerStart), end: site.ownerEnd };
-  const response = methodBody(patched, owner, "handleDictationStreamConnectInfoRequest");
+  const site = plan.graph.wrapperRequest;
   const wrapper = { options: { chunkedMessageSender: sender },
     getAppServerConnection() { return { getBackendRequestAuth: async () => ({ routing: { kind: "personal" }, signal: { throwIfAborted() {} }, token: "inert-token" }) }; },
     getDictationStreamWebsocketUrl() { return "wss://inert.invalid"; }, cancelRequest(view, request) { cancelled.push({ receiver: this, view, request }); },

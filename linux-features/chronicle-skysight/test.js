@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const { execFileSync } = require("node:child_process");
 
 const {
@@ -46,7 +47,7 @@ function currentChronicleMainFixture() {
     .replace('function runMainAppStartup(e){', 'function runMainAppStartup(e){let N="darwin"===process.platform,xe=null;')
     .replace('windowManager:window}){let host;', 'windowManager:window,getSkysightRecorderController:getController}){let host;')
     .replace('windowManager:window}));return host}', 'windowManager:window,getSkysightRecorderController:getController}));return host}')
-    .replace('windowManager:e.windowManager});return created}', 'windowManager:e.windowManager,getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null});N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{null!=await archive({codexHome:V.codexHome,reason:"skysight_gate_enabled"})&&U.broadcastQueryCacheInvalidation(["skills"])}}));globalThis.controller=xe;return created}');
+    .replace('windowManager:e.windowManager});return created}', 'windowManager:e.windowManager,getSkysightRecorderController:()=>Cr().skysight?xe:null,artifactSessionHostLifecycle:null});N&&(xe=new Hse({request:Ce.requestComputerUseWorker,reconcileComputerHistoryPluginInstallation:e=>{Xe.reconcileComputerHistoryPluginInstallation(e)},archiveLegacyChronicleSkill:async()=>{null!=await async function({codexHome:e,reason:t}){return globalThis.archiveLegacyChronicleSkill({codexHome:e,reason:t})}({codexHome:V.codexHome,reason:"skysight_gate_enabled"})&&U.broadcastQueryCacheInvalidation(["skills"])}}));globalThis.controller=xe;return created}');
   return requestGraphFixture(CHRONICLE_NATIVE_BUSINESS+body);
 }
 
@@ -433,6 +434,41 @@ test("chronicle-skysight owns the activity-memory bridge", () => {
   assert.match(patched, /getSkysightRecorderController:\(\)=>"linux"===process\.platform\|\|Cr\(\)\.skysight\?xe:null/);
   assert.doesNotMatch(patched, /"linux-record-replay-start":async/);
   assert.doesNotMatch(patched, /"linux-record-replay-draft-skill":async/);
+});
+
+test("Chronicle preserves the current opaque inline archival function and refuses a changed call scaffold", () => {
+  const original = currentChronicleMainFixture(), before = inspectChronicleBridge(original);
+  assert.equal(before.state, "current");
+  assert.equal(before.native.init.archive, null);
+  const range = before.native.init.archiveFunction;
+  const native = original.slice(range.start, range.end);
+  assert.match(native, /^async function\(\{codexHome:[\w$]+,reason:[\w$]+\}\)\{/u);
+  const patched = applyChronicleSkysightMainBridgePatch(original), after = inspectChronicleBridge(patched);
+  assert.equal(after.state, "patched");
+  assert.equal(patched.slice(after.native.init.archiveFunction.start, after.native.init.archiveFunction.end), native);
+  for (const source of [original, patched]) {
+    const current = inspectChronicleBridge(source), span = current.native.init.archiveFunction;
+    for (const replacement of [
+      native.replace("async function(", "async function*("),
+      native.replace("async function(", "async function unused("),
+    ]) {
+      assert.notEqual(replacement, native);
+      const damaged = source.slice(0, span.start) + replacement + source.slice(span.end);
+      assert.doesNotThrow(() => new vm.Script(damaged));
+      assert.equal(applyChronicleSkysightMainBridgePatch(damaged), damaged);
+      assert.equal(inspectChronicleBridge(damaged).state, "drifted");
+    }
+    const indirect = source.slice(0, span.end) + ".call(null," + source.slice(span.end + 1);
+    assert.doesNotThrow(() => new vm.Script(indirect));
+    assert.equal(applyChronicleSkysightMainBridgePatch(indirect), indirect);
+    assert.equal(inspectChronicleBridge(indirect).state, "drifted");
+  }
+  const opaque = original.slice(0, range.start) + native.replace("globalThis.archiveLegacyChronicleSkill", "globalThis.otherNativeMigration") + original.slice(range.end);
+  assert.notEqual(opaque, original);
+  const preserved = applyChronicleSkysightMainBridgePatch(opaque), opaquePlan = inspectChronicleBridge(preserved);
+  assert.equal(opaquePlan.state, "patched");
+  assert.equal(preserved.slice(opaquePlan.native.init.archiveFunction.start, opaquePlan.native.init.archiveFunction.end),
+    native.replace("globalThis.archiveLegacyChronicleSkill", "globalThis.otherNativeMigration"));
 });
 
 test("chronicle-skysight patches exactly one signed main-process chunk", { skip: !process.env.CODEX_SIGNED_EXTRACTED_APP }, () => {
