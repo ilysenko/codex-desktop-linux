@@ -11,7 +11,6 @@ const { rspackModuleFactories, findRspackRequireBinding } = require("../../scrip
 const {
   fallbackSource,
   applyDilMarkdownFallback,
-  findMarkdownChunk,
   findMarkdownModule,
   patchDilMarkdownFallback,
   descriptors,
@@ -320,15 +319,13 @@ test("the signed official webview exposes one patchable reply and Markdown modul
   const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
   const markdown = findMarkdownModule(signedApp);
   assert.equal(markdown.length, 1);
-  const markdownChunks = findMarkdownChunk(signedApp, markdown[0]);
-  assert.equal(markdownChunks.length, 1);
   const replies = findWebviewAssetsContaining(signedApp, ["model_dil_v2", "source_message_status", ".prepareDil(", "errorFallback:"])
     .map((name) => fs.readFileSync(path.join(signedApp, "webview", "assets", name), "utf8"));
   const patched = replies.map((source) => {
-    try { return applyDilMarkdownFallback(source, markdown[0], markdownChunks[0]); } catch { return null; }
+    try { return applyDilMarkdownFallback(source, markdown[0]); } catch { return null; }
   }).filter(Boolean);
   assert.equal(patched.length, 1);
-  assert.equal(applyDilMarkdownFallback(patched[0], markdown[0], markdownChunks[0]), patched[0]);
+  assert.equal(applyDilMarkdownFallback(patched[0], markdown[0]), patched[0]);
 });
 
 test("actual signed failure seam executes with its factory require, native JSX and original failure", { skip: signedApp == null }, () => {
