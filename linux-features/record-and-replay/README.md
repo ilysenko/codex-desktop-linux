@@ -72,6 +72,24 @@ rebuilds reuse the packaged artifact and never invoke Cargo.
 - Treats InputCapture/libei and X11 backend entries as readiness/evidence
   providers, not live coordinate macro replay.
 
+## Bundled plugin availability
+
+Enabling this community feature updates the existing native `recordAndReplay`
+registry entry. Linux availability follows the enabled community opt-in and
+retains Linux automatic installation when the bundled plugin is missing. The
+original native availability predicate and imported descriptor fields continue
+to govern other platforms. The feature requires Chronicle / Skysight and uses
+its Linux backend. Computer Use availability and the native Record & Replay
+rollout bit remain independent inputs to their original native consumers.
+
+The plugin gate runs in `extracted-app:pre-webview` at order 150, before the
+Chronicle bridge and Record & Replay bridge. It qualifies the evaluated native
+entry loader, full namespace and descriptor publications, one root registry
+entry and its startup controller across all main chunks. Missing, duplicate,
+partial or mixed factory cohorts leave every asset intact. The shared asset
+transaction verifies writes and rollback. Repeated application verifies the
+complete canonical row.
+
 ## Tester Contract
 
 Use the matrix in [docs/record-and-replay-linux.md](../../docs/record-and-replay-linux.md#tester-acceptance-matrix) for PR verification.

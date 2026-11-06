@@ -12,7 +12,7 @@ const {
   BRIDGE_HANDLERS_END_MARKER: CHRONICLE_BRIDGE_HANDLERS_END_MARKER,
 } = require("../chronicle-skysight/patch.js");
 
-const RECORD_REPLAY_PLUGIN_NAME = "record-and-replay";
+const { RECORD_REPLAY_PLUGIN_NAME, applyRecordReplayPluginGateToExtractedApp } = require("./plugin-gate.js");
 const HUD_RUNTIME_VERSION = 6;
 const RECORD_REPLAY_MODULE_EXPRESSIONS = Object.freeze({
   childProcessVar: 'require("node:child_process")',
@@ -30,157 +30,6 @@ function escapeRegExp(value) {
 
 function countOccurrences(source, needle) {
   return source.split(needle).length - 1;
-}
-
-function pluginNameExpressionRegex(pluginName) {
-  const escaped = escapeRegExp(pluginName);
-  return String.raw`(?:\`${escaped}\`|"${escaped}"|'${escaped}')`;
-}
-
-function recordReplayPluginNamePattern(flags = "") {
-  return new RegExp(
-    String.raw`name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)}`,
-    flags,
-  );
-}
-
-function hasRecordReplayPluginGate(source) {
-  const pluginGateArray = findBundledPluginGateArray(source);
-  if (pluginGateArray == null) {
-    return false;
-  }
-
-  if (upstreamRecordReplayDescriptorState(pluginGateArray) === "patched") {
-    return true;
-  }
-
-  const expectedDescriptor = buildRecordReplayDescriptor();
-  const sourceNameCount = [...source.matchAll(recordReplayPluginNamePattern("g"))].length;
-  const arrayNameCount = [
-    ...pluginGateArray.text.matchAll(recordReplayPluginNamePattern("g")),
-  ].length;
-  return sourceNameCount === 1
-    && arrayNameCount === 1
-    && source.split(expectedDescriptor).length - 1 === 1
-    && pluginGateArray.text.split(expectedDescriptor).length - 1 === 1;
-}
-
-function upstreamRecordReplayDescriptorState(pluginGateArray) {
-  const namespace = escapeRegExp(pluginGateArray.descriptorNamespace);
-  const current = new RegExp(
-    String.raw`\{\.\.\.${namespace}\.recordAndReplay,isAvailable:\(\{features:([A-Za-z_$][\w$]*),platform:([A-Za-z_$][\w$]*)\}\)=>"darwin"===\2&&\1\.recordAndReplay\}`,
-    "g",
-  );
-  const patched = new RegExp(
-    String.raw`\{\.\.\.${namespace}\.recordAndReplay,isAvailable:\(\{features:([A-Za-z_$][\w$]*),platform:([A-Za-z_$][\w$]*)\}\)=>\("darwin"===\2\|\|"linux"===\2\)&&\1\.recordAndReplay\}`,
-    "g",
-  );
-  const currentMatches = [...pluginGateArray.text.matchAll(current)];
-  const patchedMatches = [...pluginGateArray.text.matchAll(patched)];
-  if (currentMatches.length === 1 && patchedMatches.length === 0) return { kind: "current", match: currentMatches[0] };
-  if (currentMatches.length === 0 && patchedMatches.length === 1) return "patched";
-  if (currentMatches.length === 0 && patchedMatches.length === 0) return "missing";
-  return "ambiguous";
-}
-
-function hasAnyRecordReplayPluginName(source) {
-  return recordReplayPluginNamePattern().test(source);
-}
-
-function hasObsoleteRecordReplayPluginGate(source) {
-  return new RegExp(
-    String.raw`\{(?:[^{}]*,)?installWhenMissing:!0,name:${pluginNameExpressionRegex(RECORD_REPLAY_PLUGIN_NAME)},isEnabled:`,
-  ).test(source);
-}
-
-function buildRecordReplayDescriptor() {
-  return `{installWhenMissing:!0,name:\`${RECORD_REPLAY_PLUGIN_NAME}\`,isAvailable:({platform:e})=>e===\`linux\`}`;
-}
-
-function findMatchingBracket(source, openIndex) {
-  let depth = 0;
-  let quote = null;
-  let escaped = false;
-  for (let index = openIndex; index < source.length; index += 1) {
-    const char = source[index];
-    if (quote != null) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "'" || char === "\"" || char === "`") quote = char;
-    else if (char === "[") depth += 1;
-    else if (char === "]") {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  return -1;
-}
-
-function findBundledPluginGateArray(source) {
-  const markerPattern = /\.\.\.([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.computerUse\b/g;
-  for (const marker of source.matchAll(markerPattern)) {
-    const markerIndex = marker.index;
-    let openIndex = source.lastIndexOf("[", markerIndex);
-    while (openIndex !== -1 && markerIndex - openIndex < 100_000) {
-      const closeIndex = findMatchingBracket(source, openIndex);
-      if (closeIndex !== -1 && markerIndex < closeIndex) {
-      const text = source.slice(openIndex + 1, closeIndex);
-      const descriptorNamespace = marker[1];
-      if (
-        text.includes(`...${descriptorNamespace}.latex,isAvailable:()=>!0`) &&
-        text.includes(`...${descriptorNamespace}.visualize`) &&
-        text.includes("autoInstallOptOutKey:") &&
-        text.includes(`${descriptorNamespace}.computerUse.name`)
-      ) {
-        return { start: openIndex + 1, end: closeIndex, text, descriptorNamespace };
-      }
-      }
-      openIndex = source.lastIndexOf("[", openIndex - 1);
-    }
-  }
-  return null;
-}
-
-function findAlwaysOnBundledDescriptor(pluginGateArray) {
-  return new RegExp(
-    String.raw`\{\.\.\.${escapeRegExp(pluginGateArray.descriptorNamespace)}\.latex,isAvailable:\(\)=>!0\}`,
-  ).exec(pluginGateArray.text);
-}
-
-function applyRecordReplayPluginGatePatch(currentSource) {
-  if (hasObsoleteRecordReplayPluginGate(currentSource)) {
-    throw new Error("Optional Record & Replay plugin gate patch drift: obsolete isEnabled availability contract");
-  }
-  if (hasRecordReplayPluginGate(currentSource)) {
-    return currentSource;
-  }
-  if (hasAnyRecordReplayPluginName(currentSource)) {
-    throw new Error("Optional Record & Replay plugin gate patch drift: invalid isAvailable availability contract");
-  }
-  const pluginGateArray = findBundledPluginGateArray(currentSource);
-  if (pluginGateArray == null) {
-    throw new Error("Optional Record & Replay plugin gate patch drift: could not find expected upstream .computerUse plugin descriptor array");
-  }
-  const upstream = upstreamRecordReplayDescriptorState(pluginGateArray);
-  if (upstream === "patched") return currentSource;
-  if (upstream?.kind === "current") {
-    const replacement = upstream.match[0].replace(
-      `"darwin"===${upstream.match[2]}`,
-      `("darwin"===${upstream.match[2]}||"linux"===${upstream.match[2]})`,
-    );
-    const index = pluginGateArray.start + upstream.match.index;
-    return currentSource.slice(0, index) + replacement +
-      currentSource.slice(index + upstream.match[0].length);
-  }
-  const match = findAlwaysOnBundledDescriptor(pluginGateArray);
-  if (match == null) {
-    throw new Error("Optional Record & Replay plugin gate patch drift: could not find bundled plugin descriptor insertion point");
-  }
-  const insertionIndex = pluginGateArray.start + match.index;
-  return `${currentSource.slice(0, insertionIndex)}${buildRecordReplayDescriptor()},${currentSource.slice(insertionIndex)}`;
 }
 
 function recordReplayBridgeSource({ fsVar }) {
@@ -535,10 +384,10 @@ function applyRecordReplayGlobalDictationTranscriptPatch(currentSource) {
 const descriptors = [
   {
     id: "record-and-replay-plugin-gate",
-    phase: "main-bundle",
+    phase: "extracted-app:pre-webview",
     order: 150,
     ciPolicy: "optional",
-    apply: applyRecordReplayPluginGatePatch,
+    apply: applyRecordReplayPluginGateToExtractedApp,
   },
   {
     id: "linux-record-replay-main-bridge",
@@ -586,7 +435,7 @@ module.exports = {
   HUD_RUNTIME_VERSION,
   applyRecordReplayDictationTranscriptPatch,
   applyRecordReplayGlobalDictationTranscriptPatch,
-  applyRecordReplayPluginGatePatch,
+  applyRecordReplayPluginGateToExtractedApp,
   applyRecordReplayHudPatch,
   applyRecordReplayMainBridgePatch,
   applyRecordReplayToExtractedApp,
