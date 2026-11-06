@@ -19,7 +19,16 @@ function mapMachineArch(machine = os.arch()) {
 
 function sha256File(filePath) {
   const hash = crypto.createHash("sha256");
-  hash.update(fs.readFileSync(filePath));
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(1024 * 1024);
+    let bytesRead;
+    while ((bytesRead = fs.readSync(fd, buffer, 0, buffer.length)) > 0) {
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
   return hash.digest("hex");
 }
 
@@ -121,8 +130,44 @@ function verifyPackageControl(filePath, expected) {
 async function download(url, destination) {
   const response = await fetch(url, { redirect: "follow" });
   if (!response.ok) throw new Error(`Download failed (${response.status}) for ${url}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  fs.writeFileSync(destination, bytes, { mode: 0o600 });
+  const directory = path.dirname(destination);
+  fs.mkdirSync(directory, { recursive: true });
+  const output = fs.createWriteStream(destination, { mode: 0o600 });
+  try {
+    if (response.body != null) {
+      for await (const chunk of response.body) {
+        if (!output.write(chunk)) {
+          await new Promise((resolve, reject) => {
+            const onDrain = () => {
+              output.removeListener("drain", onDrain);
+              output.removeListener("error", onError);
+              resolve();
+            };
+            const onError = (error) => {
+              output.removeListener("drain", onDrain);
+              output.removeListener("error", onError);
+              reject(error);
+            };
+            output.once("drain", onDrain);
+            output.once("error", onError);
+          });
+        }
+      }
+    }
+    await new Promise((resolve, reject) => {
+      output.end((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+      output.once("error", reject);
+    });
+  } catch (error) {
+    output.destroy();
+    try {
+      fs.unlinkSync(destination);
+    } catch {}
+    throw error;
+  }
 }
 
 function verifySigningKey(keyPath, expectedFingerprint = EXPECTED_FINGERPRINT) {
