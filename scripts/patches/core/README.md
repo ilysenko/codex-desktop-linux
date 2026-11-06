@@ -55,6 +55,14 @@ The latest signed package removed the old before-quit confirmation flow and its
 repair and compound descriptor have been retired. The current core registry
 preserves the latest native Quit lifecycle.
 
+The current `before-quit` handler negates the macOS privacy-termination check.
+On Linux and Windows that native check returns false, so the handler already
+marks the application quitting and permits the event without consulting
+`canQuitWithoutPrompt()`. Adding approval consumption to its other branch would
+instead change macOS privacy-termination handling. The signed-bundle regression
+in `../runner.test.js` evaluates the original callback with inert collaborators
+to preserve this platform boundary; it is not a live desktop quit test.
+
 The current native
 `before-quit` owner now reads `canQuitWithoutPrompt()`, records local approval
 through `markQuitApproved()`, and reaches the existing `markAppQuitting()`

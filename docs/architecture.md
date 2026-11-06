@@ -90,12 +90,15 @@ the official browser registry.
 ## Patches and features
 
 `scripts/patches/runner.js` composes required core compatibility patches with
-descriptors from enabled features. The current core registry is empty: the
-verified upstream runtime natively consumes quit approval in its unique
-`before-quit` owner and owns shell-environment startup after app readiness. See
-the [core patch registry](../scripts/patches/core/README.md) for reproduction
-evidence and retirement criteria. Patch reports remain the candidate-acceptance
-contract.
+descriptors from enabled features. The current core registry contains the
+required `shell-env-startup` workaround, which defers the native shell loader by
+one event-loop turn while preserving its request, cache and error handling.
+The earlier Quit confirmation repair is retired. In the current signed package,
+the native `before-quit` handler negates the macOS privacy-termination predicate;
+ordinary Linux quits already mark the application quitting without consuming a
+separate approval. See the
+[core patch registry](../scripts/patches/core/README.md) for reproduction evidence
+and retirement criteria. Patch reports remain the candidate-acceptance contract.
 Enabled feature descriptors default to enforced acceptance even when their
 execution policy is optional: warnings or drift reject promotion unless an
 optional descriptor explicitly opts out with `enforceWhenEnabled: false`.
