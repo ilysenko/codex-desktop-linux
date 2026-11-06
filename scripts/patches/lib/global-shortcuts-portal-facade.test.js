@@ -29,6 +29,7 @@ for (const key of ["82820", '"82820"', "8.282e4", "0x14384"]) {
     assert.deepEqual(metadata.owner.windowServices.bindings, {
       windowManager: "D", avatarOverlayManager: "M", notchOverlayManager: "O", spotlightController: "U",
       hotkeyWindowLifecycleManager: "j", globalDictationLifecycleManager: "L",
+      appshotHotkeysService: "A", overlayHotkeyController: "Q", realtimeVoiceHotkeyController: "V",
     });
   });
 }
@@ -44,12 +45,12 @@ test("Portal semantic facade returns actual supplied coordinates in either share
 
 test("Portal semantic facade projects other bound returned data roles without constructor inference", () => {
   const original = mainBundleFixture();
-  const declared = original.replace("{let O,L=new H7({windowManager:D,globalState:G});return{", "{let O,L=new H7({windowManager:D,globalState:G});const A={};return{");
+  const declared = original.replace(";return{windowManager:D", ";const Extra={};return{windowManager:D");
   assert.notEqual(declared, original, "The additional role is declared in the current window producer");
-  const source = declared.replace("spotlightController:U,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:", "spotlightController:U,appshotHotkeysService:A,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:");
+  const source = declared.replace("spotlightController:U,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:", "spotlightController:U,additionalService:Extra,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:");
   assert.notEqual(source, declared, "The declared role is added to the returned window object");
   const metadata = inspectGlobalShortcutsPortal(source);
-  assert.equal(metadata.state, "current"); assert.equal(metadata.owner.windowServices.bindings.appshotHotkeysService, "A");
+  assert.equal(metadata.state, "current"); assert.equal(metadata.owner.windowServices.bindings.additionalService, "Extra");
   assert.equal(metadata.owner.windowServices.bindings.markAppQuitting, undefined);
 });
 
@@ -96,7 +97,7 @@ for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRAC
     const owners = originals.map(row => ({ ...row, metadata: inspectGlobalShortcutsPortal(row.source) })).filter(row => row.metadata.owner);
     assert.equal(owners.length, 1); const owner = owners[0];
     assert.equal(inspectGlobalShortcutsPortal(originals.find(row => row.name === "early-bootstrap.js").source).state, "unrelated");
-    assert.equal(owner.metadata.owner.id, "14630"); assert.equal(owner.metadata.state, "current");
+    assert.equal(owner.metadata.owner.id, "26307"); assert.equal(owner.metadata.state, "current");
     assertActualRanges(owner.source, owner.metadata, false);
     const unsupported = owner.source.replace(/exports\.ids=(\[[^\]]*\]),exports\.modules=/u, "exports.ids=$1;exports.modules=");
     assert.notEqual(unsupported, owner.source); assert.equal(inspectGlobalShortcutsPortal(unsupported).state, "drifted");

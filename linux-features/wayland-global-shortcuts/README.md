@@ -5,6 +5,14 @@ global shortcuts through the native Wayland GlobalShortcuts portal. The app
 continues to own each action, its availability and its preferred key combination.
 KDE shows descriptive action names when requesting approval.
 
+The five portal actions keep their native Popout ownership, Pet availability,
+Appshots trigger policy, voice lock-screen check and Meetings access, window and
+keymap checks. Region Screenshot and Spotlight retain their native registrations.
+The build validates the complete main-process chunk inventory before committing
+the five action tags together. Repeated builds validate the complete feature
+state, including its native owners and shared portal dependency. Incomplete or
+ambiguous adaptation leaves the input files intact and reports the refusal.
+
 Enable `wayland-global-shortcuts` in `linux-features/features.json` and rebuild.
 Global dictation is independently selected with `global-dictation`; either
 feature can be enabled alone or both can share one helper.

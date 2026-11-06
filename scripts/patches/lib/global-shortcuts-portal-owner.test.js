@@ -37,7 +37,7 @@ test("Portal requires complete pending commit order and native Windows guard", (
     ["pending-prefix missing", source.replace("let e=pendingState();null!=e&&commitPending(e),", "")],
     ["pending different capture", source.replace("null!=e&&commitPending(e),D.markAppQuitting()", "null!=e&&commitPending(other),D.markAppQuitting()")],
     ["pending commit after mark", source.replace("null!=e&&commitPending(e),D.markAppQuitting()", "D.markAppQuitting(),null!=e&&commitPending(e)")],
-    ["producer shadows pending reader", source.replace("{let O,L=new H7", "{function pendingState(){}let O,L=new H7")],
+    ["producer shadows pending reader", source.replace("{let O;D=new MeetingWindows", "{function pendingState(){}let O;D=new MeetingWindows")],
     ["startup shadows pending commit", source.replace("function runMainAppStartup(input){", "function runMainAppStartup(input){function commitPending(){}")],
     ["Windows delay changed", source.replace(".armTerminateCurrentProcess(1e4)", ".armTerminateCurrentProcess(9e3)")],
     ["Windows package guard disconnected", source.replace("e&&ea.app.isPackaged&&function", "ea.app.isPackaged&&function")],
@@ -91,7 +91,7 @@ test("Portal refuses every overriding critical member form at object seams", () 
     '["markAppQuitting"]:()=>{}', 'get markAppQuitting(){return ()=>{}}', 'markAppQuitting(){}',
     String.raw`hotkeyWindowLifecycleManag\u0065r:L`,
   ]) assertRefused(source.replace("U.dispose()}}}(", `U.dispose()},${member}}}(`), member);
-  const declaredShorthand = source.replace("{let O,L=new H7({windowManager:D,globalState:G});return{", "{let O,L=new H7({windowManager:D,globalState:G});const markAppQuitting=()=>{},hotkeyWindowLifecycleManager=L;return{");
+  const declaredShorthand = source.replace(";return{windowManager:D", ";const markAppQuitting=()=>{},hotkeyWindowLifecycleManager=L;return{windowManager:D");
   assert.notEqual(declaredShorthand, source, "Shorthand controls are declared in the current window producer");
   for (const member of ["markAppQuitting", "hotkeyWindowLifecycleManager", "...{}&&{hotkeyWindowLifecycleManager:L}"]) {
     const variant = declaredShorthand.replace("U.dispose()}}}(", `U.dispose()},${member}}}(`);
