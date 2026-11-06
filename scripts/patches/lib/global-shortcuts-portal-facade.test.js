@@ -15,7 +15,7 @@ function assertActualRanges(source, metadata, shared) {
   assert.ok(factory.includes(metadata.owner.registration.body));
   assert.equal(source.slice(owner.registration.start, owner.registration.end), owner.registration.body);
   assert.ok(owner.factoryBody.start < owner.windowServices.body.start && owner.windowServices.body.end < owner.factoryBody.end);
-  assert.equal(producer.includes("codexLinuxGlobalShortcutsPortalShutdown();"), shared);
+  assert.equal(producer.includes(",codexLinuxGlobalShortcutsPortalShutdown(),"), shared);
   for (const [key, binding] of Object.entries(owner.windowServices.bindings)) assert.ok(producer.includes(`${key}:${binding}`), key);
   assert.equal(source[owner.factoryBody.end], "}"); assert.equal(source[owner.windowServices.body.end], "}");
   assert.deepEqual(Object.keys(owner).sort(), ["factoryBody", "id", "registration", "windowServices"]);
@@ -78,7 +78,7 @@ test("Portal semantic facade retains opaque factory IDs without inventing an own
 
 test("Portal semantic facade refuses partial shared authority and marks unrelated input", () => {
   const shared = installPortalBackend(mainBundleFixture());
-  const partial = inspectGlobalShortcutsPortal(shared.replace("codexLinuxGlobalShortcutsPortalShutdown();", ""));
+  const partial = inspectGlobalShortcutsPortal(shared.replace(",codexLinuxGlobalShortcutsPortalShutdown(),", ","));
   assert.equal(partial.state, "drifted"); assert.deepEqual(partial.factoryIds, ["82820"]); assert.equal(partial.owner, null); assert.ok(partial.reason);
   assert.equal(inspectGlobalShortcutsPortal(`const marker=${JSON.stringify(PATCH_MARKER)};`).state, "drifted");
   assert.equal(inspectGlobalShortcutsPortal('const entry="ordinary runtime";').state, "unrelated");
@@ -86,24 +86,24 @@ test("Portal semantic facade refuses partial shared authority and marks unrelate
   assert.equal(inspectGlobalShortcutsPortal(null).state, "drifted");
 });
 
-const signed = process.env.CODEX_SIGNED_EXTRACTED_APP;
-test("Portal semantic facade projects real raw/shared main sources and unrelated entry", { skip: !signed }, () => {
-  const build = path.join(signed, ".vite/build");
-  const originals = fs.readdirSync(build).filter(name => /^early-bootstrap.*\.js$/u.test(name))
-    .map(name => ({ name, source: fs.readFileSync(path.join(build, name), "utf8") }));
-  const owner = originals.find(item => item.source.includes("desktop.quitConfirmation.quit") && item.source.includes("hotkeyWindowLifecycleManager:"));
-  assert.ok(owner); assert.equal(inspectGlobalShortcutsPortal(originals.find(item => item.name === "early-bootstrap.js").source).state, "unrelated");
-  const unsupportedHeader = owner.source.replace("exports.ids=[45],exports.modules=", "exports.ids=[45];exports.modules=");
-  assert.notEqual(unsupportedHeader, owner.source); assert.equal(inspectGlobalShortcutsPortal(unsupportedHeader).state, "drifted");
-  for (const source of [owner.source]) {
-    const metadata = inspectGlobalShortcutsPortal(source); assert.equal(metadata.state, "current"); assertActualRanges(source, metadata, false);
-    assert.equal(metadata.owner.windowServices.bindings.globalDictationLifecycleManager, "L");
-    assert.equal(metadata.owner.windowServices.bindings.appshotHotkeysService, "W");
-    assert.equal(metadata.owner.windowServices.bindings.regionScreenshotHotkeys, "N");
-    assert.equal(metadata.owner.windowServices.bindings.realtimeVoiceHotkeyController, "$");
-    for (const shared of [shortcuts(dictation(source)), dictation(shortcuts(source))]) {
-      const projected = inspectGlobalShortcutsPortal(shared); assert.equal(projected.state, "shared"); assertActualRanges(shared, projected, true);
-      assert.equal(projected.owner.windowServices.bindings.globalDictationLifecycleManager, "L");
-    }
-  }
-});
+for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
+  const signed = process.env[variable];
+  test(`Portal facade projects current signed raw/shared owner and unrelated entry (${variable})`, { skip: !signed }, () => {
+    const build = path.join(signed, ".vite/build");
+    const originals = fs.readdirSync(build).filter(name => /^early-bootstrap.*\.js$/u.test(name))
+      .map(name => ({ name, source: fs.readFileSync(path.join(build, name), "utf8") }));
+    assert.equal(originals.length, 19);
+    const owners = originals.map(row => ({ ...row, metadata: inspectGlobalShortcutsPortal(row.source) })).filter(row => row.metadata.owner);
+    assert.equal(owners.length, 1); const owner = owners[0];
+    assert.equal(inspectGlobalShortcutsPortal(originals.find(row => row.name === "early-bootstrap.js").source).state, "unrelated");
+    assert.equal(owner.metadata.owner.id, "14630"); assert.equal(owner.metadata.state, "current");
+    assertActualRanges(owner.source, owner.metadata, false);
+    const unsupported = owner.source.replace(/exports\.ids=(\[[^\]]*\]),exports\.modules=/u, "exports.ids=$1;exports.modules=");
+    assert.notEqual(unsupported, owner.source); assert.equal(inspectGlobalShortcutsPortal(unsupported).state, "drifted");
+    const shared = installPortalBackend(owner.source), metadata = inspectGlobalShortcutsPortal(shared);
+    assert.equal(metadata.state, "shared"); assertActualRanges(shared, metadata, true);
+    assert.equal(installPortalBackend(shared), shared);
+    assert.deepEqual(metadata.owner.windowServices.bindings, owner.metadata.owner.windowServices.bindings);
+    for (const row of originals) assert.equal(fs.readFileSync(path.join(build, row.name), "utf8"), row.source);
+  });
+}

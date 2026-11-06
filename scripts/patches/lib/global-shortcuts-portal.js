@@ -590,7 +590,7 @@ function windowWiringPlan(source, owner) {
   const parameters = header[1].split(",").map(value => value.split(":"));
   const aliases = Object.fromEntries(parameters);
   if (Object.keys(aliases).length !== parameters.length) throw new Error("Duplicate quit-installer parameter role");
-  for (const name of ["isWindows", "disableQuitConfirmationPrompt", "quitState", "windows", "globalState", "settingsStore", "stopCodexMicro", "flushTracingBeforeQuit", "flushAndDisposeContext", "disposables"]) {
+  for (const name of ["isWindows", "quitState", "windows", "globalState", "settingsStore", "stopCodexMicro", "flushTracingBeforeQuit", "flushAndDisposeContext", "disposables"]) {
     if (!aliases[name]) throw new Error(`Quit installer has no ${name} parameter`);
   }
   const argumentsProperties = objectProperties(call.arguments, "Quit arguments");
@@ -616,14 +616,53 @@ function windowWiringPlan(source, owner) {
     roles[name] = rootProperty(windowProperties, name);
     if (!new RegExp(`^${IDENT}$`, "u").test(roles[name]) || !declaredBinding(producerBody, `{${producerHead[1]}}`, roles[name])) throw new Error(`Unbound native window ${name}`);
   }
-  return { startup, header, call, aliases, producer, producerBody, producerParameters: producerHead[1], windowProperties, roles };
+  return { startup, header, call, aliases, producer, producerBody, producerParameters: producerHead[1], windowProperties, roles, resultStart: resultOpen + 1, resultBody };
+}
+
+function nativeMarkPlan(source, owner, wiring) {
+  const { startup, producerBody, producerParameters, windowProperties, roles, resultStart, resultBody } = wiring;
+  const mark = windowProperties.get("markAppQuitting");
+  const tail = `${roles.windowManager}.markAppQuitting(),${roles.avatarOverlayManager}.markAppQuitting(),${roles.notchOverlayManager}?.markAppQuitting(),${roles.spotlightController}.dispose()`;
+  const head = mark && new RegExp(`^\\(\\)=>\\{let (?<pending>${IDENT})=(?<read>${IDENT})\\(\\);${notNull("\\k<pending>")}&&(?<commit>${IDENT})\\(\\k<pending>\\),${escapeRegExp(tail)}\\}$`, "u").exec(mark.value);
+  if (!head) throw new Error("Current pending-state commit before native window marking is unavailable");
+  for (const [name, parameters] of [[head.groups.read, ""], [head.groups.commit, IDENT]]) {
+    const declaration = one(codeMatches(owner.factory.body, new RegExp(`\\bfunction ${escapeRegExp(name)}\\(${parameters}\\)\\{`, "gu"), true), "pending-state root helper declaration");
+    if (!statementAt(owner.factory.body, declaration.index) ||
+        declaredBinding(producerBody, `{${producerParameters}}`, name) || declaredBinding(startup.body, "", name)) {
+      throw new Error("Pending-state mark helper is shadowed or outside the native factory");
+    }
+  }
+  const memberAt = resultBody.indexOf(mark.member);
+  if (memberAt < 0 || resultBody.indexOf(mark.member, memberAt + mark.member.length) >= 0) throw new Error("Native window mark member is ambiguous");
+  const stopAt = resultStart + memberAt + mark.member.indexOf(tail);
+  return { stopAt, tail, source: mark.member, read: head.groups.read, commit: head.groups.commit };
+}
+
+function nativeBeforeQuitPlan(before, event, aliases, electron) {
+  const head = new RegExp(`^!function\\(\\{addon:(${IDENT}),electronAppPath:(${IDENT})=${escapeRegExp(electron)}\\.app\\.getAppPath\\(\\),platform:(${IDENT})=process\\.platform,resourcesPath:(${IDENT})=process\\.resourcesPath\\}=\\{\\}\\)\\{`, "u").exec(before);
+  if (!head) throw new Error("Current leading-not native privacy quit policy is unavailable");
+  const open = head[0].length - 1, end = findMatchingBrace(before, open), body = before.slice(open + 1, end);
+  const privacy = new RegExp(`^if\\(${literal("darwin")}!==${escapeRegExp(head[3])}\\)return!1;try\\{return\\(${escapeRegExp(head[1])}\\?\\?${IDENT}\\(\\{electronAppPath:${escapeRegExp(head[2])},resourcesPath:${escapeRegExp(head[4])}\\}\\)\\)\\.isPrivacySettingsTerminationRequest\\(\\)\\}catch\\{return!1\\}$`, "u");
+  if (!privacy.test(body)) throw new Error("Native privacy platform/termination policy changed");
+  const accepted = new RegExp(`^\\(\\)\\?\\((${IDENT})=!0,${escapeRegExp(aliases.windows)}\\.markAppQuitting\\(\\)\\):${escapeRegExp(event)}\\.preventDefault\\(\\)$`, "u").exec(before.slice(end + 1));
+  if (!accepted) throw new Error("Native accepted/privacy-cancelled quit arms changed");
+  return { quitting: accepted[1], body: before };
+}
+
+function nativeWindowsForcePlan(prefix, aliases, electron) {
+  const head = new RegExp(`^${escapeRegExp(aliases.isWindows)}&&${escapeRegExp(electron)}\\.app\\.isPackaged&&function\\(\\{loadNativeAddon:(${IDENT})=(${IDENT}\\.${IDENT}),platform:(${IDENT})=process\\.platform\\}=\\{\\}\\)\\{`, "u").exec(prefix);
+  if (!head) throw new Error("Native packaged Windows force-exit guard is unavailable");
+  const open = head[0].length - 1, end = findMatchingBrace(prefix, open), body = prefix.slice(open + 1, end);
+  if (prefix.slice(end + 1) !== "();" ||
+      !new RegExp(`^if\\(${literal("win32")}===${escapeRegExp(head[3])}&&!${IDENT}\\)try\\{`, "u").test(body) ||
+      codeMatches(body, /\.armTerminateCurrentProcess\(1e4\)/gu).length !== 1) throw new Error("Native Windows force-exit policy changed");
+  return { source: prefix };
 }
 
 function lifecyclePlan(source, owner) {
-  const { startup, header, call, aliases, producer, windowProperties, roles } = windowWiringPlan(source, owner);
-  const mark = windowProperties.get("markAppQuitting");
-  const markValue = `()=>{${roles.windowManager}.markAppQuitting(),${roles.avatarOverlayManager}.markAppQuitting(),${roles.notchOverlayManager}?.markAppQuitting(),${roles.spotlightController}.dispose()}`;
-  if (!mark || mark.value !== markValue) throw new Error("Accepted application quit before window cleanup is unavailable");
+  const wiring = windowWiringPlan(source, owner);
+  const { startup, header, call, aliases, producer } = wiring;
+  const mark = nativeMarkPlan(source, owner, wiring);
   const electron = owner.body.match(new RegExp(`(${IDENT})\\.globalShortcut\\.unregister\\(`, "u"))?.[1];
   const body = source.slice(call.open + 1, call.close);
   if (declaredBinding(body, `{${header[1]}}`, electron)) throw new Error("Quit installer shadows its Electron owner");
@@ -633,24 +672,18 @@ function lifecyclePlan(source, owner) {
   if (declaredBinding(startup.body, "", "Promise")) throw new Error("Quit startup shadows its drain Promise");
   const beforeHeader = one(codeMatches(body, new RegExp(`${escapeRegExp(electron)}\\.app\\.on\\(${literal("before-quit")},(${IDENT})=>\\{`, "gu"), true), "native before-quit callback");
   const beforeOpen = beforeHeader.index + beforeHeader[0].length - 1, beforeClose = findMatchingBrace(body, beforeOpen), before = body.slice(beforeOpen + 1, beforeClose);
-  const bypass = new RegExp(`if\\(${aliases.isWindows}\\|\\|${aliases.quitState}\\.canQuitWithoutPrompt\\(\\)\\|\\|${aliases.disableQuitConfirmationPrompt}(?:\\|\\|!${IDENT}&&!${IDENT}&&!${IDENT})?\\)\\{(${IDENT})=!0,${aliases.windows}\\.markAppQuitting\\(\\);return\\}`, "gu");
-  one(codeMatches(before, bypass, true), "accepted quit bypass and window marking");
-  const rawApproval = new RegExp(`0!==${escapeRegExp(electron)}\\.dialog\\.showMessageBoxSync\\([\\s\\S]*?\\)\\?${beforeHeader[1]}\\.preventDefault\\(\\):\\(${aliases.quitState}\\.markQuitApproved\\(\\),${IDENT}=!0,${aliases.windows}\\.markAppQuitting\\(\\)\\)`, "u");
-  const coreApproval = new RegExp(`Promise\\.resolve\\(\\)\\.then\\(\\(\\)=>codexLinuxParent\\?${escapeRegExp(electron)}\\.dialog\\.showMessageBox\\(codexLinuxParent,codexLinuxOptions\\):${escapeRegExp(electron)}\\.dialog\\.showMessageBox\\(codexLinuxOptions\\)\\)\\.then\\((${IDENT})=>\\{codexLinuxQuitPromptPending=!1;if\\(\\1\\.response===0\\)\\{${aliases.quitState}\\.markQuitApproved\\(\\);${escapeRegExp(electron)}\\.app\\.quit\\(\\)\\}\\}\\)`, "u");
-  const corePrefix = `if(codexLinuxQuitPromptPending){${beforeHeader[1]}.preventDefault();return}`;
-  const raw = codeMatches(before, new RegExp(rawApproval.source, "gu"), true).filter(match => evaluatedAt(before, match.index));
-  const core = codeMatches(before, new RegExp(coreApproval.source, "gu"), true).filter(match => evaluatedAt(before, match.index));
-  if (raw.length + core.length !== 1 || (core.length && (!before.startsWith(corePrefix) || !before.includes(`let codexLinuxParent=codexLinuxQuitDialogParent(${aliases.windows});`)))) throw new Error("Accepted/cancelled quit confirmation flow is unavailable");
+  const beforePlan = nativeBeforeQuitPlan(before, beforeHeader[1], aliases, electron);
   const willHeader = one(codeMatches(body, new RegExp(`${escapeRegExp(electron)}\\.app\\.on\\(${literal("will-quit")},(${IDENT})=>\\{`, "gu"), true), "native will-quit callback");
   const willOpen = willHeader.index + willHeader[0].length - 1, willClose = findMatchingBrace(body, willOpen), will = body.slice(willOpen + 1, willClose);
-  const guard = one(codeMatches(will, new RegExp(`if\\((?:${IDENT}=!0,)?(${IDENT})\\)return;`, "gu"), true), "repeat quit guard");
+  const guard = one(codeMatches(will, new RegExp(`^if\\(${escapeRegExp(beforePlan.quitting)}=!0,(${IDENT})\\)return;`, "gu"), true), "repeat quit guard");
   const finalizer = one(codeMatches(will, new RegExp(`let (${IDENT})=\\(\\)=>\\{(${IDENT})\\(${aliases.flushAndDisposeContext},5e3\\)\\.then\\(\\(\\)=>\\{${aliases.disposables}\\.dispose\\(\\),${escapeRegExp(electron)}\\.app\\.quit\\(\\)\\}\\)\\}`, "gu"), true), "final quit drain");
+  const force = nativeWindowsForcePlan(will.slice(guard[0].length, finalizer.index), aliases, electron);
   const event = willHeader[1], hotkey = aliases.hotkeyWindowLifecycleManager, dictation = aliases.globalDictationLifecycleManager;
   const disposal = `${event}.preventDefault(),${guard[1]}=!0,${hotkey}.dispose(),${dictation}.dispose(),Promise.allSettled([`;
   const skip = `if(${aliases.quitState}.shouldSkipDrainBeforeQuit()){${disposal}${aliases.globalState}.flush(),${aliases.stopCodexMicro}(),${aliases.flushTracingBeforeQuit}()]).then(${finalizer[1]});return}`;
   const normal = `${disposal}${aliases.globalState}.flush(),${aliases.settingsStore}.flush(),${aliases.stopCodexMicro}(),${aliases.flushTracingBeforeQuit}()]).then(${finalizer[1]})`;
   if (!will.includes(skip) || !will.endsWith(normal)) throw new Error("Both native accepted-quit drain branches are required");
-  return { factory: owner.factory, startup, producer, call, aliases, electron, quitStart: startup.start + header.index, quitOpen: call.open, quitClose: call.close };
+  return { factory: owner.factory, startup, producer, call, aliases, electron, mark, force, quitStart: startup.start + header.index, quitOpen: call.open, quitClose: call.close };
 }
 
 function applyCurrentPortalBackend(source) {
@@ -688,13 +721,8 @@ function applyCurrentPortalBackend(source) {
   patched = replaceUnique(patched,
     new RegExp(`${escapeRegExp(accessReady)}&&\\(${IDENT}\\|\\|${IDENT}\\)&&${IDENT}\\.forEach\\((${IDENT})=>\\{\\1\\(\\)\\}\\),${IDENT}\\}`, "u"),
     match => match.replace(/,([\w$]+)\}$/u, ",codexLinuxGlobalShortcutsPortalSchedule(),$1}"), "application access publication");
-  const quitting = new RegExp(
-    `markAppQuitting:\\(\\)=>\\{(?=[^{}]{0,240}?(?:${IDENT}(?:\\?\\.|\\.)markAppQuitting\\(\\),){2,}${IDENT}\\.dispose\\(\\)\\})`,
-    "u",
-  );
-  uniqueAnchor(quitting, "accepted application quit before window cleanup");
-  patched = replaceUnique(patched, quitting,
-    match => `${match}codexLinuxGlobalShortcutsPortalShutdown();`, "accepted application quit before window cleanup");
+  const accepted = lifecyclePlan(patched, registrationOwner(patched));
+  patched = patched.slice(0, accepted.mark.stopAt) + "codexLinuxGlobalShortcutsPortalShutdown()," + patched.slice(accepted.mark.stopAt);
   // Accepted quit (will-quit): upstream disposes the shortcut owners and then
   // drains asynchronously. Stop the portal session before that disposal and
   // make the drain wait for the helper to release its session.
@@ -808,7 +836,7 @@ function restoreCurrentPortalSource(source, block) {
   restored = replaceCount(restored, `null!=${entry[1]}.portalRegistration?${entry[1]}.portalRegistration.unregister():${electron}.globalShortcut.unregister(${entry[1]}.registrationHotkey)`,
     `${electron}.globalShortcut.unregister(${entry[1]}.registrationHotkey)`, 1, "Portal registration disposal");
   restored = replaceCount(restored, ",codexLinuxGlobalShortcutsPortalSchedule(),", ",", 1, "Portal access publication");
-  restored = replaceCount(restored, "codexLinuxGlobalShortcutsPortalShutdown();", "", 1, "Portal accepted quit initiation");
+  restored = replaceCount(restored, ",codexLinuxGlobalShortcutsPortalShutdown(),", ",", 1, "Portal accepted quit after pending-state commit");
   restored = replaceCount(restored, "codexLinuxGlobalShortcutsQuitStopped=codexLinuxGlobalShortcutsPortalShutdown(),", "", 2, "Portal quit drain initiation");
   restored = replaceCount(restored, "Promise.allSettled([codexLinuxGlobalShortcutsQuitStopped,", "Promise.allSettled([", 2, "Portal quit drain completion");
   restored = replaceCount(restored, "codexLinuxGlobalShortcutsCaptureReady=codexLinuxGlobalShortcutsPortalPause(),", "", 1, "Portal capture suspension");

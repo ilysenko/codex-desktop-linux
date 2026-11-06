@@ -61,11 +61,15 @@ The backend uses the application's shortcut registry, including suspension
 during shortcut capture and cancellation of held gestures. Approval requests
 are serialized. Partial approval affects the corresponding actions; a failed
 reconfiguration attempts one recovery of still-requested working actions.
-Startup binds after account-access discovery. Accepting quit starts backend
-shutdown before native window and shortcut-owner cleanup. The normal asynchronous
-quit drain waits for helper shutdown before final context disposal and application
-exit; canceling quit leaves the backend running. This preserves KDE's saved
-choices across ordinary restarts and update exits.
+Startup binds after account-access discovery. Accepted native quit first reads
+the pending-turn snapshot and attempts its native synchronous save. Portal shutdown
+then disables registration and initiates helper stop before native window and
+shortcut-owner cleanup. Both native asynchronous quit drains join the stop Promise
+before the existing timeout-bound context cleanup, final disposables and app quit.
+The drains wait for settlement, including a failed stop result. The native macOS
+privacy veto leaves the backend running. Upstream retains the platform and packaged
+Windows forced-exit policy. This preserves KDE's saved choices across ordinary
+restarts and update exits.
 Session replacement can briefly interrupt global shortcuts. The helper's
 registration timeout is 30 seconds.
 

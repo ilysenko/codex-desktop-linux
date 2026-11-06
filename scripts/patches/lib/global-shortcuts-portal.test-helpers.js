@@ -26,7 +26,8 @@ function mainBundleFixtureBody() {
   return [
     'var p=require("node:fs"),u=require("node:path"),h=require("node:child_process"),ea=require("electron"),logModule={r:()=>({warning(){}})};',
     'var accessState={codexLocalAccess:true,workCloudAccess:false,workLocalAccess:false},accessReady=true,accessListeners=new Set;function getAccess(){if(!accessReady)return{status:"loading"};let{codexLocalAccess:e,workCloudAccess:t,workLocalAccess:r}=accessState;return{status:"ready",codexLocalAccess:e,workCloudAccess:t,workLocalAccess:r}}function publishAccess(e){let t=!accessReady,r={...accessState,...e},n=!0,i=!0;return accessState=r,t&&(accessReady=!0),accessReady&&(t||i)&&accessListeners.forEach(e=>{e()}),n}',
-    'function flushWithTimeout(e,t){return Promise.resolve(e())}',
+    'function flushWithTimeout(e,t){return new Promise(r=>{let n=setTimeout(r,t),i=()=>{clearTimeout(n),r()};e().then(i,i)})}',
+    'function pendingState(){return globalThis.__readPendingState?.()??null}function commitPending(e){try{globalThis.__commitPending?.(e)}catch(e){globalThis.__commitWarning?.(e)}}function privacyAddon(){return globalThis.__privacyAddon()}var forceArmed=!1,forceModule={load:()=>globalThis.__loadForceAddon()};',
     'function Kk(e,t){let r="";e.stdout?.on("data",e=>{let n=(r+=e.toString("utf8")).indexOf("\\n");for(;-1!==n;)t(r.slice(0,n).trim()),r=r.slice(n+1),n=r.indexOf("\\n")})}',
     'function pauseBareModifiers(e){}function pauseWindowsHooks(e){}var managerEntries=new Set,suspendDepth=0;function suspendGlobalHotkeys(){return function(){if(1===(suspendDepth+=1))for(let e of(pauseBareModifiers(!0),pauseWindowsHooks(!0),managerEntries))e.onCancelled?.(),e.registered=!1,c.globalShortcut.unregister(e.registrationHotkey);let e=!1;return()=>{if(!e&&(e=!0,0==(suspendDepth-=1)))for(let e of(pauseBareModifiers(!1),pauseWindowsHooks(!1),managerEntries))activateHotkey(e)}}()}',
     'function eA(e,t,r){var n;let i=r?.ownership,s=t.onReleased,a=t.onCancelled,o=null==i?t:{onRegistrationChanged:t.onRegistrationChanged,onPressed:()=>{i.isOwner()&&t.onPressed()},onReleased:null==s?void 0:()=>{i.isOwner()&&s()},onCancelled:null==a?void 0:()=>{i.isOwner()&&a()}};if("win32"===process.platform&&uV(e))return function(e,t){return null}(e,o);if(Rk(e)||Tk(e))return Lk(e)||Tk(e)?function(e,t,r="press"){return"darwin"!==process.platform?null:{handlesRelease:!0,unregister(){}}}(e,o,r?.bareModifierTrigger):null;let l=(n=e,oA(n));if([...managerEntries].some(e=>e.registrationHotkey===l))return null;let d={onCancelled:o.onCancelled,hotkey:e,onPressed:()=>{logHotkey("global_hotkey_pressed",{safe:{hotkey:e},sensitive:{}}),o.onPressed()},registrationHotkey:l,generation:0,registered:!1},m=activateHotkey(d);if(!m)return null;let w=null;if("win32"===process.platform&&null!=o.onReleased){let t=lP(e);if(null==(w=null==t?null:g._(t,!1,e=>{"up"===e&&d.registered&&0===suspendDepth&&o.onReleased?.()})))return d.registered=!1,c.globalShortcut.unregister(l),null}return managerEntries.add(d),suspendDepth>0&&(d.registered=!1,c.globalShortcut.unregister(l)),{handlesRelease:null!=w,unregister:()=>{managerEntries.delete(d)&&(d.registered=!1,w?.dispose(),c.globalShortcut.unregister(d.registrationHotkey))}}}',
@@ -44,7 +45,7 @@ function mainBundleFixtureBody() {
     'function W7(){return"darwin"===process.platform||"win32"===process.platform}',
     // The published startup evaluates the same direct object-IIFE shape as the
     // current signed app. No test adapter invokes this complete startup.
-    'function runMainAppStartup(input){let windows=function({windowManager:D,avatarOverlayManager:M,spotlightController:U,hotkeyWindowLifecycleManager:j,globalState:G}){let O,L=new H7({windowManager:D,globalState:G});return{windowManager:D,avatarOverlayManager:M,notchOverlayManager:O,spotlightController:U,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:()=>{D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}}}({windowManager:input.windowManager,avatarOverlayManager:input.avatarOverlayManager,spotlightController:input.spotlightController,hotkeyWindowLifecycleManager:input.hotkeyWindowLifecycleManager,globalState:input.globalState});0,function({isWindows:e,disableQuitConfirmationPrompt:t,quitState:r,windows:n,applicationMenuManager:i,ensureWindow:s,hotkeyWindowLifecycleManager:a,globalDictationLifecycleManager:o,globalState:l,settingsStore:c,getPendingWorktrees:d,stopCodexMicro:u,flushTracingBeforeQuit:h,flushAndDisposeContext:p,disposables:m,appEvent:g,onAppEntrySource:f,canAttributeAppReactivation:w}){let y=!1,v=!1;ea.app.on("before-quit",i=>{if(e||r.canQuitWithoutPrompt()||t){v=!0,n.markAppQuitting();return}0!==ea.dialog.showMessageBoxSync({type:"warning",message:"Quit?",buttons:["Quit","Cancel"]})?i.preventDefault():(r.markQuitApproved(),v=!0,n.markAppQuitting())}),ea.app.on("will-quit",t=>{if(v=!0,y)return;let n=()=>{flushWithTimeout(p,5e3).then(()=>{m.dispose(),ea.app.quit()})};if(r.shouldSkipDrainBeforeQuit()){t.preventDefault(),y=!0,a.dispose(),o.dispose(),Promise.allSettled([l.flush(),u(),h()]).then(n);return}t.preventDefault(),y=!0,a.dispose(),o.dispose(),Promise.allSettled([l.flush(),c.flush(),u(),h()]).then(n)})}({isWindows:input.isWindows,disableQuitConfirmationPrompt:input.disableQuitConfirmationPrompt,quitState:input.quitState,windows:windows,applicationMenuManager:input.applicationMenuManager,ensureWindow:input.ensureWindow,hotkeyWindowLifecycleManager:windows.hotkeyWindowLifecycleManager,globalDictationLifecycleManager:windows.globalDictationLifecycleManager,globalState:input.globalState,settingsStore:input.settingsStore,getPendingWorktrees:input.getPendingWorktrees,stopCodexMicro:input.stopCodexMicro,flushTracingBeforeQuit:input.flushTracingBeforeQuit,flushAndDisposeContext:input.flushAndDisposeContext,disposables:input.disposables,appEvent:input.appEvent,onAppEntrySource:input.onAppEntrySource,canAttributeAppReactivation:input.canAttributeAppReactivation});return windows}',
+    "function runMainAppStartup(input){let windows=function({windowManager:D,avatarOverlayManager:M,spotlightController:U,hotkeyWindowLifecycleManager:j,globalState:G}){let O,L=new H7({windowManager:D,globalState:G});return{windowManager:D,avatarOverlayManager:M,notchOverlayManager:O,spotlightController:U,hotkeyWindowLifecycleManager:j,globalDictationLifecycleManager:L,markAppQuitting:()=>{let e=pendingState();null!=e&&commitPending(e),D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}}}({windowManager:input.windowManager,avatarOverlayManager:input.avatarOverlayManager,spotlightController:input.spotlightController,hotkeyWindowLifecycleManager:input.hotkeyWindowLifecycleManager,globalState:input.globalState});0,function({isWindows:e,quitState:r,windows:n,applicationMenuManager:i,ensureWindow:s,hotkeyWindowLifecycleManager:a,globalDictationLifecycleManager:o,globalState:l,settingsStore:c,stopCodexMicro:u,flushTracingBeforeQuit:h,flushAndDisposeContext:p,disposables:m,appEvent:g,onAppEntrySource:f,canAttributeAppReactivation:w}){let y=!1,v=!1;ea.app.on(\"before-quit\",i=>{!function({addon:e,electronAppPath:t=ea.app.getAppPath(),platform:r=process.platform,resourcesPath:n=process.resourcesPath}={}){if(\"darwin\"!==r)return!1;try{return(e??privacyAddon({electronAppPath:t,resourcesPath:n})).isPrivacySettingsTerminationRequest()}catch{return!1}}()?(v=!0,n.markAppQuitting()):i.preventDefault()}),ea.app.on(\"will-quit\",t=>{if(v=!0,y)return;e&&ea.app.isPackaged&&function({loadNativeAddon:e=forceModule.load,platform:t=process.platform}={}){if(\"win32\"===t&&!forceArmed)try{(function(e){let t=e();if(null==t)throw Error(\"Failed to load Windows updater addon.\");return t})(e).armTerminateCurrentProcess(1e4),forceArmed=!0}catch(e){logModule.r().warning(\"Failed to arm Windows forced exit\",{safe:{},sensitive:{error:e}})}}();let n=()=>{flushWithTimeout(p,5e3).then(()=>{m.dispose(),ea.app.quit()})};if(r.shouldSkipDrainBeforeQuit()){t.preventDefault(),y=!0,a.dispose(),o.dispose(),Promise.allSettled([l.flush(),u(),h()]).then(n);return}t.preventDefault(),y=!0,a.dispose(),o.dispose(),Promise.allSettled([l.flush(),c.flush(),u(),h()]).then(n)})}({isWindows:input.isWindows,quitState:input.quitState,windows:windows,applicationMenuManager:input.applicationMenuManager,ensureWindow:input.ensureWindow,hotkeyWindowLifecycleManager:windows.hotkeyWindowLifecycleManager,globalDictationLifecycleManager:windows.globalDictationLifecycleManager,globalState:input.globalState,settingsStore:input.settingsStore,stopCodexMicro:input.stopCodexMicro,flushTracingBeforeQuit:input.flushTracingBeforeQuit,flushAndDisposeContext:input.flushAndDisposeContext,disposables:input.disposables,appEvent:input.appEvent,onAppEntrySource:input.onAppEntrySource,canAttributeAppReactivation:input.canAttributeAppReactivation});return windows}",
     'r.d(t,{runMainAppStartup:()=>runMainAppStartup});e.exports=t;',
   ].join("").replace(/\bc\.(app|globalShortcut|BrowserWindow|powerMonitor)\b/gu, "ea.$1");
 }
@@ -150,6 +151,8 @@ function waylandPatchContext(children, features={dictation:true}) {
     __warnings: [],
     __execFile: (_file, _args, _options, callback) => callback(),
     __upstreamExecFile: async () => {},
+    __privacyAddon: () => ({ isPrivacySettingsTerminationRequest: () => false }),
+    __loadForceAddon: () => ({ armTerminateCurrentProcess() {} }),
     Rk: ()=>false, Tk: ()=>false, oA: key=>key, xV: ()=>null, Lk: ()=>false,
   };
   const patched = applyPatchTwice(mainBundleFixture(), features);
@@ -166,18 +169,20 @@ function waylandPatchContext(children, features={dictation:true}) {
     `(function(D,M,U,O){return{${fixtureMarkProperty(patched)}}})`, context,
   );
   const registerQuitLifecycle = vm.runInNewContext(`(${fixtureQuitInstaller(patched)})`, context);
+  context.installQuitLifecycle = (options = {}) => registerQuitLifecycle({
+    isWindows: false,
+    quitState: { shouldSkipDrainBeforeQuit: () => false },
+    windows: { markAppQuitting() {} }, applicationMenuManager: {}, ensureWindow() {},
+    hotkeyWindowLifecycleManager: { dispose() {} }, globalDictationLifecycleManager: { dispose() {} },
+    globalState: { flush: async () => {} }, settingsStore: { flush: async () => {} },
+    stopCodexMicro: async () => {}, flushTracingBeforeQuit: async () => {},
+    flushAndDisposeContext: async () => {}, disposables: { dispose() {} },
+    appEvent: null, onAppEntrySource() {}, canAttributeAppReactivation: () => false,
+    ...options,
+  });
   context.shutdownApp = options => new Promise(resolve => {
     context.ea.app.once("quit", resolve);
-    registerQuitLifecycle({
-      isWindows: false,
-      disableQuitConfirmationPrompt: false,
-      quitState: { canQuitWithoutPrompt: () => false, markQuitApproved() {}, shouldSkipDrainBeforeQuit: () => false },
-      windows: {}, applicationMenuManager: {}, ensureWindow() {},
-      globalState: { flush: async () => {} }, settingsStore: { flush: async () => {} },
-      getPendingWorktrees: () => [], stopCodexMicro: async () => {}, flushTracingBeforeQuit: async () => {},
-      appEvent: null, onAppEntrySource() {}, canAttributeAppReactivation: () => false,
-      ...options,
-    });
+    context.installQuitLifecycle(options);
     context.ea.app.emit("will-quit", { preventDefault() {} });
   });
   return context;

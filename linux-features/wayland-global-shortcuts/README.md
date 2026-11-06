@@ -23,9 +23,14 @@ commands such as New chat and Quick Chat retain their existing handling.
 The portal may request approval on first registration of an action. Requests are
 queued; later actions wait for the current dialog. Existing action IDs preserve
 system choices across app restarts. Startup waits for account-access discovery
-before binding the initial action set. Once application quit is accepted, the
-backend stops before windows and action owners are disposed. This keeps KDE's
-saved action set stable across ordinary restarts and update exits.
+before binding the initial action set. Accepted native quit preserves its
+pending-turn read and synchronous save attempt, then disables Portal registration
+and initiates helper stop before native window and action-owner cleanup. Both
+will-quit drains join the stop Promise settlement before timeout-bound context
+cleanup and final application disposal. Settlement includes failed stop results.
+The native macOS privacy veto keeps the backend running, and upstream retains its
+Windows forced-exit policy. This keeps KDE's saved action set stable across
+ordinary restarts and update exits.
 On KDE, edit actual bindings under
 **System Settings > Keyboard > Shortcuts > ChatGPT Community**. A changed
 preferred combination in the app may leave that saved system binding unchanged.

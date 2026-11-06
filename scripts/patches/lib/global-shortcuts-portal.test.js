@@ -66,6 +66,99 @@ test("shared backend installs into the rspack module that owns the registration 
   assert.throws(() => installPortalBackend(split), /application access readiness is outside the global shortcut module/);
 });
 
+test("current native pending read and commit attempt precede Portal stop and window marking", async () => {
+  for (const mode of ["present", "null", "commit-caught", "getter-throws"]) {
+    const child = fakeHelperChild(), ctx = context([child]), events = [];
+    registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+    await spawned(ctx, 1); child.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+    const value = { threadIds: ["inert"] };
+    ctx.__readPendingState = () => { events.push("read"); if (mode === "getter-throws") throw Error("inert reader failed"); return mode === "null" ? null : value; };
+    ctx.__commitPending = actual => { assert.equal(actual, value); events.push("commit-attempt"); if (mode === "commit-caught") throw Error("inert transaction failed"); };
+    ctx.__commitWarning = () => events.push("commit-warning");
+    const windows = ctx.createWindowServices({ markAppQuitting() { assert.equal(ctx.codexLinuxGlobalShortcutsShuttingDown, true); events.push("window"); } },
+      { markAppQuitting() { events.push("avatar"); } }, { dispose() { events.push("spotlight"); } }, { markAppQuitting() { events.push("notch"); } });
+    if (mode === "getter-throws") {
+      assert.throws(() => windows.markAppQuitting(), /inert reader failed/);
+      assert.equal(ctx.codexLinuxGlobalShortcutsShuttingDown, false); assert.equal(child.killed, undefined);
+      assert.deepEqual(events, ["read"]);
+    } else {
+      windows.markAppQuitting();
+      assert.equal(child.killed, true);
+      assert.deepEqual(events, ["read", ...(mode === "null" ? [] : ["commit-attempt"]), ...(mode === "commit-caught" ? ["commit-warning"] : []), "window", "avatar", "notch", "spotlight"]);
+    }
+    await cleanup(ctx);
+  }
+});
+
+for (const [platform, privacy, expectedVeto] of [["linux", false, false], ["darwin", true, true], ["darwin", false, false], ["darwin", "throws", false]]) {
+  test(`current native privacy polarity keeps platform policy ${platform}/${privacy}`, async () => {
+    const child = fakeHelperChild(), ctx = context([child]);
+    const handle = registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+    await spawned(ctx, 1); child.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+    ctx.process.platform = platform;
+    ctx.__privacyAddon = () => { if (privacy === "throws") throw Error("inert addon failure"); return { isPrivacySettingsTerminationRequest: () => privacy }; };
+    let marks = 0, veto = 0;
+    const windows = ctx.createWindowServices({ markAppQuitting() { marks++; } }, { markAppQuitting() {} }, { dispose() {} });
+    ctx.installQuitLifecycle({ windows });
+    ctx.ea.app.emit("before-quit", { preventDefault() { veto++; } });
+    assert.equal(veto, expectedVeto ? 1 : 0); assert.equal(marks, expectedVeto ? 0 : 1);
+    assert.equal(ctx.codexLinuxGlobalShortcutsShuttingDown, !expectedVeto);
+    if (expectedVeto) { assert.equal(handle.ready(), true); assert.equal(child.killed, undefined); }
+    await cleanup(ctx);
+  });
+}
+
+for (const skip of [false, true]) test(`current native will-quit joins stop settlement after native marking skip=${skip}`, async () => {
+  const child = fakeHelperChild(), ctx = context([child]), events = [];
+  const handle = registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+  await spawned(ctx, 1); child.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  child.kill = signal => { child.signals ??= []; child.signals.push(signal); child.killed = true; return true; };
+  let final = false, exited = false; child.once("exit", () => { exited = true; });
+  const windows = ctx.createWindowServices({ markAppQuitting() { events.push("window"); assert.equal(child.killed, true); } }, { markAppQuitting() {} }, { dispose() {} });
+  ctx.installQuitLifecycle({ windows, quitState: { shouldSkipDrainBeforeQuit: () => skip },
+    hotkeyWindowLifecycleManager: { dispose() { events.push("hotkey"); handle.unregister(); } },
+    globalDictationLifecycleManager: { dispose() { events.push("dictation"); } },
+    settingsStore: { async flush() { events.push("settings"); } },
+    flushAndDisposeContext: async () => { events.push("context"); }, disposables: { dispose() { final = true; events.push("final"); } } });
+  ctx.ea.app.emit("before-quit", { preventDefault() { throw Error("Linux quit unexpectedly cancelled"); } });
+  assert.deepEqual(events, ["window"]); assert.equal(exited, false);
+  ctx.ea.app.emit("will-quit", { preventDefault() {} });
+  await tick(); assert.equal(final, false); assert.deepEqual(events.slice(0, 3), ["window", "hotkey", "dictation"]);
+  assert.equal(events.includes("settings"), !skip);
+  const quit = new Promise(resolve => ctx.ea.app.once("quit", resolve));
+  child.emit("exit", 0); await quit;
+  assert.equal(final, true); assert.equal(events.indexOf("context") > events.indexOf("dictation"), true);
+  assert.equal(exited, true);
+  await cleanup(ctx);
+});
+
+test("current native packaged Windows forced-exit guard stays before drains and obeys repeat guard", async () => {
+  const ctx = context([]), events = [];
+  ctx.process.platform = "win32"; ctx.ea.app.isPackaged = true;
+  ctx.__loadForceAddon = () => ({ armTerminateCurrentProcess(ms) { assert.equal(ms, 10000); events.push("force"); } });
+  ctx.installQuitLifecycle({ isWindows: true, hotkeyWindowLifecycleManager: { dispose() { events.push("hotkey"); } },
+    globalDictationLifecycleManager: { dispose() { events.push("dictation"); } },
+    flushAndDisposeContext: async () => { events.push("context"); } });
+  const quit = new Promise(resolve => ctx.ea.app.once("quit", resolve));
+  ctx.ea.app.emit("will-quit", { preventDefault() {} });
+  ctx.ea.app.emit("will-quit", { preventDefault() {} });
+  await quit; assert.deepEqual(events.slice(0, 3), ["force", "hotkey", "dictation"]);
+  assert.equal(events.filter(item => item === "force").length, 1);
+});
+
+test("native allSettled accepts failed stop settlement and retains context timeout", async () => {
+  const ctx = context([]); let settleStop, timeout, finished = false;
+  const stopped = new Promise(resolve => { settleStop = resolve; });
+  ctx.codexLinuxGlobalShortcutsPortalBackend = { stop: () => stopped };
+  ctx.setTimeout = (callback, ms) => { assert.equal(ms, 5000); timeout = callback; return { id: "inert-context-timer" }; };
+  ctx.clearTimeout = () => {};
+  ctx.installQuitLifecycle({ flushAndDisposeContext: () => new Promise(() => {}), disposables: { dispose() { finished = true; } } });
+  ctx.ea.app.emit("will-quit", { preventDefault() {} });
+  await tick(); assert.equal(finished, false); assert.equal(timeout, undefined);
+  settleStop(false); await tick(); assert.equal(finished, false); assert.equal(typeof timeout, "function");
+  const quit = new Promise(resolve => ctx.ea.app.once("quit", resolve)); timeout(); await quit; assert.equal(finished, true);
+});
+
 for (const features of [{dictation: true}, {shortcuts: true}, {dictation: true, shortcuts: true}]) {
   test(`ordinary quit preserves KDE's approved action set: ${JSON.stringify(features)}`, async () => {
     let saved = new Set(), consent = 0;

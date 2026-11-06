@@ -22,13 +22,27 @@ for (const key of ["82820", '"82820"', "8.282e4", "0x14384"]) {
   });
 }
 
-test("Portal preserves native unbraced privacy exits and refuses unconditional dead startup", () => {
-  const source = mainBundleFixture();
-  const conditional = source.replace('ea.app.on("before-quit",i=>{', 'ea.app.on("before-quit",i=>{if(function(){return false}())return void i.preventDefault();');
-  const patched = installPortalBackend(conditional);
-  assert.notEqual(patched, conditional); assert.equal(installPortalBackend(patched), patched);
+test("Portal preserves current leading-not privacy policy and refuses dead startup", () => {
+  const source = mainBundleFixture(), patched = installPortalBackend(source);
+  assert.notEqual(patched, source); assert.equal(installPortalBackend(patched), patched);
   assertRefused(source.replace("function runMainAppStartup(input){", "function runMainAppStartup(input){return;"), "dead startup");
-  assertRefused(source.replace('ea.app.on("before-quit",i=>{', 'ea.app.on("before-quit",i=>{return;'), "dead confirmation");
+  assertRefused(source.replace('ea.app.on("before-quit",i=>{', 'ea.app.on("before-quit",i=>{return;'), "dead native accepted quit");
+  assertRefused(source.replace('i=>{!function({addon:', 'i=>{!!function({addon:'), "changed leading privacy negation");
+  assertRefused(source.replace('):i.preventDefault()', '):null'), "missing native privacy veto");
+});
+
+test("Portal requires complete pending commit order and native Windows guard", () => {
+  const source = mainBundleFixture();
+  for (const [name, damaged] of [
+    ["pending-prefix missing", source.replace("let e=pendingState();null!=e&&commitPending(e),", "")],
+    ["pending different capture", source.replace("null!=e&&commitPending(e),D.markAppQuitting()", "null!=e&&commitPending(other),D.markAppQuitting()")],
+    ["pending commit after mark", source.replace("null!=e&&commitPending(e),D.markAppQuitting()", "D.markAppQuitting(),null!=e&&commitPending(e)")],
+    ["producer shadows pending reader", source.replace("{let O,L=new H7", "{function pendingState(){}let O,L=new H7")],
+    ["startup shadows pending commit", source.replace("function runMainAppStartup(input){", "function runMainAppStartup(input){function commitPending(){}")],
+    ["Windows delay changed", source.replace(".armTerminateCurrentProcess(1e4)", ".armTerminateCurrentProcess(9e3)")],
+    ["Windows package guard disconnected", source.replace("e&&ea.app.isPackaged&&function", "ea.app.isPackaged&&function")],
+    ["quitting flags disconnected", source.replace("if(v=!0,y)return;", "if(other=!0,y)return;")],
+  ]) { assert.notEqual(damaged, source, name); assertRefused(damaged, name); }
 });
 
 test("Portal refuses duplicate, fake and disconnected factory owners", () => {
@@ -57,13 +71,13 @@ test("Portal requires the published startup and actual direct quit call wiring",
     skippedQuit: source.replace("0,function({isWindows:", "false&&function({isWindows:"),
     disconnectedWindows: source.replace("windows:windows,applicationMenuManager:", "windows:foreignWindows,applicationMenuManager:"),
     disconnectedDictation: source.replace("globalDictationLifecycleManager:windows.globalDictationLifecycleManager", "globalDictationLifecycleManager:windows.hotkeyWindowLifecycleManager"),
-    windowMarkOnlyInUnusedObject: source.replace("markAppQuitting:()=>{D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}", "markAppQuitting:()=>{}")
+    windowMarkOnlyInUnusedObject: source.replace("markAppQuitting:()=>{let e=pendingState();null!=e&&commitPending(e),D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}", "markAppQuitting:()=>{}")
       .replace("r.d(t,", "const unusedWindows={markAppQuitting:()=>{D.markAppQuitting(),M.markAppQuitting(),O?.markAppQuitting(),U.dispose()}};r.d(t,"),
     duplicateMark: source.replace("U.dispose()}}}(", "U.dispose()},markAppQuitting:()=>{}}}("),
     computedMark: source.replace("U.dispose()}}}(", 'U.dispose()},["markAppQuitting"]:()=>{}}}('),
     overwrittenWindowRole: source.replace("U.dispose()}}}(", "U.dispose()},windowManager:null}}("),
     missingDrain: source.replace("l.flush(),c.flush(),u(),h()", "l.flush(),u(),h()"),
-    missingCancel: source.replace("?i.preventDefault():(r.markQuitApproved()", "?null:(r.markQuitApproved()"),
+    missingCancel: source.replace("):i.preventDefault()", "):null"),
   };
   for (const [name, variant] of Object.entries(variants)) assertRefused(variant, name);
 });
@@ -111,7 +125,7 @@ test("Portal validates canonical payload and hooks in both consumer orders", () 
     const canonical = order.reduce((value, apply) => apply(value), source);
     assert.notEqual(canonical, source); assert.equal(installPortalBackend(canonical), canonical);
     for (const [name, partial] of Object.entries({
-      missingMarkHook: canonical.replace("codexLinuxGlobalShortcutsPortalShutdown();", ""),
+      missingMarkHook: canonical.replace(",codexLinuxGlobalShortcutsPortalShutdown(),", ","),
       missingOneDrain: canonical.replace("codexLinuxGlobalShortcutsQuitStopped=codexLinuxGlobalShortcutsPortalShutdown(),", ""),
       renamedRuntime: canonical.replace("function codexLinuxGlobalShortcutsPortalShutdown()", "function unrelatedShutdown()"),
       nestedShadow: canonical.replace("function runMainAppStartup(input){", "function runMainAppStartup(input){function codexLinuxGlobalShortcutsPortalShutdown(){}"),
