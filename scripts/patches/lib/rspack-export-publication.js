@@ -195,6 +195,24 @@ function parameterProjection(body, name) {
       blank(start, start + name.length, name === "_" ? "$" : "_");
     }
   }
+  const objectMethods = new RegExp(`[{,]\\s*(${ID})\\s*\\(`, "gu");
+  for (const head of matches(body, objectMethods, false)) {
+    if (hidden(head.index) || ["if", "for", "while", "switch", "catch", "with", "function"].includes(head[1])) continue;
+    const scope = callableScope(body, head.index + head[0].length - 1);
+    if (!scope) continue;
+    if (head[1] === name) {
+      const keyStart = head.index + head[0].indexOf(head[1], 1);
+      blank(keyStart, keyStart + name.length, name === "_" ? "$" : "_");
+    }
+    if (!contextBinding(body, scope.end, scope.end, name, probeName)) continue;
+    // Body declarations cannot shadow parameter default initializers. Keep
+    // those expressions unless a parameter itself owns this binding.
+    if (contextBinding(body, scope.open + 1, scope.end, name, probeName)) {
+      blank(scope.parametersOpen + 1, scope.parametersEnd);
+    }
+    blank(scope.open + 1, scope.end);
+    hiddenScopes.push([scope.open + 1, scope.end + 1]);
+  }
   const arrows = /(?:\(([^()]*)\)|([A-Za-z_$][\w$]*))\s*=>\s*/gu;
   for (const head of matches(body, arrows, false)) {
     if (hidden(head.index)) continue;

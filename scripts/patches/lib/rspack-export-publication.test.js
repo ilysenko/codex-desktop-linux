@@ -205,6 +205,43 @@ test("native local projection retains unsafe getter and publication ambiguity re
   ]) assert.equal(findRspackExportPublication({ ...module, moduleSource: module.moduleSource + publication }, "iRL"), null, publication);
 });
 
+test("native Markdown object methods preserve destructured local parameters and data keys", () => {
+  const publication = 'n.d(t,{ChatGptMarkdown:()=>eN});function eN(e){return e}';
+  const locals = [
+    'const renderer={link({href:e,title:t,tokens:n}){let r=this.parser.parseInline(n);t=String(t??"");n=[];return r+t},image({href:e,text:t,title:n}){t=String(t);n=String(n??"");return e+t+n}};',
+    'const renderer={link(value){let t,n;t=value;n=value;return t+n}};',
+    'const renderer={link(t=Date.now(),n={}){t=other;n=other;return t+n}};',
+    'const renderer={t:other,n:other,link(value){return value}};',
+    'const renderer={t(value){return value},n(value){return value}};',
+  ];
+  for (const local of locals) {
+    const moduleSource = local + publication;
+    new Script(`function nativeFactory(e,t,n){${moduleSource}}`);
+    assert.deepEqual(findRspackExportPublication({ moduleSource, params: ["e", "t", "n"] }, "ChatGptMarkdown"),
+      { requireName: "n", exportsName: "t", expression: "eN" }, local);
+  }
+});
+
+test("object method projection retains factory writes in bodies, defaults and computed keys", () => {
+  const publication = 'n.d(t,{ChatGptMarkdown:()=>eN});function eN(e){return e}';
+  for (const local of [
+    'const renderer={link({title:t}){t=other;n=other}};',
+    'const renderer={link({tokens:n}){n=other;t=other}};',
+    'const renderer={link(value=(n=other)){let n;return n}};',
+    'const renderer={link(value=(t=other)){let t;return t}};',
+    'const renderer={link(n=other,value=(t=other)){n=other;return value}};',
+    'const renderer={link(t=other,value=(n=other)){t=other;return value}};',
+    'const renderer={[(n=other)](value){return value}};',
+    'const renderer={[(t=other)](value){return value}};',
+    'const renderer={link({title:t,tokens:n}){t=other;n=other}};n=other;',
+    'const renderer={link({title:t,tokens:n}){t=other;n=other},image(value){t=other}};',
+  ]) {
+    const moduleSource = local + publication;
+    new Script(`function nativeFactory(e,t,n){${moduleSource}}`);
+    assert.equal(findRspackExportPublication({ moduleSource, params: ["e", "t", "n"] }, "ChatGptMarkdown"), null, local);
+  }
+});
+
 for (const inputVariable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
   test(`full native entry publication and imported plugin field (${inputVariable})`, { skip: !process.env[inputVariable] }, () => {
     const entryPath = path.join(process.env[inputVariable], ".vite", "build", "early-bootstrap.js");
