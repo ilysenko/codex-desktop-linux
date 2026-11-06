@@ -248,8 +248,29 @@ function createHelpers(target) {
   };
 }
 
+function normalizeLinuxTargetArchitecture(value) {
+  switch (normalizeToken(value)) {
+    case "amd64":
+    case "x86_64":
+    case "x64":
+      return "x64";
+    case "aarch64":
+    case "arm64":
+      return "arm64";
+    default:
+      throw new Error(`Unsupported Linux target architecture '${value}'; expected x64 or arm64`);
+  }
+}
+
 function detectLinuxTargetContext(options = {}) {
   const env = options.env ?? process.env;
+  const explicitArchitecture = env.CODEX_LINUX_TARGET_ARCH
+    ? normalizeLinuxTargetArchitecture(env.CODEX_LINUX_TARGET_ARCH) : null;
+  const packageArchitecture = env.CODEX_TARGET_ARCH
+    ? normalizeLinuxTargetArchitecture(env.CODEX_TARGET_ARCH) : null;
+  if (explicitArchitecture != null && packageArchitecture != null && explicitArchitecture !== packageArchitecture) {
+    throw new Error("CODEX_LINUX_TARGET_ARCH conflicts with CODEX_TARGET_ARCH");
+  }
   const osReleasePaths = options.osReleasePaths ?? [
     env.OS_RELEASE_FILE,
     "/etc/os-release",
@@ -268,7 +289,7 @@ function detectLinuxTargetContext(options = {}) {
   const atomic = detectAtomicDesktop(env, options);
   const target = {
     osReleasePath: osRelease.path,
-    arch: env.CODEX_LINUX_TARGET_ARCH || process.arch,
+    arch: explicitArchitecture ?? packageArchitecture ?? normalizeLinuxTargetArchitecture(process.arch),
     kernelRelease: env.CODEX_LINUX_TARGET_KERNEL_RELEASE || os.release(),
     distro: {
       id,
@@ -310,6 +331,7 @@ module.exports = {
   executableExists,
   flattenValues,
   linuxTargetSummary,
+  normalizeLinuxTargetArchitecture,
   parseOsRelease,
   splitTokens,
   tokenMatches,

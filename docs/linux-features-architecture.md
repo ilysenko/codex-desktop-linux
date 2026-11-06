@@ -155,6 +155,14 @@ in the installed package/update-builder only when enabled.
 
 ## ASAR descriptors
 
+Environment-derived architecture in the descriptor context, patch report and
+build metadata uses the canonical Node names `x64` or `arm64`. The installer
+passes its validated package architecture through `CODEX_TARGET_ARCH`.
+`CODEX_LINUX_TARGET_ARCH` retains its explicit override, and simultaneous values
+must normalize to the same architecture. Unknown values and conflicting targets
+fail before descriptor writes. A caller-supplied `linuxTarget` object retains
+priority over environment detection.
+
 Descriptor modules export an array or `{ descriptors: [] }`. IDs are reported
 as `feature:<feature-id>:<descriptor-id>`. Supported phases are
 `main-bundle`, `extracted-app:pre-webview`, `webview-asset`, and

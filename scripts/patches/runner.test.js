@@ -268,3 +268,51 @@ test("main-process chunks are the rspack early-bootstrap entry and its numbered 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("target context normalizes package aliases and accepts equivalent explicit overrides", () => {
+  for (const [alias, expected] of [["amd64", "x64"], ["x86_64", "x64"], ["x64", "x64"], ["aarch64", "arm64"], ["arm64", "arm64"]]) {
+    for (const key of ["CODEX_TARGET_ARCH", "CODEX_LINUX_TARGET_ARCH"]) {
+      const context = detectLinuxTargetContext({ env: { [key]: alias, PATH: "" }, osReleaseFields: {} });
+      assert.equal(context.arch, expected);
+    }
+  }
+  assert.equal(detectLinuxTargetContext({ env: {
+    CODEX_TARGET_ARCH: "amd64", CODEX_LINUX_TARGET_ARCH: "x86_64", PATH: "",
+  }, osReleaseFields: {} }).arch, "x64");
+  assert.equal(detectLinuxTargetContext({ env: {
+    CODEX_TARGET_ARCH: "arm64", CODEX_LINUX_TARGET_ARCH: "aarch64", PATH: "",
+  }, osReleaseFields: {} }).arch, "arm64");
+});
+
+test("unknown and conflicting architecture inputs reject before asset writes", t => {
+  const cache = path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "codex-desktop-dev", "tmp");
+  fs.mkdirSync(cache, { recursive: true });
+  const root = fs.mkdtempSync(path.join(cache, "target-context-conflict-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const main = path.join(root, ".vite/build/early-bootstrap.js");
+  fs.mkdirSync(path.dirname(main), { recursive: true });
+  fs.writeFileSync(main, "const originalAsset=true;");
+  for (const env of [
+    { CODEX_TARGET_ARCH: "arm64", CODEX_LINUX_TARGET_ARCH: "amd64" },
+    { CODEX_TARGET_ARCH: "ppc64" },
+    { CODEX_LINUX_TARGET_ARCH: "unknown" },
+  ]) {
+    assert.throws(() => patchExtractedApp(root, {
+      featuresConfigPath: emptyConfig,
+      linuxTargetOptions: { env: { ...env, PATH: "" }, osReleaseFields: {} },
+    }), /architecture|conflicts/u);
+    assert.equal(fs.readFileSync(main, "utf8"), "const originalAsset=true;");
+  }
+});
+
+test("an explicit runner linuxTarget object keeps priority over environment detection", () => {
+  const explicit = { ...fedoraKde, arch: "arm64" };
+  const context = createMainBundleContext(null, {
+    featuresConfigPath: emptyConfig,
+    linuxTarget: explicit,
+    linuxTargetOptions: { env: { CODEX_TARGET_ARCH: "unknown", CODEX_LINUX_TARGET_ARCH: "other" } },
+  });
+  assert.equal(context.linux, explicit);
+  assert.equal(context.linuxTarget, explicit);
+  assert.equal(context.linux.arch, "arm64");
+});

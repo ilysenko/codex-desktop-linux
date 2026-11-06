@@ -278,3 +278,63 @@ test("empty descriptors, resource-only features, and disabled modules remain val
     assert.equal(fs.readFileSync(fixture.mainPath, "utf8"), "const main=true;\n");
   }
 });
+
+test("ASAR shell passes the validated package architecture and rejects failed resolution before CLI writes", t => {
+  const cache = path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "codex-desktop-dev", "tmp");
+  fs.mkdirSync(cache, { recursive: true });
+  const root = fs.mkdtempSync(path.join(cache, "asar-target-arch-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin");
+  fs.mkdirSync(bin);
+  const probe = path.join(root, "probe.js");
+  fs.writeFileSync(probe, `const fs=require("node:fs");
+fs.writeFileSync(process.env.ARCH_PROBE_LOG, process.env.CODEX_TARGET_ARCH || "missing");
+const args=process.argv.slice(2), report=args[args.indexOf("--report-json")+1];
+fs.writeFileSync(report, JSON.stringify({patches:[]}));\n`);
+  fs.writeFileSync(path.join(bin, "node"), `#!/bin/bash
+case "$1" in
+    -) if [[ "$2" == */scripts/patches/runner.js ]]; then printf 1; exit 0; fi ;;
+    */scripts/lib/linux-features.js) printf 0; exit 0 ;;
+    */scripts/patch-linux-window-ui.js) shift; exec "$ARCH_REAL_NODE" "$ARCH_PROBE_JS" "$@" ;;
+esac
+exec "$ARCH_REAL_NODE" "$@"
+`, { mode: 0o755 });
+  const asar = path.join(bin, "asar");
+  fs.writeFileSync(asar, '#!/bin/bash\nif [ "$1" = extract ]; then mkdir -p "$3"; fi\n', { mode: 0o755 });
+  for (const [architecture, expected] of [["aarch64", "arm64"], ["amd64", "amd64"], ["unsupported", null]]) {
+    const scenario = path.join(root, architecture), app = path.join(scenario, "app"), work = path.join(scenario, "work");
+    fs.mkdirSync(path.join(app, "resources"), { recursive: true });
+    fs.mkdirSync(work);
+    const original = path.join(app, "resources/app.asar");
+    fs.writeFileSync(original, "original official fixture");
+    const log = path.join(scenario, "cli-architecture");
+    const result = childProcess.spawnSync("bash", ["-c", `
+      set -euo pipefail
+      error() { printf '%s\\n' "$*" >&2; return 1; }
+      info() { :; }
+      . "$ARCH_REPO/scripts/lib/upstream-linux-package.sh"
+      . "$ARCH_REPO/scripts/lib/asar-patch.sh"
+      SCRIPT_DIR="$ARCH_REPO"
+      ARCH="$ARCH_INPUT"
+      WORK_DIR="$ARCH_WORK"
+      resolve_asar_command() { printf '%s\\n' "$ARCH_ASAR_STUB"; }
+      if patch_asar "$ARCH_APP"; then exit 0; else exit $?; fi
+    `], { encoding: "utf8", env: {
+      ...process.env, PATH: bin + path.delimiter + process.env.PATH,
+      ARCH_REPO: path.resolve(__dirname, ".."), ARCH_INPUT: architecture, ARCH_WORK: work,
+      ARCH_APP: app, ARCH_ASAR_STUB: asar, ARCH_REAL_NODE: process.execPath,
+      ARCH_PROBE_JS: probe, ARCH_PROBE_LOG: log,
+      CODEX_PATCH_REPORT_JSON: path.join(scenario, "report.json"), CODEX_TARGET_ARCH: "host-must-not-win",
+    } });
+    if (expected == null) {
+      assert.notEqual(result.status, 0, result.stderr);
+      assert.equal(fs.existsSync(log), false, "failed target resolution must prevent CLI execution");
+      assert.equal(fs.existsSync(path.join(scenario, "report.json")), false);
+      assert.equal(fs.existsSync(path.join(work, "app-extracted")), false);
+    } else {
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(fs.readFileSync(log, "utf8"), expected);
+    }
+    assert.equal(fs.readFileSync(original, "utf8"), "original official fixture");
+  }
+});

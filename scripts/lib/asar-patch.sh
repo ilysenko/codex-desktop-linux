@@ -115,10 +115,12 @@ patch_asar() {
     local unpack_dir_pattern
     local upstream_sha
     local patched_sha
+    local target_arch
     local -a asar_command
     local -a asar_pack_command
 
     [ -f "$app_asar" ] || error "app.asar not found in $resources_dir"
+    target_arch="$(map_upstream_architecture "${ARCH:-}")" || return 1
     core_descriptor_count="$(node - "$SCRIPT_DIR/scripts/patches/runner.js" <<'NODE'
 const { corePatchDescriptors } = require(process.argv[2]);
 process.stdout.write(String(corePatchDescriptors().length));
@@ -144,7 +146,7 @@ NODE
     fi
 
     mkdir -p "$(dirname "$patch_report_json")"
-    node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" \
+    CODEX_TARGET_ARCH="$target_arch" node "$SCRIPT_DIR/scripts/patch-linux-window-ui.js" \
         --report-json "$patch_report_json" \
         --enforce-critical \
         "$WORK_DIR/app-extracted"
