@@ -11,9 +11,9 @@ const { patchExtractedApp } = require("../../scripts/patches/runner.js");
 const { createPatchReport, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 const { applyFilesystemRootFollowUpsPatch: applyPatch, descriptors } = require("./patch.js");
 
-// Current signed 26.1029.61003 amd64/arm64 composer submission state: the
-// workspace guard is compiled as an inline function called with the state
-// object whose local follow-up the sibling workspace-status check reads.
+// Reduced 26.1029.61003 guard regression model. Signed tests below execute the
+// latest official published submission function with its actual factory params.
+// The guard consumes the state read by the sibling workspace-status check.
 const guard = 'isMissingWorkspaceRoots:function({composerMode:e,workspaceRootsLoading:s,workspaceRootsForSubmit:t,canUseProjectlessThreads:i,isProjectlessConversation:n,isBrowserEnvironmentSelectionActive:a,isRemoteProjectExecution:r}){let d=(0,o.wW)(t),l=t.some(e=>"/"!==e);return"cloud"!==e&&!s&&!((l||r)&&!d)&&!("local"===e&&(n||i&&d))&&!("local"===e&&a)}(e)';
 const sibling = 'isWorkspaceStatusUnavailable:"local"===e.composerMode&&"unavailable"===e.localWorkspaceMaterialization&&!(e.isLocalModeOnRemoteHost&&e.followUp?.type==="local")';
 const state = `function submitState(e){return{${guard},${sibling}}}`;
@@ -190,15 +190,21 @@ test('current module identity/mixed/corrupt replicas reject before changing any 
  });
 });
 
-function officialSubmission(moduleSource) {
-  const imported = /^var [\w$]+=([\w$]+)\("[^"]+"\);/.exec(moduleSource);
-  const exported = /[\w$]+\.d\(([\w$]+),\{/.exec(moduleSource);
+function officialSubmission({ moduleSource, params }) {
   const predicate = /let [\w$]+=\(0,[\w$]+\.([\w$]+)\)\([\w$]+\),[\w$]+=[\w$]+\.some\(/.exec(moduleSource);
-  const submission = /function ([\w$]+)\(([\w$]+)\)\{if\(\2\.isThreadHandoffInProgress\)/.exec(moduleSource);
-  assert.ok(imported && exported && predicate && submission, "expected current submission owner dependencies");
+  assert.ok(predicate && params.length === 3, "expected current submission owner dependencies");
   const load = () => ({ [predicate[1]]: rootless });
-  load.d = () => {};
-  return vm.runInNewContext(`${moduleSource};${submission[1]}`, { [imported[1]]: load, [exported[1]]: {} });
+  load.d = (target, getters, values = {}) => {
+    for (const [name, get] of Object.entries(getters)) Object.defineProperty(target, name, { enumerable: true, get });
+    for (const [name, value] of Object.entries(values)) Object.defineProperty(target, name, { enumerable: true, value });
+  };
+  const published = {};
+  const factory = vm.runInNewContext(`(function(${params.join(",")}){${moduleSource}\n})`);
+  factory({}, published, load);
+  const submissions = Object.values(published).filter(value => typeof value === "function" &&
+    /disableSubmitForFileUploads:[\w$]+\.hasPendingFileAttachments/.test(String(value)));
+  assert.equal(submissions.length, 1, "expected one published composer submission function");
+  return submissions[0];
 }
 
 test("all real current submission factories retain outer policy and stronger argument correlation",{skip:!signedApp},()=>{
@@ -209,7 +215,7 @@ test("all real current submission factories retain outer policy and stronger arg
  });
  assert.ok(copies.length>1);const input={...base,imageAttachments:[],supportsImageInputs:true,hasMessageContent:true};
  for(const copy of copies){
-  assert.equal(officialSubmission(copy.moduleSource)(input),"missing-workspace");const patched=applyPatch(copy.moduleSource),submit=officialSubmission(patched);
+  assert.equal(officialSubmission(copy)(input),"missing-workspace");const patched=applyPatch(copy.moduleSource),submit=officialSubmission({ ...copy, moduleSource: patched });
   assert.equal(submit(input),null);assert.equal(submit({...input,followUp:null}),"missing-workspace");
   assert.equal(submit({...input,hasWindowsSandboxRequirementError:true}),"windows-sandbox-readiness-error");
   assert.equal(submit({...input,isThreadHandoffInProgress:true}),"thread-handoff");
