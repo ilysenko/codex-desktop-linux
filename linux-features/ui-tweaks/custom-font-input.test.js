@@ -72,12 +72,13 @@ function createRenderer(source, options = {}) {
     if (Object.hasOwn(context, from)) context[to] = context[from];
   }
   const functions = vm.runInNewContext(`${source}; ({picker:${rename.ti ?? "ti"},merge:B,css:K})`, context);
-  let theme = {
+  let theme = structuredClone(options.theme ?? {
     accent: "#123456", semanticColors: { skill: "#123456" },
     fonts: { ui: null, code: null, content: null },
-  };
+  });
   const props = {
-    ariaLabel: `${slot} font`, styleAriaLabel: `${slot} font style`, value: null,
+    ariaLabel: `${slot} font`, styleAriaLabel: `${slot} font style`, value: theme.fonts[slot],
+    selectedThemeFontFace: theme.fonts[`${slot}Face`],
     monospaceOnly: slot === "code",
     onChange: (value, face) => {
       changes.push({ value, face });
@@ -296,4 +297,35 @@ test("font input switch applies to the current signed official font picker", {
   assert.notEqual(patched, source);
   assert.equal(fontPickerContract(patched)?.state, "applied");
   assert.equal(applyCustomFontInputPatch(patched, enabledContext), patched);
+});
+
+
+test("all three manual font stacks survive an independent picker reopen from the saved theme", () => {
+  const patched = applyCustomFontInputPatch(fixture, enabledContext);
+  const stacks = { ui: uiStack, code: codeStack, content: '"Noto Serif", serif' };
+  let savedTheme;
+  for (const slot of ["ui", "code", "content"]) {
+    const picker = createRenderer(patched, { slot, theme: savedTheme });
+    picker.open();
+    picker.switchMode();
+    const nodes = picker.enter(stacks[slot]);
+    nodes.find((node) => node.type === "Input").props.onKeyDown({ key: "Enter", preventDefault() {} });
+    savedTheme = structuredClone(picker.theme);
+  }
+  for (const slot of ["ui", "code", "content"]) {
+    assert.equal(savedTheme.fonts[slot], stacks[slot]);
+    const reopened = createRenderer(patched, { slot, theme: savedTheme });
+    assert.equal(reopened.props.value, stacks[slot]);
+    reopened.open();
+    const nodes = reopened.switchMode();
+    assert.equal(nodes.find((node) => node.type === "Input").props.value, stacks[slot]);
+    const cleared = reopened.enter(" ");
+    cleared.find((node) => node.type === "Input").props.onKeyDown({ key: "Enter", preventDefault() {} });
+    assert.equal(reopened.theme.fonts[slot], null);
+    for (const other of Object.keys(stacks).filter((key) => key !== slot)) {
+      assert.equal(reopened.theme.fonts[other], stacks[other], "reset only changes its own font slot");
+    }
+    assert.equal(reopened.theme.accent, savedTheme.accent);
+    assert.deepEqual(reopened.theme.semanticColors, savedTheme.semanticColors);
+  }
 });
