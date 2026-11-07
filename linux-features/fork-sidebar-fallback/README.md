@@ -2,8 +2,9 @@
 
 An opt-in workaround for **Failed to fork chat** with
 `AppServerForkNotReadyError: execution-config-loading` when the background
-settings owner has no ready Statsig client. This can occur with API-key or
-compatible-provider workflows without ChatGPT rollout assignments.
+settings owner has no ready Statsig client. The trigger is the unavailable
+sidebar rollout; an authentication method or model provider alone does not
+establish that condition.
 
 The fork placement reader requires two sidebar settings before sending
 `thread/fork`. The local-section setting is a boolean, but the background

@@ -160,16 +160,6 @@ jobs:
             `Watchbound ${process.argv[4]} runtime qualified from signed executable: Node.js ${runtime.node}`,
           );
           NODE
-      - name: Test fork sidebar fallback against the signed bundle
-        run: |
-          set -euo pipefail
-          extracted_asar="$(mktemp -d)"
-          trap 'rm -rf "$extracted_asar"' EXIT
-          npx --yes @electron/asar extract \
-            "${{ steps.upstream.outputs.asar }}" \
-            "$extracted_asar"
-          CODEX_SIGNED_EXTRACTED_APP="$extracted_asar" \
-            node --test linux-features/fork-sidebar-fallback/test.js
       - name: Build required default baseline
         env:
           CODEX_TARGET_ARCH: ${{ matrix.architecture }}

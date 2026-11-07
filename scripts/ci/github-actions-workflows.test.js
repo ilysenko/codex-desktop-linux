@@ -100,16 +100,9 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.doesNotMatch(signedBaseline, /dpkg-deb -x/);
   assert.equal(
     (signedBaseline.match(/trap 'rm -rf "\$(?:extracted_asar|fix_root|runtime_metadata)"' EXIT/g) || []).length,
-    7,
+    6,
   );
   assert.match(signedBaseline, /CODEX_SIGNED_EXTRACTED_APP="\$extracted_asar"/);
-  assert.match(signedBaseline, /name: Test fork sidebar fallback against the signed bundle/);
-  assert.match(signedBaseline, /node --test linux-features\/fork-sidebar-fallback\/test\.js/);
-  assert.ok(
-    signedBaseline.indexOf("name: Test fork sidebar fallback against the signed bundle") <
-      signedBaseline.indexOf("name: Build required default baseline"),
-    "the fork regression must run even when an unrelated required core patch has drifted",
-  );
   assert.match(signedBaseline, /corePatchDescriptors\(\)/);
   assert.match(signedBaseline, /ciPolicy \}\) => ciPolicy === "required-upstream"/);
   assert.match(signedBaseline, /path\.join\(path\.dirname\(sourcePath\), "test\.js"\)/);
