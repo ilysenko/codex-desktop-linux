@@ -1231,15 +1231,17 @@ test("main handler downloads setup files atomically", async () => {
 });
 
 function assistantRenderFixture({ jsxVar = "s", component = "eA.F" } = {}) {
-  const sourceTurnCall = `(0,${jsxVar}.jsx)(${component},{item:o,alwaysShowActions:ge,assistantCopyText:a,sourceTurnId:T,savedContentResponseId:E,after:A,compactAttachment:M,autoReviewStats:L,hookStats:R,completedThreadGoal:te,conversationId:p,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:s,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,trailingActions:fe,renderUsedSkillsDetails:re})`;
-  const liveTurnCall = `(0,${jsxVar}.jsx)(${component},{item:n,showShimmer:we,alwaysShowActions:ge,assistantCopyText:w,turnId:T,isReadOnly:ro,savedContentResponseId:E,autoReviewStats:L,hookStats:R,completedThreadGoal:te,after:A,compactAttachment:M,conversationId:p,getVisualizeTurnTriggerType:m,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:i,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,allowCopyWhileStreaming:Fe,additionalActions:ce,trailingActions:fe,renderUsedSkillsDetails:re,persistentAdditionalActions:de})`;
-  const prefix = "export const __rspack_esm_id=366297;export const __rspack_esm_ids=[366297];const partition={collapsibleUnits:[],persistentUnits:[]}";
-  return {
-    liveTurnCall,
-    prefix,
-    source: `${prefix};${sourceTurnCall};${liveTurnCall}`,
-    sourceTurnCall,
-  };
+  const sourceTurnCall = `(0,${jsxVar}.jsx)(${component},{item:o,alwaysShowActions:ge,assistantCopyText:a,sourceTurnId:T,savedContentResponseId:E,after:A,compactAttachment:M,electronAfter:N,autoReviewStats:L,hookStats:R,completedThreadGoal:te,conversationId:p,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:s,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,trailingActions:fe})`;
+  const liveTurnCall = `(0,${jsxVar}.jsx)(${component},{item:n,showShimmer:we,alwaysShowActions:ge,assistantCopyText:w,turnId:T,savedContentResponseId:E,autoReviewStats:L,hookStats:R,completedThreadGoal:te,after:A,compactAttachment:M,electronAfter:N,conversationId:p,getVisualizeTurnTriggerType:m,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:i,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,allowCopyWhileStreaming:Fe,additionalActions:ce,trailingActions:fe,persistentAdditionalActions:de})`;
+  const componentMatch = /^([\w$]+)\.([\w$]+)$/.exec(component);
+  const namespace = componentMatch?.[1] ?? component;
+  const componentExport = componentMatch?.[2] ?? "F";
+  const props = [...new Set([...(`${sourceTurnCall}${liveTurnCall}`).matchAll(/(?:^|[,{}])([\w$]+):/g)].map(match => match[1]))];
+  const nativeComponent = `Component(e,t,n){n.d(t,{${componentExport}:()=>row});function row(props){let{${props.map((name,index)=>`${name}:value${index}`).join(",")}}=props;return null}}`;
+  const prefix = 'export const __rspack_esm_ids=[366297];export const __webpack_modules__={';
+  const source = prefix + `Producer(e,t,n){n.d(t,{F:()=>render});var ${jsxVar}=n("Jsx"),${namespace}=n("Component");` +
+    `const partition={collapsibleUnits:[],persistentUnits:[]};function render(props){return[${sourceTurnCall},${liveTurnCall}]}},${nativeComponent}};`;
+  return { liveTurnCall, prefix, source, sourceTurnCall };
 }
 
 test("assistant render patch atomically adds buttons to the current two-call topology", () => {
@@ -1249,8 +1251,9 @@ test("assistant render patch atomically adds buttons to the current two-call top
   assert.equal((patched.match(/codex-linux-read-aloud-icon/g) ?? []).length, 2);
   assert.equal((patched.match(/viewBox:"0 0 24 24"/g) ?? []).length, 2);
   assert.doesNotMatch(patched, /children:"Read aloud"/);
-  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(o,a,p,e\.currentTarget\)/);
-  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(n,w,p,e\.currentTarget\)/);
+  assert.match(patched, /globalThis\.codexLinuxReadAloudClick\?\.\(codexLinuxReadAloudChild\.props\.item,codexLinuxReadAloudChild\.props\.assistantCopyText,codexLinuxReadAloudChild\.props\.conversationId,codexLinuxReadAloudEvent\.currentTarget\)/);
+  assert.ok(patched.includes(fixture.sourceTurnCall));
+  assert.ok(patched.includes(fixture.liveTurnCall));
   assert.equal(matchesAssistantRuntimeContract(patched), true);
 });
 
@@ -1298,7 +1301,7 @@ test("assistant render patch ignores unrelated JSX calls beside the complete top
 
 test("assistant render patch rejects a missing current render call without modifying the asset", () => {
   const fixture = assistantRenderFixture();
-  const source = `${fixture.prefix};${fixture.liveTurnCall}`;
+  const source = fixture.source.replace(fixture.sourceTurnCall, "null");
   const { result, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
 
   assert.equal(result, source);
@@ -1308,7 +1311,8 @@ test("assistant render patch rejects a missing current render call without modif
 
 test("assistant render patch rejects an additional assistant-shaped call without modifying the asset", () => {
   const fixture = assistantRenderFixture();
-  const source = `${fixture.source};(0,$.jsx)(Other,{item:q,assistantCopyText:r,conversationId:s})`;
+  const extra = `(0,$.jsx)(Other,{item:q,assistantCopyText:r,conversationId:s})`;
+  const source = fixture.source.replace(fixture.liveTurnCall, fixture.liveTurnCall + "," + extra);
   const { result, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
 
   assert.equal(result, source);
@@ -1318,7 +1322,7 @@ test("assistant render patch rejects an additional assistant-shaped call without
 
 test("assistant render patch rejects duplicate topology roles without modifying the asset", () => {
   const fixture = assistantRenderFixture();
-  const source = `${fixture.source};${fixture.sourceTurnCall}`;
+  const source = fixture.source.replace(fixture.liveTurnCall, fixture.sourceTurnCall);
   const { result, warnings } = captureWarnings(() => applyAssistantRenderPatch(source));
 
   assert.equal(result, source);
@@ -1329,11 +1333,12 @@ test("assistant render patch rejects duplicate topology roles without modifying 
 test("assistant render patch rejects mixed patched and unpatched topology without modifying the asset", () => {
   const fixture = assistantRenderFixture();
   const patched = applyAssistantRenderPatch(fixture.source);
-  const firstWrapperStart = patched.indexOf("(0,s.jsxs)(s.Fragment");
-  const secondWrapperSeparator = patched.indexOf(";(0,s.jsxs)(s.Fragment", firstWrapperStart);
-  assert.notEqual(firstWrapperStart, -1);
-  assert.notEqual(secondWrapperSeparator, -1);
-  const mixed = `${patched.slice(0, firstWrapperStart)}${fixture.sourceTurnCall}${patched.slice(secondWrapperSeparator)}`;
+  const firstWrapperStart = patched.indexOf("/*codex-linux-read-aloud-assistant:source-turn*/");
+  const firstNative = patched.indexOf(fixture.sourceTurnCall, firstWrapperStart);
+  assert.ok(firstWrapperStart >= 0 && firstNative > firstWrapperStart);
+  const firstWrapperEnd = firstNative + fixture.sourceTurnCall.length + 1;
+  const mixed = patched.slice(0, firstWrapperStart) + fixture.sourceTurnCall + patched.slice(firstWrapperEnd);
+
   const { result, warnings } = captureWarnings(() => applyAssistantRenderPatch(mixed));
 
   assert.equal(result, mixed);
@@ -1348,7 +1353,8 @@ test("assistant runtime descriptor targets the current assistant render chunk by
   assert.equal(descriptor.assetPattern, undefined);
   assert.deepEqual(descriptor.assetNeedles, ["collapsibleUnits:", "persistentUnits:", "assistantCopyText:"]);
   assert.equal(descriptor.assetMatch(assistantRenderFixture({ jsxVar: "Q" }).source), true);
-  assert.equal(descriptor.assetMatch(assistantRenderFixture({ component: "Vb" }).source), true);
+  assert.equal(descriptor.assetMatch(assistantRenderFixture({ component: "Vb" }).source), false);
+  assert.equal(descriptor.phase, "extracted-app:pre-webview");
   assert.equal(descriptor.assetMatch("const unrelated=true"), false);
 });
 
@@ -1690,62 +1696,40 @@ test("webview runtime descriptor propagates fatal failure when rollback cannot r
   assert.equal(attempts, 2);
 });
 
-test("assistant runtime descriptor fails soft and atomically when the current render contract drifts", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-drift-"));
-  try {
-    const assetsDir = path.join(root, "webview", "assets");
-    fs.mkdirSync(assetsDir, { recursive: true });
-    const assetPath = path.join(
-      assetsDir,
-      "sites-end-resource-current.js",
-    );
-    const source = "console.log(`assistant render contract moved`);";
-    fs.writeFileSync(assetPath, source);
-    const descriptor = featurePatches.find((patch) => patch.id === "assistant-runtime");
-    const descriptors = normalizePatchDescriptors([
-      { ...descriptor, featureId: "read-aloud", sourceKind: "feature" },
-    ]);
+function assistantAppFixture(t, { source = assistantRenderFixture().source, installRuntime = true } = {}) {
+  const fixture = runtimeAppFixture(t);
+  if (installRuntime) assert.equal(fixture.run().status, "applied");
+  const owner = path.join(fixture.assets, "assistant.js");
+  fs.writeFileSync(owner, source);
+  fs.writeFileSync(path.join(fixture.assets, "jsx.js"), 'export const __rspack_esm_ids=[9];export const __webpack_modules__={Jsx(e,t,n){e.exports=n("Delegate")}};');
+  fs.writeFileSync(path.join(fixture.assets, "delegate.js"), 'export const __rspack_esm_ids=[10];export const __webpack_modules__={Delegate(e,t){var n=Symbol.for("react.transitional.element");function i(e,t,i){var r=null;if(void 0!==i&&(r=""+i),void 0!==t.key&&(r=""+t.key),"key"in t)for(var o in i={},t)"key"!==o&&(i[o]=t[o]);else i=t;return{$$typeof:n,type:e,key:r,ref:void 0!==(t=i.ref)?t:null,props:i}}t.Fragment=Symbol.for("react.fragment"),t.jsx=i,t.jsxs=i}};');
+  const descriptor = featurePatches.find(patch => patch.id === "assistant-runtime");
+  const selected = normalizePatchDescriptors([{ ...descriptor, featureId: "read-aloud", sourceKind: "feature" }]);
+  return { ...fixture, owner, runAssistant(options = {}) {
     const report = createPatchReport();
+    applyExtractedAppPatchDescriptors(fixture.root, selected, options, report, "extracted-app:pre-webview");
+    return report.patches[0];
+  } };
+}
 
-    applyWebviewAssetPatchDescriptors(root, descriptors, {}, report);
-
-    assert.equal(fs.readFileSync(assetPath, "utf8"), source);
-    assert.equal(report.patches.length, 1);
-    assert.equal(report.patches[0].status, "skipped-optional");
-    assert.match(report.patches[0].reason, /current primary thread assistant bundle/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+test("assistant runtime descriptor fails soft and atomically when the current render contract drifts", t => {
+  const fixture = assistantAppFixture(t, { source: 'console.log("assistant render contract moved");' });
+  const before = fs.readFileSync(fixture.owner, "utf8"), runtime = runtimeFixtureBytes(fixture);
+  const report = fixture.runAssistant();
+  assert.equal(report.status, "skipped-optional");
+  assert.equal(fs.readFileSync(fixture.owner, "utf8"), before);
+  assertRuntimeFixtureBytes(fixture, runtime);
 });
 
-test("assistant runtime descriptor reports applied then already-applied for the current contract", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-current-"));
-  try {
-    const assetsDir = path.join(root, "webview", "assets");
-    fs.mkdirSync(assetsDir, { recursive: true });
-    const assetPath = path.join(
-      assetsDir,
-      "sites-end-resource-current.js",
-    );
-    fs.writeFileSync(assetPath, assistantRenderFixture({ jsxVar: "DX", component: "Jft" }).source);
-    const descriptor = featurePatches.find((patch) => patch.id === "assistant-runtime");
-    const descriptors = normalizePatchDescriptors([
-      { ...descriptor, featureId: "read-aloud", sourceKind: "feature" },
-    ]);
-    const firstReport = createPatchReport();
-    const secondReport = createPatchReport();
-
-    applyWebviewAssetPatchDescriptors(root, descriptors, {}, firstReport);
-    applyWebviewAssetPatchDescriptors(root, descriptors, {}, secondReport);
-
-    const patched = fs.readFileSync(assetPath, "utf8");
-    assert.equal((patched.match(/codex-linux-read-aloud-button/g) ?? []).length, 2);
-    assert.doesNotMatch(patched, /codexLinuxReadAloudVersion/);
-    assert.equal(firstReport.patches[0].status, "applied");
-    assert.equal(secondReport.patches[0].status, "already-applied");
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+test("assistant runtime descriptor reports applied then already-applied for the current contract", t => {
+  const fixture = assistantAppFixture(t, { source: assistantRenderFixture({ jsxVar: "DX", component: "Jft.F" }).source });
+  const runtime = runtimeFixtureBytes(fixture);
+  assert.equal(fixture.runAssistant().status, "applied");
+  assert.equal(fixture.runAssistant().status, "already-applied");
+  const patched = fs.readFileSync(fixture.owner, "utf8");
+  assert.equal((patched.match(/codex-linux-read-aloud-button/g) ?? []).length, 2);
+  assert.doesNotMatch(patched, /codexLinuxReadAloudVersion/);
+  assertRuntimeFixtureBytes(fixture, runtime);
 });
 
 function generalSettingsFixture({ page = "s=(0,n.jsxs)(eG.P,{title:t,children:[e,a]})", extra = "" } = {}) {
@@ -2095,7 +2079,8 @@ test(
     assert.equal(routed.length, 1);
 
     const assetsDir = path.join(root, "webview", "assets");
-    for (const descriptor of featurePatches.filter((patch) => patch.phase === "webview-asset")) {
+    for (const descriptor of featurePatches.filter((patch) => patch.phase === "webview-asset" || patch.id === "assistant-runtime")) {
+      const apply = descriptor.id === "assistant-runtime" ? applyAssistantRenderPatch : descriptor.apply;
       const candidates = findWebviewAssetsContaining(root, descriptor.assetNeedles);
       const targets = descriptor.assetMatch == null
         ? candidates
@@ -2104,10 +2089,10 @@ test(
       if (descriptor.assetMatch != null) assert.equal(targets.length, 1, descriptor.id);
       for (const name of targets) {
         const source = fs.readFileSync(path.join(assetsDir, name), "utf8");
-        const { result, warnings } = captureWarnings(() => descriptor.apply(source));
+        const { result, warnings } = captureWarnings(() => apply(source));
         assert.deepEqual(warnings, [], `${descriptor.id} ${name}`);
         assert.notEqual(result, source, `${descriptor.id} ${name}`);
-        assert.equal(descriptor.apply(result), result, `${descriptor.id} ${name}`);
+        assert.equal(apply(result), result, `${descriptor.id} ${name}`);
       }
     }
   },
@@ -2263,5 +2248,287 @@ test("UP61 timed-out replies and queued stale flash or estimate callbacks cannot
     await r.advance(4000);
     assert.equal(second.dataset.codexLinuxReadAloudState, "ready");
     assert.equal(r.timers.size, 0);
+  }
+});
+
+function assistantPrivateApi() {
+  const Module = require("node:module"), file = path.join(__dirname, "patch.js");
+  const loaded = new Module(file, module);
+  loaded.filename = file;
+  loaded.paths = Module._nodeModulePaths(__dirname);
+  let publications = 0;
+  loaded.require = function(request) {
+    const value = Module.prototype.require.call(this, request);
+    if (request !== "../../scripts/patches/lib/rspack-export-publication.js") return value;
+    return { ...value, findRspackExportPublication(...args) { publications++; return value.findRspackExportPublication(...args); } };
+  };
+  loaded._compile(fs.readFileSync(file, "utf8") + "\nmodule.exports.assistantInspect=inspectAssistantRenderContract;module.exports.assistantCacheSize=()=>assistantContractCache.size;", file);
+  return { ...loaded.exports, publications: () => publications };
+}
+
+test("assistant contribution cache copies facts, invalidates changed source and stays bounded after eviction", () => {
+  const api = assistantPrivateApi(), source = assistantRenderFixture().source;
+  const first = api.assistantInspect(source), count = api.publications();
+  assert.equal(first.state, "unpatched");
+  const native = first.candidates[0].match;
+  first.state = "polluted"; first.candidates[0].match = "polluted";
+  first.candidates[0].names.push("polluted"); first.candidates[0].fields.set("item", "polluted");
+  const second = api.assistantInspect(source);
+  assert.equal(api.publications(), count);
+  assert.equal(second.state, "unpatched"); assert.equal(second.candidates[0].match, native);
+  assert.equal(second.candidates[0].fields.get("item"), "o");
+  assert.equal(second.candidates[0].names.includes("polluted"), false);
+  const changed = source.replace("F:()=>render", "F:()=>renDer");
+  assert.equal(api.assistantInspect(changed).state, "invalid");
+  for (let index = 0; index < 5; index++) assert.equal(api.assistantInspect(source + `\nconst opaque${index}=true;`).state, "unpatched");
+  assert.equal(api.assistantCacheSize(), 4);
+  const before = api.publications();
+  assert.equal(api.assistantInspect(source).state, "unpatched");
+  assert.ok(api.publications() > before);
+});
+
+test("assistant normal warm cache still rejects changed JSX ABI and changed UP61 payload with zero writes", t => {
+  const fixture = assistantAppFixture(t);
+  assert.equal(fixture.runAssistant().status, "applied");
+  assert.equal(fixture.runAssistant().status, "already-applied");
+  const owner = fs.readFileSync(fixture.owner, "utf8"), delegate = path.join(fixture.assets, "delegate.js");
+  const original = fs.readFileSync(delegate, "utf8");
+  fs.writeFileSync(delegate, original.replace("t.jsx=i", "t.jsx=other"));
+  let writes = 0;
+  const writeFileSync = (file, bytes) => { writes++; fs.writeFileSync(file, bytes); };
+  assert.equal(fixture.runAssistant({ writeFileSync }).status, "skipped-optional");
+  assert.equal(writes, 0); assert.equal(fs.readFileSync(fixture.owner, "utf8"), owner);
+  fs.writeFileSync(delegate, original);
+  const runtime = path.join(fixture.assets, "main.js"), source = fs.readFileSync(runtime, "utf8");
+  fs.writeFileSync(runtime, source.replace('const METHOD="linux-read-aloud"', 'const METHOD="wrong-read-aloud"'));
+  assert.equal(fixture.runAssistant({ writeFileSync }).status, "skipped-optional");
+  assert.equal(writes, 0); assert.equal(fs.readFileSync(fixture.owner, "utf8"), owner);
+});
+
+function assistantExpressionHarness(expression, fixture, role) {
+  const vm = require("node:vm");
+  const jsx = {}, delegate = 'var n=Symbol.for("react.transitional.element");function i(e,t,i){var r=null;if(void 0!==i&&(r=""+i),void 0!==t.key&&(r=""+t.key),"key"in t)for(var o in i={},t)"key"!==o&&(i[o]=t[o]);else i=t;return{$$typeof:n,type:e,key:r,ref:void 0!==(t=i.ref)?t:null,props:i}}t.Fragment=Symbol.for("react.fragment"),t.jsx=i,t.jsxs=i';
+  vm.runInNewContext(`(function(e,t){${delegate}})`)({}, jsx);
+  const values = {}, calls = [], target = { role }, ref = () => {};
+  for (const match of `${fixture.sourceTurnCall}${fixture.liveTurnCall}`.matchAll(/:([A-Za-z_$][\w$]*)(?=[,}])/gu)) values[match[1]] = "value-" + match[1];
+  Object.assign(values, { s: jsx, eA: { F: "NativeAssistant" }, p: "conversation-a", o: { content: "source" }, n: { content: "live" }, a: "source copy", w: "live copy", roleKey: "native-key", roleRef: ref });
+  values.codexLinuxReadAloudClick = (...args) => { calls.push(args); };
+  values.codexLinuxReadAloudSetup = () => { throw Error("unexpected setup"); };
+  const context = vm.createContext(values), element = vm.runInContext(`(${expression})`, context);
+  return { context, element, calls, target, ref };
+}
+
+test("assistant source and live buttons keep original child props/key/ref and stay silent until explicit click", () => {
+  const vm = require("node:vm");
+  const fixture = assistantRenderFixture();
+  const source = fixture.source.replace(fixture.sourceTurnCall, fixture.sourceTurnCall.replace("item:o,", 'item:o,key:roleKey,ref:roleRef,opaque:{tag:"native",values:[1,2]},'));
+  const api = assistantPrivateApi(), raw = api.assistantInspect(source), patched = api.applyAssistantRenderPatch(source);
+  assert.equal(raw.state, "unpatched");
+  for (const row of raw.candidates) {
+    const prefix = `/*codex-linux-read-aloud-assistant:${row.role}*/`;
+    const start = patched.indexOf(prefix), native = patched.indexOf(row.match, start), end = native + row.match.length + 1;
+    assert.ok(start >= 0 && native > start);
+    const expression = patched.slice(start, end);
+    const harness = assistantExpressionHarness(expression, fixture, row.role);
+    assert.equal(harness.calls.length, 0);
+    const original = vm.runInContext(`(${row.match})`, harness.context), child = harness.element.props.children[0];
+    assert.equal(child.type, original.type); assert.equal(child.key, original.key); assert.equal(child.ref, original.ref);
+    assert.deepEqual(Object.keys(child.props), Object.keys(original.props));
+    for (const key of Object.keys(original.props)) {
+      if (key === "opaque") assert.equal(JSON.stringify(child.props[key]), JSON.stringify(original.props[key]));
+      else assert.equal(child.props[key], original.props[key], key);
+    }
+    const item = child.props.item, copy = child.props.assistantCopyText, conversation = child.props.conversationId;
+    const button = harness.element.props.children[1].props.children;
+    vm.runInContext('o={content:"changed"};n={content:"changed"};a="changed";w="changed";p="conversation-b";', harness.context);
+    let stopped = 0;
+    button.props.onClick({ stopPropagation() { stopped++; }, currentTarget: harness.target });
+    assert.equal(stopped, 1); assert.equal(harness.calls.length, 1);
+    assert.deepEqual(harness.calls[0], [item, copy, conversation, harness.target]);
+    const rerender = assistantExpressionHarness(expression, fixture, row.role);
+    assert.equal(rerender.calls.length, 0);
+  }
+});
+
+test("assistant published owner and captured namespace gates reject orphan, shadowed and reassigned code", t => {
+  const raw = assistantRenderFixture().source;
+  for (const source of [
+    raw.replace("F:()=>render", "F:()=>Other").replace("function render(", "function Other(){return null}function render("),
+    raw.replace('s=n("Jsx")', 's=other("Jsx")'),
+    raw.replace("function render(props){", "s=other;function render(props){"),
+    raw.replace("function render(props){", String.raw`\u0073=other;function render(props){`),
+    raw.replace("function render(props){", "eA=other;function render(props){"),
+    raw.replace("function render(props){", "function render(props){let s=other;"),
+    raw.replace("function render(props){", "function render(props){let eA=other;"),
+    raw.replace("function render(props){", "function render(props){let globalThis=other;"),
+    raw.replace("F:()=>row", "F:()=>Other").replace("function row(", "function Other(){return null}function row("),
+  ]) {
+    const unchanged = captureWarnings(() => applyAssistantRenderPatch(source));
+    assert.equal(unchanged.result, source);
+    const fixture = assistantAppFixture(t, { source });
+    let writes = 0;
+    assert.equal(fixture.runAssistant({ writeFileSync() { writes++; } }).status, "skipped-optional");
+    assert.equal(writes, 0); assert.equal(fs.readFileSync(fixture.owner, "utf8"), source);
+  }
+});
+
+test("assistant canonical validation rejects changed, duplicate, eager and escaped owned contributions", t => {
+  const raw = assistantRenderFixture().source, patched = applyAssistantRenderPatch(raw);
+  const marker = '/*codex-linux-read-aloud-assistant:source-turn*/';
+  for (const source of [
+    patched.replace('.props.item,codexLinuxReadAloudChild.props.assistantCopyText', '.props.other,codexLinuxReadAloudChild.props.assistantCopyText'),
+    patched.replace('.props.conversationId,codexLinuxReadAloudEvent.currentTarget', '.props.other,codexLinuxReadAloudEvent.currentTarget'),
+    patched.replace('codexLinuxReadAloudEvent.stopPropagation(),', ''),
+    patched.replace('codexLinuxReadAloudEvent.currentTarget', 'codexLinuxReadAloudEvent.target'),
+    patched.replace('onClick:codexLinuxReadAloudEvent=>{', 'onClick:(codexLinuxReadAloudEvent=>{').replace('currentTarget)},children:', 'currentTarget)})({stopPropagation(){}}),children:'),
+    patched.replace(marker, marker + '/* opaque owned edit */'),
+    patched + ';globalThis.codexLinuxReadAloudClick?.(other,other,other,other);',
+    patched + String.raw`;globalThis["codexLinuxReadAloudCl\u0069ck"]?.(other);`,
+    raw.replace('function render(props){', 'function render(props){const orphan={className:"codex-linux-read-aloud-button"};'),
+  ]) {
+    assert.doesNotThrow(() => new (require("node:vm").Script)(source.replaceAll("export const ", "const ")));
+    const result = captureWarnings(() => applyAssistantRenderPatch(source));
+    assert.equal(result.result, source);
+    const fixture = assistantAppFixture(t, { source });
+    let writes = 0;
+    assert.equal(fixture.runAssistant({ writeFileSync() { writes++; } }).status, "skipped-optional");
+    assert.equal(writes, 0); assert.equal(fs.readFileSync(fixture.owner, "utf8"), source);
+  }
+  const inert = raw + '\n/*codex-linux-read-aloud-assistant:source-turn*/\nconst opaque="codexLinuxReadAloudClick";';
+  assert.notEqual(applyAssistantRenderPatch(inert), inert);
+});
+
+test("assistant physical producer copies are coherent and malformed component or ABI peers refuse every write", t => {
+  const fixture = assistantAppFixture(t), source = fs.readFileSync(fixture.owner, "utf8"), copy = path.join(fixture.assets, "assistant-copy.js");
+  fs.writeFileSync(copy, source);
+  assert.equal(fixture.runAssistant().status, "applied");
+  assert.equal(fixture.runAssistant().status, "already-applied");
+  const patched = fs.readFileSync(fixture.owner, "utf8");
+  fs.writeFileSync(copy, source);
+  let writes = 0;
+  assert.equal(fixture.runAssistant({ writeFileSync() { writes++; } }).status, "skipped-optional");
+  assert.equal(writes, 0); assert.equal(fs.readFileSync(fixture.owner, "utf8"), patched);
+  fs.writeFileSync(fixture.owner, source);
+  for (const damaged of [
+    source.replace('F:()=>render', 'F:()=>missing'),
+    source.replace('sourceTurnId:', 'retiredSourceTurnId:'),
+    source.replace('F:()=>row', 'Other:()=>row'),
+  ]) {
+    fs.writeFileSync(copy, damaged); writes = 0;
+    assert.equal(fixture.runAssistant({ writeFileSync() { writes++; } }).status, "skipped-optional");
+    assert.equal(writes, 0); assert.equal(fs.readFileSync(fixture.owner, "utf8"), source); assert.equal(fs.readFileSync(copy, "utf8"), damaged);
+  }
+});
+
+test("assistant two-copy writes roll back interruption and propagate unverified restoration", t => {
+  for (const fatal of [false, true]) {
+    const fixture = assistantAppFixture(t), source = fs.readFileSync(fixture.owner, "utf8"), copy = path.join(fixture.assets, "assistant-copy.js");
+    fs.writeFileSync(copy, source);
+    let attempts = 0, failed = false;
+    const options = { writeFileSync(file, bytes) {
+      if (++attempts === 2) { failed = true; fs.writeFileSync(file, "partial assistant"); throw Error("interrupted assistant write"); }
+      if (fatal && failed && String(file).endsWith("assistant-copy.js")) throw Error("assistant restoration unavailable");
+      fs.writeFileSync(file, bytes);
+    } };
+    if (fatal) assert.throws(() => fixture.runAssistant(options), /rollback could not restore original bytes/);
+    else {
+      assert.equal(fixture.runAssistant(options).status, "skipped-optional");
+      assert.equal(fs.readFileSync(fixture.owner, "utf8"), source); assert.equal(fs.readFileSync(copy, "utf8"), source);
+      assert.equal(fixture.runAssistant().status, "applied");
+    }
+  }
+});
+
+test("assistant readset rejects dependency or inventory races between physical writes", t => {
+  for (const kind of ["abi", "runtime", "inventory"]) {
+    const fixture = assistantAppFixture(t), source = fs.readFileSync(fixture.owner, "utf8"), copy = path.join(fixture.assets, "assistant-copy.js");
+    fs.writeFileSync(copy, source);
+    let changed = false;
+    const report = fixture.runAssistant({ writeFileSync(file, bytes) {
+      fs.writeFileSync(file, bytes);
+      if (changed) return;
+      changed = true;
+      if (kind === "inventory") fs.writeFileSync(path.join(fixture.assets, "unexpected.js"), "const unrelated=true;");
+      else fs.appendFileSync(path.join(fixture.assets, kind === "abi" ? "delegate.js" : "main.js"), "/* concurrent dependency change */");
+    } });
+    assert.equal(report.status, "skipped-optional");
+    assert.equal(fs.readFileSync(fixture.owner, "utf8"), source); assert.equal(fs.readFileSync(copy, "utf8"), source);
+  }
+});
+
+test("assistant full delegate chunk Symbol authority rejects unchanged factories with cold and warm owner facts", t => {
+  const prefixes = [
+    'const Symbol={for:value=>value};',
+    'let Symbol={for:value=>value};',
+    'var Symbol={for:value=>value};',
+    'function Symbol(){}',
+    'class Symbol{}',
+    String.raw`const \u0053ymbol={for:value=>value};`,
+    'Symbol={for:value=>value};',
+    String.raw`\u0053ymbol={for:value=>value};`,
+    'Symbol.for=value=>value;',
+    'Symbol["for"]=value=>value;',
+    String.raw`Symbol["\x66or"]||=value=>value;`,
+    String.raw`\u0053ymbol.\u0066or=value=>value;`,
+    '++Symbol.for;',
+    'delete Symbol?.for;',
+    'globalThis.Symbol={for:value=>value};',
+    'window["Symbol"]={for:value=>value};',
+    'self.Symbol.for^=1;',
+    String.raw`globalThis["\u0053ymbol"]["\x66or"]=value=>value;`,
+    String.raw`\u0067lobalThis.\u0053ymbol={for:value=>value};`,
+    'delete (globalThis.Symbol).for;',
+    '[Symbol.for]=[];',
+    '({x:globalThis.Symbol}={});',
+    'Symbol/*native authority*/.for/*write*/=value=>value;',
+    'Object.defineProperty(Symbol,"for",{value:value=>value});',
+    'Object["defineProperty"](globalThis,"Symbol",{value:{for:value=>value}});',
+    'Reflect.set(Symbol,"for",value=>value);',
+    'Reflect["deleteProperty"](globalThis.Symbol,"for");',
+    'Reflect.defineProperty(window,"Symbol",{value:{for:value=>value}});',
+    String.raw`Object["\u0064efineProperty"](\u0053ymbol,"\x66or",{value:value=>value});`,
+    String.raw`Reflect.\u0073et(self["\u0053ymbol"],"\u0066or",value=>value);`,
+    'function mutate(){Symbol.for=value=>value;}',
+    'function mutate(){globalThis.Symbol={for:value=>value};}',
+  ];
+  const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
+  for (const prefix of prefixes) for (const warm of [false, true]) {
+    new (require("node:vm").Script)(prefix);
+    const fixture = assistantAppFixture(t);
+    if (warm) assert.equal(fixture.runAssistant().status, "applied");
+    const delegate = path.join(fixture.assets, "delegate.js"), original = fs.readFileSync(delegate, "utf8");
+    const source = prefix + original, before = fs.readFileSync(fixture.owner, "utf8");
+    assert.equal([...rspackModuleFactories(source)].find(copy => copy.moduleId === "Delegate").moduleSource,
+      [...rspackModuleFactories(original)].find(copy => copy.moduleId === "Delegate").moduleSource);
+    fs.writeFileSync(delegate, source);
+    let writes = 0;
+    const report = fixture.runAssistant({ writeFileSync(file, bytes) { writes++; fs.writeFileSync(file, bytes); } });
+    assert.equal(report.status, "skipped-optional", `${warm ? "warm" : "cold"}: ${prefix}`);
+    assert.equal(writes, 0, prefix);
+    assert.equal(fs.readFileSync(fixture.owner, "utf8"), before, prefix);
+    assert.equal(fs.readFileSync(delegate, "utf8"), source, prefix);
+  }
+});
+
+test("assistant full delegate chunk Symbol authority permits opaque data and unrelated nested local shadows", t => {
+  const prefixes = [
+    'const opaque="const Symbol={for:value=>value}; Symbol.for=value=>value;";',
+    'const opaque=/Symbol\\.for=value/;',
+    '/* Symbol.for=value=>value; Object.defineProperty(Symbol,"for",{}); */',
+    'function unrelated(Symbol){Symbol.for=value=>value;return Symbol.for;}',
+    'function unrelated(){const Symbol={for:value=>value};Symbol.for=value=>value;return Symbol;}',
+    'function unrelated(){let Symbol;Symbol={for:value=>value};return Symbol;}',
+    'function unrelated(Symbol){Object.defineProperty(Symbol,"for",{value:value=>value});}',
+    'function unrelated(globalThis){Reflect.set(globalThis,"Symbol",{for:value=>value});}',
+    String.raw`function unrelated(\u0053ymbol){\u0053ymbol["\x66or"]=value=>value;}`,
+    'const opaque={Symbol:{for:value=>value}};opaque.Symbol.for=value=>value;',
+  ];
+  for (const prefix of prefixes) {
+    const fixture = assistantAppFixture(t), delegate = path.join(fixture.assets, "delegate.js");
+    const source = prefix + fs.readFileSync(delegate, "utf8");
+    fs.writeFileSync(delegate, source);
+    assert.equal(fixture.runAssistant().status, "applied", prefix);
+    assert.equal(fixture.runAssistant().status, "already-applied", prefix);
+    assert.equal(fs.readFileSync(delegate, "utf8"), source, prefix);
   }
 });

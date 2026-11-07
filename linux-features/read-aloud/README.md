@@ -81,8 +81,28 @@ content, not by file name:
   Both checks use one feature-private table covering assignment, arithmetic,
   shift, bitwise, logical, and update operators. Direct and computed optional
   property deletion and explicit destructuring targets are checked as well.
-- `assistant-runtime` wraps the two assistant message render calls of the
-  primary thread chunk with the speech icon button.
+- `assistant-runtime` qualifies the source-turn and live-turn calls in the
+  published primary-thread producer, its native assistant component and the
+  current callable JSX facade/delegate. Each original element becomes the
+  first child of a feature-owned fragment beside the speech icon button,
+  carrying its original props, key and ref. The button keeps that element's
+  item, copy text and conversation ID and calls the click runtime only after
+  an explicit click. Render, streaming updates and repeated renders construct
+  the button without requesting speech or setup.
+  This adapter runs after `webview-runtime` in the extracted-app pre-phase.
+  Both loaded native entries must contain the complete click runtime. Every
+  producer copy and native dependency participates in the verified asset
+  transaction. Repeated application strips the exact owned contributions and
+  reconstructs them byte-for-byte. Partial, mixed, orphan or incorrectly bound
+  contributions reject the enabled patch before writing.
+  The JSX delegate must retain its exact native callable ABI. Each application
+  also checks every complete delegate chunk for a root-level `Symbol` binding,
+  explicit `Symbol` or `Symbol.for` writes, global-object equivalents, and
+  static `Object.defineProperty` or `Reflect` define/delete/set paths. Escaped
+  identifiers and static property names receive the same checks. Opaque data
+  and unrelated nested-local shadows remain valid. The bounded producer-source
+  cache holds only source facts, while delegate chunks, native dependencies and
+  filesystem preimages are verified afresh on every application.
 - `settings-toggle` adds one host element to the General settings page; the
   runtime renders the section into it, so the injected JSX references only the
   page module's own JSX runtime.

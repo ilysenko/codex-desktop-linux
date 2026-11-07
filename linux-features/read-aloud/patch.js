@@ -290,90 +290,504 @@ function countOccurrences(source, needle) {
 }
 
 function inspectAssistantRenderContract(source) {
-  const jsxCallPattern =
-    /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?),\{(?=[^{}]*\bitem:)(?=[^{}]*\bassistantCopyText:)(?=[^{}]*\bconversationId:)([^{}]*)\}\)/g;
-  const readProp = (props, name) =>
-    new RegExp(`(?:^|,)${name}:([A-Za-z_$][\\w$]*)`).exec(props)?.[1] ?? null;
-  const candidates = Array.from(source.matchAll(jsxCallPattern), (match) => {
-    const props = match[3];
-    const propNames = new Set(
-      Array.from(props.matchAll(/(?:^|,)([A-Za-z_$][\w$]*):/g), (prop) => prop[1]),
-    );
-    let role = null;
-    if (ASSISTANT_RENDER_SHARED_PROPS.every((name) => propNames.has(name))) {
-      if (propNames.has("sourceTurnId") && !propNames.has("turnId")) {
-        role = "source-turn";
-      } else if (
-        !propNames.has("sourceTurnId") &&
-        ASSISTANT_RENDER_LIVE_PROPS.every((name) => propNames.has(name))
-      ) {
-        role = "live-turn";
-      }
-    }
-    const itemVar = readProp(props, "item");
-    const copyVar = readProp(props, "assistantCopyText");
-    const conversationVar = readProp(props, "conversationId");
-    const replacement =
-      itemVar == null || copyVar == null || conversationVar == null
-        ? null
-        : `(0,${match[1]}.jsxs)(${match[1]}.Fragment,{children:[${match[0]},${readAloudButtonRowSource(match[1], itemVar, copyVar, conversationVar, "e")}]})`;
-    return {
-      component: match[2],
-      end: match.index + match[0].length,
-      jsxVar: match[1],
-      match: match[0],
-      replacement,
-      role,
-      start: match.index,
-    };
-  });
-  const roles = new Map(candidates.map((candidate) => [candidate.role, candidate]));
-  const completeSet =
-    candidates.length === 2 &&
-    roles.size === 2 &&
-    roles.has("source-turn") &&
-    roles.has("live-turn") &&
-    candidates.every(
-      (candidate) =>
-        candidate.replacement != null &&
-        candidate.jsxVar === candidates[0].jsxVar &&
-        candidate.component === candidates[0].component,
-    );
-  if (!completeSet) {
-    return { candidates, state: "invalid" };
-  }
+  if (assistantContractCache.has(source)) return assistantFactCopy(assistantContractCache.get(source));
+  const result = inspectAssistantSource(source);
+  if (assistantContractCache.size >= 4) assistantContractCache.delete(assistantContractCache.keys().next().value);
+  assistantContractCache.set(source, result);
+  return assistantFactCopy(result);
+}
 
-  const wrapped = candidates.map((candidate) => source.includes(candidate.replacement));
-  const helperCount = countOccurrences(source, `globalThis.${HELPER_MARKER}?.(`);
-  if (wrapped.every((value) => !value) && helperCount === 0) {
-    return { candidates, state: "unpatched" };
+const assistantContractCache = new Map();
+
+function assistantFactCopy(result) {
+  return { ...result, candidates: result.candidates.map(row => ({ ...row, names: [...row.names], fields: new Map(row.fields) })) };
+}
+
+function inspectAssistantSource(source) {
+  let candidates = [];
+  try {
+    const observed = assistantCalls(source);
+    const roles = observed.filter(row => row.role != null);
+    candidates = roles.length ? roles : observed;
+    if (candidates.length !== 2 || new Set(candidates.map(row => row.role)).size !== 2 ||
+        candidates.some(row => row.role == null || row.invalid)) throw new Error("Missing complete assistant render roles");
+    const wrappers = candidates.map(row => assistantWrapper(source, row));
+    if (wrappers.some(row => row.attempted && !row.complete)) throw new Error("Incomplete assistant wrapper contribution");
+    const claims = assistantClaims(source);
+    if (wrappers.every(row => row.complete)) {
+      if (claims.some(index => !wrappers.some(row => row.start <= index && index < row.end))) throw new Error("Orphan assistant wrapper artifact");
+      let native = source;
+      for (const row of [...wrappers].reverse()) native = native.slice(0, row.start) + row.original + native.slice(row.end);
+      const pristine = inspectAssistantRenderContract(native);
+      if (pristine.state !== "unpatched" || assistantWriteWrappers(native, pristine.candidates) !== source) throw new Error("Drifted assistant wrapper state");
+      return { ...pristine, state: "patched", candidates, nativeSource: native };
+    }
+    if (wrappers.some(row => row.complete) || claims.length) throw new Error("Mixed or orphan assistant wrapper state");
+    return { state: "unpatched", candidates, ...assistantProducerFacts(source, candidates, observed), nativeSource: source };
+  } catch (error) {
+    return { state: "invalid", candidates, reason: error.message };
   }
-  if (wrapped.every(Boolean) && helperCount === candidates.length) {
-    return { candidates, state: "patched" };
+}
+
+function assistantModules(source) {
+  return [...require("../../scripts/patches/lib/rspack-module-assets.js").rspackModuleFactories(source, "Read Aloud assistant")];
+}
+
+function assistantDelimiterEnd(source, start, lexical) {
+  const pairs = { "(": ")", "[": "]", "{": "}" }, stack = [];
+  if (!pairs[source[start]]) return -1;
+  for (let index = start; index < source.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    if (pairs[source[index]]) stack.push(pairs[source[index]]);
+    else if (")]}".includes(source[index])) {
+      if (stack.pop() !== source[index]) return -1;
+      if (!stack.length) return index;
+    }
   }
-  return { candidates, state: "invalid" };
+  return -1;
+}
+
+function assistantFields(source) {
+  const lexical = createJavaScriptLexicalIndex(source), fields = new Map(), stack = [], pairs = { "(": ")", "[": "]", "{": "}" };
+  let start = 0, unknown = false;
+  const member = end => {
+    const value = source.slice(start, end), head = /^\s*([A-Za-z_$][\w$]*)\s*:\s*/u.exec(value);
+    if (value.trim()) {
+      if (head == null || fields.has(head[1])) unknown = true;
+      else fields.set(head[1], value.slice(head[0].length).trim());
+    }
+    start = end + 1;
+  };
+  for (let index = 0; index < source.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    if (pairs[source[index]]) stack.push(pairs[source[index]]);
+    else if (")]}".includes(source[index])) {
+      if (stack.pop() !== source[index]) unknown = true;
+    } else if (source[index] === "," && !stack.length) member(index);
+  }
+  member(source.length);
+  return { fields, unknown: unknown || stack.length > 0 };
+}
+
+function assistantCalls(source) {
+  const lexical = createJavaScriptLexicalIndex(source), rows = [];
+  const pattern = /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?),\{/gu;
+  for (const head of source.matchAll(pattern)) {
+    if (!lexical.isCode(head.index)) continue;
+    const propsOpen = head.index + head[0].length - 1, propsEnd = findMatchingBrace(source, propsOpen);
+    if (propsEnd < propsOpen) continue;
+    const text = source.slice(propsOpen + 1, propsEnd);
+    if (!text.includes("assistantCopyText")) continue;
+    const { fields, unknown } = assistantFields(text);
+    if (!["item", "assistantCopyText", "conversationId"].every(name => fields.has(name))) continue;
+    const callOpen = head.index + head[0].lastIndexOf("("), callEnd = assistantDelimiterEnd(source, callOpen, lexical);
+    if (callEnd < propsEnd) continue;
+    const names = [...fields.keys()];
+    let role = null;
+    if (ASSISTANT_RENDER_SHARED_PROPS.every(name => fields.has(name))) {
+      if (fields.has("sourceTurnId") && !fields.has("turnId")) role = "source-turn";
+      else if (!fields.has("sourceTurnId") && ASSISTANT_RENDER_LIVE_PROPS.every(name => fields.has(name))) role = "live-turn";
+    }
+    const values = [fields.get("item"), fields.get("assistantCopyText"), fields.get("conversationId")];
+    rows.push({ start: head.index, end: callEnd + 1, match: source.slice(head.index, callEnd + 1), component: head[2],
+      jsxVar: head[1], role, fields, names, invalid: unknown || values.some(value => !/^[A-Za-z_$][\w$]*$/u.test(value)),
+      itemVar: values[0], copyVar: values[1], conversationVar: values[2] });
+  }
+  return rows;
+}
+
+function assistantCallableScopes(source) {
+  const lexical = createJavaScriptLexicalIndex(source), parentheses = new Map(), stack = [], scopes = [];
+  for (let index = 0; index < source.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    if (source[index] === "(") stack.push(index);
+    else if (source[index] === ")") parentheses.set(index, stack.pop());
+  }
+  for (let open = 0; open < source.length; open++) {
+    if (source[open] !== "{" || !lexical.isCode(open)) continue;
+    const prefix = source.slice(0, open).trimEnd(), close = prefix.length - 1;
+    const parameters = prefix[close] === ")" ? parentheses.get(close) : null;
+    const before = parameters == null ? "" : source.slice(0, parameters).trimEnd();
+    if (prefix.endsWith("=>") || /\bstatic$/u.test(prefix) || parameters != null && !/\b(?:if|for|while|switch|with|catch)\s*$/u.test(before)) {
+      scopes.push({ start: open, end: lexical.matchingBrace(open) });
+    }
+  }
+  for (const arrow of source.matchAll(/=>/gu)) {
+    if (!lexical.isCode(arrow.index)) continue;
+    let start = arrow.index + 2;
+    while (/\s/u.test(source[start] ?? "")) start++;
+    if (source[start] === "{") continue;
+    let end = start, depth = 0;
+    for (; end < source.length; end++) {
+      if (!lexical.isCode(end)) continue;
+      if ("([{".includes(source[end])) depth++;
+      else if (")]}".includes(source[end])) { if (!depth) break; depth--; }
+      else if (!depth && /[,;]/u.test(source[end])) break;
+    }
+    scopes.push({ start, end });
+  }
+  return scopes;
+}
+
+function assistantBindingProbe(module, name, declarationStart, exportName = "F") {
+  const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
+  const publication = findRspackExportPublication(module, exportName);
+  if (publication?.expression == null || module.params.includes(name)) throw new Error("Unsupported assistant readonly binding");
+  const body = module.moduleSource;
+  const calls = runtimeMatches(body, new RegExp(`(?<![\\w$.])${escapeRegExp(publication.requireName)}\\.d\\(${escapeRegExp(publication.exportsName)},\\{`, "gu"), true);
+  if (calls.length !== 1 || body.slice(declarationStart, declarationStart + name.length) !== name) throw new Error("Assistant binding preimage is ambiguous");
+  const exportsStart = calls[0].index + calls[0][0].indexOf("(") + 1;
+  let probeName = "__codexAssistantBindingProbe";
+  while (body.includes(probeName)) probeName += "$";
+  const edits = [
+    { start: declarationStart, end: declarationStart + name.length, before: name, after: probeName },
+    { start: exportsStart, end: exportsStart + publication.exportsName.length, before: publication.exportsName, after: name },
+  ].sort((a, b) => b.start - a.start);
+  if (edits[1].end > edits[0].start) throw new Error("Assistant binding proof ranges overlap");
+  let projected = body;
+  for (const edit of edits) {
+    if (body.slice(edit.start, edit.end) !== edit.before) throw new Error("Assistant binding proof preimage changed");
+    projected = projected.slice(0, edit.start) + edit.after + projected.slice(edit.end);
+  }
+  const result = findRspackExportPublication({ moduleSource: projected, params: [module.params[0], name, module.params[2]] }, exportName);
+  if (result?.exportsName !== name || result.requireName !== publication.requireName || result.expression !== publication.expression) throw new Error("Assistant binding is reassigned or redeclared");
+  return { edits, projected, result };
+}
+
+function assistantRootFunction(module, name, readonly = true, exportName = "F") {
+  if (!/^[A-Za-z_$][\w$]*$/u.test(name ?? "")) throw new Error("Assistant publication is not a native function identifier");
+  const heads = runtimeMatches(module.moduleSource, new RegExp(`\\bfunction ${escapeRegExp(name)}\\(([^()]*)\\)\\{`, "gu"), true);
+  const head = runtimeOne(heads, "published assistant function");
+  const open = head.index + head[0].length - 1, end = findMatchingBrace(module.moduleSource, open);
+  if (readonly) assistantBindingProbe(module, name, head.index + "function ".length, exportName);
+  return { name, params: head[1], open: module.start + open, end: module.start + end,
+    source: module.moduleSource.slice(head.index, end + 1), body: module.moduleSource.slice(open + 1, end) };
+}
+
+function assistantImport(module, name) {
+  const binding = require("../../scripts/patches/lib/rspack-module-assets.js").findRspackRequireBinding(module, name);
+  if (binding == null) throw new Error("Assistant namespace is not a native static import");
+  assistantBindingProbe(module, name, binding.start - module.start);
+  return binding;
+}
+
+function assistantProducerFacts(source, candidates, observed) {
+  const modules = assistantModules(source), owner = modules.filter(module => candidates.every(row => module.start <= row.start && row.end <= module.end));
+  if (owner.length !== 1) throw new Error("Assistant roles do not share one native factory");
+  const module = owner[0], publication = require("../../scripts/patches/lib/rspack-export-publication.js").findRspackExportPublication(module, "F");
+  if (publication == null || module.params.includes("globalThis")) throw new Error("Missing assistant producer publication");
+  const producer = assistantRootFunction(module, publication.expression), scopes = assistantCallableScopes(source);
+  if (observed.some(row => !candidates.includes(row) && producer.open < row.start && row.end < producer.end)) throw new Error("Additional assistant-shaped call in the native producer");
+  for (const row of candidates) {
+    const enclosing = scopes.filter(scope => scope.start < row.start && row.end <= scope.end).sort((a, b) => b.start - a.start)[0];
+    if (row.start <= producer.open || row.end >= producer.end || enclosing?.start !== producer.open) throw new Error("Assistant call is outside its published producer");
+  }
+  const first = candidates[0];
+  if (candidates.some(row => row.jsxVar !== first.jsxVar || row.component !== first.component)) throw new Error("Assistant role namespaces disagree");
+  const component = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/u.exec(first.component);
+  if (component == null) throw new Error("Assistant component is not a native namespace member");
+  const jsx = assistantImport(module, first.jsxVar), imported = assistantImport(module, component[1]);
+  const shadowed = runtimeBindingScopes(module.moduleSource, module.moduleSource, createJavaScriptLexicalIndex(module.moduleSource));
+  if (candidates.some(row => [first.jsxVar, component[1], "globalThis"].some(name => shadowed(name, row.start - module.start)))) throw new Error("Assistant producer shadows a captured binding");
+  const componentCopies = modules.filter(row => row.moduleId === imported.moduleId);
+  if (componentCopies.length !== 1) throw new Error("Missing native assistant component registration");
+  const render = assistantComponentFacts(componentCopies[0], component[2]);
+  return { moduleId: module.moduleId, componentId: imported.moduleId, componentExport: component[2], jsxId: jsx.moduleId,
+    producerName: producer.name, componentName: render.name, producerStart: producer.open, producerEnd: producer.end };
+}
+
+function assistantComponentFacts(nativeComponent, exportName) {
+  const published = require("../../scripts/patches/lib/rspack-export-publication.js").findRspackExportPublication(nativeComponent, exportName);
+  if (published == null) throw new Error("Missing native assistant component export");
+  const render = assistantRootFunction(nativeComponent, published.expression, true, exportName), bodyLexical = createJavaScriptLexicalIndex(render.body);
+  const destructures = [];
+  for (let open = 0; open < render.body.length; open++) {
+    if (render.body[open] !== "{" || !bodyLexical.isRoot(open)) continue;
+    const end = bodyLexical.matchingBrace(open);
+    if (new RegExp(`^=${escapeRegExp(render.params)}(?=[,;])`, "u").test(render.body.slice(end + 1))) destructures.push(assistantFields(render.body.slice(open + 1, end)));
+  }
+  if (destructures.length !== 1 || destructures[0].unknown ||
+      ![...ASSISTANT_RENDER_SHARED_PROPS, "sourceTurnId", "turnId"].every(name => destructures[0].fields.has(name))) throw new Error("Native assistant component props changed");
+  return render;
+}
+
+function assistantWrapperPrefix(row) {
+  const prefix = `/*codex-linux-read-aloud-assistant:${row.role}*/`;
+  const child = "codexLinuxReadAloudChild";
+  return prefix + `(${child}=>(0,${row.jsxVar}.jsxs)(${row.jsxVar}.Fragment,{children:[${child},` +
+    readAloudButtonRowSource(row.jsxVar, child + ".props.item", child + ".props.assistantCopyText", child + ".props.conversationId", "codexLinuxReadAloudEvent") + "]}))(";
+}
+
+function assistantReplacement(row) {
+  return assistantWrapperPrefix(row) + row.match + ")";
+}
+
+function assistantWrapper(source, row) {
+  const bare = `(0,${row.jsxVar}.jsxs)(${row.jsxVar}.Fragment,{children:[`;
+  const prefix = assistantWrapperPrefix(row);
+  const replacement = assistantReplacement(row), start = row.start - prefix.length, end = start + replacement.length;
+  return { start, end, original: row.match, complete: source.slice(start, end) === replacement,
+    attempted: source.slice(row.start - bare.length, row.start) === bare };
+}
+
+function assistantClaims(source) {
+  if (!source.includes("codexLinuxReadAloud") && !source.includes("codex-linux-read-aloud") && !source.includes("\\u") && !source.includes("\\x")) return [];
+  const lexical = createJavaScriptLexicalIndex(source), claims = [];
+  const decode = value => value.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, a, b) => String.fromCodePoint(parseInt(a || b, 16))).replace(/\\x([0-9a-fA-F]{2})/gu, (_, value) => String.fromCharCode(parseInt(value, 16)));
+  const ownRuntime = inspectReadAloudRuntime(source);
+  const runtimeStart = ownRuntime.state === "patched" ? source.indexOf(readAloudRuntimeSource()) : -1;
+  const ignored = index => runtimeStart >= 0 && runtimeStart <= index && index < runtimeStart + readAloudRuntimeSource().length;
+  for (const token of source.matchAll(/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu)) {
+    if (!lexical.isCode(token.index) || ignored(token.index) || /^\s*:/u.test(source.slice(token.index + token[0].length))) continue;
+    const name = decode(token[0]);
+    if (name === HELPER_MARKER || name === "codexLinuxReadAloudEvent" || name === "codexLinuxReadAloudChild") claims.push(token.index);
+  }
+  for (const match of source.matchAll(/\bclassName\s*:\s*(["'`])((?:\\.|[^\\])*?)\1/gu)) {
+    if (lexical.isCode(match.index) && !ignored(match.index) && /^codex-linux-read-aloud-(?:row|button|icon)$/u.test(decode(match[2]))) claims.push(match.index);
+  }
+  for (const match of source.matchAll(/\[\s*(["'`])((?:\\.|[^\\])*?)\1\s*\]/gu)) {
+    if (lexical.isCode(match.index) && !ignored(match.index) && decode(match[2]) === HELPER_MARKER) claims.push(match.index);
+  }
+  for (const match of source.matchAll(/\/\*codex-linux-read-aloud-assistant:(?:source-turn|live-turn)\*\/(?=\([A-Za-z_$][\w$]*=>)/gu)) {
+    if (lexical.isCode(match.index + match[0].length)) claims.push(match.index);
+  }
+  return claims;
+}
+
+function assistantWriteWrappers(source, candidates) {
+  let result = source;
+  for (const row of [...candidates].reverse()) result = result.slice(0, row.start) + assistantReplacement(row) + result.slice(row.end);
+  return result;
 }
 
 function applyAssistantRenderPatch(source) {
   const contract = inspectAssistantRenderContract(source);
-  if (contract.state === "patched") {
-    return source;
-  }
+  if (contract.state === "patched") return source;
   if (contract.state !== "unpatched") {
-    if (
-      contract.candidates.length > 0 ||
-      source.includes(`globalThis.${HELPER_MARKER}?.(`)
-    ) {
-      warn("Could not find complete assistant message render call set", "read aloud assistant render patch");
-    }
+    if (contract.candidates.length || assistantClaims(source).length) warn("Could not find complete assistant message render call set", "read aloud assistant render patch");
     return source;
   }
-
-  let patched = source;
-  for (const candidate of [...contract.candidates].reverse()) {
-    patched = `${patched.slice(0, candidate.start)}${candidate.replacement}${patched.slice(candidate.end)}`;
-  }
+  const patched = assistantWriteWrappers(source, contract.candidates);
+  if (inspectAssistantRenderContract(patched).state !== "patched") throw new Error("Assistant wrapper poststate is incomplete");
   return patched;
+}
+
+function assistantModuleCopies(extractedDir, moduleId) {
+  const { findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
+  return findUniqueRspackModuleCopies(path.join(extractedDir, "webview/assets"), {
+    sourceMatch: source => source.includes(moduleId),
+    matchModule: (_body, copy) => copy.moduleId === moduleId,
+    description: "Read Aloud assistant dependency " + moduleId,
+  });
+}
+
+function assistantJsxStaticName(value) {
+  return value.replace(/\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([^\r\n]))/gu,
+    (_, braced, fixed, hex, escaped) => braced || fixed || hex ? String.fromCodePoint(parseInt(braced || fixed || hex, 16)) :
+      ({ b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", 0: "\0" }[escaped] ?? escaped));
+}
+
+function assistantJsxSkipTrivia(source, start) {
+  return start + /^(?:\s+|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*/u.exec(source.slice(start))[0].length;
+}
+
+function assistantJsxStaticString(source, start) {
+  const quoted = /^(["'`])((?:\\.|[^\\\n])*?)\1/u.exec(source.slice(start));
+  if (quoted == null || quoted[1] === "`" && quoted[2].includes("${")) return null;
+  return { name: assistantJsxStaticName(quoted[2]), end: start + quoted[0].length };
+}
+
+function assistantJsxStaticPath(source, start) {
+  let cursor = assistantJsxSkipTrivia(source, start);
+  while (source[cursor] === "(") cursor = assistantJsxSkipTrivia(source, cursor + 1);
+  const head = /^[A-Za-z_$][\w$]*/u.exec(source.slice(cursor));
+  if (head == null) return null;
+  const index = cursor, members = [];
+  cursor += head[0].length;
+  while (true) {
+    cursor = assistantJsxSkipTrivia(source, cursor);
+    while (source[cursor] === ")") cursor = assistantJsxSkipTrivia(source, cursor + 1);
+    if (source.startsWith("?.", cursor)) cursor = assistantJsxSkipTrivia(source, cursor + 2);
+    else if (source[cursor] === ".") cursor = assistantJsxSkipTrivia(source, cursor + 1);
+    else if (source[cursor] !== "[") break;
+    if (source[cursor] === "[") {
+      const property = assistantJsxStaticString(source, assistantJsxSkipTrivia(source, cursor + 1));
+      if (property == null) return null;
+      cursor = assistantJsxSkipTrivia(source, property.end);
+      if (source[cursor] !== "]") return null;
+      members.push(property.name); cursor++;
+    } else {
+      const property = /^[A-Za-z_$][\w$]*/u.exec(source.slice(cursor));
+      if (property == null) break;
+      members.push(property[0]); cursor += property[0].length;
+    }
+  }
+  return { head: head[0], index, members, end: cursor };
+}
+
+function assistantJsxSymbolAuthority(copy) {
+  if (typeof copy.source !== "string") throw new Error("Native JSX delegate chunk is unavailable");
+  const original = copy.source, originalLexical = createJavaScriptLexicalIndex(original);
+  // This equal-length parse view preserves the complete chunk and its lexical
+  // environment. Only native declaration-export keywords are masked.
+  const script = original.replace(/\bexport(?=\s+(?:const|let|var)\b)/gu, (text, index) =>
+    originalLexical.isRoot(index) ? " ".repeat(text.length) : text);
+  try { new Script('"use strict";\n' + script); }
+  catch { throw new Error("Unsupported native JSX delegate chunk syntax"); }
+  runtimeAssertRootBinding(script, "Symbol", []);
+  const scriptLexical = createJavaScriptLexicalIndex(script);
+  const source = script.replace(/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu,
+    (token, index) => scriptLexical.isCode(index) ? assistantJsxStaticName(token) : token);
+  const lexical = createJavaScriptLexicalIndex(source), shadowed = runtimeBindingScopes(source, source, lexical);
+  const global = name => ["globalThis", "window", "self"].includes(name);
+  const relevant = target => target.head === "Symbol" && target.members.length <= 1 &&
+    (target.members.length === 0 || target.members[0] === "for") || global(target.head) &&
+    target.members[0] === "Symbol" && (target.members.length === 1 || target.members.length === 2 && target.members[1] === "for");
+  for (const token of source.matchAll(/(?<![\w$.])[A-Za-z_$][\w$]*/gu)) {
+    if (!lexical.isCode(token.index) || !["Symbol", "globalThis", "window", "self", "Object", "Reflect"].includes(token[0])) continue;
+    const target = assistantJsxStaticPath(source, token.index);
+    if (target == null || shadowed(target.head, target.index)) continue;
+    const prefix = source.slice(0, target.index), suffix = source.slice(target.end);
+    const prefixWrite = /(?:\bdelete|\+\+|--)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n|\()*$/u.test(prefix);
+    if (relevant(target) && (runtimeStartsWrite(suffix) || prefixWrite || runtimePatternWrites(source, target.index, target.end, lexical))) {
+      throw new Error("Native JSX Symbol authority is explicitly modified");
+    }
+    const method = target.members[0];
+    if (target.members.length !== 1 || !(target.head === "Object" && method === "defineProperty" ||
+        target.head === "Reflect" && ["defineProperty", "deleteProperty", "set"].includes(method)) || source[target.end] !== "(") continue;
+    const receiver = assistantJsxStaticPath(source, target.end + 1);
+    if (receiver == null || shadowed(receiver.head, receiver.index) || source[receiver.end] !== ",") continue;
+    const property = assistantJsxStaticString(source, assistantJsxSkipTrivia(source, receiver.end + 1));
+    if (property == null) continue;
+    const changed = { ...receiver, members: [...receiver.members, property.name] };
+    if (relevant(changed)) throw new Error("Native JSX Symbol authority is statically redefined");
+  }
+}
+
+function assistantJsxDelegate(copy) {
+  assistantJsxSymbolAuthority(copy);
+  const id = "[A-Za-z_$][\\w$]*", body = copy.moduleSource, out = escapeRegExp(copy.params[1] ?? "");
+  if (copy.params.length !== 2 || new Set(copy.params).size !== 2 || copy.params.includes("Symbol")) throw new Error("Unsupported native JSX delegate parameters");
+  const symbol = runtimeOne(runtimeMatches(body, new RegExp(`^var (${id})=Symbol\\.for\\("react\\.transitional\\.element"\\);`, "gu"), true), "native JSX element symbol")[1];
+  const published = runtimeOne(runtimeMatches(body, new RegExp(`${out}\\.Fragment=Symbol\\.for\\("react\\.fragment"\\),${out}\\.jsx=(${id}),${out}\\.jsxs=\\1$`, "gu"), true), "native JSX public ABI");
+  const fn = assistantRootFunction(copy, published[1], false), parameters = fn.params.split(",");
+  if (parameters.length !== 3 || parameters.some(name => !new RegExp(`^${id}$`, "u").test(name))) throw new Error("Unsupported native JSX function signature");
+  const key = /^var ([\w$]+)=null;/u.exec(fn.body)?.[1];
+  const loop = /for\(var ([\w$]+) in /u.exec(fn.body)?.[1];
+  const [component, props, explicitKey] = parameters;
+  if (!key || !loop || new Set([symbol, ...parameters, key, loop]).size !== 6 ||
+      new Set([...copy.params, symbol, fn.name]).size !== 4 || [symbol, fn.name].includes("Symbol")) throw new Error("Native JSX ABI binding collision");
+  const expected = `var ${symbol}=Symbol.for("react.transitional.element");function ${fn.name}(${parameters.join(",")}){` +
+    `var ${key}=null;if(void 0!==${explicitKey}&&(${key}=""+${explicitKey}),void 0!==${props}.key&&(${key}=""+${props}.key),"key"in ${props})` +
+    `for(var ${loop} in ${explicitKey}={},${props})"key"!==${loop}&&(${explicitKey}[${loop}]=${props}[${loop}]);else ${explicitKey}=${props};` +
+    `return{$$typeof:${symbol},type:${component},key:${key},ref:void 0!==(${props}=${explicitKey}.ref)?${props}:null,props:${explicitKey}}}` +
+    `${copy.params[1]}.Fragment=Symbol.for("react.fragment"),${copy.params[1]}.jsx=${fn.name},${copy.params[1]}.jsxs=${fn.name}`;
+  if (body !== expected) throw new Error("Native JSX delegate semantics changed");
+}
+
+function assistantJsxFacts(extractedDir, moduleId, include) {
+  const facades = assistantModuleCopies(extractedDir, moduleId), delegates = new Set();
+  for (const copy of facades) {
+    if (copy.params.length !== 3 || new Set(copy.params).size !== 3) throw new Error("Unsupported native JSX facade parameters");
+    const shape = new RegExp(`^${escapeRegExp(copy.params[0])}\\.exports=${escapeRegExp(copy.params[2])}\\("([A-Za-z0-9_$]+)"\\)$`, "u").exec(copy.moduleSource);
+    if (shape == null) throw new Error("Native JSX facade changed");
+    delegates.add(shape[1]); include(copy.assetName, copy.source);
+  }
+  if (delegates.size !== 1) throw new Error("Native JSX facades disagree");
+  for (const copy of assistantModuleCopies(extractedDir, [...delegates][0])) {
+    assistantJsxDelegate(copy); include(copy.assetName, copy.source);
+  }
+}
+
+function assistantRuntimeDependencies(read) {
+  const roles = [];
+  for (const html of ["webview/index.html", "webview/detached-window.html"]) {
+    const scripts = runtimeHtmlScripts(read(html)), entries = [];
+    for (const name of scripts) {
+      const text = read(name);
+      if (RUNTIME_ENTRY_EXPORT.test(text) || runtimeOwnClaims(text).length) entries.push({ name, text,
+        native: inspectRuntimeEntry(text), own: inspectReadAloudRuntime(text) });
+    }
+    const owner = runtimeOne(entries, "assistant host runtime entry");
+    if (owner.own.state !== "patched") throw new Error("Assistant requires the complete Read Aloud runtime");
+    const chunks = new Set(), modules = new Set(owner.native.bootstrapModules);
+    for (const imported of owner.native.imports) {
+      if (!/^\.\/[A-Za-z0-9_./-]+\.js$/u.test(imported) || imported.split("/").some(part => part === "..")) throw new Error("Unsupported assistant runtime dependency");
+      const name = path.posix.normalize(path.posix.join(path.posix.dirname(owner.name), imported));
+      if (!scripts.includes(name)) throw new Error("Assistant runtime dependency is outside its HTML edge");
+      const facts = runtimeDependencyFacts(read(name)); facts.chunks.forEach(id => chunks.add(id)); facts.modules.forEach(id => modules.add(id));
+    }
+    if (owner.native.chunks.some(id => !chunks.has(id)) || !modules.has(owner.native.startupId)) throw new Error("Assistant runtime startup is unavailable");
+    roles.push(owner);
+  }
+  if (new Set(roles.map(row => row.name)).size !== 2) throw new Error("Assistant runtime window roles overlap");
+  return roles;
+}
+
+function applyAssistantToExtractedApp(extractedDir, options = {}) {
+  const digest = bytes => require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+  const names = runtimeAssetNames(extractedDir), hashes = new Map(), snapshots = new Map(), ownRuntime = [], ownAssistant = [];
+  const read = name => {
+    if (!snapshots.has(name)) {
+      let file = extractedDir;
+      const parts = name.split("/");
+      for (const [index, part] of parts.entries()) {
+        file = path.join(file, part); const stat = fs.lstatSync(file);
+        if (index === parts.length - 1 ? !stat.isFile() : !stat.isDirectory()) throw new Error("Assistant dependency path is not regular");
+      }
+      const source = fs.readFileSync(file, "utf8"), hash = digest(source);
+      if (hashes.has(name) && hashes.get(name) !== hash) throw new Error("Assistant dependency changed during qualification");
+      hashes.set(name, hash); snapshots.set(name, source);
+    }
+    return snapshots.get(name);
+  };
+  for (const name of names) {
+    const source = fs.readFileSync(path.join(extractedDir, name), "utf8"); hashes.set(name, digest(source));
+    if (runtimeOwnClaims(source).length) ownRuntime.push(name);
+    if (assistantClaims(source).length) ownAssistant.push(name);
+  }
+  const runtime = assistantRuntimeDependencies(read);
+  if (ownRuntime.some(name => !runtime.some(row => row.name === name))) throw new Error("Orphan assistant host runtime");
+  const { findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
+  const copies = findUniqueRspackModuleCopies(path.join(extractedDir, "webview/assets"), {
+    sourceMatch: source => source.includes("assistantCopyText"),
+    matchModule: body => new Set(assistantCalls(body).filter(row => row.role != null).map(row => row.role)).size === 2,
+    description: "published primary-thread assistant producer",
+  });
+  const owners = new Set(copies.map(copy => "webview/assets/" + copy.assetName));
+  if (ownAssistant.some(name => !owners.has(name) && !runtime.some(row => row.name === name))) throw new Error("Assistant wrapper artifact escaped its owner");
+  const states = copies.map(copy => {
+    const name = "webview/assets/" + copy.assetName;
+    if (read(name) !== copy.source) throw new Error("Assistant owner changed during qualification");
+    const state = inspectAssistantRenderContract(copy.source);
+    if (state.state === "invalid") throw new Error(state.reason);
+    return state;
+  });
+  if (new Set(states.map(row => row.state)).size !== 1 || new Set(states.map(row => row.componentId)).size !== 1 ||
+      new Set(states.map(row => row.jsxId)).size !== 1) throw new Error("Mixed assistant producer cohort");
+  const include = (assetName, source) => {
+    if (read("webview/assets/" + assetName) !== source) throw new Error("Assistant registration changed during qualification");
+  };
+  for (const copy of assistantModuleCopies(extractedDir, states[0].componentId)) {
+    include(copy.assetName, copy.source);
+    assistantComponentFacts(copy, states[0].componentExport);
+  }
+  assistantJsxFacts(extractedDir, states[0].jsxId, include);
+  const outputs = new Map(copies.map(copy => ["webview/assets/" + copy.assetName, applyAssistantAssetPatch(copy.source)]));
+  const verify = () => {
+    if (JSON.stringify(runtimeAssetNames(extractedDir)) !== JSON.stringify(names)) throw new Error("Assistant asset inventory changed before commit");
+    for (const [name, hash] of hashes) if (digest(fs.readFileSync(path.join(extractedDir, name))) !== hash) throw new Error("Assistant dependency changed before commit: " + name);
+  };
+  verify();
+  const edits = [...snapshots].map(([assetName, source]) => ({ assetName, source, patchedSource: outputs.get(assetName) ?? source }));
+  const original = new Map(edits.map(edit => [path.join(extractedDir, edit.assetName), Buffer.from(edit.source)]));
+  const result = commitMainEdits(extractedDir, edits, { ...options, writeFileSync(file, bytes) {
+    const restoring = original.get(file)?.equals(bytes);
+    if (!restoring) verify();
+    (options.writeFileSync ?? fs.writeFileSync)(file, bytes);
+    if (!restoring) hashes.set(path.relative(extractedDir, file).split(path.sep).join("/"), digest(bytes));
+  } });
+  return { matched: 1, ...result, moduleId: copies[0].moduleId, copies: copies.length };
 }
 
 // The webview runtime is appended to the rspack runtime entry chunks: the
@@ -774,9 +1188,7 @@ function applyAssistantAssetPatch(source) {
 }
 
 function matchesAssistantRuntimeContract(source) {
-  const primaryThreadPartition =
-    source.includes("collapsibleUnits:") && source.includes("persistentUnits:");
-  return primaryThreadPartition && inspectAssistantRenderContract(source).state !== "invalid";
+  return inspectAssistantRenderContract(source).state !== "invalid";
 }
 
 // Settings: the official General settings page wraps its content in a page
@@ -877,14 +1289,15 @@ module.exports = {
     },
     {
       id: "assistant-runtime",
-      phase: "webview-asset",
+      phase: "extracted-app:pre-webview",
       order: 20620,
       ciPolicy: "optional",
       assetNeedles: ["collapsibleUnits:", "persistentUnits:", "assistantCopyText:"],
       assetMatch: matchesAssistantRuntimeContract,
       missingDescription: "current primary thread assistant bundle",
       skipDescription: "read aloud assistant runtime patch",
-      apply: applyAssistantAssetPatch,
+      apply: applyAssistantToExtractedApp,
+      status: result => result?.matched !== 1 ? { status: "skipped-optional", reason: result?.reason ?? "missing assistant cohort" } : result.changed > 0 ? "applied" : "already-applied",
     },
     {
       id: "settings-toggle",
