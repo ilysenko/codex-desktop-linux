@@ -1,0 +1,158 @@
+{
+  "provenance": {
+    "version": "26.1103.32239",
+    "architecture": "amd64",
+    "probeSha256": "5c24da6deeb7ab50ae25dd407f91abff357c14a48f0641f32107c6eba91f2bbc",
+    "scope": "Small native callback/queue source from signed o8WW/Eklu. Only controlled callback harnesses execute these snippets; no native services or app runtime."
+  },
+  "snippets": {
+    "queue": {
+      "text": "(e,{scope:t})=>{let n=null,r=!1,i=null;return e=>{let l=n;t.set(a,e.target,e.selection),n=e,null!=l&&l.resolve(!1),null!=i&&clearTimeout(i),i=setTimeout(()=>{i=null,async function e(){var l,s;if(r||null==n)return;let d=n;n=null,r=!0,t.set(o,d.target,d.selection);let u=!1;try{u=await d.write()}catch{}l=t,s=d,l.get(o,s.target)===s.selection&&(l.set(o,s.target,null),l.get(a,s.target)===s.selection&&l.set(a,s.target,null)),d.resolve(u),r=!1,null!=n&&null==i&&e()}()},320)}}",
+      "bytes": 473,
+      "sha256": "67c91ef922e7c710794836de05543aa4344f33c55c7446f532e892e096a022cf",
+      "provenance": {
+        "moduleId": "Eklu",
+        "asset": "webview/assets/async/321808.c362f3c7ed.js",
+        "moduleLocalUtf16": [
+          119,
+          592
+        ]
+      }
+    },
+    "HM": {
+      "text": "function(e,t,n,r){return new Promise(i=>{e.get(s,JSON.stringify(t))({resolve:i,selection:n,target:t,write:r})})}",
+      "bytes": 112,
+      "sha256": "1b867084c1ff97640515ed696b977f7028bfea777400d818d1c0b3742554d8cf",
+      "provenance": {
+        "moduleId": "Eklu",
+        "asset": "webview/assets/async/321808.c362f3c7ed.js",
+        "moduleLocalUtf16": [
+          731,
+          843
+        ]
+      }
+    },
+    "BG": {
+      "text": "function({conversationId:e,hasConversation:t,hostId:n,cwd:r}){return null!=e&&t?[\"conversation\",e]:[\"default\",n,r]}",
+      "bytes": 115,
+      "sha256": "6d0f7f0d63890b9a01f7a453eb91593b1f15b9f2fffed5a420c4ccbba7d7895e",
+      "provenance": {
+        "moduleId": "Eklu",
+        "asset": "webview/assets/async/321808.c362f3c7ed.js",
+        "moduleLocalUtf16": [
+          607,
+          722
+        ]
+      }
+    },
+    "default": {
+      "text": "(e,l)=>(0,C.HM)(Q,[\"default\",ec,eI],{model:e,reasoningEffort:l},()=>eJ(e,l,\"default\"))",
+      "bytes": 86,
+      "sha256": "ded075c57cc508761d563d79157ea389ca7f8570049bbdfe980f7bf39f3b56d1",
+      "provenance": {
+        "moduleId": "o8WW",
+        "asset": "async/177472.42f91dd590.js",
+        "moduleLocalUtf16": {
+          "start": 14432,
+          "end": 14520
+        }
+      }
+    },
+    "current": {
+      "text": "(l,t,i)=>{let n=(0,C.BG)({conversationId:e,hasConversation:eN,hostId:ec,cwd:eI});if(\"conversation\"===n[0]&&Q.get(A.D0,n[1]))return eY(l,t).then(em,ef);let a=i?.serviceTier===void 0?Q.get(C.EX,n)?.serviceTier:i.serviceTier;return(0,C.HM)(Q,n,{model:l,reasoningEffort:t,serviceTier:a},()=>eJ(l,t,\"current\",a))}",
+      "bytes": 308,
+      "sha256": "02657a0c6ddf7ee01f10fa6ae30d79a5e8e1b0876fa2caebd637c751c5d3ee3a",
+      "provenance": {
+        "moduleId": "o8WW",
+        "asset": "async/177472.42f91dd590.js",
+        "moduleLocalUtf16": {
+          "start": 13987,
+          "end": 14297,
+          "body": {
+            "start": 13999,
+            "end": 14296
+          }
+        }
+      }
+    },
+    "nextTurn": {
+      "text": "async(l,t,i)=>{(0,j.OS)(Q,e,l);let n=(0,C.BG)({conversationId:e,hasConversation:eN,hostId:ec,cwd:eI}),a={model:l,reasoningEffort:t,serviceTier:i?.threadSettings.serviceTier};void 0!==a.serviceTier&&Q.set(C.pu,{hostId:ec,conversationId:e},null),Q.set(C.EX,n,a),await (async()=>{let e;try{e=await eq(l,t,i)}catch(e){throw eZ(e),e}if(!e){let e=Error(\"No conversation available for next-turn model update\");throw eZ(e),e}})().finally(()=>{Q.get(C.EX,n)===a&&Q.set(C.EX,n,null)})}",
+      "bytes": 475,
+      "sha256": "6bc35dd8a21d7a58877b209271c508b3a84505c58d3ec0db3c3bacfb8eb6258e",
+      "provenance": {
+        "moduleId": "o8WW",
+        "asset": "async/177472.42f91dd590.js",
+        "moduleLocalUtf16": {
+          "start": 11517,
+          "end": 11994,
+          "body": {
+            "start": 11534,
+            "end": 11993
+          }
+        }
+      }
+    },
+    "rpc": {
+      "text": "async(l,t,i)=>null!=e&&!!eO&&(await (0,u.V)(Q,ec).updateThreadSettingsForNextTurn(e,{...i?.threadSettings,model:l,effort:t,multiAgentMode:f.Y}),!0)",
+      "bytes": 147,
+      "sha256": "2863a073fd4eedf493c84a149d4ca433b8826c7680e26e391b1dddc9e7436790",
+      "provenance": {
+        "moduleId": "o8WW",
+        "asset": "async/177472.42f91dd590.js",
+        "moduleLocalUtf16": {
+          "start": 9103,
+          "end": 9252
+        }
+      }
+    },
+    "copilotDefaultRead": {
+      "text": "function(){let e,l=(0,i.c)(3),t=(0,o.Ul)(L.t),{data:n,isLoading:a}=(0,o.Ul)(g.BK),r=n?.defaultModel??t.defaultModel;return l[0]!==a||l[1]!==r?(e={model:r,reasoningEffort:\"medium\",profile:null,isLoading:a},l[0]=a,l[1]=r,l[2]=e):e=l[2],e}",
+      "bytes": 236,
+      "sha256": "4bfae480e28d72faa2be21119d1915241abb5f56735955d4928a1ab6f0d7f09e",
+      "provenance": {
+        "moduleId": "o8WW",
+        "moduleLocalUtf16": [
+          7961,
+          8197
+        ]
+      }
+    },
+    "effectiveBase": {
+      "text": "eN?{model:eK??eA.model,reasoningEffort:null==eK?eA.reasoningEffort:eH,profile:eA.profile,isLoading:!eO||eA.isLoading&&null==eK}:{...eF,isLoading:eF.isLoading||eb||null!=e}",
+      "bytes": 171,
+      "sha256": "9b8140379e99912cc33d498ee201402d25c2c718d47ea2c57711424e23f9ac64",
+      "provenance": {
+        "moduleId": "o8WW",
+        "asset": "async/177472.42f91dd590.js",
+        "moduleLocalUtf16": {
+          "start": 9484,
+          "end": 9657
+        }
+      }
+    },
+    "threadModelRead": {
+      "text": "null!=eB&&eB.trim().length>0&&(eg||eB!==_.qz)?eB:ep?.model??null",
+      "bytes": 64,
+      "sha256": "c293b500b7e0378d97cc9db3c98b84814c1ab5edf019317af7f8527644ffd2a4",
+      "provenance": {
+        "moduleId": "o8WW",
+        "moduleLocalUtf16": [
+          8850,
+          8914
+        ]
+      }
+    },
+    "threadEffortRead": {
+      "text": "eB!==_.qz||eg||null==ep?eW?.settings.reasoning_effort??null:ep.reasoningEffort",
+      "bytes": 78,
+      "sha256": "30440015a3b13675fc79f2f81acf2f99ae8f484141ba502947f1dd4ae925c3e7",
+      "provenance": {
+        "moduleId": "o8WW",
+        "moduleLocalUtf16": [
+          8978,
+          9056
+        ]
+      }
+    }
+  }
+}

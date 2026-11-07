@@ -1,10 +1,12 @@
 "use strict";
 
 const path = require("node:path");
-const { inspectModelCatalogOwner } = require("../../scripts/patches/lib/model-composer-owners.js");
+const {findRspackExportPublication}=require("../../scripts/patches/lib/rspack-export-publication.js");
+const {createCopilotEffortPreferences}=require("./effort-preferences.js");
+const { inspectModelCatalogOwner, inspectModelSettingsOwner } = require("../../scripts/patches/lib/model-composer-owners.js");
 const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
 const {
-  findUniqueRspackModuleCopies, patchRspackModuleCopies, rspackModuleFactories,
+  findUniqueRspackModuleCopies, patchRspackModuleCopies, rspackModuleFactories, findRspackRequireBinding,
 } = require("../../scripts/patches/lib/rspack-module-assets.js");
 
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
@@ -40,49 +42,147 @@ function warn(message, skipDescription) {
   console.warn(`WARN: ${message} - skipping ${skipDescription}`);
 }
 
-// --- Persistence owner (validation only) ------------------------------------
+// --- Copilot default effort persistence ---------------------------------------
 
-// Upstream persists Copilot model and effort selections through its model
-// settings hook. The hook is copied into every composer surface chunk; each
-// copy must still write the default through setDefaultModelConfig and route
-// both the "default" and "current" scopes through the same writer.
-function matchesCopilotModelAndReasoningPersistenceContract(source) {
-  const exportedMatches = findAllMatches(source, new RegExp(
-    `setDefaultModelAndReasoningEffort:${JS_IDENT},` +
-      `setModelAndReasoningEffortForNextTurn:${JS_IDENT},` +
-      `setModelAndReasoningEffort:${JS_IDENT},modelSettings:${JS_IDENT}`,
-  ));
-  if (exportedMatches.length !== 1) return false;
+const PERSISTENCE_MARKER = "codexLinuxCopilotEffortPreferences";
+const PERSISTENCE_IDS=[PERSISTENCE_MARKER,"codexLinuxCopilotEffortSelection","codexLinuxCopilotRequestedEffort"];
+const mentionsPersistence=source=>PERSISTENCE_IDS.some(name=>source.includes(name));
+const PERSISTENCE_DESCRIPTION = "current Copilot model-and-reasoning settings factory";
+const PERSISTENCE_FACTORY = `const ${PERSISTENCE_MARKER}=(${createCopilotEffortPreferences.toString()})(`;
 
-  const match = exportedMatches[0];
-  const ownerRegion = source.slice(Math.max(0, match.index - 6_000), match.index + match[0].length);
-  const defaultWrites = findAllMatches(
-    ownerRegion,
-    new RegExp(`\\.setDefaultModelConfig\\(${JS_IDENT},${JS_IDENT},${JS_IDENT}\\.profile\\)`),
-  );
-  const defaultWrappers = findAllMatches(
-    ownerRegion,
-    new RegExp(`=>(${JS_IDENT})\\(${JS_IDENT},${JS_IDENT},"default"\\)`),
-  );
-  const currentWrappers = findAllMatches(
-    ownerRegion,
-    new RegExp(`=>(${JS_IDENT})\\(${JS_IDENT},${JS_IDENT},"current",${JS_IDENT}\\)`),
-  );
-  return defaultWrites.length === 1 &&
-    defaultWrappers.length === 1 &&
-    currentWrappers.length === 1 &&
-    defaultWrappers[0][1] === currentWrappers[0][1];
+// Reuse the publication checker's syntax-only parameter authority proof. The
+// proven initializer binder is renamed only in this private projection; actual
+// source/publication qualification remains a separate prerequisite.
+function stableCapturedBinding(body,name,binderAt=null) {
+  const alias="__copilotEffortBinder",target="__copilotEffortExports",value="__copilotEffortValue";
+  if([alias,target,value].some(probe=>body.includes(probe)))return false;
+  let projection=body;
+  if(binderAt!=null){if(body.slice(binderAt,binderAt+name.length)!==name)return false;
+    projection=body.slice(0,binderAt)+alias+body.slice(binderAt+name.length);}
+  projection=`${name}.d(${target},{proof:()=>${value}});`+projection;
+  return findRspackExportPublication({moduleSource:projection,params:[value,target,name]},"proof")!=null;
 }
 
-function validateCopilotModelAndReasoningPersistence(source) {
-  if (!matchesCopilotModelAndReasoningPersistenceContract(source)) {
-    warn(
-      "Could not find current model-and-reasoning persistence owner",
-      "Copilot reasoning effort persistence validation",
-    );
+function settingsPersistenceOwner(source, snapshot) {
+  if(snapshot?.params?.some(name=>PERSISTENCE_IDS.includes(name)||name==="globalThis"))throw new Error("Copilot helper collides with factory parameters");
+  const module = {...snapshot,moduleSource:source};
+  const owner = inspectModelSettingsOwner(module);
+  if (!owner.ok) throw new Error(`Unsupported ${PERSISTENCE_DESCRIPTION}: ${owner.reason}`);
+  if(!stableCapturedBinding(source,"globalThis"))throw new Error("Copilot runtime global is shadowed or reassigned");
+  const lexical = createJavaScriptLexicalIndex(source);
+  const region = source.slice(owner.state.body.start,owner.state.body.end);
+  const stateLexical=createJavaScriptLexicalIndex(region);
+  const ownMatches = regex => [...region.matchAll(regex)].filter(match =>stateLexical.isRoot(match.index));
+  const only = (values,label) => {if(values.length!==1)throw new Error(`Missing or ambiguous Copilot ${label}`);return values[0];};
+  const auth = only(ownMatches(new RegExp(`(?<copilot>${JS_IDENT})=${escapeRegExp(owner.active.identity.host)}\\?\\.authMethod==="copilot"`,"gu")),"auth binding");
+  const readerPattern = new RegExp(`(?<binding>${JS_IDENT})=function\\(\\)\\{let (?<result>${JS_IDENT}),(?<memo>${JS_IDENT})=\\(0,(?<memoApi>${JS_IDENT})\\.${JS_IDENT}\\)\\(3\\),`+
+    `(?<defaults>${JS_IDENT})=\\(0,(?<query>${JS_IDENT})\\.${JS_IDENT}\\)\\((?<defaultsApi>${JS_IDENT})\\.${JS_IDENT}\\),`+
+    `\\{data:(?<preferences>${JS_IDENT}),isLoading:(?<loading>${JS_IDENT})\\}=\\(0,\\k<query>\\.${JS_IDENT}\\)\\((?<copilotApi>${JS_IDENT})\\.${JS_IDENT}\\),`+
+    `(?<model>${JS_IDENT})=\\k<preferences>\\?\\.defaultModel\\?\\?\\k<defaults>\\.defaultModel;return `+
+    `\\k<memo>\\[0\\]!==\\k<loading>\\|\\|\\k<memo>\\[1\\]!==\\k<model>\\?`+
+    `\\(\\k<result>=\\{model:\\k<model>,reasoningEffort:"medium",profile:null,isLoading:\\k<loading>\\},`+
+    `\\k<memo>\\[0\\]=\\k<loading>,\\k<memo>\\[1\\]=\\k<model>,\\k<memo>\\[2\\]=\\k<result>\\):`+
+    `\\k<result>=\\k<memo>\\[2\\],\\k<result>\\}\\(\\),`,"gu");
+  const reader=only(ownMatches(readerPattern),"native default reader");
+  const fallback=source.slice(owner.effectiveSettings.base.fallback.start,owner.effectiveSettings.base.fallback.end);
+  const expectedFallback=new RegExp(`^(?<fallback>${JS_IDENT})=${escapeRegExp(auth.groups.copilot)}&&null==(?<managed>${JS_IDENT})\\?${escapeRegExp(reader.groups.binding)}:${escapeRegExp(owner.profile.settings)}$`,"u").exec(fallback);
+  if(!expectedFallback)throw new Error("Copilot reader is disconnected from effective settings");
+  const catalogRegion=source.slice(owner.profile.reader.body.start,owner.profile.reader.body.end);
+  const catalogLexical=createJavaScriptLexicalIndex(catalogRegion);
+  const catalog=only([...catalogRegion.matchAll(new RegExp(`let\\{data:${JS_IDENT},isLoading:${JS_IDENT}\\}=\\(0,(?<namespace>${JS_IDENT})\\.(?<exportName>${JS_IDENT})\\)\\(${JS_IDENT}\\)`,"gu"))].filter(match=>catalogLexical.isRoot(match.index)),"model catalog hook");
+  if(!stableCapturedBinding(catalogRegion,catalog.groups.namespace))throw new Error("Copilot catalog import is shadowed or reassigned");
+  const imports=[reader.groups.memoApi,reader.groups.query,reader.groups.defaultsApi,reader.groups.copilotApi,catalog.groups.namespace];
+  if(new Set(imports).size!==imports.length||imports.some(name=>findRspackRequireBinding(module,name)==null))throw new Error("Copilot reader has invalid imports");
+  // The native React namespace is the state-level context reader and error UI
+  // provider. Its binding is resolved through this factory's loader.
+  const react=only(ownMatches(new RegExp(`\\(0,(?<namespace>${JS_IDENT})\\.use\\)\\(${JS_IDENT}\\.${JS_IDENT}\\)`,"gu")),"React context reader").groups.namespace;
+  if(!findRspackRequireBinding(module,react))throw new Error("Copilot React namespace has no factory binding");
+  for(const name of [react,catalog.groups.namespace]){
+    const binding=findRspackRequireBinding(module,name);
+    if(!binding||!stableCapturedBinding(source,name,binding.start-(module.start??0)))throw new Error("Copilot hook dependency is reassigned");
   }
-  return source;
+  if(!stableCapturedBinding(region,react)||!stableCapturedBinding(region,auth.groups.copilot,auth.index))throw new Error("Copilot context binding is shadowed or reassigned");
+  const readerLocals=[reader.groups.result,reader.groups.memo,reader.groups.defaults,reader.groups.preferences,reader.groups.loading,reader.groups.model];
+  if(new Set(readerLocals).size!==readerLocals.length||imports.some(name=>readerLocals.includes(name)))throw new Error("Copilot reader import is shadowed");
+  const writer=source.slice(owner.default.writer.start,owner.default.writer.end);
+  const call=only([...writer.matchAll(new RegExp(`if\\(${escapeRegExp(auth.groups.copilot)}\\)\\{let (?<service>${JS_IDENT})=(?<services>${JS_IDENT})\\.appServices\\?\\.copilot;`+
+    `if\\(null==\\k<service>\\)return ${JS_IDENT}\\(Error\\("Copilot is unavailable"\\)\\),!1;return await `+
+    `(?<nativeCall>\\(0,(?<unwrap>${JS_IDENT})\\.${JS_IDENT}\\)\\(\\k<service>\\.setDefaultModel\\((?<model>${JS_IDENT})\\)\\)),`+
+    `await (?<invalidateCall>\\(0,(?<invalidate>${JS_IDENT})\\.${JS_IDENT}\\)\\(${escapeRegExp(owner.target.store)}\\)),!0\\}`,"gu"))],"native model writer");
+  const writerHead=new RegExp(`^[^=]+?=async\\((?<model>${JS_IDENT}),(?<effort>${JS_IDENT}),(?<scope>${JS_IDENT}),(?<tier>${JS_IDENT})\\)=>\\{`).exec(writer);
+  if(!writerHead||Object.values(writerHead.groups).some(name=>name===auth.groups.copilot)||writerHead.groups.model!==call.groups.model||
+    [call.groups.services,call.groups.unwrap,call.groups.invalidate].some(name=>findRspackRequireBinding(module,name)==null))throw new Error("Copilot writer binding is disconnected");
+  const useCall=`${PERSISTENCE_MARKER}.useSelection(${auth.groups.copilot},${owner.active.hostId},${reader.groups.binding})`;
+  const readFrom=`?${reader.groups.binding}:${owner.profile.settings}`;
+  // Hooks must execute regardless of auth or managed-default branches.
+  const hookBinding="codexLinuxCopilotEffortSelection";
+  if(mentionsPersistence(source))throw new Error("Orphan Copilot effort persistence marker");
+  const edits=[
+    {from:reader[0],to:reader[0]+`${hookBinding}=${useCall},`},
+    {from:fallback,to:fallback.replace(readFrom,`?${hookBinding}:${owner.profile.settings}`)},
+    {from:`return await ${call.groups.nativeCall},await ${call.groups.invalidateCall},!0`,to:`return await ${PERSISTENCE_MARKER}.save(${owner.active.hostId},null,${writerHead.groups.model},codexLinuxCopilotRequestedEffort,async()=>{await ${call.groups.nativeCall};await ${call.groups.invalidateCall}}),!0`},
+    {from:writerHead[0],to:writerHead[0]+`let codexLinuxCopilotRequestedEffort=${writerHead.groups.effort};`},
+  ];
+  for(const edit of edits)if(source.split(edit.from).length!==2)throw new Error("Ambiguous Copilot persistence edit");
+  return {owner,edits,helper:PERSISTENCE_FACTORY+`${react},${catalog.groups.namespace}.${catalog.groups.exportName});`};
 }
+
+function rewriteSettingsPersistence(source, snapshot) {
+  const {edits,helper}=settingsPersistenceOwner(source,snapshot);
+  for(const edit of edits)source=source.replace(edit.from,edit.to);
+  return source+helper;
+}
+
+function settingsPersistenceState(source,snapshot) {
+  if(!PERSISTENCE_NEEDLES.every(needle=>source.includes(needle)))return {kind:"missing"};
+  try{
+    if(!mentionsPersistence(source))return {kind:"current",...settingsPersistenceOwner(source,snapshot)};
+    const helperAt=source.lastIndexOf(PERSISTENCE_FACTORY);
+    if(helperAt<0)return {kind:"missing"};
+    const suffix=source.slice(helperAt+PERSISTENCE_FACTORY.length);
+    if(!new RegExp(`^${JS_IDENT},${JS_IDENT}\\.${JS_IDENT}\\);$`,"u").test(suffix))return {kind:"missing"};
+    let native=source.slice(0,helperAt);
+    const selection=new RegExp(`codexLinuxCopilotEffortSelection=${PERSISTENCE_MARKER}\\.useSelection\\(${JS_IDENT},${JS_IDENT},${JS_IDENT}\\),`,"gu");
+    const selections=[...native.matchAll(selection)];if(selections.length!==1)return {kind:"missing"};
+    const selected=selections[0][0];const args=selected.slice(selected.indexOf("(")+1,selected.lastIndexOf(")")).split(",");
+    native=native.replace(selected,"").replace(`?codexLinuxCopilotEffortSelection:`,`?${args[2]}:`);
+    const writes=new RegExp(`return await ${PERSISTENCE_MARKER}\\.save\\(${JS_IDENT},null,${JS_IDENT},codexLinuxCopilotRequestedEffort,async\\(\\)=>\\{await (?<native>\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${JS_IDENT}\\.setDefaultModel\\(${JS_IDENT}\\)\\));await (?<invalidate>\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${JS_IDENT}\\))\\}\\),!0`,"gu");
+    const written=[...native.matchAll(writes)];if(written.length!==1)return {kind:"missing"};native=native.replace(written[0][0],`return await ${written[0].groups.native},await ${written[0].groups.invalidate},!0`);
+    const aliases=[...native.matchAll(new RegExp(`let codexLinuxCopilotRequestedEffort=${JS_IDENT};`,"gu"))];if(aliases.length!==1)return {kind:"missing"};native=native.replace(aliases[0][0],"");
+    const found=settingsPersistenceOwner(native,snapshot);
+    return rewriteSettingsPersistence(native,snapshot)===source?{kind:"patched",native,...found}:{kind:"missing"};
+  }catch{return {kind:"missing"};}
+}
+
+function applyCopilotSettingsPersistence(source,snapshot) {
+  const state=settingsPersistenceState(source,snapshot);
+  if(state.kind==="patched")return source;
+  if(state.kind!=="current")throw new Error("Missing, ambiguous or partial current Copilot persistence factory");
+  const patched=rewriteSettingsPersistence(source,snapshot);
+  if(settingsPersistenceState(patched,snapshot).kind!=="patched")throw new Error("Copilot persistence failed canonical replay");
+  return patched;
+}
+
+function patchCopilotSettingsPersistence(extractedDir,_context={},options={}) {
+  const assetsDir=path.join(extractedDir,"webview","assets"),markerAssets=new Set();
+  const copies=findUniqueRspackModuleCopies(assetsDir,{
+    description:PERSISTENCE_DESCRIPTION,
+    sourceMatch(source,name){if(mentionsPersistence(source))markerAssets.add(name);return PERSISTENCE_NEEDLES.every(needle=>source.includes(needle));},
+    matchModule:(source,snapshot)=>settingsPersistenceState(source,snapshot).kind!=="missing",
+  });
+  for(const copy of copies){requireModelListRegistry(copy.source);
+    const outside=copy.source.slice(0,copy.start)+copy.source.slice(copy.end);
+    if(mentionsPersistence(outside))throw new Error("Orphan Copilot persistence marker");
+    markerAssets.delete(copy.assetName);
+  }
+  if(markerAssets.size)throw new Error("Orphan Copilot persistence marker asset");
+  return patchRspackModuleCopies(assetsDir,copies,applyCopilotSettingsPersistence,options);
+}
+
+// Compatibility exports inspect a complete factory; a nearby ordinary config
+// writer can no longer claim that Copilot effort already persists natively.
+function matchesCopilotModelAndReasoningPersistenceContract(source,snapshot){return settingsPersistenceState(source,snapshot).kind!=="missing";}
+function validateCopilotModelAndReasoningPersistence(source,snapshot){return applyCopilotSettingsPersistence(source,snapshot);}
 
 // --- Model catalog ------------------------------------------------------------
 
@@ -331,15 +431,14 @@ function applyCopilotReasoningSlashPatch(source) {
 }
 
 module.exports = {
+  applyCopilotSettingsPersistence,patchCopilotSettingsPersistence,settingsPersistenceState,
+  settingsPersistenceOwner,
   descriptors: [
     {
       id: "persistence-contract",
       name: "copilot-reasoning-effort-persistence-contract",
-      phase: "webview-asset",
-      assetNeedles: PERSISTENCE_NEEDLES,
-      missingDescription: "current model-and-reasoning persistence owner",
-      skipDescription: "Copilot reasoning effort persistence validation",
-      apply: validateCopilotModelAndReasoningPersistence,
+      phase: "extracted-app:pre-webview",
+      apply: patchCopilotSettingsPersistence,
     },
     {
       id: "model-list",

@@ -22,6 +22,7 @@ const {
   MODEL_LIST_NEEDLES,
   applyCopilotReasoningSlashPatch,
   descriptors,
+  applyCopilotSettingsPersistence,patchCopilotSettingsPersistence,settingsPersistenceState,
   matchesCopilotModelAndReasoningPersistenceContract,
   matchesCopilotReasoningEffortDropdownContract,
   matchesCopilotReasoningSlashContract,
@@ -33,6 +34,7 @@ const { inspectModelCatalogOwner } = require("../../scripts/patches/lib/model-co
 const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 const currentModelCatalog = require("../../scripts/patches/lib/fixtures/current-model-composer.json").catalog;
+const currentSettings=require("../../scripts/patches/lib/fixtures/current-model-composer.json").settings;
 const MODEL_LIST_MARKER = "codexLinuxCopilotReasoningEffortModelList";
 
 function applyPatchTwice(patchFn, source) {
@@ -54,9 +56,7 @@ function withCapturedWarns(fn) {
 }
 
 // Fixtures below follow the current official rspack/SWC shapes.
-function currentModelAndReasoningPersistenceFixture() {
-  return 'function hook(){let l=await (0,u.V)(Y,eE).setDefaultModelConfig(e,t,eM.profile);let a=r?.serviceTier;z=(t,n,r)=>(0,E.HM)(Y,i,{model:t,reasoningEffort:n,serviceTier:a},()=>eK(t,n,"current",a));let eJ=z;W=(e,t)=>(0,E.HM)(Y,["default",ec,eI],{model:e,reasoningEffort:t},()=>eK(e,t,"default"));let e0=W;return G={defaultAdvancedModel:eM.model,setDefaultModelAndReasoningEffort:e0,setModelAndReasoningEffortForNextTurn:eQ,setModelAndReasoningEffort:eJ,modelSettings:eX}}';
-}
+function currentModelAndReasoningPersistenceFixture() { return currentSettings.moduleSource; }
 
 function currentFilteredCopilotReasoningEffortModelListFixture() {
   const predicate = 'function({additionalAvailableModels:extra,apiKeyDaybreakSupported:daybreak,authMethod:auth,availableModels:allow,hasConfiguredModelCatalog:configured,isCustomModelProvider:custom,model:item,useHiddenModels:hidden}){let programs=item.availableAccessPrograms?.cyber;return("apikey"!==auth||!!daybreak||null==programs||!(programs.length>0)||!!programs.includes("standard"))&&(extra?.has(item.model)===!0||"codex-auto-review"!==item.model&&(configured&&!item.hidden||(hidden&&!custom&&"amazonBedrock"!==auth?allow.has(item.model)||"apikey"===auth&&daybreak&&!item.hidden&&programs?.some(program=>"standard"!==program)===!0:!item.hidden)))}';
@@ -113,7 +113,7 @@ function asChunk(body) {
 function writeAsset(extractedDir, name, source) {
   const assetsDir = path.join(extractedDir, "webview", "assets", "async");
   fs.mkdirSync(assetsDir, { recursive: true });
-  fs.writeFileSync(path.join(assetsDir, name), source.includes("additionalAvailableModels:") ? asChunk(source).replace("{m(", "{ModelCatalog(") : asChunk(source));
+  fs.writeFileSync(path.join(assetsDir, name), source === currentSettings.moduleSource || source.startsWith(currentSettings.moduleSource.slice(0,20)) ? `export const __webpack_modules__={settings(${currentSettings.params.join(",")}){${source}}};` : source.includes("additionalAvailableModels:") ? asChunk(source).replace("{m(", "{ModelCatalog(") : asChunk(source));
 }
 
 function readAsset(extractedDir, name) {
@@ -122,13 +122,13 @@ function readAsset(extractedDir, name) {
 
 test("binds Copilot persistence to the current model-and-reasoning service", () => {
   const source = currentModelAndReasoningPersistenceFixture();
-  assert.equal(matchesCopilotModelAndReasoningPersistenceContract(source), true);
+  assert.equal(matchesCopilotModelAndReasoningPersistenceContract(source,currentSettings), true);
   for (const drifted of [
-    source.replace(".setDefaultModelConfig(e,t,eM.profile)", ".setDefaultModelConfig(e,eM.profile)"),
-    source.replace('()=>eK(e,t,"default")', '()=>other(e,t,"default")'),
+    source.replace(".setDefaultModelConfig(e,l,eA.profile)", ".setDefaultModelConfig(e,eA.profile)"),
+    source.replace('()=>eJ(e,l,"default")', '()=>other(e,l,"default")'),
     source.repeat(2),
   ]) {
-    assert.equal(matchesCopilotModelAndReasoningPersistenceContract(drifted), false);
+    assert.equal(matchesCopilotModelAndReasoningPersistenceContract(drifted,currentSettings), false);
   }
 });
 
@@ -149,10 +149,10 @@ test("descriptors find their owners by content needles, not chunk names", () => 
     assert.equal(descriptor.pattern, undefined);
     assert.equal(descriptor.assetPattern, undefined);
     assert.equal(descriptor.assetMatch, undefined);
-    if (descriptor.id === "model-list") {
+    if (["model-list","persistence-contract"].includes(descriptor.id)) {
       assert.equal(descriptor.phase, "extracted-app:pre-webview");
       assert.equal(descriptor.assetNeedles, undefined);
-      assert.ok(MODEL_LIST_NEEDLES.every(needle => fixtures[index].includes(needle)));
+      if(descriptor.id==="model-list")assert.ok(MODEL_LIST_NEEDLES.every(needle => fixtures[index].includes(needle)));
       return;
     }
     for (const needle of descriptor.assetNeedles) {
@@ -161,21 +161,13 @@ test("descriptors find their owners by content needles, not chunk names", () => 
   });
 });
 
-test("Copilot persistence validation warns on every drifted copy and never edits it", () => {
-  const descriptor = descriptors[0];
-  withTempDir((extractedDir) => {
-    const good = currentModelAndReasoningPersistenceFixture();
-    const drifted = good.replace('()=>eK(e,t,"default")', '()=>other(e,t,"default")');
-    writeAsset(extractedDir, "1.a.js", good);
-    writeAsset(extractedDir, "2.b.js", drifted);
-    const { warnings } = withCapturedWarns(() =>
-      applyWebviewAssetPatchDescriptors(extractedDir, normalizePatchDescriptors([descriptor]), {}, null),
-    );
-    assert.equal(readAsset(extractedDir, "1.a.js"), asChunk(good));
-    assert.equal(readAsset(extractedDir, "2.b.js"), asChunk(drifted));
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /current model-and-reasoning persistence owner/);
-  });
+test("Copilot persistence rejects a drifted physical copy before editing its healthy sibling",()=>{
+ withTempDir(extractedDir=>{const good=currentSettings.moduleSource;const drifted=good.replace('()=>eJ(e,l,"default")','()=>other(e,l,"default")');
+ writeAsset(extractedDir,"1.a.js",good);writeAsset(extractedDir,"2.b.js",drifted);
+ const before=["1.a.js","2.b.js"].map(name=>readAsset(extractedDir,name));
+ assert.throws(()=>patchCopilotSettingsPersistence(extractedDir),/persistence factory/);
+ assert.deepEqual(["1.a.js","2.b.js"].map(name=>readAsset(extractedDir,name)),before);
+ });
 });
 
 function modelListSnapshot(source) {
@@ -425,7 +417,7 @@ test("feature descriptor loader exposes the Copilot webview asset patches only w
       "feature:copilot-reasoning-effort:ui-dropdown",
       "feature:copilot-reasoning-effort:ui-slash-command",
     ]);
-    assert.deepEqual(loaded.map(descriptor => descriptor.phase), ["webview-asset", "extracted-app:pre-webview", "webview-asset", "webview-asset"]);
+    assert.deepEqual(loaded.map(descriptor => descriptor.phase), ["extracted-app:pre-webview", "extracted-app:pre-webview", "webview-asset", "webview-asset"]);
     assert.ok(loaded.every((descriptor) => descriptor.ciPolicy === "optional"));
   });
 });
@@ -448,7 +440,7 @@ test("enabled feature descriptors patch rspack async chunks", () => {
       assert.match(readAsset(extractedDir, "24191.a.js"), /codexLinuxCopilotReasoningEffortModelList\*\/\[\.\.\.raw\]\.filter/);
       assert.match(readAsset(extractedDir, "104066.c.js"), /oy=\/\*codexLinuxCopilotReasoningEffortUi\*\//);
       assert.match(readAsset(extractedDir, "589850.d.js"), /H=j&&R&&!0\/\*codexLinuxCopilotReasoningEffortUi\*\//);
-      assert.equal(readAsset(extractedDir, "258607.b.js"), asChunk(currentModelAndReasoningPersistenceFixture()));
+      assert.match(readAsset(extractedDir, "258607.b.js"), /codexLinuxCopilotEffortPreferences/);
     });
   });
 });
@@ -458,18 +450,16 @@ test("official signed webview owners validate or patch once and still parse", { 
   const assetsDir = path.join(signedApp, "webview", "assets");
   const counts = {};
   for (const descriptor of descriptors) {
-    const assets = findWebviewAssetsContaining(signedApp, descriptor.id === "model-list" ? MODEL_LIST_NEEDLES : descriptor.assetNeedles);
+    const candidates = findWebviewAssetsContaining(signedApp, descriptor.id === "model-list" ? MODEL_LIST_NEEDLES : descriptor.id==="persistence-contract" ? ["setDefaultModelAndReasoningEffort:",".setDefaultModelConfig("] : descriptor.assetNeedles);
+    const assets=descriptor.id==="model-list"?candidates.filter(asset=>[...rspackModuleFactories(fs.readFileSync(path.join(assetsDir,asset),"utf8"),asset)].some(module=>MODEL_LIST_NEEDLES.every(needle=>module.moduleSource.includes(needle))&&inspectModelCatalogOwner(module).ok)):candidates;
     counts[descriptor.id] = assets.length;
     for (const asset of assets) {
       const source = fs.readFileSync(path.join(assetsDir, asset), "utf8");
-      const apply = descriptor.id === "model-list" ? applyCopilotReasoningEffortModelListPatch : descriptor.apply;
+      const copy=descriptor.id==="persistence-contract"?[...rspackModuleFactories(source,asset)].find(m=>settingsPersistenceState(m.moduleSource,m).kind==="current"):null;
+      const apply = descriptor.id === "model-list" ? applyCopilotReasoningEffortModelListPatch : copy ? text=>{const end=text.length-(source.length-copy.end);return text.slice(0,copy.start)+applyCopilotSettingsPersistence(text.slice(copy.start,end),copy)+text.slice(end)} : descriptor.apply;
       const { value: patched, warnings } = withCapturedWarns(() => apply(source));
       assert.deepEqual(warnings, [], `${descriptor.id} ${asset}`);
       assert.equal(apply(patched), patched, `${descriptor.id} ${asset}`);
-      if (descriptor.id === "persistence-contract") {
-        assert.equal(patched, source);
-        continue;
-      }
       assert.notEqual(patched, source, `${descriptor.id} ${asset}`);
       const check = spawnSync(process.execPath, ["--input-type=module", "--check"], {
         input: patched,
