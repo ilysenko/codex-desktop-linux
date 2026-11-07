@@ -16,19 +16,31 @@ const {
   descriptors,
 } = require("./patch.js");
 
-// Reduced rspack chunk shaped like the signed stable Linux 26.1029 webview:
-// the interactive reply module and a sibling renderer that requires the
-// native Markdown module (`N=n("UePh")` … `N.ChatGptMarkdown`).
+// Reduced current native modules. The anonymous lazy callback preloads both
+// registrations before requiring the exported reply. The reply chunk itself
+// has no direct Markdown import.
 const REPLY = 'URlo(e,t,n){let a;n.d(t,{DilResponse:()=>nS});var r=n("ABep"),tG=n("Fail"),aJ=n("Prog");' +
   "function nS(e){let {experiment:x,assistantMessageId:y,reference:t,source:n,onAutoSafeUrls:u,dilComponents:a,loadPublicComponents:l,surface:s}=e;" +
   "let aN=n.preparing,st=n.source_message_status,q=n.error;return(0,r.jsx)(n.runtime,{" +
   "dil:aJ.prepareDil(t.model_dil_v2.code)," +
   "errorFallback:aN?null:(0,r.jsx)(tG.X,{stage:q?.stage,errorClass:q?.errorClass}),diagnostics:!1})}}";
-const SIBLING = 'WT9T(e,t,n){var a=n("ABep"),N=n("UePh");function o(e){return(0,a.jsx)(N.ChatGptMarkdown,{children:e})}n.d(t,{o:()=>o})}';
+const OTHER = 'Other(e){return e}';
 const EXPORTER = 'UePh(e,t,n){n.d(t,{ChatGptMarkdown:()=>e_});function e_(e){return e}}';
-const chunk = (id, ...modules) => `export const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];` +
+const LOADER = 'KO1w(e,t,n){var r=n("ABep"),a=n("Lazy"),l=n("Fail");' +
+  'let i=(0,a._)(async()=>(await Promise.all([n.e(168420),n.e(62056)]).then(n.bind(n,"URlo"))).DilResponse,' +
+  '{errorFallback:(0,r.jsx)(l.X,{stage:"host_error",initialization:!0})});n.d(t,{},{DilResponse:i})}';
+const chunk = (id, ...modules) => `export const __rspack_esm_ids=[${id}];` +
   `export const __webpack_modules__={${modules.join(",")}};`;
-const REPLY_CHUNK = chunk(62056, SIBLING, REPLY);
+const REPLY_CHUNK = chunk(62056, OTHER, REPLY);
+const LOADER_CHUNK = chunk(7, LOADER);
+const WRAPPER = 'function nR(e){let tree,result,memo=(0,Z.memo)(3),{experiment:experiment,reference:reference,dilComponents:components,surface:surface}=e,context=(0,P.context)();' +
+  'if(memo[0]!==reference){result=Symbol.for("react.early_return_sentinel");bound:{let parsed=ny.safeParse(reference),valid=!0;tree=(0,r.jsxs)(P.Q.Provider,{value:{},children:[(0,r.jsx)(Container,{children:' +
+  '(0,r.jsx)(nN,{experiment:experiment,assistantMessageId:context.messageId,dilComponents:components??S.Hy,loadPublicComponents:void 0===components,' +
+  'reference:reference,source:parsed.data,surface:surface})})]})}memo[0]=reference,memo[1]=tree,memo[2]=result}else tree=memo[1],result=memo[2];return result!==Symbol.for("react.early_return_sentinel")?result:tree}';
+const WRAPPED_REPLY = REPLY.replace('()=>nS', '()=>nR').replace('function nS(',
+  'var S=n("Catalog"),P=n("Provider"),Z=n("Schema");let ny=Z.object({});' + WRAPPER + 'function nN(')
+  .replace('let aN=', 'let nR=opaque;nR=other;function local(r){r=other;return r}let aN=');
+const WRAPPED_CHUNK = chunk(62056, OTHER, WRAPPED_REPLY);
 
 const jsx = { jsx: (type, props) => ({ type, props }) };
 const MARKER_FOR_TEST = "function codexLinuxDilMarkdownFallback(";
@@ -98,13 +110,11 @@ test("patch targets only the failure branch at module scope and is idempotent", 
   ));
   for (const source of [
     REPLY_CHUNK.replace("errorFallback:", "fallback:"),
-    chunk(1, SIBLING, REPLY, REPLY.replace("URlo", "URlp")),
+    chunk(1, OTHER, REPLY, REPLY.replace("URlo", "URlp")),
     REPLY_CHUNK.replace("export const __webpack_modules__=", "export const modules="),
   ]) {
     assert.throws(() => applyDilMarkdownFallback(source, "UePh"), /contract changed/);
   }
-  assert.throws(() => applyDilMarkdownFallback(chunk(1, REPLY), "UePh"), /not loaded with the interactive reply chunk/);
-  assert.throws(() => applyDilMarkdownFallback(REPLY_CHUNK, "Other"), /not loaded with the interactive reply chunk/);
   assert.throws(() => applyDilMarkdownFallback(REPLY_CHUNK, '"bad"'), /Invalid/);
   assert.throws(() => applyDilMarkdownFallback(patched.replace("jsx)(codexLinuxDilMarkdownFallback,{", "jsx)(Other,{"), "UePh"), /Incomplete/);
 });
@@ -128,7 +138,7 @@ test("applied state proves the complete version-one helper and its reply dataflo
     patched.replace("failure:(0,r.jsx)", "failure:(0,other.jsx)"),
     patched.replace(helper, helper + helper),
     withoutHelper.replace(owner, owner + helper),
-    withoutHelper.replace("WT9T(e,t,n){", "WT9T(e,t,n){" + helper),
+    withoutHelper.replace("Other(e){", "Other(e){" + helper),
     helper + withoutHelper,
     patched.replace(helper, "{" + helper + "}"),
     patched.replace("let a;", "let a;codexLinuxDilMarkdownFallback({});"),
@@ -203,14 +213,100 @@ test("runner startup failure reaches the patched fallback; success and preparati
   assert.equal(preparing.markdownViews, 0);
 });
 
-function withAssets(t, files) {
+function withAssets(t, files, { nativeLoader = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dil-markdown-test-"));
   t.after(() => fs.rmSync(root, {recursive:true,force:true}));
   const assets = path.join(root, "webview", "assets");
   fs.mkdirSync(path.join(assets, "async"), {recursive:true});
-  for (const [name, source] of Object.entries(files)) fs.writeFileSync(path.join(assets, name), source);
+  const inputs = { ...(nativeLoader ? { "async/loader.js": LOADER_CHUNK } : {}), ...files };
+  for (const [name, source] of Object.entries(inputs)) {
+    fs.mkdirSync(path.dirname(path.join(assets, name)), { recursive: true });
+    fs.writeFileSync(path.join(assets, name), source);
+  }
   return { root, read: (name) => fs.readFileSync(path.join(assets, name), "utf8") };
 }
+
+function assertUnpublishedOrUnsafe(t, pristine, change) {
+  const applied = applyDilMarkdownFallback(pristine, "UePh");
+  for (const source of [change(pristine), change(applied)]) {
+    assert.doesNotThrow(() => new vm.Script(source.replaceAll("export const ", "const ")));
+    assert.throws(() => applyDilMarkdownFallback(source, "UePh"));
+    const { root, read } = withAssets(t, { "async/reply.js": source, "async/markdown.js": chunk(168420, EXPORTER) });
+    const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+    const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+    let writes = 0;
+    const report = createPatchReport();
+    applyExtractedAppPatchDescriptors(root, descriptors, { writeFileSync(file, bytes) { writes++; fs.writeFileSync(file, bytes); } }, report, descriptors[0].phase);
+    assert.equal(report.patches[0].status, "skipped-optional");
+    assert.equal(writes, 0);
+    assert.equal(read("async/reply.js"), source);
+  }
+}
+
+test("published native wrapper reaches the renderer with local context shadows and opaque data preserved", t => {
+  const source = WRAPPED_CHUNK.replace('let a;', 'let a;const metadata={nR:"opaque",nN:"opaque",r:"opaque",tG:"opaque"};');
+  const patched = applyDilMarkdownFallback(source, "UePh");
+  assert.notEqual(patched, source);
+  assert.equal(applyDilMarkdownFallback(patched, "UePh"), patched);
+  const { root } = withAssets(t, { "async/reply.js": source, "async/markdown.js": chunk(168420, EXPORTER) });
+  assert.equal(patchDilMarkdownFallback(root).changed, true);
+  assert.equal(patchDilMarkdownFallback(root).changed, false);
+  const other = source => source.replace("function nR(", "function Other(){return null}function nR(");
+  for (const change of [
+    source => other(source).replace('()=>nR', '()=>Other'),
+    source => other(source).replace('(nN,{experiment:', '(Other,{experiment:'),
+    source => other(source).replace('function nR(e){', 'function nR(e){let nN=Other;'),
+    source => other(source).replace('function nR(e){', 'nR=Other;function nR(e){'),
+    source => other(source).replace('function nR(e){', 'nN=Other;function nR(e){'),
+    source => other(source).replace('function nR(e){', String.raw`\u006eR=Other;function nR(e){`),
+    source => source.replace('function nN(', 'function UnusedRenderer('),
+    source => source.replace('function nR(', 'function side(value=(nR=other)){let nR;}function nR('),
+    source => source.replace('function nR(', 'const side={[(nR=other)](){return null}};function nR('),
+    source => source.replace('return result!==', 'tree=null;return result!=='),
+    source => source.replace('return result!==', 'result=null;return result!=='),
+    source => source.replace('memo[1]=tree', 'memo[1]=null'),
+    source => source.replace('else tree=memo[1]', 'else tree=memo[0]'),
+    source => source.replace('value:{}', 'value:{sideEffect:(result=null)}'),
+  ]) assertUnpublishedOrUnsafe(t, WRAPPED_CHUNK, change);
+  assertUnpublishedOrUnsafe(t, REPLY_CHUNK, source => source.replace('()=>nS', '()=>Other')
+    .replace('function nS(', 'function Other(){return null}function nS('));
+});
+
+test("subsequent import writes and escaped owned declarations refuse raw and canonical descriptor states", t => {
+  for (const insertion of [
+    'r=other;', 'tG=other;', String.raw`\u0072=other;`, String.raw`t\u0047=other;`,
+    String.raw`function codexLinuxD\u0069lMarkdownFallback(p){return p.failure}`,
+    String.raw`function \u0063odexLinuxDilMarkdownFallback(p){return p.failure}`,
+  ]) assertUnpublishedOrUnsafe(t, REPLY_CHUNK, source => source.replace('let a;', 'let a;' + insertion));
+});
+
+test("native Promise barrier rejects factory, body and chunk-root shadows or writes", t => {
+  const opaque = withAssets(t, { "async/reply.js": REPLY_CHUNK, "async/markdown.js": chunk(168420, EXPORTER),
+    "async/loader.js": 'const metadata={Promise:"opaque"};' + LOADER_CHUNK });
+  assert.equal(patchDilMarkdownFallback(opaque.root).changed, true);
+  for (const loader of [
+    LOADER_CHUNK.replace('KO1w(e,t,n)', 'KO1w(Promise,t,n)'),
+    LOADER_CHUNK.replace('var r=', 'var Promise=').replace('(0,r.jsx)', '(0,Promise.jsx)'),
+    LOADER_CHUNK.replace('let i=', 'let Promise=').replace('DilResponse:i', 'DilResponse:Promise'),
+    LOADER_CHUNK.replace('var r=', 'Promise=other;var r='),
+    'const Promise=other;' + LOADER_CHUNK,
+    'Promise=other;' + LOADER_CHUNK,
+    String.raw`\u0050romise=other;` + LOADER_CHUNK,
+    'globalThis.Promise=other;' + LOADER_CHUNK,
+    'globalThis.Promise.all=other;' + LOADER_CHUNK,
+    String.raw`globalThis.\u0050romise=other;` + LOADER_CHUNK,
+    String.raw`globalThis.Promise.\u0061ll=other;` + LOADER_CHUNK,
+    'globalThis . Promise /*memo*/ . all =other;' + LOADER_CHUNK,
+    'globalThis.Promise. /*memo*/all=other;' + LOADER_CHUNK,
+  ]) {
+    assert.doesNotThrow(() => new vm.Script(loader.replaceAll("export const ", "const ")));
+    const { root, read } = withAssets(t, { "async/reply.js": REPLY_CHUNK, "async/markdown.js": chunk(168420, EXPORTER), "async/loader.js": loader });
+    let writes = 0;
+    assert.throws(() => patchDilMarkdownFallback(root, { writeFileSync(file, bytes) { writes++; fs.writeFileSync(file, bytes); } }));
+    assert.equal(writes, 0);
+    assert.equal(read("async/reply.js"), REPLY_CHUNK);
+  }
+});
 
 test("module discovery is fail closed and writes only after all contracts match", t => {
   const replyName = "async/62056.3f2d3d25bb.js";
@@ -245,7 +341,7 @@ test("exporters without the named export or with competing ids are rejected befo
     [chunk(1, 'UePh(e,t,n){/*;n.d(t,{ChatGptMarkdown:()=>e_})*/function e_(e){return e}}'), /found 1 and 0/],
     [chunk(1, 'UePh(e,t,n){for(let i=0;n.d(t,{ChatGptMarkdown:()=>e_});i++){}function e_(e){return e}}'), /found 1 and 0/],
     [chunk(1, EXPORTER, EXPORTER.replace("UePh", "Othr")), /found 1 and 2/],
-    [chunk(1, EXPORTER.replace("UePh", "Othr")), /not loaded with the interactive reply chunk/],
+    [chunk(1, EXPORTER.replace("UePh", "Othr")), /does not preload/],
   ]) {
     fs.writeFileSync(exporter, source);
     assert.throws(() => patchDilMarkdownFallback(root), expected);
@@ -266,18 +362,144 @@ test("native Markdown discovery accepts its own getter or third value export rec
   }
 });
 
-test("the loaded Markdown edge must be a unique factory-owned require binding", () => {
-  for (const sibling of [
-    SIBLING.replace('N=n("UePh")', 'N=other("UePh")'),
-    SIBLING.replace('N=n("UePh")', 'N=missing').replace('function o(', 'function decoy(){var N=n("UePh");return N.ChatGptMarkdown}function o('),
-    SIBLING.replace('N=n("UePh")', 'N=missing').replace('function o(', '/*var N=n("UePh");N.ChatGptMarkdown;*/function o('),
-    SIBLING.replace('N=n("UePh")', 'N=missing').replace('function o(', 'let decoy=\'N=n("UePh");N.ChatGptMarkdown\';function o('),
-    SIBLING.replace('N=n("UePh")', 'N=n("UePh"),N=n("UePh")'),
-    SIBLING.replace("WT9T(e,t,n)", "WT9T(e,t,other)"),
-  ]) {
-    assert.throws(() => applyDilMarkdownFallback(chunk(1, sibling, REPLY), "UePh"), /not loaded/);
+test("the native anonymous loader owns the published callback and its complete preload set", t => {
+  const variants = [
+    LOADER.replace("n.e(168420),", ""),
+    LOADER.replace(",n.e(62056)", ""),
+    LOADER.replace("n.e(168420)", "other.e(168420)"),
+    LOADER.replace('n.bind(n,"URlo")', 'other.bind(other,"URlo")'),
+    LOADER.replace("async()=>", "async function namedLoader(){return ").replace(".DilResponse,{", ".DilResponse},{"),
+    LOADER.replace('a=n("Lazy")', 'a=other("Lazy")'),
+    LOADER.replace("DilResponse:i", "DilResponse:r"),
+    LOADER.replace("var r=", "n=other;var r="),
+    LOADER.replace(".e(168420)", ".e(168420),n.e(168420)"),
+    LOADER.replace("let i=", "function unused(){let i=").replace(";n.d(t,", ";}n.d(t,"),
+  ];
+  for (const loader of variants) {
+    assert.doesNotThrow(() => new vm.Script(chunk(7, loader).replaceAll("export const ", "const ")));
+    const { root, read } = withAssets(t, { "async/reply.js": REPLY_CHUNK,
+      "async/markdown.js": chunk(168420, EXPORTER), "async/loader.js": chunk(7, loader) });
+    assert.throws(() => patchDilMarkdownFallback(root), /native DIL|Native DIL|anonymous loader/);
+    assert.equal(read("async/reply.js"), REPLY_CHUNK);
+  }
+  const { root, read } = withAssets(t, { "async/reply.js": REPLY_CHUNK,
+    "async/markdown.js": chunk(168420, EXPORTER) }, { nativeLoader: false });
+  assert.throws(() => patchDilMarkdownFallback(root), /anonymous loader/);
+  assert.equal(read("async/reply.js"), REPLY_CHUNK);
+});
+
+test("native lazy loading waits for Markdown and reply registration before resolving the component", async () => {
+  const factories = vm.runInNewContext(`(${LOADER_CHUNK.split("export const __webpack_modules__=")[1].replace(/;$/, "")})`);
+  const events = [], resolvers = new Map(), ready = new Set(), exports = {};
+  const require = id => {
+    if (id === "ABep") return jsx;
+    if (id === "Fail") return { X: "Failure" };
+    if (id === "Lazy") return { _: load => ({ load }) };
+    assert.equal(id, "URlo");
+    assert.equal(ready.has(168420) && ready.has(62056), true);
+    events.push("require-reply");
+    return { DilResponse: "NativeReply" };
+  };
+  require.e = id => new Promise(resolve => resolvers.set(id, () => {
+    ready.add(id); events.push(`registered-${id}`); resolve();
+  }));
+  require.d = (target, getters, values) => Object.assign(target, values);
+  factories.KO1w({}, exports, require);
+  assert.equal(events.length, 0);
+  const pending = exports.DilResponse.load();
+  assert.deepEqual([...resolvers.keys()], [168420, 62056]);
+  resolvers.get(62056)();
+  await Promise.resolve();
+  assert.deepEqual(events, ["registered-62056"]);
+  resolvers.get(168420)();
+  assert.equal(await pending, "NativeReply");
+  assert.deepEqual(events, ["registered-62056", "registered-168420", "require-reply"]);
+});
+
+test("missing and damaged dependency replicas or chunk registrations refuse every reply write", t => {
+  const variants = [
+    { "async/loader-copy.js": chunk(8, LOADER.replace('n.bind(n,"URlo")', 'n.bind(n,"Missing")')) },
+    { "async/loader-copy.js": chunk(8, LOADER.replace("KO1w(e,t,n)", "Competing(e,t,n)")) },
+    { "async/markdown-copy.js": chunk(168421, EXPORTER.replace("ChatGptMarkdown:", "Other:")) },
+    { "async/markdown-copy.js": chunk(168421, EXPORTER.replace("n.d(t,", "n=other;n.d(t,")) },
+    { "async/reply.js": REPLY_CHUNK.replace("__rspack_esm_ids", "unregistered") },
+    { "async/markdown.js": chunk(168420, EXPORTER).replace("__rspack_esm_ids", "unregistered") },
+    { "async/reply-copy.js": chunk(62057, REPLY) },
+  ];
+  for (const extra of variants) {
+    const files = { "async/reply.js": REPLY_CHUNK, "async/markdown.js": chunk(168420, EXPORTER), ...extra };
+    const { root, read } = withAssets(t, files);
+    assert.throws(() => patchDilMarkdownFallback(root));
+    for (const [name, source] of Object.entries(files)) assert.equal(read(name), source);
   }
 });
+
+test("reply publication, current experiment props and native JSX imports remain authoritative", t => {
+  for (const reply of [
+    REPLY_CHUNK.replace("experiment:z,", ""),
+    REPLY_CHUNK.replace('r=n("ABep")', 'r=other("ABep")'),
+    REPLY_CHUNK.replace('tG=n("Fail")', 'tG=other("Fail")'),
+    REPLY_CHUNK.replace("let aN=", "let r=other;let aN="),
+    REPLY_CHUNK.replace("experiment:z,", "experiment:r,"),
+    REPLY_CHUNK.replace("let a;", "let a;n=other;"),
+    REPLY_CHUNK.replace("n.d(t,", "n.d(other,"),
+  ]) {
+    const { root, read } = withAssets(t, { "async/reply.js": reply, "async/markdown.js": chunk(168420, EXPORTER) });
+    assert.throws(() => patchDilMarkdownFallback(root), /contract changed/);
+    assert.equal(read("async/reply.js"), reply);
+  }
+  const text = REPLY.slice(REPLY.indexOf("function nS("), -1);
+  const fake = chunk(62056, 'URlo(e,t,n){n.d(t,{DilResponse:()=>nS});var r=n("ABep"),tG=n("Fail");const text=' + JSON.stringify(text) + ';}');
+  assert.doesNotThrow(() => new vm.Script(fake.replaceAll("export const ", "const ")));
+  assert.throws(() => applyDilMarkdownFallback(fake, "UePh"), /contract changed/);
+});
+
+test("orphan artifacts and misleading string load edges cannot grant a valid descriptor state", t => {
+  const { root, read } = withAssets(t, { "async/reply.js": REPLY_CHUNK,
+    "async/markdown.js": chunk(168420, EXPORTER), "async/orphan.js": 'const orphan="codexLinuxDilProps";' });
+  assert.throws(() => patchDilMarkdownFallback(root), /artifact escaped/);
+  assert.equal(read("async/reply.js"), REPLY_CHUNK);
+  const decoy = 'Decoy(e,t,n){const text=\'n.bind(n,"URlo")\';}';
+  const misleading = withAssets(t, { "async/reply.js": REPLY_CHUNK,
+    "async/markdown.js": chunk(168420, EXPORTER), "async/decoy.js": chunk(7, decoy) }, { nativeLoader: false });
+  assert.throws(() => patchDilMarkdownFallback(misleading.root), /anonymous loader/);
+  assert.equal(misleading.read("async/reply.js"), REPLY_CHUNK);
+});
+
+test("dependency preimages participate in the reply asset transaction", t => {
+  const { root, read } = withAssets(t, { "async/reply.js": REPLY_CHUNK, "async/markdown.js": chunk(168420, EXPORTER) });
+  let checked = false, writes = 0;
+  assert.throws(() => patchDilMarkdownFallback(root, {
+    readFileSync(file) {
+      if (!checked && file.endsWith("/markdown.js")) {
+        checked = true; fs.appendFileSync(file, "/*concurrent dependency edit*/");
+      }
+      return fs.readFileSync(file);
+    },
+    writeFileSync(file, bytes) { writes++; fs.writeFileSync(file, bytes); },
+  }), /changed before patch commit/);
+  assert.equal(checked, true);
+  assert.equal(writes, 0);
+  assert.equal(read("async/reply.js"), REPLY_CHUNK);
+});
+
+test("normal descriptor phase applies once and refuses a damaged complete-state helper", t => {
+  const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+  const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+  const { root, read } = withAssets(t, { "async/reply.js": REPLY_CHUNK, "async/markdown.js": chunk(168420, EXPORTER) });
+  const run = () => {
+    const report = createPatchReport();
+    applyExtractedAppPatchDescriptors(root, descriptors, {}, report, descriptors[0].phase);
+    return report.patches[0].status;
+  };
+  assert.equal(run(), "applied");
+  assert.equal(run(), "already-applied");
+  const damaged = read("async/reply.js").replace("isStreaming:!1", "isStreaming:!0");
+  fs.writeFileSync(path.join(root, "webview/assets/async/reply.js"), damaged);
+  assert.equal(run(), "skipped-optional");
+  assert.equal(read("async/reply.js"), damaged);
+});
+
 
 test("reply replicas reject mixed, damaged and competing identities before any write", t => {
   const patched = applyDilMarkdownFallback(REPLY_CHUNK, "UePh");
@@ -285,9 +507,9 @@ test("reply replicas reject mixed, damaged and competing identities before any w
     [patched, /Partially applied/],
     [patched.replace("1!==codexLinuxDil?.fallbackMarkdownVersion", "2!==codexLinuxDil?.fallbackMarkdownVersion"), /Incomplete/],
     [REPLY_CHUNK.replace("source_message_status", "changed_status"), /contract changed/],
-    [REPLY_CHUNK.replace("URlo(e,t,n)", "Other(e,t,n)"), /multiple.*identities/],
+    [REPLY_CHUNK.replace("URlo(e,t,n)", "Competing(e,t,n)"), /multiple.*identities/],
   ]) {
-    const { root, read } = withAssets(t, { "async/a.js": REPLY_CHUNK, "async/b.js": second, "async/markdown.js": chunk(2, EXPORTER) });
+    const { root, read } = withAssets(t, { "async/a.js": REPLY_CHUNK, "async/b.js": second, "async/markdown.js": chunk(168420, EXPORTER) });
     assert.throws(() => patchDilMarkdownFallback(root), expected);
     assert.equal(read("async/a.js"), REPLY_CHUNK);
     assert.equal(read("async/b.js"), second);
@@ -295,7 +517,7 @@ test("reply replicas reject mixed, damaged and competing identities before any w
 });
 
 test("replica writes are verified, rolled back on interruption and idempotent", t => {
-  const { root, read } = withAssets(t, { "async/a.js": REPLY_CHUNK, "async/b.js": REPLY_CHUNK, "async/markdown.js": chunk(2, EXPORTER) });
+  const { root, read } = withAssets(t, { "async/a.js": REPLY_CHUNK, "async/b.js": REPLY_CHUNK, "async/markdown.js": chunk(168420, EXPORTER) });
   let writes = 0;
   assert.throws(() => patchDilMarkdownFallback(root, {
     writeFileSync(...args) {
@@ -310,7 +532,7 @@ test("replica writes are verified, rolled back on interruption and idempotent", 
   assert.equal(result.matched, 2);
   assert.equal(read("async/a.js"), applyDilMarkdownFallback(REPLY_CHUNK, "UePh"));
   assert.equal(read("async/b.js"), read("async/a.js"));
-  assert.equal(read("async/markdown.js"), chunk(2, EXPORTER));
+  assert.equal(read("async/markdown.js"), chunk(168420, EXPORTER));
   assert.equal(patchDilMarkdownFallback(root).changed, false);
 });
 
@@ -328,6 +550,47 @@ test("the signed official webview exposes one patchable reply and Markdown modul
   assert.equal(applyDilMarkdownFallback(patched[0], markdown[0]), patched[0]);
 });
 
+test("actual native anonymous loaders register all chunks before requiring the reply", { skip: signedApp == null }, async () => {
+  const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const replies = findWebviewAssetsContaining(signedApp, ["model_dil_v2", "source_message_status", ".prepareDil(", "errorFallback:"]);
+  const ids = replies.flatMap(name => [...rspackModuleFactories(fs.readFileSync(path.join(signedApp, "webview/assets", name), "utf8"), name)])
+    .filter(copy => copy.moduleSource.includes(".prepareDil(") && copy.moduleSource.includes("model_dil_v2"))
+    .map(copy => copy.moduleId);
+  assert.equal(new Set(ids).size, 1);
+  let exercised = 0;
+  for (const name of findWebviewAssetsContaining(signedApp, [JSON.stringify(ids[0])])) {
+    const source = fs.readFileSync(path.join(signedApp, "webview/assets", name), "utf8");
+    for (const copy of rspackModuleFactories(source, name)) {
+      if (!copy.moduleSource.includes(JSON.stringify(ids[0])) || !copy.moduleSource.includes(".DilResponse")) continue;
+      const imports = [...copy.moduleSource.matchAll(/(?:var |,)([\w$]+)=[\w$]+\("([\w$]+)"\)/gu)];
+      assert.equal(imports.length, 3);
+      const lazyExport = /let [\w$]+=\(0,[\w$]+\.([\w$]+)\)/u.exec(copy.moduleSource)?.[1];
+      assert.ok(lazyExport);
+      const chunkIds = [...copy.moduleSource.matchAll(/[\w$]+\.e\((\d+)\)/gu)].map(match => Number(match[1]));
+      const ready = new Set(), exports = {};
+      let required = 0;
+      const require = id => {
+        if (id === imports[0][2]) return jsx;
+        if (id === imports[1][2]) return { [lazyExport]: load => ({ load }) };
+        if (id === imports[2][2]) return { X: "NativeFailure" };
+        assert.equal(id, ids[0]);
+        assert.equal(ready.size, chunkIds.length);
+        required++;
+        return { DilResponse: "NativeReply" };
+      };
+      require.e = id => Promise.resolve().then(() => ready.add(id));
+      require.d = (target, getters, values) => Object.assign(target, values);
+      const factory = vm.runInNewContext(`(function(${copy.params.join(",")}){${copy.moduleSource}})`);
+      factory({}, exports, require);
+      assert.equal(required, 0);
+      assert.equal(await exports.DilResponse.load(), "NativeReply");
+      assert.equal(required, 1);
+      exercised++;
+    }
+  }
+  assert.ok(exercised > 0);
+});
+
 test("actual signed failure seam executes with its factory require, native JSX and original failure", { skip: signedApp == null }, () => {
   const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
   const [markdownId] = findMarkdownModule(signedApp);
@@ -339,11 +602,10 @@ test("actual signed failure seam executes with its factory require, native JSX a
   const owner = [...rspackModuleFactories(patched, "actual")].find(module => module.moduleSource.startsWith(MARKER_FOR_TEST));
   assert.ok(owner);
   const requireName = owner.params[2];
-  const reference = owner.moduleSource.match(/function [\w$]+\(\{assistantMessageId:[\w$]+,reference:([\w$]+),source:([\w$]+),/);
+  const reference = owner.moduleSource.match(/function [\w$]+\(\{experiment:[\w$]+,assistantMessageId:[\w$]+,reference:([\w$]+),source:([\w$]+),/);
   const seam = owner.moduleSource.match(/errorFallback:([\w$]+)\?null:\(0,([\w$]+)\.jsx\)\(codexLinuxDilMarkdownFallback,\{reference:([\w$]+),jsx:[\w$]+,failure:\(0,[\w$]+\.jsx\)\(([\w$]+)\.([\w$]+),\{stage:([\w$]+)\?\.stage,errorClass:[\w$]+\?\.errorClass\}\)\}\),diagnostics:/);
   assert.ok(reference && seam);
   assert.equal(reference[1], seam[3]);
-  assert.equal(reference[2], requireName, "current source parameter shadows the factory require");
   const jsxBinding = findRspackRequireBinding(owner, seam[2]);
   assert.ok(jsxBinding);
   const helper = owner.moduleSource.slice(0, fallbackSource(requireName, markdownId).length);
@@ -386,15 +648,27 @@ test("actual signed failure seam executes with its factory require, native JSX a
 
 test("production descriptor patches independent actual owner copies and preserves official inputs", { skip: signedApp == null }, t => {
   const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+  const replies = findWebviewAssetsContaining(signedApp, ["model_dil_v2", "source_message_status", ".prepareDil(", "errorFallback:"]);
+  const replyIds = replies.flatMap(name => [...rspackModuleFactories(fs.readFileSync(path.join(signedApp, "webview/assets", name), "utf8"), name)])
+    .filter(copy => ["model_dil_v2", "source_message_status", ".prepareDil(", "errorFallback:"].every(needle => copy.moduleSource.includes(needle)))
+    .map(copy => copy.moduleId);
+  assert.equal(new Set(replyIds).size, 1);
   const names = [...new Set([
-    ...findWebviewAssetsContaining(signedApp, ["model_dil_v2", "source_message_status", ".prepareDil(", "errorFallback:"]),
-    ...findWebviewAssetsContaining(signedApp, ["ChatGptMarkdown:"]),
+    ...replies, ...findWebviewAssetsContaining(signedApp, ["ChatGptMarkdown:"]),
+    ...findWebviewAssetsContaining(signedApp, [JSON.stringify(replyIds[0])]),
   ])];
   const files = Object.fromEntries(names.map(name => [name, fs.readFileSync(path.join(signedApp, "webview/assets", name), "utf8")]));
   const originals = new Map(names.map(name => [name, createHash("sha256").update(files[name]).digest("hex")]));
-  const { root, read } = withAssets(t, files);
-  assert.equal(descriptors[0].apply(root).changed, true);
-  assert.equal(descriptors[0].apply(root).changed, false);
+  const { root, read } = withAssets(t, files, { nativeLoader: false });
+  const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+  const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+  const run = () => {
+    const report = createPatchReport();
+    applyExtractedAppPatchDescriptors(root, descriptors, {}, report, descriptors[0].phase);
+    return report.patches[0].status;
+  };
+  assert.equal(run(), "applied");
+  assert.equal(run(), "already-applied");
   let changed = 0;
   for (const name of names) {
     if (read(name) !== files[name]) {
@@ -404,4 +678,21 @@ test("production descriptor patches independent actual owner copies and preserve
     assert.equal(createHash("sha256").update(fs.readFileSync(path.join(signedApp, "webview/assets", name))).digest("hex"), originals.get(name));
   }
   assert.equal(changed, 1);
+  const markdownName = names.find(name => files[name].includes("ChatGptMarkdown:"));
+  const markdownChunk = /export const __rspack_esm_ids=\[(\d+)\]/u.exec(files[markdownName])?.[1];
+  assert.ok(markdownChunk);
+  const loaderName = names.find(name => files[name].includes(JSON.stringify(replyIds[0])));
+  const loader = [...rspackModuleFactories(files[loaderName], loaderName)]
+    .find(copy => copy.moduleSource.includes(JSON.stringify(replyIds[0])) && copy.moduleSource.includes(".DilResponse"));
+  assert.ok(loader);
+  const damagedBody = loader.moduleSource.replace(`.e(${markdownChunk})`, ".e(999999999)");
+  assert.notEqual(damagedBody, loader.moduleSource);
+  const damagedLoader = loader.source.slice(0, loader.start) + damagedBody + loader.source.slice(loader.end);
+  fs.writeFileSync(path.join(root, "webview/assets", loaderName), damagedLoader);
+  const beforeRefusal = new Map(names.map(name => [name, read(name)]));
+  assert.equal(run(), "skipped-optional");
+  for (const name of names) {
+    assert.equal(read(name), beforeRefusal.get(name));
+    assert.equal(createHash("sha256").update(fs.readFileSync(path.join(signedApp, "webview/assets", name))).digest("hex"), originals.get(name));
+  }
 });

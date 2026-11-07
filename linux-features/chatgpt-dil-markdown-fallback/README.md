@@ -21,19 +21,28 @@ The feature is disabled by default. Add `chatgpt-dil-markdown-fallback` to
 The build fails if the unique upstream renderer contracts have changed.
 The Markdown view is resolved from the unique rspack module exporting the
 named `ChatGptMarkdown` component; minified export letters are not used. The
-registration must target the factory's own exports parameter, with the named
+shared export-publication inspector verifies the factory's own exports and
+require parameters, with the named
 component in the direct getter record or optional value record. Nested calls,
 unrelated objects and same-named properties outside that record do not count.
-The reply chunk must already require that module from a sibling renderer, so it is
-loaded together with the reply. The module is required only when a failure is
-rendered; if it cannot be resolved, the upstream error message is kept.
+The current native lazy `DilResponse` component exports an anonymous async
+callback. Its `Promise.all` preloads the chunks registering both the reply and
+Markdown modules before requiring the reply. The patch derives those chunk IDs
+from their registrations and verifies every physical copy of that native lazy
+loader, its factory-local imports, its published component and its complete
+preload expression. The reply renderer retains its native `experiment`, message,
+reference, source and DIL component props. The Markdown module is required when
+a failure is rendered. An unavailable renderer preserves the upstream error
+message.
 
 An existing patch is accepted only when the complete version 1 helper is at the
 reply factory's own scope and its injected reference, JSX and original failure
 flow match. Nested helpers, orphan calls and damaged helper bodies are rejected.
-Every physical copy of the reply module is validated before writing; mixed
-pristine/applied copies are rejected, and an interrupted write restores the
-original bytes.
+Every physical copy of the reply and Markdown modules is validated before
+writing. Mixed pristine/applied replies, damaged loader copies and escaped
+fallback artifacts are rejected. The asset transaction checks the original
+bytes of the reply, Markdown and loader resources before committing reply
+changes. An interrupted write restores the original bytes.
 
 ## Validation
 
@@ -46,7 +55,10 @@ CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
 
 The signed-source checks use independent copies of the relevant official
 assets. They execute the actual injected helper and failure expression with
-the current factory require and native JSX bindings; they do not launch the app.
+the current factory require and native JSX bindings. Native lazy callbacks run
+with inert module providers to verify registration order. These checks cover
+isolated loading and rendering behavior. The app-level checks below remain
+part of full feature validation.
 
 Build against the signed official package with this feature alone. Open a mobile
 conversation, block the DIL runner and verify that the saved answer renders as
