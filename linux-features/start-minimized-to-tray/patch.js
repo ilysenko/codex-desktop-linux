@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { Script } = require("node:vm");
+const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
 const { findWebviewAssetsContaining, findMainProcessChunks, patchWebviewAssets } = require("../../scripts/patches/lib/assets.js");
 const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
@@ -558,7 +559,7 @@ function labelCatalogPatches(extractedDir) {
       }
       continue;
     }
-    patches.push({ target, source: source.slice(0, open) + inserted + source.slice(open) });
+    patches.push({ target, originalSource: source, source: source.slice(0, open) + inserted + source.slice(open) });
   }
   return patches;
 }
@@ -595,9 +596,15 @@ function applySettingsPatch(extractedDir) {
     ].sort((left, right) => right.index - left.index);
     for (const edit of edits) patched = patched.slice(0, edit.index) + edit.text + patched.slice(edit.index);
   }
-  if (patched !== source) fs.writeFileSync(target, patched);
-  for (const catalog of catalogs) fs.writeFileSync(catalog.target, catalog.source);
-  return { changed: patched !== source || catalogs.length > 0 };
+  const result = commitAssetEdits(assetsDir, [
+    { assetName: candidates[0], source, patchedSource: patched },
+    ...catalogs.map((catalog) => ({
+      assetName: path.relative(assetsDir, catalog.target).split(path.sep).join("/"),
+      source: catalog.originalSource,
+      patchedSource: catalog.source,
+    })),
+  ]);
+  return { changed: result.changed > 0 };
 }
 
 module.exports = {

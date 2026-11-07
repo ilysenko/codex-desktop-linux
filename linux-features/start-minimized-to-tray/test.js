@@ -1305,3 +1305,44 @@ test("normal startup descriptor patches the actual full main inventory and rejec
   }
   for (const [name, source] of before) assert.equal(fs.readFileSync(path.join(main.buildDir, name), "utf8"), source);
 });
+
+
+test("registered tray General setting restores its whole write cohort and retries canonically", async (t) => {
+  const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+  const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+  const descriptor = require("./patch.js").descriptors.find(({ id }) => id === "general-setting");
+  t.mock.method(console, "warn", () => {});
+  for (const failedRole of ["settings", "first catalog", "last catalog"]) {
+    await t.test(failedRole, (t) => {
+      const { root, asyncDir, settings, catalogs } = settingsApp(t, ["pl-PL", "hi-Latn"]);
+      const files = [settings, ...catalogs.map(({ file }) => file), path.join(asyncDir, "496175.cf5ad221c1.js")];
+      for (const [index, file] of files.entries()) fs.chmodSync(file, index % 2 ? 0o640 : 0o600);
+      const snapshot = () => files.map((file) => ({ file, bytes: fs.readFileSync(file), mode: fs.statSync(file).mode & 0o777 }));
+      const before = snapshot(), names = fs.readdirSync(asyncDir).sort();
+      const run = () => {
+        const report = createPatchReport();
+        applyExtractedAppPatchDescriptors(root, [descriptor], {}, report, "extracted-app:post-webview");
+        return report.patches[0].status;
+      };
+      const target = files[["settings", "first catalog", "last catalog"].indexOf(failedRole)];
+      const originalWrite = fs.writeFileSync;
+      let failed = false;
+      const fault = t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+        if (file === target && !failed) {
+          failed = true;
+          originalWrite(file, "truncated");
+          throw Error("injected tray General setting write failure");
+        }
+        return originalWrite(file, bytes, ...args);
+      });
+      assert.equal(run(), "skipped-optional");
+      assert.equal(failed, true);
+      assert.deepEqual(snapshot(), before, "settings and every catalog retain exact bytes and modes");
+      assert.deepEqual(fs.readdirSync(asyncDir).sort(), names);
+      fault.mock.restore();
+      assert.equal(run(), "applied");
+      assert.equal(run(), "already-applied");
+      assert.deepEqual(snapshot().map(({ mode }) => mode), before.map(({ mode }) => mode));
+    });
+  }
+});
