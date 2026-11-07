@@ -33,14 +33,14 @@ run_node_tests() {
     # off, so every step that can fail returns its status itself.
     node scripts/ci/manage-labels.js --check || return
 
-    if node --help | grep -q -- "--test-force-exit"; then
-        # All assertions must finish, but a leaked worker handle must not hold CI open.
-        node_test_args+=(--test-force-exit)
-    fi
+    # No --test-force-exit: it can drop finished tests from the report and still
+    # exit 0 (nodejs/node#64833). Where timeout exists, the watchdog below ends
+    # a run that a leaked handle holds open; without it the run has no limit.
 
+    # Every *.test.js and every test.js; a git pathspec * also matches /.
     while IFS= read -r file; do
         test_files+=("$file")
-    done < <(git ls-files '*.test.js' 'linux-features/*/test.js')
+    done < <(git ls-files '*.test.js' '*/test.js')
 
     if [ "${#test_files[@]}" -eq 0 ]; then
         return 0

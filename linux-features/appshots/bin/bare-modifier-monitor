@@ -112,6 +112,81 @@ if [ -z "${DISPLAY:-}" ] || ! command -v xinput >/dev/null 2>&1; then
     exit 1
 fi
 
+parent_pid="$PPID"
+monitor_pid=""
+preflight_pid=""
+event_fd=""
+stdbuf_dir=""
+cleanup_started=0
+
+cleanup() {
+    [ "$cleanup_started" -eq 0 ] || return
+    cleanup_started=1
+
+    if [ -n "$preflight_pid" ]; then
+        kill -KILL "$preflight_pid" >/dev/null 2>&1 || true
+        wait "$preflight_pid" >/dev/null 2>&1 || true
+    fi
+
+    if [ -n "$monitor_pid" ]; then
+        kill "$monitor_pid" >/dev/null 2>&1 || true
+        sleep 0.05
+        kill -KILL "$monitor_pid" >/dev/null 2>&1 || true
+        wait "$monitor_pid" >/dev/null 2>&1 || true
+    fi
+
+    # Only the directory this script made.
+    case "$stdbuf_dir" in
+        */codex-appshots-stdbuf.??????) rm -rf -- "$stdbuf_dir" 2>/dev/null || true ;;
+    esac
+}
+trap cleanup EXIT
+trap 'exit 143' INT TERM
+
+# xinput test-xi2 fails at once when the X server is unreachable or has no
+# XInput 2, but how soon that exit shows depends on load, so the check after
+# starting the stream below can miss it. xinput --version opens the display
+# and reads the server's XInput version, the same preconditions. It is awaited
+# for as long as the server takes, as the stream itself would wait for it (an
+# Xwayland started on demand can take a while), but it runs in the background
+# so that SIGTERM and the parent's exit still end the monitor, and cleanup
+# ends the probe with it. It is a process substitution, not a coprocess: bash
+# drops a coprocess's descriptor once it exits, and a fast answer can exit
+# before the read.
+exec {preflight_fd}< <(exec xinput --version 2>/dev/null)
+preflight_pid="$!"
+xinput_version_output=""
+partial=""
+while :; do
+    line=""
+    read_status=0
+    IFS= read -r -t 1 -u "$preflight_fd" line || read_status=$?
+    if [ "$read_status" -eq 0 ]; then
+        xinput_version_output+="$partial$line"$'\n'
+        partial=""
+    elif [ "$read_status" -gt 128 ]; then
+        # No full line yet. Keep what arrived, and wait on while the parent lives.
+        partial+="$line"
+        kill -0 "$parent_pid" >/dev/null 2>&1 || exit 1
+    else
+        xinput_version_output+="$partial$line"
+        break
+    fi
+done
+exec {preflight_fd}<&-
+preflight_status=0
+wait "$preflight_pid" || preflight_status=$?
+preflight_pid=""
+[ "$preflight_status" -eq 0 ] || xinput_version_output=""
+server_xi_version="${xinput_version_output##*XI version on server: }"
+case "$server_xi_version" in
+    [2-9].*|[1-9][0-9]*.*) ;;
+    *)
+        echo "permission-denied"
+        exit 1
+        ;;
+esac
+
 xmodmap_output="$(xmodmap -pke 2>/dev/null || true)"
 IFS=$'\t' read -r key_symbols fallback_codes < <(select_keys "$key")
 key_codes="$(find_keycodes "$key_symbols" "$fallback_codes")"
@@ -143,31 +218,6 @@ last_tap_ms=0
 last_tap_code=""
 active=0
 
-parent_pid="$PPID"
-monitor_pid=""
-event_fd=""
-stdbuf_dir=""
-cleanup_started=0
-
-cleanup() {
-    [ "$cleanup_started" -eq 0 ] || return
-    cleanup_started=1
-
-    if [ -n "$monitor_pid" ]; then
-        kill "$monitor_pid" >/dev/null 2>&1 || true
-        sleep 0.05
-        kill -KILL "$monitor_pid" >/dev/null 2>&1 || true
-        wait "$monitor_pid" >/dev/null 2>&1 || true
-    fi
-
-    # Only the directory this script made.
-    case "$stdbuf_dir" in
-        */codex-appshots-stdbuf.??????) rm -rf -- "$stdbuf_dir" 2>/dev/null || true ;;
-    esac
-}
-trap cleanup EXIT
-trap 'exit 143' INT TERM
-
 # uutils stdbuf makes a temporary directory in TMPDIR and then execs its
 # command, so nothing removes it (uutils/coreutils#13939). Give it a directory
 # this script removes on exit. GNU stdbuf writes nothing there.
@@ -183,8 +233,14 @@ if command -v stdbuf >/dev/null 2>&1; then
     stdbuf_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-appshots-stdbuf.XXXXXX" 2>/dev/null)" || stdbuf_dir=""
 fi
 coproc APPSHOT_XINPUT { start_xinput; }
-monitor_pid="$APPSHOT_XINPUT_PID"
-event_fd="${APPSHOT_XINPUT[0]}"
+# Bash unsets these variables once the producer exits, which a stream that
+# fails at once can do before the next line runs. That stream already died.
+monitor_pid="${APPSHOT_XINPUT_PID:-}"
+event_fd="${APPSHOT_XINPUT[0]:-}"
+if [ -z "$monitor_pid" ] || [ -z "$event_fd" ]; then
+    echo "permission-denied"
+    exit 1
+fi
 
 sleep 0.1
 if ! kill -0 "$monitor_pid" >/dev/null 2>&1; then

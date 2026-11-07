@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
@@ -21,9 +22,36 @@ function job(workflow, jobName) {
   return lines.slice(start, end === -1 ? undefined : end).join("\n");
 }
 
+// Every tracked test file, found by name rather than by the runner's glob.
+function trackedTestFiles() {
+  return execFileSync("git", ["ls-files"], { cwd: repoRoot, encoding: "utf8" })
+    .split("\n")
+    .filter((file) => /(^|\/)test\.js$|\.test\.js$/.test(file))
+    .sort();
+}
+
+// The files scripts/ci/run-node-checks.sh runs.
+function guardedTestFiles() {
+  const runner = read("scripts/ci/run-node-checks.sh");
+  const match = runner.match(/git ls-files ((?:'[^']*test\.js' ?)+)\)/);
+  assert.ok(match, "run-node-checks.sh lists its test files with git ls-files");
+  const pathspecs = match[1].trim().split(/\s+/).map((spec) => spec.slice(1, -1));
+  return execFileSync("git", ["ls-files", ...pathspecs], { cwd: repoRoot, encoding: "utf8" })
+    .split("\n")
+    .filter(Boolean)
+    .sort();
+}
+
+test("CI runs every Node test through the TMPDIR guard", () => {
+  const sourceAndNode = job(read(".github/workflows/ci.yml"), "source-and-node");
+  assert.match(sourceAndNode, /^        run: bash scripts\/ci\/run-node-checks\.sh all$/m);
+  assert.doesNotMatch(sourceAndNode, /node --test/);
+  assert.deepEqual(guardedTestFiles(), trackedTestFiles());
+});
+
 test("CI runs the complete workflow regression suite", () => {
   const workflow = read(".github/workflows/ci.yml");
-  assert.match(workflow, /node --test scripts\/ci\/\*\.test\.js/);
+  assert.ok(guardedTestFiles().includes("scripts/ci/github-actions-workflows.test.js"));
   const nixBuild = job(workflow, "nix-build");
   assert.match(nixBuild, /system: x86_64-linux/);
   assert.match(nixBuild, /system: aarch64-linux/);
@@ -50,14 +78,11 @@ test("CI runs the complete workflow regression suite", () => {
 
 test("normal CI and container smoke run local package verification policy regressions", () => {
   const suite = "scripts/lib/install-verification.test.js";
-  for (const source of [
-    job(read(".github/workflows/ci.yml"), "source-and-node"),
-    read("tests/scripts_smoke.sh"),
-  ]) {
-    const commands = source.replace(/\\\r?\n/g, " ").split("\n").map(line => line.trim());
-    assert.ok(commands.some(line => line.startsWith("node --test ") && line.split(/\s+/).includes(suite)),
-      `the normal test entrypoint must execute ${suite}`);
-  }
+  // CI runs it through the guarded runner (checked above), smoke directly.
+  assert.ok(guardedTestFiles().includes(suite), `run-node-checks.sh must execute ${suite}`);
+  const commands = read("tests/scripts_smoke.sh").replace(/\\\r?\n/g, " ").split("\n").map(line => line.trim());
+  assert.ok(commands.some(line => line.startsWith("node --test ") && line.split(/\s+/).includes(suite)),
+    `the container smoke entrypoint must execute ${suite}`);
   const core = read("scripts/ci/container-entrypoint.sh").split("run_core() {", 2)[1].split("\n}", 1)[0];
   assert.match(core, /bash tests\/scripts_smoke\.sh/);
 });

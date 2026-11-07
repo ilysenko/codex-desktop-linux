@@ -319,10 +319,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   fixtures move to `XDG_RUNTIME_DIR` when a socket path would not fit under
   `TMPDIR`, so the suite passes with a long `TMPDIR` too; without
   `XDG_RUNTIME_DIR` they fail with the limit and the path.
-  `scripts/ci/run-node-checks.sh`, a standalone script that runs the
-  `*.test.js` files and the feature `test.js` files, now runs them with a
-  fresh `TMPDIR` and fails, naming the entries, when a run leaves any. CI and
-  `scripts/ci-local.sh` run their own lists of Node tests and do not use it.
+  `scripts/ci/run-node-checks.sh all` syntax-checks every tracked `.js` file,
+  then runs every `*.test.js` and `test.js` with a fresh `TMPDIR` and fails,
+  naming the entries, when a run leaves any. CI's Node step runs it, so CI
+  runs exactly the files the guard checks; `scripts/ci-local.sh` still runs
+  its own list. The GNOME dictation and package permission tests keep their
+  scratch under `TMPDIR` too, and the shared app-server tests bind their
+  sockets inside the `try` that removes them. The host-service tests wait for
+  their detached bridge to exit and kill it if it still runs after 3 s. The
+  Dock icon lock test's holder keeps the lock only while the test holds its
+  stdin open. The runner does not pass `--test-force-exit`. That flag can drop
+  finished tests from the report and still exit 0 (nodejs/node#64833). With
+  it, 8 of 11 local runs on Node 24 and 26 reported up to 47 fewer tests than
+  ran. A file that a leaked handle holds open fails the run with status 124
+  when the runner's 300 s `timeout` watchdog ends it. CI requires `timeout`; a
+  local run without it has no limit.
+- The AppShots bare modifier monitor waits for `xinput --version` before it
+  starts its XInput 2 stream, and reports `permission-denied` when the X
+  server cannot be reached or has no XInput 2. Before, it judged the stream
+  by whether it still ran 0.1 s after the start, so under load a failing
+  `xinput` could print `ready` and then stop. SIGTERM or the app's exit
+  still ends the monitor and the check while it waits. A stream that exits
+  before the monitor reads its coprocess also gives `permission-denied`;
+  before, the monitor stopped with an unbound-variable error and no output.
+- The global dictation release watcher stops each helper subshell, signals
+  its children, then ends the subshell with SIGKILL. A child that a subshell
+  forked between `pkill -P` and its own end, such as the watchdog's `sleep`,
+  no longer outlives the watcher. A second SIGINT, SIGTERM or SIGHUP during
+  cleanup no longer cuts it short, which left the helpers running.
+- The embedded Computer Use crate's
+  `editable_text_normalization_mismatch_is_not_verified` test accepts
+  `ReadbackTimedOut` as well as `MismatchAfterDeadline`, like the two other
+  mismatch tests (agent-sh/computer-use-linux#431). Its last poll can start
+  just before the one-second deadline and still be reading when it passes.
+  Both outcomes leave the write unverified, and neither allows a replay.
 - Desktop entries no longer offer a "New Window" action. It relied on the
   retired multi-instance launcher (`--new-instance`, `CODEX_MULTI_LAUNCH`),
   which the official app ignores, so it did nothing while the app was running

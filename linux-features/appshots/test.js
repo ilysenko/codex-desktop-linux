@@ -237,9 +237,10 @@ test("stages the Linux bare modifier monitor helper and Wayland portal hook", ()
 // directory in TMPDIR and execs its command, so nothing removes the directory.
 const LEAKY_STDBUF = '#!/bin/sh\nmktemp -d "${TMPDIR:-/tmp}/.tmpXXXXXX" >/dev/null || exit 125\nshift\nexec "$@"\n';
 
-// A stdbuf that only execs, like GNU stdbuf, for a test where a slower start
-// would race the monitor's startup check.
-const PLAIN_STDBUF = '#!/bin/sh\nshift\nexec "$@"\n';
+// What xinput --version prints for an X server with XInput 2.4; the monitor
+// checks it before it starts the event stream.
+const XINPUT_VERSION_OK =
+  'if [ "$1" = --version ]; then printf \'%s\\n\' \'xinput version 1.6.4\' \'XI version on server: 2.4\'; exit 0; fi';
 
 // What the bare modifier monitor's stdbuf run leaves in TMPDIR.
 function stdbufLeftovers(dir) {
@@ -263,6 +264,7 @@ test("bare modifier monitor emits one transition from one XInput2 stream", () =>
     path.join(binDir, "xinput"),
     [
       "#!/bin/sh",
+      XINPUT_VERSION_OK,
       "[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2",
       "printf '%s\\n' \\",
       "  'EVENT type 13 (RawKeyPress)' '    detail: 50' \\",
@@ -299,7 +301,7 @@ test("bare modifier monitor emits one transition from one XInput2 stream", () =>
   }
 });
 
-test("bare modifier monitor fails before ready when XInput2 exits during startup", () => {
+test("bare modifier monitor fails closed before ready when xinput cannot reach the X server", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-startup-"));
   const binDir = path.join(tempDir, "bin");
   const helper = path.join(__dirname, "bin", "bare-modifier-monitor");
@@ -309,13 +311,9 @@ test("bare modifier monitor fails before ready when XInput2 exits during startup
     "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
     { mode: 0o755 },
   );
-  // The monitor still makes, and must remove, its own stdbuf directory.
-  fs.writeFileSync(path.join(binDir, "stdbuf"), PLAIN_STDBUF, { mode: 0o755 });
-  fs.writeFileSync(
-    path.join(binDir, "xinput"),
-    "#!/bin/sh\n[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2\nexit 2\n",
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+  // Every xinput command fails, as when the X server is unreachable.
+  fs.writeFileSync(path.join(binDir, "xinput"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
   try {
     const result = spawnSync(helper, ["--key", "DoubleShift", "--immediate"], {
@@ -337,6 +335,66 @@ test("bare modifier monitor fails before ready when XInput2 exits during startup
   }
 });
 
+// The preflight waits for xinput's own answer, so a slow start under load
+// cannot turn a failure into ready. The old 0.1 s check printed ready here.
+for (const [name, xinput, expected] of [
+  ["fails closed for a slow xinput that cannot reach the X server", "#!/bin/sh\nsleep 0.3\nexit 1\n", "permission-denied\n"],
+  [
+    "fails closed when the X server has no XInput 2",
+    "#!/bin/sh\n[ \"$1\" = --version ] && printf '%s\\n' 'xinput version 1.6.4' 'XI version on server: 1.5' && exit 0\nexec sleep 30\n",
+    "permission-denied\n",
+  ],
+]) {
+  test(`bare modifier monitor ${name}`, (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-preflight-"));
+    t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+    const binDir = path.join(tempDir, "bin");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(
+      path.join(binDir, "xmodmap"),
+      "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+    fs.writeFileSync(path.join(binDir, "xinput"), xinput, { mode: 0o755 });
+    const result = spawnSync(path.join(__dirname, "bin", "bare-modifier-monitor"), ["--key", "DoubleShift"], {
+      encoding: "utf8",
+      env: { ...process.env, DISPLAY: ":99", PATH: `${binDir}:${process.env.PATH}`, TMPDIR: tempDir },
+      timeout: 5_000,
+    });
+    assert.notEqual(result.status, 0, result.stderr);
+    assert.equal(result.stdout, expected);
+    assert.deepEqual(stdbufLeftovers(tempDir), []);
+  });
+}
+
+// After a good preflight, a stream that still dies at once is caught by the
+// short check when the monitor sees it in time, else it ends after ready.
+// Either way the monitor removes its stdbuf directory.
+test("bare modifier monitor removes its stdbuf directory when the stream dies after the preflight", (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-stream-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const binDir = path.join(tempDir, "bin");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "xmodmap"),
+    "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+  fs.writeFileSync(path.join(binDir, "xinput"), `#!/bin/sh\n${XINPUT_VERSION_OK}\nexit 2\n`, { mode: 0o755 });
+  const result = spawnSync(path.join(__dirname, "bin", "bare-modifier-monitor"), ["--key", "DoubleShift"], {
+    encoding: "utf8",
+    env: { ...process.env, DISPLAY: ":99", PATH: `${binDir}:${process.env.PATH}`, TMPDIR: tempDir },
+    timeout: 5_000,
+  });
+  assert.ok(["permission-denied\n", "ready\n"].includes(result.stdout), result.stdout);
+  // A refusal exits non-zero; after ready, the end of the stream is a normal stop.
+  if (result.stdout === "permission-denied\n") assert.notEqual(result.status, 0, result.stderr);
+  else assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(stdbufLeftovers(tempDir), []);
+});
+
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
   test(`bare modifier monitor removes its stdbuf directory on ${signal}`, { timeout: 15_000 }, async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "appshots-xinput2-signal-"));
@@ -351,7 +409,7 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
     fs.writeFileSync(
       path.join(binDir, "xinput"),
-      "#!/bin/sh\n[ \"$1 $2\" = \"test-xi2 --root\" ] || exit 2\nexec sleep 30\n",
+      `#!/bin/sh\n${XINPUT_VERSION_OK}\n[ "$1 $2" = "test-xi2 --root" ] || exit 2\nexec sleep 30\n`,
       { mode: 0o755 },
     );
 
@@ -391,6 +449,118 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     assert.deepEqual(stdbufLeftovers(tempDir), []);
   });
 }
+
+// A live process, not a zombie.
+function processRunning(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] !== "Z";
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntil(condition, timeoutMs, message) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    assert.ok(Date.now() < deadline, message());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+// An X server that never answers: xinput --version records its pid and hangs.
+function hangingPreflightFixture(t, prefix) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const binDir = path.join(tempDir, "bin");
+  const xinputPidFile = path.join(tempDir, "xinput.pid");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "xmodmap"),
+    "#!/bin/sh\nprintf '%s\\n' 'keycode 50 = Shift_L' 'keycode 62 = Shift_R'\n",
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(path.join(binDir, "stdbuf"), LEAKY_STDBUF, { mode: 0o755 });
+  fs.writeFileSync(
+    path.join(binDir, "xinput"),
+    `#!/bin/sh\n[ "$1" = --version ] || exit 2\nprintf '%s\\n' "$$" > "${xinputPidFile}"\nexec sleep 30\n`,
+    { mode: 0o755 },
+  );
+  const env = { ...process.env, DISPLAY: ":99", PATH: `${binDir}:${process.env.PATH}`, TMPDIR: tempDir };
+  const xinputPid = () => (fs.existsSync(xinputPidFile) ? Number(fs.readFileSync(xinputPidFile, "utf8")) : 0);
+  return { tempDir, env, xinputPid };
+}
+
+// Its own process group, so the test can end everything it started.
+function killGroupAfter(t, child) {
+  t.after(() => {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  });
+}
+
+// The preflight waits for the server as long as it takes, but a stop request
+// still ends the monitor and the probe with it.
+test("bare modifier monitor stops a hanging preflight on SIGTERM", { timeout: 15_000 }, async (t) => {
+  const { tempDir, env, xinputPid } = hangingPreflightFixture(t, "appshots-xinput2-hang-term-");
+  const monitor = spawn(path.join(__dirname, "bin", "bare-modifier-monitor"), ["--key", "DoubleShift"], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  killGroupAfter(t, monitor);
+  const exited = once(monitor, "exit");
+  let stdout = "";
+  monitor.stdout.setEncoding("utf8");
+  monitor.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  await waitUntil(() => xinputPid() > 0, 5_000, () => "xinput --version never started");
+  monitor.kill("SIGTERM");
+  await exited;
+  await waitUntil(() => !processRunning(xinputPid()), 2_000, () => "xinput --version outlived the monitor");
+  assert.equal(stdout, "");
+  assert.deepEqual(stdbufLeftovers(tempDir), []);
+});
+
+// The app can exit without stopping the monitor. The monitor then ends on its
+// own, during the preflight too.
+test("bare modifier monitor stops a hanging preflight when its parent exits", { timeout: 15_000 }, async (t) => {
+  const { tempDir, env, xinputPid } = hangingPreflightFixture(t, "appshots-xinput2-hang-parent-");
+  const pidFile = path.join(tempDir, "monitor.pid");
+  // The parent starts the monitor, waits for the preflight, then exits.
+  const parent = spawn(
+    "/bin/sh",
+    [
+      "-c",
+      [
+        '"$1" --key DoubleShift >/dev/null 2>&1 </dev/null &',
+        'printf "%s\\n" "$!" > "$2"',
+        "i=0",
+        'while [ ! -s "$3" ] && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done',
+      ].join("\n"),
+      "sh",
+      path.join(__dirname, "bin", "bare-modifier-monitor"),
+      pidFile,
+      path.join(tempDir, "xinput.pid"),
+    ],
+    { env, stdio: "ignore", detached: true },
+  );
+  killGroupAfter(t, parent);
+  const [code] = await once(parent, "exit");
+  assert.equal(code, 0);
+  assert.ok(xinputPid() > 0, "xinput --version never started");
+  const monitorPid = Number(fs.readFileSync(pidFile, "utf8"));
+  await waitUntil(
+    () => !processRunning(monitorPid) && !processRunning(xinputPid()),
+    5_000,
+    () => `still running: monitor ${processRunning(monitorPid)}, xinput --version ${processRunning(xinputPid())}`,
+  );
+  assert.deepEqual(stdbufLeftovers(tempDir), []);
+});
 
 test("enables AppShots availability atom on Linux", () => {
   const patched = applyPatchTwice(
