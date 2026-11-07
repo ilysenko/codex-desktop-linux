@@ -225,10 +225,14 @@ function parameterProjection(body, name) {
     const end = block ? findMatchingBrace(body, start) : arrowExpressionEnd(body, start);
     if (end < start) continue;
     const scope = block ? body.slice(start + 1, end) : `return (${body.slice(start, end)});`;
-    if (!localBinding(scope, head[1] ?? head[2], name)) continue;
+    const parameters = head[1] ?? head[2];
+    if (!localBinding(scope, parameters, name)) continue;
     const arrow = head.index + head[0].indexOf("=>");
-    if (head[1] == null) blank(head.index, arrow, name === "_" ? "$" : "_");
-    else blank(head.index + 1, head.index + head[0].lastIndexOf(")", head[0].indexOf("=>")));
+    // Body declarations do not bind parameter default initializers.
+    if (localBinding("", parameters, name)) {
+      if (head[1] == null) blank(head.index, arrow, name === "_" ? "$" : "_");
+      else blank(head.index + 1, head.index + head[0].lastIndexOf(")", head[0].indexOf("=>")));
+    }
     if (block) blank(start + 1, end);
     else blank(start, end, "0");
     hiddenScopes.push([head.index, end + Number(block)]);

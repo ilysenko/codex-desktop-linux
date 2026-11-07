@@ -186,6 +186,37 @@ test("native local projection keeps free parameter writes and default initialize
   assert.deepEqual(input, { ...source, moduleId: "native", start: 4, end: 90, sourceFlags: { native: true } });
 });
 
+test("arrow body locals do not hide factory writes in parameter defaults", () => {
+  for (const local of [
+    'const use=(value=n=other)=>{var n;return value};',
+    'const use=(value=n=other)=>{let n;return value};',
+    'const use=(value=n=other)=>{const n=1;return value};',
+    'const use=(value=n=other)=>{function n(){}return value};',
+    'const use=async(value=n=other)=>{var n;return value};',
+    'const use=(value=t=other)=>{var t;return value};',
+    String.raw`const use=(value=\u006e=other)=>{var n;return value};`,
+    'const use=(value={target:n}=other)=>{var n;return value};',
+    'const use=(value=n+=other)=>{var n;return value};',
+    'const use=(value=n[n=0])=>{var n;return value};',
+  ]) assert.equal(findRspackExportPublication(nativeSnapshot(local), "iRL"), null, local);
+});
+
+test("arrow parameter bindings and readonly defaults preserve publication authority", () => {
+  for (const local of [
+    'const use=(value=n)=>{var n;return value};',
+    'const use=(value=n)=>{let n;return value};',
+    'const use=(value=t)=>{var t;return value};',
+    'const use=(value=n)=>value;',
+    'const use=(n,value=n=other)=>value;',
+    'const use=(n,value=n=other)=>{var n;return n};',
+    'const use=async(n,value=n=other)=>{n=other;return value};',
+    'const use=n=>{n=other;return n};',
+    'const use=({value:n})=>n=other;',
+    'const use=(...n)=>{n=other;return n};',
+    'const use=(value=n)=>{{let n;n=other;}return value};',
+  ]) assert.deepEqual(findRspackExportPublication(nativeSnapshot(local), "iRL"), nativePublication, local);
+});
+
 test("native local projection retains unsafe getter and publication ambiguity refusals", () => {
   const module = nativeSnapshot('class B{#state;run(n=Date.now()){let t=this.#state;return t}}');
   for (const getter of [
