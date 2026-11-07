@@ -128,7 +128,7 @@ function* moduleAssets(assetsDir, { pattern, sourceMatch }) {
 }
 
 function containsFactoryId(source, moduleId) {
-  for (const header of source.matchAll(new RegExp(FACTORY.source, "g"))) {
+  for (const header of source.matchAll(new RegExp(`(?<![\\w$])${FACTORY.source}`, "g"))) {
     const key = header.groups.key;
     if ((key.startsWith('"') ? JSON.parse(key) : key) === moduleId) return true;
   }

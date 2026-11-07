@@ -227,3 +227,81 @@ test("declarations after native function bodies resolve once per immutable snaps
   owner.moduleSource = 'var store=n("new-store");';
   assert.equal(findRspackRequireBinding(owner, "store")?.moduleId, "new-store");
 });
+
+test("fallback discovery scans long unrelated words within a bounded subprocess", t => {
+  const { spawnSync } = require("node:child_process");
+  const unrelated = 'const ' + "a".repeat(300_000) + '=0;const opaque="' + "b".repeat(300_000) + '";const escape="\\u0061";' + chunk("return false;", "Other");
+  const files = {
+    "owner.js": chunk(pristine),
+    "escaped-peer.js": chunk("const damaged=true;", '"\\u0041b12"'),
+    "unrelated.js": unrelated,
+  };
+  const assets = workspace(t, files);
+  const script = `
+    const api = require(process.argv[1]);
+    const found = api.findUniqueRspackModuleCopies(process.argv[2], {
+      sourceMatch: source => source.includes("semantic-owner"),
+      matchModule: source => source.includes("semantic-owner"),
+    });
+    process.stdout.write(JSON.stringify(found.map(copy => [copy.assetName, copy.moduleId])));
+  `;
+  const result = spawnSync(process.execPath, ["-e", script, require.resolve("./rspack-module-assets.js"), assets], {
+    encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [["escaped-peer.js", "Ab12"], ["owner.js", "Ab12"]]);
+  for (const [name, bytes] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(assets, name), "utf8"), bytes);
+});
+
+test("fallback discovery retains every supported registry-member start and key shape", t => {
+  const keys = [
+    ["Plain", '"\\u0050lain"', "Plain"],
+    ["$ID", '"\\u0024ID"', "$ID"],
+    ["123", '"\\u0031\\u0032\\u0033"', "123"],
+    ['"a/b"', '"a\\/b"', "a/b"],
+    ['"汉字"', '"\\u6c49\\u5b57"', "汉字"],
+  ];
+  const starts = ["", "\t\n", "\u00a0\u2028", "Before(){},", "Before(){} , \t\n"];
+  const parameters = ["", "module", "module,exports", "module,exports,$load"];
+  for (const [ownerKey, peerKey, moduleId] of keys) for (const start of starts) for (const params of parameters) {
+    const peer = `export const __webpack_modules__={${start}${peerKey}(${params}){const damaged=true;}};`;
+    const snapshots = [...rspackModuleFactories(peer, "peer.js")];
+    const target = snapshots.find(copy => copy.moduleId === moduleId);
+    assert.ok(target);
+    assert.deepEqual(target.params, params ? params.split(",") : []);
+    assert.equal(peer.slice(target.start, target.end), "const damaged=true;");
+    const files = { "owner.js": chunk(pristine, ownerKey), "peer.js": peer };
+    const assets = workspace(t, files), found = copies(assets);
+    assert.deepEqual(found.map(copy => [copy.assetName, copy.moduleId]), [["owner.js", moduleId], ["peer.js", moduleId]]);
+    assert.equal(found[1].source, peer);
+    assert.throws(() => patchRspackModuleCopies(assets, found, patch), /Invalid semantic-owner/);
+    for (const [name, bytes] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(assets, name), "utf8"), bytes);
+  }
+});
+
+test("warm fallback discovery rereads damaged and malformed escaped physical peers", t => {
+  const key = '"\\u0041b12"', owner = chunk(pristine), peer = chunk(pristine, key);
+  const assets = workspace(t, { "owner.js": owner, "peer.js": peer });
+  assert.equal(copies(assets).length, 2);
+  assert.equal(copies(assets).length, 2);
+  const damaged = chunk("const damaged=true;", key);
+  fs.writeFileSync(path.join(assets, "peer.js"), damaged);
+  const found = copies(assets);
+  assert.equal(found.length, 2);
+  assert.equal(found.find(copy => copy.assetName === "peer.js").moduleSource, "const damaged=true;");
+  assert.throws(() => patchRspackModuleCopies(assets, found, patch), /Invalid semantic-owner/);
+  const malformed = [
+    `export const __webpack_modules__={${key}(e){},Bad:(e)=>{}};`,
+    `export const __webpack_modules__={Bad:(e)=>{},${key}(e){}};`,
+    `export const __webpack_modules__={${key}(e){},${key}(e){}};`,
+    `export const __webpack_modules__={${key}(e){}};export const __webpack_modules__={};`,
+    `export const __webpack_modules__={${key}(e){return 1`,
+  ];
+  for (const source of malformed) {
+    fs.writeFileSync(path.join(assets, "peer.js"), source);
+    assert.throws(() => copies(assets), /Rspack module/);
+    assert.equal(fs.readFileSync(path.join(assets, "owner.js"), "utf8"), owner);
+    assert.equal(fs.readFileSync(path.join(assets, "peer.js"), "utf8"), source);
+  }
+});
