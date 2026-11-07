@@ -1,7 +1,8 @@
 # API Key Model Visibility
 
-This opt-in feature makes the desktop model picker trust the non-hidden model
-catalog returned by Codex CLI for API-key authenticated hosts.
+This opt-in feature lets the desktop model picker show non-hidden models
+returned by Codex CLI for API-key authenticated hosts, while preserving the
+upstream access-program checks and explicit catalog exceptions.
 
 The upstream desktop UI can apply a separate Statsig `available_models`
 allowlist after `model/list` succeeds. That allowlist is useful for ChatGPT
@@ -29,16 +30,27 @@ Then rebuild the app:
 
 ## Behavior
 
-- API-key hosts show every `model/list` entry whose `hidden` field is false.
+- API-key hosts bypass the extra desktop allowlist for non-hidden `model/list`
+  entries. The upstream `codex-auto-review` exclusion and access-program checks
+  still apply.
 - Upstream's API-key access-program check still applies first: a model that
   is restricted to non-standard `cyber` access programs stays hidden unless
   the host supports them.
 - ChatGPT, Copilot, and Amazon Bedrock hosts keep the upstream filtering rules.
-- Models that the CLI marks as hidden remain hidden.
+- Hidden models stay excluded by the API-key visibility path. Upstream
+  `additionalAvailableModels` overrides remain intact, including an explicit
+  override for a hidden model or `codex-auto-review`. An override still cannot
+  bypass the API-key access-program check.
 - The feature does not grant model access. The configured provider must accept
   the selected model id.
 - Reasoning choices such as Max or Ultra appear only when the selected model
   advertises those efforts and the desktop UI enables them.
+
+The patch qualifies the published catalog normalizer and its native visibility
+condition, then validates every physical copy of that module before writing.
+Missing, ambiguous, partially patched, or noncanonical copies fail the enabled
+feature gate without changing the catalog assets. Opaque marker text does not
+count as an applied patch.
 
 ## Risks
 
