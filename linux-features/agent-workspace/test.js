@@ -2733,3 +2733,169 @@ for (const envName of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACT
     for (const [name, bytes] of originalFiles) assert.deepEqual(fs.readFileSync(path.join(input.build, name)), bytes, "raw signed main chunk " + name);
   });
 }
+
+
+function settingsAtomicSnapshot(root) {
+  const rows = [];
+  function visit(file, name) {
+    const info = fs.lstatSync(file);
+    rows.push({ name, mode: info.mode & 0o777, directory: info.isDirectory(), bytes: info.isFile() ? fs.readFileSync(file) : null });
+    if (info.isDirectory()) for (const child of fs.readdirSync(file).sort()) visit(path.join(file, child), name ? `${name}/${child}` : child);
+  }
+  visit(root, ""); return rows;
+}
+
+function settingsAtomicFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-settings-atomic-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { assetsDir } = writeSyntheticExtractedApp(root);
+  const native = collectAgentWorkspaceSettingsPatches(root).patches;
+  assert.ok(native.length > 1);
+  native.forEach(({ filePath }, index) => fs.chmodSync(filePath, index % 2 ? 0o640 : 0o600));
+  return { root, assetsDir, native, page: path.join(assetsDir, SETTINGS_ASSET) };
+}
+
+function runSettingsAtomicDescriptor(root) {
+  const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+  const descriptor = require("./patch.js").descriptors.find(({ id }) => id === "settings-page");
+  const report = createPatchReport();
+  applyExtractedAppPatchDescriptors(root, [descriptor], {}, report, "extracted-app:post-webview");
+  assert.equal(report.patches.length, 1);
+  return report.patches[0];
+}
+
+test("registered workspace settings roll back the new page and whole native cohort after interrupted writes", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  for (const role of ["page write", "page readback", "first native", "last native"]) {
+    await t.test(role, (t) => {
+      const f = settingsAtomicFixture(t), before = settingsAtomicSnapshot(f.root);
+      const target = role === "first native" ? f.native[0].filePath : f.native.at(-1).filePath;
+      const originalWrite = fs.writeFileSync;
+      let failed = false, pageFd;
+      const fault = t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+        const selected = role.startsWith("page") ? file === f.page || Number.isInteger(file) : file === target;
+        if (selected && !failed) {
+          failed = true; if (Number.isInteger(file)) pageFd = file;
+          originalWrite(file, "truncated");
+          if (role === "page readback") return;
+          throw Error("injected workspace settings write failure");
+        }
+        return originalWrite(file, bytes, ...args);
+      });
+      assert.equal(runSettingsAtomicDescriptor(f.root).status, "skipped-optional");
+      assert.equal(failed, true);
+      if (pageFd != null) assert.throws(() => fs.fstatSync(pageFd), { code: "EBADF" });
+      assert.deepEqual(settingsAtomicSnapshot(f.root), before);
+      fault.mock.restore();
+      const first = runSettingsAtomicDescriptor(f.root); assert.equal(first.status, "applied"); assert.ok(!first.warnings?.length);
+      const canonical = settingsAtomicSnapshot(f.root);
+      let writes = 0;
+      const repeatedWrite = t.mock.method(fs, "writeFileSync", (...args) => { writes++; return originalWrite(...args); });
+      const repeated = runSettingsAtomicDescriptor(f.root); assert.equal(repeated.status, "already-applied"); assert.ok(!repeated.warnings?.length);
+      assert.equal(writes, 0, "canonical settings do not rewrite the generated page");
+      assert.deepEqual(settingsAtomicSnapshot(f.root), canonical); repeatedWrite.mock.restore();
+    });
+  }
+});
+
+test("registered workspace settings reject partial page and original native-role states before any write", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const cases = [
+    ["missing page with canonical native", (f) => { assert.equal(runSettingsAtomicDescriptor(f.root).status, "applied"); fs.unlinkSync(f.page); }],
+    ["exact page with raw native", (f) => fs.writeFileSync(f.page, buildAgentWorkspaceSettingsSource())],
+    ["exact page with mixed native", (f) => { fs.writeFileSync(f.page, buildAgentWorkspaceSettingsSource()); fs.writeFileSync(f.native[0].filePath, f.native[0].patchedSource); }],
+    ["absent page with mixed native", (f) => fs.writeFileSync(f.native[0].filePath, f.native[0].patchedSource)],
+    ["modified existing page", (f) => { assert.equal(runSettingsAtomicDescriptor(f.root).status, "applied"); fs.appendFileSync(f.page, "\n// user-modified page\n"); }],
+    ["route ABI changed", (f) => { assert.equal(runSettingsAtomicDescriptor(f.root).status, "applied"); const file = path.join(f.assetsDir, "async/91641.b7e1e9981c.js"); const source = fs.readFileSync(file, "utf8"); assert.ok(source.includes('React:n("Vlts")')); fs.writeFileSync(file, source.replace('React:n("Vlts")', 'React:n("wrong-react")')); }],
+    ["owned label changed", (f) => { assert.equal(runSettingsAtomicDescriptor(f.root).status, "applied"); const file = path.join(f.assetsDir, "async/968499.fa029184f4.js"); const source = fs.readFileSync(file, "utf8"); fs.writeFileSync(file, source.replace('id:"settings.nav.agent-workspaces",defaultMessage:"Agent Workspaces"', 'id:"settings.nav.agent-workspaces",defaultMessage:"Wrong label"')); }],
+    ["owned title changed", (f) => { assert.equal(runSettingsAtomicDescriptor(f.root).status, "applied"); const file = path.join(f.assetsDir, "async/124801.fe71f64eb7.js"); const source = fs.readFileSync(file, "utf8"); fs.writeFileSync(file, source.replace('id:"settings.section.agent-workspaces",defaultMessage:"Agent Workspaces"', 'id:"settings.section.agent-workspaces",defaultMessage:"Wrong title"')); }],
+    ["owned icon changed", (f) => { assert.equal(runSettingsAtomicDescriptor(f.root).status, "applied"); const file = path.join(f.assetsDir, "async/61039.1021918763.js"); const source = fs.readFileSync(file, "utf8"); assert.ok(source.includes('"agent-workspaces":{component:ey.A')); fs.writeFileSync(file, source.replace('"agent-workspaces":{component:ey.A', '"agent-workspaces":{component:wrong.A')); }],
+  ];
+  for (const [name, setup] of cases) {
+    await t.test(name, (t) => {
+      const f = settingsAtomicFixture(t); setup(f);
+      const before = settingsAtomicSnapshot(f.root), originalWrite = fs.writeFileSync;
+      let writes = 0;
+      const spy = t.mock.method(fs, "writeFileSync", (...args) => { writes++; return originalWrite(...args); });
+      assert.equal(runSettingsAtomicDescriptor(f.root).status, "skipped-optional");
+      assert.equal(writes, 0); assert.deepEqual(settingsAtomicSnapshot(f.root), before); spy.mock.restore();
+    });
+  }
+});
+
+test("workspace settings preserve fatal integrity failures and validate the page after native commit", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  for (const role of ["normal-return foreign page", "normal-return same-inode corruption", "native rollback denied", "page unlink denied"]) {
+    await t.test(role, (t) => {
+      const f = settingsAtomicFixture(t), before = settingsAtomicSnapshot(f.root), originalWrite = fs.writeFileSync, originalUnlink = fs.unlinkSync;
+      let triggered = false, nativeAttempts = 0;
+      const fault = t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+        if (role === "native rollback denied" && file === f.native[0].filePath) {
+          nativeAttempts++; if (nativeAttempts === 1) originalWrite(file, "truncated");
+          throw Error("injected native restore failure");
+        }
+        if (role === "page unlink denied" && file === f.native[0].filePath && !triggered) {
+          triggered = true; originalWrite(file, "truncated"); throw Error("injected native write failure");
+        }
+        if (role.startsWith("normal-return") && file === f.native.at(-1).filePath && !triggered) {
+          triggered = true; originalWrite(file, bytes, ...args);
+          if (role === "normal-return foreign page") { fs.renameSync(f.page, `${f.page}.previous`); originalWrite(f.page, "foreign page", { flag: "wx" }); }
+          else originalWrite(f.page, "corrupted page");
+          return;
+        }
+        return originalWrite(file, bytes, ...args);
+      });
+      const removal = t.mock.method(fs, "unlinkSync", (file) => {
+        if (role === "page unlink denied" && file === f.page) throw Error("injected page removal failure");
+        return originalUnlink(file);
+      });
+      if (role === "normal-return same-inode corruption") {
+        assert.equal(runSettingsAtomicDescriptor(f.root).status, "skipped-optional");
+        assert.equal(triggered, true); assert.deepEqual(settingsAtomicSnapshot(f.root), before);
+      } else {
+        assert.throws(() => runSettingsAtomicDescriptor(f.root), { code: "PATCH_INTEGRITY_FAILURE" });
+        if (role === "normal-return foreign page") {
+          assert.equal(triggered, true); assert.equal(fs.readFileSync(f.page, "utf8"), "foreign page");
+          const excluded = new Set([path.relative(f.root, f.page), path.relative(f.root, `${f.page}.previous`)]);
+          assert.deepEqual(settingsAtomicSnapshot(f.root).filter(({ name }) => !excluded.has(name)), before);
+        } else if (role === "native rollback denied") {
+          assert.ok(nativeAttempts >= 2); assert.equal(fs.readFileSync(f.native[0].filePath, "utf8"), "truncated");
+          assert.equal(fs.existsSync(f.page), false);
+        } else {
+          assert.equal(triggered, true); assert.equal(fs.existsSync(f.page), true);
+          const pageName = path.relative(f.root, f.page);
+          assert.deepEqual(settingsAtomicSnapshot(f.root).filter(({ name }) => name !== pageName), before);
+        }
+      }
+      fault.mock.restore(); removal.mock.restore();
+    });
+  }
+});
+
+
+test("workspace settings reject hidden related physical copies in raw and canonical cohorts", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const role = require("./patch.js").SETTINGS_CONTRACTS.find(({ name }) => name === "catalogSlugs");
+  for (const state of ["raw", "canonical"]) for (const hiddenNeedle of [false, true]) {
+    await t.test(`${state} copy without select${hiddenNeedle ? " or needle" : ""}`, (t) => {
+      const f = settingsAtomicFixture(t);
+      if (state === "canonical") assert.equal(runSettingsAtomicDescriptor(f.root).status, "applied");
+      const copies = Object.keys(SETTINGS_CHUNKS).filter(name => role.select(readAsset(f.assetsDir, name)));
+      assert.ok(copies.length > 1);
+      const file = path.join(f.assetsDir, copies.at(-1));
+      let source = fs.readFileSync(file, "utf8");
+      assert.ok(source.includes('"environments"')); source = source.replace('"environments"', '"retired-environments"');
+      if (hiddenNeedle) source = source.replace('"computer-use"', '"retired-computer-use"');
+      assert.equal(role.select(source), false);
+      assert.equal(source.includes(role.needle), !hiddenNeedle);
+      fs.writeFileSync(file, source);
+      const before = settingsAtomicSnapshot(f.root), originalWrite = fs.writeFileSync;
+      let writes = 0;
+      const spy = t.mock.method(fs, "writeFileSync", (...args) => { writes++; return originalWrite(...args); });
+      const result = runSettingsAtomicDescriptor(f.root);
+      assert.equal(result.status, "skipped-optional");
+      assert.match(result.reason, /settings catalogSlugs copy.*lost its semantic contract/);
+      assert.equal(writes, 0); assert.deepEqual(settingsAtomicSnapshot(f.root), before); spy.mock.restore();
+    });
+  }
+});

@@ -11,6 +11,10 @@ const {
 } = require("../../scripts/patches/lib/assets.js");
 const { createJavaScriptLexicalIndex, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { inspectMainRequestSites } = require("../../scripts/patches/lib/main-request-sites.js");
+const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
+const { PatchIntegrityError, isPatchIntegrityError } = require("../../scripts/patches/integrity-error.js");
+const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
+const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const SETTINGS_ASSET = "agent-workspaces-linux.js";
 const SETTINGS_SLUG = "agent-workspaces";
 const SETTINGS_COMMAND_KEY = "codex-linux-agent-workspace-command";
@@ -1597,23 +1601,10 @@ const REF = `${IDENT}(?:\\.${IDENT})*`;
 // `__webpack_modules__={id(module,exports,require){...},...}`. Modules are
 // duplicated into several lazily loaded chunks and minified separately, so a
 // settings contract is resolved and patched inside each module copy.
-function rspackModules(source) {
-  const start = source.indexOf("__webpack_modules__={");
-  if (start < 0) return [];
-  const header = new RegExp(`^,?("[^"]+"|${IDENT}|\\d+)\\(((?:${IDENT}(?:,${IDENT}){0,2})?)\\)\\{`, "u");
-  const modules = [];
-  let index = start + "__webpack_modules__={".length;
-  while (index < source.length) {
-    const match = header.exec(source.slice(index, index + 200));
-    if (match == null) break;
-    const open = index + match[0].length - 1;
-    const close = findMatchingBrace(source, open);
-    if (close < 0) break;
-    const id = match[1].startsWith("\"") ? JSON.parse(match[1]) : match[1];
-    modules.push({ id, params: match[2].split(","), start: open, end: close + 1 });
-    index = close + 1;
-  }
-  return modules;
+function settingsModuleSnapshots(source, assetName) {
+  return [...rspackModuleFactories(source, assetName)].map(({ moduleId, params, start, end }) => ({
+    id: moduleId, params, start: start - 1, end: end + 1,
+  }));
 }
 
 function uniqueMatch(source, pattern) {
@@ -1782,99 +1773,225 @@ function relativeImportPath(fromAsset, toAsset) {
   return relative.startsWith(".") ? relative : `./${relative}`;
 }
 
+// Remove only this feature's contribution for one role. Replaying the
+// existing role transform then proves exact canonical bytes and bindings.
+function restoreSettingsRole(contract, body) {
+  const slug = JSON.stringify(SETTINGS_SLUG);
+  const removeSpan = (start, end, description) => {
+    if (start < 0 || end <= start) throw Error(`could not resolve owned ${description}`);
+    return body.slice(0, start) + body.slice(end);
+  };
+  switch (contract.name) {
+    case "navigationLabel":
+      return replaceOnce(body,
+        `${slug}:{id:"settings.nav.${SETTINGS_SLUG}",defaultMessage:${JSON.stringify(SETTINGS_TITLE)},description:${JSON.stringify(SETTINGS_DESCRIPTION)}},`,
+        "", "owned settings navigation label");
+    case "sectionTitle": {
+      const marker = `case${slug}:return`;
+      if (body.split(marker).length !== 2) throw Error("ambiguous owned settings section title");
+      const start = body.indexOf(marker), end = body.indexOf('case"worktrees":{', start);
+      return removeSpan(start, end, "settings section title");
+    }
+    case "route": {
+      const route = uniqueMatch(body, new RegExp(`${escapeRegExp(slug)}:(?:\\(0,${REF}\\)|${IDENT})\\(async\\(\\)=>`, "g"));
+      if (route == null) throw Error("ambiguous owned settings route");
+      return removeSpan(route.index, body.indexOf('"general-settings":', route.index), "settings route");
+    }
+    case "navigation":
+      return replaceOnce(replaceOnce(body,
+        `"git-settings","local-environments",${slug},"worktrees","browser-use"`,
+        '"git-settings","local-environments","worktrees","browser-use"', "owned settings navigation order"),
+        `"local-environments",${slug},"environments","worktrees"]`,
+        '"local-environments","environments","worktrees"]', "owned settings navigation group");
+    case "visibility": {
+      let restored = replaceOnce(replaceOnce(body,
+        `case"worktrees":case"local-environments":case${slug}:case"environments":`,
+        'case"worktrees":case"local-environments":case"environments":', "owned settings visibility cases"),
+        `"hooks-settings","gateways","local-environments",${slug},"worktrees","storage"`,
+        '"hooks-settings","gateways","local-environments","worktrees","storage"', "owned settings preload allowlist");
+      const policy = uniqueMatch(restored, new RegExp(`"local-environments":("[A-Za-z]+"|${IDENT}),${escapeRegExp(slug)}:\\1,"mcp-settings":`, "g"));
+      if (policy == null) throw Error("ambiguous owned settings host policy");
+      return restored.replace(policy[0], () => `"local-environments":${policy[1]},"mcp-settings":`);
+    }
+    case "icon": {
+      const icon = uniqueMatch(body, new RegExp(`"local-environments":\\{component:${REF},commandAsset:${REF},navigation:\\{assets:\\{16:${REF},20:${REF}\\},ariaHidden:!1\\}\\},${escapeRegExp(slug)}:`, "g"));
+      if (icon == null) throw Error("ambiguous owned settings icon");
+      const start = icon.index + icon[0].lastIndexOf(`${slug}:`);
+      return removeSpan(start, body.indexOf("worktrees:", start), "settings icon");
+    }
+    case "catalogSlugs":
+      return replaceOnce(body, `"local-environments",${slug},"worktrees","environments"`,
+        '"local-environments","worktrees","environments"', "owned settings slug catalog");
+    case "catalogItems":
+      return replaceOnce(body, `{slug:"local-environments"},{slug:${slug}},{slug:"worktrees"}`,
+        '{slug:"local-environments"},{slug:"worktrees"}', "owned settings section catalog");
+    default:
+      throw Error(`unknown settings role ${contract.name}`);
+  }
+}
+
 function collectAgentWorkspaceSettingsPatches(extractedDir) {
   const assetsDir = webviewAssetsDir(extractedDir);
-  if (!fs.existsSync(assetsDir)) {
-    throw new Error(`missing webview assets directory ${assetsDir}`);
-  }
+  if (!fs.existsSync(assetsDir)) throw new Error(`missing webview assets directory ${assetsDir}`);
   const request = findCodexRequestWebviewAsset(assetsDir);
   const needles = [...SETTINGS_CONTRACTS.map(({ needle }) => needle), 'Symbol.for("react.transitional.element")'];
   const assets = [];
-  for (const assetName of listWebviewScriptAssets(extractedDir)) {
+  const assetNames = listWebviewScriptAssets(extractedDir);
+  for (const assetName of assetNames) {
     if (assetName === SETTINGS_ASSET) continue;
     const source = fs.readFileSync(path.join(assetsDir, assetName), "utf8");
-    if (needles.some((needle) => source.includes(needle))) {
-      assets.push({ assetName, source, modules: rspackModules(source) });
-    }
+    if (needles.some((needle) => source.includes(needle))) assets.push({ assetName, source, modules: settingsModuleSnapshots(source, assetName) });
   }
-
   const reactModules = new Set();
-  for (const asset of assets) {
-    for (const module of asset.modules) {
-      if (isReactModule(asset.source.slice(module.start, module.end))) reactModules.add(module.id);
-    }
+  for (const asset of assets) for (const module of asset.modules) {
+    if (isReactModule(asset.source.slice(module.start, module.end))) reactModules.add(module.id);
   }
-  if (reactModules.size !== 1) {
-    throw new Error(`could not uniquely resolve the React module (${reactModules.size})`);
-  }
+  if (reactModules.size !== 1) throw new Error(`could not uniquely resolve the React module (${reactModules.size})`);
   const [reactModuleId] = reactModules;
-
-  const edits = new Map();
+  const identities = new Map();
+  for (const contract of SETTINGS_CONTRACTS) {
+    const ids = new Set();
+    for (const asset of assets) for (const module of asset.modules) {
+      if (contract.select(asset.source.slice(module.start, module.end))) ids.add(module.id);
+    }
+    if (ids.size === 0) throw new Error(`could not uniquely resolve webview settings semantic owners (${contract.name}=0)`);
+    identities.set(contract.name, ids);
+  }
+  // A semantic prefilter discovers identities, never their complete copies.
+  // Close every identified role over all script carriers before classifying it,
+  // including replicas that have lost both their needle and role selector.
+  const allIdentities = new Set([...identities.values()].flatMap(ids => [...ids]));
+  const literalIds = [...allIdentities].flatMap(id => [escapeRegExp(id), escapeRegExp(JSON.stringify(id))]);
+  const relatedHeader = new RegExp(`(?:${literalIds.join("|")})\\s*\\(`);
+  const selectedAssets = new Set(assets.map(({ assetName }) => assetName));
+  for (const assetName of assetNames) {
+    if (assetName === SETTINGS_ASSET || selectedAssets.has(assetName)) continue;
+    const source = fs.readFileSync(path.join(assetsDir, assetName), "utf8");
+    const escapedKey = source.includes(String.fromCharCode(92) + "u") || source.includes(String.fromCharCode(92) + "/");
+    if (!relatedHeader.test(source) && !escapedKey) continue;
+    const modules = settingsModuleSnapshots(source, assetName).filter(module => allIdentities.has(module.id));
+    if (modules.length) assets.push({ assetName, source, modules });
+  }
+  const roles = [];
   for (const contract of SETTINGS_CONTRACTS) {
     const owners = [];
-    for (const asset of assets) {
-      for (const module of asset.modules) {
-        const body = asset.source.slice(module.start, module.end);
-        if (contract.select(body)) owners.push({ asset, module, body });
-      }
+    for (const asset of assets) for (const module of asset.modules) {
+      if (!identities.get(contract.name).has(module.id)) continue;
+      const body = asset.source.slice(module.start, module.end);
+      if (!contract.select(body)) throw new Error(`agent workspace settings ${contract.name} copy ${module.id} lost its semantic contract`);
+      owners.push({ asset, module, body });
     }
     if (owners.length === 0 || (contract.copies === "one" && owners.length !== 1)) {
       throw new Error(`could not uniquely resolve webview settings semantic owners (${contract.name}=${owners.length})`);
     }
-    for (const { asset, module, body } of owners) {
-      const existing = edits.get(asset.assetName)?.get(module.start)?.text ?? body;
-      if (contract.patched(existing)) {
-        if (contract.complete != null && !contract.complete(existing)) {
-          throw new Error(`agent workspace settings ${contract.name} is partially patched`);
+    for (const owner of owners) {
+      const { asset, module, body } = owner;
+      const context = { route: { require: module.params[2], importPath: relativeImportPath(asset.assetName, SETTINGS_ASSET), reactModuleId, request } };
+      if (contract.name === "route" && module.params[2] == null) throw new Error("could not resolve current settings route require binding");
+      // Inspect original bodies only. Planned contributions from another role
+      // in the same factory cannot make this role look canonical.
+      const state = contract.patched(body) ? "canonical" : "raw";
+      if (state === "canonical") {
+        if (contract.complete != null && !contract.complete(body)) throw new Error(`agent workspace settings ${contract.name} is partially patched`);
+        try {
+          if (contract.apply(restoreSettingsRole(contract, body), context) !== body) throw Error("owned contribution does not replay exactly");
+        } catch (error) {
+          throw new Error(`agent workspace settings ${contract.name} is partially patched: ${error.message}`);
         }
-        continue;
+      } else {
+        contract.apply(body, context); // Full raw-role preflight without writes.
       }
-      const requireParam = module.params[2];
-      const context = {
-        route: {
-          require: requireParam,
-          importPath: relativeImportPath(asset.assetName, SETTINGS_ASSET),
-          reactModuleId,
-          request,
-        },
-      };
-      if (contract.name === "route" && requireParam == null) {
-        throw new Error("could not resolve current settings route require binding");
-      }
-      const text = contract.apply(existing, context);
-      if (!edits.has(asset.assetName)) edits.set(asset.assetName, new Map());
-      edits.get(asset.assetName).set(module.start, { module, text });
+      roles.push({ ...owner, contract, context, state });
     }
   }
-
+  const states = new Set(roles.map(({ state }) => state));
+  if (states.size !== 1) throw Error("agent workspace settings native contracts are partially patched");
+  const [cohortState] = states;
+  const factories = new Map();
+  for (const role of roles) {
+    const key = `${role.asset.assetName}:${role.module.start}`;
+    if (!factories.has(key)) factories.set(key, { body: role.body, roles: [] });
+    factories.get(key).roles.push(role);
+  }
+  for (const factory of factories.values()) {
+    let restored = factory.body;
+    if (cohortState === "canonical") for (const { contract } of factory.roles) restored = restoreSettingsRole(contract, restored);
+    if (restored.includes(SETTINGS_SLUG) || restored.includes("createAgentWorkspacesSettings")) throw Error("agent workspace settings contain an orphaned owned contribution");
+  }
+  const stateCounts = SETTINGS_CONTRACTS.map(({ name }) => ({ name, raw: roles.filter(r => r.contract.name === name && r.state === "raw").length, canonical: roles.filter(r => r.contract.name === name && r.state === "canonical").length }));
+  if (cohortState === "canonical") return { patches: [], request, cohortState, stateCounts };
+  const edits = new Map();
+  for (const { asset, module, body, contract, context } of roles) {
+    const existing = edits.get(asset.assetName)?.get(module.start)?.text ?? body;
+    const text = contract.apply(existing, context);
+    if (!edits.has(asset.assetName)) edits.set(asset.assetName, new Map());
+    edits.get(asset.assetName).set(module.start, { module, text });
+  }
   const patches = [];
   for (const asset of assets) {
     const assetEdits = edits.get(asset.assetName);
     if (assetEdits == null) continue;
     let patchedSource = asset.source;
-    for (const { module, text } of [...assetEdits.values()].sort((a, b) => b.module.start - a.module.start)) {
-      patchedSource = patchedSource.slice(0, module.start) + text + patchedSource.slice(module.end);
-    }
+    for (const { module, text } of [...assetEdits.values()].sort((a, b) => b.module.start - a.module.start)) patchedSource = patchedSource.slice(0, module.start) + text + patchedSource.slice(module.end);
     patches.push({ filePath: path.join(assetsDir, asset.assetName), currentSource: asset.source, patchedSource });
   }
-  return { patches, request };
+  return { patches, request, cohortState, stateCounts };
 }
 
 function patchAgentWorkspaceSettingsAssets(extractedDir) {
   try {
-    const { patches } = collectAgentWorkspaceSettingsPatches(extractedDir);
-    const settingsPath = path.join(webviewAssetsDir(extractedDir), SETTINGS_ASSET);
+    const { patches, cohortState } = collectAgentWorkspaceSettingsPatches(extractedDir);
+    const assetsDir = webviewAssetsDir(extractedDir), settingsPath = path.join(assetsDir, SETTINGS_ASSET);
     const settingsSource = buildAgentWorkspaceSettingsSource();
-    const previousSettingsSource = fs.existsSync(settingsPath) ? fs.readFileSync(settingsPath, "utf8") : null;
-
-    fs.writeFileSync(settingsPath, settingsSource, "utf8");
-    let changed = previousSettingsSource !== settingsSource ? 1 : 0;
-    for (const patch of patches) {
-      fs.writeFileSync(patch.filePath, patch.patchedSource, "utf8");
-      changed += 1;
+    let previous = null;
+    try {
+      const info = fs.lstatSync(settingsPath);
+      if (!info.isFile() || fs.readFileSync(settingsPath, "utf8") !== settingsSource) throw Error("existing Agent Workspaces settings page is not canonical");
+      previous = info;
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (cohortState === "canonical") {
+      if (!previous) throw Error("canonical native settings are missing their generated page");
+      return { matched: true, changed: 0 };
     }
-    return { matched: true, changed };
+    if (previous) throw Error("raw native settings have an unexpected existing generated page");
+    if (patches.length === 0 || !javascriptSourceParses(settingsSource)) throw Error("could not prepare complete Agent Workspaces settings output");
+    const nativeEdits = patches.map(({ filePath, currentSource, patchedSource }) => ({ assetName: path.relative(assetsDir, filePath).split(path.sep).join("/"), source: currentSource, patchedSource }));
+    const fd = fs.openSync(settingsPath, "wx");
+    let identity, nativeCommitted = false;
+    const verifyPage = () => {
+      const info = fs.lstatSync(settingsPath);
+      if (!identity || !info.isFile() || info.dev !== identity.dev || info.ino !== identity.ino || (info.mode & 0o777) !== (identity.mode & 0o777) || fs.readFileSync(settingsPath, "utf8") !== settingsSource) throw Error("Agent Workspaces generated page verification failed");
+    };
+    try {
+      try { identity = fs.fstatSync(fd); fs.writeFileSync(fd, settingsSource); }
+      finally { fs.closeSync(fd); }
+      verifyPage();
+      const result = commitAssetEdits(assetsDir, nativeEdits);
+      if (result.changed !== nativeEdits.length) throw Error("Agent Workspaces native settings commit was refused");
+      nativeCommitted = true;
+      verifyPage();
+    } catch (error) {
+      const failures = [];
+      if (nativeCommitted) {
+        try {
+          const result = commitAssetEdits(assetsDir, nativeEdits.map(({ assetName, source, patchedSource }) => ({ assetName, source: patchedSource, patchedSource: source })));
+          if (result.changed !== nativeEdits.length) throw Error("native settings reverse commit was refused");
+        } catch (rollbackError) { failures.push(rollbackError); }
+      }
+      // Attempt owned-page cleanup even if restoring native files failed.
+      try {
+        const info = fs.lstatSync(settingsPath);
+        if (!identity || !info.isFile() || info.dev !== identity.dev || info.ino !== identity.ino) throw Error("generated page ownership changed before rollback");
+        fs.unlinkSync(settingsPath);
+        try { fs.lstatSync(settingsPath); throw Error("generated page remains after rollback"); }
+        catch (checkError) { if (checkError.code !== "ENOENT") throw checkError; }
+      } catch (rollbackError) { failures.push(rollbackError); }
+      if (failures.length) throw new PatchIntegrityError(`Agent Workspaces settings rollback could not be proved: ${failures.map(failure => failure.message).join("; ")}`, { cause: error });
+      throw error;
+    }
+    return { matched: true, changed: nativeEdits.length + 1 };
   } catch (error) {
+    if (isPatchIntegrityError(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`WARN: Agent Workspaces settings patch skipped: ${message}`);
     return { matched: false, changed: 0, reason: message };
