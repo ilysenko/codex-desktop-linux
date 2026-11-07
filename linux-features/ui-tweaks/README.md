@@ -432,8 +432,9 @@ the Quick Chat module, reaches the ChatGPT sender, model, status, and submission
 lock modules through that module's own require function, and publishes itself
 under `Symbol.for("codex-linux.selected-text-more-details")` when the module
 evaluates. The selection overlay reads that registry; until it exists, the menu
-keeps its upstream actions without More details. rspack duplicates the overlay
-module into several lazy chunks, and every copy is patched. All inserted code
+keeps its upstream actions without More details. Rspack can put the overlay and
+toolbar modules in separate lazy chunks. The patch validates the native toolbar
+exports and patches every discovered overlay copy. All inserted code
 is wrapped in marker comments, so an already patched asset is verified by
 restoring the upstream bytes and re-applying the patch. The runtime and overlay
 assets are committed together with byte verification. A failed write restores
