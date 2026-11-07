@@ -2225,7 +2225,16 @@ mod tests {
                 .unwrap(),
         );
 
-        assert_eq!(outcome, EditableTextSetOutcome::MismatchAfterDeadline);
+        // A last poll can cross the same fixed deadline. Both outcomes mean
+        // an unverified write; neither permits verification or replay.
+        assert!(
+            matches!(
+                outcome,
+                EditableTextSetOutcome::MismatchAfterDeadline
+                    | EditableTextSetOutcome::ReadbackTimedOut
+            ),
+            "{outcome:?}"
+        );
         let state = state.lock().unwrap();
         assert_eq!(state.mutations, 1);
         assert!(state.character_count_reads > 1);

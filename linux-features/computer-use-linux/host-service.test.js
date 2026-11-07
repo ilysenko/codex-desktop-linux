@@ -118,11 +118,37 @@ test('launcher hook leaves the app usable when XDG_RUNTIME_DIR is unavailable', 
   assert.equal(fs.existsSync(marker), false);
 });
 
+// The bridge runs detached. Unregister its owner. Wait up to 3 s for the
+// bridge named in the lock to exit, then kill it if it still runs.
+// The lock's start time keeps a reused pid from being taken for the bridge.
+async function stopBridge(socketPath, cleanup) {
+  let lock;
+  try { lock = JSON.parse(fs.readFileSync(`${socketPath}.lock`, 'utf8')); } catch {}
+  try { await cleanup?.(); } catch {}
+  const pid = lock?.pid;
+  if (!Number.isSafeInteger(pid) || typeof lock.startTime !== 'string') return;
+  const running = () => {
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+      return fields[0] !== 'Z' && fields[19] === lock.startTime;
+    } catch { return false; }
+  };
+  const deadline = Date.now() + 3000;
+  while (running() && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  if (running()) {
+    try { process.kill(pid, 'SIGKILL'); } catch {}
+  }
+}
+
 test('launcher reuses one host authority and only its owner token can stop it', async t => {
   const root = makeSocketTempDir('cu-', 'runtime/codex-test/computer-use-native.sock', { limit: BRIDGE_SOCKET_PATH_MAX });
   let cleanup;
-  t.after(() => {
-    try { cleanup?.(); } catch {}
+  let socketPath;
+  t.after(async () => {
+    if (socketPath) await stopBridge(socketPath, cleanup);
     fs.rmSync(root, { recursive: true, force: true });
   });
   const runtime = path.join(root, 'runtime');
@@ -141,8 +167,10 @@ test('launcher reuses one host authority and only its owner token can stop it', 
     CODEX_LINUX_LAUNCHER_PID: String(process.pid),
     CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE: process.execPath,
   };
-  const { cleanupOwnedBridge, launchHostBridge } = await import('./host-service.mjs');
+  const { bridgeSocketPath, cleanupOwnedBridge, launchHostBridge } = await import('./host-service.mjs');
+  socketPath = bridgeSocketPath(env);
   const first = await launchHostBridge(env);
+  assert.equal(first.socketPath, socketPath);
   cleanup = () => cleanupOwnedBridge({ ...env, CODEX_LINUX_CUA_HOST_OWNER_TOKEN: first.ownerToken });
   assert.match(first.ownerToken, /^[a-f0-9]{48}$/);
   const second = await launchHostBridge(env);
@@ -163,8 +191,9 @@ test('launcher reuses one host authority and only its owner token can stop it', 
 test('launcher registers a new owner while the previous launcher exits', async t => {
   const root = makeSocketTempDir('cu-', 'runtime/codex-test/computer-use-native.sock', { limit: BRIDGE_SOCKET_PATH_MAX });
   let cleanup;
-  t.after(() => {
-    try { cleanup?.(); } catch {}
+  let socketPath;
+  t.after(async () => {
+    if (socketPath) await stopBridge(socketPath, cleanup);
     fs.rmSync(root, { recursive: true, force: true });
   });
   const runtime = path.join(root, 'runtime');
@@ -194,8 +223,10 @@ test('launcher registers a new owner while the previous launcher exits', async t
     CODEX_LINUX_APP_ID: 'codex-test',
     CODEX_LINUX_COMPUTER_USE_BACKEND_SOURCE: process.execPath,
   };
-  const { cleanupOwnedBridge, launchHostBridge } = await import('./host-service.mjs');
+  const { bridgeSocketPath, cleanupOwnedBridge, launchHostBridge } = await import('./host-service.mjs');
+  socketPath = bridgeSocketPath(baseEnv);
   const first = await launchHostBridge({ ...baseEnv, CODEX_LINUX_LAUNCHER_PID: String(owner.pid) });
+  assert.equal(first.socketPath, socketPath);
   owner.kill('SIGKILL');
   await new Promise(resolve => owner.once('exit', resolve));
 

@@ -8,16 +8,20 @@ const {spawnSync} = require('node:child_process');
 const test = require('node:test');
 const {stageEnabledLinuxFeatureInstall, loadEnabledLinuxFeatures} =
     require('../../scripts/lib/linux-features.js');
+const {DBUS_SOCKET_PATH_MAX, makeSocketTempDir} = require('../../scripts/lib/unix-socket-dir.test-helpers.js');
 const feature = __dirname;
 const repo = path.resolve(feature, '../..');
 const uuid = 'global-dictation-gnome@chatgpt-community.local';
 const helperPath = '/opt/codex-desktop/resources/native/codex-global-dictation-linux';
 
-function scratch(t) {
-    // Never use os.tmpdir(): this machine's /tmp is RAM-backed.
-    const base = path.join(os.homedir(), '.cache/codex-desktop-dev');
-    fs.mkdirSync(base, {recursive: true});
-    const dir = fs.mkdtempSync(path.join(base, 'gnome-dictation-test-'));
+// Under TMPDIR, like the other tests, so the run-node-checks.sh guard sees
+// anything left behind. Set TMPDIR to keep scratch off a RAM-backed /tmp. A
+// test that listens on a bus socket in its scratch names the socket, so the
+// scratch moves where that path fits dbus-daemon's limit.
+function scratch(t, busSocket) {
+    const dir = busSocket
+        ? makeSocketTempDir('gnome-dictation-test-', busSocket, {limit: DBUS_SOCKET_PATH_MAX})
+        : fs.mkdtempSync(path.join(os.tmpdir(), 'gnome-dictation-test-'));
     t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
     return dir;
 }
@@ -134,7 +138,7 @@ test('real GJS private-bus dispatch returns uint32 version, denies async Paste a
                 return;
             }
         }
-        const root = scratch(t), runtime = path.join(root, 'runtime');
+        const root = scratch(t, 'runtime/bus'), runtime = path.join(root, 'runtime');
         const socket = path.join(runtime, 'bus');
         const env = {...process.env, HOME: path.join(root, 'home'), TMPDIR: path.join(root, 'tmp'),
             XDG_RUNTIME_DIR: runtime, XDG_CONFIG_HOME: path.join(root, 'config'),
@@ -150,7 +154,7 @@ test('real GJS private-bus dispatch returns uint32 version, denies async Paste a
         const xmlSocket = socket.replace(/[&<>"']/g, c => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
         })[c]);
-        // A private socket on disk, not /tmp and never the user's session bus.
+        // A private socket in the test's scratch, never the user's session bus.
         write(busConfig, `<busconfig><type>session</type><listen>unix:path=${xmlSocket}</listen>
 <auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/>
 <allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>`);
@@ -249,7 +253,7 @@ if (failed) System.exit(1);
         {env, encoding: 'utf8', timeout: 15000});
         assert.equal(result.status, 0, `${result.error ?? ''}\n${result.stderr}\n${result.stdout}`);
         assert.match(result.stdout, /REAL_DBUS_OK: uint32=1; async caller denied; events=0; name released; object unexported/);
-        t.diagnostic('Real Gio async dispatch and unsigned reply verified on a private cache-backed bus');
+        t.diagnostic('Real Gio async dispatch and unsigned reply verified on a private test bus');
     });
 
 test('live configuration changes authorize only the new exact executable without re-enabling', async () => {
