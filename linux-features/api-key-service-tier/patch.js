@@ -470,6 +470,149 @@ function applyFallbackFastTierPatch(source) {
   return source;
 }
 
+const OPTIONS_MESSAGES = "{standardLabel:{id:\"serviceTier.standard.label\",defaultMessage:\"Standard\",description:\"Label for the standard service tier\"},standardDescription:{id:\"serviceTier.standard.description\",defaultMessage:\"Default speed\",description:\"Description for the standard service tier\"},fastLabel:{id:\"serviceTier.fast.label\",defaultMessage:\"Fast\",description:\"Label for the Fast service tier\"},fastDescription:{id:\"serviceTier.fast.description\",defaultMessage:\"1.5x speed, increased usage\",description:\"Description for the Fast service tier\"},fast2xDescription:{id:\"serviceTier.fast.description.2x\",defaultMessage:\"2x speed, increased usage\",description:\"Description for a Fast service tier that runs at 2x speed\"},ultrafastLabel:{id:\"serviceTier.ultrafast.label\",defaultMessage:\"Ultrafast\",description:\"Label for the Ultrafast service tier\"},ultrafastDescription:{id:\"serviceTier.ultrafast.description\",defaultMessage:\"The fastest available responses for latency-sensitive work\",description:\"Description for the Ultrafast service tier\"}}";
+
+// The complete current options factory owns its Standard option, localization,
+// provider-tier mapping and public active-model wrapper. The low-level splice
+// above is used only after this closed native grammar and import publication
+// bindings have qualified the actual owner.
+const FALLBACK_MARKER = "codexLinuxApiKeyServiceTierOptions";
+const FALLBACK_DESCRIPTION = "current API key service tier options factory";
+const fallbackMarkerCount = source => source.split(FALLBACK_MARKER).length - 1;
+
+function nativeOptionsOwner(source, module) {
+  if (!module || module.params?.length !== 3 || new Set(module.params).size !== 3) return null;
+  const [argument, exportsName, requireName] = module.params;
+  if (module.params.includes("Boolean") || module.params.some(name => !new RegExp(`^${JS_IDENT}$`, "u").test(name))) return null;
+  const req = escapeRegExp(requireName), exp = escapeRegExp(exportsName);
+  const importValue = `${req}\\((?:"(?:\\\\.|[^"\\\\])*"|\\d+)\\)`;
+  const pattern = new RegExp(
+    `^var (?<resolver>${JS_IDENT})=${importValue},(?<messages>${JS_IDENT})=${importValue};` +
+    `let (?<standardValue>${JS_IDENT})="default",(?<labels>${JS_IDENT})=\\(0,\\k<messages>\\.(?<messagesKey>${JS_IDENT})\\)` +
+    `\\(${escapeRegExp(OPTIONS_MESSAGES)}\\),(?<standard>${JS_IDENT})=\\{description:\\k<labels>\\.standardDescription,iconKind:null,label:\\k<labels>\\.standardLabel,speedMultiplier:null,tier:null,value:null\\};` +
+    `function (?<builder>${JS_IDENT})\\((?<bm>${JS_IDENT}),(?<bt>${JS_IDENT})\\)\\{return\\[\\k<standard>,\\.\\.\\.\\(\\k<bt>\\?\\?\\[\\]\\)\\.map\\((?<tier>${JS_IDENT})=>\\{` +
+    `let (?<kind>${JS_IDENT})=\\(0,\\k<resolver>\\.(?<classifyKey>${JS_IDENT})\\)\\(\\k<tier>\\.id,\\k<tier>\\.name\\),(?<speed>${JS_IDENT})="fast"===\\k<kind>\\?1.5:null;` +
+    `return\\{description:function\\((?<dm>${JS_IDENT}),(?<ds>${JS_IDENT})\\)\\{switch\\(\\(0,\\k<resolver>\\.\\k<classifyKey>\\)\\(\\k<dm>\\?\\.id\\?\\?null,\\k<dm>\\?\\.name\\)\\)\\{` +
+    `case"fast":return 2===\\k<ds>\\?\\k<labels>\\.fast2xDescription:\\k<labels>\\.fastDescription;case"ultrafast":return \\k<dm>\\?\\.description\\|\\|\\k<labels>\\.ultrafastDescription;case null:return \\k<dm>\\?\\.description\\?\\?\\k<labels>\\.standardDescription\\}\\}` +
+    `\\(\\k<tier>,\\k<speed>\\),iconKind:\\k<kind>,label:function\\((?<lm>${JS_IDENT})\\)\\{switch\\(\\(0,\\k<resolver>\\.\\k<classifyKey>\\)\\(\\k<lm>\\?\\.id\\?\\?null,\\k<lm>\\?\\.name\\)\\)\\{` +
+    `case"fast":return \\k<labels>\\.fastLabel;case"ultrafast":return \\k<labels>\\.ultrafastLabel;case null:return \\k<lm>\\?\\.name\\?\\?\\k<labels>\\.standardLabel\\}\\}` +
+    `\\(\\k<tier>\\),speedMultiplier:\\k<speed>,tier:\\k<tier>,value:\\k<tier>\\.id\\}\\}\\)\\]\\}` +
+    `${req}\\.d\\(${exp},\\{(?<requestExport>${JS_IDENT}):\\(\\)=>\\k<resolver>\\.(?<requestKey>${JS_IDENT}),` +
+    `(?<effectiveExport>${JS_IDENT}):\\(\\)=>\\k<resolver>\\.(?<effectiveKey>${JS_IDENT}),` +
+    `(?<fastExport>${JS_IDENT}):\\(\\)=>\\k<resolver>\\.(?<fastKey>${JS_IDENT}),` +
+    `(?<availableExport>${JS_IDENT}):\\(\\)=>\\k<resolver>\\.(?<availableKey>${JS_IDENT}),` +
+    `(?<priorityExport>${JS_IDENT}):\\(\\)=>\\k<resolver>\\.(?<priorityKey>${JS_IDENT}),` +
+    `(?<fastValueExport>${JS_IDENT}):\\(\\)=>"fast"\\},` +
+    `\\{(?<builderExport>${JS_IDENT}):\\k<builder>,(?<optionsExport>${JS_IDENT}):function\\((?<model>${JS_IDENT})\\)\\{return \\k<builder>\\(\\k<model>\\?\\.model,\\k<model>\\?\\.serviceTiers\\)\\},` +
+    `(?<findExport>${JS_IDENT}):function\\((?<models>${JS_IDENT}),(?<target>${JS_IDENT}),(?<selectedTier>${JS_IDENT})\\)\\{return \\k<models>\\?\\.find\\((?<candidate>${JS_IDENT})=>\\k<candidate>\\.model===\\k<target>&&\\(0,\\k<resolver>\\.\\k<availableKey>\\)\\(\\k<candidate>,\\k<selectedTier>\\)\\)\\?\\?null\\},` +
+    `(?<configExport>${JS_IDENT}):\\{type:"fromConfig"\\},(?<defaultExport>${JS_IDENT}):function\\((?<defaultInput>${JS_IDENT})\\)\\{return \\k<defaultInput>\\?\\?\\k<standardValue>\\},` +
+    `(?<isFastExport>${JS_IDENT}):function\\((?<classifyInput>${JS_IDENT})\\)\\{return"fast"===\\(0,\\k<resolver>\\.\\k<classifyKey>\\)\\(\\k<classifyInput>\\)\\},` +
+    `(?<standardExport>${JS_IDENT}):function\\((?<standardInput>${JS_IDENT})\\)\\{return \\k<standardInput>\\?\\?"standard"\\},` +
+    `(?<toSettingExport>${JS_IDENT}):function\\((?<toSettingInput>${JS_IDENT})\\)\\{return null==\\k<toSettingInput>\\?\\{type:"standard"\\}:\\{serviceTier:\\k<toSettingInput>,type:"custom"\\}\\},` +
+    `(?<fromSettingExport>${JS_IDENT}):function\\((?<setting>${JS_IDENT}),(?<configured>${JS_IDENT})\\)\\{switch\\(\\k<setting>\\.type\\)\\{case"fromConfig":return \\k<configured>;case"standard":return \\k<standardValue>;case"custom":return \\k<setting>\\.serviceTier\\}\\},` +
+    `(?<labelsExport>${JS_IDENT}):\\k<labels>\\}\\);?$`, "u");
+  const match = pattern.exec(source);
+  if (!match) return null;
+  const g = match.groups;
+  const roots = [g.resolver, g.messages, g.standardValue, g.labels, g.standard, g.builder];
+  const exports = Object.entries(g).filter(([key]) => key.endsWith("Export")).map(([, value]) => value);
+  if (new Set(roots).size !== roots.length || roots.some(name => module.params.includes(name) || name === PATCH_MARKER || name === "Boolean") ||
+      new Set(exports).size !== exports.length || fallbackMarkerCount(source) !== 0) return null;
+  for (const [locals, captured] of [
+    [[g.bm,g.bt],[g.standard,g.resolver,g.labels]], [[g.tier,g.kind,g.speed],[g.resolver,g.labels]],
+    [[g.dm,g.ds],[g.resolver,g.labels]], [[g.lm],[g.resolver,g.labels]],
+    [[g.model],[g.builder,PATCH_MARKER,"Boolean"]], [[g.models,g.target,g.selectedTier],[g.resolver]],
+    [[g.defaultInput],[g.standardValue]], [[g.classifyInput],[g.resolver]],
+    [[g.setting,g.configured],[g.standardValue]],
+  ]) if (new Set(locals).size !== locals.length || locals.some(name => captured.includes(name))) return null;
+  if ([g.target,g.selectedTier,g.resolver].includes(g.candidate)) return null;
+  const snapshot = { ...module, moduleSource: source };
+  const resolver = findRspackRequireBinding(snapshot,g.resolver), messages = findRspackRequireBinding(snapshot,g.messages);
+  if (resolver == null || messages == null || resolver.moduleId === messages.moduleId) return null;
+  if (findRspackExportPublication(snapshot,g.builderExport)?.expression !== g.builder ||
+      findRspackExportPublication(snapshot,g.optionsExport)?.fn == null) return null;
+  return { groups:g, resolverImport:resolver, messagesImport:messages };
+}
+
+function fallbackContribution(source) {
+  const patched = applyFallbackFastTierPatch(source);
+  return patched === source ? null : replaceOnce(patched,FALLBACK_FAST_TIER_HELPER,`/*${FALLBACK_MARKER}*/${FALLBACK_FAST_TIER_HELPER}`);
+}
+
+function fallbackModuleState(source, module) {
+  const native = nativeOptionsOwner(source,module);
+  if (native) return { kind:"current", owner:native };
+  if (fallbackMarkerCount(source) !== 1) return { kind:"missing" };
+  const withoutMarker = replaceOnce(source,`/*${FALLBACK_MARKER}*/`,"");
+  if (withoutMarker == null) return { kind:"missing" };
+  const patched = fallbackFastTierState(withoutMarker);
+  if (patched.kind !== "patched") return { kind:"missing" };
+  const {model} = patched.match.groups;
+  const args = `${model}?.serviceTiers?.length?${model}.serviceTiers:[${PATCH_MARKER}(${model})].filter(Boolean)`;
+  const restoredArgs = replaceOnce(withoutMarker,args,`${model}?.serviceTiers`);
+  const restored = restoredArgs && replaceOnce(restoredArgs,FALLBACK_FAST_TIER_HELPER,"");
+  const owner = restored && nativeOptionsOwner(restored,module);
+  if (owner && fallbackContribution(restored) === source) return { kind:"patched",owner };
+  return { kind:"missing" };
+}
+
+function applyFallbackFastTierModule(source,module) {
+  const state = fallbackModuleState(source,module);
+  if (state.kind === "patched") return source;
+  if (state.kind !== "current") throw new Error(`Missing, ambiguous or partial ${FALLBACK_DESCRIPTION}`);
+  const patched = fallbackContribution(source);
+  if (patched == null || fallbackModuleState(patched,module).kind !== "patched") {
+    throw new Error("API key service tier options failed canonical replay");
+  }
+  return patched;
+}
+
+function requireOptionsRegistry(source) {
+  const headers=[...source.matchAll(/\bexport\s+const\s+__webpack_modules__\s*=\s*\{/gu)];
+  if (headers.length !== 1) throw new Error(`Missing or ambiguous ${FALLBACK_DESCRIPTION} registry`);
+  const [header]=headers;
+  if (!createJavaScriptLexicalIndex(source.slice(0,header.index+header[0].length)).isRoot(header.index)) {
+    throw new Error(`Opaque or nested ${FALLBACK_DESCRIPTION} registry`);
+  }
+}
+
+function patchApiKeyServiceTierFallback(extractedDir, options={}) {
+  const assetsDir=path.join(extractedDir,"webview","assets"), markerAssets=new Set();
+  const copies=findUniqueRspackModuleCopies(assetsDir,{
+    description:FALLBACK_DESCRIPTION,
+    sourceMatch(source,name){
+      if(source.includes(FALLBACK_MARKER))markerAssets.add(name);
+      return source.includes(FALLBACK_MARKER)||FALLBACK_NEEDLES.every(needle=>source.includes(needle));
+    },
+    matchModule:(source,module)=>fallbackModuleState(source,module).kind!=="missing",
+  });
+  // Resolve the actual provider-tier classifier used by the builder, rather
+  // than accepting any same-spelled property on an unrelated imported module.
+  const resolvers=findUniqueRspackModuleCopies(assetsDir,{
+    description:"current API key service tier resolver dependency",
+    sourceMatch:source=>RESOLVER_NEEDLES.every(needle=>source.includes(needle)),
+    matchModule:(source,module)=>resolverModuleState(source,module).kind!=="missing",
+  });
+  const resolverStates=resolvers.map(module=>resolverModuleState(module.moduleSource,module));
+  const resolverGroups=resolverStates.map(state=>state.owner?.groups);
+  if(resolverGroups.some(groups=>groups==null) || new Set(resolverStates.map(state=>state.kind)).size!==1) {
+    throw new Error("Damaged or partially applied service tier options resolver dependency");
+  }
+  for(const copy of copies){
+    requireOptionsRegistry(copy.source);
+    const state=fallbackModuleState(copy.moduleSource,copy);
+    const owner=state.owner;
+    if(owner==null || fallbackMarkerCount(copy.source)!==fallbackMarkerCount(copy.moduleSource))throw new Error("Orphan service tier options marker");
+    markerAssets.delete(copy.assetName);
+    if(owner.resolverImport.moduleId!==resolvers[0].moduleId || resolverGroups.some(g=>
+      ["classifyKey","requestKey","effectiveKey","fastKey","availableKey","priorityKey"].some(key=>g[key]!==owner.groups[key]))) {
+      throw new Error("Service tier options import does not bind its native resolver publications");
+    }
+  }
+  if(markerAssets.size)throw new Error(`Orphan service tier options marker in ${[...markerAssets].join(", ")}`);
+  return patchRspackModuleCopies(assetsDir,copies,applyFallbackFastTierModule,options);
+}
+
 const descriptors = [
   {
     id: "api-key-service-tier-gate",
@@ -494,13 +637,10 @@ const descriptors = [
   },
   {
     id: "api-key-service-tier-fallback",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20610,
     ciPolicy: "optional",
-    assetNeedles: FALLBACK_NEEDLES,
-    missingDescription: "current API key service tier fallback bundle",
-    skipDescription: "API key fallback fast tier patch",
-    apply: applyFallbackFastTierPatch,
+    apply: patchApiKeyServiceTierFallback,
   },
 ];
 
@@ -517,6 +657,9 @@ module.exports = {
   resolverModuleState,
   descriptors,
   fallbackFastTierState,
+  fallbackModuleState,
+  applyFallbackFastTierModule,
+  patchApiKeyServiceTierFallback,
   serviceTierGateState,
   serviceTierResolverState,
 };

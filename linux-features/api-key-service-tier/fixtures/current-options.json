@@ -1,0 +1,45 @@
+{
+  "provenance": {
+    "version": "26.1103.32239",
+    "architecture": "amd64",
+    "source": "Retained signed raw input and UP04-current-owner-locator-4e39-v1.json; half-open UTF-16 and byte spans; source inspected, never evaluated."
+  },
+  "options": {
+    "asset": "webview/assets/async/182735.d3d917f28d.js",
+    "id": "l2g8",
+    "utf16": [
+      7842005,
+      7844322
+    ],
+    "rawBytes": [
+      7842456,
+      7844773
+    ],
+    "bytes": 2317,
+    "bodySha256": "429437eabaf5e37dff258b49eb645089a439719656932b896d9117995f36ce67",
+    "params": [
+      "e",
+      "t",
+      "n"
+    ],
+    "publications": {
+      "HN": {
+        "params": "e",
+        "utf16": [
+          1863,
+          1910
+        ],
+        "bodyBytes": 34,
+        "anonymous": true
+      }
+    },
+    "imports": {
+      "r": "eWgO",
+      "i": "Qgfj"
+    },
+    "pureChecks": {
+      "fallback": "current"
+    },
+    "source": "var r=n(\"eWgO\"),i=n(\"Qgfj\");let a=\"default\",s=(0,i.YK)({standardLabel:{id:\"serviceTier.standard.label\",defaultMessage:\"Standard\",description:\"Label for the standard service tier\"},standardDescription:{id:\"serviceTier.standard.description\",defaultMessage:\"Default speed\",description:\"Description for the standard service tier\"},fastLabel:{id:\"serviceTier.fast.label\",defaultMessage:\"Fast\",description:\"Label for the Fast service tier\"},fastDescription:{id:\"serviceTier.fast.description\",defaultMessage:\"1.5x speed, increased usage\",description:\"Description for the Fast service tier\"},fast2xDescription:{id:\"serviceTier.fast.description.2x\",defaultMessage:\"2x speed, increased usage\",description:\"Description for a Fast service tier that runs at 2x speed\"},ultrafastLabel:{id:\"serviceTier.ultrafast.label\",defaultMessage:\"Ultrafast\",description:\"Label for the Ultrafast service tier\"},ultrafastDescription:{id:\"serviceTier.ultrafast.description\",defaultMessage:\"The fastest available responses for latency-sensitive work\",description:\"Description for the Ultrafast service tier\"}}),o={description:s.standardDescription,iconKind:null,label:s.standardLabel,speedMultiplier:null,tier:null,value:null};function l(e,t){return[o,...(t??[]).map(e=>{let t=(0,r.Pg)(e.id,e.name),n=\"fast\"===t?1.5:null;return{description:function(e,t){switch((0,r.Pg)(e?.id??null,e?.name)){case\"fast\":return 2===t?s.fast2xDescription:s.fastDescription;case\"ultrafast\":return e?.description||s.ultrafastDescription;case null:return e?.description??s.standardDescription}}(e,n),iconKind:t,label:function(e){switch((0,r.Pg)(e?.id??null,e?.name)){case\"fast\":return s.fastLabel;case\"ultrafast\":return s.ultrafastLabel;case null:return e?.name??s.standardLabel}}(e),speedMultiplier:n,tier:e,value:e.id}})]}n.d(t,{DS:()=>r.DS,E_:()=>r.E_,L9:()=>r.L9,Pd:()=>r.Pd,Yf:()=>r.Yf,aF:()=>\"fast\"},{Ej:l,HN:function(e){return l(e?.model,e?.serviceTiers)},MI:function(e,t,n){return e?.find(e=>e.model===t&&(0,r.Pd)(e,n))??null},Q5:{type:\"fromConfig\"},Q7:function(e){return e??a},Qw:function(e){return\"fast\"===(0,r.Pg)(e)},XK:function(e){return e??\"standard\"},oD:function(e){return null==e?{type:\"standard\"}:{serviceTier:e,type:\"custom\"}},qh:function(e,t){switch(e.type){case\"fromConfig\":return t;case\"standard\":return a;case\"custom\":return e.serviceTier}},sN:s})"
+  }
+}

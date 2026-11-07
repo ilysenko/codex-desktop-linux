@@ -75,15 +75,20 @@ physical copy of its module. The model marker validates the published catalog's
 auth input, loop model, normalized output, and returned catalog through the shared
 owner inspector. Only its exact output-field insertion qualifies as applied;
 marker text in comments, strings, other objects, or another auth binding refuses
-the patch. The gate, model and resolver patches prepare every physical copy before
+the patch. All four patches prepare every physical copy before
 writes. All copies must be pristine or exactly patched; a missing, ambiguous,
 drifted, orphan, or partially patched owner refuses that patch's whole cohort.
 A later write failure restores every attempted file, including a partially
 written file. The resolver qualifies the complete published factory, including its provider-tier
 lookup, request-id conversion, classification, access checks and exported callers.
 It accepts only the exact local Fast helper and fallback insertion as applied.
-The option-list patch leaves a missing or drifted owner chunk unchanged and reports
-a warning.
+The option-list patch qualifies its complete published factory, including
+localized Standard/Fast/Ultrafast options, provider-tier mapping and the active-model
+wrapper. Its imported classifier and reexports must bind the actual qualified
+service-tier resolver. Existing provider tiers take precedence; synthetic Fast is
+available only for a strictly marked API-key model without advertised tiers.
+Only the exact wrapper helper and argument insertion qualify as applied. The
+enabled-feature build gate rejects a skipped or failed required descriptor.
 
 ## Risks
 
@@ -94,5 +99,5 @@ ignores unknown fields may show the UI without changing latency.
 ## Test
 
 ```bash
-node --test linux-features/api-key-service-tier/test.js
+node --test linux-features/api-key-service-tier/test.js linux-features/api-key-service-tier/resolver.test.js linux-features/api-key-service-tier/options.test.js
 ```
