@@ -431,7 +431,7 @@ function settingsTree(t, locales = ["pl-PL", "es-419"]) {
   return { root, assets, catalog, settingsPath: path.join(assets, "572868.36a6c86221.js") };
 }
 
-test("native row and all 64 locale catalogs patch idempotently while existing messages stay unchanged", async (t) => {
+test("native row and all 65 locale catalogs patch idempotently while existing messages stay unchanged", async (t) => {
   const locales = Object.keys(translations).filter((locale) => locale !== "en");
   const { root, catalog, settingsPath } = settingsTree(t, locales);
   assert.deepEqual(applySettingsPatch(root), { changed: true });
@@ -525,4 +525,45 @@ test("official signed General settings module and all locale catalogs satisfy th
   assert.deepEqual(extraLoaders, []);
   const catalogs = catalogPatches(assetsDir, listWebviewScriptAssets(signedApp), fs.readFileSync(path.join(assetsDir, loaderName), "utf8"));
   assert.equal(catalogs.length, 65);
+});
+
+
+test("registered General setting restores every file after a truncated write and retries canonically", async (t) => {
+  const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+  const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+  const { settingsDescriptor } = require("./settings.js");
+  t.mock.method(console, "warn", () => {});
+  for (const failedRole of ["settings", "first catalog", "last catalog"]) {
+    await t.test(failedRole, (t) => {
+      const { root, assets, catalog, settingsPath } = settingsTree(t);
+      const files = [settingsPath, catalog("pl-PL"), catalog("es-419"), path.join(assets, "496175.cf5ad221c1.js")];
+      for (const [index, file] of files.entries()) fs.chmodSync(file, index % 2 ? 0o640 : 0o600);
+      const snapshot = () => files.map((file) => ({ file, bytes: fs.readFileSync(file), mode: fs.statSync(file).mode & 0o777 }));
+      const before = snapshot(), names = fs.readdirSync(assets).sort();
+      const run = () => {
+        const report = createPatchReport();
+        applyExtractedAppPatchDescriptors(root, [settingsDescriptor], {}, report, "extracted-app:post-webview");
+        return report.patches[0].status;
+      };
+      const target = files[["settings", "first catalog", "last catalog"].indexOf(failedRole)];
+      const originalWrite = fs.writeFileSync;
+      let failed = false;
+      const fault = t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+        if (file === target && !failed) {
+          failed = true;
+          originalWrite(file, "truncated");
+          throw Error("injected General setting write failure");
+        }
+        return originalWrite(file, bytes, ...args);
+      });
+      assert.equal(run(), "skipped-optional");
+      assert.equal(failed, true);
+      assert.deepEqual(snapshot(), before, "settings and every catalog retain exact bytes and modes");
+      assert.deepEqual(fs.readdirSync(assets).sort(), names);
+      fault.mock.restore();
+      assert.equal(run(), "applied");
+      assert.equal(run(), "already-applied");
+      assert.deepEqual(snapshot().map(({ mode }) => mode), before.map(({ mode }) => mode));
+    });
+  }
 });

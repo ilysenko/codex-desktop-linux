@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { findMatchingBrace, escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 const { listWebviewScriptAssets } = require("../../scripts/patches/lib/assets.js");
+const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
 const { patchBreaksJavaScriptSyntax } = require("../../scripts/patches/lib/javascript-syntax.js");
 const { STORAGE_KEY } = require("./runtime.js");
 const translations = require("./translations.json");
@@ -141,7 +142,7 @@ function catalogPatches(assetsDir, assetNames, loaderSource) {
       throw Error(`reasoning-visibility: ${locale} translations do not round-trip`);
     }
     const separator = literal === "{}" ? "" : ",";
-    patches.push({ target: path.join(assetsDir, names[0]), source: source.slice(0, close - 1) + separator + addition + source.slice(close - 1) });
+    patches.push({ target: path.join(assetsDir, names[0]), originalSource: source, source: source.slice(0, close - 1) + separator + addition + source.slice(close - 1) });
   }
   return patches;
 }
@@ -185,9 +186,15 @@ function applySettingsPatch(extractedDir) {
   const patched = patchSettingsSource(source);
   // Complete preflight before any settings/catalog writes, including locale drift.
   const catalogs = catalogPatches(assetsDir, assetNames, loaders[0]);
-  if (patched !== source) fs.writeFileSync(path.join(assetsDir, name), patched);
-  for (const catalog of catalogs) fs.writeFileSync(catalog.target, catalog.source);
-  return { changed: patched !== source || catalogs.length > 0 };
+  const result = commitAssetEdits(assetsDir, [
+    { assetName: name, source, patchedSource: patched },
+    ...catalogs.map((catalog) => ({
+      assetName: path.relative(assetsDir, catalog.target).split(path.sep).join("/"),
+      source: catalog.originalSource,
+      patchedSource: catalog.source,
+    })),
+  ]);
+  return { changed: result.changed > 0 };
 }
 
 module.exports = {

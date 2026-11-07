@@ -38,8 +38,8 @@ make install-native
 Then enable **Show reasoning summaries** under **Settings → General**, completely
 quit the app (including the tray), and start it again. The Polish label is
 **Pokaż podsumowania myślenia**. The label, description, accessible switch label,
-and save error follow the app language: English plus all 64 shipped translation
-catalogs, including `es-419`.
+and save error follow the app language: English plus all 65 shipped translation
+catalogs, including `es-419` and `hi-Latn`.
 
 The switch is saved in the current Electron profile's local storage under
 `codex-linux-reasoning-visibility`, consistent with other renderer preferences.
@@ -76,7 +76,7 @@ The official webview is an rspack build, so chunks are found by distinctive
 content, never by file name, chunk id, or module id. When rspack copies a module
 into several lazily loaded chunks, every copy is patched. The General setting
 row is declared inside the module factory that owns the native menu-bar setting
-and reuses only that factory's imports. Translations are added to the 64 locale
+and reuses only that factory's imports. Translations are added to the 65 locale
 JSON modules named by the upstream locale loader map.
 Contracts capture local identifiers. Missing, ambiguous, or incomplete
 contracts are left untouched and reported; the build gate refuses promotion
