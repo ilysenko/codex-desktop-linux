@@ -240,7 +240,7 @@ function recordReplayHudRuntimeSource() {
 }
 
 function recordReplayTranscriptCaptureExpression(transcriptVar, actionVar) {
-  return `(globalThis.codexLinuxRecordReplayCaptureTranscript?.(${transcriptVar},${actionVar})??((globalThis.codexLinuxRecordReplayPendingTranscripts??=[]).push({transcript:${transcriptVar},action:${actionVar},queuedAt:Date.now()}),!1))`;
+  return `(()=>{try{let codexLinuxRecordReplayCaptureResult=(globalThis.codexLinuxRecordReplayCaptureTranscript?.(${transcriptVar},${actionVar})??((globalThis.codexLinuxRecordReplayPendingTranscripts??=[]).push({transcript:${transcriptVar},action:${actionVar},queuedAt:Date.now()}),!1));codexLinuxRecordReplayCaptureResult?.catch?.(()=>{});return codexLinuxRecordReplayCaptureResult}catch{return!1}})()`;
 }
 
 function recordReplayActiveSpeechContextExpression(dispatchVar, transcriptVar) {
@@ -248,60 +248,333 @@ function recordReplayActiveSpeechContextExpression(dispatchVar, transcriptVar) {
 }
 
 
-function recordReplayCurrentChatGptBlocks(source) {
-  const id = String.raw`[A-Za-z_$][\w$]*`;
-  const starts = source.matchAll(new RegExp(
-    String.raw`if\((?<transcript>${id})\.length>0\|\|null!=(?:(?<handlers>${id})\.chatgpt|${id})\)\{`,
-    "g",
-  ));
-  const blocks = [];
-  for (const start of starts) {
-    const openBrace = start.index + start[0].length - 1;
-    const closeBrace = findMatchingBrace(source, openBrace);
-    if (closeBrace === -1) continue;
-    const text = source.slice(start.index, closeBrace + 1);
-    if (countOccurrences(text, "global-dictation-record-history-item") !== 1 ||
-        countOccurrences(text, "transcript_dispatched") !== 1) continue;
-    const actionMatches = [...text.matchAll(new RegExp(String.raw`else if\("send"===(?<actionContext>${id})\.action\)`, "g"))];
-    if (actionMatches.length !== 1) continue;
-    const capture = text.match(
-      new RegExp(String.raw`^if\([^{}]+\)\{(?<capture>\(globalThis\.codexLinuxRecordReplayCaptureTranscript\?\.\(\k<transcript>,(?<captureAction>${id})\.action\)[^;]+\);)?`.replace("\\k<transcript>", start.groups.transcript)),
-    );
-    blocks.push({
-      0: text,
-      index: start.index,
-      groups: {
-        transcript: start.groups.transcript,
-        actionContext: actionMatches[0].groups.actionContext,
-        capture: capture?.groups?.capture,
-        captureAction: capture?.groups?.captureAction,
-      },
-    });
+const DICTATION_IDENTIFIER = "[A-Za-z_$][\\w$]*";
+const DICTATION_PUBLIC_API = "codexLinuxRecordReplayCaptureTranscript";
+const DICTATION_QUEUE = "codexLinuxRecordReplayPendingTranscripts";
+
+function dictationMatches(source, pattern, root = false) {
+  const lexical = createJavaScriptLexicalIndex(source);
+  return [...source.matchAll(pattern)].filter(match => lexical.isCode(match.index) && (!root || lexical.isRoot(match.index)));
+}
+
+function dictationOne(rows, label) {
+  if (rows.length !== 1) throw Error(`${label} matched ${rows.length} times`);
+  return rows[0];
+}
+
+function dictationDelimiter(source, open) {
+  const lexical = createJavaScriptLexicalIndex(source), stack = [], pairs = { "(": ")", "[": "]", "{": "}" };
+  if (!pairs[source[open]]) return -1;
+  for (let index = open; index < source.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    if (pairs[source[index]]) stack.push(pairs[source[index]]);
+    else if (")]}".includes(source[index])) {
+      if (stack.pop() !== source[index]) return -1;
+      if (!stack.length) return index;
+    }
   }
-  return blocks;
+  return -1;
+}
+
+function dictationPublicationKeys(module) {
+  const body = module.moduleSource, req = escapeRegExp(module.params[2] ?? "");
+  const target = escapeRegExp(module.params[1] ?? "");
+  const call = dictationOne(dictationMatches(body, new RegExp(`(?<![\\w$.])${req}\\.d\\(${target},\\{`, "gu"), true), "native dictation publication call");
+  const maps = [];
+  let open = call.index + call[0].length - 1, close = findMatchingBrace(body, open);
+  if (close < open) throw Error("Incomplete native dictation publication");
+  maps.push(body.slice(open + 1, close));
+  if (body.slice(close + 1).startsWith(",{")) {
+    open = close + 2; close = findMatchingBrace(body, open);
+    if (close < open) throw Error("Incomplete native dictation value publication");
+    maps.push(body.slice(open + 1, close));
+  }
+  const keys = [];
+  for (const map of maps) {
+    const lexical = createJavaScriptLexicalIndex(map);
+    for (const match of map.matchAll(/(?:^|,)("(?:\\.|[^"\\])*"|[A-Za-z_$][\w$]*):/gu)) {
+      const at = match.index + (match[0].startsWith(",") ? 1 : 0);
+      if (lexical.isRoot(at)) keys.push(match[1].startsWith('"') ? JSON.parse(match[1]) : match[1]);
+    }
+  }
+  return [...new Set(keys)];
+}
+
+// The projection changes only a verified declaration leaf and exports target.
+// Original subsequent uses stay visible to the shared publication proof.
+function dictationBindingProbe(module, name, declarationStart, exportName) {
+  const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
+  const publication = findRspackExportPublication(module, exportName), body = module.moduleSource;
+  if (publication?.expression == null || module.params.includes(name)) throw Error("Unsupported dictation readonly binding");
+  const call = dictationOne(dictationMatches(body, new RegExp(`(?<![\\w$.])${escapeRegExp(publication.requireName)}\\.d\\(${escapeRegExp(publication.exportsName)},\\{`, "gu"), true), "dictation binding publication target");
+  const exportsStart = call.index + call[0].indexOf("(") + 1;
+  if (declarationStart < 0 || body.slice(declarationStart, declarationStart + name.length) !== name) throw Error("Dictation binding preimage changed");
+  let probeName = "__codexRecordReplayDictationBindingProbe";
+  while (body.includes(probeName)) probeName += "$";
+  const edits = [
+    { start: declarationStart, end: declarationStart + name.length, before: name, after: probeName },
+    { start: exportsStart, end: exportsStart + publication.exportsName.length, before: publication.exportsName, after: name },
+  ].sort((left, right) => right.start - left.start);
+  if (edits[1].end > edits[0].start) throw Error("Dictation binding proof ranges overlap");
+  let projected = body;
+  for (const edit of edits) {
+    if (body.slice(edit.start, edit.end) !== edit.before) throw Error("Dictation binding proof preimage changed");
+    projected = projected.slice(0, edit.start) + edit.after + projected.slice(edit.end);
+  }
+  const result = findRspackExportPublication({ moduleSource: projected, params: [module.params[0], name, module.params[2]] }, exportName);
+  if (result?.exportsName !== name || result.requireName !== publication.requireName || result.expression !== publication.expression) throw Error("Dictation binding is reassigned or redeclared");
+  return { edits, projected, result };
+}
+
+function dictationRootFunction(module, point) {
+  const heads = dictationMatches(module.moduleSource, new RegExp(`\\bfunction (${DICTATION_IDENTIFIER})\\(([^()]*)\\)\\{`, "gu"), true);
+  const functions = heads.map(head => {
+    const open = head.index + head[0].length - 1, end = findMatchingBrace(module.moduleSource, open);
+    return { name: head[1], params: head[2], start: head.index, nameStart: head.index + "function ".length, open, end };
+  }).filter(fn => fn.open < point && point < fn.end);
+  const fn = dictationOne(functions, "native published dictation hook");
+  const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
+  const publications = dictationPublicationKeys(module).map(key => ({ key, value: findRspackExportPublication(module, key) })).filter(row => row.value?.expression === fn.name);
+  const publication = dictationOne(publications, "native dictation hook publication");
+  dictationBindingProbe(module, fn.name, fn.nameStart, publication.key);
+  return { ...fn, exportName: publication.key, publication: publication.value };
+}
+
+function dictationNativeBody(body, transcript, context) {
+  const trivia = /^(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*(?:[\r\n\u2028\u2029]|$))*/u.exec(body)[0];
+  body = body.slice(trivia.length);
+  const id = DICTATION_IDENTIFIER, text = escapeRegExp(transcript), extra = escapeRegExp(context);
+  const pattern = [
+    `^${text}\\.length>0&&null==(?<history>${id})&&null==(?<handlers>${id})\\.chatgpt\\?(?<dispatcher>${id})\\.(?<dispatchExport>${id})\\.getInstance\\(\\)\\.dispatchMessage\\("global-dictation-record-history-item",\\{text:${text}\\}\\):\\k<history>\\?\\.setTranscript\\(${text},void 0\\),(?<analytics>${id})\\.performance\\.mark\\("transcript_dispatched"\\);let (?<session>${id})=\\k<history>\\?\\.id;`,
+    `if\\((?<delivered>${id})=!0,null!=(?<action>${id})\\.recovery&&null!=\\k<handlers>\\.onRecoveryChange\\)\\{if\\((?<recover>${id})\\("recovered",${text},${extra}\\),(?<retrying>${id})&&(?<mounted>${id})\\.current&&(?<generation>${id})===(?<currentGeneration>${id})\\.current\\)\\{let (?<promise>${id})=null==${extra}\\?\\k<handlers>\\.onTranscriptRetry\\?\\.\\(${text},\\k<session>\\):\\k<handlers>\\.onTranscriptRetry\\?\\.\\(${text},\\k<session>,${extra}\\);null==\\k<handlers>\\.chatgpt\\|\\|(?<attached>${id})\\|\\|(?<state>${id})\\(\\k<analytics>,\\{\\.\\.\\.(?<metadata>${id}),action:null==\\k<handlers>\\.onTranscriptRetry\\?\\k<metadata>\\.action:"insert"\\}\\),await \\k<promise>,(?<usedRetry>${id})=null!=\\k<handlers>\\.onTranscriptRetry\\}\\}`,
+    `else if\\("send"===\\k<action>\\.action\\)\\{let \\k<promise>=null==${extra}\\?\\k<handlers>\\.onTranscriptSend\\(${text},\\k<session>\\):\\k<handlers>\\.onTranscriptSend\\(${text},\\k<session>,${extra}\\);null==\\k<handlers>\\.chatgpt\\|\\|\\k<attached>\\|\\|\\k<state>\\(\\k<analytics>,\\k<metadata>\\),await \\k<promise>\\}`,
+    `else\\{let \\k<promise>=null==${extra}\\?\\k<handlers>\\.onTranscriptInsert\\(${text},\\k<session>\\):\\k<handlers>\\.onTranscriptInsert\\(${text},\\k<session>,${extra}\\);null==\\k<handlers>\\.chatgpt\\|\\|\\k<attached>\\|\\|\\k<state>\\(\\k<analytics>,\\k<metadata>\\),await \\k<promise>,(?<pendingAction>${id})\\.current===\\k<action>&&"send"===\\k<pendingAction>\\.current\\.action&&await \\(null==${extra}\\|\\|null!=${extra}\\.recording\\?\\k<handlers>\\.onTranscriptSend\\("",\\k<session>\\):\\k<handlers>\\.onTranscriptSend\\("",\\k<session>,${extra}\\)\\)\\}$`,
+  ].join("");
+  const matched = new RegExp(pattern, "u").exec(body);
+  if (!matched) throw Error("Native dictation history/recovery/send/insert body changed");
+  return { ...matched.groups, transcript, context };
+}
+
+function dictationStatement(source) {
+  const lexical = createJavaScriptLexicalIndex(source), stack = [], pairs = { "(": ")", "[": "]", "{": "}" };
+  for (let index = 0; index < source.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    const char = source[index];
+    if (pairs[char]) stack.push(pairs[char]);
+    else if (")]}".includes(char)) { if (stack.pop() !== char) return null; }
+    else if (char === ";" && stack.length === 0) return { source: source.slice(0, index + 1), end: index + 1 };
+  }
+  return null;
+}
+
+function dictationCaptureClaims(source) {
+  if (!source.includes("codexLinuxRecordReplay") && !source.includes("\\u") && !source.includes("\\x")) return [];
+  const lexical = createJavaScriptLexicalIndex(source), claims = [];
+  const decode = token => token.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)));
+  for (const token of source.matchAll(/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu)) {
+    if (!lexical.isCode(token.index)) continue;
+    const name = decode(token[0]), tail = source.slice(token.index + token[0].length);
+    if (name === "codexLinuxRecordReplayCaptureResult" || name === DICTATION_PUBLIC_API && /^\s*(?:\?\.)?\s*\(/u.test(tail) ||
+        name === DICTATION_QUEUE && /^\s*\?\?=\[\]\)\.push\(/u.test(tail)) claims.push(token.index);
+  }
+  for (const member of source.matchAll(/(?:globalThis|window|self)\s*(?:\?\.)?\s*\[\s*(["'`])((?:\\.|[^\\\n])*?)\1\s*\]/gu)) {
+    if (!lexical.isCode(member.index)) continue;
+    const name = decode(member[2]).replace(/\\x([0-9a-fA-F]{2})/gu, (_, value) => String.fromCharCode(parseInt(value, 16))), tail = source.slice(member.index + member[0].length);
+    if (name === DICTATION_PUBLIC_API && /^\s*(?:\?\.)?\s*\(/u.test(tail) || name === DICTATION_QUEUE && /^\s*\?\?=\[\]\)\.push\(/u.test(tail)) claims.push(member.index);
+  }
+  return claims;
+}
+
+function dictationObjectFields(source) {
+  const lexical = createJavaScriptLexicalIndex(source), members = [], fields = new Map();
+  let start = 0;
+  for (let index = 0; index < source.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    if ("([{".includes(source[index])) {
+      index = dictationDelimiter(source, index);
+      if (index < 0) throw Error("Incomplete native recording context value");
+    } else if (source[index] === ",") { members.push(source.slice(start, index)); start = index + 1; }
+  }
+  members.push(source.slice(start));
+  for (const member of members) {
+    const head = /^("(?:\\.|[^"\\])*"|[A-Za-z_$][\w$]*):/u.exec(member);
+    if (!head) throw Error("Unsupported native recording context field");
+    const key = head[1].startsWith('"') ? JSON.parse(head[1]) : head[1];
+    if (fields.has(key)) throw Error("Duplicate native recording context field");
+    fields.set(key, member.slice(head[0].length));
+  }
+  return fields;
+}
+
+function dictationSeamGlobals(module, hook, callback, inner) {
+  const body = module.moduleSource;
+  const scopes = [
+    { params: module.params.join(","), body },
+    { params: hook.params, body: body.slice(hook.open + 1, hook.end) },
+    { params: callback.params, body: body.slice(callback.open + 1, callback.end) },
+    { params: "", body: body.slice(inner.open + 1, inner.end) },
+    { params: "", body: body.slice(inner.tryOpen + 1, inner.tryEnd) },
+  ];
+  for (const scope of scopes) {
+    try { new Script(`"use strict";async function captureGlobalsProbe(${scope.params}){${scope.body}\n;let globalThis;let Date;}`); }
+    catch { throw Error("Native capture seam shadows its globalThis or Date capability"); }
+  }
+}
+
+function dictationNativeCallback(module, hook, block, roles) {
+  const body = module.moduleSource, id = DICTATION_IDENTIFIER;
+  const arrows = dictationMatches(body, new RegExp(`(?<binding>${id})=async\\((?<request>${id}),(?<retry>${id})\\)=>\\{`, "gu"));
+  const outer = dictationOne(arrows.map(head => ({ head, open: head.index + head[0].length - 1, end: findMatchingBrace(body, head.index + head[0].length - 1) }))
+    .filter(fn => hook.open < fn.head.index && fn.open < block.index && block.end < fn.end && fn.end < hook.end), "native live dictation callback");
+  const callback = body.slice(outer.open + 1, outer.end), request = escapeRegExp(outer.head.groups.request), retry = escapeRegExp(outer.head.groups.retry);
+  const start = new RegExp(`^let (?<retrying>${id})=void 0!==${retry}&&${retry},(?<action>${id})=\\{\\.\\.\\.${request},abortController:new AbortController\\},(?<abort>${id})=\\(\\)=>\\{\\k<action>\\.abortController\\.abort\\(\\)\\};${request}\\.signal\\?\\.addEventListener\\("abort",\\k<abort>,\\{once:!0\\}\\),${request}\\.signal\\?\\.aborted&&\\k<abort>\\(\\);let\\{analytics:(?<analytics>${id}),audio:(?<audio>${id}),handlers:(?<handlers>${id}),recordingPersistence:(?<history>${id}),requestDurationMs:(?<duration>${id})\\}=\\k<action>,(?<attached>${id})="CHATGPT_DICTATION_RECORDING_SOURCE_ATTACHED_AUDIO"===\\k<analytics>\\.recordingSource,`, "u").exec(callback);
+  if (!start) throw Error("Native dictation callback request/abort ABI changed");
+  const initialFlags = new RegExp(`^(?<completed>${id})=!1,(?<logged>${id})=!1;`, "u").exec(callback.slice(start[0].length));
+  if (!initialFlags) throw Error("Native dictation completion flags changed");
+  for (const name of ["retrying", "action", "analytics", "handlers", "history", "attached"]) if (start.groups[name] !== roles[name]) throw Error("Native dictation callback role changed: " + name);
+  const action = escapeRegExp(roles.action), handlers = escapeRegExp(roles.handlers), analytics = escapeRegExp(roles.analytics), text = escapeRegExp(roles.transcript), context = escapeRegExp(roles.context);
+  const before = body.slice(outer.open + 1, block.index);
+  const clean = dictationOne(dictationMatches(before, new RegExp(`let (?<cleaned>${id})=null!=${handlers}\\.chatgpt\\?(?<response>${id})\\.text:await \\(0,(?<cleanup>${id})\\.(?<cleanupExport>${id})\\)\\(\\{transcript:\\k<response>\\.text,surroundingText:${handlers}\\.getSurroundingText\\?\\.\\(\\)\\?\\?null,cleanupEnabled:(?<enabled>${id}),signal:${action}\\.abortController\\.signal\\}\\);if\\(${action}\\.isCurrent\\?\\.\\(\\)===!1&&${action}\\.abortController\\.abort\\(\\),${action}\\.abortController\\.signal\\.aborted\\)return;(?<recoveryRef>${id})\\.current=null,${escapeRegExp(roles.mounted)}\\.current&&(?<recoverState>${id})\\(!1\\);let ${text}=null==${handlers}\\.chatgpt\\?\\k<cleaned>\\.trim\\(\\):\\k<cleaned>;\\(0,(?<persistence>${id})\\.(?<persistenceExport>${id})\\)\\((?<store>${id})\\.get\\((?<settings>${id})\\.(?<settingsExport>${id})\\),${analytics},${text}\\);let ${escapeRegExp(roles.usedRetry)}=!1,(?<recording>${id})=null!=${action}\\.recordingSignal&&!${action}\\.recordingSignal\\.aborted&&${escapeRegExp(start.groups.audio)}\\.size>0\\?${escapeRegExp(start.groups.audio)}:void 0,${context}=null==${handlers}\\.chatgpt&&null==\\k<recording>\\?void 0:\\{`, "gu")), "native sanitized transcript/current-signal producer");
+  const contextOpen = clean.index + clean[0].length - 1, contextEnd = findMatchingBrace(before, contextOpen);
+  if (contextEnd < contextOpen) throw Error("Native dictation recording context is incomplete");
+  const fields = dictationObjectFields(before.slice(contextOpen + 1, contextEnd));
+  const required = {
+    signal: `${roles.action}.abortController.signal`, response: clean.groups.response,
+    recording: clean.groups.recording, recordingSignal: `${roles.action}.recordingSignal`,
+    recordingDurationMs: `${roles.analytics}.recordDurationMs`, dictationSessionId: `${roles.analytics}.dictationSessionId`,
+    attemptId: `${roles.analytics}.attemptId`, transcriptReceivedTs: `${roles.analytics}.timings?.transcriptReceivedTs??Date.now()`,
+  };
+  if (!new RegExp(`^${id}$`, "u").test(fields.get("assetResponse") ?? "") || Object.entries(required).some(([name, value]) => fields.get(name) !== value)) throw Error("Native dictation recording/session context changed");
+  const metadata = new RegExp(`^;(?<activeRef>${id})\\.current=null,${escapeRegExp(roles.mounted)}\\.current&&(?<reset>${id})\\(void 0\\);let ${escapeRegExp(roles.metadata)}=\\{action:${action}\\.action,audioLost:!1,reason:"success",retrySameAudioAvailable:!1,stopReason:(?<stopRef>${id})\\.current,transcript:${text},transcriptionStartedAtMs:(?<started>${id})\\};$`, "u").exec(before.slice(contextEnd + 1));
+  if (!metadata) throw Error("Native dictation completion metadata changed");
+  const asr = dictationOne(dictationMatches(before.slice(0, clean.index), new RegExp(`(?<![\\w$.])${escapeRegExp(clean.groups.response)}=await \\(`, "gu")), "native ASR response producer");
+  const asrOpen = asr.index + asr[0].length - 1, asrEnd = dictationDelimiter(before, asrOpen);
+  const asrSource = before.slice(asrOpen + 1, asrEnd);
+  if (asrEnd < asrOpen || !asrSource.startsWith(`null!=${roles.action}.recovery&&!${roles.action}.streamingSession?.hasBoundaries()?`) ||
+      !asrSource.includes(`signal:${roles.action}.abortController.signal`) || !asrSource.includes(`onTranscriptUpdate:`) || !asrSource.includes(`${roles.action}.isCurrent?.()===!1?${roles.action}.abortController.abort()`)) throw Error("Native ASR/current-session linkage changed");
+  const dispatched = dictationOne(dictationMatches(before, new RegExp(`${analytics}\\.performance\\.mark\\("final_received"\\)`, "gu")), "native final transcript analytics");
+  if (!(asrEnd < dispatched.index && dispatched.index < clean.index)) throw Error("Native ASR/cleanup ordering changed");
+  const hookBody = body.slice(hook.open + 1, hook.end);
+  if (dictationMatches(hookBody, new RegExp(`\\{[^{}]*cleanupEnabled:${escapeRegExp(clean.groups.enabled)}[^{}]*\\}=${escapeRegExp(hook.params)}(?=[,;])`, "gu"), true).length !== 1) throw Error("Native cleanup-enabled input changed");
+  const tail = body.slice(outer.end + 1);
+  const memo = new RegExp(`^,(?<stores>${id}\\[\\d+\\]=${id}(?:,${id}\\[\\d+\\]=${id})*)\\):${escapeRegExp(outer.head.groups.binding)}=(?<cache>${id})\\[(?<slot>\\d+)\\];let (?<alias>${id})=${escapeRegExp(outer.head.groups.binding)};`, "u").exec(tail);
+  if (!memo) throw Error("Native dictation callback memo/alias linkage changed");
+  const stores = memo.groups.stores.split(",").map(store => new RegExp(`^${escapeRegExp(memo.groups.cache)}\\[(\\d+)\\]=(${id})$`, "u").exec(store));
+  if (stores.some(store => store == null) || new Set(stores.map(store => store[1])).size !== stores.length || stores.filter(store => store[1] === memo.groups.slot && store[2] === outer.head.groups.binding).length !== 1) throw Error("Native dictation callback memo stores changed");
+  const alias = memo.groups.alias;
+  const aliasStart = outer.end + 1 + memo[0].indexOf(`let ${alias}=`) + "let ".length;
+  dictationBindingProbe(module, alias, aliasStart, hook.exportName);
+  const calls = dictationMatches(body.slice(hook.open + 1, hook.end), new RegExp(`(?<![\\w$.])${escapeRegExp(alias)}\\(`, "gu"));
+  if (calls.length !== 3) throw Error("Native dictation callback consumer set changed");
+  const argumentsList = calls.map(call => {
+    const open = hook.open + 1 + call.index + call[0].length - 1, end = dictationDelimiter(body, open);
+    if (end < open) throw Error("Incomplete native dictation callback arguments");
+    const prefix = body.slice(0, hook.open + 1 + call.index).trimEnd();
+    return { source: body.slice(open + 1, end), form: /\bawait$/u.test(prefix) ? "await" : /\breturn$/u.test(prefix) ? "return" : "other" };
+  });
+  const consumers = argumentsList.map(row => {
+    if (row.form === "await" && new RegExp(`^\\{\\.\\.\\.${id},analytics:${id}\\},!0$`, "u").test(row.source)) return "retry";
+    if (!row.source.startsWith("{") || !row.source.endsWith("}")) return "unsupported";
+    const fields = dictationObjectFields(row.source.slice(1, -1));
+    const identifier = value => new RegExp(`^${id}$`, "u").test(value ?? "");
+    if (row.form === "await" && identifier(fields.get("action")) && identifier(fields.get("isCurrent")) &&
+        ["recovery", "analytics", "audio", "recordingSignal", "streamingSession", "handlers", "language", "recordingPersistence", "requestDurationMs"].every(name => fields.has(name)) &&
+        identifier(fields.get("handlers")) && identifier(fields.get("recordingPersistence")) &&
+        new RegExp(`^null==${escapeRegExp(fields.get("handlers"))}\\.chatgpt\\?void 0:${id}$`, "u").test(fields.get("requestDurationMs"))) return "stop";
+    if (row.form === "return" && fields.get("action") === '"insert"' && fields.get("recordingPersistence") === "null" &&
+        ["analytics", "audio", "streamingSession", "language", "requestDurationMs", "signal"].every(name => fields.has(name)) &&
+        new RegExp(`^\\{\\.\\.\\.${id},onTranscriptInsert:${id}\\}$`, "u").test(fields.get("handlers") ?? "")) return "file-insert";
+    return "unsupported";
+  });
+  if (consumers.sort().join(",") !== "file-insert,retry,stop") throw Error("Native stop/retry/file-insert callback ABI changed");
+  const inner = dictationOne(dictationMatches(body, /async\(\)=>\{try\{/gu).map(head => {
+    const open = head.index + "async()=>".length, end = findMatchingBrace(body, open);
+    const tryOpen = head.index + head[0].length - 1, tryEnd = findMatchingBrace(body, tryOpen);
+    return { start: head.index, open, end, tryOpen, tryEnd };
+  }).filter(fn => outer.open < fn.start && fn.tryOpen < block.index && block.end < fn.tryEnd && fn.end < outer.end), "native awaited ASR completion body");
+  if (!body.slice(0, inner.start).endsWith("return await (") || !body.slice(inner.end + 1).startsWith(")().finally(()=>{")) throw Error("Native dictation awaited completion/finalizer linkage changed");
+  const finalizerOpen = inner.end + 1 + ")().finally(()=>".length, finalizerEnd = findMatchingBrace(body, finalizerOpen);
+  const finalizer = body.slice(finalizerOpen + 1, finalizerEnd);
+  if (!finalizer.startsWith(`${outer.head.groups.request}.signal?.removeEventListener("abort",${start.groups.abort})`) || !finalizer.includes(`${roles.pendingAction}.current===${roles.action}`)) throw Error("Native dictation abort/current-session finalizer changed");
+  const remainder = body.slice(block.end + 1, inner.tryEnd);
+  const remaining = new RegExp(`^else null!=${handlers}\\.onRecoveryChange&&\\(null!=${action}\\.recovery\\|\\|(?<recovered>${id})\\)\\?\\(${escapeRegExp(clean.groups.recoveryRef)}\\.current=${action},${escapeRegExp(roles.mounted)}\\.current&&${escapeRegExp(clean.groups.recoverState)}\\(!0\\),${escapeRegExp(roles.recover)}\\("failed"\\)\\):${handlers}\\.onTranscriptCancel\\?\\.\\(\\);if\\(${action}\\.abortController\\.signal\\.aborted\\)return;${escapeRegExp(roles.state)}\\(${analytics},\\{\\.\\.\\.${escapeRegExp(roles.metadata)},action:${action}\\.action,recovery:null==${action}\\.recovery\\|\\|null==${handlers}\\.onRecoveryChange\\?void 0:\\{phase:${action}\\.recovery\\.phase,transcriptInserted:${escapeRegExp(roles.usedRetry)},retrySameAudioAvailable:${escapeRegExp(roles.mounted)}\\.current&&${escapeRegExp(roles.generation)}===${escapeRegExp(roles.currentGeneration)}\\.current&&${escapeRegExp(clean.groups.recoveryRef)}\\.current===${action}\\}\\}\\),(?<completed>${id})=!0$`, "u").exec(remainder);
+  if (!remaining || remaining.groups.completed !== initialFlags.groups.completed || !asrSource.includes(`onRecover:()=>{${remaining.groups.recovered}=!0}`)) throw Error("Native dictation cancel/stale/recovery completion changed");
+  const flags = `let ${metadata.groups.started}=Date.now(),${remaining.groups.recovered}=!1,${roles.delivered}=!1;return await (`;
+  if (!before.includes(flags) || body.slice(finalizerEnd + 1, outer.end) !== `),${initialFlags.groups.completed}`) throw Error("Native dictation completion flag/return linkage changed");
+  dictationSeamGlobals(module, hook, { ...outer, params: `${outer.head.groups.request},${outer.head.groups.retry}` }, inner);
+  const { findRspackRequireBinding } = require("../../scripts/patches/lib/rspack-module-assets.js");
+  const imports = [...new Set([roles.dispatcher, clean.groups.cleanup, clean.groups.persistence, clean.groups.settings])].map(name => {
+    const binding = findRspackRequireBinding(module, name);
+    if (binding == null) throw Error("Native dictation namespace is not a static CJS import");
+    dictationBindingProbe(module, name, binding.start - module.start, hook.exportName);
+    return binding;
+  });
+  return { outer, clean, metadata, alias, imports, nativeConsumers: argumentsList };
+}
+
+function recordReplayCurrentChatGptBlocks(source) {
+  const id = DICTATION_IDENTIFIER, rows = [];
+  const heads = dictationMatches(source, new RegExp(`if\\((?<transcript>${id})\\.length>0\\|\\|null!=(?<context>${id})\\)\\{`, "gu"));
+  for (const head of heads) {
+    const open = head.index + head[0].length - 1, end = findMatchingBrace(source, open);
+    if (end < open) throw Error("Incomplete native dictation completion block");
+    const content = source.slice(open + 1, end);
+    if (!dictationMatches(content, /\.dispatchMessage\("global-dictation-record-history-item"/gu).length || !dictationMatches(content, /\.performance\.mark\("transcript_dispatched"\)/gu).length) continue;
+    rows.push({ index: head.index, open, end, transcript: head.groups.transcript, context: head.groups.context, source: source.slice(head.index, end + 1) });
+  }
+  return rows;
+}
+
+function inspectRecordReplayDictationModule(module) {
+  const body = module.moduleSource;
+  const block = dictationOne(recordReplayCurrentChatGptBlocks(body), "native dictation completion block");
+  const originalContent = body.slice(block.open + 1, block.end), first = dictationStatement(originalContent);
+  const contribution = first && dictationCaptureClaims(first.source).length ? first : null;
+  const content = contribution ? originalContent.slice(contribution.end) : originalContent;
+  const roles = dictationNativeBody(content, block.transcript, block.context);
+  const rawBody = contribution ? body.slice(0, block.open + 1) + content + body.slice(block.end) : body;
+  const rawModule = { ...module, moduleSource: rawBody };
+  const rawBlock = dictationOne(recordReplayCurrentChatGptBlocks(rawBody), "stripped native completion block");
+  const hook = dictationRootFunction(rawModule, rawBlock.index);
+  const callback = dictationNativeCallback(rawModule, hook, rawBlock, roles);
+  const expected = recordReplayTranscriptCaptureExpression(roles.transcript, `${roles.action}.action`) + ";";
+  if (contribution && contribution.source !== expected) throw Error("Incomplete or mismatched dictation capture contribution");
+  const start = block.open + 1, end = start + (contribution?.end ?? 0);
+  if (dictationCaptureClaims(body).some(index => index < start || index >= end)) throw Error("Orphan or duplicate dictation capture contribution");
+  const patchedBody = rawBody.slice(0, rawBlock.open + 1) + expected + rawBody.slice(rawBlock.open + 1);
+  if (contribution && patchedBody !== body) throw Error("Dictation capture strip/reapply changed native bytes");
+  return { module, roles, hook, callback, rawBody, patchedBody, contribution: contribution ? { start, end } : null, kind: contribution ? "patched" : "current" };
+}
+
+function dictationChunkGlobals(source) {
+  const lexical = createJavaScriptLexicalIndex(source), edits = [];
+  for (const imported of source.matchAll(/\bimport(?:\*as\s+([\w$]+)|\{([^}]+)\})\s+from\s*["'][^"'\n]+["'];/gu)) {
+    if (!lexical.isRoot(imported.index)) continue;
+    const locals = imported[1] ? [imported[1]] : imported[2].split(",").map(item => item.trim().split(/\s+as\s+/u).at(-1));
+    if (locals.some(name => ["Date", "globalThis"].includes(name))) throw Error("Dictation chunk import shadows a capture capability");
+    edits.push({ start: imported.index, end: imported.index + imported[0].length });
+  }
+  for (const exported of source.matchAll(/\bexport\s+(?=const\b|let\b|var\b|function\b|class\b)/gu)) {
+    if (lexical.isRoot(exported.index)) edits.push({ start: exported.index, end: exported.index + exported[0].length });
+  }
+  let projected = source;
+  for (const edit of edits.sort((left, right) => right.start - left.start)) projected = projected.slice(0, edit.start) + source.slice(edit.start, edit.end).replace(/[^\r\n]/gu, " ") + projected.slice(edit.end);
+  try { new Script(`"use strict";async function captureChunkGlobals(){${projected}\n;let Date;let globalThis;}`); }
+  catch { throw Error("Dictation chunk shadows a capture capability or has unsupported module syntax"); }
 }
 
 function recordReplayDictationTranscriptState(source) {
-  const blocks = recordReplayCurrentChatGptBlocks(source);
-  const current = blocks.filter((match) => match.groups.capture == null);
-  const patched = blocks.filter((match) =>
-    match.groups.capture != null && match.groups.captureAction === match.groups.actionContext
-  );
-  const captureMarkerCount = source.split("codexLinuxRecordReplayCaptureTranscript").length - 1;
-
-  if (current.length === 1 && patched.length === 0 && captureMarkerCount === 0) {
-    return { kind: "current", match: current[0] };
-  }
-  if (current.length === 0 && patched.length === 1 && captureMarkerCount === 1) {
-    return { kind: "patched", match: patched[0] };
-  }
-  if (current.length > 0 && patched.length > 0) {
-    return { kind: "mixed" };
-  }
-  if (current.length > 1 || patched.length > 1) {
-    return { kind: "ambiguous" };
-  }
-  return { kind: "partial" };
+  try {
+    const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
+    const modules = [...rspackModuleFactories(source, "Record & Replay dictation chunk")];
+    dictationChunkGlobals(source);
+    const candidates = modules.filter(module => recordReplayCurrentChatGptBlocks(module.moduleSource).length > 0);
+    const module = dictationOne(candidates, "published dictation producer");
+    const contract = inspectRecordReplayDictationModule(module);
+    const allowed = contract.contribution && { start: module.start + contract.contribution.start, end: module.start + contract.contribution.end };
+    if (dictationCaptureClaims(source).some(index => !allowed || index < allowed.start || index >= allowed.end)) throw Error("Dictation capture escaped its native module");
+    return { ...contract, kind: contract.kind };
+  } catch (error) { return { kind: "partial", reason: error.message }; }
 }
 
 const RUNTIME_ENTRY_EXPORT = /export\{[A-Za-z_$][\w$]* as __webpack_require__\}/;
@@ -719,29 +992,106 @@ function applyRecordReplayHudPatch(currentSource) {
 }
 
 function applyRecordReplayDictationTranscriptPatch(currentSource) {
-  const patchName = "Record & Replay dictation transcript patch";
   const state = recordReplayDictationTranscriptState(currentSource);
-  if (state.kind === "patched") {
-    return currentSource;
-  }
-  if (state.kind === "partial" &&
-      !currentSource.includes("global-dictation-record-history-item") &&
-      !currentSource.includes("codexLinuxRecordReplayCaptureTranscript")) {
-    return currentSource;
-  }
-  if (state.kind === "current") {
-    const { transcript, actionContext } = state.match.groups;
-    const insertionIndex = state.match.index + state.match[0].indexOf("{") + 1;
-    const patched = currentSource.slice(0, insertionIndex) +
-      `${recordReplayTranscriptCaptureExpression(transcript, `${actionContext}.action`)};` +
-      currentSource.slice(insertionIndex);
-    return recordReplayDictationTranscriptState(patched).kind === "patched"
-      ? patched
-      : currentSource;
-  }
-
-  warn("Could not find dictation transcript send point", patchName);
+  if (state.kind === "patched") return currentSource;
+  if (state.kind === "current") return currentSource.slice(0, state.module.start) + state.patchedBody + currentSource.slice(state.module.end);
+  if (!currentSource.includes("global-dictation-record-history-item") && !dictationCaptureClaims(currentSource).length) return currentSource;
+  warn(state.reason ?? "Could not find complete native dictation producer", "Record & Replay dictation transcript patch");
   return currentSource;
+}
+
+function dictationAssetNames(extractedDir) {
+  const base = path.join(extractedDir, "webview", "assets"), names = [];
+  if (!fs.lstatSync(extractedDir).isDirectory() || !fs.lstatSync(path.join(extractedDir, "webview")).isDirectory()) throw Error("Dictation inventory root path is not regular");
+  function visit(directory, prefix) {
+    if (!fs.lstatSync(directory).isDirectory()) throw Error("Dictation inventory directory is not regular");
+    for (const name of fs.readdirSync(directory).sort()) {
+      const file = path.join(directory, name), relative = prefix + name, stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink()) throw Error("Dictation inventory contains a symlink");
+      if (stat.isDirectory()) visit(file, relative + "/");
+      else if (stat.isFile() && /\.(?:c|m)?js$/u.test(name)) names.push(relative);
+    }
+  }
+  visit(base, "");
+  return names;
+}
+
+function applyRecordReplayDictationToExtractedApp(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const hash = bytes => require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+  let names, hashes, edits;
+  try {
+    names = dictationAssetNames(extractedDir); hashes = new Map();
+    const claimed = [], proofs = new Map();
+    for (const name of names) {
+      const source = fs.readFileSync(path.join(assets, name), "utf8");
+      hashes.set(name, hash(source));
+      if (dictationCaptureClaims(source).length) claimed.push(name);
+    }
+    const { findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
+    const copies = findUniqueRspackModuleCopies(assets, {
+      pattern: /\.(?:c|m)?js$/u,
+      description: "published native ordinary dictation hook",
+      sourceMatch: source => source.includes("global-dictation-record-history-item") && source.includes("transcript_dispatched"),
+      matchModule: (_body, module) => {
+        const state = recordReplayDictationTranscriptState(module.source);
+        if (!["current", "patched"].includes(state.kind) || state.module.moduleId !== module.moduleId) return false;
+        proofs.set(module.assetName, { source: module.source, state });
+        return true;
+      },
+    });
+    if (!copies.length) throw Error("Missing native ordinary dictation module cohort");
+    const states = copies.map(copy => {
+      if (hash(copy.source) !== hashes.get(copy.assetName)) throw Error("Dictation source changed during qualification");
+      const proof = proofs.get(copy.assetName);
+      const state = proof?.source === copy.source ? proof.state : recordReplayDictationTranscriptState(copy.source);
+      if (!["current", "patched"].includes(state.kind) || state.module.moduleId !== copy.moduleId) throw Error(state.reason ?? "Malformed native dictation module peer");
+      return { copy, state };
+    });
+    if (new Set(states.map(row => row.state.kind)).size !== 1) throw Error("Mixed raw/applied ordinary dictation cohort");
+    const owners = new Set(copies.map(copy => copy.assetName));
+    if (claimed.some(name => !owners.has(name))) throw Error("Orphan ordinary dictation capture contribution");
+    const transaction = new Map();
+    for (const { copy, state } of states) {
+      const patchedSource = state.kind === "patched" ? copy.source : copy.source.slice(0, state.module.start) + state.patchedBody + copy.source.slice(state.module.end);
+      const poststate = recordReplayDictationTranscriptState(patchedSource);
+      if (poststate.kind !== "patched" || poststate.module.moduleId !== copy.moduleId) throw Error(poststate.reason ?? "Generated ordinary dictation contribution is incomplete");
+      transaction.set(copy.assetName, { assetName: copy.assetName, source: copy.source, patchedSource });
+      const lexical = createJavaScriptLexicalIndex(copy.source);
+      for (const imported of copy.source.matchAll(/\bimport(?:\*as\s+[\w$]+|\{[^}]+\})\s+from\s*["']([^"'\n]+)["'];/gu)) {
+        if (!lexical.isRoot(imported.index)) continue;
+        if (!/^\.{1,2}\/[A-Za-z0-9_./-]+\.(?:c|m)?js$/u.test(imported[1])) throw Error("Unsupported dictation chunk static import edge");
+        const name = path.posix.normalize(path.posix.join(path.posix.dirname(copy.assetName), imported[1]));
+        if (!names.includes(name)) throw Error("Missing dictation static import dependency");
+        if (!transaction.has(name)) {
+          const source = fs.readFileSync(path.join(assets, name), "utf8");
+          if (hash(source) !== hashes.get(name)) throw Error("Dictation import changed during qualification");
+          transaction.set(name, { assetName: name, source, patchedSource: source });
+        }
+      }
+    }
+    edits = [...transaction.values()];
+  } catch (error) {
+    warn(error.message, "Record & Replay dictation transcript patch");
+    return { matched: 0, changed: 0, changedAssets: [], reason: error.message };
+  }
+  const verify = () => {
+    if (JSON.stringify(dictationAssetNames(extractedDir)) !== JSON.stringify(names)) throw Error("Dictation inventory changed before commit");
+    for (const [name, digest] of hashes) if (hash(fs.readFileSync(path.join(assets, name))) !== digest) throw Error("Dictation read dependency changed before commit: " + name);
+  };
+  verify();
+  const originals = new Map(edits.map(edit => [path.join(assets, edit.assetName), Buffer.from(edit.source)]));
+  const result = patchWebviewAssets(assets, edits, { writeFileSync(file, bytes) {
+    const restoring = originals.get(file)?.equals(bytes);
+    if (!restoring) verify();
+    fs.writeFileSync(file, bytes);
+    if (!restoring) {
+      hashes.set(path.relative(assets, file).split(path.sep).join("/"), hash(bytes));
+      verify();
+    }
+  } });
+  if (result.changed === 0) verify();
+  return { matched: 1, ...result };
 }
 
 function hasRecordReplayDictationTranscriptContract(source) {
@@ -817,14 +1167,17 @@ const descriptors = [
   },
   {
     id: "record-replay-dictation-transcript",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20695,
     ciPolicy: "optional",
     assetNeedles: ["global-dictation-record-history-item", "transcript_dispatched"],
     assetMatch: hasRecordReplayDictationTranscriptContract,
     missingDescription: "composer dictation bundle",
     skipDescription: "Record & Replay dictation transcript patch",
-    apply: applyRecordReplayDictationTranscriptPatch,
+    apply: applyRecordReplayDictationToExtractedApp,
+    status: result => result?.matched !== 1
+      ? { status: "skipped-optional", reason: result?.reason ?? "missing complete ordinary dictation cohort" }
+      : result.changed > 0 ? "applied" : "already-applied",
   },
   {
     id: "record-replay-global-dictation-transcript",

@@ -7,6 +7,8 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 const { execFileSync } = require("node:child_process");
 const {
   disabledLinuxFeatureCleanupHooks,
@@ -40,7 +42,65 @@ const featureDir = __dirname;
 
 // Current rspack/SWC composer dictation block (double quotes, Yoda comparisons).
 function currentComposerTranscriptFixture() {
-  return "async function send(){let p=\"Create an image of a neon cabin\",c={id:\"session-1\",setTranscript(){}},a={dictationSessionId:\"session-1\",performance:{mark(){}}},i={action:\"send\",recovery:null},s={chatgpt:null,onRecoveryChange:null,onTranscriptRetry:async()=>{},onTranscriptSend:async(t,e)=>globalThis.events.push([\"send\",t,e]),onTranscriptInsert:async(t,e)=>globalThis.events.push([\"insert\",t,e]),onTranscriptCancel:()=>globalThis.events.push([\"cancel\"])},x=null,te={current:i};if(p.length>0||null!=s.chatgpt){null==c&&null==s.chatgpt?une.getInstance().dispatchMessage(\"global-dictation-record-history-item\",{text:p}):c?.setTranscript(p),a.performance.mark(\"transcript_dispatched\");let e=c?.id;if(null!=i.recovery&&null!=s.onRecoveryChange){await s.onTranscriptRetry?.(p,e,x)}else if(\"send\"===i.action){let t=null==x?s.onTranscriptSend(p,e):s.onTranscriptSend(p,e,x);await t}else{let t=null==x?s.onTranscriptInsert(p,e):s.onTranscriptInsert(p,e,x);await t,te.current===i&&\"send\"===te.current.action&&await s.onTranscriptSend(\"\",e,x)}}else s.onTranscriptCancel?.()}";
+  return [
+    'export const __rspack_esm_ids=[72];export const __webpack_modules__={Composer(module,exports,load){',
+    'load.d(exports,{dictate:()=>hook});var historyNS=load("History"),cleanupNS=load("Cleanup"),persistNS=load("Persist"),settingsNS=load("Settings");',
+    'function hook(props){let{cleanupEnabled:cleanupEnabled}=props;let memo={},callback;',
+    'memo[0]!==cleanupEnabled?(callback=async(request,retry)=>{let retrying=void 0!==retry&&retry,action={...request,abortController:new AbortController},abort=()=>{action.abortController.abort()};request.signal?.addEventListener("abort",abort,{once:!0}),request.signal?.aborted&&abort();let{analytics:analytics,audio:audio,handlers:handlers,recordingPersistence:history,requestDurationMs:duration}=action,attached="CHATGPT_DICTATION_RECORDING_SOURCE_ATTACHED_AUDIO"===analytics.recordingSource,completed=!1,logged=!1;',
+    'pending.current=action,mounted.current&&!attached&&setAction(action.action);let generation=currentGeneration.current,recover=(phase,text,context)=>{};let started=Date.now(),recovered=!1,delivered=!1;return await (async()=>{try{',
+    'let response=await (null!=action.recovery&&!action.streamingSession?.hasBoundaries()?transcribe(audio):stream(audio,{signal:action.abortController.signal,onTranscriptUpdate:(text,extra)=>{action.isCurrent?.()===!1?action.abortController.abort():handlers.onTranscriptUpdate?.(text,extra)},onRecover:()=>{recovered=!0}}));analytics.performance.mark("final_received");',
+    'let cleaned=null!=handlers.chatgpt?response.text:await (0,cleanupNS.h)({transcript:response.text,surroundingText:handlers.getSurroundingText?.()??null,cleanupEnabled:cleanupEnabled,signal:action.abortController.signal});if(action.isCurrent?.()===!1&&action.abortController.abort(),action.abortController.signal.aborted)return;recoveryRef.current=null,mounted.current&&recoverState(!1);let text=null==handlers.chatgpt?cleaned.trim():cleaned;(0,persistNS.bE)(store.get(settingsNS.YV),analytics,text);let usedRetry=!1,recording=null!=action.recordingSignal&&!action.recordingSignal.aborted&&audio.size>0?audio:void 0,context=null==handlers.chatgpt&&null==recording?void 0:{signal:action.abortController.signal,response:response,assetResponse:assetResponse,recording:recording,recordingSignal:action.recordingSignal,recordingDurationMs:analytics.recordDurationMs,dictationSessionId:analytics.dictationSessionId,attemptId:analytics.attemptId,transcriptReceivedTs:analytics.timings?.transcriptReceivedTs??Date.now()};activeRef.current=null,mounted.current&&reset(void 0);let metadata={action:action.action,audioLost:!1,reason:"success",retrySameAudioAvailable:!1,stopReason:stopRef.current,transcript:text,transcriptionStartedAtMs:started};',
+    'if(text.length>0||null!=context){text.length>0&&null==history&&null==handlers.chatgpt?historyNS.QY.getInstance().dispatchMessage("global-dictation-record-history-item",{text:text}):history?.setTranscript(text,void 0),analytics.performance.mark("transcript_dispatched");let session=history?.id;if(delivered=!0,null!=action.recovery&&null!=handlers.onRecoveryChange){if(recover("recovered",text,context),retrying&&mounted.current&&generation===currentGeneration.current){let promise=null==context?handlers.onTranscriptRetry?.(text,session):handlers.onTranscriptRetry?.(text,session,context);null==handlers.chatgpt||attached||state(analytics,{...metadata,action:null==handlers.onTranscriptRetry?metadata.action:"insert"}),await promise,usedRetry=null!=handlers.onTranscriptRetry}}else if("send"===action.action){let promise=null==context?handlers.onTranscriptSend(text,session):handlers.onTranscriptSend(text,session,context);null==handlers.chatgpt||attached||state(analytics,metadata),await promise}else{let promise=null==context?handlers.onTranscriptInsert(text,session):handlers.onTranscriptInsert(text,session,context);null==handlers.chatgpt||attached||state(analytics,metadata),await promise,pending.current===action&&"send"===pending.current.action&&await (null==context||null!=context.recording?handlers.onTranscriptSend("",session):handlers.onTranscriptSend("",session,context))}}',
+    'else null!=handlers.onRecoveryChange&&(null!=action.recovery||recovered)?(recoveryRef.current=action,mounted.current&&recoverState(!0),recover("failed")):handlers.onTranscriptCancel?.();if(action.abortController.signal.aborted)return;state(analytics,{...metadata,action:action.action,recovery:null==action.recovery||null==handlers.onRecoveryChange?void 0:{phase:action.recovery.phase,transcriptInserted:usedRetry,retrySameAudioAvailable:mounted.current&&generation===currentGeneration.current&&recoveryRef.current===action}}),completed=!0',
+    '}catch(error){if(action.abortController.signal.aborted)return;throw error}})().finally(()=>{request.signal?.removeEventListener("abort",abort),pending.current===action&&(pending.current=null)}),completed},memo[1]=callback):callback=memo[1];let invoke=callback;',
+    'async function stop(){await invoke({action:nextAction,isCurrent:isCurrent,recovery:recovery,analytics:analytics,audio:audio,recordingSignal:recordingSignal,streamingSession:streamingSession,handlers:handlers,language:language,recordingPersistence:history,requestDurationMs:null==handlers.chatgpt?void 0:duration})}',
+    'async function retry(){await invoke({...request,analytics:analytics},!0)}',
+    'function insert(){return invoke({action:"insert",analytics:analytics,audio:audio,streamingSession:null,language:language,handlers:{...handlers,onTranscriptInsert:insertTranscript},recordingPersistence:null,requestDurationMs:duration,signal:signal})}',
+    'return{stop,retry,insert}}},Opaque(module,exports,load){const data={nativeOpaque:"preserve"};},Other(){}};',
+  ].join("");
+}
+
+function composerCallbackRuntime(source, options = {}) {
+  const events = [], globals = {}, pending = { current: null }, generation = { current: 1 };
+  if (options.capture !== undefined) globals.codexLinuxRecordReplayCaptureTranscript = (...args) => {
+    events.push(["capture", ...args]);
+    return options.capture(...args);
+  };
+  const inputSignal = new AbortController();
+  const handlers = {
+    chatgpt: options.chatgpt ?? null,
+    getSurroundingText: () => "surrounding text",
+    onTranscriptUpdate: (...args) => events.push(["native-update", ...args]),
+    onTranscriptSend: (...args) => { events.push(["send", ...args]); if (options.nativeError) throw Error("native send failure"); return options.nativeDeferred ?? Promise.resolve(); },
+    onTranscriptInsert: (...args) => { events.push(["insert", ...args]); if (options.nativeError) throw Error("native insert failure"); return options.nativeDeferred ?? Promise.resolve(); },
+    onTranscriptRetry: (...args) => { events.push(["retry", ...args]); return Promise.resolve(); },
+    onTranscriptCancel: () => events.push(["cancel"]),
+    onRecoveryChange: options.recovery ? () => {} : null,
+  };
+  const history = options.history === false ? null : { id: "native-session", setTranscript: (...args) => { events.push(["history", ...args]); if (options.historyError) throw Error("native history failure"); } };
+  const analytics = { performance: { mark: name => events.push(["mark", name]) }, recordingSource: options.attached ? "CHATGPT_DICTATION_RECORDING_SOURCE_ATTACHED_AUDIO" : "composer", recordDurationMs: 500, dictationSessionId: "dictation-session", attemptId: "attempt", timings: { transcriptReceivedTs: 1234 } };
+  const asr = async (_audio, callbacks) => {
+    events.push(["asr"]);
+    if (options.abortAt === "asr") inputSignal.abort();
+    if (options.stale) callbacks?.onTranscriptUpdate("partial", null);
+    return { text: options.text ?? " raw transcript " };
+  };
+  const context = {
+    globalThis: globals, Date: { now: () => options.now ?? 1234 }, AbortController, cleanupEnabled: true,
+    pending, mounted: { current: options.mounted !== false }, setAction() {}, currentGeneration: generation,
+    transcribe: asr, stream: asr,
+    cleanupNS: { h: async parameters => { events.push(["cleanup", parameters.transcript, parameters.surroundingText]); if (options.abortAt === "cleanup") inputSignal.abort(); if (options.cleanupError) throw Error("native cleanup failure"); return options.cleaned ?? " cleaned transcript "; } },
+    persistNS: { bE: (_value, _analytics, text) => events.push(["persist", text]) }, settingsNS: { YV: "native-setting" }, store: { get: value => value },
+    historyNS: { QY: { getInstance: () => ({ dispatchMessage: (...args) => events.push(["history-dispatch", ...args]) }) } },
+    recoveryRef: { current: null }, recoverState() {}, activeRef: { current: null }, reset() {}, stopRef: { current: "user" },
+    assetResponse: { nativeAsset: true }, state: (_analytics, data) => events.push(["state", data.action]),
+  };
+  const marker = 'callback=async(request,retry)=>{', at = source.indexOf(marker);
+  assert.ok(at >= 0);
+  const open = at + marker.length - 1, end = findMatchingBrace(source, open);
+  vm.runInNewContext('async function run(request,retry){' + source.slice(open + 1, end) + '};globalThis.run=run;', context);
+  const request = { action: options.action ?? "send", recovery: options.recovery ? { phase: "recovering" } : null, analytics, audio: { size: 1 }, handlers, recordingPersistence: history, requestDurationMs: 500, signal: inputSignal.signal, isCurrent: () => !options.stale, recordingSignal: options.recording ? new AbortController().signal : undefined };
+  return { events, globals, context, request, pending, generation, run: () => globals.run(request, options.retrying ?? false) };
 }
 
 // Previous Vite/rolldown composer dictation block (template literals, `x==null`).
@@ -1120,36 +1180,16 @@ test("record-and-replay rejects retired composer transcript contracts", () => {
 });
 
 test("record-and-replay matches and executes the current composer transcript block", async () => {
-  const source = currentComposerTranscriptFixture();
-  const patched = applyRecordReplayDictationTranscriptPatch(source);
-
+  const source = currentComposerTranscriptFixture(), patched = applyRecordReplayDictationTranscriptPatch(source);
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayDictationTranscriptPatch(patched), patched);
-  assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(p,i\.action\)/);
-  assert.match(patched, /let e=c\?\.id;/);
-  assert.match(patched, /onTranscriptSend\(p,e\)/);
-  assert.match(patched, /onTranscriptInsert\(p,e\)/);
-
-  const context = {
-    Date,
-    globalThis: {
-      events: [],
-      codexLinuxRecordReplayCaptureTranscript: (transcript, action) => {
-        context.globalThis.events.push(["capture", transcript, action]);
-        return true;
-      },
-    },
-    une: { getInstance: () => ({ dispatchMessage() {} }) },
-  };
-  vm.runInNewContext(`${patched};globalThis.run=send`, context);
-  await context.globalThis.run();
-  assert.deepEqual(JSON.parse(JSON.stringify(context.globalThis.events)), [
-    ["capture", "Create an image of a neon cabin", "send"],
-    ["send", "Create an image of a neon cabin", "session-1"],
+  assert.match(patched, /codexLinuxRecordReplayCaptureTranscript\?\.\(text,action\.action\)/);
+  const runtime = composerCallbackRuntime(patched, { capture: () => true });
+  await runtime.run();
+  assert.deepEqual(runtime.events.filter(event => ["capture", "send"].includes(event[0])), [
+    ["capture", "cleaned transcript", "send"], ["send", "cleaned transcript", "native-session"],
   ]);
 });
-
-
 
 test("record-and-replay transcript repair rejects duplicate, partial, mixed, and ambiguous owners", () => {
   const current = currentComposerTranscriptFixture();
@@ -1163,7 +1203,7 @@ test("record-and-replay transcript repair rejects duplicate, partial, mixed, and
     "duplicate patched": patched + patched,
     mixed: current + patched,
     partial,
-    ambiguous: current.replace('else if("send"===i.action){', 'else if("send"===i.action){if(false){}else if("send"===i.action){}'),
+    ambiguous: current.replace('else if("send"===action.action){', 'else if("send"===action.action){if(false){}else if("send"===action.action){}'),
   };
   const descriptor = descriptors.find((patch) => patch.id === "record-replay-dictation-transcript");
 
@@ -1255,7 +1295,7 @@ test("record-and-replay generated transcript runtimes are syntactically valid", 
   const globalDictationSource = CURRENT_GLOBAL_DICTATION_SOURCE;
 
   assert.doesNotThrow(() => new vm.Script(recordReplayHudRuntimeSource()));
-  assert.doesNotThrow(() => new vm.Script(applyRecordReplayDictationTranscriptPatch(source)));
+  assert.equal(javascriptSourceParses(applyRecordReplayDictationTranscriptPatch(source)), true);
   assert.doesNotThrow(() => new vm.Script(applyRecordReplayGlobalDictationTranscriptPatch(globalDictationSource)));
 });
 
@@ -2094,4 +2134,331 @@ test("UP71 HUD descriptor includes orphan DOM and style definitions in physical 
     finally { fs.writeFileSync = oldWrite; }
     assert.equal(writes, 0); assertHudFixtureBytes(fixture, bytes);
   }
+});
+
+function ordinaryDictationFixture(t, { copies = 2, dependency = false } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-record-replay-ordinary-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const assets = path.join(root, "webview/assets"); fs.mkdirSync(assets, { recursive: true });
+  const names = Array.from({ length: copies }, (_, index) => index === 0 ? "primary.js" : "peer.js");
+  const prefix = dependency ? 'import*as dependency from"./dependency.js";' : "";
+  for (const name of names) fs.writeFileSync(path.join(assets, name), prefix + currentComposerTranscriptFixture());
+  if (dependency) fs.writeFileSync(path.join(assets, "dependency.js"), 'export const opaque={nativeData:true};');
+  const descriptor = descriptors.find(item => item.id === "record-replay-dictation-transcript");
+  const selected = normalizePatchDescriptors([{ ...descriptor, featureId: "record-and-replay", sourceKind: "feature" }]);
+  return { root, assets, names, run() {
+    const report = createPatchReport();
+    applyExtractedAppPatchDescriptors(root, selected, {}, report, "extracted-app:pre-webview");
+    return report.patches[0];
+  } };
+}
+
+function ordinaryDictationBytes(fixture) {
+  return Object.fromEntries(fs.readdirSync(fixture.assets).filter(name => fs.lstatSync(path.join(fixture.assets, name)).isFile())
+    .map(name => [name, fs.readFileSync(path.join(fixture.assets, name), "utf8")]));
+}
+
+function assertOrdinaryDictationBytes(fixture, expected) {
+  for (const [name, bytes] of Object.entries(expected)) assert.equal(fs.readFileSync(path.join(fixture.assets, name), "utf8"), bytes, name);
+}
+
+function assertOrdinaryRefusal(t, mutate, label) {
+  const raw = currentComposerTranscriptFixture(), source = mutate(raw);
+  const direct = captureWarns(() => applyRecordReplayDictationTranscriptPatch(source));
+  assert.equal(direct.value, source, label); assert.equal(direct.warnings.length, 1, label);
+  const fixture = ordinaryDictationFixture(t);
+  for (const name of fixture.names) fs.writeFileSync(path.join(fixture.assets, name), source);
+  const before = ordinaryDictationBytes(fixture), oldWrite = fs.writeFileSync;
+  let writes = 0;
+  fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+  try { assert.equal(fixture.run().status, "skipped-optional", label); }
+  finally { fs.writeFileSync = oldWrite; }
+  assert.equal(writes, 0, label); assertOrdinaryDictationBytes(fixture, before);
+}
+
+test("UP72 descriptor commits all current native copies and unchanged static read dependencies", t => {
+  const fixture = ordinaryDictationFixture(t, { dependency: true });
+  const before = ordinaryDictationBytes(fixture);
+  const descriptor = descriptors.find(item => item.id === "record-replay-dictation-transcript");
+  assert.equal(descriptor.phase, "extracted-app:pre-webview"); assert.equal(descriptor.order, 20695);
+  assert.equal(fixture.run().status, "applied"); assert.equal(fixture.run().status, "already-applied");
+  for (const name of fixture.names) {
+    const patched = fs.readFileSync(path.join(fixture.assets, name), "utf8");
+    const seam = before[name].indexOf('if(text.length>0||null!=context){') + 'if(text.length>0||null!=context){'.length;
+    const contributionLength = patched.length - before[name].length;
+    assert.ok(contributionLength > 0);
+    assert.equal(patched.slice(0, seam) + patched.slice(seam + contributionLength), before[name]);
+    assert.equal(patched.split('codexLinuxRecordReplayCaptureTranscript?.(').length - 1, 1);
+  }
+  assert.equal(fs.readFileSync(path.join(fixture.assets, "dependency.js"), "utf8"), before['dependency.js']);
+});
+
+test("UP72 canonical contribution validates both direct and queued dataflow", t => {
+  for (const [from, to] of [
+    ['CaptureTranscript?.(text,action.action)', 'CaptureTranscript?.(other,action.action)'],
+    ['CaptureTranscript?.(text,action.action)', 'CaptureTranscript?.(text,other.action)'],
+    ['transcript:text,action:action.action,queuedAt:', 'transcript:"wrong",action:action.action,queuedAt:'],
+    ['transcript:text,action:action.action,queuedAt:', 'transcript:text,action:"wrong",queuedAt:'],
+    ['codexLinuxRecordReplayPendingTranscripts??=[]', 'otherQueue??=[]'],
+    ['queuedAt:Date.now()', 'queuedAt:0'],
+    ['codexLinuxRecordReplayCaptureResult?.catch?.(()=>{})', 'codexLinuxRecordReplayCaptureResult?.catch?.(other)'],
+    ['catch{return!1}', 'catch{throw Error("wrong policy")}'],
+  ]) assertOrdinaryRefusal(t, raw => applyRecordReplayDictationTranscriptPatch(raw).replace(from, to), from);
+});
+
+test("UP72 native publication import and callback ABI drifts refuse before writes", t => {
+  for (const [from, to] of [
+    ['dictate:()=>hook', 'dictate:()=>other'],
+    ['load.d(exports,', 'other.d(exports,'],
+    ['var historyNS=load("History")', 'var historyNS=other("History")'],
+    ['let invoke=callback;', 'let invoke=other;'],
+    ['await invoke({...request,analytics:analytics},!0)', 'await other({...request,analytics:analytics},!0)'],
+    ['await invoke({...request,analytics:analytics},!0)', 'invoke({...request,analytics:analytics},!0)'],
+    ['handlers:handlers,language:language', 'newhandlers:handlers,language:language'],
+    ['return await (async()=>{try{', 'return (async()=>{try{'],
+    ['cleanupEnabled:cleanupEnabled,signal:action.abortController.signal', 'cleanupEnabled:other,signal:action.abortController.signal'],
+    ['action.isCurrent?.()===!1&&action.abortController.abort()', 'other.isCurrent?.()===!1&&action.abortController.abort()'],
+    ['signal:action.abortController.signal,response:response', 'signal:other.signal,response:response'],
+    ['dictationSessionId:analytics.dictationSessionId', 'dictationSessionId:other.dictationSessionId'],
+    ['history?.setTranscript(text,void 0)', 'history?.setTranscript(other,void 0)'],
+    ['handlers.onTranscriptSend(text,session,context)', 'handlers.onTranscriptSend(text,session,other)'],
+    ['pending.current===action&&"send"===pending.current.action', 'other.current===action&&"send"===pending.current.action'],
+    ['request.signal?.removeEventListener("abort",abort)', 'request.signal?.removeEventListener("abort",other)'],
+  ]) assertOrdinaryRefusal(t, raw => raw.replace(from, to), from);
+});
+
+test("UP72 publication projection preserves later writes and permits real local shadows", t => {
+  const inject = (source, text) => source.replace('function hook(props){', text + 'function hook(props){');
+  for (const statement of [
+    'historyNS=other;', 'function rebind(){historyNS<<=1;}', 'function rebind(){\\u0068istoryNS=other;}',
+    'function rebind(){hook=other;}', 'for(let historyNS of [])for(let item of []){historyNS=item;}historyNS=other;',
+  ]) assertOrdinaryRefusal(t, raw => inject(raw, statement), statement);
+  for (const statement of [
+    'function local(historyNS){historyNS=other;}',
+    'for(let historyNS of [])for(let item of []){historyNS=item;}',
+    'scope:{let historyNS;historyNS=other;break scope;}',
+    'function local(){let historyNS;historyNS>>>=1;}',
+    'const opaque={nativeData:"codexLinuxRecordReplayCaptureTranscript?.(wrong,wrong)"};',
+    '/*codexLinuxRecordReplayPendingTranscripts??=[]).push({transcript:wrong})*/',
+  ]) {
+    const raw = inject(currentComposerTranscriptFixture(), statement), output = captureWarns(() => applyRecordReplayDictationTranscriptPatch(raw));
+    assert.notEqual(output.value, raw, statement); assert.equal(output.warnings.length, 0, statement);
+    assert.equal(applyRecordReplayDictationTranscriptPatch(output.value), output.value, statement);
+  }
+});
+
+test("UP72 renamed native roles opaque context data and UTF16 preimages survive", t => {
+  const fixture = ordinaryDictationFixture(t);
+  for (const name of fixture.names) {
+    const text = 'const opaque="😀";' + currentComposerTranscriptFixture()
+      .replace(/\btext\b/gu, "sanitizedText").replace(/\baction\b/gu, "nextAction")
+      .replace(/\bhistoryNS\b/gu, "nativeHistory").replace('attemptId:analytics.attemptId,', 'attemptId:analytics.attemptId,nativeOpaque:{label:"preserve"},');
+    // Renaming JavaScript property keys would change the native ABI.
+    const corrected = text.replace(/sanitizedText:/gu, "text:").replace(/\.sanitizedText\b/gu, ".text")
+      .replace(/nextAction:/gu, "action:").replace(/\.nextAction\b/gu, ".action");
+    fs.writeFileSync(path.join(fixture.assets, name), corrected);
+  }
+  assert.equal(fixture.run().status, "applied"); assert.equal(fixture.run().status, "already-applied");
+  for (const name of fixture.names) assert.ok(fs.readFileSync(path.join(fixture.assets, name), "utf8").includes('nativeOpaque:{label:"preserve"}'));
+});
+
+test("UP72 mixed malformed and hidden physical peers and orphan contributions refuse atomically", t => {
+  for (const kind of ["mixed", "malformed-peer", "hidden-peer", "orphan-call", "orphan-queue", "orphan-unicode", "duplicate", "module-duplicate"]) {
+    const fixture = ordinaryDictationFixture(t), raw = currentComposerTranscriptFixture();
+    if (kind === "mixed") fs.writeFileSync(path.join(fixture.assets, "primary.js"), applyRecordReplayDictationTranscriptPatch(raw));
+    else if (kind === "malformed-peer") fs.writeFileSync(path.join(fixture.assets, "peer.js"), raw.replace('dictate:()=>hook', 'dictate:()=>other'));
+    else if (kind === "hidden-peer") { fs.renameSync(path.join(fixture.assets, "peer.js"), path.join(fixture.assets, "peer.mjs")); fs.writeFileSync(path.join(fixture.assets, "peer.mjs"), raw.replace('global-dictation-record-history-item', 'hidden-native-history')); }
+    else if (kind === "orphan-call") fs.writeFileSync(path.join(fixture.assets, "orphan.js"), 'globalThis.codexLinuxRecordReplayCaptureTranscript?.("x","send");');
+    else if (kind === "orphan-queue") fs.writeFileSync(path.join(fixture.assets, "orphan.js"), '(globalThis.codexLinuxRecordReplayPendingTranscripts??=[]).push({transcript:"x",action:"send",queuedAt:0});');
+    else if (kind === "orphan-unicode") fs.writeFileSync(path.join(fixture.assets, "orphan.js"), 'globalThis["\\u0063odexLinuxRecordReplayCaptureTranscript"]?.("x","send");');
+    else if (kind === "duplicate") {
+      const patched = applyRecordReplayDictationTranscriptPatch(raw), seam = raw.indexOf('if(text.length>0||null!=context){') + 'if(text.length>0||null!=context){'.length;
+      const contribution = patched.slice(seam, seam + patched.length - raw.length);
+      fs.writeFileSync(path.join(fixture.assets, "primary.js"), patched.slice(0, seam) + contribution + patched.slice(seam));
+    } else fs.writeFileSync(path.join(fixture.assets, "primary.js"), raw.replace('Opaque(module,exports,load){', 'Composer(module,exports,load){'));
+    const before = ordinaryDictationBytes(fixture), oldWrite = fs.writeFileSync; let writes = 0;
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(writes, 0, kind); assertOrdinaryDictationBytes(fixture, before);
+  }
+});
+
+test("UP72 commit protects unchanged dependencies inventory races and partial writes", t => {
+  for (const kind of ["partial", "dependency", "inventory"]) {
+    const fixture = ordinaryDictationFixture(t, { dependency: true }), before = ordinaryDictationBytes(fixture), oldWrite = fs.writeFileSync;
+    let attempted = false;
+    fs.writeFileSync = (file, bytes, ...options) => {
+      if (String(file).endsWith("/primary.js") && !attempted) {
+        attempted = true;
+        if (kind === "partial") { oldWrite(file, "partial"); throw Error("inert partial write"); }
+        if (kind === "dependency") oldWrite(path.join(fixture.assets, "dependency.js"), before['dependency.js'] + "\n// concurrent");
+        else oldWrite(path.join(fixture.assets, "hidden.js"), 'globalThis.codexLinuxRecordReplayCaptureTranscript?.("x","send");');
+      }
+      return oldWrite(file, bytes, ...options);
+    };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(attempted, true, kind);
+    for (const name of fixture.names) assert.equal(fs.readFileSync(path.join(fixture.assets, name), "utf8"), before[name], name);
+  }
+});
+
+test("UP72 failed restoration remains fatal", t => {
+  const fixture = ordinaryDictationFixture(t), oldWrite = fs.writeFileSync; let attempts = 0;
+  fs.writeFileSync = (file, bytes, ...options) => {
+    if (String(file).endsWith("/primary.js")) { if (++attempts === 1) oldWrite(file, "partial"); throw Error("inert restoration failure"); }
+    return oldWrite(file, bytes, ...options);
+  };
+  try { assert.throws(() => fixture.run(), /rollback could not restore original bytes/u); }
+  finally { fs.writeFileSync = oldWrite; }
+  assert.equal(attempts, 2);
+});
+
+test("UP72 warm canonical checks revalidate inventory and read dependencies after preflight", t => {
+  for (const kind of ["inventory", "dependency"]) {
+    const fixture = ordinaryDictationFixture(t, { dependency: true });
+    assert.equal(fixture.run().status, "applied");
+    const oldRead = fs.readFileSync, oldWrite = fs.writeFileSync; let changed = false, writes = 0;
+    fs.readFileSync = (file, ...options) => {
+      const bytes = oldRead(file, ...options);
+      if (!changed && options.length === 0 && String(file).endsWith("/primary.js")) {
+        changed = true;
+        if (kind === "inventory") oldWrite(path.join(fixture.assets, "hidden.js"), 'globalThis.codexLinuxRecordReplayCaptureTranscript?.("x","send");');
+        else oldWrite(path.join(fixture.assets, "dependency.js"), 'export const opaque={concurrent:true};');
+      }
+      return bytes;
+    };
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.readFileSync = oldRead; fs.writeFileSync = oldWrite; }
+    assert.equal(changed, true); assert.equal(writes, 0);
+  }
+});
+
+test("UP72 inert direct and queued capture carry the same sanitized native transcript and action", async () => {
+  const raw = currentComposerTranscriptFixture(), patched = applyRecordReplayDictationTranscriptPatch(raw);
+  for (const action of ["send", "insert"]) {
+    const direct = composerCallbackRuntime(patched, { action, capture: () => true });
+    const queued = composerCallbackRuntime(patched, { action });
+    await direct.run(); await queued.run();
+    assert.deepEqual(direct.events.find(event => event[0] === "capture"), ["capture", "cleaned transcript", action]);
+    assert.deepEqual(JSON.parse(JSON.stringify(queued.globals.codexLinuxRecordReplayPendingTranscripts)), [{ transcript: "cleaned transcript", action, queuedAt: 1234 }]);
+    assert.deepEqual(JSON.parse(JSON.stringify(direct.events.filter(event => event[0] !== "capture"))), JSON.parse(JSON.stringify(queued.events)));
+    const captureAt = direct.events.findIndex(event => event[0] === "capture"), historyAt = direct.events.findIndex(event => event[0] === "history");
+    assert.ok(direct.events.findIndex(event => event[0] === "cleanup") < captureAt);
+    assert.ok(captureAt < historyAt);
+  }
+});
+
+test("UP72 inert synthetic capture faults stay isolated and deferred work never blocks native send", async () => {
+  const patched = applyRecordReplayDictationTranscriptPatch(currentComposerTranscriptFixture());
+  for (const capture of [() => { throw Error("synthetic capture failure"); }, () => Promise.reject(Error("synthetic capture rejection")), () => new Promise(() => {})]) {
+    const runtime = composerCallbackRuntime(patched, { capture });
+    let done = false;
+    const pending = runtime.run().then(() => { done = true; });
+    await settleHudPromises(80);
+    assert.equal(done, true); await pending;
+    assert.equal(runtime.events.filter(event => event[0] === "send").length, 1);
+    assert.equal(runtime.events.filter(event => event[0] === "capture").length, 1);
+    assert.equal(runtime.globals.codexLinuxRecordReplayPendingTranscripts, undefined);
+  }
+});
+
+test("UP72 inert native history send and cleanup failures retain original propagation", async () => {
+  const raw = currentComposerTranscriptFixture(), patched = applyRecordReplayDictationTranscriptPatch(raw);
+  for (const options of [{ historyError: true }, { nativeError: true }, { cleanupError: true }]) {
+    for (const source of [raw, patched]) {
+      const runtime = composerCallbackRuntime(source, { ...options, capture: () => true });
+      await assert.rejects(runtime.run(), /native (?:history|send|cleanup) failure/u);
+      if (options.cleanupError) assert.equal(runtime.events.some(event => event[0] === "capture"), false);
+    }
+  }
+});
+
+test("UP72 inert empty abort and stale-current paths preserve native cancellation gates", async () => {
+  const raw = currentComposerTranscriptFixture(), patched = applyRecordReplayDictationTranscriptPatch(raw);
+  for (const options of [{ cleaned: "" }, { abortAt: "asr" }, { abortAt: "cleanup" }, { stale: true }]) {
+    const baseline = composerCallbackRuntime(raw, options), runtime = composerCallbackRuntime(patched, { ...options, capture: () => true });
+    await baseline.run(); await runtime.run();
+    assert.equal(runtime.events.some(event => event[0] === "capture"), false);
+    assert.equal(runtime.events.some(event => event[0] === "send" || event[0] === "insert"), false);
+    assert.deepEqual(JSON.parse(JSON.stringify(runtime.events)), JSON.parse(JSON.stringify(baseline.events)));
+  }
+});
+
+test("UP72 inert recovery native session and recording context arguments are preserved", async () => {
+  const patched = applyRecordReplayDictationTranscriptPatch(currentComposerTranscriptFixture());
+  const recovery = composerCallbackRuntime(patched, { recovery: true, retrying: true, capture: () => true });
+  await recovery.run();
+  assert.equal(recovery.events.filter(event => event[0] === "retry").length, 1);
+  assert.equal(recovery.events.filter(event => event[0] === "send" || event[0] === "insert").length, 0);
+  for (const options of [{ recording: true }, { chatgpt: {} }]) {
+    const runtime = composerCallbackRuntime(patched, { ...options, capture: () => true });
+    await runtime.run();
+    const sent = runtime.events.find(event => event[0] === "send");
+    assert.equal(sent[2], "native-session");
+    assert.equal(sent.length, 4);
+    const context = sent[3];
+    assert.equal(context.dictationSessionId, "dictation-session"); assert.equal(context.attemptId, "attempt");
+    assert.equal(context.recording, options.recording ? runtime.request.audio : undefined);
+    assert.equal(context.recordingSignal, runtime.request.recordingSignal);
+    assert.equal(context.recordingDurationMs, 500); assert.equal(context.transcriptReceivedTs, 1234);
+    assert.equal(runtime.events.find(event => event[0] === "capture")[1], options.chatgpt ? " raw transcript " : "cleaned transcript");
+  }
+});
+
+test("UP72 inert pending insert-to-send changes keep the original final empty native submission", async () => {
+  const patched = applyRecordReplayDictationTranscriptPatch(currentComposerTranscriptFixture());
+  let resolve;
+  const deferred = new Promise(done => { resolve = done; });
+  const runtime = composerCallbackRuntime(patched, { action: "insert", nativeDeferred: deferred, capture: () => true });
+  const pending = runtime.run(); await settleHudPromises(80);
+  assert.equal(runtime.events.filter(event => event[0] === "insert").length, 1);
+  runtime.pending.current.action = "send"; resolve(); await pending;
+  assert.deepEqual(runtime.events.filter(event => ["capture", "insert", "send"].includes(event[0])), [
+    ["capture", "cleaned transcript", "insert"], ["insert", "cleaned transcript", "native-session"], ["send", "", "native-session"],
+  ]);
+});
+
+test("UP72 inert direct API status delay is unawaited and queued fallback is consumed by unchanged UP71", async () => {
+  const patched = applyRecordReplayDictationTranscriptPatch(currentComposerTranscriptFixture());
+  const delayed = inertHudRuntime({ autoReply: false });
+  const runtime = composerCallbackRuntime(patched, { now: delayed.now, capture: delayed.context.codexLinuxRecordReplayCaptureTranscript });
+  await runtime.run();
+  assert.equal(runtime.events.filter(event => event[0] === "send").length, 1);
+  assert.ok(delayed.requests.filter(request => request.url.endsWith("linux-record-replay-status")).length >= 2);
+  assert.equal(delayed.requests.some(request => request.url.endsWith("linux-record-replay-speech-context")), false);
+  delayed.fire("pagehide"); await settleHudPromises();
+  const hud = inertHudRuntime(); await settleHudPromises();
+  const queued = composerCallbackRuntime(patched, { now: hud.now }); await queued.run();
+  hud.context.codexLinuxRecordReplayPendingTranscripts = queued.globals.codexLinuxRecordReplayPendingTranscripts;
+  hud.setStatus({ state: "active", session_dir: "/recording" }); await hud.advance(1000); await settleHudPromises(120);
+  const spoken = hudRequests(hud, "linux-record-replay-speech-context");
+  assert.equal(spoken.length, 1);
+  assert.deepEqual(JSON.parse(spoken[0].body), { sessionDir: "/recording", transcript: "cleaned transcript", source: "codex-dictation-send" });
+  hud.fire("pagehide");
+});
+
+test("UP72 inert discard and blank context preserve unchanged UP71 filtering", async () => {
+  const patched = applyRecordReplayDictationTranscriptPatch(currentComposerTranscriptFixture());
+  const hud = await activeInertHud();
+  for (const options of [{ action: "discard" }, { text: "", chatgpt: {} }]) {
+    const runtime = composerCallbackRuntime(patched, { ...options, now: hud.now, capture: hud.context.codexLinuxRecordReplayCaptureTranscript });
+    await runtime.run(); await settleHudPromises();
+    assert.equal(hudRequests(hud, "linux-record-replay-speech-context").length, 0);
+    assert.equal(runtime.events.filter(event => event[0] === "capture").length, 1);
+  }
+  hud.fire("pagehide");
+});
+
+test("UP72 injected capture capabilities keep their selected lexical scope", t => {
+  for (const [from, to] of [
+    ['export const __rspack_esm_ids=', 'const Date={};export const __rspack_esm_ids='],
+    ['function hook(props){', 'const globalThis={};function hook(props){'],
+    ['function hook(props){', 'function hook(props){let Date;'],
+    ['let response=await (', 'let globalThis;let response=await ('],
+  ]) assertOrdinaryRefusal(t, raw => raw.replace(from, to), from);
+  const raw = currentComposerTranscriptFixture().replace('function hook(props){', 'function opaque(){let Date;let globalThis;}function hook(props){');
+  assert.notEqual(applyRecordReplayDictationTranscriptPatch(raw), raw);
 });

@@ -216,6 +216,33 @@ Document teardown releases the HUD's owned DOM, style, listeners, timers,
 observer, and capture API. Deferred replies and composer waits retire with that
 document. Unrelated styles, listeners, and replacement APIs keep their owners.
 
+## Ordinary dictation transcripts
+
+The ordinary dictation descriptor runs in `extracted-app:pre-webview` at order
+20695. It qualifies the published composer hook, its stable CJS imports, native
+callback memo and stop/retry/file-insert consumers, ASR and cleanup ordering,
+current-signal checks, recording context, and history/recovery/send/insert paths.
+The capture contribution sits at the native nonempty-or-context completion
+boundary and preserves the surrounding native bytes.
+
+The direct HUD API and its bootstrap queue carry the same sanitized transcript
+and original action. The queue retains the existing `transcript`, `action`, and
+`queuedAt` fields. Capture stays unawaited. A local guard isolates synchronous
+capture failures and handles its returned Promise rejection, while native
+history, analytics, and submission retain their original error handling. The
+HUD owns active-session lookup, normalization, filtering, deduplication, and
+retry policy.
+
+Repeated application strips the exact owned contribution, requalifies the
+native producer and bindings, and reconstructs the complete supplied bytes.
+Wrong direct or fallback arguments, changed queue/timestamp policy, mixed or
+malformed copies, and orphan contributions are rejected before writes. The
+feature inventories every physical module copy and executable contribution,
+retains static import resources as unchanged transaction dependencies, and
+rechecks inventory and hashes around forward writes and warm validation.
+Verified rollback preserves the transaction's original bytes. Failed
+restoration remains fatal.
+
 ```bash
 node --test linux-features/record-and-replay/test.js
 ```
