@@ -8,8 +8,8 @@ const path = require("node:path");
 const test = require("node:test");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const { createPatchReport, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
-const { applyMainProcessChunkPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
-const { applyForkSidebarFallback, descriptors } = require("./patch.js");
+const { applyExtractedAppPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
+const { applyForkSidebarFallback } = require("./patch.js");
 
 // Reduced background settings owner from the current official Linux package.
 const READER = 'read:e=>(p(),"sidebarCustomSectionsEnabled"===e)?null!=d():' +
@@ -105,6 +105,10 @@ test("missing, ambiguous, partial, and drifted readers are preserved with a warn
     FIXTURE.replace("codex-app-server-custom-sections", "other-gate"),
     FIXTURE.replace("getReadyClient()", "getClient()"),
     FIXTURE.replace("null!=d()", "d()"),
+    FIXTURE + FIXTURE.replace("getReadyClient()", "getClient()"),
+    patched + FIXTURE.replace("getReadyClient()", "getClient()"),
+    FIXTURE + FIXTURE.replace("read:e=>", "read:(e)=>"),
+    FIXTURE + FIXTURE.replace(READER, `read:e=>{return ${READER.slice(8)}}`),
   ]) {
     const result = captureWarnings(() => applyForkSidebarFallback(source));
     assert.equal(result.value, source);
@@ -112,7 +116,7 @@ test("missing, ambiguous, partial, and drifted readers are preserved with a warn
   }
 });
 
-test("feature is disabled by default and integrates with chunk reports and drift enforcement", (t) => {
+test("feature is disabled by default and rejects ambiguous or drifted chunk sets before writing", (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "fork-sidebar-fallback-"));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const config = path.join(temp, "features.json");
@@ -123,23 +127,48 @@ test("feature is disabled by default and integrates with chunk reports and drift
   fs.writeFileSync(config, JSON.stringify({ enabled: ["fork-sidebar-fallback"] }));
   const enabled = normalizePatchDescriptors(loadLinuxFeaturePatchDescriptors(options));
   assert.equal(enabled.length, 1);
-  const report = createPatchReport();
-  const chunks = [
-    { name: "early-bootstrap-renamed.js", source: FIXTURE },
-    { name: "unrelated.js", source: "function other(){}" },
-  ];
-  const patched = applyMainProcessChunkPatchDescriptors(chunks, enabled, {}, report);
-  assert.equal(patched[0].source, applyForkSidebarFallback(FIXTURE));
-  assert.equal(patched[1].source, chunks[1].source);
-  assert.equal(report.patches[0].status, "applied");
-  assert.deepEqual(report.patches[0].chunks, [chunks[0].name]);
-  const repeated = createPatchReport();
-  applyMainProcessChunkPatchDescriptors(patched, enabled, {}, repeated);
-  assert.equal(repeated.patches[0].status, "already-applied");
-  const drift = createPatchReport();
-  drift.enabledFeatures = ["fork-sidebar-fallback"];
-  captureWarnings(() => applyMainProcessChunkPatchDescriptors([chunks[1]], enabled, {}, drift));
-  assert.equal(enabledFeatureFailuresFromReport(drift).length, 1);
+  const patched = applyForkSidebarFallback(FIXTURE);
+  const drifted = FIXTURE.replace("getReadyClient()", "getClient()");
+  const parenthesized = FIXTURE.replace("read:e=>", "read:(e)=>");
+  const block = FIXTURE.replace(READER, `read:e=>{return ${READER.slice(8)}}`);
+  const unrelated = "function other(){}";
+  const build = path.join(temp, ".vite", "build");
+  fs.mkdirSync(build, { recursive: true });
+  const run = (sources) => {
+    fs.rmSync(build, { recursive: true });
+    fs.mkdirSync(build);
+    const files = sources.map((source, index) => {
+      const file = path.join(build, `early-bootstrap-${index}-abcdef.js`);
+      fs.writeFileSync(file, source);
+      return file;
+    });
+    const report = createPatchReport();
+    report.enabledFeatures = ["fork-sidebar-fallback"];
+    captureWarnings(() => applyExtractedAppPatchDescriptors(
+      temp, enabled, {}, report, "extracted-app:pre-webview",
+    ));
+    return { report, sources: files.map((file) => fs.readFileSync(file, "utf8")) };
+  };
+  const applied = run([unrelated, FIXTURE]);
+  assert.deepEqual(applied.sources, [unrelated, patched]);
+  assert.equal(applied.report.patches[0].status, "applied");
+  assert.deepEqual(enabledFeatureFailuresFromReport(applied.report), []);
+  const repeated = run(applied.sources);
+  assert.deepEqual(repeated.sources, applied.sources);
+  assert.equal(repeated.report.patches[0].status, "already-applied");
+  for (const sources of [
+    [], [unrelated], [drifted], [FIXTURE, FIXTURE], [FIXTURE, drifted],
+    [patched, FIXTURE], [patched, drifted], [patched, patched],
+    [FIXTURE + drifted], [patched + drifted],
+    [FIXTURE, parenthesized], [FIXTURE, block],
+    [patched, parenthesized], [patched, block],
+    [FIXTURE + parenthesized], [FIXTURE + block],
+    [patched.replace("??!1", "??!0")],
+  ]) {
+    const rejected = run(sources);
+    assert.deepEqual(rejected.sources, sources);
+    assert.equal(enabledFeatureFailuresFromReport(rejected.report).length, 1);
+  }
 });
 
 test("current signed official fork placement advances only after the sidebar fallback", {
@@ -151,7 +180,7 @@ test("current signed official fork placement advances only after the sidebar fal
     .filter(({ source }) => source.includes('"codex-app-server-custom-sections"'));
   assert.equal(owners.length, 1);
   const [{ source }] = owners;
-  const { value: patched, warnings } = captureWarnings(() => descriptors[0].apply(source));
+  const { value: patched, warnings } = captureWarnings(() => applyForkSidebarFallback(source));
   assert.deepEqual(warnings, []);
   assert.notEqual(patched, source);
   assert.equal(patched.replace('checkGate("codex-app-server-custom-sections")??!1',

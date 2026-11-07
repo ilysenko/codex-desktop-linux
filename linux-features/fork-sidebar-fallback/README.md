@@ -34,8 +34,9 @@ permissions, and authentication retain their upstream behavior. The reader
 continues checking the live client, so later rollout assignments take effect.
 Other reasons for `execution-config-loading` are outside this workaround.
 
-The patch locates the background settings owner by both semantic setting
-names, independently of chunk filenames and minified bindings. Missing,
+The patch requires one sidebar rollout gate reference across all main-process
+chunks, then validates the reader using both semantic setting names,
+independently of chunk filenames and minified bindings. Missing,
 ambiguous, or changed contracts preserve the source and reject an enabled
 feature build through the existing patch-report enforcement.
 
