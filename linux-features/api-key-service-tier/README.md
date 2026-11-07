@@ -48,7 +48,9 @@ provider explicitly documents such a model alias.
 - API-key-authenticated hosts are allowed to show Fast service-tier controls.
   The current upstream access object keeps synthetic Ultrafast access disabled;
   ChatGPT, personal-access-token, and Amazon Bedrock hosts retain their upstream
-  speed-mode requirements and pending state.
+  speed-mode requirements and pending state. Loaded API-key hosts receive Fast
+  access only after host loading completes; changing the authentication method
+  invalidates the access memo even between two non-account identities.
 - If an API-key host's active model has no `serviceTiers` metadata, the UI
   synthesizes one `fast` option so the selector can send
   `serviceTier: "fast"`.
@@ -59,12 +61,17 @@ provider explicitly documents such a model alias.
 ## Implementation
 
 The rspack webview has no stable chunk names, so each patch finds its owner by
-content: the speed-mode access hook (copied into every chunk that renders a
-speed control; every copy is patched), the model catalog filter that marks
+content: the published speed-mode access hook (copied into every chunk that
+renders a speed control), the model catalog filter that marks
 API-key models, the service-tier resolver, and the active-model speed option
 list. The synthetic Fast helper is declared inside the same webpack module as
-each function that calls it. A missing or drifted owner leaves its chunk
-unchanged and reports a warning.
+each function that calls it. The gate validates its factory imports, host/auth
+query, native entitlement resolver and memoized outputs before preparing every
+physical copy of its module. All copies must be pristine or exactly patched;
+a missing, ambiguous, drifted or partially patched owner refuses the whole gate
+cohort before writes. A later write failure rolls back earlier copies. The
+other three patches leave a missing or drifted owner chunk unchanged and report
+a warning.
 
 ## Risks
 

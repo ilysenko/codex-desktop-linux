@@ -1,5 +1,11 @@
 "use strict";
 
+const path = require("node:path");
+const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
+const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
+const { findRspackRequireBinding, findUniqueRspackModuleCopies, patchRspackModuleCopies } =
+  require("../../scripts/patches/lib/rspack-module-assets.js");
+
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const PATCH_MARKER = "codexLinuxApiKeyFastTier";
 const MODEL_MARKER = "codexLinuxApiKeyServiceTierModel";
@@ -7,7 +13,7 @@ const API_KEY_ACCESS = "{fast:!0,ultrafast:!1}";
 
 // rspack chunks have no stable filenames, so every owner is found by content.
 // The speed-mode access hook is copied into every chunk that renders a speed
-// control; each copy is patched independently.
+// control; prepare every physical copy before committing the cohort.
 const GATE_NEEDLES = ["serviceTierAccess:", 'authMethod==="personalAccessToken"'];
 const MODEL_NEEDLES = [
   "hasModelSupportingUltraReasoningEffort",
@@ -41,65 +47,117 @@ function spliceMatch(source, match, replacement) {
 
 // --- Speed-mode access gate -------------------------------------------------
 
+// This contract describes the complete current published hook, not text that
+// merely resembles its entitlement branch. In particular the hostId, auth
+// query, loading state, native resolver and both memoized outputs share the
+// captured bindings. Import/export names and physical chunk names may drift.
 function serviceTierGatePattern(patched = false) {
-  const access = patched
-    ? `"apikey"===\\k<auth>&&!\\k<loading>\\?\\{fast:!0,ultrafast:!1\\}:null`
-    : "null";
   const cacheAuth = patched ? "\\k<auth>" : "\\k<account>";
+  const access = patched ? `"apikey"===\\k<auth>&&!\\k<loading>\\?\\{fast:!0,ultrafast:!1\\}:null` : "null";
   return new RegExp(
-    `(?<account>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod==="chatgpt"` +
-      `\\|\\|\\k<host>\\?\\.authMethod==="personalAccessToken"` +
-      `\\|\\|\\k<host>\\?\\.authMethod==="amazonBedrock",` +
-      `(?<auth>${JS_IDENT})=\\k<host>\\?\\.authMethod\\?\\?null;[\\s\\S]{0,500}?` +
-      `(?<loading>${JS_IDENT})=!!\\k<host>\\?\\.isLoading\\|\\|\\k<account>&&${JS_IDENT};` +
-      `(?<cache>${JS_IDENT})\\[3\\]!==(?<requirements>${JS_IDENT})\\|\\|\\k<cache>\\[4\\]!==\\k<loading>` +
-      `\\|\\|\\k<cache>\\[5\\]!==${cacheAuth}\\?` +
-      `\\((?<result>${JS_IDENT})=\\k<account>&&!\\k<loading>&&null!=\\k<requirements>` +
-      `\\?(?<resolver>\\(0,${JS_IDENT}\\.${JS_IDENT}\\)|${JS_IDENT})\\(\\k<requirements>\\):${access},` +
-      `\\k<cache>\\[3\\]=\\k<requirements>,\\k<cache>\\[4\\]=\\k<loading>,\\k<cache>\\[5\\]=${cacheAuth},` +
-      `\\k<cache>\\[6\\]=\\k<result>\\):\\k<result>=\\k<cache>\\[6\\];` +
-      `let (?<output>${JS_IDENT})=\\k<result>(?:,${JS_IDENT})*;return[\\s\\S]{0,160}?` +
-      `serviceTierAccess:\\k<output>,isLoading:\\k<loading>\\}`,
-    "g",
+    `^function\\((?<argument>${JS_IDENT})\\)\\{let (?<query>${JS_IDENT}),(?<result>${JS_IDENT}),` +
+    `(?<returned>${JS_IDENT}),(?<cache>${JS_IDENT})=\\(0,(?<memoModule>${JS_IDENT})\\.${JS_IDENT}\\)\\(10\\),` +
+    `(?<defaultHost>${JS_IDENT})=\\(0,(?<queryModule>${JS_IDENT})\\.${JS_IDENT}\\)` +
+    `\\((?<defaultModule>${JS_IDENT})\\.${JS_IDENT}\\),(?<hostId>${JS_IDENT})=\\k<argument>\\?\\.hostId\\?\\?\\k<defaultHost>,` +
+    `(?<host>${JS_IDENT})=\\(0,(?<hostModule>${JS_IDENT})\\.${JS_IDENT}\\)\\(\\k<hostId>\\),` +
+    `(?<account>${JS_IDENT})=\\k<host>\\?\\.authMethod==="chatgpt"` +
+    `\\|\\|\\k<host>\\?\\.authMethod==="personalAccessToken"` +
+    `\\|\\|\\k<host>\\?\\.authMethod==="amazonBedrock",(?<auth>${JS_IDENT})=\\k<host>\\?\\.authMethod\\?\\?null;` +
+    `\\k<cache>\\[0\\]!==\\k<hostId>\\|\\|\\k<cache>\\[1\\]!==\\k<auth>\\?` +
+    `\\(\\k<query>=\\{authMethod:\\k<auth>,hostId:\\k<hostId>\\},\\k<cache>\\[0\\]=\\k<hostId>,` +
+    `\\k<cache>\\[1\\]=\\k<auth>,\\k<cache>\\[2\\]=\\k<query>\\):\\k<query>=\\k<cache>\\[2\\];` +
+    `let\\{data:(?<requirements>${JS_IDENT}),isPending:(?<pending>${JS_IDENT})\\}=` +
+    `\\(0,\\k<queryModule>\\.${JS_IDENT}\\)\\((?<requirementsModule>${JS_IDENT})\\.${JS_IDENT},\\k<query>\\),` +
+    `(?<loading>${JS_IDENT})=!!\\k<host>\\?\\.isLoading\\|\\|\\k<account>&&\\k<pending>;` +
+    `\\k<cache>\\[3\\]!==\\k<requirements>\\|\\|\\k<cache>\\[4\\]!==\\k<loading>\\|\\|\\k<cache>\\[5\\]!==${cacheAuth}\\?` +
+    `\\(\\k<result>=\\k<account>&&!\\k<loading>&&null!=\\k<requirements>\\?` +
+    `(?<resolver>\\(0,(?<resolverModule>${JS_IDENT})\\.${JS_IDENT}\\))\\(\\k<requirements>\\):${access},` +
+    `\\k<cache>\\[3\\]=\\k<requirements>,\\k<cache>\\[4\\]=\\k<loading>,\\k<cache>\\[5\\]=${cacheAuth},` +
+    `\\k<cache>\\[6\\]=\\k<result>\\):\\k<result>=\\k<cache>\\[6\\];` +
+    `let (?<output>${JS_IDENT})=\\k<result>;return \\k<cache>\\[7\\]!==\\k<loading>\\|\\|\\k<cache>\\[8\\]!==\\k<output>\\?` +
+    `\\(\\k<returned>=\\{serviceTierAccess:\\k<output>,isLoading:\\k<loading>\\},\\k<cache>\\[7\\]=\\k<loading>,` +
+    `\\k<cache>\\[8\\]=\\k<output>,\\k<cache>\\[9\\]=\\k<returned>\\):\\k<returned>=\\k<cache>\\[9\\],\\k<returned>\\}$`, "u",
   );
 }
 
-function serviceTierGateState(source) {
-  const current = [...source.matchAll(serviceTierGatePattern())];
-  const patched = [...source.matchAll(serviceTierGatePattern(true))];
-  if (current.length === 1 && patched.length === 0) return { kind: "current", match: current[0] };
-  if (current.length === 0 && patched.length === 1) return { kind: "patched", match: patched[0] };
-  return { kind: current.length + patched.length === 0 ? "missing" : "invalid" };
-}
-
-function applyApiKeyServiceTierGatePatch(source) {
-  const state = serviceTierGateState(source);
-  if (state.kind === "patched") return source;
-  if (state.kind === "current") {
-    const { account, auth, loading, result, cache, requirements, resolver } = state.match.groups;
-    // Keep account entitlements intact. The memo is keyed by the auth method
-    // instead of the account boolean: API-key and other non-account hosts
-    // share the same false account-auth value.
-    let replacement = replaceOnce(
-      state.match[0],
-      `${result}=${account}&&!${loading}&&null!=${requirements}?${resolver}(${requirements}):null,`,
-      `${result}=${account}&&!${loading}&&null!=${requirements}?${resolver}(${requirements}):` +
-        `"apikey"===${auth}&&!${loading}?${API_KEY_ACCESS}:null,`,
-    );
-    replacement = replacement && replaceOnce(replacement, `${cache}[5]!==${account}?`, `${cache}[5]!==${auth}?`);
-    replacement = replacement && replaceOnce(replacement, `,${cache}[5]=${account},`, `,${cache}[5]=${auth},`);
-    if (replacement != null) {
-      const patched = spliceMatch(source, state.match, replacement);
-      if (serviceTierGateState(patched).kind === "patched") return patched;
-    }
+function gateOwner(source, module, patched) {
+  if (module == null || !Array.isArray(module.params) || module.params.length !== 3 ||
+      !GATE_NEEDLES.every(needle => source.includes(needle))) return null;
+  if (typeof module.source === "string" &&
+      !createJavaScriptLexicalIndex(module.source).isCode(module.start)) return null;
+  const snapshot = { ...module, moduleSource: source };
+  const lexical = createJavaScriptLexicalIndex(source);
+  const keys = [...source.matchAll(new RegExp(`(?<key>${JS_IDENT}):function\\(`, "gu"))]
+    .filter(match => lexical.isCode(match.index)).map(match => match.groups.key);
+  const owners = [];
+  for (const key of new Set(keys)) {
+    const publication = findRspackExportPublication(snapshot, key);
+    if (publication?.fn == null) continue;
+    const { start, end } = publication.fn;
+    const match = serviceTierGatePattern(patched).exec(source.slice(start, end));
+    if (match == null) continue;
+    const groups = match.groups;
+    const imports = [groups.memoModule, groups.queryModule, groups.defaultModule,
+      groups.hostModule, groups.requirementsModule, groups.resolverModule];
+    const locals = [groups.argument, groups.query, groups.result, groups.returned, groups.cache,
+      groups.defaultHost, groups.hostId, groups.host, groups.account, groups.auth,
+      groups.requirements, groups.pending, groups.loading, groups.output];
+    if (new Set(imports).size !== imports.length || new Set(locals).size !== locals.length ||
+        locals.some(name => imports.includes(name)) || imports.some(name => module.params.includes(name))) continue;
+    const bindings = imports.map(name => findRspackRequireBinding(snapshot, name));
+    if (bindings.some(binding => binding == null)) continue;
+    // The current owner contains only static imports and this direct anonymous
+    // publication. No earlier/later reassignment, shadow scope or extra export
+    // may borrow the otherwise matching branch.
+    const req = escapeRegExp(publication.requireName), exp = escapeRegExp(publication.exportsName);
+    const imported = `${JS_IDENT}=${req}\\((?:"(?:\\\\.|[^"\\\\])*"|\\d+)\\)`;
+    const prefix = new RegExp(`^var ${imported}(?:,${imported}){5};${req}\\.d\\(${exp},\\{\\},\\{${escapeRegExp(key)}:$`, "u");
+    if (!prefix.test(source.slice(0, start)) || !/^\}\);?$/u.test(source.slice(end))) continue;
+    owners.push({ match: { ...match, index: start }, publication, imports: bindings });
   }
-  warn(
-    state.kind === "invalid"
-      ? "Service tier auth gate is ambiguous or partially patched"
-      : "Could not find service tier auth gate",
-    "API key service tier gate patch",
-  );
-  return source;
+  return owners.length === 1 ? owners[0] : null;
+}
+
+function rewriteGate(source, owner, reverse = false) {
+  const { account, auth, loading, result, cache, requirements, resolver } = owner.match.groups;
+  const nativeAccess = `${result}=${account}&&!${loading}&&null!=${requirements}?${resolver}(${requirements}):null,`;
+  const apiKeyAccess = `${result}=${account}&&!${loading}&&null!=${requirements}?${resolver}(${requirements}):` +
+    `"apikey"===${auth}&&!${loading}?${API_KEY_ACCESS}:null,`;
+  let replacement = replaceOnce(owner.match[0], reverse ? apiKeyAccess : nativeAccess, reverse ? nativeAccess : apiKeyAccess);
+  replacement = replacement && replaceOnce(replacement, `${cache}[5]!==${reverse ? auth : account}?`, `${cache}[5]!==${reverse ? account : auth}?`);
+  replacement = replacement && replaceOnce(replacement, `,${cache}[5]=${reverse ? auth : account},`, `,${cache}[5]=${reverse ? account : auth},`);
+  return replacement == null ? null : spliceMatch(source, owner.match, replacement);
+}
+
+function serviceTierGateState(source, module) {
+  const current = gateOwner(source, module, false), patched = gateOwner(source, module, true);
+  if (current != null && patched == null) return { kind: "current", ...current };
+  if (current == null && patched != null) {
+    const native = rewriteGate(source, patched, true), owner = gateOwner(native, module, false);
+    if (owner != null && rewriteGate(native, owner) === source) return { kind: "patched", ...patched };
+  }
+  return { kind: "missing" };
+}
+
+function applyApiKeyServiceTierGatePatch(source, module) {
+  const state = serviceTierGateState(source, module);
+  if (state.kind === "patched") return source;
+  if (state.kind !== "current") throw new Error("Missing, ambiguous or partial current API key service tier gate owner");
+  const patched = rewriteGate(source, state);
+  if (patched == null || serviceTierGateState(patched, module).kind !== "patched") {
+    throw new Error("API key service tier gate patch failed canonical replay");
+  }
+  return patched;
+}
+
+function patchApiKeyServiceTierGate(extractedDir, options = {}) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  const copies = findUniqueRspackModuleCopies(assetsDir, {
+    description: "current API key service tier gate bundle",
+    sourceMatch: source => GATE_NEEDLES.every(needle => source.includes(needle)),
+    matchModule: (source, module) => serviceTierGateState(source, module).kind !== "missing",
+  });
+  return patchRspackModuleCopies(assetsDir, copies, applyApiKeyServiceTierGatePatch, options);
 }
 
 // --- Model catalog marker ----------------------------------------------------
@@ -266,13 +324,10 @@ function applyFallbackFastTierPatch(source) {
 const descriptors = [
   {
     id: "api-key-service-tier-gate",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20600,
     ciPolicy: "optional",
-    assetNeedles: GATE_NEEDLES,
-    missingDescription: "current API key service tier gate bundle",
-    skipDescription: "API key service tier gate patch",
-    apply: applyApiKeyServiceTierGatePatch,
+    apply: patchApiKeyServiceTierGate,
   },
   {
     id: "api-key-service-tier-model",
@@ -310,6 +365,7 @@ module.exports = {
   FALLBACK_FAST_TIER_HELPER,
   applyApiKeyModelMarkerPatch,
   applyApiKeyServiceTierGatePatch,
+  patchApiKeyServiceTierGate,
   applyApiKeyServiceTierResolverPatch,
   applyFallbackFastTierPatch,
   descriptors,
