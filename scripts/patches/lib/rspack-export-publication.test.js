@@ -277,6 +277,72 @@ test("async object method defaults and nested free writes remain visible to fact
   }
 });
 
+test("nested single-statement iteration keeps each lexical loop binding local", () => {
+  for (const local of [
+    'const meta=()=>{for(let a of values)for(let item of a){consume(a,item)}};',
+    'const meta=()=>{for(let a of values)for(let item of a)consume(a,item)};',
+    'const meta=()=>{for(let a of values)for(let item of a)if(item)consume(a);else consume(a)};',
+    'async function meta(){for await(let a of values)for(const item of a){a=other;consume(item)}}',
+    'function meta(){for(let a=0;a<3;a++)for(let item of values){a+=1}}',
+    'const meta=()=>{for(let a of values)for(let n of a){a=n}};',
+    'const meta=()=>{for(let a of values) /* gap */ for(let item of a) {consume(a,item)}};',
+  ]) {
+    const moduleSource = local + 'n.d(a,{F:()=>render});function render(){}';
+    new Script(`function factory(module,a,n){${moduleSource}}`);
+    assert.deepEqual(findRspackExportPublication({moduleSource, params:["module","a","n"]},"F"),
+      {requireName:"n",exportsName:"a",expression:"render"},local);
+  }
+});
+
+test("nested iteration does not hide factory writes in iterables, sibling branches or after loops", () => {
+  for (const local of [
+    'const meta=()=>{for(let a of values)for(let item of a){n=other}};',
+    'const meta=()=>{for(let a of values)for(let item of a)consume(a);a=other};',
+    'const meta=()=>{for(let item of(a=other))for(let n of item){consume(n)}};',
+    'const meta=()=>{for(let a of(n=other))for(let item of a){consume(item)}};',
+    'function meta(){for(let a of values)for(let item of a)if(item)consume(a);else n=other}',
+    'function meta(){for(let a of values)for(let item of a){consume(item)}a=other;}',
+    'for(let a of values)for(let item of a){consume(a)}n=other;',
+    'for(let a of values)for(let item of a){consume(a)};function later(a){n=other}',
+  ]) {
+    const moduleSource = local + 'n.d(a,{F:()=>render});function render(){}';
+    new Script(`function factory(module,a,n){${moduleSource}}`);
+    assert.equal(findRspackExportPublication({moduleSource,params:["module","a","n"]},"F"),null,local);
+  }
+});
+
+test("labelled lexical blocks keep their original context while projecting local shadows", () => {
+  for (const local of [
+    'const meta=()=>{e:{let e,a=function({currentAccount:e,fallbackPlan:t,isCurrentAccountError:n}){return e??t};if(!a(e))break e;consume(a)}};',
+    'function meta(){exit:{const a=other;if(a)break exit;consume(a)}}',
+    'function meta(){exit:{let a=other;for(let item of a){if(item)break exit}}}',
+    'class B{#field;run(){exit:{let a=this.#field;if(a)break exit;consume(a)}}}',
+    'function meta(){exit:{var a=other;break exit;}}',
+    String.raw`const meta=()=>{exit:{let \u0061=other;consume(a);break exit;}};`,
+  ]) {
+    const moduleSource=local+'n.d(a,{F:()=>render});function render(){}';
+    new Script(`function factory(module,a,n){${moduleSource}}`);
+    assert.deepEqual(findRspackExportPublication({moduleSource,params:["module","a","n"]},"F"),
+      {requireName:"n",exportsName:"a",expression:"render"},local);
+  }
+});
+
+test("labelled block projection retains outside writes and factory-scoped declarations", () => {
+  for (const local of [
+    'function meta(){exit:{a=other;break exit;}}',
+    'function meta(){exit:{let local=a;a=other;break exit;}}',
+    'function meta(){exit:{let a=other;break exit;}a=other;}',
+    'exit:{var a=other;break exit;}',
+    'function meta(){exit:{let a=other;n=other;break exit;}}',
+    'exit:{let a=other;break exit;}n=other;',
+    String.raw`function meta(){exit:{let a=other;break exit;}\u0061=other;}`,
+  ]) {
+    const moduleSource=local+'n.d(a,{F:()=>render});function render(){}';
+    new Script(`function factory(module,a,n){${moduleSource}}`);
+    assert.equal(findRspackExportPublication({moduleSource,params:["module","a","n"]},"F"),null,local);
+  }
+});
+
 for (const inputVariable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
   test(`full native entry publication and imported plugin field (${inputVariable})`, { skip: !process.env[inputVariable] }, () => {
     const entryPath = path.join(process.env[inputVariable], ".vite", "build", "early-bootstrap.js");

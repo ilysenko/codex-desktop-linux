@@ -101,6 +101,11 @@ function loopBodyEnd(body, start) {
     const following = nextCode(body, end);
     return /^else\b/u.test(body.slice(following)) ? loopBodyEnd(body, nextCode(body, following + 4)) : end;
   }
+  const iteration = /^for(?:\s+await)?\s*\(/u.exec(body.slice(start));
+  if (iteration) {
+    const close = delimiterEnd(body, start + iteration[0].length - 1);
+    return close < start ? -1 : loopBodyEnd(body, nextCode(body, close + 1));
+  }
   // Native single-statement loops use expressions or an if/return branch.
   // Balance the entire expression so a function/object value cannot end it.
   const jump = /^(?:return|throw)\b/u.exec(body.slice(start));
@@ -242,7 +247,7 @@ function parameterProjection(body, name) {
   for (const open of matches(body, /\{/gu, false)) {
     if (hidden(open.index)) continue;
     const end = findMatchingBrace(body, open.index);
-    if (end > open.index && localBinding(body.slice(open.index + 1, end), "", name)) blank(open.index + 1, end);
+    if (end > open.index && contextBinding(body, end, end, name, probeName)) blank(open.index + 1, end);
   }
   return projected.join("");
 }
