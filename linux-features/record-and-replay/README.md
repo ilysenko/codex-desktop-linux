@@ -243,6 +243,41 @@ rechecks inventory and hashes around forward writes and warm validation.
 Verified rollback preserves the transaction's original bytes. Failed
 restoration remains fatal.
 
+## Global dictation recording context
+
+The global dictation descriptor runs in `extracted-app:pre-webview` at order
+20696. It qualifies the published Global Dictation page, its live component and
+normal stop/retry/server-stream finalization helpers, stable CJS namespaces,
+and the finalizer's ASR, stream recovery, two signal checks, cleanup, persistence,
+and analytics sequence. Selected body reads must resolve to those qualified
+functions and namespaces; local shadows are refused. Parameter/default
+initializer and unsupported header reads fail closed rather than extending
+the body-read proof to new scope forms.
+
+Only the normal completion branch adds a fire-and-forget
+`linux-record-replay-speech-context-active` request. Its additional transcript
+is trimmed, with `source` set to `codex-global-dictation`. The main bridge
+resolves the current active recording. The original completion retains its
+session ID, full text, branch, and following analytics for the native clipboard
+path. Recovery, empty, and cancellation paths keep their native behavior.
+
+The owned request has local synchronous-error and Promise-rejection isolation.
+Recording-disabled, status-error, and deferred recording work leave native
+completion unawaited. Native ASR, cleanup, persistence, completion, and logger
+errors retain their original handling.
+
+Canonical validation checks the complete request and its normal-only placement,
+strips its wrapper, requalifies the producer and bindings, and reconstructs the
+supplied bytes. Executable dispatch requests claim owned `url` or `source`
+fields using their complete static object-key and string-value meaning, including
+Unicode/hex escapes and computed literal keys. Static value checks also cover
+identity escapes and line continuations. Escapes are decoded once; dynamic
+computed keys, foreign values, and opaque string/comment data remain outside
+that static claim check. The physical module-copy cohort, static import
+dependencies, and fresh inventory/hash checks use the shared
+verified asset transaction and rollback behavior. Other native empty/cancel
+completion sites stay outside the capture seam.
+
 ```bash
 node --test linux-features/record-and-replay/test.js
 ```

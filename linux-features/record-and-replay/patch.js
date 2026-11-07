@@ -244,7 +244,7 @@ function recordReplayTranscriptCaptureExpression(transcriptVar, actionVar) {
 }
 
 function recordReplayActiveSpeechContextExpression(dispatchVar, transcriptVar) {
-  return `(()=>{let t=String(${transcriptVar}??"").trim();if(t.length>0){let n="codex-linux-record-replay-global-dictation-"+Date.now()+"-"+Math.random().toString(36).slice(2);${dispatchVar}.dispatchMessage("fetch",{hostId:"local",requestId:n,method:"POST",url:"vscode://codex/linux-record-replay-speech-context-active",body:JSON.stringify({transcript:t,source:"codex-global-dictation"})})}})()`;
+  return `(()=>{try{let t=String(${transcriptVar}??"").trim();if(t.length>0){let n="codex-linux-record-replay-global-dictation-"+Date.now()+"-"+Math.random().toString(36).slice(2);let codexLinuxRecordReplayGlobalCaptureResult=${dispatchVar}.dispatchMessage("fetch",{hostId:"local",requestId:n,method:"POST",url:"vscode://codex/linux-record-replay-speech-context-active",body:JSON.stringify({transcript:t,source:"codex-global-dictation"})});codexLinuxRecordReplayGlobalCaptureResult?.catch?.(()=>{})}}catch{}})()`;
 }
 
 
@@ -1105,36 +1105,457 @@ function hasRecordReplayDictationTranscriptContract(source) {
 function recordReplayCompiledGlobalDictationPattern() {
   const id = String.raw`[A-Za-z_$][\w$]*`;
   return new RegExp(
-    String.raw`(?<![\w$.])(?<dispatch>${id}(?:\.${id})*)\.dispatchMessage\("global-dictation-completed",\{sessionId:(?<session>${id})\.sessionId,text:(?<transcript>${id})\}\),(?<suffix>\k<session>\.analytics\.performance\.mark\("transcript_dispatched"\))`,
-    "",
+    String.raw`(?<![\w$.])(?<dispatch>${id}(?:\.${id})*)\.dispatchMessage\("global-dictation-completed",\{sessionId:(?<session>${id})\.sessionId,text:(?<transcript>${id})\}\)(?<wrapped>\))?,(?<suffix>\k<session>\.analytics\.performance\.mark\("transcript_dispatched"\))`,
+    "gu",
   );
 }
 
+const GLOBAL_SPEECH_EXPORT = "GlobalDictationPage";
+const GLOBAL_SPEECH_PREFIX = "codex-linux-record-replay-global-dictation-";
+const GLOBAL_SPEECH_RESULT = "codexLinuxRecordReplayGlobalCaptureResult";
+
+function globalSpeechFunctions(module) {
+  return dictationMatches(module.moduleSource, new RegExp(`(?<async>async )?function (?<name>${DICTATION_IDENTIFIER})\\((?<params>[^()]*)\\)\\{`, "gu"), true).map(head => {
+    const open = head.index + head[0].length - 1, end = findMatchingBrace(module.moduleSource, open);
+    if (end < open) throw Error("Incomplete native global dictation function");
+    return { name: head.groups.name, params: head.groups.params, async: head.groups.async != null,
+      start: head.index, nameStart: head.index + head[0].indexOf(head.groups.name, head[0].indexOf("function") + 8), open, end,
+      source: module.moduleSource.slice(head.index, end + 1), body: module.moduleSource.slice(open + 1, end) };
+  });
+}
+
+function globalSpeechReadonly(module, name, declarationStart) {
+  const proof = dictationBindingProbe(module, name, declarationStart, GLOBAL_SPEECH_EXPORT);
+  return { body: module.moduleSource, name, declarationStart, edits: proof.edits, result: proof.result };
+}
+
+function globalSpeechReadBodyContext(module, reference) {
+  const body = module.moduleSource;
+  const lexical = createJavaScriptLexicalIndex(body), stack = [];
+  for (let index = 0; index < body.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    if (body[index] === "(") stack.push(index);
+    else if (body[index] === ")") {
+      const open = stack.pop();
+      if (!(open < reference && reference < index)) continue;
+      const next = globalSpeechTrivia(body, index + 1);
+      // Parameter/default initializers are outside this body-read proof.
+      if (body.startsWith("=>", next)) throw Error("Selected global consumer read is in an unsupported parameter/header context");
+      if (body[next] !== "{") continue;
+      // The current component places an arrow-body consumer inside an if
+      // condition. Only that control header is supported here. Rename its
+      // keyword and remove intervening trivia: a method named `if` still
+      // parses, while a real if statement cannot become a call plus block.
+      const keyword = /(?<![\w$.])if\s*$/u.exec(body.slice(0, open));
+      let controlHeader = false;
+      if (keyword && lexical.isCode(keyword.index)) {
+        const projected = body.slice(0, keyword.index) + "globalSpeechIfHeader" + body.slice(keyword.index + 2, index + 1) + " " + body.slice(next);
+        try { new Script(`"use strict";function selectedGlobalHeaderSyntax(${module.params.join(",")}){${projected}}`); }
+        catch { controlHeader = true; }
+      }
+      if (!controlHeader) throw Error("Selected global consumer read is in an unsupported parameter/header context");
+    }
+  }
+}
+
+function globalSpeechReference(module, definition, reference, label) {
+  const original = definition.readonly, body = module.moduleSource;
+  if (!original || original.body !== body) throw Error("Missing positive readonly proof for selected global consumer");
+  const name = original.name, end = reference + name.length;
+  if (!createJavaScriptLexicalIndex(body).isCode(reference) || body.slice(reference, end) !== name) throw Error("Selected global consumer read preimage changed: " + label);
+  if (original.edits.some(edit => reference < edit.end && edit.start < end)) throw Error("Selected global consumer read overlaps binding proof leaves");
+  globalSpeechReadBodyContext(module, reference);
+  const replacement = `(${name}=0,${name})`, delta = replacement.length - name.length;
+  const instrumented = body.slice(0, reference) + replacement + body.slice(end);
+  try { new Script(`"use strict";function selectedGlobalReadSyntax(${module.params.join(",")}){${instrumented}}`); }
+  catch { throw Error("Selected global consumer read instrumentation is not valid JavaScript"); }
+  const declaration = original.declarationStart + (reference < original.declarationStart ? delta : 0);
+  let rootWriteRejected = false;
+  try { dictationBindingProbe({ ...module, moduleSource: instrumented }, name, declaration, GLOBAL_SPEECH_EXPORT); }
+  catch (error) {
+    if (error.message !== "Dictation binding is reassigned or redeclared") throw Error("Unsupported selected global read proof: " + error.message);
+    rootWriteRejected = true;
+  }
+  if (!rootWriteRejected) throw Error("Selected global consumer reference is shadowed: " + label);
+  return { name, reference, end, label, bodyReadContext: true, instrumentationValid: true, positiveOriginalReadonly: true, insertedRootWriteRejected: true };
+}
+
+function globalSpeechFunction(module, functions, name) {
+  const fn = dictationOne(functions.filter(row => row.name === name), "native global dictation function " + name);
+  fn.readonly = globalSpeechReadonly(module, fn.name, fn.nameStart);
+  return fn;
+}
+
+function globalSpeechImport(module, name) {
+  const binding = require("../../scripts/patches/lib/rspack-module-assets.js").findRspackRequireBinding(module, name);
+  if (binding == null) throw Error("Global dictation namespace is not a static CJS import");
+  binding.readonly = globalSpeechReadonly(module, name, binding.start - module.start);
+  return binding;
+}
+
+function globalSpeechTrivia(source, start) {
+  let index = start;
+  while (index < source.length) {
+    if (/\s/u.test(source[index])) { index++; continue; }
+    if (source.startsWith("/*", index)) {
+      const end = source.indexOf("*/", index + 2);
+      return end < 0 ? source.length : globalSpeechTrivia(source, end + 2);
+    }
+    if (source.startsWith("//", index)) {
+      const end = source.slice(index + 2).search(/[\r\n\u2028\u2029]/u);
+      return end < 0 ? source.length : globalSpeechTrivia(source, index + 2 + end);
+    }
+    break;
+  }
+  return index;
+}
+
+function globalSpeechStaticString(source, start) {
+  const quote = source[start];
+  if (!["\"", "'", "`"].includes(quote)) return null;
+  let value = "", index = start + 1;
+  while (index < source.length) {
+    const char = source[index++];
+    if (char === quote) return { value, end: index };
+    if (quote === "`" && char === "$" && source[index] === "{") return null;
+    if (char !== "\\") {
+      if (quote !== "`" && (char === "\r" || char === "\n")) return null;
+      value += char === "\r" && quote === "`" ? "\n" : char;
+      if (char === "\r" && quote === "`" && source[index] === "\n") index++;
+      continue;
+    }
+    if (index >= source.length) return null;
+    const escaped = source[index++];
+    if (escaped === "\r" || escaped === "\n" || escaped === "\u2028" || escaped === "\u2029") {
+      if (escaped === "\r" && source[index] === "\n") index++;
+      continue;
+    }
+    if (escaped === "u" || escaped === "x") {
+      const braced = escaped === "u" && source[index] === "{";
+      const pattern = braced ? /^\{([0-9a-fA-F]+)\}/u : escaped === "u" ? /^([0-9a-fA-F]{4})/u : /^([0-9a-fA-F]{2})/u;
+      const match = pattern.exec(source.slice(index));
+      if (!match) return null;
+      const point = parseInt(match[1], 16);
+      if (point > 0x10ffff) return null;
+      value += String.fromCodePoint(point); index += match[0].length;
+      continue;
+    }
+    const escapes = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v", 0: "\0" };
+    if (/\d/u.test(escaped) && (escaped !== "0" || /\d/u.test(source[index] ?? ""))) return null;
+    value += escapes[escaped] ?? escaped;
+  }
+  return null;
+}
+
+function globalSpeechStaticProperty(source, introducer) {
+  let index = globalSpeechTrivia(source, introducer + 1), key;
+  if (source[index] === "[") {
+    const literal = globalSpeechStaticString(source, globalSpeechTrivia(source, index + 1));
+    if (!literal) return null;
+    index = globalSpeechTrivia(source, literal.end);
+    if (source[index] !== "]") return null;
+    key = literal.value; index++;
+  } else if (source[index] === "\"" || source[index] === "'") {
+    const literal = globalSpeechStaticString(source, index);
+    if (!literal) return null;
+    key = literal.value; index = literal.end;
+  } else {
+    const identifier = /^(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[A-Za-z_$])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])*/u.exec(source.slice(index));
+    if (!identifier) return null;
+    key = identifier[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)));
+    index += identifier[0].length;
+  }
+  index = globalSpeechTrivia(source, index);
+  if (source[index] !== ":") return null;
+  const colon = index, value = globalSpeechStaticString(source, globalSpeechTrivia(source, index + 1));
+  return value ? { key, value: value.value, colon } : null;
+}
+
+function globalSpeechClaims(source) {
+  if (!source.includes(GLOBAL_SPEECH_PREFIX) && !source.includes("codex-global-dictation") && !source.includes("linux-record-replay-speech-context-active") && !source.includes(GLOBAL_SPEECH_RESULT) && !source.includes("\\")) return [];
+  const lexical = createJavaScriptLexicalIndex(source), claims = [], calls = [];
+  const decode = token => token.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)))
+    .replace(/\\x([0-9a-fA-F]{2})/gu, (_, value) => String.fromCharCode(parseInt(value, 16)));
+  for (const token of source.matchAll(/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu)) {
+    if (!lexical.isCode(token.index)) continue;
+    const name = decode(token[0]);
+    if (name === GLOBAL_SPEECH_RESULT) { claims.push(token.index); continue; }
+    if (name !== "dispatchMessage") continue;
+    const following = /^\s*\(/u.exec(source.slice(token.index + token[0].length));
+    if (following) calls.push({ start: token.index, open: token.index + token[0].length + following[0].length - 1 });
+  }
+  for (const method of source.matchAll(/\[\s*(["'`])((?:\\.|[^\\\n])*?)\1\s*\]\s*\(/gu)) {
+    if (lexical.isCode(method.index) && decode(method[2]) === "dispatchMessage") calls.push({ start: method.index, open: method.index + method[0].length - 1 });
+  }
+  for (const method of calls) {
+    const end = dictationDelimiter(source, method.open);
+    if (end < method.open) continue;
+    const call = source.slice(method.open + 1, end), code = createJavaScriptLexicalIndex(call);
+    for (let index = 0; index < call.length; index++) {
+      if (!code.isCode(index) || !["{", ","].includes(call[index])) continue;
+      const field = globalSpeechStaticProperty(call, index);
+      if (!field || !code.isCode(field.colon)) continue;
+      if (field.key === "url" && field.value === "vscode://codex/linux-record-replay-speech-context-active" || field.key === "source" && field.value === "codex-global-dictation") claims.push(method.start);
+    }
+  }
+  return claims;
+}
+
+function globalSpeechPrefix(body, parameters) {
+  const id = DICTATION_IDENTIFIER;
+  const matched = new RegExp(`^(?<session>${id}),(?<cleanupFlag>${id}),(?<stream>${id})=null,(?<signal>${id})$`, "u").exec(parameters);
+  if (!matched || new Set(Object.values(matched.groups)).size !== 4) throw Error("Native global finalizer parameters changed");
+  const roles = matched.groups, session = escapeRegExp(roles.session), flag = escapeRegExp(roles.cleanupFlag), stream = escapeRegExp(roles.stream), signal = escapeRegExp(roles.signal);
+  const pattern = [
+    `^let (?<started>${id})=Date\\.now\\(\\);null!=${session}\\.recovery&&(?<recover>${id})\\(${session},"recovering"\\);let (?<raw>${id})=await \\(null==${stream}\\?\\(0,(?<asr>${id})\\.(?<asrExport>${id})\\)\\(${session}\\.audio,\\{signal:${signal}\\}\\)\\.then\\((?<batch>${id})=>\\k<batch>\\.text\\):`,
+    `async function\\((?<streamArg>${id}),(?<sessionArg>${id}),(?<signalArg>${id}),(?<recoverArg>${id})=!0\\)\\{try\\{return await \\k<streamArg>\\.finish\\(\\)\\}catch\\{if\\(\\k<signalArg>\\?\\.throwIfAborted\\(\\),\\k<streamArg>\\.isSilent\\(\\)\\)return"";if\\(!\\k<recoverArg>\\)throw Error\\("Streaming dictation failed without recoverable audio\\."\\);return \\k<recover>\\(\\k<sessionArg>,"recovering"\\),\\(await \\(0,\\k<asr>\\.\\k<asrExport>\\)\\(\\k<sessionArg>\\.audio,\\{signal:\\k<signalArg>\\}\\)\\)\\.text\\}\\}\\(${stream},${session},${signal},${session}\\.canBatchRecover\\)\\);`,
+    `${signal}\\?\\.throwIfAborted\\(\\),${session}\\.analytics\\.performance\\.mark\\("final_received"\\);let (?<transcript>${id})=await \\(0,(?<cleanup>${id})\\.(?<cleanupExport>${id})\\)\\(\\{transcript:\\k<raw>,cleanupEnabled:${flag},signal:${signal}\\}\\);${signal}\\?\\.throwIfAborted\\(\\),`,
+    `\\(0,(?<logger>${id})\\.(?<persistExport>${id})\\)\\(${session}\\.productLogger,${session}\\.analytics,\\k<transcript>\\),(?<active>${id})===${session}&&\\(\\k<active>=null\\),\\k<transcript>\\.trim\\(\\)\\.length>0&&${session}\\.recordingPersistence\\?\\.setTranscript\\(\\k<transcript>\\.trim\\(\\)\\),`,
+    `null!=${session}\\.recovery&&null!=${session}\\.onRecoveryChange\\?\\(0===\\k<transcript>\\.trim\\(\\)\\.length&&(?<current>${id})===${session}\\.sessionId&&\\(\\k<active>=${session}\\),\\k<recover>\\(${session},\\k<transcript>\\.trim\\(\\)\\.length>0\\?"recovered":"failed",\\k<transcript>\\.trim\\(\\)\\|\\|null\\)\\):`,
+  ].join("");
+  const prefix = new RegExp(pattern, "u").exec(body);
+  if (!prefix) throw Error("Native global ASR/stream/dual-signal/cleanup/recovery chain changed");
+  return { ...roles, ...prefix.groups, prefix: prefix[0] };
+}
+
+function globalSpeechPage(module, functions, publication) {
+  if (!new RegExp(`^${DICTATION_IDENTIFIER}$`, "u").test(publication.expression ?? "")) throw Error("Native global dictation page is not a published function");
+  const page = globalSpeechFunction(module, functions, publication.expression), id = DICTATION_IDENTIFIER;
+  const readiness = dictationOne(dictationMatches(page.body, new RegExp(`(?<namespace>${id})\\.(?<member>${id})\\.dispatchMessage\\("global-dictation-renderer-ready",\\{\\}\\)`, "gu")), "published global renderer-ready dispatcher");
+  const components = [];
+  for (const call of dictationMatches(page.body, new RegExp(`\\(0,(?<jsx>${id})\\.jsx\\)\\((?<component>${id}),\\{`, "gu"))) {
+    const open = call.index + call[0].length - 1, end = findMatchingBrace(page.body, open);
+    if (end < open) throw Error("Incomplete global page component props");
+    let fields;
+    try { fields = dictationObjectFields(page.body.slice(open + 1, end)); } catch { continue; }
+    if (fields.has("initialStatus") && fields.has("recoveryVisible")) components.push({ ...call.groups, start: page.open + 1 + call.index, head: call[0] });
+  }
+  const rendered = dictationOne(components, "published global page renderer"), component = globalSpeechFunction(module, functions, rendered.component);
+  const namespace = globalSpeechImport(module, readiness.groups.namespace), jsx = globalSpeechImport(module, rendered.jsx);
+  const references = [
+    globalSpeechReference(module, namespace, page.open + 1 + readiness.index, "published page renderer-ready namespace"),
+    globalSpeechReference(module, jsx, rendered.start + rendered.head.indexOf(rendered.jsx, 3), "published page JSX namespace"),
+    globalSpeechReference(module, component, rendered.start + rendered.head.indexOf(rendered.component, rendered.head.indexOf(")(") + 2), "published page component"),
+  ];
+  return { page, component, namespace, jsx, references, dispatch: `${readiness.groups.namespace}.${readiness.groups.member}` };
+}
+
+function globalSpeechConsumers(module, functions, fn, page) {
+  const id = DICTATION_IDENTIFIER, body = module.moduleSource;
+  const calls = dictationMatches(body, new RegExp(`(?<![\\w$.])${escapeRegExp(fn.name)}\\(`, "gu")).filter(call => call.index !== fn.nameStart);
+  if (calls.length !== 3) throw Error("Native global finalizer consumer set changed");
+  const references = calls.map(call => globalSpeechReference(module, fn, call.index, "native finalizer call"));
+  const rows = calls.map(call => {
+    const open = call.index + call[0].length - 1, end = dictationDelimiter(body, open);
+    if (end < open) throw Error("Incomplete global finalizer call");
+    const owner = dictationOne(functions.filter(row => row.open < call.index && call.index < row.end), "global finalizer caller owner");
+    return { owner, args: body.slice(open + 1, end), prefix: body.slice(0, call.index).trimEnd(), following: body.slice(end + 1), call };
+  });
+  const stop = dictationOne(rows.filter(row => new RegExp(`^(?<snapshot>${id}),(?<recording>${id})\\.cleanupEnabled,\\k<recording>\\.streamingSession,\\k<recording>\\.abortController\\.signal$`, "u").test(row.args) && /\bawait$/u.test(row.prefix)), "native stopped-session finalization");
+  const stopDefinition = globalSpeechFunction(module, functions, stop.owner.name);
+  const retry = dictationOne(rows.filter(row => row.owner === page.component && new RegExp(`^${id},${id}$`, "u").test(row.args) && /\bawait$/u.test(row.prefix)), "native retry finalization");
+  const server = dictationOne(rows.filter(row => row.owner === page.component && row.args.startsWith("{") && row.following.startsWith(".catch(")), "native server streaming finalization");
+  const objectEnd = dictationDelimiter(server.args, 0), fields = dictationObjectFields(server.args.slice(1, objectEnd));
+  if (objectEnd < 0 || fields.get("recordingPersistence") !== "null" || fields.get("canBatchRecover") !== "!1" || fields.get("stopReason") !== '"server-request"' ||
+      !["analytics", "productLogger", "sessionId", "audio", "onTranscriptionFailed"].every(name => fields.has(name)) || !new RegExp(`^,${id},${id}$`, "u").test(server.args.slice(objectEnd + 1))) throw Error("Native server finalization request ABI changed");
+  const upstream = dictationMatches(page.component.body, new RegExp(`(?<![\\w$.])${escapeRegExp(stop.owner.name)}\\(`, "gu"));
+  if (!upstream.length) throw Error("Published global page lost the stop/finalization helper");
+  const linked = [];
+  for (const call of upstream) {
+    try { linked.push(globalSpeechReference(module, stopDefinition, page.component.open + 1 + call.index, "native stop helper call")); break; }
+    catch { /* Other same-spelled local calls do not establish this link. */ }
+  }
+  if (!linked.length) throw Error("Published global page stop/finalization references are shadowed or unsupported");
+  return { references: [...references, ...linked], stop: { owner: stop.owner.name, args: stop.args }, retry: retry.args, server: server.args };
+}
+
+function globalSpeechGlobals(module, fn) {
+  for (const scope of [{ params: module.params.join(","), body: module.moduleSource }, { params: fn.params, body: fn.body }]) {
+    try { new Script(`"use strict";async function globalSpeechCapabilities(${scope.params}){${scope.body}\n;let String;let Date;let Math;let JSON;}`); }
+    catch { throw Error("Global speech context shadows a capture capability"); }
+  }
+}
+
+function globalSpeechFinalizerReferences(module, fn, page, imports, recovery, roles, finalLogger) {
+  const namespace = name => imports.find(binding => binding.localName === name);
+  const sites = [
+    { definition: page.namespace, members: [page.dispatch.split(".")[1]], count: 1, label: "normal completion dispatcher" },
+    { definition: namespace(roles.asr), members: [roles.asrExport], count: 2, label: "ASR namespace" },
+    { definition: namespace(roles.cleanup), members: [roles.cleanupExport], count: 1, label: "cleanup namespace" },
+    { definition: namespace(roles.logger), members: [roles.persistExport, finalLogger], count: 2, label: "native logger namespace" },
+    { definition: recovery, members: null, count: 3, label: "native recovery helper" },
+  ];
+  const references = [];
+  for (const site of sites) {
+    if (!site.definition?.readonly) throw Error("Missing readonly definition for global finalizer reference");
+    const name = escapeRegExp(site.definition.readonly.name);
+    const following = site.members ? `\\.(?:${[...new Set(site.members)].map(escapeRegExp).join("|")})(?![\\w$])` : "\\(";
+    const reads = dictationMatches(fn.body, new RegExp(`(?<![\\w$.])${name}(?=${following})`, "gu"));
+    if (reads.length !== site.count) throw Error("Selected native global reference set changed: " + site.label);
+    for (const read of reads) references.push(globalSpeechReference(module, site.definition, fn.open + 1 + read.index, site.label));
+  }
+  return references;
+}
+
+function inspectGlobalSpeechModule(module) {
+  const publication = require("../../scripts/patches/lib/rspack-export-publication.js").findRspackExportPublication(module, GLOBAL_SPEECH_EXPORT);
+  if (!publication) throw Error("Missing native GlobalDictationPage publication");
+  let functions = globalSpeechFunctions(module);
+  const candidates = functions.filter(fn => fn.async && dictationMatches(fn.body, recordReplayCompiledGlobalDictationPattern()).length).flatMap(fn => {
+    try { return [{ fn, roles: globalSpeechPrefix(fn.body, fn.params) }]; } catch { return []; }
+  });
+  const { fn, roles } = dictationOne(candidates, "native normal global finalizer");
+  const tailPattern = new RegExp(`,${escapeRegExp(roles.session)}\\.analytics\\.performance\\.mark\\("transcript_dispatched"\\),\\(0,${escapeRegExp(roles.logger)}\\.(?<finalLogger>${DICTATION_IDENTIFIER})\\)\\(${escapeRegExp(roles.session)}\\.productLogger,${escapeRegExp(roles.session)}\\.analytics,\\{action:"insert",audioLost:!1,reason:"success",retrySameAudioAvailable:!1,stopReason:${escapeRegExp(roles.session)}\\.stopReason,transcript:${escapeRegExp(roles.transcript)},transcriptionStartedAtMs:${escapeRegExp(roles.started)}\\}\\)$`, "u");
+  const tail = tailPattern.exec(fn.body);
+  if (!tail || tail.index < roles.prefix.length) throw Error("Native global completion analytics/logger suffix changed");
+  const normal = fn.body.slice(roles.prefix.length, tail.index);
+  const completed = dictationOne(dictationMatches(fn.body, recordReplayCompiledGlobalDictationPattern()), "native normal completion dispatch");
+  if (completed.groups.session !== roles.session || completed.groups.transcript !== roles.transcript) throw Error("Native global completion session/text binding changed");
+  const nativeCall = `${completed.groups.dispatch}.dispatchMessage("global-dictation-completed",{sessionId:${roles.session}.sessionId,text:${roles.transcript}})`;
+  const expected = `(${recordReplayActiveSpeechContextExpression(completed.groups.dispatch, roles.transcript)},${nativeCall})`;
+  const kind = normal === nativeCall ? "current" : normal === expected ? "patched" : "partial";
+  if (kind === "partial") throw Error("Incomplete or misplaced global speech capture contribution");
+  const rawFnBody = roles.prefix + nativeCall + tail[0];
+  const rawBody = module.moduleSource.slice(0, fn.open + 1) + rawFnBody + module.moduleSource.slice(fn.end);
+  const rawModule = { ...module, moduleSource: rawBody };
+  functions = globalSpeechFunctions(rawModule);
+  const rawFn = dictationOne(functions.filter(row => row.name === fn.name), "stripped global finalizer");
+  const page = globalSpeechPage(rawModule, functions, publication);
+  if (completed.groups.dispatch !== page.dispatch) throw Error("Global finalizer dispatcher differs from the published page");
+  globalSpeechFunction(rawModule, functions, fn.name);
+  const recovery = globalSpeechFunction(rawModule, functions, roles.recover);
+  const consumers = globalSpeechConsumers(rawModule, functions, rawFn, page);
+  const imports = [...new Set([roles.asr, roles.cleanup, roles.logger])].map(name => globalSpeechImport(rawModule, name));
+  const finalizerReferences = globalSpeechFinalizerReferences(rawModule, rawFn, page, imports, recovery, roles, tail.groups.finalLogger);
+  globalSpeechGlobals(rawModule, rawFn);
+  const normalStart = fn.open + 1 + roles.prefix.length, normalEnd = fn.open + 1 + tail.index;
+  if (globalSpeechClaims(module.moduleSource).some(index => kind !== "patched" || index < normalStart || index >= normalEnd)) throw Error("Orphan or duplicate global speech contribution");
+  const patchedBody = rawBody.slice(0, rawFn.open + 1) + roles.prefix + expected + tail[0] + rawBody.slice(rawFn.end);
+  if (kind === "patched" && patchedBody !== module.moduleSource) throw Error("Global speech canonical reconstruction changed native bytes");
+  return { kind, module, roles, publication, finalizer: rawFn, page, consumers, imports, finalizerReferences, rawBody, patchedBody, normalStart, normalEnd };
+}
+
+function globalSpeechChunkGlobals(source) {
+  const lexical = createJavaScriptLexicalIndex(source), edits = [];
+  for (const imported of source.matchAll(/\bimport(?:\*as\s+([\w$]+)|\{([^}]+)\})\s+from\s*["'][^"'\n]+["'];/gu)) {
+    if (!lexical.isRoot(imported.index)) continue;
+    const locals = imported[1] ? [imported[1]] : imported[2].split(",").map(item => item.trim().split(/\s+as\s+/u).at(-1));
+    if (locals.some(name => ["String", "Date", "Math", "JSON"].includes(name))) throw Error("Global speech chunk import shadows a capture capability");
+    edits.push({ start: imported.index, end: imported.index + imported[0].length });
+  }
+  for (const exported of source.matchAll(/\bexport\s+(?=const\b|let\b|var\b|function\b|class\b)/gu)) {
+    if (lexical.isRoot(exported.index)) edits.push({ start: exported.index, end: exported.index + exported[0].length });
+  }
+  let projected = source;
+  for (const edit of edits.sort((left, right) => right.start - left.start)) projected = projected.slice(0, edit.start) + source.slice(edit.start, edit.end).replace(/[^\r\n]/gu, " ") + projected.slice(edit.end);
+  try { new Script(`"use strict";async function globalSpeechChunkCapabilities(){${projected}\n;let String;let Date;let Math;let JSON;}`); }
+  catch { throw Error("Global speech chunk shadows a capture capability or has unsupported module syntax"); }
+}
+
+function globalSpeechState(source) {
+  try {
+    const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
+    const publication = require("../../scripts/patches/lib/rspack-export-publication.js").findRspackExportPublication;
+    const modules = [...rspackModuleFactories(source, "global dictation chunk")];
+    globalSpeechChunkGlobals(source);
+    const owner = dictationOne(modules.filter(module => publication(module, GLOBAL_SPEECH_EXPORT) != null), "published global dictation module");
+    const state = inspectGlobalSpeechModule(owner);
+    const start = owner.start + state.normalStart, end = owner.start + state.normalEnd;
+    if (globalSpeechClaims(source).some(index => state.kind !== "patched" || index < start || index >= end)) throw Error("Global speech contribution escaped its module");
+    return state;
+  } catch (error) { return { kind: "partial", reason: error.message }; }
+}
+
+
 function applyRecordReplayGlobalDictationTranscriptPatch(currentSource) {
-  const patchName = "Record & Replay global dictation transcript patch";
-  if (currentSource.includes("codex-linux-record-replay-global-dictation")) {
-    return currentSource;
-  }
-  if (!currentSource.includes("global-dictation-completed")) {
-    return currentSource;
-  }
-
-  const compiledCompletedPattern = recordReplayCompiledGlobalDictationPattern();
-  if (compiledCompletedPattern.test(currentSource)) {
-    return currentSource.replace(
-      compiledCompletedPattern,
-      (...args) => {
-        const { dispatch, session, transcript, suffix } = args.at(-1);
-        // Parenthesized: upstream dispatches from the else branch of a recovery
-        // ternary, so the extra fetch must stay inside that branch.
-        return `(${recordReplayActiveSpeechContextExpression(dispatch, transcript)},${dispatch}.dispatchMessage("global-dictation-completed",{sessionId:${session}.sessionId,text:${transcript}})),${suffix}`;
-      },
-    );
-  }
-
-  warn("Could not find global dictation completion point", patchName);
+  const state = globalSpeechState(currentSource);
+  if (state.kind === "patched") return currentSource;
+  if (state.kind === "current") return currentSource.slice(0, state.module.start) + state.patchedBody + currentSource.slice(state.module.end);
+  if (!currentSource.includes("global-dictation-completed") && !globalSpeechClaims(currentSource).length) return currentSource;
+  warn(state.reason ?? "Missing complete global dictation finalizer", "Record & Replay global dictation transcript patch");
   return currentSource;
 }
+
+function applyGlobalSpeechToExtractedApp(extractedDir) {
+  const assets = path.join(extractedDir, "webview", "assets");
+  const hash = bytes => require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+  let names, hashes, edits;
+  try {
+    names = dictationAssetNames(extractedDir); hashes = new Map();
+    const claimed = [], proofs = new Map();
+    for (const name of names) {
+      const source = fs.readFileSync(path.join(assets, name), "utf8");
+      hashes.set(name, hash(source));
+      if (globalSpeechClaims(source).length) claimed.push(name);
+    }
+    const { findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
+    const copies = findUniqueRspackModuleCopies(assets, {
+      pattern: /\.(?:c|m)?js$/u,
+      description: "published native global dictation finalizer",
+      sourceMatch: source => source.includes(GLOBAL_SPEECH_EXPORT) && source.includes("global-dictation-completed"),
+      matchModule: (_body, module) => {
+        const publication = require("../../scripts/patches/lib/rspack-export-publication.js").findRspackExportPublication(module, GLOBAL_SPEECH_EXPORT);
+        if (!publication) return false;
+        const state = globalSpeechState(module.source);
+        if (!["current", "patched"].includes(state.kind) || state.module.moduleId !== module.moduleId) return false;
+        proofs.set(module.assetName, { source: module.source, state });
+        return true;
+      },
+    });
+    if (!copies.length) throw Error("Missing native global dictation module cohort");
+    const states = copies.map(copy => {
+      if (hash(copy.source) !== hashes.get(copy.assetName)) throw Error("Global speech source changed during qualification");
+      const proof = proofs.get(copy.assetName);
+      const state = proof?.source === copy.source ? proof.state : globalSpeechState(copy.source);
+      if (!["current", "patched"].includes(state.kind) || state.module.moduleId !== copy.moduleId) throw Error(state.reason ?? "Malformed native dictation module peer");
+      return { copy, state };
+    });
+    if (new Set(states.map(row => row.state.kind)).size !== 1) throw Error("Mixed raw/applied global dictation cohort");
+    const owners = new Set(copies.map(copy => copy.assetName));
+    if (claimed.some(name => !owners.has(name))) throw Error("Orphan global dictation capture contribution");
+    const transaction = new Map();
+    for (const { copy, state } of states) {
+      const patchedSource = state.kind === "patched" ? copy.source : copy.source.slice(0, state.module.start) + state.patchedBody + copy.source.slice(state.module.end);
+      const poststate = globalSpeechState(patchedSource);
+      if (poststate.kind !== "patched" || poststate.module.moduleId !== copy.moduleId) throw Error(poststate.reason ?? "Generated global dictation contribution is incomplete");
+      transaction.set(copy.assetName, { assetName: copy.assetName, source: copy.source, patchedSource });
+      const lexical = createJavaScriptLexicalIndex(copy.source);
+      for (const imported of copy.source.matchAll(/\bimport(?:\*as\s+[\w$]+|\{[^}]+\})\s+from\s*["']([^"'\n]+)["'];/gu)) {
+        if (!lexical.isRoot(imported.index)) continue;
+        if (!/^\.{1,2}\/[A-Za-z0-9_./-]+\.(?:c|m)?js$/u.test(imported[1])) throw Error("Unsupported dictation chunk static import edge");
+        const name = path.posix.normalize(path.posix.join(path.posix.dirname(copy.assetName), imported[1]));
+        if (!names.includes(name)) throw Error("Missing dictation static import dependency");
+        if (!transaction.has(name)) {
+          const source = fs.readFileSync(path.join(assets, name), "utf8");
+          if (hash(source) !== hashes.get(name)) throw Error("Global speech import changed during qualification");
+          transaction.set(name, { assetName: name, source, patchedSource: source });
+        }
+      }
+    }
+    edits = [...transaction.values()];
+  } catch (error) {
+    warn(error.message, "Record & Replay global dictation transcript patch");
+    return { matched: 0, changed: 0, changedAssets: [], reason: error.message };
+  }
+  const verify = () => {
+    if (JSON.stringify(dictationAssetNames(extractedDir)) !== JSON.stringify(names)) throw Error("Global speech inventory changed before commit");
+    for (const [name, digest] of hashes) if (hash(fs.readFileSync(path.join(assets, name))) !== digest) throw Error("Global speech read dependency changed before commit: " + name);
+  };
+  verify();
+  const originals = new Map(edits.map(edit => [path.join(assets, edit.assetName), Buffer.from(edit.source)]));
+  const result = patchWebviewAssets(assets, edits, { writeFileSync(file, bytes) {
+    const restoring = originals.get(file)?.equals(bytes);
+    if (!restoring) verify();
+    fs.writeFileSync(file, bytes);
+    if (!restoring) {
+      hashes.set(path.relative(assets, file).split(path.sep).join("/"), hash(bytes));
+      verify();
+    }
+  } });
+  if (result.changed === 0) verify();
+  return { matched: 1, ...result };
+}
+
 
 const descriptors = [
   {
@@ -1181,13 +1602,16 @@ const descriptors = [
   },
   {
     id: "record-replay-global-dictation-transcript",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20696,
     ciPolicy: "optional",
     assetNeedles: ["global-dictation-completed", "transcript_dispatched"],
     missingDescription: "global dictation bundle",
     skipDescription: "Record & Replay global dictation transcript patch",
-    apply: applyRecordReplayGlobalDictationTranscriptPatch,
+    apply: applyGlobalSpeechToExtractedApp,
+    status: result => result?.matched !== 1
+      ? { status: "skipped-optional", reason: result?.reason ?? "missing complete global speech cohort" }
+      : result.changed > 0 ? "applied" : "already-applied",
   },
 ];
 

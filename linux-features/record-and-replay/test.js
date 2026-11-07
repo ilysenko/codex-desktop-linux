@@ -110,8 +110,44 @@ function retiredComposerTranscriptFixture() {
 
 // Current rspack/SWC global dictation success chain: the completion dispatch is
 // the else branch of a recovery ternary and the dispatcher is a member access.
-const CURRENT_GLOBAL_DICTATION_SOURCE =
-  "async function U(e,t,n=null){let r=Date.now(),i=await (null==n?I(e.audio):W(n,e.audio));e.analytics.performance.mark(\"final_received\");let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),null!=e.recovery&&null!=e.onRecoveryChange?globalThis.recovered(a):x.O1.dispatchMessage(\"global-dictation-completed\",{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(\"transcript_dispatched\")}";
+function currentGlobalDictationFixture() {
+  return [
+    'export const __rspack_esm_ids=[73];export const __webpack_modules__={Global(module,exports,load){load.d(exports,{GlobalDictationPage:()=>Page});var bus=load("Transport"),asr=load("ASR"),cleanup=load("Cleanup"),logger=load("Logger"),jsx=load("JSX");let active=null,current=null;',
+    'async function finalize(session,cleanupFlag,stream=null,signal){let started=Date.now();null!=session.recovery&&recover(session,"recovering");let raw=await (null==stream?(0,asr.Ks)(session.audio,{signal:signal}).then(value=>value.text):async function(streamValue,sessionValue,signalValue,allow=!0){try{return await streamValue.finish()}catch{if(signalValue?.throwIfAborted(),streamValue.isSilent())return"";if(!allow)throw Error("Streaming dictation failed without recoverable audio.");return recover(sessionValue,"recovering"),(await (0,asr.Ks)(sessionValue.audio,{signal:signalValue})).text}}(stream,session,signal,session.canBatchRecover));signal?.throwIfAborted(),session.analytics.performance.mark("final_received");let transcript=await (0,cleanup.h)({transcript:raw,cleanupEnabled:cleanupFlag,signal:signal});signal?.throwIfAborted(),(0,logger.bE)(session.productLogger,session.analytics,transcript),active===session&&(active=null),transcript.trim().length>0&&session.recordingPersistence?.setTranscript(transcript.trim()),null!=session.recovery&&null!=session.onRecoveryChange?(0===transcript.trim().length&&current===session.sessionId&&(active=session),recover(session,transcript.trim().length>0?"recovered":"failed",transcript.trim()||null)):bus.Channel.dispatchMessage("global-dictation-completed",{sessionId:session.sessionId,text:transcript}),session.analytics.performance.mark("transcript_dispatched"),(0,logger.Uk)(session.productLogger,session.analytics,{action:"insert",audioLost:!1,reason:"success",retrySameAudioAvailable:!1,stopReason:session.stopReason,transcript:transcript,transcriptionStartedAtMs:started})}',
+    'function recover(session,phase,text=null){session.recovery={phase,text};}',
+    'function stop(id){let recording=record,snapshot={...recording};async function finish(){await finalize(snapshot,recording.cleanupEnabled,recording.streamingSession,recording.abortController.signal)}bus.Channel.dispatchMessage("global-dictation-completed",{sessionId:id,text:""});return finish()}',
+    'function Page(props){bus.Channel.dispatchMessage("global-dictation-renderer-ready",{});return(0,jsx.jsx)(View,{initialStatus:props.initialStatus,recoveryVisible:props.recoveryVisible})}',
+    'function View(props){stop(props.sessionId);async function retry(){await finalize(snapshot,flag)}function server(){return finalize({analytics:analytics,productLogger:productLogger,sessionId:id,audio:audio,recordingPersistence:null,onTranscriptionFailed:onFailed,canBatchRecover:!1,stopReason:"server-request"},flag,stream).catch(onFailed)}return{retry,server}}',
+    'function cancel(session){bus.Channel.dispatchMessage("global-dictation-completed",{sessionId:session.sessionId,text:""})}},Opaque(module,exports,load){const nativeData={preserve:true};},Other(){}};',
+  ].join("");
+}
+
+function globalFinalizerRuntime(source, options = {}) {
+  const events = [], signal = { aborted: options.abort === "before", throwIfAborted() { events.push(["signal"]); if (this.aborted) throw Error("native abort"); } };
+  const session = { sessionId: options.sessionId ?? "native-session", audio: "inert-audio", analytics: { performance: { mark: value => events.push(["mark", value]) } }, productLogger: {}, stopReason: "user", canBatchRecover: options.canBatchRecover !== false,
+    recovery: options.recovery ? { phase: "initial" } : null, onRecoveryChange: options.recovery || options.streamFailure ? () => {} : null,
+    recordingPersistence: { setTranscript: value => { events.push(["persist", value]); if (options.persistenceError) throw Error("native persistence failure"); } } };
+  let random = 0;
+  const context = { Date: { now: () => options.now ?? 1234 }, Math: { random: () => .1 + random++ / 100 }, JSON, String, active: session, current: session.sessionId,
+    recover(value, phase, transcript) { events.push(["recovery", phase, transcript]); value.recovery = { phase }; },
+    asr: { Ks: async (_audio, value) => { events.push(["asr", value.signal === signal]); if (options.asrError) throw Error("native ASR failure"); return { text: options.raw ?? " raw native " }; } },
+    cleanup: { h: async value => { events.push(["cleanup", value.transcript, value.cleanupEnabled, value.signal === signal]); if (options.abort === "cleanup") signal.aborted = true; if (options.cleanupError) throw Error("native cleanup failure"); return options.cleaned ?? " cleaned native "; } },
+    logger: { bE: (_product, _analytics, text) => { events.push(["logger", text]); if (options.loggerError) throw Error("native logger failure"); }, Uk: (_product, _analytics, data) => { events.push(["final-log", data.transcript]); if (options.finalLoggerError) throw Error("native final logger failure"); } },
+    bus: { Channel: { dispatchMessage(type, payload) {
+      events.push([type, payload]);
+      if (type === "fetch") return options.fetch?.(payload);
+      if (type === "global-dictation-completed" && options.completedError) throw Error("native completion failure");
+      return options.completed?.(payload);
+    } } },
+  };
+  const at = source.indexOf('async function finalize('), open = source.indexOf('{', at), end = findMatchingBrace(source, open);
+  assert.ok(at >= 0);
+  vm.runInNewContext(source.slice(at, end + 1) + ';globalThis.run=finalize;', context);
+  const stream = options.stream ? { finish: async () => { events.push(["stream"]); if (options.streamFailure) throw Error("inert stream failure"); return options.raw ?? " stream native "; }, isSilent: () => options.silent === true } : null;
+  return { events, session, signal, context, run: () => context.run(session, options.cleanupFlag ?? true, stream, signal) };
+}
+
+const CURRENT_GLOBAL_DICTATION_SOURCE = currentGlobalDictationFixture();
 const RETIRED_GLOBAL_DICTATION_SOURCE =
   "async function U(e,t,n=null){let r=Date.now(),i=n==null?await I(e.audio):await W(n,e.audio);e.analytics.performance.mark(`final_received`);let a=await E({transcript:i,cleanupEnabled:t});J===e&&(J=null),a.trim().length>0&&e.recordingPersistence?.setTranscript(a.trim()),B.dispatchMessage(`global-dictation-completed`,{sessionId:e.sessionId,text:a}),e.analytics.performance.mark(`transcript_dispatched`)}";
 
@@ -318,7 +354,7 @@ test("record-and-replay patches the signed rspack webview and main chunks", { sk
     applyRecordReplayGlobalDictationTranscriptPatch(globalSource));
   assert.deepEqual(globalWarnings, []);
   assert.notEqual(globalPatched, globalSource);
-  assert.match(globalPatched, /:\(\(\(\)=>\{let t=String\(a\?\?""\)\.trim\(\)/);
+  assert.match(globalPatched, /:\(\(\(\)=>\{try\{let t=String\(a\?\?""\)\.trim\(\)/);
 
   const runtimeEntries = containing(["codex-host-chunked-message-v1", "as __webpack_require__}"]);
   assert.ok(runtimeEntries.length >= 1);
@@ -1232,52 +1268,23 @@ test("record-and-replay rejects the retired template-literal global dictation ch
 });
 
 test("record-and-replay matches the current rspack global dictation success chain", () => {
-  const source = CURRENT_GLOBAL_DICTATION_SOURCE;
-  const patched = applyRecordReplayGlobalDictationTranscriptPatch(source);
-
+  const source = CURRENT_GLOBAL_DICTATION_SOURCE, patched = applyRecordReplayGlobalDictationTranscriptPatch(source);
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayGlobalDictationTranscriptPatch(patched), patched);
   assert.match(patched, /codex-linux-record-replay-global-dictation/);
-  assert.match(patched, /x\.O1\.dispatchMessage\("fetch",/);
-  assert.match(patched, /x\.O1\.dispatchMessage\("global-dictation-completed",\{sessionId:e\.sessionId,text:a\}\)\),e\.analytics/);
+  assert.match(patched, /bus\.Channel\.dispatchMessage\("fetch",/);
+  assert.match(patched, /bus\.Channel\.dispatchMessage\("global-dictation-completed",\{sessionId:session\.sessionId,text:transcript\}\)\),session\.analytics/);
 });
 
 test("record-and-replay keeps global dictation side effects inside the success branch", async () => {
   const patched = applyRecordReplayGlobalDictationTranscriptPatch(CURRENT_GLOBAL_DICTATION_SOURCE);
-  const run = async (recovery) => {
-    const context = {
-      Date,
-      Math,
-      JSON,
-      String,
-      globalThis: { recovered() { context.events.push(["recovered"]); } },
-      events: [],
-      J: null,
-      I: async () => "spoken words",
-      W: async () => "spoken words",
-      E: async ({ transcript }) => transcript,
-      x: { O1: { dispatchMessage: (type, payload) => context.events.push([type, payload.url ?? payload.text]) } },
-    };
-    vm.runInNewContext(`${patched};globalThis.run=U`, context);
-    await context.globalThis.run({
-      audio: null,
-      recovery,
-      onRecoveryChange: recovery == null ? null : () => {},
-      analytics: { performance: { mark: (name) => context.events.push(["mark", name]) } },
-    }, false);
-    return JSON.parse(JSON.stringify(context.events));
-  };
-  assert.deepEqual(await run(null), [
-    ["mark", "final_received"],
-    ["fetch", "vscode://codex/linux-record-replay-speech-context-active"],
-    ["global-dictation-completed", "spoken words"],
-    ["mark", "transcript_dispatched"],
+  const normal = globalFinalizerRuntime(patched), recovery = globalFinalizerRuntime(patched, { recovery: true });
+  await normal.run(); await recovery.run();
+  assert.deepEqual(normal.events.filter(event => ["fetch", "global-dictation-completed"].includes(event[0])).map(event => [event[0], event[1].url ?? event[1].text]), [
+    ["fetch", "vscode://codex/linux-record-replay-speech-context-active"], ["global-dictation-completed", " cleaned native "],
   ]);
-  assert.deepEqual(await run({ recordingId: "r1" }), [
-    ["mark", "final_received"],
-    ["recovered"],
-    ["mark", "transcript_dispatched"],
-  ]);
+  assert.equal(recovery.events.filter(event => ["fetch", "global-dictation-completed"].includes(event[0])).length, 0);
+  assert.equal(recovery.events.filter(event => event[0] === "mark" && event[1] === "transcript_dispatched").length, 1);
 });
 
 test("record-and-replay current transcript drift remains byte-identical", () => {
@@ -1296,7 +1303,7 @@ test("record-and-replay generated transcript runtimes are syntactically valid", 
 
   assert.doesNotThrow(() => new vm.Script(recordReplayHudRuntimeSource()));
   assert.equal(javascriptSourceParses(applyRecordReplayDictationTranscriptPatch(source)), true);
-  assert.doesNotThrow(() => new vm.Script(applyRecordReplayGlobalDictationTranscriptPatch(globalDictationSource)));
+  assert.equal(javascriptSourceParses(applyRecordReplayGlobalDictationTranscriptPatch(globalDictationSource)), true);
 });
 
 test("record-and-replay HUD drains queued dictation transcripts into active bundle", async () => {
@@ -2461,4 +2468,411 @@ test("UP72 injected capture capabilities keep their selected lexical scope", t =
   ]) assertOrdinaryRefusal(t, raw => raw.replace(from, to), from);
   const raw = currentComposerTranscriptFixture().replace('function hook(props){', 'function opaque(){let Date;let globalThis;}function hook(props){');
   assert.notEqual(applyRecordReplayDictationTranscriptPatch(raw), raw);
+});
+
+function globalSpeechFixture(t, { copies = 2, dependency = false } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-record-replay-global-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const assets = path.join(root, "webview/assets"); fs.mkdirSync(assets, { recursive: true });
+  const names = copies === 1 ? ["primary.js"] : ["primary.js", "peer.js"];
+  for (const name of names) fs.writeFileSync(path.join(assets, name), (dependency ? 'import*as dependency from"./dependency.js";' : "") + currentGlobalDictationFixture());
+  if (dependency) fs.writeFileSync(path.join(assets, "dependency.js"), 'export const nativeData={preserve:true};');
+  const descriptor = descriptors.find(item => item.id === "record-replay-global-dictation-transcript");
+  const selected = normalizePatchDescriptors([{ ...descriptor, featureId: "record-and-replay", sourceKind: "feature" }]);
+  return { root, assets, names, run() {
+    const report = createPatchReport(); applyExtractedAppPatchDescriptors(root, selected, {}, report, "extracted-app:pre-webview"); return report.patches[0];
+  } };
+}
+
+function assertGlobalSpeechRefusal(t, mutate, label) {
+  const source = mutate(currentGlobalDictationFixture()), output = captureWarns(() => applyRecordReplayGlobalDictationTranscriptPatch(source));
+  assert.equal(output.value, source, label); assert.equal(output.warnings.length, 1, label);
+  const fixture = globalSpeechFixture(t);
+  for (const name of fixture.names) fs.writeFileSync(path.join(fixture.assets, name), source);
+  const before = ordinaryDictationBytes(fixture), oldWrite = fs.writeFileSync; let writes = 0;
+  fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+  try { assert.equal(fixture.run().status, "skipped-optional", label); }
+  finally { fs.writeFileSync = oldWrite; }
+  assert.equal(writes, 0, label); assertOrdinaryDictationBytes(fixture, before);
+}
+
+test("UP73 cohort validates the published consumed finalizer and exact normal-only contribution", t => {
+  const fixture = globalSpeechFixture(t, { dependency: true }), before = ordinaryDictationBytes(fixture);
+  const descriptor = descriptors.find(item => item.id === "record-replay-global-dictation-transcript");
+  assert.equal(descriptor.phase, "extracted-app:pre-webview"); assert.equal(descriptor.order, 20696);
+  assert.equal(fixture.run().status, "applied"); assert.equal(fixture.run().status, "already-applied");
+  const nativeCall = 'bus.Channel.dispatchMessage("global-dictation-completed",{sessionId:session.sessionId,text:transcript})';
+  for (const name of fixture.names) {
+    const patched = fs.readFileSync(path.join(fixture.assets, name), "utf8"), start = before[name].indexOf(nativeCall), completed = patched.indexOf(nativeCall);
+    assert.ok(start >= 0 && completed > start);
+    assert.equal(patched.slice(0, start) + nativeCall + patched.slice(completed + nativeCall.length + 1), before[name]);
+    assert.equal(patched.split('url:"vscode://codex/linux-record-replay-speech-context-active"').length - 1, 1);
+    assert.equal(patched.includes('function cancel(session){bus.Channel.dispatchMessage("global-dictation-completed",{sessionId:session.sessionId,text:""})}'), true);
+  }
+  assert.equal(fs.readFileSync(path.join(fixture.assets, "dependency.js"), "utf8"), before['dependency.js']);
+});
+
+test("UP73 full owned request host method endpoint body id and fault policy are canonical", t => {
+  for (const [from, to] of [
+    ['hostId:"local"', 'hostId:"remote"'], ['method:"POST"', 'method:"GET"'],
+    ['vscode://codex/linux-record-replay-speech-context-active', 'vscode://codex/wrong-recording-route'],
+    ['String(transcript??"").trim()', 'String(other??"").trim()'],
+    ['source:"codex-global-dictation"', 'source:"wrong-source"'],
+    ['transcript:t,source:', 'transcript:"wrong",source:'],
+    ['requestId:n', 'requestId:"wrong-id"'],
+    ['Date.now()+"-"+Math.random().toString(36).slice(2)', 'Date.now()'],
+    ['codexLinuxRecordReplayGlobalCaptureResult?.catch?.(()=>{})', 'codexLinuxRecordReplayGlobalCaptureResult?.catch?.(other)'],
+    ['}catch{}})()', '}catch{throw Error("wrong policy")}})()'],
+    ['bus.Channel.dispatchMessage("fetch",', 'bus.Other.dispatchMessage("fetch",'],
+  ]) assertGlobalSpeechRefusal(t, raw => applyRecordReplayGlobalDictationTranscriptPatch(raw).replace(from, to), from);
+});
+
+test("UP73 native dual-signal recovery dispatch analytics and consumer linkage drifts refuse", t => {
+  for (const [from, to] of [
+    ['GlobalDictationPage:()=>Page', 'GlobalDictationPage:()=>OtherPage'],
+    ['(View,{initialStatus:', '(OtherView,{initialStatus:'],
+    ['await finalize(snapshot,recording.cleanupEnabled,recording.streamingSession,recording.abortController.signal)', 'await finalize(snapshot,recording.cleanupEnabled,recording.streamingSession,other.signal)'],
+    ['await finalize(snapshot,flag)', 'await other(snapshot,flag)'],
+    ['canBatchRecover:!1', 'canBatchRecover:!0'],
+    ['signal?.throwIfAborted(),session.analytics.performance.mark("final_received")', 'session.analytics.performance.mark("final_received")'],
+    ['signal?.throwIfAborted(),(0,logger.bE)', '(0,logger.bE)'],
+    ['signal:signal}).then', 'signal:other}).then'],
+    ['recover(sessionValue,"recovering")', 'recover(other,"recovering")'],
+    ['null!=session.recovery&&null!=session.onRecoveryChange?', 'null!=other.recovery&&null!=session.onRecoveryChange?'],
+    ['text:transcript}),session.analytics.performance.mark', 'text:other}),session.analytics.performance.mark'],
+    ['sessionId:session.sessionId,text:transcript', 'sessionId:other.sessionId,text:transcript'],
+    ['bus.Channel.dispatchMessage("global-dictation-completed",{sessionId:session.sessionId,text:transcript})', 'bus.Other.dispatchMessage("global-dictation-completed",{sessionId:session.sessionId,text:transcript})'],
+    ['session.analytics.performance.mark("transcript_dispatched")', 'session.analytics.performance.mark("wrong-analytics")'],
+    ['transcriptionStartedAtMs:started', 'transcriptionStartedAtMs:other'],
+  ]) assertGlobalSpeechRefusal(t, raw => raw.replace(from, to), from);
+});
+
+test("UP73 CJS readonly probes retain free writes while allowing supported local shadows and inert markers", t => {
+  const insert = (source, text) => source.replace('async function finalize(', text + 'async function finalize(');
+  for (const statement of ['bus=other;', 'function mutate(){bus<<=1;}', 'function mutate(){\\u0062us=other;}', 'function mutate(){finalize=other;}']) assertGlobalSpeechRefusal(t, raw => insert(raw, statement), statement);
+  for (const statement of [
+    'function local(bus){bus=other;}', 'scope:{let bus;bus=other;break scope;}',
+    'for(let bus of [])for(let local of []){bus=local;}',
+    'const marker="codex-linux-record-replay-global-dictation-";',
+    '/*bus.Channel.dispatchMessage("fetch",{url:"vscode://codex/linux-record-replay-speech-context-active"})*/',
+  ]) {
+    const raw = insert(currentGlobalDictationFixture(), statement), result = captureWarns(() => applyRecordReplayGlobalDictationTranscriptPatch(raw));
+    assert.notEqual(result.value, raw, statement); assert.equal(result.warnings.length, 0, statement);
+    assert.equal(applyRecordReplayGlobalDictationTranscriptPatch(result.value), result.value);
+  }
+});
+
+test("UP73 partial mixed hidden and orphan request cohorts refuse before writes", t => {
+  for (const kind of ["mixed", "bad-peer", "hidden-peer", "orphan", "computed-orphan", "duplicate", "wrong-wrapper"]) {
+    const fixture = globalSpeechFixture(t), raw = currentGlobalDictationFixture();
+    if (kind === "mixed") fs.writeFileSync(path.join(fixture.assets, "primary.js"), applyRecordReplayGlobalDictationTranscriptPatch(raw));
+    else if (kind === "bad-peer") fs.writeFileSync(path.join(fixture.assets, "peer.js"), raw.replace('GlobalDictationPage:()=>Page', 'GlobalDictationPage:()=>OtherPage'));
+    else if (kind === "hidden-peer") { fs.renameSync(path.join(fixture.assets, "peer.js"), path.join(fixture.assets, "peer.mjs")); fs.writeFileSync(path.join(fixture.assets, "peer.mjs"), raw.replace('transcript_dispatched', 'hidden-analytics')); }
+    else if (kind === "orphan") fs.writeFileSync(path.join(fixture.assets, "orphan.js"), 'bus.Channel.dispatchMessage("fetch",{url:"vscode://codex/linux-record-replay-speech-context-active"});');
+    else if (kind === "computed-orphan") fs.writeFileSync(path.join(fixture.assets, "orphan.js"), 'bus.Channel["dispatchMessage"]("fetch",{"url":"vscode://codex/linux-record-replay-speech-context-active"});');
+    else {
+      const patched = applyRecordReplayGlobalDictationTranscriptPatch(raw), nativeCall = 'bus.Channel.dispatchMessage("global-dictation-completed",{sessionId:session.sessionId,text:transcript})';
+      const start = raw.indexOf(nativeCall), completed = patched.indexOf(nativeCall), prefix = patched.slice(start, completed);
+      const source = kind === "duplicate" ? patched.slice(0, start) + prefix + patched.slice(start) : patched.slice(0, start) + patched.slice(start + 1);
+      fs.writeFileSync(path.join(fixture.assets, "primary.js"), source);
+    }
+    const before = ordinaryDictationBytes(fixture), oldWrite = fs.writeFileSync; let writes = 0;
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(writes, 0, kind); assertOrdinaryDictationBytes(fixture, before);
+  }
+});
+
+test("UP73 native role renames opaque props and UTF16 bounds preserve all surrounding bytes", t => {
+  const fixture = globalSpeechFixture(t);
+  for (const name of fixture.names) {
+    const raw = 'const opaque="😀";' + currentGlobalDictationFixture().replace(/\bfinalize\b/gu, "completeNative")
+      .replace(/\bbus\b/gu, "nativeBus").replace(/\btranscript\b/gu, "resultText")
+      .replace(/resultText:/gu, "transcript:").replace(/\.resultText\b/gu, ".transcript")
+      .replace('recoveryVisible:props.recoveryVisible}', 'recoveryVisible:props.recoveryVisible,nativeOpaque:{preserve:true}}');
+    fs.writeFileSync(path.join(fixture.assets, name), raw);
+  }
+  assert.equal(fixture.run().status, "applied"); assert.equal(fixture.run().status, "already-applied");
+});
+
+test("UP73 atomic dependency and inventory races roll back every attempted copy", t => {
+  for (const kind of ["partial", "dependency", "inventory"]) {
+    const fixture = globalSpeechFixture(t, { dependency: true }), before = ordinaryDictationBytes(fixture), oldWrite = fs.writeFileSync; let attempted = false;
+    fs.writeFileSync = (file, bytes, ...options) => {
+      if (!attempted && String(file).endsWith("/primary.js")) {
+        attempted = true;
+        if (kind === "partial") { oldWrite(file, "partial"); throw Error("inert partial write"); }
+        if (kind === "dependency") oldWrite(path.join(fixture.assets, "dependency.js"), 'export const nativeData={concurrent:true};');
+        else oldWrite(path.join(fixture.assets, "orphan.js"), 'bus.Channel.dispatchMessage("fetch",{source:"codex-global-dictation"});');
+      }
+      return oldWrite(file, bytes, ...options);
+    };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(attempted, true, kind);
+    for (const name of fixture.names) assert.equal(fs.readFileSync(path.join(fixture.assets, name), "utf8"), before[name]);
+  }
+});
+
+test("UP73 warm preflight validates fresh dependencies and inventory without writes", t => {
+  const fixture = globalSpeechFixture(t, { dependency: true }); assert.equal(fixture.run().status, "applied");
+  const oldRead = fs.readFileSync, oldWrite = fs.writeFileSync; let changed = false, writes = 0;
+  fs.readFileSync = (file, ...options) => {
+    const bytes = oldRead(file, ...options);
+    if (!changed && options.length === 0 && String(file).endsWith("/primary.js")) { changed = true; oldWrite(path.join(fixture.assets, "orphan.js"), 'bus.Channel.dispatchMessage("fetch",{source:"codex-global-dictation"});'); }
+    return bytes;
+  };
+  fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+  try { assert.equal(fixture.run().status, "skipped-optional"); }
+  finally { fs.readFileSync = oldRead; fs.writeFileSync = oldWrite; }
+  assert.equal(changed, true); assert.equal(writes, 0);
+});
+
+test("UP73 failed restoration remains fatal", t => {
+  const fixture = globalSpeechFixture(t), oldWrite = fs.writeFileSync; let attempts = 0;
+  fs.writeFileSync = (file, bytes, ...options) => {
+    if (String(file).endsWith("/primary.js")) { if (++attempts === 1) oldWrite(file, "partial"); throw Error("inert restore failure"); }
+    return oldWrite(file, bytes, ...options);
+  };
+  try { assert.throws(() => fixture.run(), /rollback could not restore original bytes/u); }
+  finally { fs.writeFileSync = oldWrite; }
+  assert.equal(attempts, 2);
+});
+
+test("UP73 inert normal completion emits one trimmed context then untouched native completion and analytics", async () => {
+  const patched = applyRecordReplayGlobalDictationTranscriptPatch(CURRENT_GLOBAL_DICTATION_SOURCE), runtime = globalFinalizerRuntime(patched);
+  await runtime.run();
+  const fetches = runtime.events.filter(event => event[0] === "fetch"), completed = runtime.events.filter(event => event[0] === "global-dictation-completed");
+  assert.equal(fetches.length, 1); assert.equal(completed.length, 1);
+  const request = fetches[0][1];
+  assert.equal(request.hostId, "local"); assert.equal(request.method, "POST");
+  assert.equal(request.url, "vscode://codex/linux-record-replay-speech-context-active");
+  assert.match(request.requestId, /^codex-linux-record-replay-global-dictation-1234-[a-z0-9]+$/u);
+  assert.deepEqual(JSON.parse(request.body), { transcript: "cleaned native", source: "codex-global-dictation" });
+  assert.equal(completed[0][1].sessionId, "native-session"); assert.equal(completed[0][1].text, " cleaned native ");
+  const at = kind => runtime.events.findIndex(event => event[0] === kind);
+  assert.ok(at("persist") < at("fetch")); assert.ok(at("fetch") < at("global-dictation-completed"));
+  assert.ok(at("global-dictation-completed") < runtime.events.findIndex(event => event[0] === "mark" && event[1] === "transcript_dispatched"));
+  assert.ok(at("global-dictation-completed") < at("final-log"));
+});
+
+test("UP73 inert recovery dual-abort and blank output keep native branches without extra context", async () => {
+  const raw = CURRENT_GLOBAL_DICTATION_SOURCE, patched = applyRecordReplayGlobalDictationTranscriptPatch(raw);
+  for (const options of [{ recovery: true }, { recovery: true, cleaned: "" }, { abort: "before" }, { abort: "cleanup" }, { cleaned: "  " }]) {
+    const baseline = globalFinalizerRuntime(raw, options), runtime = globalFinalizerRuntime(patched, options);
+    let baselineError = null, error = null;
+    try { await baseline.run(); } catch (caught) { baselineError = caught.message; }
+    try { await runtime.run(); } catch (caught) { error = caught.message; }
+    assert.equal(error, baselineError);
+    assert.equal(runtime.events.filter(event => event[0] === "fetch").length, 0);
+    assert.deepEqual(JSON.parse(JSON.stringify(runtime.events)), JSON.parse(JSON.stringify(baseline.events)));
+    if (options.cleaned === "  ") assert.equal(runtime.events.find(event => event[0] === "global-dictation-completed")[1].text, "  ");
+  }
+});
+
+test("UP73 inert original streaming recovery fallback and forbidden recovery remain native", async () => {
+  const raw = CURRENT_GLOBAL_DICTATION_SOURCE, patched = applyRecordReplayGlobalDictationTranscriptPatch(raw);
+  for (const options of [{ stream: true }, { stream: true, streamFailure: true }, { stream: true, streamFailure: true, silent: true, cleaned: "" }, { stream: true, streamFailure: true, canBatchRecover: false }]) {
+    const baseline = globalFinalizerRuntime(raw, options), runtime = globalFinalizerRuntime(patched, options);
+    let beforeError = null, afterError = null;
+    try { await baseline.run(); } catch (caught) { beforeError = caught.message; }
+    try { await runtime.run(); } catch (caught) { afterError = caught.message; }
+    assert.equal(afterError, beforeError);
+    assert.deepEqual(JSON.parse(JSON.stringify(runtime.events.filter(event => event[0] !== "fetch"))), JSON.parse(JSON.stringify(baseline.events)));
+    assert.equal(runtime.events.filter(event => event[0] === "fetch").length, options.streamFailure ? 0 : 1);
+  }
+});
+
+test("UP73 inert sync reject deferred disabled and status-error recording fetch never blocks completion", async () => {
+  const patched = applyRecordReplayGlobalDictationTranscriptPatch(CURRENT_GLOBAL_DICTATION_SOURCE);
+  for (const fetch of [
+    () => { throw Error("synthetic capture failure"); },
+    () => Promise.reject(Error("synthetic capture rejection")),
+    () => new Promise(() => {}),
+    () => Promise.resolve({ ok: false, reason: "disabled" }),
+    () => Promise.resolve({ ok: false, reason: "status-error" }),
+  ]) {
+    const runtime = globalFinalizerRuntime(patched, { fetch });
+    let done = false; const pending = runtime.run().then(() => { done = true; });
+    await settleHudPromises(80); assert.equal(done, true); await pending;
+    assert.equal(runtime.events.filter(event => event[0] === "fetch").length, 1);
+    assert.equal(runtime.events.filter(event => event[0] === "global-dictation-completed").length, 1);
+    assert.equal(runtime.events.filter(event => event[0] === "final-log").length, 1);
+  }
+});
+
+test("UP73 inert native ASR cleanup persistence dispatcher and logger errors still propagate", async () => {
+  const raw = CURRENT_GLOBAL_DICTATION_SOURCE, patched = applyRecordReplayGlobalDictationTranscriptPatch(raw);
+  for (const options of [{ asrError: true }, { cleanupError: true }, { persistenceError: true }, { loggerError: true }, { completedError: true }, { finalLoggerError: true }]) {
+    for (const source of [raw, patched]) {
+      const runtime = globalFinalizerRuntime(source, options);
+      await assert.rejects(runtime.run(), /native (?:ASR|cleanup|persistence|logger|completion|final logger) failure/u);
+    }
+  }
+});
+
+test("UP73 repeated patch and native completions preserve one capture per native event", async () => {
+  const once = applyRecordReplayGlobalDictationTranscriptPatch(CURRENT_GLOBAL_DICTATION_SOURCE), twice = applyRecordReplayGlobalDictationTranscriptPatch(once);
+  assert.equal(twice, once);
+  const runtime = globalFinalizerRuntime(twice); await runtime.run(); await runtime.run();
+  assert.equal(runtime.events.filter(event => event[0] === "fetch").length, 2);
+  assert.equal(runtime.events.filter(event => event[0] === "global-dictation-completed").length, 2);
+  for (const event of runtime.events.filter(event => event[0] === "fetch")) assert.deepEqual(Object.keys(JSON.parse(event[1].body)).sort(), ["source", "transcript"]);
+});
+
+test("UP73 other native empty and cancel completion sites remain uncaptured opaque positives", () => {
+  const extra = 'async function nativeEmpty(session){bus.Channel.dispatchMessage("global-dictation-completed",{sessionId:session.sessionId,text:""}),session.analytics.performance.mark("transcript_dispatched")}';
+  const raw = CURRENT_GLOBAL_DICTATION_SOURCE.replace('function cancel(session){', extra + 'function cancel(session){');
+  const patched = applyRecordReplayGlobalDictationTranscriptPatch(raw); assert.notEqual(patched, raw); assert.ok(patched.includes(extra));
+  const events = [], context = { bus: { Channel: { dispatchMessage: (...args) => events.push(args) } } };
+  vm.runInNewContext(extra + ';globalThis.run=nativeEmpty;', context);
+  return context.run({ sessionId: "cancel-session", analytics: { performance: { mark() {} } } }).then(() => {
+    assert.equal(events.length, 1); assert.equal(events[0][0], "global-dictation-completed"); assert.equal(events[0][1].text, "");
+  });
+});
+
+test("UP73 capture builtin capabilities have their original selected scopes", t => {
+  for (const [from, to] of [
+    ['export const __rspack_esm_ids=', 'const JSON={};export const __rspack_esm_ids='],
+    ['async function finalize(', 'let Math;async function finalize('],
+    ['let started=Date.now();', 'let String;let started=Date.now();'],
+  ]) assertGlobalSpeechRefusal(t, raw => raw.replace(from, to), from);
+  const raw = CURRENT_GLOBAL_DICTATION_SOURCE.replace('async function finalize(', 'function opaque(){let Math;let JSON;}async function finalize(');
+  assert.notEqual(applyRecordReplayGlobalDictationTranscriptPatch(raw), raw);
+});
+
+test("UP73 V2 selected consumer references reject the confirmed local binding shadows", t => {
+  for (const [from, to] of [
+    ['function View(props){', 'function View(props){let finalize=other;'],
+    ['function Page(props){', 'function Page(props){let bus=other;'],
+    ['function Page(props){', 'function Page(props){let jsx=other;'],
+    ['function Page(props){', 'function Page(props){let View=other;'],
+    ['function View(props){', 'function View(props){let stop=other;'],
+  ]) assertGlobalSpeechRefusal(t, raw => raw.replace(from, to), from + to);
+  const raw = CURRENT_GLOBAL_DICTATION_SOURCE.replace('function View(props){', 'function unrelated(finalize,bus,jsx){return[finalize,bus,jsx]}function View(props){');
+  const patched = applyRecordReplayGlobalDictationTranscriptPatch(raw);
+  assert.notEqual(patched, raw); assert.equal(applyRecordReplayGlobalDictationTranscriptPatch(patched), patched);
+});
+
+test("UP73 V2 selected parameter and default initializer references remain unsupported and fail closed", t => {
+  for (const replacement of [
+    'const use=(bus,value=bus.Channel.dispatchMessage("global-dictation-renderer-ready",{}))=>value;',
+    'const use=(bus,value=/*selected*/bus.Channel.dispatchMessage("global-dictation-renderer-ready",{}))=>value;',
+    'const use=(bus,value=(bus.Channel.dispatchMessage("global-dictation-renderer-ready",{})))=>value;',
+    'function use(bus,value=bus.Channel.dispatchMessage("global-dictation-renderer-ready",{})){return value}',
+    'const use={run(bus,value=bus.Channel.dispatchMessage("global-dictation-renderer-ready",{})){return value}};',
+    'const use={if(bus,value=bus.Channel.dispatchMessage("global-dictation-renderer-ready",{})){return value}};',
+    'class use{;if(bus,value=bus.Channel.dispatchMessage("global-dictation-renderer-ready",{})){return value}}',
+  ]) assertGlobalSpeechRefusal(t, raw => raw.replace('bus.Channel.dispatchMessage("global-dictation-renderer-ready",{});', replacement), replacement);
+});
+
+test("UP73 V2 selected finalizer references reject namespace and recovery parameter shadows", t => {
+  for (const name of ["bus", "asr", "cleanup", "logger", "recover"]) {
+    assertGlobalSpeechRefusal(t, raw => raw.replace('finalize(session,cleanupFlag,stream=null,signal)', `finalize(session,${name},stream=null,signal)`)
+      .replace('cleanupEnabled:cleanupFlag', `cleanupEnabled:${name}`), "finalizer parameter " + name);
+  }
+  for (const name of ["asr", "recover"]) assertGlobalSpeechRefusal(t, raw => raw.replaceAll("streamValue", name), "stream helper parameter " + name);
+});
+
+test("UP73 V2 static owned key and value spellings refuse cold and warm orphan requests without writes", t => {
+  const keySpellings = (name, point) => [
+    name, `\\u${point.toString(16).padStart(4, "0")}${name.slice(1)}`, `\\u{${point.toString(16)}}${name.slice(1)}`,
+    `"\\u${point.toString(16).padStart(4, "0")}${name.slice(1)}"`, `'\\x${point.toString(16)}${name.slice(1)}'`,
+    `["\\u${point.toString(16).padStart(4, "0")}${name.slice(1)}"]`, `['\\x${point.toString(16)}${name.slice(1)}']`,
+    '[`' + name + '`]', '[`\\u' + point.toString(16).padStart(4, "0") + name.slice(1) + '`]', `["${name}"]`,
+    `${name}/*key*/`, `/*before*/${name}/*after*/`, `${name}// key\n`,
+  ];
+  const fields = [
+    ...keySpellings("url", 117).map(key => key + ':"vscode://codex/linux-record-replay-speech-context-active"'),
+    ...keySpellings("source", 115).map(key => key + ':"codex-global-dictation"'),
+    String.raw`url:"\u0076scode://codex/linux-record-replay-speech-context-active"`,
+    String.raw`source:"\x63odex-global-dictation"`,
+    String.raw`"\u0075rl":"vscode://codex/linux-record-replay-speech-context-active",body:{"\u0073ource":"codex-global-dictation"}`,
+  ];
+  for (const warm of [false, true]) for (const field of fields) {
+    const fixture = globalSpeechFixture(t);
+    if (warm) assert.equal(fixture.run().status, "applied");
+    const orphan = 'bus.Channel.dispatchMessage("fetch",{' + field + '});';
+    assert.doesNotThrow(() => new vm.Script(orphan)); fs.writeFileSync(path.join(fixture.assets, "orphan.js"), orphan);
+    const before = ordinaryDictationBytes(fixture), oldWrite = fs.writeFileSync; let writes = 0;
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", field); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(writes, 0, field); assertOrdinaryDictationBytes(fixture, before);
+  }
+});
+
+test("UP73 V2 opaque foreign and once-decoded literal backslash keys keep their actual static meaning", t => {
+  for (const source of [
+    String.raw`bus.Channel.dispatchMessage("fetch",{"\u005cx75rl":"vscode://codex/linux-record-replay-speech-context-active"});`,
+    String.raw`bus.Channel.dispatchMessage("fetch",{"\\u0075rl":"vscode://codex/linux-record-replay-speech-context-active"});`,
+    String.raw`bus.Channel.dispatchMessage("fetch",{["\u005cx75rl"]:"vscode://codex/linux-record-replay-speech-context-active"});`,
+    String.raw`bus.Channel.dispatchMessage("fetch",{"\u005cx73ource":"codex-global-dictation"});`,
+    String.raw`bus.Channel.dispatchMessage("fetch",{["\\u0073ource"]:"codex-global-dictation"});`,
+    String.raw`bus.Channel.dispatchMessage("fetch",{url:"\u005cx76scode://codex/linux-record-replay-speech-context-active"});`,
+    String.raw`bus.Channel.dispatchMessage("fetch",{source:"\\u0063odex-global-dictation"});`,
+    'bus.Channel.dispatchMessage("fetch",{noturl:"vscode://codex/linux-record-replay-speech-context-active"});',
+    'bus.Channel.dispatchMessage("fetch",{notsource:"codex-global-dictation"});',
+    'bus.Channel.dispatchMessage("fetch",condition?url:"vscode://codex/linux-record-replay-speech-context-active");',
+    'bus.Channel.dispatchMessage("fetch",{url:"vscode://codex/foreign",source:"foreign"});',
+    'bus.Channel.dispatchMessage("fetch",{[dynamic]:"codex-global-dictation"});',
+    'bus.Channel.dispatchMessage("fetch",{["sou"+"rce"]:"codex-global-dictation"});',
+    'bus.Channel.dispatchMessage("fetch",{[`sou${part}rce`]:"codex-global-dictation"});',
+    'const opaque={url:"vscode://codex/linux-record-replay-speech-context-active"};',
+    'const marker="bus.Channel.dispatchMessage(fetch,{url:owned})";',
+    '/*bus.Channel.dispatchMessage("fetch",{url:"vscode://codex/linux-record-replay-speech-context-active"})*/',
+  ]) {
+    assert.doesNotThrow(() => new vm.Script(source));
+    const fixture = globalSpeechFixture(t); fs.writeFileSync(path.join(fixture.assets, "opaque.js"), source);
+    assert.equal(fixture.run().status, "applied", source); assert.equal(fixture.run().status, "already-applied", source);
+    assert.equal(fs.readFileSync(path.join(fixture.assets, "opaque.js"), "utf8"), source);
+  }
+});
+
+
+test("UP73 V3 static literal value escapes reach orphan checks and preserve opaque values", t => {
+  const url = "vscode://codex/linux-record-replay-speech-context-active", source = "codex-global-dictation";
+  const slash = String.fromCharCode(92), tick = String.fromCharCode(96), owned = [];
+  for (const [key, value, part] of [["url", url, "ch-context"], ["source", source, "l-dictation"]]) {
+    const at = value.indexOf(part), char = value[at], point = char.codePointAt(0);
+    const literal = escape => '"' + value.slice(0, at) + escape + value.slice(at + 1) + '"';
+    for (const escaped of [slash + char, slash + "u" + point.toString(16).padStart(4, "0"), slash + "u{" + point.toString(16) + "}", slash + "x" + point.toString(16)]) {
+      owned.push({ key, value, fields: key + ":" + literal(escaped) });
+    }
+    for (const newline of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
+      owned.push({ key, value, fields: key + ":" + literal(slash + newline + char) });
+    }
+    for (const quote of ["'", tick]) owned.push({ key, value, fields: key + ":" + quote + value.slice(0, at) + slash + value.slice(at) + quote });
+  }
+  owned.push({ key: "url", value: url, fields: 'url:"vscode:' + slash + '/' + '/codex/linux-record-replay-speech-context-active"' });
+  owned.push({ key: "url", value: url, fields: 'url:"vscode://codex/linux-record-repla' + slash + 'y-speech-context-active",body:JSON.stringify({source:"codex-globa' + slash + 'l-dictation"})' });
+  for (const entry of owned) for (const warm of [false, true]) {
+    const orphan = 'bus.Channel.dispatchMessage("fetch",{' + entry.fields + '});', emitted = [];
+    vm.runInNewContext(orphan, { bus: { Channel: { dispatchMessage: (_kind, payload) => emitted.push(payload) } } });
+    assert.equal(emitted.length, 1); assert.equal(emitted[0][entry.key], entry.value);
+    const fixture = globalSpeechFixture(t);
+    if (warm) assert.equal(fixture.run().status, "applied");
+    fs.writeFileSync(path.join(fixture.assets, "orphan.js"), orphan);
+    const before = ordinaryDictationBytes(fixture), oldWrite = fs.writeFileSync; let writes = 0;
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", entry.fields); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(writes, 0, entry.fields); assertOrdinaryDictationBytes(fixture, before);
+  }
+  const opaque = [
+    'source:"codex-globa' + slash + slash + 'l-dictation"',
+    'source:"codex-globa' + slash + 'u005cl-dictation"',
+    'url:"vscode://codex/linux-record-replay-spee' + slash + slash + 'ch-context-active"',
+    'url:"vscode://codex/linux-record-replay-spee' + slash + slash + 'nch-context-active"',
+    ...["n", "r", "t", "b", "f", "v", "0", '"', "'", tick].map(char => 'source:"codex-globa' + slash + char + 'l-dictation"'),
+  ];
+  for (const fields of opaque) {
+    const orphan = 'bus.Channel.dispatchMessage("fetch",{' + fields + '});', emitted = [];
+    vm.runInNewContext(orphan, { bus: { Channel: { dispatchMessage: (_kind, payload) => emitted.push(payload) } } });
+    assert.equal(emitted.length, 1); assert.notEqual(emitted[0].url ?? emitted[0].source, emitted[0].url ? url : source);
+    const fixture = globalSpeechFixture(t); fs.writeFileSync(path.join(fixture.assets, "opaque.js"), orphan);
+    assert.equal(fixture.run().status, "applied", fields); assert.equal(fixture.run().status, "already-applied", fields);
+    assert.equal(fs.readFileSync(path.join(fixture.assets, "opaque.js"), "utf8"), orphan);
+  }
 });
