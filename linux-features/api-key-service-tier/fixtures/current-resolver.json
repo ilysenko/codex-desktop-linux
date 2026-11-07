@@ -1,0 +1,53 @@
+{
+  "provenance": {
+    "version": "26.1103.32239",
+    "architecture": "amd64",
+    "source": "Signed raw inputs and UP04-current-owner-locator-4e39-v1.json; half-open UTF-16 spans"
+  },
+  "resolver": {
+    "asset": "webview/assets/async/972499.b9f8eb2bc4.js",
+    "id": "eWgO",
+    "utf16": [
+      155828,
+      156792
+    ],
+    "rawBytes": [
+      155834,
+      156798
+    ],
+    "bytes": 964,
+    "bodySha256": "69f0610582f8dad85792cb40c178dff884b1d5472216bef179530213c4cf93e2",
+    "params": [
+      "e",
+      "t",
+      "n"
+    ],
+    "publications": {
+      "W6": {
+        "params": "e",
+        "utf16": [
+          730,
+          952
+        ],
+        "bodyBytes": 209,
+        "anonymous": true
+      },
+      "DS": {
+        "expression": "c"
+      },
+      "E_": {
+        "params": "e,t,n={fast:!0,ultrafast:!0}",
+        "utf16": [
+          543,
+          652
+        ],
+        "bodyBytes": 69,
+        "anonymous": true
+      }
+    },
+    "pureChecks": {
+      "resolver": "current"
+    },
+    "source": "let r=\"priority\",a=\"fast\",i=\"default\";function o(e,t){if(null==e||e===i)return!0;if(null==t)return!1;let n=l(e);return\"flex\"===e||t[n??\"fast\"]}function l(e,t){let n=t?.trim().toLowerCase();return e===r||e===a||\"fast\"===n?\"fast\":\"ultrafast\"===e||\"ultrafast\"===n?\"ultrafast\":null}function s(e,t){return null==t?null:t===a?u(e):e?.serviceTiers?.find(e=>e.id===t)??null}function u(e){return e?.serviceTiers?.find(e=>\"fast\"===l(e.id,e.name)||\"priority\"===e.name.trim().toLowerCase())??null}function c(e,t){return s(e,t)?.id??null}n.d(t,{},{DS:c,E_:function(e,t,n={fast:!0,ultrafast:!0}){let r=t??c(e,e?.defaultServiceTier??null);return r!==i&&o(r,n)?r:null},L9:u,LE:\"default-service-tier\",Pd:function(e,t){return null!=s(e,t)},Pg:l,W6:function(e){let t=e.requirements?.featureRequirements,n=t?.fast_mode!==!1;return{fast:n,ultrafast:\"supportsIndependentSpeedModes\"in e&&!0===e.supportsIndependentSpeedModes?t?.ultrafast_mode!==!1:n&&t?.ultrafast_mode!==!1}},Yf:r,uw:o})"
+  }
+}

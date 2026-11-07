@@ -75,12 +75,15 @@ physical copy of its module. The model marker validates the published catalog's
 auth input, loop model, normalized output, and returned catalog through the shared
 owner inspector. Only its exact output-field insertion qualifies as applied;
 marker text in comments, strings, other objects, or another auth binding refuses
-the patch. Both the gate and model patches prepare every physical copy before
+the patch. The gate, model and resolver patches prepare every physical copy before
 writes. All copies must be pristine or exactly patched; a missing, ambiguous,
 drifted, orphan, or partially patched owner refuses that patch's whole cohort.
 A later write failure restores every attempted file, including a partially
-written file. The resolver and option-list patches leave a missing or drifted
-owner chunk unchanged and report a warning.
+written file. The resolver qualifies the complete published factory, including its provider-tier
+lookup, request-id conversion, classification, access checks and exported callers.
+It accepts only the exact local Fast helper and fallback insertion as applied.
+The option-list patch leaves a missing or drifted owner chunk unchanged and reports
+a warning.
 
 ## Risks
 

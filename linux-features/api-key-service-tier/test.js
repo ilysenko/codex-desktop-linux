@@ -29,6 +29,8 @@ const {
   patchApiKeyModelMarker,
   serviceTierGateState,
   applyApiKeyServiceTierResolverPatch,
+  applyApiKeyServiceTierResolverModule,
+  resolverModuleState,
   applyFallbackFastTierPatch,
   descriptors,
 } = require("./patch.js");
@@ -171,7 +173,7 @@ test("api-key-service-tier stays disabled until listed in features.json", () => 
     const loaded = loadLinuxFeaturePatchDescriptors({ featuresRoot });
     assert.deepEqual(
       loaded.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
-      DESCRIPTOR_IDS.map((id, index) => [`feature:api-key-service-tier:${id}`, index <= 1 ? "extracted-app:pre-webview" : "webview-asset", "optional"]),
+      DESCRIPTOR_IDS.map((id, index) => [`feature:api-key-service-tier:${id}`, index <= 2 ? "extracted-app:pre-webview" : "webview-asset", "optional"]),
     );
   });
 });
@@ -186,7 +188,7 @@ test("descriptors find their owners by content needles, not chunk names", () => 
   };
   assert.equal(descriptors[1].phase, "extracted-app:pre-webview");
   assert.equal(descriptors[1].assetNeedles, undefined);
-  for (const descriptor of descriptors.slice(2)) {
+  for (const descriptor of descriptors.slice(3)) {
     assert.equal(descriptor.pattern, undefined);
     assert.equal(descriptor.assetPattern, undefined);
     assert.equal(descriptor.assetMatch, undefined);
@@ -584,7 +586,7 @@ test("rspack chunks patch every gate copy and report a drifted owner separately"
       assert.equal(entries["api-key-service-tier-model"]?.status, "applied");
       assert.equal(entries["api-key-service-tier-fallback"]?.status, "applied");
       assert.equal(entries["api-key-service-tier-resolver"]?.status, "skipped-optional");
-      assert.ok(warnings.some((warning) => warning.includes("Could not find service tier resolver")));
+      assert.ok(entries["api-key-service-tier-resolver"]?.reason?.includes("current API key service tier resolver factory"));
       for (const name of ["11.aaaa.js", "12.bbbb.js"]) {
         assert.match(fs.readFileSync(path.join(asyncDir, name), "utf8"), /"apikey"===h&&!x\?/);
       }
@@ -602,7 +604,7 @@ test("a missing owner gets its own skipped report entry", () => {
       for (const [id, description] of [
         ["api-key-service-tier-gate", "current API key service tier gate bundle"],
         ["api-key-service-tier-model", "current API key service tier model bundle"],
-        ["api-key-service-tier-resolver", "current API key service tier resolver bundle"],
+        ["api-key-service-tier-resolver", "current API key service tier resolver factory"],
         ["api-key-service-tier-fallback", "current API key service tier fallback bundle"],
       ]) {
         assert.ok(warnings.some((warning) => warning.includes(description)) || entries[id]?.reason?.includes(description), description);
@@ -617,10 +619,10 @@ test("official signed webview owners patch once, idempotently, and still parse",
   const assetsDir = path.join(signedApp, "webview", "assets");
   const counts = {};
   for (const descriptor of descriptors) {
-    const copies = ["api-key-service-tier-gate", "api-key-service-tier-model"].includes(descriptor.id)
+    const copies = ["api-key-service-tier-gate", "api-key-service-tier-model", "api-key-service-tier-resolver"].includes(descriptor.id)
       ? findUniqueRspackModuleCopies(assetsDir, {
-        sourceMatch: source => source.includes(descriptor.id === "api-key-service-tier-gate" ? "serviceTierAccess:" : "apiKeyDaybreakSupported"),
-        matchModule: (source, module) => descriptor.id === "api-key-service-tier-gate" ? serviceTierGateState(source, module).kind === "current" : inspectModelCatalogOwner(module).ok,
+        sourceMatch: source => descriptor.id === "api-key-service-tier-resolver" ? ["serviceTiers?.find(","supportsIndependentSpeedModes"].every(needle=>source.includes(needle)) : source.includes(descriptor.id === "api-key-service-tier-gate" ? "serviceTierAccess:" : "apiKeyDaybreakSupported"),
+        matchModule: (source, module) => descriptor.id === "api-key-service-tier-gate" ? serviceTierGateState(source, module).kind === "current" : descriptor.id === "api-key-service-tier-resolver" ? resolverModuleState(source, module).kind === "current" : inspectModelCatalogOwner(module).ok,
       }) : null;
     const assets = copies?.map(copy => copy.assetName) ?? findWebviewAssetsContaining(signedApp, descriptor.assetNeedles);
     assert.ok(assets.length > 0, descriptor.id);
@@ -629,7 +631,7 @@ test("official signed webview owners patch once, idempotently, and still parse",
       const copy = copies?.find(copy => copy.assetName === asset);
       const apply = copy == null ? descriptor.apply : text => {
         const body = text.slice(copy.start, text.length - (source.length - copy.end));
-        return text.slice(0, copy.start) + (descriptor.id === "api-key-service-tier-gate" ? applyApiKeyServiceTierGatePatch(body, copy) : applyApiKeyModelMarkerPatch(body, {factorySnapshot: {...copy, moduleSource: body}})) + text.slice(text.length - (source.length - copy.end));
+        return text.slice(0, copy.start) + (descriptor.id === "api-key-service-tier-gate" ? applyApiKeyServiceTierGatePatch(body, copy) : descriptor.id === "api-key-service-tier-resolver" ? applyApiKeyServiceTierResolverModule(body, copy) : applyApiKeyModelMarkerPatch(body, {factorySnapshot: {...copy, moduleSource: body}})) + text.slice(text.length - (source.length - copy.end));
       };
       let patched;
       assert.deepEqual(captureWarnings(() => {

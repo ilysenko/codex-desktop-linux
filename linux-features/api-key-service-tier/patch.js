@@ -329,6 +329,86 @@ function applyApiKeyServiceTierResolverPatch(source) {
   return source;
 }
 
+// The resolver's complete factory connects the classifier, provider-tier lookup,
+// request-id conversion, access predicate and public callers. Checking this
+// closed grammar also excludes shadow scopes, reassignment and opaque witnesses.
+function nativeResolverOwner(source, module) {
+  if (!module || module.params?.length !== 3 || new Set(module.params).size !== 3) return null;
+  if (typeof module.source === "string" && !createJavaScriptLexicalIndex(module.source).isCode(module.start)) return null;
+  const [argument, exportsName, requireName] = module.params;
+  if ([argument, exportsName, requireName].some(name => !new RegExp(`^${JS_IDENT}$`, "u").test(name))) return null;
+  const pattern = new RegExp(
+    `^let (?<priority>${JS_IDENT})="priority",(?<fast>${JS_IDENT})="fast",(?<standard>${JS_IDENT})="default";` +
+    `function (?<allow>${JS_IDENT})\\((?<at>${JS_IDENT}),(?<aa>${JS_IDENT})\\)\\{if\\(null==\\k<at>\\|\\|\\k<at>===\\k<standard>\\)return!0;if\\(null==\\k<aa>\\)return!1;let (?<ak>${JS_IDENT})=(?<classify>${JS_IDENT})\\(\\k<at>\\);return"flex"===\\k<at>\\|\\|\\k<aa>\\[\\k<ak>\\?\\?"fast"\\]\\}` +
+    `function \\k<classify>\\((?<ct>${JS_IDENT}),(?<cn>${JS_IDENT})\\)\\{let (?<normalized>${JS_IDENT})=\\k<cn>\\?\\.trim\\(\\)\\.toLowerCase\\(\\);return \\k<ct>===\\k<priority>\\|\\|\\k<ct>===\\k<fast>\\|\\|"fast"===\\k<normalized>\\?"fast":"ultrafast"===\\k<ct>\\|\\|"ultrafast"===\\k<normalized>\\?"ultrafast":null\\}` +
+    `function (?<resolve>${JS_IDENT})\\((?<rm>${JS_IDENT}),(?<rt>${JS_IDENT})\\)\\{return null==\\k<rt>\\?null:\\k<rt>===\\k<fast>\\?(?<findFast>${JS_IDENT})\\(\\k<rm>\\):\\k<rm>\\?\\.serviceTiers\\?\\.find\\((?<ri>${JS_IDENT})=>\\k<ri>\\.id===\\k<rt>\\)\\?\\?null\\}` +
+    `function \\k<findFast>\\((?<fm>${JS_IDENT})\\)\\{return \\k<fm>\\?\\.serviceTiers\\?\\.find\\((?<fi>${JS_IDENT})=>"fast"===\\k<classify>\\(\\k<fi>\\.id,\\k<fi>\\.name\\)\\|\\|"priority"===\\k<fi>\\.name.trim\\(\\)\\.toLowerCase\\(\\)\\)\\?\\?null\\}` +
+    `function (?<request>${JS_IDENT})\\((?<qm>${JS_IDENT}),(?<qt>${JS_IDENT})\\)\\{return \\k<resolve>\\(\\k<qm>,\\k<qt>\\)\\?\\.id\\?\\?null\\}` +
+    `${escapeRegExp(requireName)}\\.d\\(${escapeRegExp(exportsName)},\\{\\},\\{(?<requestKey>${JS_IDENT}):\\k<request>,` +
+    `(?<effectiveKey>${JS_IDENT}):function\\((?<em>${JS_IDENT}),(?<et>${JS_IDENT}),(?<ea>${JS_IDENT})=\\{fast:!0,ultrafast:!0\\}\\)\\{let (?<selected>${JS_IDENT})=\\k<et>\\?\\?\\k<request>\\(\\k<em>,\\k<em>\\?\\.defaultServiceTier\\?\\?null\\);return \\k<selected>!==\\k<standard>&&\\k<allow>\\(\\k<selected>,\\k<ea>\\)\\?\\k<selected>:null\\},` +
+    `(?<fastKey>${JS_IDENT}):\\k<findFast>,(?<defaultKey>${JS_IDENT}):"default-service-tier",` +
+    `(?<availableKey>${JS_IDENT}):function\\((?<vm>${JS_IDENT}),(?<vt>${JS_IDENT})\\)\\{return null!=\\k<resolve>\\(\\k<vm>,\\k<vt>\\)\\},` +
+    `(?<classifyKey>${JS_IDENT}):\\k<classify>,(?<accessKey>${JS_IDENT}):function\\((?<input>${JS_IDENT})\\)\\{let (?<requirements>${JS_IDENT})=\\k<input>\\.requirements\\?\\.featureRequirements,(?<accessFast>${JS_IDENT})=\\k<requirements>\\?\\.fast_mode!==!1;return\\{fast:\\k<accessFast>,ultrafast:"supportsIndependentSpeedModes"in \\k<input>&&!0===\\k<input>\\.supportsIndependentSpeedModes\\?\\k<requirements>\\?\\.ultrafast_mode!==!1:\\k<accessFast>&&\\k<requirements>\\?\\.ultrafast_mode!==!1\\}\\},` +
+    `(?<priorityKey>${JS_IDENT}):\\k<priority>,(?<allowKey>${JS_IDENT}):\\k<allow>\\}\\);?$`, "u");
+  const match = pattern.exec(source);
+  if (!match) return null;
+  const g = match.groups;
+  if (module.params.includes(PATCH_MARKER) || [g.rm,g.rt].includes(PATCH_MARKER)) return null;
+  const roots = [g.priority, g.fast, g.standard, g.allow, g.classify, g.resolve, g.findFast, g.request];
+  const keys = Object.entries(g).filter(([name]) => name.endsWith("Key")).map(([, value]) => value);
+  if (new Set(roots).size !== roots.length || roots.some(name => module.params.includes(name)) ||
+      new Set(keys).size !== keys.length || roots.includes(PATCH_MARKER)) return null;
+  for (const [names, captured] of [
+    [[g.at,g.aa,g.ak],[g.standard,g.classify]], [[g.ct,g.cn,g.normalized],[g.priority,g.fast]],
+    [[g.rm,g.rt],[g.fast,g.findFast]], [[g.fm],[g.classify]], [[g.qm,g.qt],[g.resolve]],
+    [[g.em,g.et,g.ea,g.selected],[g.request,g.standard,g.allow]], [[g.vm,g.vt],[g.resolve]],
+    [[g.input,g.requirements,g.accessFast],[]],
+  ]) {
+    if (new Set(names).size !== names.length || names.some(name => captured.includes(name))) return null;
+  }
+  if (g.ri === g.rt || g.fi === g.classify) return null;
+  const snapshot = {...module, moduleSource: source};
+  for (const [key, expression] of [[g.requestKey,g.request], [g.fastKey,g.findFast],
+    [g.classifyKey,g.classify], [g.priorityKey,g.priority], [g.allowKey,g.allow]]) {
+    const publication = findRspackExportPublication(snapshot,key);
+    if (publication?.expression !== expression) return null;
+  }
+  return { groups:g };
+}
+
+function resolverModuleState(source, module) {
+  if (!RESOLVER_NEEDLES.every(needle => source.includes(needle))) return {kind:"missing"};
+  const native = nativeResolverOwner(source, module);
+  if (native) return {kind:"current",owner:native};
+  const state = serviceTierResolverState(source);
+  if (state.kind !== "patched") return {kind:"missing"};
+  const {model, findFast} = state.match.groups;
+  const withoutFallback = replaceOnce(source, `?${findFast}(${model})??${PATCH_MARKER}(${model}):`, `?${findFast}(${model}):`);
+  const restored = withoutFallback && replaceOnce(withoutFallback, FALLBACK_FAST_TIER_HELPER, "");
+  const owner = restored && nativeResolverOwner(restored,module);
+  if (owner && applyApiKeyServiceTierResolverPatch(restored) === source) return {kind:"patched",owner};
+  return {kind:"missing"};
+}
+
+function applyApiKeyServiceTierResolverModule(source, module) {
+  const state = resolverModuleState(source,module);
+  if (state.kind === "patched") return source;
+  if (state.kind !== "current") throw new Error("Missing, ambiguous or partial current service tier resolver factory");
+  const patched = applyApiKeyServiceTierResolverPatch(source);
+  if (resolverModuleState(patched,module).kind !== "patched") throw new Error("Service tier resolver failed canonical replay");
+  return patched;
+}
+
+function patchApiKeyServiceTierResolver(extractedDir, options = {}) {
+  const assetsDir=path.join(extractedDir,"webview","assets");
+  const copies=findUniqueRspackModuleCopies(assetsDir, {
+    description:"current API key service tier resolver factory",
+    sourceMatch:source=>RESOLVER_NEEDLES.every(needle=>source.includes(needle)),
+    matchModule:(source,module)=>resolverModuleState(source,module).kind!=="missing",
+  });
+  return patchRspackModuleCopies(assetsDir,copies,applyApiKeyServiceTierResolverModule,options);
+}
+
 // --- Speed option list for the active model ----------------------------------
 
 function fallbackOptionsPattern() {
@@ -407,13 +487,10 @@ const descriptors = [
   },
   {
     id: "api-key-service-tier-resolver",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20608,
     ciPolicy: "optional",
-    assetNeedles: RESOLVER_NEEDLES,
-    missingDescription: "current API key service tier resolver bundle",
-    skipDescription: "API key service tier resolver patch",
-    apply: applyApiKeyServiceTierResolverPatch,
+    apply: patchApiKeyServiceTierResolver,
   },
   {
     id: "api-key-service-tier-fallback",
@@ -435,6 +512,9 @@ module.exports = {
   patchApiKeyServiceTierGate,
   applyApiKeyServiceTierResolverPatch,
   applyFallbackFastTierPatch,
+  applyApiKeyServiceTierResolverModule,
+  patchApiKeyServiceTierResolver,
+  resolverModuleState,
   descriptors,
   fallbackFastTierState,
   serviceTierGateState,
