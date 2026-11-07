@@ -655,3 +655,15 @@ test("official signed webview owners patch once, idempotently, and still parse",
   assert.equal(counts["api-key-service-tier-fallback"], 1);
   assert.ok(counts["api-key-service-tier-gate"] >= 1);
 });
+
+test("model marker census recognizes only complete canonical sibling Fast factories",()=>{
+ const resolver=require("./fixtures/current-resolver.json").resolver;
+ const options=require("./fixtures/current-options.json").options;
+ const rsource=applyApiKeyServiceTierResolverModule(resolver.source,{params:resolver.params,moduleSource:resolver.source,start:0});
+ const osource=applyFallbackFastTierModule(options.moduleSource??options.source,{params:options.params,moduleSource:options.moduleSource??options.source,start:0});
+ const whole=`export const __webpack_modules__={catalogOwner(e,t,n){${currentModelFixture()}},eWgO(e,t,n){${rsource}},l2g8(e,t,n){${osource}}};`;
+ withExtractedApp({"catalog.js":whole},root=>{assert.equal(patchApiKeyModelMarker(root).changed,1);assert.equal(patchApiKeyModelMarker(root).changed,0);});
+ for(const body of [rsource.replace('name:"Fast"','name:"Faster"'),`/*${rsource}*/`,`const sample=${JSON.stringify(rsource)};`,`const arbitrary=model.${MODEL_MARKER};`]){
+  withExtractedApp({"catalog.js":modelChunk(),"reader.js":gateChunk(body,"reader")},(root,dir)=>{const before=fs.readFileSync(path.join(dir,"catalog.js"));assert.throws(()=>patchApiKeyModelMarker(root),/Orphan/);assert.deepEqual(fs.readFileSync(path.join(dir,"catalog.js")),before);});
+ }
+});

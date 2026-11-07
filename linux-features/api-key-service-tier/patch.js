@@ -245,13 +245,28 @@ function applyApiKeyModelMarkerPatch(source, context = {}) {
   return source.slice(0, module.start) + patchModelFactory(module.moduleSource, module) + source.slice(module.end);
 }
 
+// A marker declaration belongs to the catalog. The two feature-owned Fast
+// helpers also read that field; exclude their complete canonical factories,
+// never arbitrary property reads or opaque mentions.
+function catalogMarkerCensus(source) {
+  let count=modelMarkerCount(source);
+  if(count===0)return 0;
+  requireModelRegistry(source);
+  for(const module of rspackModuleFactories(source,"service-tier-marker-census.js")){
+    if(!module.moduleSource.includes(MODEL_MARKER))continue;
+    if(resolverModuleState(module.moduleSource,module).kind==="patched" ||
+        fallbackModuleState(module.moduleSource,module).kind==="patched")count-=modelMarkerCount(module.moduleSource);
+  }
+  return count;
+}
+
 function patchApiKeyModelMarker(extractedDir, _context = {}, options = {}) {
   const assetsDir = path.join(extractedDir, "webview", "assets");
-  const markerAssets = new Set();
+  const markerAssets = new Map();
   const copies = findUniqueRspackModuleCopies(assetsDir, {
     description: MODEL_DESCRIPTION,
     sourceMatch(source, name) {
-      if (source.includes(MODEL_MARKER)) markerAssets.add(name);
+      if (source.includes(MODEL_MARKER)) markerAssets.set(name,source);
       return identifiesModelOwner(source);
     },
     matchModule: (source, module) => identifiesModelOwner(source) && inspectModelCatalogOwner(module).ok,
@@ -259,10 +274,10 @@ function patchApiKeyModelMarker(extractedDir, _context = {}, options = {}) {
   for (const copy of copies) {
     requireModelRegistry(copy.source);
     inspectModelMarker(copy.moduleSource, copy);
-    if (modelMarkerCount(copy.source) !== modelMarkerCount(copy.moduleSource)) throw new Error(`Orphan ${MODEL_DESCRIPTION} marker`);
+    if (catalogMarkerCensus(copy.source) !== modelMarkerCount(copy.moduleSource)) throw new Error(`Orphan ${MODEL_DESCRIPTION} marker`);
     markerAssets.delete(copy.assetName);
   }
-  if (markerAssets.size > 0) throw new Error(`Orphan ${MODEL_DESCRIPTION} marker in ${[...markerAssets].join(", ")}`);
+  for(const [name,source] of markerAssets)if(catalogMarkerCensus(source)!==0)throw new Error(`Orphan ${MODEL_DESCRIPTION} marker in ${name}`);
   return patchRspackModuleCopies(assetsDir, copies, patchModelFactory, options);
 }
 

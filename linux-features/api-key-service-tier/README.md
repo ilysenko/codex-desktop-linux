@@ -75,7 +75,9 @@ physical copy of its module. The model marker validates the published catalog's
 auth input, loop model, normalized output, and returned catalog through the shared
 owner inspector. Only its exact output-field insertion qualifies as applied;
 marker text in comments, strings, other objects, or another auth binding refuses
-the patch. All four patches prepare every physical copy before
+the patch. The catalog marker census permits the two Fast helpers to read that
+field only when their whole resolver or options factory is exactly canonical;
+arbitrary property reads and opaque examples still refuse the catalog cohort. All four patches prepare every physical copy before
 writes. All copies must be pristine or exactly patched; a missing, ambiguous,
 drifted, orphan, or partially patched owner refuses that patch's whole cohort.
 A later write failure restores every attempted file, including a partially
