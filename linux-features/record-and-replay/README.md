@@ -180,6 +180,42 @@ removes only its newly created file after command success, helper failure,
 argument conversion failure, or partial write failure. The runtime root is
 selected from `XDG_RUNTIME_DIR`, then `TMPDIR`, then `/tmp`.
 
+## Recording HUD
+
+The main window polls the existing recording status bridge and displays an
+active recording with two explicit controls. Finish stops the active recording
+and follows the existing done-message composer flow, including its send and
+Enter fallbacks. Discard asks for confirmation before canceling the active
+recording. Controls stay locked while their deferred action runs, including
+when the document body is replaced. Conversation navigation preserves the
+global recording.
+
+The HUD descriptor runs in `extracted-app:pre-webview` at order 153. It qualifies
+the main and detached HTML module edges together, including their callable
+require and export bindings, original bootstrap registry ranges, connected host
+decoder and receiver, imported namespace registrations, and native startup
+roles. Both entries receive one canonical HUD payload. The detached runtime
+returns before registering its DOM, listeners, timers, or transcript API.
+
+Repeated application checks the complete HUD payload and both native entry
+roles. Partial, duplicate, mixed, hidden, and orphan copies are rejected.
+Feature-private authority checks cover explicit owned-global destruction and
+nested writes to native bindings while allowing local shadows and inert data.
+The shared asset transaction includes the unchanged HTML and namespace import
+preimages, and fresh inventory and dependency checks precede forward writes.
+Rollback restoration failures remain fatal. A Read Aloud runtime keeps its
+original bytes and position in either append order.
+
+Active desktop snapshots use a five-second cadence and one in-flight operation
+covering status lookup and capture. Transcript normalization and deduplication
+retain session directory, action, and text ownership. The HUD pending queue is
+capped at 60 entries, the captured-key set retains 120, and retries drop entries
+older than ten minutes or with more than 24 prior attempts.
+
+Document teardown releases the HUD's owned DOM, style, listeners, timers,
+observer, and capture API. Deferred replies and composer waits retire with that
+document. Unrelated styles, listeners, and replacement APIs keep their owners.
+
 ```bash
 node --test linux-features/record-and-replay/test.js
 ```

@@ -30,6 +30,12 @@ const {
   recordReplayRuntimeHelperSource,
 } = require("../chronicle-skysight/patch.js");
 
+const {
+  applyExtractedAppPatchDescriptors,
+  normalizePatchDescriptors,
+} = require("../../scripts/patches/engine.js");
+const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+
 const featureDir = __dirname;
 
 // Current rspack/SWC composer dictation block (double quotes, Yoda comparisons).
@@ -738,8 +744,335 @@ test("record-and-replay bridge temp trace files are private", () => {
   }
 });
 
+function hudEntryFixture(id = 348410) {
+  const detached = id === 357055;
+  const startup = detached ? 'Main(e,t,r){r.a(e,async function(done,fail){let{initializeDetachedWindow:init}=await r.e(2).then(r.bind(r,"Detached"));let result=await init();window.addEventListener("pagehide",()=>result[Symbol.dispose](),{once:true});window.close();done()})}' : 'Main(e,t,r){r.a(e,async function(done,fail){await Promise.all([r.e(2)]).then(r.bind(r,"Root"));done()})}';
+  return 'var cache={},modules={' + startup + ',Empty(){},Value(e,t){t.value=1},Gav4(e,t,r){let marker="codex-host-chunked-message-v1";r.d(t,{},{I:marker,Z:function(message){return "marker"in message&&message.marker===marker&&"transferId"in message&&"sequence"in message&&Number.isSafeInteger(message.sequence)&&"kind"in message&&"tokens"in message&&Array.isArray(message.tokens)}})},Receiver(e,t,r){var codec=r("Gav4");r.d(t,{},{read:class{receive(message){return (0,codec.Z)(message)?message:null}}})},Router(e,t,r){var codec=r("Gav4"),receiver=r("Receiver");let instance=new receiver.read;r.d(t,{},{route:function(message){return message.marker===codec.I?instance.receive(message):null}})}};function req(id){var item=cache[id];if(item)return item.exports;var item=cache[id]={exports:{}};modules[id].call(item.exports,item,item.exports,req);return item.exports}req.m=modules;var exported=req;import*as shared from"./shared.js";req.C(shared);var boot=req.O(void 0,["1"],()=>req("Main"));req.O(boot);export{exported as __webpack_require__};\n//# sourceMappingURL=' + id + '.js.map';
+}
+
+function hudAppFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-record-replay-hud-entry-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const assets = path.join(root, "webview/assets");
+  fs.mkdirSync(assets, { recursive: true });
+  fs.writeFileSync(path.join(root, "webview/index.html"), '<script type="module" src="/assets/shared.js"></script><script type="module" src="/assets/main.js"></script>');
+  fs.writeFileSync(path.join(root, "webview/detached-window.html"), '<script type="module" src="/assets/shared.js"></script><script type="module" src="/assets/detached.js"></script>');
+  fs.writeFileSync(path.join(assets, "main.js"), hudEntryFixture());
+  fs.writeFileSync(path.join(assets, "detached.js"), hudEntryFixture(357055));
+  fs.writeFileSync(path.join(assets, "shared.js"), 'export const __rspack_esm_ids=["1"];export const __webpack_modules__={Support(e,t,r){t.ready=true}};');
+  const descriptor = descriptors.find(patch => patch.id === "record-replay-hud");
+  const selected = normalizePatchDescriptors([{ ...descriptor, featureId: "record-and-replay", sourceKind: "feature" }]);
+  return { root, assets, run() {
+    const report = createPatchReport();
+    applyExtractedAppPatchDescriptors(root, selected, {}, report, "extracted-app:pre-webview");
+    return report.patches[0];
+  } };
+}
+
+function hudFixtureBytes(fixture) {
+  return Object.fromEntries(["webview/index.html", "webview/detached-window.html", "webview/assets/main.js", "webview/assets/detached.js", "webview/assets/shared.js"]
+    .map(name => [name, fs.readFileSync(path.join(fixture.root, name), "utf8")]));
+}
+
+function assertHudFixtureBytes(fixture, expected) {
+  for (const [name, text] of Object.entries(expected)) assert.equal(fs.readFileSync(path.join(fixture.root, name), "utf8"), text, name);
+}
+
+test("UP71 HUD descriptor qualifies native entry bindings and complete source", () => {
+  const descriptor = descriptors.find(patch => patch.id === "record-replay-hud");
+  assert.equal(descriptor.phase, "extracted-app:pre-webview");
+  const raw = hudEntryFixture();
+  const patched = applyRecordReplayHudPatch(raw);
+  assert.equal(applyRecordReplayHudPatch(patched), patched);
+  assert.ok(patched.startsWith(raw));
+  assert.equal(patched.split('globalThis.codexLinuxRecordReplayHudVersion=VERSION').length - 1, 1);
+  for (const variant of [
+    patched.replace('post("linux-record-replay-status"', 'post("wrong-handler"'),
+    patched + recordReplayHudRuntimeSource(),
+    raw.replace('var exported=req;', 'var exported=other;'),
+    raw.replace('req.m=modules;', 'req.m=modulesOther;'),
+    raw.replace('var exported=req;', 'var exported=req;exported=other;'),
+    raw.replace('Array.isArray(message.tokens)', 'Array.isArray(other.tokens)'),
+    raw.replace('(0,codec.Z)(message)', '(0,other.Z)(message)'),
+    raw.replace('message.marker===codec.I', 'message.marker===other.I'),
+    raw.replace('receiver=r("Receiver")', 'receiver=r("Other")'),
+    raw.replace('new receiver.read', 'new other.read'),
+    raw.replace('var boot=req.O', 'if(false)var boot=req.O'),
+  ]) {
+    const result = captureWarns(() => applyRecordReplayHudPatch(variant));
+    assert.equal(result.value, variant);
+    assert.equal(result.warnings.length, 1);
+  }
+  const markerData = raw + '\n/*codexLinuxRecordReplayHudVersion=*/';
+  assert.notEqual(applyRecordReplayHudPatch(markerData), markerData);
+  const unrelated = 'export const unrelated=1;';
+  assert.equal(captureWarns(() => applyRecordReplayHudPatch(unrelated)).value, unrelated);
+});
+
+test("UP71 HUD descriptor preserves renamed native bindings and original UTF16 ranges", t => {
+  const fixture = hudAppFixture(t), originals = new Map();
+  for (const [name, id] of [["main.js", 348410], ["detached.js", 357055]]) {
+    const source = 'var opaque="😀";\n' + hudEntryFixture(id).replace(/\breq\b/gu, "load").replace(/\bmodules\b/gu, "registry").replace(/\bexported\b/gu, "publicLoad").replace(/Gav4/gu, "RenamedCodec");
+    originals.set(name, source);
+    fs.writeFileSync(path.join(fixture.assets, name), source);
+  }
+  assert.equal(fixture.run().status, "applied");
+  assert.equal(fixture.run().status, "already-applied");
+  for (const [name, source] of originals) assert.ok(fs.readFileSync(path.join(fixture.assets, name), "utf8").startsWith(source));
+});
+
+function assertHudAuthorityRefusal(t, mutate, label) {
+  const source = mutate(hudEntryFixture()), result = captureWarns(() => applyRecordReplayHudPatch(source));
+  assert.equal(result.value, source, label);
+  assert.equal(result.warnings.length, 1, label);
+  const fixture = hudAppFixture(t);
+  for (const [name, id] of [["main.js", 348410], ["detached.js", 357055]]) fs.writeFileSync(path.join(fixture.assets, name), mutate(hudEntryFixture(id)));
+  const bytes = hudFixtureBytes(fixture), oldWrite = fs.writeFileSync;
+  let writes = 0;
+  fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+  try {
+    const report = fixture.run();
+    assert.equal(report.status, "skipped-optional", label);
+    assert.match(report.reason, /Incomplete, duplicate or misplaced|Native runtime binding/u, label);
+  } finally { fs.writeFileSync = oldWrite; }
+  assert.equal(writes, 0, label);
+  assertHudFixtureBytes(fixture, bytes);
+}
+
+test("UP71 HUD descriptor rejects drift in every complete HUD payload contract", t => {
+  for (const [from, to] of [
+    ['post("linux-record-replay-status"', 'post("wrong-status"'],
+    ['post("linux-record-replay-stop-active"', 'post("wrong-stop"'],
+    ['post("linux-record-replay-cancel-active"', 'post("wrong-cancel"'],
+    ['post("linux-record-replay-speech-context"', 'post("wrong-speech"'],
+    ['post("linux-record-replay-desktop-snapshot"', 'post("wrong-snapshot"'],
+    ['hostId:"local"', 'hostId:"remote"'],
+    ['method:"POST"', 'method:"GET"'],
+    ['window.addEventListener("message",onMessage)', 'window.addEventListener("other",onMessage)'],
+    ['timer=setInterval(tick,1000)', 'timer=setInterval(tick,100)'],
+    ['codexLinuxRecordReplayCaptureTranscript=captureTranscript', 'codexLinuxRecordReplayCaptureTranscript=other'],
+    ['if(/^\\/detached-window', 'if(/^\\/wrong-window'],
+  ]) assertHudAuthorityRefusal(t, raw => applyRecordReplayHudPatch(raw).replace(from, to), from);
+});
+
+test("UP71 authority V3 covers the complete assignment and update operator table", t => {
+  const assignments = ["=", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "^=", "|=", "&&=", "||=", "??="];
+  const expressions = assignments.map(operator => target => target + operator + "1");
+  expressions.push(target => "++" + target, target => "--" + target, target => target + "++", target => target + "--");
+  for (const expression of expressions) {
+    const nativeTail = 'function rebind(){' + expression("exported") + ';}rebind();';
+    assertHudAuthorityRefusal(t, raw => raw.replace('var exported=req;', 'var exported=req;' + nativeTail), nativeTail);
+    for (const target of ['globalThis.codexLinuxRecordReplayCaptureTranscript', 'globalThis["codexLinuxRecordReplayCaptureTranscript"]']) {
+      const tail = expression(target) + ";";
+      assertHudAuthorityRefusal(t, raw => applyRecordReplayHudPatch(raw) + "\n" + tail, tail);
+    }
+    const fixture = hudAppFixture(t), shadow = 'function shadow(exported){' + expression("exported") + ';}';
+    for (const name of ["main.js", "detached.js"]) fs.appendFileSync(path.join(fixture.assets, name), "\n" + shadow);
+    assert.equal(fixture.run().status, "applied", shadow);
+    assert.equal(fixture.run().status, "already-applied", shadow);
+  }
+});
+
+test("UP71 authority V3 covers optional static owned deletes and grouped Unicode targets", t => {
+  for (const tail of [
+    'delete globalThis?.codexLinuxRecordReplayCaptureTranscript;',
+    'delete window?.codexLinuxRecordReplayCaptureTranscript;',
+    'delete self?.codexLinuxRecordReplayCaptureTranscript;',
+    'delete globalThis?.["codexLinuxRecordReplayCaptureTranscript"];',
+    "delete window?.['codexLinuxRecordReplayCaptureTranscript'];",
+    'delete self?.[`codexLinuxRecordReplayCaptureTranscript`];',
+    'delete (globalThis?.codexLinuxRecordReplayCaptureTranscript);',
+    'delete ((globalThis))?.codexLinuxRecordReplayCaptureTranscript;',
+    'delete ((globalThis))?.["codexLinuxRecordReplayCaptureTranscript"];',
+    'delete globalThis?.\\u0063odexLinuxRecordReplayCaptureTranscript;',
+    'delete globalThis?.["\\u0063odexLinuxRecordReplayCaptureTranscript"];',
+    'delete globalThis?.["\\x63odexLinuxRecordReplayCaptureTranscript"];',
+  ]) assertHudAuthorityRefusal(t, raw => applyRecordReplayHudPatch(raw) + "\n" + tail, tail);
+});
+
+test("UP71 authority V3 preserves destructuring and iteration target write boundaries", t => {
+  for (const expression of [
+    '({exported}=other)',
+    '({value:exported}=other)',
+    '[exported]=other',
+    '[exported=other]=values',
+    'for(exported of values){}',
+    'for(exported in values){}',
+    '(exported)++',
+    '++(exported)',
+    '\\u0065xported<<=1',
+  ]) {
+    const tail = 'function rebind(){' + expression + ';}rebind();';
+    assertHudAuthorityRefusal(t, raw => raw.replace('var exported=req;', 'var exported=req;' + tail), tail);
+  }
+  for (const tail of [
+    '({value:globalThis.codexLinuxRecordReplayCaptureTranscript}=other);',
+    '[globalThis.codexLinuxRecordReplayCaptureTranscript]=other;',
+    '[globalThis["codexLinuxRecordReplayCaptureTranscript"],other]=values;',
+    'for([globalThis.codexLinuxRecordReplayCaptureTranscript] of values){}',
+  ]) assertHudAuthorityRefusal(t, raw => applyRecordReplayHudPatch(raw) + "\n" + tail, tail);
+});
+
+test("UP71 authority permits local binding shadows and inert or foreign owned-name data", () => {
+  for (const tail of [
+    'function shadow(exported){exported=other;}',
+    'function shadow({value:exported}){exported<<=1;}',
+    'const shadow=({value:exported})=>exported>>=1;',
+    'function shadow(){try{}catch({message:exported}){exported>>>=1;}}',
+    'const values=[globalThis.codexLinuxRecordReplayCaptureTranscript];',
+    'const values={value:globalThis.codexLinuxRecordReplayCaptureTranscript};',
+    'let local;({[globalThis.codexLinuxRecordReplayCaptureTranscript]:local}=other);',
+    'let local;[local=globalThis.codexLinuxRecordReplayCaptureTranscript]=other;',
+    'let local;[local=(globalThis.codexLinuxRecordReplayCaptureTranscript)]=other;',
+    'let local;[local=(globalThis["codexLinuxRecordReplayCaptureTranscript"])]=other;',
+    'function shadow(){let {value:exported}=other;exported<<=1;}',
+    'function shadow(){let [exported]=other;exported>>>=1;}',
+    'const read=()=>exported<<1;',
+    'globalThis.codexLinuxRecordReplayCaptureTranscript===undefined;',
+    'globalThis.codexLinuxRecordReplayCaptureTranscript<=1;',
+    'globalThis.otherFeature<<=1;',
+    '/*delete globalThis?.codexLinuxRecordReplayCaptureTranscript; exported<<=1;*/',
+    'const inert="delete globalThis?.codexLinuxRecordReplayCaptureTranscript; exported<<=1;";',
+    'function shadow(){let exported;exported=other;}',
+    'function shadow(){var exported;{exported=other;}}',
+    'function shadow(){if(true){let exported;exported=other;}}',
+    'function shadow(){try{}catch(exported){exported=other;}}',
+    'function shadow(){for(let exported of other){exported=null;}}',
+    'function shadow(){for(let exported=0;exported<2;exported++){exported=1;}}',
+    'const shadow=(exported)=>exported=other;',
+    'const shadow=(exported=null)=>exported=other;',
+    'const shadow=exported=>()=>exported=other;',
+    'const shadow=function exported(){exported=other;};',
+    'function shadow(req,modules){req=other;modules={};}',
+    'class Shadow{static{var exported;exported=null;}}',
+    '/*delete globalThis.codexLinuxRecordReplayCaptureTranscript;*/',
+    'const text="delete globalThis.codexLinuxRecordReplayCaptureTranscript;";',
+    'globalThis.otherFeature=null;',
+    'const inertDOM={id:"codex-linux-record-replay-hud"};',
+    'const inertDOMText="node.id=codex-linux-record-replay-hud";',
+    'Object.defineProperty(globalThis,"otherFeature",{value:null});',
+  ]) {
+    const source = hudEntryFixture() + "\n" + tail;
+    const result = captureWarns(() => applyRecordReplayHudPatch(source));
+    assert.notEqual(result.value, source, tail);
+    assert.equal(result.warnings.length, 0, tail);
+    assert.equal(applyRecordReplayHudPatch(result.value), result.value, tail);
+  }
+});
+
+test("UP71 HUD descriptor commits the coherent two-entry cohort and validates warm dependencies", t => {
+  const fixture = hudAppFixture(t), before = hudFixtureBytes(fixture);
+  assert.equal(fixture.run().status, "applied");
+  assert.equal(fixture.run().status, "already-applied");
+  for (const name of ["main.js", "detached.js"]) {
+    const text = fs.readFileSync(path.join(fixture.assets, name), "utf8");
+    assert.equal(text.split('globalThis.codexLinuxRecordReplayHudVersion=VERSION').length - 1, 1);
+  }
+  assert.equal(fs.readFileSync(path.join(fixture.assets, "shared.js"), "utf8"), before['webview/assets/shared.js']);
+  const otherRuntime = '\n;(()=>{globalThis.otherFeature=true})();';
+  for (const name of ["main.js", "detached.js"]) fs.appendFileSync(path.join(fixture.assets, name), otherRuntime);
+  assert.equal(fixture.run().status, "already-applied");
+  for (const name of ["main.js", "detached.js"]) assert.ok(fs.readFileSync(path.join(fixture.assets, name), "utf8").endsWith(otherRuntime));
+});
+
+test("UP71 HUD descriptor refuses mixed partial orphan and bad native dependency cohorts before writes", t => {
+  for (const kind of ["mixed", "wrong-handler", "orphan", "hidden-peer", "hidden-single", "hidden-template", "hidden-unicode", "hidden-hex", "missing-import", "wrong-startup", "html-role", "html-swapped", "duplicate-html"]) {
+    const fixture = hudAppFixture(t);
+    if (["mixed", "wrong-handler"].includes(kind)) {
+      fs.writeFileSync(path.join(fixture.assets, "main.js"), applyRecordReplayHudPatch(hudEntryFixture()));
+      if (kind === "wrong-handler") fs.writeFileSync(path.join(fixture.assets, "main.js"), fs.readFileSync(path.join(fixture.assets, "main.js"), "utf8").replace('post("linux-record-replay-status"', 'post("wrong-handler"'));
+    } else if (kind === "orphan") fs.writeFileSync(path.join(fixture.assets, "extra.js"), recordReplayHudRuntimeSource());
+    else if (kind.startsWith("hidden-")) {
+      const peers = {
+        "hidden-peer": 'globalThis["codexLinuxRecordReplayHudVersion"]="v6";',
+        "hidden-single": "globalThis['codexLinuxRecordReplayCaptureTranscript']=()=>{};",
+        "hidden-template": 'globalThis[`codexLinuxRecordReplayCaptureTranscript`]=()=>{};',
+        "hidden-unicode": 'globalThis.\\u0063odexLinuxRecordReplayCaptureTranscript=()=>{};',
+        "hidden-hex": "globalThis['\\x63odexLinuxRecordReplayCaptureTranscript']=()=>{};",
+      };
+      fs.writeFileSync(path.join(fixture.assets, "extra.js"), peers[kind]);
+    }
+    else if (kind === "missing-import") fs.writeFileSync(path.join(fixture.assets, "main.js"), hudEntryFixture().replace('req.C(shared);', 'other.C(shared);'));
+    else if (kind === "wrong-startup") fs.writeFileSync(path.join(fixture.assets, "main.js"), hudEntryFixture().replace('()=>req("Main")', '()=>req("Other")'));
+    else if (kind === "html-swapped") {
+      fs.writeFileSync(path.join(fixture.root, "webview/index.html"), '<script type="module" src="/assets/shared.js"></script><script type="module" src="/assets/detached.js"></script>');
+      fs.writeFileSync(path.join(fixture.root, "webview/detached-window.html"), '<script type="module" src="/assets/shared.js"></script><script type="module" src="/assets/main.js"></script>');
+    }
+    else if (kind === "html-role") fs.writeFileSync(path.join(fixture.root, "webview/detached-window.html"), '<script type="module" src="/assets/main.js"></script>');
+    else fs.writeFileSync(path.join(fixture.root, "webview/index.html"), '<script type="module" src="/assets/main.js" src="/assets/detached.js"></script>');
+    const bytes = hudFixtureBytes(fixture), oldWrite = fs.writeFileSync;
+    let writes = 0;
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(writes, 0, kind);
+    assertHudFixtureBytes(fixture, bytes);
+  }
+});
+
+test("UP71 HUD descriptor rolls back partial writes and protects changed read dependencies", t => {
+  for (const kind of ["partial", "dependency-race", "html-race", "inventory-race"]) {
+    const fixture = hudAppFixture(t), before = hudFixtureBytes(fixture), oldWrite = fs.writeFileSync;
+    let written = false;
+    fs.writeFileSync = (file, bytes, ...options) => {
+      if (String(file).endsWith('/main.js') && !written) {
+        written = true;
+        if (kind === "partial") { oldWrite(file, "partial"); throw Error("inert partial write"); }
+        if (kind === "html-race") oldWrite(path.join(fixture.root, "webview/index.html"), before["webview/index.html"] + "<!-- concurrent -->");
+        else if (kind === "dependency-race") oldWrite(path.join(fixture.assets, "shared.js"), before['webview/assets/shared.js'] + "\n// concurrent");
+        else oldWrite(path.join(fixture.assets, "extra.js"), 'globalThis.codexLinuxRecordReplayHudVersion="unexpected";');
+      }
+      return oldWrite(file, bytes, ...options);
+    };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(written, true);
+    assert.equal(fs.readFileSync(path.join(fixture.assets, "main.js"), "utf8"), before['webview/assets/main.js']);
+    assert.equal(fs.readFileSync(path.join(fixture.assets, "detached.js"), "utf8"), before['webview/assets/detached.js']);
+  }
+});
+
+test("UP71 HUD descriptor detects warm inventory entry HTML and dependency races without own writes", t => {
+  for (const kind of ["inventory", "entry", "html", "dependency"]) {
+    const fixture = hudAppFixture(t);
+    assert.equal(fixture.run().status, "applied");
+    const oldReadDirectory = fs.readdirSync, oldWrite = fs.writeFileSync;
+    let scans = 0, writes = 0;
+    fs.readdirSync = (directory, ...options) => {
+      if (String(directory) === fixture.assets && ++scans === 2) {
+        const file = kind === "inventory" ? path.join(fixture.assets, "extra.js")
+          : kind === "entry" ? path.join(fixture.assets, "main.js")
+          : kind === "html" ? path.join(fixture.root, "webview/index.html")
+          : path.join(fixture.assets, "shared.js");
+        oldWrite(file, kind === "inventory" ? "const peer=true;" : fs.readFileSync(file, "utf8") + "\n/* concurrent */");
+      }
+      return oldReadDirectory(directory, ...options);
+    };
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.readdirSync = oldReadDirectory; fs.writeFileSync = oldWrite; }
+    assert.equal(scans, 2, kind);
+    assert.equal(writes, 0, kind);
+  }
+});
+
+test("UP71 HUD descriptor propagates fatal failure when rollback cannot restore an entry", t => {
+  const fixture = hudAppFixture(t), oldWrite = fs.writeFileSync;
+  let attempts = 0;
+  fs.writeFileSync = (file, bytes, ...options) => {
+    if (String(file).endsWith("/main.js")) {
+      if (++attempts === 1) oldWrite(file, "partial");
+      throw Error("inert write and restoration failure");
+    }
+    return oldWrite(file, bytes, ...options);
+  };
+  try { assert.throws(() => fixture.run(), /rollback could not restore original bytes/u); }
+  finally { fs.writeFileSync = oldWrite; }
+  assert.equal(attempts, 2);
+});
+
 test("record-and-replay HUD patch is idempotent and appends runtime UI", () => {
-  const source = "var e,u={Gav4(e,a,c){let f=\"codex-host-chunked-message-v1\"}};export{p as __webpack_require__};\n//# sourceMappingURL=348410.js.map";
+  const source = hudEntryFixture();
   const patched = applyRecordReplayHudPatch(source);
   assert.notEqual(patched, source);
   assert.equal(applyRecordReplayHudPatch(patched), patched);
@@ -1377,5 +1710,388 @@ test("record-and-replay stage hook borrows upstream webview icon when present", 
     assert.equal(stagedPlugin.interface.composerIcon, "./assets/record-and-replay-plugin-icon.png");
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+async function settleHudPromises(turns = 40) {
+  for (let turn = 0; turn < turns; turn++) await Promise.resolve();
+}
+
+function inertHudRuntime({ detached = false, bridge = true, autoReply = true, loading = false, bootstrap = [], preexistingStyle = false } = {}) {
+  const requests = [], events = [], observers = [], timers = new Map(), intervals = new Map();
+  let now = 1_000_000, sequence = 0, status = { state: "idle" }, confirmation = true, confirmations = 0, sent = 0;
+  class Element {
+    constructor(tag = "div") { this.tagName = tag; this.children = []; this.dataset = {}; this.style = {}; this.attributes = {}; this.listeners = new Map(); this.disabled = false; this.value = ""; this.dispatched = []; }
+    appendChild(child) { child.remove(); child.parentElement = this; this.children.push(child); return child; }
+    remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this); this.parentElement = null; }
+    contains(child) { return child === this || this.children.some(node => node.contains(child)); }
+    setAttribute(name, value) { this.attributes[name] = String(value); }
+    getAttribute(name) { return this.attributes[name] ?? null; }
+    addEventListener(type, callback) { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type).add(callback); }
+    removeEventListener(type, callback) { this.listeners.get(type)?.delete(callback); }
+    dispatchEvent(event) { this.dispatched.push(event); event.currentTarget = this; for (const callback of this.listeners.get(event.type) ?? []) callback(event); return true; }
+    click() { if (this.disabled) return; return [...this.listeners.get("click") ?? []].map(callback => callback({ currentTarget: this })); }
+    focus() {}
+    closest(selector) { return this.composer ? composer : this.parentElement?.closest(selector) ?? null; }
+    getBoundingClientRect() { return { left: 100, top: 600, width: 600, height: 100 }; }
+    querySelectorAll(selector) {
+      const all = this.children.flatMap(child => [child, ...child.querySelectorAll("*")]);
+      if (selector === "*") return all;
+      if (selector.startsWith(".")) return all.filter(node => node.className?.split(" ").includes(selector.slice(1)));
+      if (selector === "button") return all.filter(node => node.tagName === "button");
+      if (selector.includes("textarea") || selector.includes("textbox")) return all.filter(node => node === editor);
+      if (selector.includes("button")) return all.filter(node => node === sendButton);
+      return [];
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    set innerHTML(value) {
+      this.html = value;
+      this.children = [];
+      for (const [tag, name] of [["span", "time"], ["button", "finish"], ["button", "discard"]]) {
+        const child = new Element(tag); child.className = "codex-linux-record-replay-" + name; this.appendChild(child);
+      }
+    }
+    get innerHTML() { return this.html ?? ""; }
+  }
+  class TextArea extends Element { constructor() { super("textarea"); } }
+  class Input extends Element {}
+  class Event { constructor(type, options = {}) { this.type = type; Object.assign(this, options); } }
+  class CustomEvent extends Event { constructor(type, options) { super(type, options); } }
+  const documentElement = new Element("html"), head = documentElement.appendChild(new Element("head"));
+  const composer = new Element("form"), editor = new TextArea(), sendButton = new Element("button");
+  editor.composer = true; sendButton.setAttribute("aria-label", "Send"); sendButton.addEventListener("click", () => sent++);
+  composer.appendChild(editor); composer.appendChild(sendButton);
+  const documentEvents = new Element("document"), windowEvents = new Element("window");
+  const document = {
+    documentElement, head, body: documentElement.appendChild(new Element("body")), readyState: loading ? "loading" : "complete",
+    createElement: tag => new Element(tag),
+    contains: node => documentElement.contains(node),
+    getElementById: id => documentElement.querySelectorAll("*").find(node => node.id === id) ?? null,
+    querySelectorAll: selector => document.body.querySelectorAll(selector),
+    addEventListener: documentEvents.addEventListener.bind(documentEvents),
+    removeEventListener: documentEvents.removeEventListener.bind(documentEvents),
+  };
+  document.body.appendChild(composer);
+  const reply = (request, body = {}, extra = {}) => windowEvents.dispatchEvent({ type: "message", data: { type: "fetch-response", responseType: "success", requestId: request.requestId, status: 200, bodyJsonString: JSON.stringify(body), ...extra } });
+  const record = payload => {
+    if (payload.type !== "fetch") return;
+    requests.push(payload);
+    if (autoReply) queueMicrotask(() => reply(payload, payload.url.endsWith("linux-record-replay-status") ? { json: status } : { ok: true, json: { ok: true } }));
+  };
+  const window = {
+    innerWidth: 1200, innerHeight: 800,
+    addEventListener: windowEvents.addEventListener.bind(windowEvents),
+    removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
+    dispatchEvent(event) { events.push(event); if (!event.__codexForwardedViaBridge) record(event.detail); },
+  };
+  if (bridge) window.electronBridge = { sendMessageFromView(payload) { record(payload); return Promise.resolve(); } };
+  if (preexistingStyle) { const style = new Element("style"); style.id = "codex-linux-record-replay-hud-style"; head.appendChild(style); }
+  const context = {
+    codexLinuxRecordReplayPendingTranscripts: bootstrap,
+    window, document, location: { pathname: detached ? "/detached-window.html" : "/" },
+    CustomEvent, Event, InputEvent: Event, KeyboardEvent: Event, HTMLTextAreaElement: TextArea, HTMLInputElement: Input,
+    confirm() { confirmations++; return confirmation; },
+    Date: class extends Date { constructor(...args) { super(...args.length ? args : [now]); } static now() { return now; } },
+    MutationObserver: class { constructor(callback) { this.callback = callback; this.connected = false; observers.push(this); } observe(target) { this.connected = true; this.target = target; } disconnect() { this.connected = false; } },
+    setTimeout(callback, delay = 0) { const id = ++sequence; timers.set(id, { at: now + delay, callback }); return id; },
+    clearTimeout: id => timers.delete(id),
+    setInterval(callback, delay) { const id = ++sequence; intervals.set(id, { at: now + delay, callback, delay }); return id; },
+    clearInterval: id => intervals.delete(id),
+  };
+  vm.createContext(context);
+  const install = () => vm.runInContext(recordReplayHudRuntimeSource(), context);
+  install();
+  return {
+    context, document, requests, events, timers, intervals, observers, install, reply, editor, sendButton,
+    windowListeners: windowEvents.listeners, documentListeners: documentEvents.listeners,
+    setStatus(value) { status = value; }, setConfirmation(value) { confirmation = value; },
+    get confirmations() { return confirmations; }, get sent() { return sent; }, get now() { return now; },
+    hud: () => document.getElementById("codex-linux-record-replay-hud"),
+    fire(type, extra = {}) { windowEvents.dispatchEvent({ type, ...extra }); },
+    ready() { document.readyState = "complete"; documentEvents.dispatchEvent({ type: "DOMContentLoaded" }); },
+    replaceBody() { document.body.remove(); document.body = documentElement.appendChild(new Element("body")); document.body.appendChild(composer); },
+    async advance(milliseconds) {
+      const until = now + milliseconds;
+      for (;;) {
+        const due = [...timers].map(([id, timer]) => ({ id, timer, interval: false })).concat([...intervals].map(([id, timer]) => ({ id, timer, interval: true })))
+          .filter(row => row.timer.at <= until).sort((a, b) => a.timer.at - b.timer.at)[0];
+        if (!due) break;
+        now = due.timer.at;
+        if (due.interval) due.timer.at += due.timer.delay; else timers.delete(due.id);
+        due.timer.callback(); await settleHudPromises();
+      }
+      now = until; await settleHudPromises();
+    },
+  };
+}
+
+test("UP71 inert detached is silent and main bootstrap polls without recording start", async () => {
+  const detached = inertHudRuntime({ detached: true });
+  assert.equal(detached.requests.length, 0); assert.equal(detached.intervals.size, 0); assert.equal(detached.timers.size, 0);
+  assert.equal(detached.windowListeners.size, 0); assert.equal(detached.observers.length, 0); assert.equal(detached.hud(), null);
+  assert.equal(detached.context.codexLinuxRecordReplayCaptureTranscript, undefined);
+  const r = inertHudRuntime(); await settleHudPromises(); r.install();
+  assert.equal(r.intervals.size, 1); assert.equal(r.windowListeners.get("message").size, 1);
+  assert.deepEqual(r.requests.map(request => request.url.split("/").pop()), ["linux-record-replay-status", "linux-record-replay-status"]);
+  assert.equal(r.hud().dataset.active, "false"); assert.equal(r.sent, 0);
+});
+
+test("UP71 inert recording status survives routes and rebuilds one HUD for replaced body", async () => {
+  const r = inertHudRuntime(); await settleHudPromises();
+  r.setStatus({ state: "active", session_dir: "/recording", started_at: new Date(r.now - 61000).toISOString() });
+  await r.advance(1000);
+  assert.equal(r.hud().dataset.active, "true");
+  assert.equal(r.hud().querySelector(".codex-linux-record-replay-time").textContent, "1:02");
+  const old = r.hud(); r.context.location.pathname = "/conversation/other"; r.replaceBody(); await r.advance(1000);
+  assert.notEqual(r.hud(), old); assert.equal(r.hud().dataset.active, "true");
+  assert.equal(r.document.documentElement.querySelectorAll(".codex-linux-record-replay-hud").length, 1);
+  assert.equal(r.requests.some(request => /stop|cancel|start/.test(request.url)), false);
+  for (const state of ["stopped", "canceled", "expired", "idle"]) { r.setStatus({ state }); await r.advance(1000); assert.equal(r.hud().dataset.active, "false", state); }
+});
+
+test("UP71 inert pagehide retires owned DOM listeners timers observer and capture API", async () => {
+  const r = inertHudRuntime({ autoReply: false });
+  r.fire("pagehide");
+  assert.equal(r.intervals.size, 0);
+  assert.equal(r.timers.size, 0);
+  assert.equal([...r.windowListeners.values()].reduce((count, callbacks) => count + callbacks.size, 0), 0);
+  assert.equal(r.observers.filter(observer => observer.connected).length, 0);
+  assert.equal(r.hud(), null);
+  assert.equal(r.context.codexLinuxRecordReplayCaptureTranscript, undefined);
+  r.reply(r.requests[0], { json: { state: "active", session_dir: "/recording" } }); await settleHudPromises();
+  assert.equal(r.hud(), null);
+  assert.equal(r.requests.some(request => /stop|cancel/.test(request.url)), false);
+});
+
+async function activeInertHud(options = {}) {
+  const runtime = inertHudRuntime(options);
+  const active = { state: "active", session_dir: "/recording", started_at: new Date(runtime.now - 60000).toISOString() };
+  runtime.setStatus(active);
+  if (options.autoReply === false) runtime.reply(runtime.requests[0], { json: active });
+  await settleHudPromises();
+  if (options.autoReply === false) {
+    const snapshot = runtime.requests.find(request => request.url.endsWith("linux-record-replay-desktop-snapshot"));
+    if (snapshot) runtime.reply(snapshot, { ok: true, json: { ok: true } });
+    await settleHudPromises();
+  }
+  return runtime;
+}
+
+function hudRequests(runtime, method) {
+  return runtime.requests.filter(request => request.url.endsWith("/" + method));
+}
+
+test("UP71 inert rebuilt HUD keeps deferred Finish controls locked and retires old listeners", async () => {
+  const r = await activeInertHud({ autoReply: false });
+  const old = r.hud(), oldFinish = old.querySelector(".codex-linux-record-replay-finish");
+  const [pending] = oldFinish.click();
+  const stop = hudRequests(r, "linux-record-replay-stop-active")[0];
+  assert.ok(stop); assert.equal(oldFinish.disabled, true);
+  r.replaceBody(); await r.advance(1000);
+  const current = r.hud();
+  assert.notEqual(current, old);
+  assert.equal(oldFinish.listeners.get("click").size, 0);
+  assert.equal(current.querySelector(".codex-linux-record-replay-finish").disabled, true);
+  assert.equal(r.observers.find(observer => observer.connected).target, r.document.body);
+  r.reply(stop, { ok: true, json: { ok: true } }); await settleHudPromises();
+  await r.advance(120); await pending;
+  assert.equal(current.querySelector(".codex-linux-record-replay-finish").disabled, false);
+  assert.equal(r.sent, 1);
+  r.fire("pagehide");
+});
+
+test("UP71 inert desktop snapshot owns the entire deferred status lookup flight", async () => {
+  const r = inertHudRuntime({ autoReply: false });
+  r.reply(r.requests[0], { json: { state: "idle" } }); await settleHudPromises();
+  const firstLookup = r.requests[1];
+  assert.ok(firstLookup.url.endsWith("linux-record-replay-status"));
+  await r.advance(1000);
+  const poll = r.requests[2];
+  r.reply(poll, { json: { state: "idle" } }); await settleHudPromises();
+  const active = { state: "active", session_dir: "/recording" };
+  r.reply(firstLookup, { json: active }); await settleHudPromises();
+  for (const request of r.requests.slice(3).filter(request => request.url.endsWith("linux-record-replay-status"))) r.reply(request, { json: active });
+  await settleHudPromises();
+  assert.equal(hudRequests(r, "linux-record-replay-desktop-snapshot").length, 1);
+  r.fire("pagehide");
+});
+
+test("UP71 inert observer follows its replacement body", async () => {
+  const r = await activeInertHud();
+  r.replaceBody(); await r.advance(1000);
+  assert.equal(r.observers.find(observer => observer.connected).target, r.document.body);
+  r.fire("pagehide");
+});
+
+for (const bridge of [true, false]) {
+  test(`UP71 inert Finish is explicit and preserves done-message send flow with bridge=${bridge}`, async () => {
+    const r = await activeInertHud({ bridge });
+    assert.equal(r.sent, 0);
+    assert.equal(r.requests.some(request => /stop-active|cancel-active|record-replay-start/.test(request.url)), false);
+    const finish = r.hud().querySelector(".codex-linux-record-replay-finish");
+    const [pending] = finish.click();
+    assert.equal(finish.disabled, true);
+    await settleHudPromises();
+    assert.equal(hudRequests(r, "linux-record-replay-stop-active").length, 1);
+    assert.equal(r.editor.value, "I'm done recording.");
+    await r.advance(120); await pending;
+    assert.equal(finish.disabled, false); assert.equal(r.sent, 1);
+    assert.equal(hudRequests(r, "linux-record-replay-cancel-active").length, 0);
+    assert.equal(r.events.find(event => event.detail?.type === "fetch").__codexForwardedViaBridge === true, bridge);
+    for (const request of r.requests) { assert.equal(request.hostId, "local"); assert.equal(request.method, "POST"); assert.match(request.requestId, /^codex-linux-record-replay-/u); }
+    r.fire("pagehide");
+  });
+}
+
+test("UP71 inert Finish keeps Enter fallback and retries stop when neither stop nor submission succeeds", async () => {
+  const fallback = await activeInertHud();
+  fallback.sendButton.remove();
+  const [pending] = fallback.hud().querySelector(".codex-linux-record-replay-finish").click();
+  await settleHudPromises(); await fallback.advance(120); await pending;
+  assert.deepEqual(fallback.editor.dispatched.filter(event => /key/.test(event.type)).map(event => [event.type, event.key]), [["keydown", "Enter"], ["keyup", "Enter"]]);
+  assert.equal(fallback.sent, 0); fallback.fire("pagehide");
+  const retry = await activeInertHud({ autoReply: false });
+  retry.editor.remove(); retry.sendButton.remove();
+  const [failed] = retry.hud().querySelector(".codex-linux-record-replay-finish").click();
+  retry.reply(hudRequests(retry, "linux-record-replay-stop-active")[0], { ok: false }); await settleHudPromises();
+  assert.equal(hudRequests(retry, "linux-record-replay-stop-active").length, 2);
+  retry.reply(hudRequests(retry, "linux-record-replay-stop-active")[1], { ok: true }); await failed;
+  assert.equal(retry.sent, 0); assert.equal(retry.hud().querySelector(".codex-linux-record-replay-finish").disabled, false);
+  retry.fire("pagehide");
+});
+
+test("UP71 inert Discard confirms explicit cancellation and restores controls after an error", async () => {
+  const r = await activeInertHud({ autoReply: false });
+  const discard = r.hud().querySelector(".codex-linux-record-replay-discard");
+  r.setConfirmation(false); await Promise.all(discard.click());
+  assert.equal(r.confirmations, 1); assert.equal(hudRequests(r, "linux-record-replay-cancel-active").length, 0);
+  r.setConfirmation(true); const [pending] = discard.click();
+  assert.equal(discard.disabled, true); assert.equal(r.confirmations, 2);
+  const cancel = hudRequests(r, "linux-record-replay-cancel-active")[0];
+  assert.deepEqual(JSON.parse(cancel.body), { discarded: true });
+  r.reply(cancel, null, { responseType: "error", error: "inert cancellation failure" }); await pending;
+  assert.equal(discard.disabled, false); assert.equal(r.sent, 0);
+  assert.equal(hudRequests(r, "linux-record-replay-stop-active").length, 0);
+  r.fire("pagehide");
+});
+
+test("UP71 inert status error hides HUD and reconnect restores the global active recording", async () => {
+  const r = await activeInertHud({ autoReply: false });
+  await r.advance(1000);
+  r.reply(hudRequests(r, "linux-record-replay-status").at(-1), null, { responseType: "error", error: "inert disconnected bridge" }); await settleHudPromises();
+  assert.equal(r.hud().dataset.active, "false");
+  await r.advance(1000);
+  r.reply(hudRequests(r, "linux-record-replay-status").at(-1), { json: { state: "active", session_dir: "/recording" } }); await settleHudPromises();
+  assert.equal(r.hud().dataset.active, "true");
+  assert.equal(r.requests.some(request => /stop-active|cancel-active|record-replay-start/.test(request.url)), false);
+  assert.equal(r.sent, 0); r.fire("pagehide");
+});
+
+test("UP71 inert snapshot cadence remains five seconds and pending snapshots remain single-flight", async () => {
+  const r = await activeInertHud();
+  assert.equal(hudRequests(r, "linux-record-replay-desktop-snapshot").length, 1);
+  await r.advance(4999); assert.equal(hudRequests(r, "linux-record-replay-desktop-snapshot").length, 1);
+  await r.advance(1); assert.equal(hudRequests(r, "linux-record-replay-desktop-snapshot").length, 2);
+  assert.deepEqual(JSON.parse(hudRequests(r, "linux-record-replay-desktop-snapshot")[0].body), { sessionDir: "/recording", source: "record-replay-hud" });
+  r.fire("pagehide");
+  const held = inertHudRuntime({ autoReply: false });
+  const active = { state: "active", session_dir: "/recording" };
+  held.reply(held.requests[0], { json: active }); await settleHudPromises();
+  const first = hudRequests(held, "linux-record-replay-desktop-snapshot")[0];
+  for (let second = 0; second < 6; second++) { await held.advance(1000); held.reply(hudRequests(held, "linux-record-replay-status").at(-1), { json: active }); await settleHudPromises(); }
+  assert.equal(hudRequests(held, "linux-record-replay-desktop-snapshot").length, 1);
+  held.reply(first, { ok: true }); await settleHudPromises();
+  await held.advance(1000); held.reply(hudRequests(held, "linux-record-replay-status").at(-1), { json: active }); await settleHudPromises();
+  assert.equal(hudRequests(held, "linux-record-replay-desktop-snapshot").length, 2);
+  held.fire("pagehide");
+});
+
+test("UP71 inert transcript normalization and dedup retain session action text and captured cap 120", async () => {
+  const r = await activeInertHud();
+  const capture = r.context.codexLinuxRecordReplayCaptureTranscript;
+  await capture(" hello \n world ", "send"); await capture("hello world", "send");
+  assert.equal(hudRequests(r, "linux-record-replay-speech-context").length, 1);
+  assert.deepEqual(JSON.parse(hudRequests(r, "linux-record-replay-speech-context")[0].body), { sessionDir: "/recording", transcript: "hello world", source: "codex-dictation-send" });
+  await capture("hello world", "insert");
+  assert.equal(hudRequests(r, "linux-record-replay-speech-context").length, 2);
+  assert.equal(await capture("hello world", "discard"), false);
+  for (let index = 0; index < 121; index++) await capture("entry " + index, "send");
+  const before = hudRequests(r, "linux-record-replay-speech-context").length;
+  await capture("entry 120", "send"); assert.equal(hudRequests(r, "linux-record-replay-speech-context").length, before);
+  await capture("entry 0", "send"); assert.equal(hudRequests(r, "linux-record-replay-speech-context").length, before + 1);
+  r.setStatus({ state: "active", session_dir: "/second-recording" }); await r.advance(1000);
+  await capture("entry 120", "send");
+  assert.equal(JSON.parse(hudRequests(r, "linux-record-replay-speech-context").at(-1).body).sessionDir, "/second-recording");
+  r.fire("pagehide");
+});
+
+for (const origin of ["bootstrap", "capture-api"]) {
+  test(`UP71 inert pending transcript queue keeps the newest 60 from ${origin}`, async () => {
+    const entries = Array.from({ length: 65 }, (_, index) => ({ transcript: "queued " + index, action: "send", queuedAt: 1_000_000 }));
+    const r = inertHudRuntime({ bootstrap: origin === "bootstrap" ? entries : [] });
+    await settleHudPromises(800);
+    if (origin === "capture-api") for (const entry of entries) await r.context.codexLinuxRecordReplayCaptureTranscript(entry.transcript, entry.action);
+    r.setStatus({ state: "active", session_dir: "/recording" }); await r.advance(1000); await settleHudPromises(800);
+    const spoken = hudRequests(r, "linux-record-replay-speech-context").map(request => JSON.parse(request.body).transcript);
+    assert.equal(spoken.length, 60); assert.equal(spoken[0], "queued 5"); assert.equal(spoken.at(-1), "queued 64");
+    assert.equal(r.context.codexLinuxRecordReplayPendingTranscripts.length, 0);
+    r.fire("pagehide");
+  });
+}
+
+test("UP71 inert pending transcript age and attempts drop policies preserve their boundaries", async () => {
+  const age = inertHudRuntime({ bootstrap: [{ transcript: "old", action: "send", queuedAt: 399999 }, { transcript: "edge", action: "send", queuedAt: 400000 }] });
+  age.setStatus({ state: "active", session_dir: "/recording" }); await settleHudPromises(100);
+  assert.deepEqual(hudRequests(age, "linux-record-replay-speech-context").map(request => JSON.parse(request.body).transcript), ["edge"]);
+  age.fire("pagehide");
+  for (const attempts of [24, 25]) {
+    const r = inertHudRuntime(); await settleHudPromises();
+    await r.context.codexLinuxRecordReplayCaptureTranscript("retry item", "send");
+    await r.advance(attempts * 1000);
+    r.setStatus({ state: "active", session_dir: "/recording" }); await r.advance(1000);
+    assert.equal(hudRequests(r, "linux-record-replay-speech-context").length, attempts === 24 ? 1 : 0, "attempts=" + attempts);
+    r.fire("pagehide");
+  }
+});
+
+test("UP71 inert DOM-ready start and cleanup preserve unrelated resources and settle deferred Finish", async () => {
+  const loading = inertHudRuntime({ loading: true });
+  assert.equal(loading.intervals.size, 0); assert.equal(loading.hud(), null);
+  loading.ready(); loading.ready(); await settleHudPromises();
+  assert.equal(loading.intervals.size, 1); assert.equal(loading.observers.length, 1);
+  loading.fire("pagehide");
+  const abandoned = inertHudRuntime({ loading: true }); abandoned.fire("pagehide"); abandoned.ready();
+  assert.equal(abandoned.intervals.size, 0); assert.equal(abandoned.hud(), null);
+  const r = await activeInertHud({ preexistingStyle: true });
+  const foreignStyle = r.document.getElementById("codex-linux-record-replay-hud-style");
+  const foreignListener = () => {}, foreignCapture = () => "foreign";
+  r.windowListeners.get("message").add(foreignListener);
+  const capture = r.context.codexLinuxRecordReplayCaptureTranscript;
+  const [pending] = r.hud().querySelector(".codex-linux-record-replay-finish").click(); await settleHudPromises();
+  r.context.codexLinuxRecordReplayCaptureTranscript = foreignCapture;
+  r.fire("pagehide"); await pending;
+  assert.equal(r.document.getElementById("codex-linux-record-replay-hud-style"), foreignStyle);
+  assert.equal(r.context.codexLinuxRecordReplayCaptureTranscript, foreignCapture);
+  assert.deepEqual([...r.windowListeners.get("message")], [foreignListener]);
+  assert.equal(await capture("late", "send"), false);
+  assert.equal(r.sent, 0); assert.equal(r.timers.size, 0); assert.equal(r.intervals.size, 0); assert.equal(r.hud(), null);
+});
+
+test("UP71 HUD descriptor includes orphan DOM and style definitions in physical inventory", t => {
+  for (const source of [
+    'const style=document.createElement("style");style.id="codex-linux-record-replay-hud-style";',
+    'const root=document.createElement("div");root.id="codex-linux-record-replay-hud";',
+    'const root=document.createElement("div");root.className="codex-linux-record-replay-hud";',
+    'const root=document.createElement("div");root["id"]="codex-linux-record-replay-hud";',
+    'const root=document.createElement("div");root.setAttribute("id","codex-linux-record-replay-hud");',
+  ]) {
+    const fixture = hudAppFixture(t);
+    fs.writeFileSync(path.join(fixture.assets, "orphan.js"), source);
+    const bytes = hudFixtureBytes(fixture), oldWrite = fs.writeFileSync;
+    let writes = 0;
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", source); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(writes, 0); assertHudFixtureBytes(fixture, bytes);
   }
 });
