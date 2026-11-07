@@ -341,7 +341,7 @@ test("webview runtime appends only once", () => {
   assert.match(patched, /codexLinuxReadAloudSetup/);
   assert.match(patched, /action:"setup",mode/);
   assert.match(patched, /9e5/);
-  assert.match(applyIndexRuntimePatch("globalThis.codexLinuxReadAloudClick=()=>{};"), /kokoro-explicit-v6/);
+  assert.throws(() => applyIndexRuntimePatch("globalThis.codexLinuxReadAloudClick=()=>{};"), /Incomplete, duplicate or misplaced Read Aloud runtime/);
   assert.doesNotMatch(patched, /SpeechSynthesisUtterance/);
   assert.doesNotMatch(patched, /browser speech/);
   assert.doesNotMatch(patched, /no-voices/);
