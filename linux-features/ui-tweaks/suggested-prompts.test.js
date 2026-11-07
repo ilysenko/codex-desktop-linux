@@ -422,3 +422,31 @@ test("Suggested Prompts contracts resolve uniquely in the signed official bundle
   const patchedMain = applySuggestedPromptsMainPatch(mainOwners[0]);
   assert.equal(suggestedPromptsMainContract(patchedMain), "patched");
 });
+
+
+test("exposing Suggested Prompts preserves the native off preference and setting round trip", () => {
+  const vm = require("node:vm"), key = "native-suggested-prompts", saved = new Map([[key, false]]), writes = [];
+  // Supply an inert native setting row around the existing eligibility fixture.
+  const source = settingsFixture().replace('f=(0,F.iK)(b.enabled)', 'value=(0,F.iK)(b.enabled)')
+    .replace('return row()', 'return{checked:value,onChange:next=>(0,F.gc)(b.enabled,next)}');
+  const patched = applySuggestedPromptsSettingsPatch(source);
+  assert.notEqual(patched, source);
+  assert.equal(applySuggestedPromptsSettingsPatch(patched), patched);
+  const open = (text) => vm.runInNewContext(`${text};({page:ki,setting:ci})`, {
+    Q: { c: () => [] }, li: { c: () => [] }, G: { Zj: () => false }, ft: "unrelated-gate",
+    $: { jsx: (type, props) => ({ type, props }) }, H: "Section", n: () => ({}), m: {}, R: () => ({}),
+    tZ: { As: () => ({ authMethod: "api-key", email: "saved@example.invalid", planAtLogin: "unknown" }) },
+    tq: { U: () => ({ data: null }) }, f: { ML4: () => false }, b: { enabled: key },
+    F: { iK: (name) => saved.get(name), gc: (name, value) => { writes.push({ name, value }); saved.set(name, value); } },
+  });
+  assert.equal(open(source).page(), null);
+  assert.equal(open(source).setting(), null);
+  assert.equal(open(patched).page().type, "Section");
+  assert.equal(open(patched).setting().checked, false, "build opt-in exposes the row without enabling its preference");
+  for (const value of [true, false]) {
+    open(patched).setting().onChange(value);
+    assert.deepEqual(writes.at(-1), { name: key, value });
+    assert.equal(open(patched).setting().checked, value, "a new component scope reads the saved native preference");
+  }
+  assert.equal(saved.size, 1);
+});
