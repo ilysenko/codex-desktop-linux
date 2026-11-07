@@ -268,6 +268,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | `directory-only-working-tree-watch` | 有界 Watchbound 工作树监听 | [文档](linux-features/directory-only-working-tree-watch/README.md) |
 | `filesystem-root-follow-ups` | 允许工作目录为 `/` 的现有本地任务继续发送消息 | [文档](linux-features/filesystem-root-follow-ups/README.md) |
 | `flatpak-chrome-native-messaging` | 将官方 Chrome 扩展连接到 Flatpak Google Chrome | [文档](linux-features/flatpak-chrome-native-messaging/README.md) |
+| `fork-sidebar-fallback` | 可选侧边栏功能开关客户端未就绪时，允许 fork 会话 | [文档](linux-features/fork-sidebar-fallback/README.md) |
 | `frameless-titlebar` | 隐藏官方 Linux overlay 按钮，改由 compositor 管理窗口装饰 | [文档](linux-features/frameless-titlebar/README.md) |
 | `global-dictation` | X11 / XDG portal 全局听写快捷键 | [文档](linux-features/global-dictation/README.md) |
 | `wayland-global-shortcuts` | 为弹出聊天、Mini/Pet 等全局快捷键提供原生 Wayland 支持；可独立于听写启用 | [文档](linux-features/wayland-global-shortcuts/README.md) |
