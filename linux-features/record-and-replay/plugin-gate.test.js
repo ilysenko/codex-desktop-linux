@@ -193,6 +193,146 @@ test("Record & Replay entry extraction requires the evaluated native loader and 
   ]) assert.throws(() => entryFactories(source));
 });
 
+test("Record & Replay entry extraction preserves nonpublishing root companion statements", () => {
+  const original = seedEntry(), factories = entryFactories(original);
+  const nativeFacts = rows => rows.map(row => [row.identity, row.start, row.end, row.body, row.parameters]);
+  for (const tail of [
+    ';const afterNative=true;',
+    ';(()=>{const {ipcMain}=require(`electron`);ipcMain.handle("theme",()=>null)})();',
+    ';function local(require,module,exports){require=other;module.exports=other;exports.value=other;}',
+    ';{let module={};let exports={};module.exports=other;exports.value=other;}',
+    ';const local=(require,module,exports)=>{require=other;module=other;exports=other;};',
+    ';const note="module.exports=other;require=other";const pattern=/exports=/;',
+    String.raw`;function local(\u006dodule,\u0065xports){module.exports=other;exports.value=other}`,
+    ';const local=function require(){require=other};',
+    ';const object={module:1,exports:2,require:3,read(){return this.module}};',
+    ';const object={module(){return 1},get exports(){return 1},set require(value){this.value=value}};',
+  ]) {
+    const source = original + '\n//# sourceMappingURL=entry.js.map\n' + tail;
+    new vm.Script(source);
+    assert.deepEqual(nativeFacts(entryFactories(source)), nativeFacts(factories), tail);
+    assert.ok(source.startsWith(original));
+  }
+  const prefix = 'function nativeHelper(){return null}\n';
+  assert.equal(entryFactories(prefix + original + '\nconst afterNative=true;').length, 3);
+});
+
+test("Record & Replay entry invocation refuses foreign callee and ASI continuation contexts", () => {
+  const original = seedEntry(), expression = original.slice(0, -3);
+  for (const source of [
+    'consume(' + expression + ')();',
+    'consume\n' + original,
+    '(consume)\n' + original,
+    'getCallee()\n' + original,
+    'const foreign={}\n' + original,
+    expression + ';',
+    'false&&' + original,
+    'if(false){' + original + '}',
+  ]) {
+    new vm.Script(source);
+    let factories = [];
+    try { factories = entryFactories(source); } catch { continue; }
+    assert.equal(factories.length, 0, source);
+  }
+  assert.throws(() => entryFactories(original + '\nconst broken=;'));
+});
+
+test("Record & Replay root companions reject unsupported CommonJS publication capabilities", () => {
+  const original = seedEntry();
+  const tails = [
+    ';module.exports=other;', ';module["exports"]=other;',
+    ';delete module.exports;', ';module.exports++;',
+    ';({value:module.exports}=other);', ';[module.exports]=other;',
+    ';Object.defineProperty(module,"exports",{value:other});',
+    ';Reflect.set(module,"exports",other);', ';const borrowed=module;',
+    ';const borrowed=flag?module:null;', ';const borrowed={...module};',
+    ';const borrowed=flag?exports:null;', ';const borrowed={...exports};',
+    ';const borrowed=flag?require:null;', ';const borrowed={...require};',
+    ';exports.value=other;', ';delete exports.value;', ';const borrowed=exports;',
+    ';const borrowed=require;', ';require.call(null,"electron");',
+    ';require["apply"](null,[]);', ';require?.("electron");',
+    ';new require("electron");',
+    ';function deferred(){module.exports=other;}',
+    ';function deferred(value=module.exports=other){var module;return value}',
+    ';const deferred=(value=module.exports=other)=>{var module;return value};',
+    String.raw`;\u006dodule.exports=other;`,
+    String.raw`;\u0072equire.call(null,"electron");`,
+  ];
+  for (const name of ["require", "module", "exports"]) {
+    for (const operator of ["=", "+=", "<<=", ">>=", ">>>=", "&=", "&&=", "||=", "??="]) tails.push(`;${name}${operator}other;`);
+    tails.push(`;${name}++;`, `;({value:${name}}=other);`, `;[${name}]=other;`);
+  }
+  for (const tail of tails) {
+    new vm.Script(original + tail);
+    assert.throws(() => entryFactories(original + tail), undefined, tail);
+  }
+  for (const prefix of ['const borrowed=module;', 'const borrowed=exports;', 'const borrowed=require;']) {
+    const source = prefix + original + '\nconst afterNative=true;';
+    new vm.Script(source);
+    assert.throws(() => entryFactories(source), undefined, prefix);
+  }
+});
+
+test("Record & Replay root companion bytes survive all-copy application and warm refusal", t => {
+  const files = filesFixture(), tail = '\n;(()=>{const {ipcMain}=require(`electron`);ipcMain.handle("theme",()=>null)})();';
+  files['early-bootstrap.js'] += tail;
+  const root = extracted(t, files);
+  assert.equal(run(root).patch.status, 'applied');
+  const canonical = readFiles(root), plan = inspect(assets(canonical));
+  assert.equal(plan.state, 'patched', plan.reason);
+  assert.equal(canonical['early-bootstrap.js'], files['early-bootstrap.js']);
+  assert.equal(stripCanonical(canonical[OWNER], plan), files[OWNER]);
+  assert.equal(run(root).patch.status, 'already-applied');
+  assertUnchanged(root, canonical);
+  const invalid = { ...canonical, 'early-bootstrap.js': canonical['early-bootstrap.js'] + '\nmodule.exports=other;' };
+  fs.writeFileSync(path.join(root, '.vite/build/early-bootstrap.js'), invalid['early-bootstrap.js']);
+  assert.equal(run(root).patch.status, 'skipped-optional');
+  assertUnchanged(root, invalid);
+});
+
+test("Record & Replay direct companion require keeps literals outside its trivia gap", () => {
+  const original = seedEntry();
+  for (const tail of [
+    ';require`electron`();',
+    ';require/*gap*/`electron`();',
+    String.raw`;\u0072equire` + '`electron`();',
+    ';require`electron`\n();',
+  ]) {
+    new vm.Script(original + tail);
+    assert.throws(() => entryFactories(original + tail), undefined, tail);
+  }
+  for (const tail of [
+    ';require(`electron`);',
+    ';require/* literal `tag` is a comment */(`electron`);',
+    ';require\n(`electron`);',
+    String.raw`;\u0072equire/*gap*/(` + '`electron`);',
+    ';const opaque="require`electron`()";',
+  ]) {
+    new vm.Script(original + tail);
+    assert.equal(entryFactories(original + tail).length, 3, tail);
+  }
+});
+
+test("Record & Replay native invocation keeps literals outside its trivia-only prefix gap", () => {
+  const original = seedEntry();
+  for (const prefix of [
+    ";'opaque'\n", "'opaque'\n", ';/opaque/\n', '/opaque/\n',
+    ';`opaque`\n', '`opaque`\n', ";'opaque'/*gap*/\n",
+    ";('opaque')\n", ';["opaque"]\n', ';42\n',
+  ]) {
+    new vm.Script(prefix + original);
+    assert.throws(() => entryFactories(prefix + original), undefined, prefix);
+  }
+  for (const prefix of [
+    ";'opaque';\n", ';/opaque/;\n', ';`opaque`;\n',
+    'function helper(){} /*gap*/\n', '/*gap*/\n', ';;/*gap*/\n',
+  ]) {
+    const source = prefix + original + '\nconst afterNative=true;';
+    new vm.Script(source);
+    assert.equal(entryFactories(source).length, 3, prefix);
+  }
+});
+
 test("Record & Replay authority rejects conditional native declaration carriers", t => {
   const original = filesFixture();
   const variants = [

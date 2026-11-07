@@ -352,6 +352,49 @@ function stableRootBinding(body, name, assignmentIndex, options = {}) {
   return true;
 }
 
+function directEntryContext(source, index) {
+  const previous = previousCode(source, index - 1);
+  if (triviaEnd(source, previous + 1) !== index) throw Error("Unsupported main entry invocation gap");
+  if (previous < 0 || source[previous] === ";") return;
+  const prefix = source.slice(0, index);
+  const functions = new RegExp(`\\b(?:async\\s+)?function(?![\\w$])\\s*\\*?\\s*${ID}\\s*\\(`, "gu");
+  for (const head of matches(prefix, functions)) {
+    if (!statementAt(prefix, head.index)) continue;
+    const close = delimiterEnd(prefix, head.index + head[0].length - 1);
+    const open = nextCode(prefix, close + 1);
+    if (close >= 0 && prefix[open] === "{" && delimiterEnd(prefix, open) === previous) return;
+  }
+  throw Error("Unsupported main entry invocation context");
+}
+
+function entryCompanionAuthority(source) {
+  const authorities = new Map();
+  for (const token of source.matchAll(IDENTIFIER_TOKEN)) {
+    const name = identifierValue(token[0]);
+    if (!["require", "module", "exports"].includes(name) || !lexical(source).isCode(token.index)) continue;
+    const before = previousCode(source, token.index - 1), after = triviaEnd(source, token.index + token[0].length);
+    if (source[before] === "#" || source[before] === "." && source.slice(before - 2, before + 1) !== "...") continue;
+    if (!authorities.has(name)) authorities.set(name, bindingAuthority(source, name));
+    const authority = authorities.get(name);
+    if (authority.local(token.index)) continue;
+    const prefix = source.slice(0, token.index), suffix = source.slice(token.index + token[0].length);
+    const reference = sourceParses(prefix + "(0)" + suffix) || sourceParses(prefix + `${name}:(0)` + suffix);
+    if (!reference) {
+      if (source[after] === ":") continue;
+      if (/\b(?:function\s*\*?|class)\s*$/u.test(prefix) && sourceParses(prefix + suffix)) continue;
+      // A computed literal is a property key, while reads and shorthand
+      // references were distinguished by the expression probes above.
+      if (sourceParses(prefix + `[${JSON.stringify(authority.fresh)}]` + suffix)) continue;
+    }
+    // Companion code may call the real CommonJS require directly. Other free
+    // publication capabilities and borrowed require forms stay unsupported.
+    const prior = identifierBefore(source, before);
+    if (name !== "require" || !reference || source[after] !== "(" || prior?.value === "new") {
+      throw Error("Unsupported main entry companion CommonJS capability: " + name);
+    }
+  }
+}
+
 // The adapter follows the evaluated seed table, its real module loader, the
 // CommonJS chunk installer and the final exported bootstrap invocation. Only
 // the table carrier changes for the shared parser. Factory bytes stay exact.
@@ -359,6 +402,11 @@ function entryFactories(source) {
   const heads = matches(source, new RegExp(`\\(\\(\\)=>\\{var (?:${ID},)*(?<table>${ID})=\\{`, "gu"));
   if (heads.length === 0) return [];
   const head = one(heads, "evaluated main entry seed"), outerStart = head.index + 6;
+  try {
+    new Script(source);
+    new Script(`function entryCommonJsSyntax(exports,require,module,__filename,__dirname){${source}\n}`);
+  } catch { throw Error("Invalid complete main entry source"); }
+  directEntryContext(source, head.index);
   try { new Script(`function entryPreludeProbe(){${source.slice(0, head.index)}\nconst entryPreludeReached=0;\n}`); }
   catch { throw Error("Conditional main entry seed"); }
   if (matches(source.slice(0, head.index), /\b(?:return|throw)\b/gu).length) throw Error("Unreachable main entry seed");
@@ -376,7 +424,12 @@ function entryFactories(source) {
     throw Error("Disconnected main entry loader/table");
   }
   const outerEnd = delimiterEnd(source, head.index + 5), outer = source.slice(outerStart, outerEnd);
-  if (!/^\)\(\);(?:\s*\/\/# sourceMappingURL=[^\n]*)?\s*$/u.test(source.slice(outerEnd + 1))) throw Error("Unevaluated main entry wrapper");
+  if (!source.startsWith(")();", outerEnd + 1)) throw Error("Unevaluated main entry wrapper");
+  const companion = source.slice(outerEnd + 5);
+  if (nextCode(companion, 0) < companion.length) {
+    entryCompanionAuthority(source.slice(0, head.index));
+    entryCompanionAuthority(companion);
+  }
   const bootstrap = new RegExp(`var (?<value>${ID})=${escapeRegExp(loader)}\\((?<id>\\d+)\\);module\\.exports=\\k<value>$`, "u").exec(outer);
   if (!bootstrap || !lexical(outer).isRoot(bootstrap.index)) throw Error("Missing evaluated main entry bootstrap");
   try { new Script(`function entryCallerProbe(){${outer.slice(0, bootstrap.index)}\nconst entryCallerReached=0;\n}`); }
