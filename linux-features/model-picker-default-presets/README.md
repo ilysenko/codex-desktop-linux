@@ -97,8 +97,16 @@ partially changing the app.
 The official webview is an rspack build whose application code lives in
 lazily loaded `webview/assets/async/` chunks, so every descriptor finds its
 chunk by stable content strings and then by its semantic contract, never by
-file name. The catalog normalizer, picker slider, local resolver, and local
-composer are each patched in exactly one chunk. Upstream inlines the
+file name. The catalog patch validates the current published schema normalizer and its
+slider/default/returned-catalog bindings, including writes and redeclarations
+of captured bindings at every code-owned depth. Genuine nested local shadows,
+opaque text, and member keys retain their native meaning. It then prepares every
+physical copy of that module before writing. Only its exact helper and return-wrapper replay
+qualify as applied; missing, ambiguous, opaque, orphan, stale-config, partial, or
+mixed copies refuse the catalog cohort. Invalid syntax refuses before writes; a
+later write fault restores every attempted file and preserves its mode. The
+retired separate catalog/selection-resolver format is rejected. The picker
+slider, local resolver, and local composer are each patched in one chunk. Upstream inlines the
 model-settings hook into every composer surface, so the existing-chat
 selection patch is applied to each copy and warns about any copy that drifted.
 
