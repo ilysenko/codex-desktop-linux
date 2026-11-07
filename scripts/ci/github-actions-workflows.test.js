@@ -33,8 +33,10 @@ function trackedTestFiles() {
 // The files scripts/ci/run-node-checks.sh runs.
 function guardedTestFiles() {
   const runner = read("scripts/ci/run-node-checks.sh");
-  const match = runner.match(/git ls-files([\s\S]*?)\)/);
-  assert.ok(match, "run-node-checks.sh lists its test files with git ls-files");
+  const tests = /^run_node_tests\(\) \{([\s\S]*?)^\}/m.exec(runner);
+  assert.ok(tests, "run-node-checks.sh defines the guarded Node test function");
+  const match = tests[1].match(/git ls-files([\s\S]*?)\)/);
+  assert.ok(match, "run_node_tests lists its test files with git ls-files");
   const pathspecs = [...match[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1]);
   assert.ok(pathspecs.length > 0);
   assert.match(match[1].replace(/'[^']+'/g, ""), /^[\s\\]*$/);
