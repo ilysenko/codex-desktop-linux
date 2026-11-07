@@ -218,7 +218,7 @@ test("opaque, orphan, partial and wrong-binding contributions cannot count as ap
     assert.throws(() => apply(chunk(opaque)), /Unsupported|Missing|ambiguous/);
   }
   assert.throws(() => apply(`/*${MARKER}*/` + chunk(source)), /Orphan/);
-  assert.throws(() => apply(chunk(source).replace("}};", `},Other(module,exports,loader){const marker="${MARKER}";}};`)), /ambiguous/);
+  assert.throws(() => apply(chunk(source).replace("}};", `},Other(module,exports,loader){const marker="${MARKER}";}};`)), /Orphan/);
 });
 
 test("exact feature reconstruction preserves other legitimate catalog contributions", () => {
@@ -242,6 +242,27 @@ test("enabled production descriptor patches all renamed physical copies and repo
   for (const name of ["async/one.js", "nested/two.js"]) assert.equal(ws.read(name), apply(source));
   assert.equal(ws.read("ordinary.js"), "export const keep=1;");
   assert.equal(report(ws.root, loaded).patches[0].status, "already-applied");
+});
+
+test("query consumers with the same discovery needles are not catalog owner identities", t => {
+  // Reduced current relationship: a query consumer forwards catalog arguments
+  // to the imported normalizer, but does not own its publication or model loop.
+  const consumer = 'var normalizer=loader("RenamedCatalog");function readCatalog(models,authMethod){return(0,normalizer.catalog)({additionalAvailableModels:new Set(),enabledReasoningEfforts:new Set(),hasConfiguredModelCatalog:!1,useHiddenModels:!0,models:models,authMethod:authMethod})}loader.d(exports,{read:()=>readCatalog});';
+  const { ASSET_NEEDLES } = require("./patch.js");
+  assert.ok(ASSET_NEEDLES.every(needle => consumer.includes(needle)));
+  assert.equal(inspectModelCatalogOwner(factory(consumer)).ok, false);
+  const owner = chunk(modelCatalogFixture());
+  const consumerChunk = chunk(consumer, "CatalogQueryConsumer");
+  const combined = owner.replace("}};", `},CatalogQueryConsumer(module,exports,loader){${consumer}}};`);
+  assert.equal(apply(combined), combined.replace(modelCatalogFixture(), applyBody(modelCatalogFixture())));
+  const ws = workspace(t, { "one.js": combined, "nested/two.js": owner, "query.js": consumerChunk });
+  const result = report(ws.root, loadedFeature(t));
+  assert.equal(result.patches[0].status, "applied");
+  assert.deepEqual(enabledFeatureFailuresFromReport(result), []);
+  assert.equal(ws.read("one.js"), apply(combined));
+  assert.equal(ws.read("nested/two.js"), apply(owner));
+  assert.equal(ws.read("query.js"), consumerChunk);
+  assert.equal(report(ws.root, loadedFeature(t)).patches[0].status, "already-applied");
 });
 
 test("missing, ambiguous, mixed, damaged and opaque cohorts reject every write", t => {

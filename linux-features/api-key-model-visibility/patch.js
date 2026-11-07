@@ -84,7 +84,7 @@ function applyApiKeyModelVisibilityPatch(source, context = {}) {
   }
   requireNativeRegistry(source);
   const candidates = [...rspackModuleFactories(source, "model-catalog.js")]
-    .filter(module => identifiesOwner(module.moduleSource));
+    .filter(module => identifiesOwner(module.moduleSource) && inspectModelCatalogOwner(module).ok);
   if (candidates.length !== 1) throw new Error(`Missing or ambiguous ${DESCRIPTION} factory`);
   const [module] = candidates;
   if (markerCount(source) !== markerCount(module.moduleSource)) throw new Error(`Orphan ${DESCRIPTION} marker`);
@@ -100,7 +100,7 @@ function applyApiKeyModelVisibilityAppPatch(extractedDir, _context = {}, options
       if (source.includes(PATCH_MARKER)) markerAssets.add(name);
       return identifiesOwner(source);
     },
-    matchModule: identifiesOwner,
+    matchModule: (source, module) => identifiesOwner(source) && inspectModelCatalogOwner(module).ok,
   });
   for (const copy of copies) {
     requireNativeRegistry(copy.source);
