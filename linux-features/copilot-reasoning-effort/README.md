@@ -34,9 +34,14 @@ feature to the generated app.
   are validated and changed together before any write. An applied state must
   contain the exact feature contribution at that owner's effort expression;
   a marker elsewhere does not count.
-- The current dropdown and slash-command owners keep the reasoning effort
-  controls and `/reasoning` command enabled when the normal model and effort
-  prerequisites are present.
+- The dropdown qualifies the published composer, its active host and model
+  settings, native loading/locked/disabled-model gates, and actual returned menu
+  callback. Its composer selector must bind the native settings hook; the
+  feature preserves upstream guardian and full-access confirmation routes.
+  All dropdown copies change together and only the exact Copilot gate removal
+  qualifies as applied. Selection still goes through the current settings writer.
+- The slash-command owner keeps `/reasoning` enabled when the normal model and
+  effort prerequisites are present.
 - Every copy of the model settings hook receives the same qualified default
   effort adapter. Its storage key includes the active host, native Copilot
   profile (`null` in the supported upstream package), and model. The Electron

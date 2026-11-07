@@ -15,7 +15,6 @@ const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
-  applyCopilotReasoningEffortDropdownPatch,
   applyCopilotReasoningEffortModelListPatch,
   applyCopilotReasoningEffortModelListAppPatch,
   matchesCopilotReasoningEffortModelListContract,
@@ -24,12 +23,13 @@ const {
   descriptors,
   applyCopilotSettingsPersistence,patchCopilotSettingsPersistence,settingsPersistenceState,
   matchesCopilotModelAndReasoningPersistenceContract,
-  matchesCopilotReasoningEffortDropdownContract,
   matchesCopilotReasoningSlashContract,
 } = require("./patch.js");
 const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 const { spawnSync } = require("node:child_process");
 const { Script } = require("node:vm");
+const {applyDropdownModule,dropdownModuleState,NEEDLES:DROPDOWN_OWNER_NEEDLES}=require("./dropdown-owner.js");
+const currentDropdown=require("./fixtures/current-dropdown.json");
 const { inspectModelCatalogOwner } = require("../../scripts/patches/lib/model-composer-owners.js");
 const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
@@ -63,13 +63,6 @@ function currentFilteredCopilotReasoningEffortModelListFixture() {
   return 'var guard=loader("effort-guard");loader.d(exports,{},{catalog:function({additionalAvailableModels:extra,apiKeyDaybreakSupported:daybreak=!1,authMethod:auth,availableModels:allow,defaultModel:fallback,enabledReasoningEfforts:enabled,hasConfiguredModelCatalog:configured,includeUltraReasoningEffort:ultra,isCustomModelProvider:custom=!1,models:models,useHiddenModels:hidden}){let output=[],defaultModel=null,maximum=!1,ultraFlag=!1;return models.forEach(item=>{if(' + predicate + '({additionalAvailableModels:extra,apiKeyDaybreakSupported:daybreak,authMethod:auth,availableModels:allow,hasConfiguredModelCatalog:configured,isCustomModelProvider:custom,model:item,useHiddenModels:hidden})){let raw=ultra?item.supportedReasoningEfforts:item.supportedReasoningEfforts.filter(({reasoningEffort:effort})=>"ultra"!==effort),filtered=("copilot"===auth?[raw.find(effort=>"medium"===effort.reasoningEffort)??{reasoningEffort:"medium",description:"medium effort"}]:raw).filter(({reasoningEffort:effort})=>(0,guard.allowed)(effort)&&enabled.has(effort)),normalized={...item,supportedReasoningEfforts:filtered};output.push(normalized),item.isDefault&&(defaultModel=normalized)}}),null==defaultModel&&(defaultModel=output.find(item=>item.model===fallback)??null),{models:output,defaultModel:defaultModel,hasModelSupportingMaxReasoningEffort:maximum,hasModelSupportingUltraReasoningEffort:ultraFlag}}})';
 }
 
-
-function currentCopilotReasoningEffortDropdownFixture() {
-  return [
-    'function composer(){let ov=lock,n4=[{model:{model:nH},disabledReason:null}],oy=nc?.authMethod==="copilot"||n4?.find(e=>{let{model:l}=e;return l.model===nH})?.disabledReason!=null,ts=ov||"error"===nV,tr=ov||oy||n_?.lockedReasoningEffort!=null;return(0,r.jsx)(M,{modelOptionsDisabled:ts,reasoningEffortDisabled:tr,showReasoningEffortControls:!0})}',
-    "function unrelatedGate(){let q=a&&b&&!0;return q}",
-  ].join("");
-}
 
 function currentCopilotReasoningSlashFixture() {
   return [
@@ -142,17 +135,18 @@ test("descriptors find their owners by content needles, not chunk names", () => 
   const fixtures = [
     currentModelAndReasoningPersistenceFixture(),
     currentFilteredCopilotReasoningEffortModelListFixture(),
-    currentCopilotReasoningEffortDropdownFixture(),
+    currentDropdown.composer.source,
     currentCopilotReasoningSlashFixture(),
   ];
   descriptors.forEach((descriptor, index) => {
     assert.equal(descriptor.pattern, undefined);
     assert.equal(descriptor.assetPattern, undefined);
     assert.equal(descriptor.assetMatch, undefined);
-    if (["model-list","persistence-contract"].includes(descriptor.id)) {
+    if (["model-list","persistence-contract","ui-dropdown"].includes(descriptor.id)) {
       assert.equal(descriptor.phase, "extracted-app:pre-webview");
       assert.equal(descriptor.assetNeedles, undefined);
       if(descriptor.id==="model-list")assert.ok(MODEL_LIST_NEEDLES.every(needle => fixtures[index].includes(needle)));
+      if(descriptor.id==="ui-dropdown")assert.ok(DROPDOWN_OWNER_NEEDLES.every(needle=>currentDropdown.composer.source.includes(needle)));
       return;
     }
     for (const needle of descriptor.assetNeedles) {
@@ -344,46 +338,15 @@ test("a second physical model-list write failure restores bytes and modes", () =
   });
 });
 
-test("allows Copilot auth to use the current app effort controls", () => {
-  const dropdownPatched = applyPatchTwice(
-    applyCopilotReasoningEffortDropdownPatch,
-    currentCopilotReasoningEffortDropdownFixture(),
-  );
+test("allows Copilot auth to use the current slash command", () => {
   const slashPatched = applyPatchTwice(
     applyCopilotReasoningSlashPatch,
     currentCopilotReasoningSlashFixture(),
   );
-
-  assert.match(dropdownPatched, /oy=\/\*codexLinuxCopilotReasoningEffortUi\*\/n4\?\.find/);
-  assert.match(dropdownPatched, /tr=ov\|\|oy\|\|/);
-  assert.match(dropdownPatched, /reasoningEffortDisabled:tr/);
-  assert.doesNotMatch(dropdownPatched, /authMethod==="copilot"/);
-  assert.match(dropdownPatched, /let q=a&&b&&!0;/);
   assert.match(slashPatched, /let H=j&&R&&!0\/\*codexLinuxCopilotReasoningEffortUi\*\/;/);
   assert.doesNotMatch(slashPatched, /H=j&&R&&!P;/);
   assert.match(slashPatched, /A=O\.length>0,j=!w&&!A/);
-  assert.equal(matchesCopilotReasoningEffortDropdownContract(dropdownPatched), true);
   assert.equal(matchesCopilotReasoningSlashContract(slashPatched), true);
-  assert.equal(matchesCopilotReasoningEffortDropdownContract(currentCopilotReasoningSlashFixture()), false);
-  assert.equal(matchesCopilotReasoningSlashContract(currentCopilotReasoningEffortDropdownFixture()), false);
-});
-
-test("dropdown gate that no longer reaches the dropdown is rejected byte-identically", () => {
-  const base = currentCopilotReasoningEffortDropdownFixture();
-  const cases = [
-    [base.replace("tr=ov||oy||", "tr=ov||z||"), /dropdown gate/],
-    [base.replace("reasoningEffortDisabled:tr", "effortDisabled:tr"), /dropdown gate/],
-    [base.replace("tr=ov||oy||", "tr=ov||oy||").replace("ts=ov||", "ts=ov||oy||"), /dropdown gate/],
-    [base.replace('nc?.authMethod==="copilot"||', ""), /reasoning effort gate/],
-    [base + base, /duplicate current compiled Copilot reasoning effort gates/],
-  ];
-  for (const [source, warning] of cases) {
-    const { value, warnings } = withCapturedWarns(() => applyCopilotReasoningEffortDropdownPatch(source));
-    assert.equal(matchesCopilotReasoningEffortDropdownContract(source), false);
-    assert.equal(value, source);
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], warning);
-  }
 });
 
 test("mismatched or unowned Copilot slash command gates warn and remain byte-identical", () => {
@@ -417,7 +380,7 @@ test("feature descriptor loader exposes the Copilot webview asset patches only w
       "feature:copilot-reasoning-effort:ui-dropdown",
       "feature:copilot-reasoning-effort:ui-slash-command",
     ]);
-    assert.deepEqual(loaded.map(descriptor => descriptor.phase), ["extracted-app:pre-webview", "extracted-app:pre-webview", "webview-asset", "webview-asset"]);
+    assert.deepEqual(loaded.map(descriptor => descriptor.phase), ["extracted-app:pre-webview", "extracted-app:pre-webview", "extracted-app:pre-webview", "webview-asset"]);
     assert.ok(loaded.every((descriptor) => descriptor.ciPolicy === "optional"));
   });
 });
@@ -428,7 +391,13 @@ test("enabled feature descriptors patch rspack async chunks", () => {
     withTempDir((extractedDir) => {
       writeAsset(extractedDir, "24191.a.js", currentFilteredCopilotReasoningEffortModelListFixture());
       writeAsset(extractedDir, "258607.b.js", currentModelAndReasoningPersistenceFixture());
-      writeAsset(extractedDir, "104066.c.js", currentCopilotReasoningEffortDropdownFixture());
+      const dropdownAssets=path.join(extractedDir,"webview","assets","async");
+      for(const [name,record,id]of [["104066.c.js",currentDropdown.composer,"dropdownOwner"],["selector.js",currentDropdown.selector,"sU9s"]]) {
+        fs.writeFileSync(path.join(dropdownAssets,name),`export const __webpack_modules__={${id}(${record.params.join(",")}){${record.source}}};`);
+      }
+      // The selector imports this native hook by module identity.
+      const settingsAsset=path.join(dropdownAssets,"258607.b.js");
+      fs.writeFileSync(settingsAsset,fs.readFileSync(settingsAsset,"utf8").replace("{settings(","{o8WW("));
       writeAsset(extractedDir, "589850.d.js", currentCopilotReasoningSlashFixture());
 
       const { warnings } = withCapturedWarns(() => {
@@ -438,7 +407,7 @@ test("enabled feature descriptors patch rspack async chunks", () => {
       });
       assert.deepEqual(warnings, []);
       assert.match(readAsset(extractedDir, "24191.a.js"), /codexLinuxCopilotReasoningEffortModelList\*\/\[\.\.\.raw\]\.filter/);
-      assert.match(readAsset(extractedDir, "104066.c.js"), /oy=\/\*codexLinuxCopilotReasoningEffortUi\*\//);
+      assert.match(readAsset(extractedDir, "104066.c.js"), /ob=\/\*codexLinuxCopilotEffortDropdown\*\//);
       assert.match(readAsset(extractedDir, "589850.d.js"), /H=j&&R&&!0\/\*codexLinuxCopilotReasoningEffortUi\*\//);
       assert.match(readAsset(extractedDir, "258607.b.js"), /codexLinuxCopilotEffortPreferences/);
     });
@@ -450,13 +419,13 @@ test("official signed webview owners validate or patch once and still parse", { 
   const assetsDir = path.join(signedApp, "webview", "assets");
   const counts = {};
   for (const descriptor of descriptors) {
-    const candidates = findWebviewAssetsContaining(signedApp, descriptor.id === "model-list" ? MODEL_LIST_NEEDLES : descriptor.id==="persistence-contract" ? ["setDefaultModelAndReasoningEffort:",".setDefaultModelConfig("] : descriptor.assetNeedles);
+    const candidates = findWebviewAssetsContaining(signedApp, descriptor.id === "model-list" ? MODEL_LIST_NEEDLES : descriptor.id==="ui-dropdown" ? DROPDOWN_OWNER_NEEDLES : descriptor.id==="persistence-contract" ? ["setDefaultModelAndReasoningEffort:",".setDefaultModelConfig("] : descriptor.assetNeedles);
     const assets=descriptor.id==="model-list"?candidates.filter(asset=>[...rspackModuleFactories(fs.readFileSync(path.join(assetsDir,asset),"utf8"),asset)].some(module=>MODEL_LIST_NEEDLES.every(needle=>module.moduleSource.includes(needle))&&inspectModelCatalogOwner(module).ok)):candidates;
     counts[descriptor.id] = assets.length;
     for (const asset of assets) {
       const source = fs.readFileSync(path.join(assetsDir, asset), "utf8");
-      const copy=descriptor.id==="persistence-contract"?[...rspackModuleFactories(source,asset)].find(m=>settingsPersistenceState(m.moduleSource,m).kind==="current"):null;
-      const apply = descriptor.id === "model-list" ? applyCopilotReasoningEffortModelListPatch : copy ? text=>{const end=text.length-(source.length-copy.end);return text.slice(0,copy.start)+applyCopilotSettingsPersistence(text.slice(copy.start,end),copy)+text.slice(end)} : descriptor.apply;
+      const copy=descriptor.id==="ui-dropdown"?[...rspackModuleFactories(source,asset)].find(m=>dropdownModuleState(m.moduleSource,m).kind==="current"):descriptor.id==="persistence-contract"?[...rspackModuleFactories(source,asset)].find(m=>settingsPersistenceState(m.moduleSource,m).kind==="current"):null;
+      const apply = descriptor.id === "model-list" ? applyCopilotReasoningEffortModelListPatch : copy ? text=>{const end=text.length-(source.length-copy.end);return text.slice(0,copy.start)+(descriptor.id==="ui-dropdown"?applyDropdownModule(text.slice(copy.start,end),copy):applyCopilotSettingsPersistence(text.slice(copy.start,end),copy))+text.slice(end)} : descriptor.apply;
       const { value: patched, warnings } = withCapturedWarns(() => apply(source));
       assert.deepEqual(warnings, [], `${descriptor.id} ${asset}`);
       assert.equal(apply(patched), patched, `${descriptor.id} ${asset}`);

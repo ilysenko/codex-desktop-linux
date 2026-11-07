@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const {patchCopilotDropdown}=require("./dropdown-owner.js");
 const {findRspackExportPublication}=require("../../scripts/patches/lib/rspack-export-publication.js");
 const {createCopilotEffortPreferences}=require("./effort-preferences.js");
 const { inspectModelCatalogOwner, inspectModelSettingsOwner } = require("../../scripts/patches/lib/model-composer-owners.js");
@@ -18,7 +19,6 @@ const MODEL_LIST_MARKER = "codexLinuxCopilotReasoningEffortModelList";
 const PERSISTENCE_NEEDLES = ["setDefaultModelAndReasoningEffort:", ".setDefaultModelConfig("];
 const MODEL_LIST_NEEDLES = ["additionalAvailableModels:", "enabledReasoningEfforts:", "hasConfiguredModelCatalog:", "useHiddenModels:"];
 const MODEL_LIST_DESCRIPTION = "Copilot model reasoning effort catalog";
-const DROPDOWN_NEEDLES = ["reasoningEffortDisabled:", "?.disabledReason!=null"];
 const SLASH_NEEDLES = [
   'id:"composer.reasoningSlashCommand.title"',
   "requiresEmptyComposer",
@@ -300,77 +300,6 @@ function applyCopilotReasoningEffortModelListAppPatch(extractedDir, _context = {
   return patchRspackModuleCopies(assets, copies, patchModelListFactory, options);
 }
 
-// --- Composer reasoning effort dropdown --------------------------------------
-
-function analyzeCompiledCopilotReasoningEffortUiContract(source) {
-  const modelExpression =
-    `${JS_IDENT}\\?\\.find\\(${JS_IDENT}=>\\{let\\{model:${JS_IDENT}\\}=${JS_IDENT};` +
-    `return ${JS_IDENT}\\.model===${JS_IDENT}\\}\\)\\?\\.disabledReason!=null`;
-  const cleanMatches = findAllMatches(source, new RegExp(
-    `(?<disabled>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod==="copilot"\\|\\|` +
-      `(?<modelExpression>${modelExpression})`,
-  ));
-  const patchedMatches = findAllMatches(source, new RegExp(
-    `(?<disabled>${JS_IDENT})=/\\*${COMPILED_UI_MARKER}\\*/(?<modelExpression>${modelExpression})`,
-  ));
-  const combinedMatches = [...cleanMatches, ...patchedMatches];
-  if (combinedMatches.length !== 1) {
-    return {
-      state: "invalid",
-      warning: combinedMatches.length === 0
-        ? "Could not find current compiled Copilot reasoning effort gate"
-        : "Found duplicate current compiled Copilot reasoning effort gates",
-    };
-  }
-
-  // The combined gate must reach the dropdown through one later
-  // `dropdown=<locked>||<combined>||...` assignment in the same composer.
-  const combinedMatch = combinedMatches[0];
-  const after = source.slice(combinedMatch.index + combinedMatch[0].length, combinedMatch.index + 60_000);
-  const dropdownGates = findAllMatches(after, new RegExp(
-    `[,;](?<dropdown>${JS_IDENT})=${JS_IDENT}\\|\\|` +
-      `${escapeRegExp(combinedMatch.groups.disabled)}${NOT_IDENT}`,
-  ));
-  const consumers = dropdownGates.filter((gate) => findAllMatches(
-    after.slice(gate.index, gate.index + 20_000),
-    new RegExp(`reasoningEffortDisabled:${escapeRegExp(gate.groups.dropdown)}${NOT_IDENT}`),
-  ).length === 1);
-  if (dropdownGates.length !== 1 || consumers.length !== 1) {
-    return {
-      state: "invalid",
-      warning: dropdownGates.length > 1
-        ? "Found duplicate current compiled Copilot reasoning effort dropdown gates"
-        : "Could not find current compiled Copilot reasoning effort dropdown gate",
-    };
-  }
-
-  return {
-    state: cleanMatches.length === 1 ? "pristine" : "patched",
-    combinedMatch,
-  };
-}
-
-function matchesCopilotReasoningEffortDropdownContract(source) {
-  return analyzeCompiledCopilotReasoningEffortUiContract(source).state !== "invalid";
-}
-
-function applyCopilotReasoningEffortDropdownPatch(source) {
-  const contract = analyzeCompiledCopilotReasoningEffortUiContract(source);
-  if (contract.state === "patched") return source;
-  if (contract.state === "pristine") {
-    const { disabled, modelExpression } = contract.combinedMatch.groups;
-    const patched = spliceMatch(
-      source,
-      contract.combinedMatch,
-      `${disabled}=/*${COMPILED_UI_MARKER}*/${modelExpression}`,
-    );
-    if (analyzeCompiledCopilotReasoningEffortUiContract(patched).state === "patched") return patched;
-    contract.warning = "Compiled Copilot reasoning effort dropdown patch did not produce one coherent patched contract";
-  }
-  warn(contract.warning, "Copilot reasoning effort dropdown patch");
-  return source;
-}
-
 // --- /reasoning slash command --------------------------------------------------
 
 function analyzeCompiledCopilotReasoningSlashContract(source) {
@@ -451,11 +380,10 @@ module.exports = {
     {
       id: "ui-dropdown",
       name: "copilot-reasoning-effort-ui-dropdown",
-      phase: "webview-asset",
-      assetNeedles: DROPDOWN_NEEDLES,
-      missingDescription: "current reasoning effort dropdown owner",
-      skipDescription: "Copilot reasoning effort dropdown patch",
-      apply: applyCopilotReasoningEffortDropdownPatch,
+      phase: "extracted-app:pre-webview",
+      order: 20580,
+      ciPolicy: "optional",
+      apply: extractedDir=>patchCopilotDropdown(extractedDir,settingsPersistenceState),
     },
     {
       id: "ui-slash-command",
@@ -467,13 +395,11 @@ module.exports = {
       apply: applyCopilotReasoningSlashPatch,
     },
   ],
-  applyCopilotReasoningEffortDropdownPatch,
   applyCopilotReasoningEffortModelListPatch,
   applyCopilotReasoningEffortModelListAppPatch,
   MODEL_LIST_NEEDLES,
   applyCopilotReasoningSlashPatch,
   matchesCopilotModelAndReasoningPersistenceContract,
-  matchesCopilotReasoningEffortDropdownContract,
   matchesCopilotReasoningEffortModelListContract,
   matchesCopilotReasoningSlashContract,
   validateCopilotModelAndReasoningPersistence,
