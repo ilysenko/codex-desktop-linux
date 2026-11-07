@@ -280,6 +280,16 @@ function copyFeatureTo(featuresRoot) {
   fs.cpSync(path.join(__dirname, "patches"), path.join(featureDir, "patches"), { recursive: true });
 }
 
+
+function copyUiFontSizeCommitDependencies(featuresRoot) {
+  const scriptsRoot = path.join(featuresRoot, "..", "scripts");
+  for (const name of ["patches/lib/asset-edits.js", "patches/lib/javascript-syntax.js", "patches/integrity-error.js"]) {
+    const destination = path.join(scriptsRoot, name);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(__dirname, "../../scripts", name), destination);
+  }
+}
+
 function withCapturedWarns(fn) {
   const warnings = [];
   const originalWarn = console.warn;
@@ -1055,6 +1065,7 @@ test("feature settings override the tracked defaults through features.json", () 
     const featuresRoot = path.join(tempDir, "linux-features");
     fs.mkdirSync(featuresRoot, { recursive: true });
     copyFeatureTo(featuresRoot);
+    copyUiFontSizeCommitDependencies(featuresRoot);
     fs.writeFileSync(
       path.join(featuresRoot, "features.json"),
       `${JSON.stringify(
@@ -1246,4 +1257,80 @@ test("unsafe styles warn, stay scoped, and fall back to the default", () => {
   assert.equal(value.includes(unsafeStyle), false);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /^WARN: ui-tweaks sidebar project name style must be a safe CSS declaration list/);
+});
+
+
+test("registered UI font-size descriptor restores its whole four-file cohort after interrupted writes", async (t) => {
+  const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+  const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+  const descriptor = require("./patches/ui-font-size.js").descriptors.find(({ id }) => id === "extended-ui-font-size");
+  t.mock.method(console, "warn", () => {});
+  const snapshot = (root) => {
+    const rows = [];
+    function visit(file, name) {
+      const info = fs.lstatSync(file);
+      rows.push({ name, mode: info.mode & 0o777, directory: info.isDirectory(), bytes: info.isFile() ? fs.readFileSync(file) : null });
+      if (info.isDirectory()) for (const child of fs.readdirSync(file).sort()) visit(path.join(file, child), name ? `${name}/${child}` : child);
+    }
+    visit(root, ""); return rows;
+  };
+  for (const failedIndex of [0, 1, 2, 3]) {
+    await t.test(`write ${failedIndex + 1}`, (t) => {
+      const { extractedDir, targets } = createUiFontSizeExtractedApp();
+      t.after(() => fs.rmSync(extractedDir, { recursive: true, force: true }));
+      targets.forEach((file, index) => fs.chmodSync(file, index % 2 ? 0o640 : 0o600));
+      const before = snapshot(extractedDir);
+      const run = () => {
+        const report = createPatchReport();
+        applyExtractedAppPatchDescriptors(extractedDir, [descriptor], uiFontSizeContext({ max: 32 }), report, "extracted-app:post-webview");
+        assert.equal(report.patches.length, 1);
+        return report.patches[0];
+      };
+      const originalWrite = fs.writeFileSync;
+      let failed = false;
+      const fault = t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+        if (file === targets[failedIndex] && !failed) {
+          failed = true; originalWrite(file, "truncated");
+          throw Error("injected UI font-size write failure");
+        }
+        return originalWrite(file, bytes, ...args);
+      });
+      assert.equal(run().status, "skipped-optional");
+      assert.equal(failed, true);
+      assert.deepEqual(snapshot(extractedDir), before, "every target, unrelated file, directory and mode is restored");
+      fault.mock.restore();
+      const first = run(); assert.equal(first.status, "applied"); assert.ok(!first.warnings?.length);
+      const canonical = snapshot(extractedDir);
+      const second = run(); assert.equal(second.status, "already-applied"); assert.ok(!second.warnings?.length);
+      assert.deepEqual(snapshot(extractedDir), canonical);
+      assert.deepEqual(canonical.map(({ name, mode, directory }) => ({ name, mode, directory })), before.map(({ name, mode, directory }) => ({ name, mode, directory })));
+      for (const target of targets) assert.equal(fontSizeLimitContract(fs.readFileSync(target, "utf8")), "applied");
+    });
+  }
+});
+
+test("registered UI font-size descriptor refuses an unparseable prepared edit without reporting already-applied", (t) => {
+  const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+  const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+  const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
+  const descriptor = require("./patches/ui-font-size.js").descriptors.find(({ id }) => id === "extended-ui-font-size");
+  const { extractedDir, targets } = createUiFontSizeExtractedApp();
+  t.after(() => fs.rmSync(extractedDir, { recursive: true, force: true }));
+  // This parseable regexp has a contract-shaped literal. Inserting the owned
+  // comment would break its parse goal, so the existing commit seam must refuse it.
+  const source = 'const observed=/(limits={sans:{min:11,max:16},code:{min:8,max:24}})/;';
+  assert.equal(javascriptSourceParses(source), true);
+  const prepared = applyUiFontSizePatch(source, uiFontSizeContext({ max: 32 }));
+  assert.notEqual(prepared, source);
+  assert.equal(javascriptSourceParses(prepared), false);
+  fs.writeFileSync(targets[2], source);
+  assert.equal(findUiFontSizeBundles(extractedDir).candidates.length, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+  const before = targets.map(file => ({ file, bytes: fs.readFileSync(file), mode: fs.statSync(file).mode & 0o777 }));
+  t.mock.method(console, "warn", () => {});
+  const report = createPatchReport();
+  applyExtractedAppPatchDescriptors(extractedDir, [descriptor], uiFontSizeContext({ max: 32 }), report, "extracted-app:post-webview");
+  assert.equal(report.patches[0].status, "skipped-optional");
+  assert.deepEqual(targets.map(file => ({ file, bytes: fs.readFileSync(file), mode: fs.statSync(file).mode & 0o777 })), before);
+  const result = applyUiFontSizeAppPatch(extractedDir, uiFontSizeContext({ max: 32 }));
+  assert.equal(result.matched, 0); assert.equal(result.changed, 0);
 });

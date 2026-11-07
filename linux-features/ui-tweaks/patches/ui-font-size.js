@@ -265,12 +265,21 @@ function applyUiFontSizeAppPatch(extractedDir, context = {}) {
     warn(reason);
     return { matched: 0, changed: 0, reason };
   }
-  for (const { filePath, patchedSource } of results) {
-    fs.writeFileSync(filePath, patchedSource, "utf8");
+  // Disabled and canonical feature-only copies do not need patch-engine helpers.
+  const { commitAssetEdits } = require("../../../scripts/patches/lib/asset-edits.js");
+  const committed = commitAssetEdits(extractedDir, results.map(({ filePath, source, patchedSource }) => ({
+    assetName: path.relative(extractedDir, filePath).split(path.sep).join("/"),
+    source,
+    patchedSource,
+  })));
+  if (committed.changed !== EXPECTED_FONT_SIZE_BUNDLE_COUNT) {
+    const reason = "Could not commit every current UI font-size contract";
+    warn(reason);
+    return { matched: 0, changed: 0, reason };
   }
   return {
     matched: EXPECTED_FONT_SIZE_BUNDLE_COUNT,
-    changed: EXPECTED_FONT_SIZE_BUNDLE_COUNT,
+    changed: committed.changed,
     reason: null,
     targets: results.map(({ filePath }) => path.relative(extractedDir, filePath)),
   };
