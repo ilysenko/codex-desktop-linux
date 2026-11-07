@@ -26,8 +26,13 @@ feature to the generated app.
 
 ## What It Patches
 
-- The semantic model-list owner keeps the model's full
-  `supportedReasoningEfforts` list for Copilot auth.
+- The published native model-catalog owner keeps the model's full
+  `supportedReasoningEfforts` list for Copilot auth. Its model, hidden-model,
+  enabled-effort and ultra-effort filters remain in place. Stable catalog
+  inputs identify the owner before and after patching; all physical copies
+  are validated and changed together before any write. An applied state must
+  contain the exact feature contribution at that owner's effort expression;
+  a marker elsewhere does not count.
 - The current dropdown and slash-command owners keep the reasoning effort
   controls and `/reasoning` command enabled when the normal model and effort
   prerequisites are present.
@@ -52,5 +57,8 @@ Or run all feature tests with:
 node --test linux-features/*/test.js
 ```
 
-The patch is fail-soft. If the upstream minified bundle shape changes, the
-build logs a warning and leaves the affected bundle unchanged.
+When enabled, the feature must qualify every required owner. Missing,
+ambiguous, damaged or partially patched model-catalog copies reject the
+candidate before changing any model-list asset. The enabled-feature build
+gate rejects a skipped or failed required descriptor; inspect its patch report
+before retrying against changed upstream source.

@@ -1,5 +1,12 @@
 "use strict";
 
+const path = require("node:path");
+const { inspectModelCatalogOwner } = require("../../scripts/patches/lib/model-composer-owners.js");
+const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
+const {
+  findUniqueRspackModuleCopies, patchRspackModuleCopies, rspackModuleFactories,
+} = require("../../scripts/patches/lib/rspack-module-assets.js");
+
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const NOT_IDENT = "(?![\\w$])";
 const COMPILED_UI_MARKER = "codexLinuxCopilotReasoningEffortUi";
@@ -7,7 +14,8 @@ const MODEL_LIST_MARKER = "codexLinuxCopilotReasoningEffortModelList";
 
 // rspack chunks have no stable filenames, so every owner is found by content.
 const PERSISTENCE_NEEDLES = ["setDefaultModelAndReasoningEffort:", ".setDefaultModelConfig("];
-const MODEL_LIST_NEEDLES = ['description:"medium effort"', "supportedReasoningEfforts"];
+const MODEL_LIST_NEEDLES = ["additionalAvailableModels:", "enabledReasoningEfforts:", "hasConfiguredModelCatalog:", "useHiddenModels:"];
+const MODEL_LIST_DESCRIPTION = "Copilot model reasoning effort catalog";
 const DROPDOWN_NEEDLES = ["reasoningEffortDisabled:", "?.disabledReason!=null"];
 const SLASH_NEEDLES = [
   'id:"composer.reasoningSlashCommand.title"',
@@ -78,45 +86,118 @@ function validateCopilotModelAndReasoningPersistence(source) {
 
 // --- Model catalog ------------------------------------------------------------
 
-function modelListState(source) {
-  const clean = findAllMatches(source, new RegExp(
-    `(?<result>${JS_IDENT})=\\("copilot"===${JS_IDENT}\\?\\[(?<efforts>${JS_IDENT})\\.find\\(` +
-      `(${JS_IDENT})=>"medium"===\\3\\.reasoningEffort\\)\\?\\?` +
-      `\\{reasoningEffort:"medium",description:"medium effort"\\}\\]:\\k<efforts>\\)\\.filter\\(`,
-  ));
-  const patched = findAllMatches(source, new RegExp(
-    `${JS_IDENT}=/\\*${MODEL_LIST_MARKER}\\*/\\[\\.\\.\\.${JS_IDENT}\\]\\.filter\\(`,
-  ));
-  if (clean.length === 1 && patched.length === 0) return { kind: "current", match: clean[0] };
-  if (clean.length === 0 && patched.length === 1) return { kind: "patched" };
-  return { kind: clean.length + patched.length === 0 ? "missing" : "invalid" };
+function modelListMarkerCount(source) {
+  return source.split(MODEL_LIST_MARKER).length - 1;
 }
 
-function matchesCopilotReasoningEffortModelListContract(source) {
-  const { kind } = modelListState(source);
-  return kind === "current" || kind === "patched";
+function identifiesModelList(source) {
+  return source.includes(MODEL_LIST_MARKER) || MODEL_LIST_NEEDLES.every(needle => source.includes(needle));
 }
 
-function applyCopilotReasoningEffortModelListPatch(source) {
-  const state = modelListState(source);
-  if (state.kind === "patched") return source;
-  if (state.kind === "current") {
-    const { result, efforts } = state.match.groups;
-    // Copilot keeps every effort the model advertises instead of a single
-    // synthetic "medium" entry; the upstream enabled-effort filter still runs.
-    return spliceMatch(
-      source,
-      state.match,
-      `${result}=/*${MODEL_LIST_MARKER}*/[...${efforts}].filter(`,
-    );
+function requireModelListRegistry(source) {
+  const headers = [...source.matchAll(/\bexport\s+const\s+__webpack_modules__\s*=\s*\{/gu)];
+  if (headers.length !== 1) throw new Error(`Missing or ambiguous ${MODEL_LIST_DESCRIPTION} registry`);
+  const [header] = headers;
+  const prefix = createJavaScriptLexicalIndex(source.slice(0, header.index + header[0].length));
+  if (!prefix.isRoot(header.index)) throw new Error(`Opaque or nested ${MODEL_LIST_DESCRIPTION} registry`);
+}
+
+function inspectModelList(module) {
+  const owner = inspectModelCatalogOwner(module);
+  if (!owner.ok) throw new Error(`Unsupported ${MODEL_LIST_DESCRIPTION}: ${owner.reason}`);
+  const { sourceEfforts, filteredEfforts, enabledFilter, sourceRange } = owner.normalization;
+  const source = module.moduleSource;
+  const sourceExpression = source.slice(sourceRange.start, sourceRange.end);
+  const effort = new RegExp(`\\.filter\\(\\(\\{reasoningEffort:(${JS_IDENT})\\}\\)=>"ultra"!==\\1\\)$`).exec(sourceExpression)?.[1];
+  const captured = [owner.inputs.auth, owner.inputs.ultra, owner.inputs.enabled];
+  const outputRange = owner.normalization.outputRange;
+  const ifOpen = owner.visibility.call.end + 1;
+  if (source.slice(owner.visibility.call.end, sourceRange.start) !== "){let " ||
+      owner.visibility.owner.start !== owner.loop.range.end ||
+      createJavaScriptLexicalIndex(source).matchingBrace(ifOpen) !== outputRange.end ||
+      source.slice(sourceRange.end, enabledFilter.start) !== "," ||
+      source.slice(enabledFilter.end, outputRange.start) !== ",") {
+    throw new Error(`Unsupported ${MODEL_LIST_DESCRIPTION} normalization flow`);
   }
-  warn(
-    state.kind === "invalid"
-      ? "Found ambiguous Copilot model reasoning effort filters"
-      : "Could not find current Copilot model reasoning effort filter",
-    "Copilot reasoning effort model list patch",
-  );
-  return source;
+  if (effort == null || captured.includes(owner.loop.model) ||
+      new Set([sourceEfforts, filteredEfforts, owner.normalization.output]).size !== 3 ||
+      [sourceEfforts, filteredEfforts, owner.normalization.output].some(name => captured.includes(name) || name === owner.loop.model)) {
+    throw new Error(`Unsupported ${MODEL_LIST_DESCRIPTION} effort bindings`);
+  }
+  // The branch and its inverse use the same current compiler-local effort
+  // binding already established by the native ultra filter. A marker alone
+  // cannot claim an applied state or choose a different model/auth input.
+  const native = `("copilot"===${owner.inputs.auth}?[${sourceEfforts}.find(${effort}=>"medium"===${effort}.reasoningEffort)??{reasoningEffort:"medium",description:"medium effort"}]:${sourceEfforts})`;
+  const contribution = `/*${MODEL_LIST_MARKER}*/[...${sourceEfforts}]`;
+  const filter = source.slice(enabledFilter.start, enabledFilter.end);
+  const prefix = `${filteredEfforts}=`;
+  const suffix = filter.slice(filter.lastIndexOf(".filter("));
+  const current = prefix + native + suffix;
+  const patched = prefix + contribution + suffix;
+  const applied = filter === patched && modelListMarkerCount(source) === 1;
+  if (!applied && (filter !== current || modelListMarkerCount(source) !== 0)) {
+    throw new Error(`Unsupported or noncanonical ${MODEL_LIST_DESCRIPTION} effort filter`);
+  }
+  if (applied) {
+    const inverse = source.slice(0, enabledFilter.start) + current + source.slice(enabledFilter.end);
+    if (!inspectModelCatalogOwner({ ...module, moduleSource: inverse }).ok ||
+        modelListMarkerCount(inverse) !== 0) throw new Error(`Invalid ${MODEL_LIST_DESCRIPTION} inverse`);
+  }
+  return { applied, range: enabledFilter, patched };
+}
+
+function patchModelListFactory(source, snapshot) {
+  const module = { ...snapshot, moduleSource: source };
+  const state = inspectModelList(module);
+  if (state.applied) return source;
+  const patched = source.slice(0, state.range.start) + state.patched + source.slice(state.range.end);
+  if (!inspectModelList({ ...module, moduleSource: patched }).applied) {
+    throw new Error(`Incomplete ${MODEL_LIST_DESCRIPTION} insertion`);
+  }
+  return patched;
+}
+
+function applyCopilotReasoningEffortModelListPatch(source, context = {}) {
+  if (context.factorySnapshot != null) {
+    if (context.factorySnapshot.moduleSource !== source) throw new Error("Stale Copilot model catalog factory snapshot");
+    return patchModelListFactory(source, context.factorySnapshot);
+  }
+  requireModelListRegistry(source);
+  const candidates = [...rspackModuleFactories(source, "copilot-model-catalog.js")]
+    .filter(module => identifiesModelList(module.moduleSource) && inspectModelCatalogOwner(module).ok);
+  if (candidates.length !== 1) throw new Error(`Missing or ambiguous ${MODEL_LIST_DESCRIPTION} factory`);
+  const [module] = candidates;
+  if (modelListMarkerCount(source) !== modelListMarkerCount(module.moduleSource)) {
+    throw new Error(`Orphan ${MODEL_LIST_DESCRIPTION} marker`);
+  }
+  return source.slice(0, module.start) + patchModelListFactory(module.moduleSource, module) + source.slice(module.end);
+}
+
+function matchesCopilotReasoningEffortModelListContract(source, context = {}) {
+  try { applyCopilotReasoningEffortModelListPatch(source, context); return true; }
+  catch { return false; }
+}
+
+function applyCopilotReasoningEffortModelListAppPatch(extractedDir, _context = {}, options = {}) {
+  const assets = path.join(extractedDir, "webview", "assets"), markerAssets = new Set();
+  const copies = findUniqueRspackModuleCopies(assets, {
+    description: MODEL_LIST_DESCRIPTION,
+    sourceMatch(source, name) {
+      if (source.includes(MODEL_LIST_MARKER)) markerAssets.add(name);
+      return identifiesModelList(source);
+    },
+    matchModule: (source, module) => identifiesModelList(source) && inspectModelCatalogOwner(module).ok,
+  });
+  for (const copy of copies) {
+    requireModelListRegistry(copy.source);
+    inspectModelList(copy);
+    if (modelListMarkerCount(copy.source) !== modelListMarkerCount(copy.moduleSource)) {
+      throw new Error(`Orphan ${MODEL_LIST_DESCRIPTION} marker`);
+    }
+    markerAssets.delete(copy.assetName);
+  }
+  if (markerAssets.size > 0) throw new Error(`Orphan ${MODEL_LIST_DESCRIPTION} marker in ${[...markerAssets].join(", ")}`);
+  return patchRspackModuleCopies(assets, copies, patchModelListFactory, options);
 }
 
 // --- Composer reasoning effort dropdown --------------------------------------
@@ -263,11 +344,10 @@ module.exports = {
     {
       id: "model-list",
       name: "copilot-reasoning-effort-model-list",
-      phase: "webview-asset",
-      assetNeedles: MODEL_LIST_NEEDLES,
-      missingDescription: "model list bundle",
-      skipDescription: "Copilot reasoning effort model list patch",
-      apply: applyCopilotReasoningEffortModelListPatch,
+      phase: "extracted-app:pre-webview",
+      order: 20570,
+      ciPolicy: "optional",
+      apply: applyCopilotReasoningEffortModelListAppPatch,
     },
     {
       id: "ui-dropdown",
@@ -290,6 +370,8 @@ module.exports = {
   ],
   applyCopilotReasoningEffortDropdownPatch,
   applyCopilotReasoningEffortModelListPatch,
+  applyCopilotReasoningEffortModelListAppPatch,
+  MODEL_LIST_NEEDLES,
   applyCopilotReasoningSlashPatch,
   matchesCopilotModelAndReasoningPersistenceContract,
   matchesCopilotReasoningEffortDropdownContract,
