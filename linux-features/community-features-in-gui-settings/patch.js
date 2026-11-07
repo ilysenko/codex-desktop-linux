@@ -8,6 +8,8 @@ const { buildCatalog, CATALOG_ASSET } = require("./catalog.js");
 const { loadLocaleResources, createTranslator } = require("./i18n.js");
 const { patchStatusFromChange } = require("../../scripts/lib/patch-report.js");
 const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
+const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
+const { PatchIntegrityError } = require("../../scripts/patches/integrity-error.js");
 
 const UI = "codexLinuxCommunityFeaturesInGuiSettings";
 const ID = "[A-Za-z_$][\\w$]*";
@@ -171,8 +173,63 @@ function applySettingsPatch(extractedDir, context = {}) {
     source.slice(contract.renderInsertAt, contract.componentInsertAt) + component +
     source.slice(contract.componentInsertAt);
   // Resolve and validate every contract before writing either generated asset.
-  fs.writeFileSync(snapshotPath, snapshot);
-  fs.writeFileSync(path.join(assetsDir, name), patched);
+  // The snapshot is new, while General is an existing asset. Own the new
+  // inode exclusively and let the shared existing-file transaction restore
+  // General before removing our snapshot if either write fails.
+  const snapshotFd = fs.openSync(snapshotPath, "wx");
+  let snapshotIdentity, generalCommitted = false;
+  const verifySnapshot = () => {
+    const written = fs.lstatSync(snapshotPath);
+    if (!written.isFile() || written.dev !== snapshotIdentity.dev || written.ino !== snapshotIdentity.ino ||
+        fs.readFileSync(snapshotPath, "utf8") !== snapshot) {
+      throw Error("community-features-in-gui-settings: catalog snapshot write verification failed");
+    }
+  };
+  try {
+    try {
+      snapshotIdentity = fs.fstatSync(snapshotFd);
+      fs.writeFileSync(snapshotFd, snapshot);
+    } finally {
+      fs.closeSync(snapshotFd);
+    }
+    verifySnapshot();
+    const result = commitAssetEdits(assetsDir, [{ assetName: name, source, patchedSource: patched }]);
+    if (result.changed !== 1) throw Error("community-features-in-gui-settings: General settings write was refused");
+    generalCommitted = true;
+    verifySnapshot();
+  } catch (error) {
+    const rollbackErrors = [];
+    if (generalCommitted) {
+      try {
+        const restored = commitAssetEdits(assetsDir, [{ assetName: name, source: patched, patchedSource: source }]);
+        if (restored.changed !== 1) throw Error("General settings rollback was refused");
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    try {
+      const current = fs.lstatSync(snapshotPath);
+      if (!snapshotIdentity || !current.isFile() || current.dev !== snapshotIdentity.dev || current.ino !== snapshotIdentity.ino) {
+        throw Error("catalog snapshot ownership changed before rollback");
+      }
+      fs.unlinkSync(snapshotPath);
+      try {
+        fs.lstatSync(snapshotPath);
+        throw Error("catalog snapshot still exists after rollback");
+      } catch (verificationError) {
+        if (verificationError.code !== "ENOENT") throw verificationError;
+      }
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    if (rollbackErrors.length > 0) {
+      throw new PatchIntegrityError(
+        `Community catalog patch could not restore its asset cohort: ${rollbackErrors.map((problem) => problem.message).join("; ")}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   return { changed: true, catalogWarnings };
 }
 

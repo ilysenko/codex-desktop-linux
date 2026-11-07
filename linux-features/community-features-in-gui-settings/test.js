@@ -1219,3 +1219,139 @@ test("Gentoo source rebuilds refresh the ASAR catalog without persisting a build
   assert.equal(second.features.find(feature => feature.id === "plain").subfeatures[0].enabled, false);
   assert.equal(second.features.some(feature => feature.origin === "local"), false);
 });
+
+
+test("registered catalog settings restore the absent snapshot and General bytes after interrupted writes", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  for (const failedRole of ["snapshot", "snapshot readback", "settings"]) {
+    await t.test(failedRole, (t) => {
+      const f = fixture(t), snapshot = path.join(f.app, CATALOG_ASSET);
+      fs.chmodSync(f.target, 0o640);
+      const before = fs.readFileSync(f.target), names = fs.readdirSync(f.assets, { recursive: true }).sort();
+      const run = () => {
+        const report = createPatchReport();
+        applyExtractedAppPatchDescriptors(f.app, descriptors, f.context, report, "extracted-app:post-webview");
+        return report.patches[0].status;
+      };
+      const originalWrite = fs.writeFileSync;
+      let failed = false, snapshotFd;
+      const fault = t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+        const isTarget = failedRole === "settings" ? file === f.target : file === snapshot || Number.isInteger(file);
+        if (isTarget && !failed) {
+          failed = true;
+          if (Number.isInteger(file)) snapshotFd = file;
+          originalWrite(file, "truncated");
+          if (failedRole === "snapshot readback") return;
+          throw Error("injected catalog settings write failure");
+        }
+        return originalWrite(file, bytes, ...args);
+      });
+      assert.equal(run(), "skipped-optional");
+      assert.equal(failed, true);
+      if (snapshotFd != null) assert.throws(() => fs.fstatSync(snapshotFd), { code: "EBADF" });
+      assert.deepEqual(fs.readFileSync(f.target), before);
+      assert.equal(fs.statSync(f.target).mode & 0o777, 0o640);
+      assert.equal(fs.existsSync(snapshot), false, "failed patch cannot leave a new snapshot behind");
+      assert.deepEqual(fs.readdirSync(f.assets, { recursive: true }).sort(), names);
+      fault.mock.restore();
+      assert.equal(run(), "applied");
+      assert.equal(run(), "already-applied");
+      assert.equal(fs.statSync(f.target).mode & 0o777, 0o640);
+      assert.deepEqual(JSON.parse(fs.readFileSync(snapshot, "utf8")), buildCatalog(f.context));
+    });
+  }
+});
+
+
+test("catalog snapshot rollback failures remain fatal at the registered descriptor boundary", (t) => {
+  const f = fixture(t), snapshot = path.join(f.app, CATALOG_ASSET), original = fs.readFileSync(f.target);
+  t.mock.method(console, "warn", () => {});
+  const originalWrite = fs.writeFileSync, originalUnlink = fs.unlinkSync;
+  t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+    if (file === f.target) throw Error("injected General write failure");
+    return originalWrite(file, bytes, ...args);
+  });
+  const removal = t.mock.method(fs, "unlinkSync", (file) => {
+    if (file === snapshot) throw Error("injected snapshot removal failure");
+    return originalUnlink(file);
+  });
+  assert.throws(() => applyExtractedAppPatchDescriptors(f.app, descriptors, f.context,
+    createPatchReport(), "extracted-app:post-webview"), { code: "PATCH_INTEGRITY_FAILURE" });
+  assert.deepEqual(fs.readFileSync(f.target), original);
+  assert.equal(fs.existsSync(snapshot), true);
+  removal.mock.restore();
+});
+
+test("exclusive snapshot creation preserves an unexpected existing snapshot", (t) => {
+  const f = fixture(t), snapshot = path.join(f.app, CATALOG_ASSET), original = fs.readFileSync(f.target);
+  fs.writeFileSync(snapshot, "existing snapshot");
+  assert.throws(() => applySettingsPatch(f.app, f.context), /unexpected catalog asset/);
+  assert.equal(fs.readFileSync(snapshot, "utf8"), "existing snapshot");
+  assert.deepEqual(fs.readFileSync(f.target), original);
+});
+
+
+test("catalog rollback preserves a concurrently replaced snapshot and reports integrity failure", (t) => {
+  const f = fixture(t), snapshot = path.join(f.app, CATALOG_ASSET), original = fs.readFileSync(f.target);
+  t.mock.method(console, "warn", () => {});
+  const originalWrite = fs.writeFileSync;
+  let replaced = false;
+  t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+    if (file === f.target && !replaced) {
+      replaced = true;
+      originalWrite(file, "truncated");
+      // Keep the owned inode alive so the replacement cannot reuse its ID.
+      fs.renameSync(snapshot, `${snapshot}.previous`);
+      originalWrite(snapshot, "concurrent snapshot", { flag: "wx" });
+      throw Error("injected concurrent snapshot replacement");
+    }
+    return originalWrite(file, bytes, ...args);
+  });
+  assert.throws(() => applyExtractedAppPatchDescriptors(f.app, descriptors, f.context,
+    createPatchReport(), "extracted-app:post-webview"), { code: "PATCH_INTEGRITY_FAILURE" });
+  assert.equal(replaced, true);
+  assert.deepEqual(fs.readFileSync(f.target), original);
+  assert.equal(fs.readFileSync(snapshot, "utf8"), "concurrent snapshot");
+});
+
+
+test("catalog final verification restores General when its writer returns after snapshot replacement", (t) => {
+  const f = fixture(t), snapshot = path.join(f.app, CATALOG_ASSET), original = fs.readFileSync(f.target);
+  t.mock.method(console, "warn", () => {});
+  const originalWrite = fs.writeFileSync;
+  let replaced = false;
+  t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+    if (file === f.target && !replaced) {
+      replaced = true;
+      fs.renameSync(snapshot, `${snapshot}.previous`);
+      originalWrite(snapshot, "concurrent final snapshot", { flag: "wx" });
+    }
+    return originalWrite(file, bytes, ...args);
+  });
+  assert.throws(() => applyExtractedAppPatchDescriptors(f.app, descriptors, f.context,
+    createPatchReport(), "extracted-app:post-webview"), { code: "PATCH_INTEGRITY_FAILURE" });
+  assert.equal(replaced, true);
+  assert.deepEqual(fs.readFileSync(f.target), original);
+  assert.equal(fs.readFileSync(snapshot, "utf8"), "concurrent final snapshot");
+});
+
+
+test("catalog final content verification rolls back both owned assets after silent corruption", (t) => {
+  const f = fixture(t), snapshot = path.join(f.app, CATALOG_ASSET), original = fs.readFileSync(f.target);
+  t.mock.method(console, "warn", () => {});
+  const originalWrite = fs.writeFileSync;
+  let corrupted = false;
+  t.mock.method(fs, "writeFileSync", (file, bytes, ...args) => {
+    if (file === f.target && !corrupted) {
+      corrupted = true;
+      originalWrite(snapshot, "silently corrupted catalog");
+    }
+    return originalWrite(file, bytes, ...args);
+  });
+  const report = createPatchReport();
+  applyExtractedAppPatchDescriptors(f.app, descriptors, f.context, report, "extracted-app:post-webview");
+  assert.equal(report.patches[0].status, "skipped-optional");
+  assert.equal(corrupted, true);
+  assert.deepEqual(fs.readFileSync(f.target), original);
+  assert.equal(fs.existsSync(snapshot), false);
+});
