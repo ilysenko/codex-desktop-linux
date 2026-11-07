@@ -142,7 +142,7 @@ test("feature is disabled by default and integrates with chunk reports and drift
   assert.equal(enabledFeatureFailuresFromReport(drift).length, 1);
 });
 
-test("current signed official owner patches once and the complete chunk still parses", {
+test("current signed official fork placement advances only after the sidebar fallback", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, () => {
   const dir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
@@ -157,6 +157,55 @@ test("current signed official owner patches once and the complete chunk still pa
   assert.equal(patched.replace('checkGate("codex-app-server-custom-sections")??!1',
     'checkGate("codex-app-server-custom-sections")'), source);
   assert.equal(applyForkSidebarFallback(patched), patched);
+
+  // Execute the shipped reader and placement function together, rather than
+  // recreating the readiness condition in a fixture.
+  const ident = String.raw`[A-Za-z_$][\w$]*`;
+  const readerPattern = new RegExp(
+    String.raw`read:(?<key>${ident})=>\((?<assertCurrent>${ident})\(\),"sidebarCustomSectionsEnabled"===\k<key>\)` +
+      String.raw`\?null!=(?<accountId>${ident})\(\):(?<evaluations>${ident})\.getReadyClient\(\)` +
+      String.raw`\?\.checkGate\("codex-app-server-custom-sections"\)(?:\?\?!1)?`,
+    "g",
+  );
+  const placementMatches = [...source.matchAll(new RegExp(
+    String.raw`readPlacement:${ident}=>\((?<placement>function\([^)]*\)\{.*?)\)\(${ident},${ident}\),prependProjectThread:`,
+    "gs",
+  ))];
+  assert.equal(placementMatches.length, 1);
+  const placementSource = placementMatches[0].groups.placement;
+  const schemaNames = [...new Set([...placementSource.matchAll(new RegExp(
+    String.raw`(${ident})\.(?:safeParse|object)\(`, "g",
+  ))].map((match) => match[1]))];
+  assert.equal(schemaNames.length, 2);
+  const schema = {
+    safeParse: (value) => ({ data: value }),
+    optional: () => ({}),
+    object: () => schema,
+  };
+  const readPlacement = Function(...schemaNames, `return (${placementSource})`)(...schemaNames.map(() => schema));
+  for (const [candidate, expected] of [[source, "not-ready"], [patched, "ready"]]) {
+    const readers = [...candidate.matchAll(readerPattern)];
+    assert.equal(readers.length, 1);
+    const [reader] = readers;
+    const { assertCurrent, accountId, evaluations } = reader.groups;
+    const read = Function(assertCurrent, accountId, evaluations, `return ({${reader[0]}}).read`)(
+      () => {}, () => null, { getReadyClient: () => undefined },
+    );
+    const storageReads = [];
+    const result = readPlacement({
+      readSetting: read,
+      accountId: () => null,
+      storage: { readValue(key) { storageReads.push(key); } },
+    }, "source-thread");
+    assert.equal(result.status, expected);
+    if (expected === "not-ready") {
+      assert.equal(result.reason, "execution-config-loading");
+      assert.deepEqual(storageReads, []);
+    } else {
+      assert.deepEqual(result.placement, { prependToManualProject: false, customSection: null });
+      assert.deepEqual(storageReads, ["codex-sidebar-sort-mode-v1", "flat-project-sidebar-preferences-v1"]);
+    }
+  }
   const syntax = spawnSync(process.execPath, ["--check"], { input: patched, encoding: "utf8" });
   assert.equal(syntax.status, 0, syntax.stderr);
 });

@@ -46,6 +46,12 @@ CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted-official-asar \
   node --test linux-features/fork-sidebar-fallback/test.js
 ```
 
+The signed-bundle regression executes the actual background settings reader
+and fork placement function together. Without a ready rollout client, the
+unmodified code must report `execution-config-loading` before reading saved
+placement. With the fallback, the same function must return a ready placement.
+It also checks that the complete patched owner chunk still parses.
+
 Retire this workaround when the current signed stable official package returns
 a boolean for the background sidebar rollout without a ready client. Disabling
 the feature and rebuilding restores the upstream behavior.
