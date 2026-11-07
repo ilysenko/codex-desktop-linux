@@ -1968,6 +1968,7 @@ function createSettingsRuntime(host) {
   return {
     controller,
     requests,
+    root,
     toggle: root.find((node) => node.attributes.role === "switch"),
     range: root.find((node) => node.attributes.type === "range"),
     error: root.find((node) => node.className === "codex-linux-read-aloud-settings-error"),
@@ -2548,4 +2549,44 @@ test("assistant full delegate chunk Symbol authority permits opaque data and unr
     assert.equal(fixture.runAssistant().status, "already-applied", prefix);
     assert.equal(fs.readFileSync(delegate, "utf8"), source, prefix);
   }
+});
+
+
+test("independent Read Aloud settings reopen reads confirmed preferences without starting setup", async () => {
+  const enabledKey = "codex-linux-read-aloud-enabled", speedKey = "codex-linux-read-aloud-kokoro-speed";
+  const saved = new Map([[enabledKey, false], [speedKey, 1.05]]), writes = [];
+  const host = async (body) => {
+    assert([enabledKey, speedKey].includes(body.key));
+    if (body.action === "get-setting") return { value: saved.get(body.key) };
+    assert.equal(body.action, "set-setting");
+    writes.push({ ...body });
+    saved.set(body.key, body.value);
+    return { success: true, value: body.value };
+  };
+  const first = createSettingsRuntime(host);
+  await first.controller.load;
+  assert.equal(first.setupControls.hidden, true);
+  assert(first.root.find((node) => node.textContent.includes("Message speech buttons work independently.")));
+  first.toggle.fire("click");
+  await settlePromises();
+  first.range.value = "1.35";
+  first.range.fire("change");
+  await settlePromises();
+  assert.deepEqual(writes, [
+    { action: "set-setting", key: enabledKey, value: true },
+    { action: "set-setting", key: speedKey, value: 1.35 },
+  ]);
+  const reopened = createSettingsRuntime(host);
+  await reopened.controller.load;
+  assert.equal(reopened.toggle.getAttribute("aria-checked"), "true");
+  assert.equal(reopened.range.value, "1.35");
+  assert.equal(reopened.setupControls.hidden, false);
+  assert(reopened.requests.every((body) => body.action === "get-setting"), "opening settings does not choose or download a voice");
+  reopened.toggle.fire("click");
+  await settlePromises();
+  const final = createSettingsRuntime(host);
+  await final.controller.load;
+  assert.equal(final.toggle.getAttribute("aria-checked"), "false");
+  assert.equal(final.setupControls.hidden, true);
+  assert.equal(final.range.value, "1.35");
 });

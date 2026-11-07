@@ -37,7 +37,9 @@ Settings > General gets a **Read Aloud** section. Its toggle and pace are
 stored in the same Linux `settings.json` that the main-process helper reads
 (`codex-linux-read-aloud-enabled` and `codex-linux-read-aloud-kokoro-speed`),
 and it has setup controls for machines where the default Kokoro paths are not
-ready:
+ready. The toggle controls speech requests from integrations and the visibility
+of setup controls. Message speech buttons are explicit actions and work
+independently of this preference:
 
 - `Choose folder` stores a folder that already contains `kokoro-v1.0.onnx` and
   `voices-v1.0.bin`.
