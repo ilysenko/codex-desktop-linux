@@ -14,7 +14,7 @@ const { applyExtractedAppPatchDescriptors, normalizeDescriptor } = require("../.
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const { loadLinuxFeaturePatchDescriptors, stageEnabledLinuxFeatureInstall } = require("../../scripts/lib/linux-features.js");
 const {
-  SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY, ROUTE_URL, applyMainPatch, applyMainToExtractedApp, applySettingsPatch, settingComponent,
+  SETTINGS_KEY, BOOT_ONLY_SETTINGS_KEY, ROUTE_URL, applyMainPatch, applyMainToExtractedApp, applySettingsPatch, settingsContract, settingComponent,
   settingsPostSource, codexLinuxStartMinimizedRoute,
   codexLinuxStartMinimizedTrayReady, codexLinuxStartMinimizedAutostart,
   LABEL_IDS, LABEL_TRANSLATIONS, DESCRIPTION_IDS, DESCRIPTION_TRANSLATIONS,
@@ -831,20 +831,128 @@ test("the settings client times out and forgets an unanswered request", async ()
   harness.deliver({ type: "fetch-response", responseType: "success", requestId: harness.sent[0].requestId, bodyJsonString: "{}" });
 });
 
-function componentHarness(post, bootOnly = false, platform = "linux", messages = {}) {
-  const state = [], effects = [];
+
+// A test-only seam: bind roles captured from one actual factory, then execute
+// only our generated setting component. No native factory is evaluated.
+function settingsReferenceParts(reference) {
+  const call = /^\(0,([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\)$/.exec(reference);
+  const value = call?.[1] ?? reference;
+  assert.match(value, /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/);
+  return value.split(".");
+}
+
+function settingsRoleContext(contract, roles) {
+  const context = {};
+  for (const [role, stub] of Object.entries(roles)) {
+    const parts = settingsReferenceParts(contract[role]);
+    let owner = context;
+    for (const part of parts.slice(0, -1)) owner = owner[part] ??= {};
+    assert.equal(Object.hasOwn(owner, parts.at(-1)), false, `colliding role ${role}`);
+    owner[parts.at(-1)] = stub;
+  }
+  return context;
+}
+
+function qualifiedSettingsContract(source) {
+  const { rspackModuleFactories, findRspackRequireBinding } = require("../../scripts/patches/lib/rspack-module-assets.js");
+  const contract = settingsContract(source);
+  assert.ok(contract, "native General setting contract");
+  const owners = [...rspackModuleFactories(source, "selected General text")]
+    .filter(module => module.start < contract.ownerEnd && contract.ownerEnd <= module.end);
+  assert.equal(owners.length, 1, "one native factory owns every captured role");
+  for (const role of ["row", "toggle", "react", "platformHook", "jsx", "intlHook"]) {
+    const root = settingsReferenceParts(contract[role])[0];
+    assert.ok(findRspackRequireBinding(owners[0], root), `factory-root import for ${role}`);
+  }
+  return contract;
+}
+
+function selectedSettingsGeneralSource() {
+  const file = process.env.CODEX_SIGNED_SETTINGS_GENERAL_ASSET;
+  assert.ok(file);
+  const info = fs.lstatSync(file);
+  assert.ok(info.isFile() && !info.isSymbolicLink());
+  assert.ok(info.size <= 512 * 1024, "selected General text must stay within512KiB");
+  return fs.readFileSync(file, "utf8");
+}
+
+function renamedSettingsFixture() {
+  const aliases = { n: "jsxRuntime", m: "reactRuntime", P: "rowRuntime", N: "toggleRuntime", ed: "platformRuntime", b: "localeRuntime" };
+  return settingsFixture().replace(/\b(?:n|m|P|N|ed|b)\b/g, name => aliases[name]);
+}
+
+function componentHarness(post, bootOnly = false, platform = "linux", messages = {}, contract = settingsContract(settingsFixture())) {
+  const state = [], effects = [], cleanups = [], setterCalls = [];
   let cursor = 0, mounted = false;
   const React = {
-    useState(initial) { const index = cursor++; if (!(index in state)) state[index] = initial; return [state[index], v => { state[index] = v; }]; },
+    useState(initial) { const index = cursor++; if (!(index in state)) state[index] = typeof initial === "function" ? initial() : initial; return [state[index], v => { setterCalls.push({ index, value: v }); state[index] = typeof v === "function" ? v(state[index]) : v; }]; },
     useEffect(callback) { if (!mounted) effects.push(callback); },
   };
-  const context = { React, platformHook: () => ({ platform }),
-    intlHook: () => ({ formatMessage: ({ id, defaultMessage }) => messages[id] ?? defaultMessage }),
-    j: { jsx: (type, props) => ({ type, props }) }, Row: "row", Toggle: "toggle", codexLinuxStartMinimizedPost: post };
-  const renderFn = vm.runInNewContext(`${settingComponent({row:"Row",toggle:"Toggle",react:"React",platformHook:"platformHook",jsx:"j",intlHook:"intlHook"}, bootOnly)};${bootOnly ? "codexLinuxStartMinimizedBootOnlySetting" : "codexLinuxStartMinimizedSetting"}`, context);
+  const context = {
+    ...settingsRoleContext(contract, { react: React, platformHook: () => ({ platform }),
+      intlHook: () => ({ formatMessage: ({ id, defaultMessage }) => messages[id] ?? defaultMessage }),
+      jsx: { jsx: (type, props) => ({ type, props }) }, row: "row", toggle: "toggle" }),
+    codexLinuxStartMinimizedPost: post,
+  };
+  const renderFn = vm.runInNewContext(`${settingComponent(contract, bootOnly)};${bootOnly ? "codexLinuxStartMinimizedBootOnlySetting" : "codexLinuxStartMinimizedSetting"}`, context);
   const render = () => { cursor = 0; const result = renderFn(); mounted = true; return result; };
-  return { render, load: async () => { effects.forEach(callback => callback()); await new Promise(resolve => setImmediate(resolve)); } };
+  return { render,
+    load: async () => { effects.splice(0).forEach(callback => cleanups.push(callback())); await new Promise(resolve => setImmediate(resolve)); },
+    unmount() { cleanups.splice(0).forEach(cleanup => cleanup?.()); },
+    stateValues() { return [...state]; },
+    stateSetterCalls() { return [...setterCalls]; },
+  };
 }
+
+async function qualifyTraySettingBehavior(contract) {
+  const values = new Map([[SETTINGS_KEY, false], [BOOT_ONLY_SETTINGS_KEY, false]]), transport = postHarness();
+  const held = []; let holdWrites = false, failWrites = false;
+  const store = { get: key => values.get(key), set: (key, value) => { if (failWrites) throw Error("disk full"); values.set(key, value); } };
+  const deliver = payload => codexLinuxStartMinimizedRoute(payload, store, transport.deliver);
+  const post = body => { const pending = transport.post(body), payload = transport.sent.at(-1); if (holdWrites && body.action === "set") held.push(payload); else queueMicrotask(() => deliver(payload)); return pending; };
+  const first = componentHarness(post, false, "linux", {}, contract), second = componentHarness(post, true, "linux", {}, contract);
+  for (const harness of [first, second]) {
+    const row = harness.render(); assert.equal(row.type, "row"); assert.equal(row.props.control.type, "toggle");
+    assert.equal(row.props.control.props.disabled, true); await harness.load();
+    assert.equal(harness.render().props.control.props.checked, false);
+  }
+  holdWrites = true;
+  const saving = first.render().props.control.props.onChange(true);
+  assert.equal(first.render().props.control.props.disabled, true);
+  assert.equal(second.render().props.control.props.disabled, false);
+  assert.equal(second.render().props.control.props.checked, false);
+  assert.equal(held.length, 1); deliver(held.shift()); await saving;
+  assert.equal(values.get(SETTINGS_KEY), true); assert.equal(values.get(BOOT_ONLY_SETTINGS_KEY), false);
+  assert.equal(first.render().props.control.props.disabled, false);
+  holdWrites = false; await second.render().props.control.props.onChange(true);
+  assert.equal(values.get(SETTINGS_KEY), true); assert.equal(values.get(BOOT_ONLY_SETTINGS_KEY), true);
+  first.unmount(); second.unmount();
+  for (const bootOnly of [false, true]) {
+    const reopened = componentHarness(post, bootOnly, "linux", {}, contract);
+    reopened.render(); await reopened.load(); assert.equal(reopened.render().props.control.props.checked, true);
+    failWrites = true; await reopened.render().props.control.props.onChange(false);
+    const row = reopened.render(); assert.equal(row.props.control.props.checked, true);
+    assert.equal(row.props.control.props.disabled, false); assert.match(row.props.description, /disk full/);
+    failWrites = false; reopened.unmount();
+  }
+  let resolveRead;
+  const late = componentHarness(() => new Promise(resolve => { resolveRead = resolve; }), false, "linux", {}, contract);
+  late.render(); const loading = late.load(), before = late.stateValues(), beforeCalls = late.stateSetterCalls();
+  late.unmount(); resolveRead({ value: true });
+  await loading; await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(late.stateValues(), before, "late get cannot update an unmounted setting");
+  assert.deepEqual(late.stateSetterCalls(), beforeCalls, "production cleanup prevents late setter calls");
+  const otherPlatform = componentHarness(post, false, "macOS", {}, contract);
+  assert.equal(otherPlatform.render(), null); otherPlatform.unmount();
+}
+
+test("foundation General roles drive both tray preferences through their route with renamed aliases", async () => {
+  for (const source of [settingsFixture(), renamedSettingsFixture()]) await qualifyTraySettingBehavior(qualifiedSettingsContract(source));
+});
+
+test("foundation current General roles drive tray setting behavior without evaluating its factory", {
+  skip: !process.env.CODEX_SIGNED_SETTINGS_GENERAL_ASSET,
+}, async () => qualifyTraySettingBehavior(qualifiedSettingsContract(selectedSettingsGeneralSource())));
 
 test("General toggle loads and persists the profile preference, and disables while pending", async () => {
   for (const bootOnly of [false, true]) {
