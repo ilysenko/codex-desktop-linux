@@ -21,6 +21,7 @@ const {
 } = require("./patch.js");
 const {
   applyWebviewAssetPatchDescriptors,
+  applyExtractedAppPatchDescriptors,
   normalizePatchDescriptors,
 } = require("../../scripts/patches/engine.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
@@ -1352,48 +1353,341 @@ test("assistant runtime descriptor targets the current assistant render chunk by
 });
 
 function runtimeEntryFixture(id = 348410) {
-  return `var e,a,c,u={Gav4(e,a,c){let f="codex-host-chunked-message-v1"}};import*as k from"./782259.9dd29a0a62.js";p.C(k);var O=p.O(void 0,["782259"],()=>p("R2r9"));p.O(O);export{v as __webpack_require__};\n//# sourceMappingURL=${id}.09aab3f377.js.map`;
+  return 'var cache={},modules={Main(e,t,r){t.ready=true},Gav4(e,t,r){let marker="codex-host-chunked-message-v1";r.d(t,{},{I:marker,Z:function(message){return "marker"in message&&message.marker===marker&&"transferId"in message&&"sequence"in message&&Number.isSafeInteger(message.sequence)&&"kind"in message&&"tokens"in message&&Array.isArray(message.tokens)}})},Receiver(e,t,r){var codec=r("Gav4");r.d(t,{},{read:class{receive(message){return (0,codec.Z)(message)?message:null}}})},Router(e,t,r){var codec=r("Gav4"),receiver=r("Receiver");let instance=new receiver.read;r.d(t,{},{route:function(message){return message.marker===codec.I?instance.receive(message):null}})}};function req(id){var item=cache[id];if(item)return item.exports;var item=cache[id]={exports:{}};modules[id].call(item.exports,item,item.exports,req);return item.exports}var exported=req;import*as shared from"./shared.js";req.C(shared);var boot=req.O(void 0,["1"],()=>req("Main"));req.O(boot);export{exported as __webpack_require__};\n//# sourceMappingURL=' + id + '.js.map';
 }
 
-test("webview runtime descriptor targets rspack runtime entries by content", () => {
-  const descriptor = featurePatches.find((patch) => patch.id === "webview-runtime");
-  assert.ok(descriptor);
-  assert.equal(descriptor.pattern, undefined);
-  assert.deepEqual(descriptor.assetNeedles, ["codex-host-chunked-message-v1", "as __webpack_require__}"]);
-  const patched = twice(applyRuntimeEntryPatch, runtimeEntryFixture());
-  assert.equal(patched.split("kokoro-explicit-v6").length - 1, 1);
-  assert.ok(patched.startsWith(runtimeEntryFixture()));
-  const unrelated = 'export const __rspack_esm_id=1;let f="codex-host-chunked-message-v1"';
-  const { result, warnings } = captureWarnings(() => applyRuntimeEntryPatch(unrelated));
-  assert.equal(result, unrelated);
-  assert.match(warnings.join("\n"), /rspack webview runtime entry contract/);
+function runtimeAppFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-entry-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const assets = path.join(root, "webview/assets");
+  fs.mkdirSync(assets, { recursive: true });
+  fs.writeFileSync(path.join(root, "webview/index.html"), '<script type="module" src="/assets/shared.js"></script><script type="module" src="/assets/main.js"></script>');
+  fs.writeFileSync(path.join(root, "webview/detached-window.html"), '<script type="module" src="/assets/shared.js"></script><script type="module" src="/assets/detached.js"></script>');
+  fs.writeFileSync(path.join(assets, "main.js"), runtimeEntryFixture());
+  fs.writeFileSync(path.join(assets, "detached.js"), runtimeEntryFixture(357055));
+  fs.writeFileSync(path.join(assets, "shared.js"), 'export const __rspack_esm_ids=["1"];export const __webpack_modules__={Support(e,t,r){t.ready=true}};');
+  const descriptor = featurePatches.find(patch => patch.id === "webview-runtime");
+  const selected = normalizePatchDescriptors([{ ...descriptor, featureId: "read-aloud", sourceKind: "feature" }]);
+  return { root, assets, run() {
+    const report = createPatchReport();
+    applyExtractedAppPatchDescriptors(root, selected, {}, report, "extracted-app:pre-webview");
+    return report.patches[0];
+  } };
+}
+
+function runtimeFixtureBytes(fixture) {
+  return Object.fromEntries(["webview/index.html", "webview/detached-window.html", "webview/assets/main.js", "webview/assets/detached.js", "webview/assets/shared.js"]
+    .map(name => [name, fs.readFileSync(path.join(fixture.root, name), "utf8")]));
+}
+
+function assertRuntimeFixtureBytes(fixture, expected) {
+  for (const [name, text] of Object.entries(expected)) assert.equal(fs.readFileSync(path.join(fixture.root, name), "utf8"), text, name);
+}
+
+test("webview runtime descriptor qualifies native entry bindings and complete source", () => {
+  const descriptor = featurePatches.find(patch => patch.id === "webview-runtime");
+  assert.equal(descriptor.phase, "extracted-app:pre-webview");
+  const raw = runtimeEntryFixture();
+  const patched = twice(applyRuntimeEntryPatch, raw);
+  assert.ok(patched.startsWith(raw));
+  assert.equal(patched.split('globalThis.codexLinuxReadAloudVersion=VERSION').length - 1, 1);
+  for (const variant of [
+    patched.replace('const METHOD="linux-read-aloud"', 'const METHOD="wrong-handler"'),
+    patched + applyIndexRuntimePatch(""),
+    raw.replace('var exported=req;', 'var exported=other;'),
+    raw.replace('var exported=req;', 'var exported=req;exported=other;'),
+    raw.replace('Array.isArray(message.tokens)', 'Array.isArray(other.tokens)'),
+    raw.replace('(0,codec.Z)(message)', '(0,other.Z)(message)'),
+    raw.replace('message.marker===codec.I', 'message.marker===other.I'),
+    raw.replace('receiver=r("Receiver")', 'receiver=r("Other")'),
+    raw.replace('new receiver.read', 'new other.read'),
+    raw.replace('var boot=req.O', 'if(false)var boot=req.O'),
+  ]) {
+    const result = captureWarnings(() => applyRuntimeEntryPatch(variant));
+    assert.equal(result.result, variant);
+    assert.equal(result.warnings.length, 1);
+  }
+  const markerData = raw + '\n/*kokoro-explicit-v6*/';
+  assert.notEqual(applyRuntimeEntryPatch(markerData), markerData);
+  const unrelated = 'export const unrelated=1;';
+  assert.equal(captureWarnings(() => applyRuntimeEntryPatch(unrelated)).result, unrelated);
 });
 
-test("webview runtime descriptor patches every rspack runtime entry once", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-entry-"));
-  try {
-    const assetsDir = path.join(root, "webview", "assets");
-    fs.mkdirSync(path.join(assetsDir, "async"), { recursive: true });
-    const entries = ["348410.09aab3f377.js", "357055.8ef98feffe.js"];
-    for (const [index, name] of entries.entries()) {
-      fs.writeFileSync(path.join(assetsDir, name), runtimeEntryFixture(348410 + index));
-    }
-    fs.writeFileSync(path.join(assetsDir, "async", "24191.7b05d5cf83.js"), "export const __rspack_esm_id=24191;");
-    const descriptor = featurePatches.find((patch) => patch.id === "webview-runtime");
-    const descriptors = normalizePatchDescriptors([{ ...descriptor, featureId: "read-aloud", sourceKind: "feature" }]);
-    const firstReport = createPatchReport();
-    const secondReport = createPatchReport();
-    applyWebviewAssetPatchDescriptors(root, descriptors, {}, firstReport);
-    applyWebviewAssetPatchDescriptors(root, descriptors, {}, secondReport);
-    for (const name of entries) {
-      assert.equal(fs.readFileSync(path.join(assetsDir, name), "utf8").split("kokoro-explicit-v6").length - 1, 1);
-    }
-    assert.doesNotMatch(fs.readFileSync(path.join(assetsDir, "async", "24191.7b05d5cf83.js"), "utf8"), /kokoro/);
-    assert.equal(firstReport.patches[0].status, "applied");
-    assert.equal(secondReport.patches[0].status, "already-applied");
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+function assertRuntimeAuthorityRefusal(t, source, label) {
+  const result = captureWarnings(() => applyRuntimeEntryPatch(source));
+  assert.equal(result.result, source, label);
+  assert.equal(result.warnings.length, 1, label);
+  const fixture = runtimeAppFixture(t);
+  for (const name of ["main.js", "detached.js"]) fs.writeFileSync(path.join(fixture.assets, name), source);
+  const bytes = runtimeFixtureBytes(fixture), oldWrite = fs.writeFileSync;
+  let writes = 0;
+  fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+  try { assert.equal(fixture.run().status, "skipped-optional", label); }
+  finally { fs.writeFileSync = oldWrite; }
+  assert.equal(writes, 0, label);
+  assertRuntimeFixtureBytes(fixture, bytes);
+}
+
+test("UP61 authority rejects owned global destruction and nested free binding writes", t => {
+  for (const tail of [
+    'delete globalThis.codexLinuxReadAloudClick;',
+    'delete globalThis["codexLinuxReadAloudSetup"];',
+    "delete (window['codexLinuxReadAloudClick']);",
+    'globalThis.codexLinuxReadAloudClick++;',
+    '++globalThis.codexLinuxReadAloudClick;',
+    'globalThis.codexLinuxReadAloudClick&&=null;',
+    'globalThis[`codexLinuxReadAloudSetup`]||=null;',
+    'Object.defineProperty(globalThis,"codexLinuxReadAloudClick",{value:null});',
+    'Reflect.deleteProperty(globalThis,"codexLinuxReadAloudClick");',
+    'Reflect.set(globalThis,"codexLinuxReadAloudClick",null);',
+    'function rebind(){exported=other;}rebind();',
+    'function rebind(){req=other;}rebind();',
+    'function rebind(){modules={};}rebind();',
+    'function rebind(){exported??=other;}rebind();',
+    'function rebind(){(exported)=other;}rebind();',
+    'function rebind(){++(exported);}rebind();',
+    'function rebind(){++exported;}rebind();',
+    'function rebind(){({value:exported}=other);}rebind();',
+    'function rebind(){[exported]=other;}rebind();',
+    'function rebind(){for(exported of other){}}rebind();',
+    'function rebind(){\\u0065xported=other;}rebind();',
+    'const rebind=()=>exported=other;rebind();',
+  ]) {
+    const raw = runtimeEntryFixture();
+    const source = !tail.includes("rebind") ? applyRuntimeEntryPatch(raw) + "\n" + tail
+      : raw.replace('var exported=req;', 'var exported=req;' + tail);
+    assertRuntimeAuthorityRefusal(t, source, tail);
   }
+});
+
+test("UP61 authority V3 refuses optional owned deletion from the independent witness", t => {
+  assertRuntimeAuthorityRefusal(t, applyRuntimeEntryPatch(runtimeEntryFixture()) + '\ndelete globalThis?.codexLinuxReadAloudClick;', "optional owned delete");
+});
+
+test("UP61 authority V3 refuses nested shift write from the independent witness", t => {
+  const source = runtimeEntryFixture().replace('var exported=req;', 'var exported=req;function rebind(){exported<<=1;}rebind();');
+  assertRuntimeAuthorityRefusal(t, source, "nested shift write");
+});
+
+test("UP61 authority V3 covers the complete assignment and update operator table", t => {
+  const assignments = ["=", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "^=", "|=", "&&=", "||=", "??="];
+  const expressions = assignments.map(operator => target => target + operator + "1");
+  expressions.push(target => "++" + target, target => "--" + target, target => target + "++", target => target + "--");
+  for (const expression of expressions) {
+    const nativeTail = 'function rebind(){' + expression("exported") + ';}rebind();';
+    assertRuntimeAuthorityRefusal(t, runtimeEntryFixture().replace('var exported=req;', 'var exported=req;' + nativeTail), nativeTail);
+    for (const target of ['globalThis.codexLinuxReadAloudClick', 'globalThis["codexLinuxReadAloudClick"]']) {
+      const tail = expression(target) + ";";
+      assertRuntimeAuthorityRefusal(t, applyRuntimeEntryPatch(runtimeEntryFixture()) + "\n" + tail, tail);
+    }
+    const fixture = runtimeAppFixture(t), shadow = 'function shadow(exported){' + expression("exported") + ';}';
+    for (const name of ["main.js", "detached.js"]) fs.appendFileSync(path.join(fixture.assets, name), "\n" + shadow);
+    assert.equal(fixture.run().status, "applied", shadow);
+    assert.equal(fixture.run().status, "already-applied", shadow);
+  }
+});
+
+test("UP61 authority V3 covers optional static owned deletes and grouped Unicode targets", t => {
+  for (const tail of [
+    'delete globalThis?.codexLinuxReadAloudClick;',
+    'delete window?.codexLinuxReadAloudClick;',
+    'delete self?.codexLinuxReadAloudClick;',
+    'delete globalThis?.["codexLinuxReadAloudClick"];',
+    "delete window?.['codexLinuxReadAloudClick'];",
+    'delete self?.[`codexLinuxReadAloudClick`];',
+    'delete (globalThis?.codexLinuxReadAloudClick);',
+    'delete ((globalThis))?.codexLinuxReadAloudClick;',
+    'delete ((globalThis))?.["codexLinuxReadAloudClick"];',
+    'delete globalThis?.\\u0063odexLinuxReadAloudClick;',
+    'delete globalThis?.["\\u0063odexLinuxReadAloudClick"];',
+    'delete globalThis?.["\\x63odexLinuxReadAloudClick"];',
+  ]) assertRuntimeAuthorityRefusal(t, applyRuntimeEntryPatch(runtimeEntryFixture()) + "\n" + tail, tail);
+});
+
+test("UP61 authority V3 preserves destructuring and iteration target write boundaries", t => {
+  for (const expression of [
+    '({exported}=other)',
+    '({value:exported}=other)',
+    '[exported]=other',
+    '[exported=other]=values',
+    'for(exported of values){}',
+    'for(exported in values){}',
+    '(exported)++',
+    '++(exported)',
+    '\\u0065xported<<=1',
+  ]) {
+    const tail = 'function rebind(){' + expression + ';}rebind();';
+    assertRuntimeAuthorityRefusal(t, runtimeEntryFixture().replace('var exported=req;', 'var exported=req;' + tail), tail);
+  }
+  for (const tail of [
+    '({value:globalThis.codexLinuxReadAloudClick}=other);',
+    '[globalThis.codexLinuxReadAloudClick]=other;',
+    '[globalThis["codexLinuxReadAloudClick"],other]=values;',
+    'for([globalThis.codexLinuxReadAloudClick] of values){}',
+  ]) assertRuntimeAuthorityRefusal(t, applyRuntimeEntryPatch(runtimeEntryFixture()) + "\n" + tail, tail);
+});
+
+test("UP61 authority permits local binding shadows and inert or foreign owned-name data", () => {
+  for (const tail of [
+    'function shadow(exported){exported=other;}',
+    'function shadow({value:exported}){exported<<=1;}',
+    'const shadow=({value:exported})=>exported>>=1;',
+    'function shadow(){try{}catch({message:exported}){exported>>>=1;}}',
+    'const values=[globalThis.codexLinuxReadAloudClick];',
+    'const values={value:globalThis.codexLinuxReadAloudClick};',
+    'let local;({[globalThis.codexLinuxReadAloudClick]:local}=other);',
+    'let local;[local=globalThis.codexLinuxReadAloudClick]=other;',
+    'let local;[local=(globalThis.codexLinuxReadAloudClick)]=other;',
+    'let local;[local=(globalThis["codexLinuxReadAloudClick"])]=other;',
+    'function shadow(){let {value:exported}=other;exported<<=1;}',
+    'function shadow(){let [exported]=other;exported>>>=1;}',
+    'const read=()=>exported<<1;',
+    'globalThis.codexLinuxReadAloudClick===undefined;',
+    'globalThis.codexLinuxReadAloudClick<=1;',
+    'globalThis.otherFeature<<=1;',
+    '/*delete globalThis?.codexLinuxReadAloudClick; exported<<=1;*/',
+    'const inert="delete globalThis?.codexLinuxReadAloudClick; exported<<=1;";',
+    'function shadow(){let exported;exported=other;}',
+    'function shadow(){var exported;{exported=other;}}',
+    'function shadow(){if(true){let exported;exported=other;}}',
+    'function shadow(){try{}catch(exported){exported=other;}}',
+    'function shadow(){for(let exported of other){exported=null;}}',
+    'function shadow(){for(let exported=0;exported<2;exported++){exported=1;}}',
+    'const shadow=(exported)=>exported=other;',
+    'const shadow=(exported=null)=>exported=other;',
+    'const shadow=exported=>()=>exported=other;',
+    'const shadow=function exported(){exported=other;};',
+    'function shadow(req,modules){req=other;modules={};}',
+    'class Shadow{static{var exported;exported=null;}}',
+    '/*delete globalThis.codexLinuxReadAloudClick;*/',
+    'const text="delete globalThis.codexLinuxReadAloudClick;";',
+    'globalThis.otherFeature=null;',
+    'Object.defineProperty(globalThis,"otherFeature",{value:null});',
+  ]) {
+    const source = runtimeEntryFixture() + "\n" + tail;
+    const result = captureWarnings(() => applyRuntimeEntryPatch(source));
+    assert.notEqual(result.result, source, tail);
+    assert.equal(result.warnings.length, 0, tail);
+    assert.equal(applyRuntimeEntryPatch(result.result), result.result, tail);
+  }
+});
+
+test("webview runtime descriptor commits the coherent two-entry cohort and validates warm dependencies", t => {
+  const fixture = runtimeAppFixture(t), before = runtimeFixtureBytes(fixture);
+  assert.equal(fixture.run().status, "applied");
+  assert.equal(fixture.run().status, "already-applied");
+  for (const name of ["main.js", "detached.js"]) {
+    const text = fs.readFileSync(path.join(fixture.assets, name), "utf8");
+    assert.equal(text.split('globalThis.codexLinuxReadAloudVersion=VERSION').length - 1, 1);
+  }
+  assert.equal(fs.readFileSync(path.join(fixture.assets, "shared.js"), "utf8"), before['webview/assets/shared.js']);
+  const otherRuntime = '\n;(()=>{globalThis.otherFeature=true})();';
+  for (const name of ["main.js", "detached.js"]) fs.appendFileSync(path.join(fixture.assets, name), otherRuntime);
+  assert.equal(fixture.run().status, "already-applied");
+  for (const name of ["main.js", "detached.js"]) assert.ok(fs.readFileSync(path.join(fixture.assets, name), "utf8").endsWith(otherRuntime));
+});
+
+test("webview runtime descriptor resolves a startup producer registered by its imported chunk", t => {
+  const fixture = runtimeAppFixture(t);
+  for (const name of ["main.js", "detached.js"]) {
+    const file = path.join(fixture.assets, name);
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace('Main(e,t,r){t.ready=true},', ''));
+  }
+  fs.writeFileSync(path.join(fixture.assets, "shared.js"), 'export const __rspack_esm_ids=["1"];export const __webpack_modules__={Main(e,t,r){t.ready=true}};');
+  assert.equal(fixture.run().status, "applied");
+  assert.equal(fixture.run().status, "already-applied");
+});
+
+test("webview runtime descriptor refuses mixed partial orphan and bad native dependency cohorts before writes", t => {
+  for (const kind of ["mixed", "wrong-handler", "orphan", "hidden-peer", "hidden-single", "hidden-template", "hidden-unicode", "hidden-hex", "missing-import", "wrong-startup", "html-role", "duplicate-html"]) {
+    const fixture = runtimeAppFixture(t);
+    if (["mixed", "wrong-handler"].includes(kind)) {
+      fs.writeFileSync(path.join(fixture.assets, "main.js"), applyRuntimeEntryPatch(runtimeEntryFixture()));
+      if (kind === "wrong-handler") fs.writeFileSync(path.join(fixture.assets, "main.js"), fs.readFileSync(path.join(fixture.assets, "main.js"), "utf8").replace('const METHOD="linux-read-aloud"', 'const METHOD="wrong-handler"'));
+    } else if (kind === "orphan") fs.writeFileSync(path.join(fixture.assets, "extra.js"), applyIndexRuntimePatch(""));
+    else if (kind.startsWith("hidden-")) {
+      const peers = {
+        "hidden-peer": 'globalThis["codexLinuxReadAloudVersion"]="v6";',
+        "hidden-single": "globalThis['codexLinuxReadAloudClick']=()=>{};",
+        "hidden-template": 'globalThis[`codexLinuxReadAloudSetup`]=()=>{};',
+        "hidden-unicode": 'globalThis.\\u0063odexLinuxReadAloudClick=()=>{};',
+        "hidden-hex": "globalThis['\\x63odexLinuxReadAloudSetup']=()=>{};",
+      };
+      fs.writeFileSync(path.join(fixture.assets, "extra.js"), peers[kind]);
+    }
+    else if (kind === "missing-import") fs.writeFileSync(path.join(fixture.assets, "main.js"), runtimeEntryFixture().replace('req.C(shared);', 'other.C(shared);'));
+    else if (kind === "wrong-startup") fs.writeFileSync(path.join(fixture.assets, "main.js"), runtimeEntryFixture().replace('()=>req("Main")', '()=>req("Other")'));
+    else if (kind === "html-role") fs.writeFileSync(path.join(fixture.root, "webview/detached-window.html"), '<script type="module" src="/assets/main.js"></script>');
+    else fs.writeFileSync(path.join(fixture.root, "webview/index.html"), '<script type="module" src="/assets/main.js" src="/assets/detached.js"></script>');
+    const bytes = runtimeFixtureBytes(fixture), oldWrite = fs.writeFileSync;
+    let writes = 0;
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(writes, 0, kind);
+    assertRuntimeFixtureBytes(fixture, bytes);
+  }
+});
+
+test("webview runtime descriptor rolls back partial writes and protects changed read dependencies", t => {
+  for (const kind of ["partial", "dependency-race", "html-race", "inventory-race"]) {
+    const fixture = runtimeAppFixture(t), before = runtimeFixtureBytes(fixture), oldWrite = fs.writeFileSync;
+    let written = false;
+    fs.writeFileSync = (file, bytes, ...options) => {
+      if (String(file).endsWith('/main.js') && !written) {
+        written = true;
+        if (kind === "partial") { oldWrite(file, "partial"); throw Error("inert partial write"); }
+        if (kind === "html-race") oldWrite(path.join(fixture.root, "webview/index.html"), before["webview/index.html"] + "<!-- concurrent -->");
+        else if (kind === "dependency-race") oldWrite(path.join(fixture.assets, "shared.js"), before['webview/assets/shared.js'] + "\n// concurrent");
+        else oldWrite(path.join(fixture.assets, "extra.js"), 'globalThis.codexLinuxReadAloudVersion="unexpected";');
+      }
+      return oldWrite(file, bytes, ...options);
+    };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.writeFileSync = oldWrite; }
+    assert.equal(written, true);
+    assert.equal(fs.readFileSync(path.join(fixture.assets, "main.js"), "utf8"), before['webview/assets/main.js']);
+    assert.equal(fs.readFileSync(path.join(fixture.assets, "detached.js"), "utf8"), before['webview/assets/detached.js']);
+  }
+});
+
+test("webview runtime descriptor detects warm inventory entry HTML and dependency races without own writes", t => {
+  for (const kind of ["inventory", "entry", "html", "dependency"]) {
+    const fixture = runtimeAppFixture(t);
+    assert.equal(fixture.run().status, "applied");
+    const oldReadDirectory = fs.readdirSync, oldWrite = fs.writeFileSync;
+    let scans = 0, writes = 0;
+    fs.readdirSync = (directory, ...options) => {
+      if (String(directory) === fixture.assets && ++scans === 2) {
+        const file = kind === "inventory" ? path.join(fixture.assets, "extra.js")
+          : kind === "entry" ? path.join(fixture.assets, "main.js")
+          : kind === "html" ? path.join(fixture.root, "webview/index.html")
+          : path.join(fixture.assets, "shared.js");
+        oldWrite(file, kind === "inventory" ? "const peer=true;" : fs.readFileSync(file, "utf8") + "\n/* concurrent */");
+      }
+      return oldReadDirectory(directory, ...options);
+    };
+    fs.writeFileSync = (...args) => { writes++; return oldWrite(...args); };
+    try { assert.equal(fixture.run().status, "skipped-optional", kind); }
+    finally { fs.readdirSync = oldReadDirectory; fs.writeFileSync = oldWrite; }
+    assert.equal(scans, 2, kind);
+    assert.equal(writes, 0, kind);
+  }
+});
+
+test("webview runtime descriptor propagates fatal failure when rollback cannot restore an entry", t => {
+  const fixture = runtimeAppFixture(t), oldWrite = fs.writeFileSync;
+  let attempts = 0;
+  fs.writeFileSync = (file, bytes, ...options) => {
+    if (String(file).endsWith("/main.js")) {
+      if (++attempts === 1) oldWrite(file, "partial");
+      throw Error("inert write and restoration failure");
+    }
+    return oldWrite(file, bytes, ...options);
+  };
+  try { assert.throws(() => fixture.run(), /rollback could not restore original bytes/u); }
+  finally { fs.writeFileSync = oldWrite; }
+  assert.equal(attempts, 2);
 });
 
 test("assistant runtime descriptor fails soft and atomically when the current render contract drifts", () => {
@@ -1818,3 +2112,156 @@ test(
     }
   },
 );
+
+function readAloudInertRuntime({ bridge = true } = {}) {
+  const { FakeElement, document } = fakeDocument(), listeners = {}, requests = [], events = [], timers = new Map();
+  let now = 0, sequence = 0;
+  const globals = {}, setTimer = (callback, delay = 0) => { const id = ++sequence; timers.set(id, { at: now + delay, callback }); return id; };
+  const window = {
+    addEventListener(type, callback) { (listeners[type] ??= []).push(callback); },
+    dispatchEvent(event) {
+      events.push(event);
+      if (event.type === "codex-message-from-view" && !event.__codexForwardedViaBridge && event.detail.type === "fetch") requests.push(event.detail);
+    },
+  };
+  if (bridge) window.electronBridge = { sendMessageFromView(payload) { if (payload.type === "fetch") requests.push(payload); return Promise.resolve(); } };
+  class CustomEvent { constructor(type, options) { this.type = type; this.detail = options.detail; } }
+  const install = () => new Function("window", "document", "globalThis", "CustomEvent", "setTimeout", "clearTimeout", applyIndexRuntimePatch(""))(
+    window, document, globals, CustomEvent, setTimer, id => timers.delete(id),
+  );
+  install();
+  return { globals, requests, events, listeners, document, timers, install,
+    button: () => new FakeElement("button"),
+    reply(request, body = {}, extra = {}) {
+      for (const listener of listeners.message ?? []) listener({ data: { type: "fetch-response", responseType: "success", status: 200, requestId: request.requestId, bodyJsonString: JSON.stringify(body), ...extra } });
+    },
+    async advance(milliseconds) {
+      const until = now + milliseconds;
+      for (;;) {
+        const next = [...timers].filter(([, timer]) => timer.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        timers.delete(next[0]); now = next[1].at; next[1].callback(); await settlePromises();
+      }
+      now = until; await settlePromises();
+    },
+  };
+}
+
+test("UP61 bootstrap and repeated install register one silent realm runtime", () => {
+  const r = readAloudInertRuntime();
+  r.install();
+  assert.equal(r.requests.length, 0);
+  assert.equal(r.listeners.message.length, 1);
+  assert.equal(r.document.head.children.length, 1);
+  for (const name of ["Click", "Setup", "MountSettings", "GetSetting", "SetSetting"]) assert.equal(typeof r.globals['codexLinuxReadAloud' + name], "function");
+});
+
+for (const bridge of [true, false]) {
+  test(`UP61 explicit click uses one cleaned local request and settles owned timers with bridge=${bridge}`, async () => {
+    const r = readAloudInertRuntime({ bridge }), button = r.button();
+    const click = r.globals.codexLinuxReadAloudClick({}, '**hello** [world](https://example.invalid)\n```code```', 'conversation-one', button);
+    assert.equal(r.requests.length, 1);
+    const request = r.requests[0];
+    assert.deepEqual(JSON.parse(request.body), { action: "speak", source: "button", text: "hello world\n code block." });
+    assert.equal(request.hostId, "local"); assert.equal(request.method, "POST"); assert.equal(request.url, "vscode://codex/linux-read-aloud");
+    assert.match(request.requestId, /^codex-linux-read-aloud-/u);
+    assert.equal(r.events.find(event => event.detail.type === "fetch").__codexForwardedViaBridge === true, bridge);
+    r.reply(request, { spoken: true }); await click;
+    assert.equal(button.dataset.codexLinuxReadAloudState, "speaking");
+    assert.equal(r.timers.size, 1, "Only the current speech estimate remains after its response");
+    await r.globals.codexLinuxReadAloudClick({}, "ignored", 'conversation-one', button);
+    assert.equal(button.dataset.codexLinuxReadAloudState, "ready");
+    assert.deepEqual(JSON.parse(r.requests[1].body), { action: "stop" });
+    r.reply(r.requests[1]); await settlePromises();
+    r.reply(request, { spoken: true });
+    assert.equal(button.dataset.codexLinuxReadAloudState, "ready");
+    assert.equal(r.timers.size, 0);
+  });
+}
+
+test("UP61 timeout malformed error and stale replies leave usable request state", async () => {
+  for (const outcome of ["timeout", "malformed", "error"]) {
+    const r = readAloudInertRuntime(), button = r.button();
+    const pending = r.globals.codexLinuxReadAloudClick({}, "hello", "conv", button);
+    r.reply({ requestId: "unknown" }, { spoken: true });
+    assert.equal(button.dataset.codexLinuxReadAloudState, "loading");
+    if (outcome === "timeout") await r.advance(4000);
+    else if (outcome === "malformed") r.reply(r.requests[0], null, { bodyJsonString: "{" });
+    else r.reply(r.requests[0], null, { responseType: "error", error: "inert failure" });
+    await pending;
+    assert.equal(button.dataset.codexLinuxReadAloudState, "error");
+    await r.advance(1500);
+    assert.equal(button.dataset.codexLinuxReadAloudState, "ready");
+    r.reply(r.requests[0], { spoken: true });
+    assert.equal(button.dataset.codexLinuxReadAloudState, "ready");
+    assert.equal(r.timers.size, 0);
+  }
+});
+
+test("UP61 newer explicit speech owns button state and late response or timer cannot replace it", async () => {
+  const r = readAloudInertRuntime(), first = r.button(), second = r.button();
+  const old = r.globals.codexLinuxReadAloudClick({}, "first", "old-conv", first);
+  const current = r.globals.codexLinuxReadAloudClick({}, "x".repeat(9000), "new-conv", second);
+  assert.equal(JSON.parse(r.requests[1].body).text.length, 8000);
+  r.reply(r.requests[1], { spoken: true }); await current;
+  r.reply(r.requests[0], { spoken: true }); await old;
+  assert.equal(first.dataset.codexLinuxReadAloudState, "ready");
+  assert.equal(second.dataset.codexLinuxReadAloudState, "speaking");
+  assert.equal(r.timers.size, 1);
+  await r.advance(120000);
+  assert.equal(second.dataset.codexLinuxReadAloudState, "ready");
+  assert.equal(r.requests.length, 2);
+});
+
+test("UP61 out-of-order failures and conversation stop cannot reclaim newer button state", async () => {
+  for (const outcome of ["old-error", "new-error", "conversation-stop"]) {
+    const r = readAloudInertRuntime(), first = r.button(), second = r.button();
+    const old = r.globals.codexLinuxReadAloudClick({}, "first", "old", first);
+    if (outcome === "conversation-stop") {
+      let stopped = 0;
+      r.globals.codexLinuxConversationIsSpeaking = () => true;
+      r.globals.codexLinuxConversationStopSpeaking = () => stopped++;
+      await r.globals.codexLinuxReadAloudClick({}, "stop", "old", first);
+      assert.equal(stopped, 1);
+      r.reply(r.requests[0], { spoken: true }); await old;
+      assert.equal(first.dataset.codexLinuxReadAloudState, "ready");
+      assert.equal(r.requests.length, 1);
+      assert.equal(r.timers.size, 0);
+      continue;
+    }
+    const current = r.globals.codexLinuxReadAloudClick({}, "second", "new", second);
+    if (outcome === "new-error") r.reply(r.requests[1], null, { responseType: "error" });
+    else r.reply(r.requests[1], { spoken: true });
+    await current;
+    if (outcome === "old-error") r.reply(r.requests[0], null, { responseType: "error" });
+    else r.reply(r.requests[0], { spoken: true });
+    await old;
+    assert.equal(first.dataset.codexLinuxReadAloudState, "ready");
+    assert.equal(second.dataset.codexLinuxReadAloudState, outcome === "new-error" ? "error" : "speaking");
+    await r.advance(4000);
+    assert.equal(second.dataset.codexLinuxReadAloudState, "ready");
+    assert.equal(r.timers.size, 0);
+  }
+});
+
+test("UP61 timed-out replies and queued stale flash or estimate callbacks cannot alter a newer speech", async () => {
+  for (const outcome of ["timeout", "error", "estimate"]) {
+    const r = readAloudInertRuntime(), first = r.button(), second = r.button();
+    const old = r.globals.codexLinuxReadAloudClick({}, "first", "old", first);
+    if (outcome === "timeout") await r.advance(4000);
+    else r.reply(r.requests[0], outcome === "estimate" ? { spoken: true } : { spoken: false });
+    await old;
+    const staleCallback = [...r.timers.values()][0].callback;
+    const current = r.globals.codexLinuxReadAloudClick({}, "second", "new", second);
+    staleCallback();
+    assert.equal(second.dataset.codexLinuxReadAloudState, "loading");
+    r.reply(r.requests[1], { spoken: true }); await current;
+    r.reply(r.requests[0], { spoken: true });
+    staleCallback();
+    assert.equal(first.dataset.codexLinuxReadAloudState, "ready");
+    assert.equal(second.dataset.codexLinuxReadAloudState, "speaking");
+    await r.advance(4000);
+    assert.equal(second.dataset.codexLinuxReadAloudState, "ready");
+    assert.equal(r.timers.size, 0);
+  }
+});

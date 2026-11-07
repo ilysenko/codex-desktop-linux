@@ -62,8 +62,25 @@ content, not by file name:
   asset transaction writes anything. Its `get-setting` and `set-setting`
   actions only accept the enabled and speed keys. Interactive `setup` actions
   separately persist the model and voices paths selected by the user.
-- `webview-runtime` appends the self-contained click, setup, and settings
-  runtime to the rspack runtime entry chunks (main and detached windows).
+- `webview-runtime` qualifies the main and detached HTML module edges as one
+  two-entry cohort. Each entry must retain its exported require binding,
+  bootstrap registry, host-message decoder and connected receiver, registered
+  imports, and unconditional startup producer. It appends the self-contained
+  click, setup, and settings runtime to both entries together. Repeated runs
+  validate the complete generated payload and native dependencies before
+  accepting an already-applied cohort. Mixed, partial, duplicate, hidden, or
+  orphan runtime copies are rejected. The feature uses the shared asset
+  transaction with both entry preimages and unchanged HTML/import resources,
+  rechecks the script inventory and dependency hashes before forward writes,
+  and restores entry bytes if a write fails. A restoration failure remains
+  fatal.
+  Explicit deletion, reassignment, update, or property redefinition of an
+  owned runtime global also invalidates the payload. Native entry bindings are
+  checked for nested free writes while permitting function, block, catch, and
+  arrow-local shadows.
+  Both checks use one feature-private table covering assignment, arithmetic,
+  shift, bitwise, logical, and update operators. Direct and computed optional
+  property deletion and explicit destructuring targets are checked as well.
 - `assistant-runtime` wraps the two assistant message render calls of the
   primary thread chunk with the speech icon button.
 - `settings-toggle` adds one host element to the General settings page; the
@@ -80,6 +97,11 @@ request also cancels a pending launch. Piper owns both its synthesizer and
 player process groups. Final application quit and process exit clean up owned
 speech and setup commands; a cancelled `before-quit` or ordinary window close
 does not stop them.
+
+The renderer releases each request's timeout when its reply arrives. A newer
+explicit speech request or stop retires the previous button and speech timer.
+Replies and queued button callbacks from an older request cannot take ownership
+of the newer button state.
 
 ## Conversation mode direction
 

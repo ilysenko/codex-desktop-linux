@@ -228,22 +228,22 @@ function applyMainToExtractedApp(extractedDir, options = {}) {
 function readAloudRuntimeSource() {
   return [
     `;(()=>{const VERSION=${JSON.stringify(RUNTIME_VERSION)};if(globalThis.codexLinuxReadAloudVersion===VERSION)return;globalThis.codexLinuxReadAloudVersion=VERSION;try{globalThis.speechSynthesis?.cancel?.()}catch{}`,
-    `const METHOD=${JSON.stringify(HANDLER_NAME)};let seq=0,pending=new Map,currentButton=null,currentSpeakTimer=null;`,
-    `function onMessage(e){let t=e?.data;if(!t||typeof t!="object"||t.type!=="fetch-response")return;let n=pending.get(t.requestId);if(!n)return;pending.delete(t.requestId);if(t.responseType==="success"){let e=null;try{e=t.bodyJsonString?JSON.parse(t.bodyJsonString):null}catch{}n.resolve({status:t.status,body:e})}else n.reject(Error(t.error||"fetch failed"))}`,
+    `const METHOD=${JSON.stringify(HANDLER_NAME)};let seq=0,speechTicket=0,pending=new Map,currentButton=null,currentSpeakTimer=null;`,
+    `function onMessage(e){let t=e?.data;if(!t||typeof t!="object"||t.type!=="fetch-response")return;let n=pending.get(t.requestId);if(!n)return;pending.delete(t.requestId);clearTimeout(n.timer);if(t.responseType==="success"){let e=null;try{e=t.bodyJsonString?JSON.parse(t.bodyJsonString):null}catch{}n.resolve({status:t.status,body:e})}else n.reject(Error(t.error||"fetch failed"))}`,
     `window.addEventListener("message",onMessage);`,
     `function dispatch(payload){let bridge=window.electronBridge,event=new CustomEvent("codex-message-from-view",{detail:payload});if(bridge?.sendMessageFromView){event.__codexForwardedViaBridge=!0;bridge.sendMessageFromView(payload).catch(()=>{})}window.dispatchEvent(event)}`,
     `function log(message,tags={}){dispatch({type:"log-message",level:"info",message,tags:{safe:tags,sensitive:{}}})}`,
-    `function hostPost(method,body,timeoutMs=4000){let requestId="codex-linux-read-aloud-"+ ++seq;let payload={type:"fetch",hostId:"local",requestId,method:"POST",url:"vscode://codex/"+method,body:JSON.stringify(body??{})};return new Promise((resolve,reject)=>{pending.set(requestId,{resolve,reject});setTimeout(()=>{pending.delete(requestId);reject(Error("timeout"))},timeoutMs);dispatch(payload)})}`,
+    `function hostPost(method,body,timeoutMs=4000){let requestId="codex-linux-read-aloud-"+ ++seq;let payload={type:"fetch",hostId:"local",requestId,method:"POST",url:"vscode://codex/"+method,body:JSON.stringify(body??{})};return new Promise((resolve,reject)=>{let timer=setTimeout(()=>{pending.delete(requestId);reject(Error("timeout"))},timeoutMs);pending.set(requestId,{resolve,reject,timer});dispatch(payload)})}`,
     `function post(params,timeoutMs=4000){return hostPost(METHOD,params,timeoutMs)}`,
     `function clean(text){return String(text||"").replace(/\\r\\n/g,"\\n").replace(/\`\`\`[\\s\\S]*?\`\`\`/g," code block. ").replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g,"$1").replace(/[*_#>~]/g,"").replace(/\\n{3,}/g,"\\n\\n").trim().slice(0,8e3)}`,
     `function buttonLabel(state,label){return label??(state==="speaking"?"Stop read aloud":state==="loading"?"Loading voice":state==="error"?"No voice available":"Read assistant response aloud")}`,
     `function setButton(button,state,label){if(!button)return;let title=buttonLabel(state,label);button.dataset.codexLinuxReadAloudState=state;button.title=title;button.setAttribute("aria-label",title);button.disabled=state==="loading"}`,
-    `function flash(button,label){setButton(button,"error",label);setTimeout(()=>setButton(button,"ready"),1500)}`,
+    `function flash(button,label,ticket=speechTicket){if(ticket!==speechTicket)return;setButton(button,"error",label);setTimeout(()=>{ticket===speechTicket&&resetButton(button)},1500)}`,
     `function resetButton(button=currentButton){if(currentSpeakTimer!=null){clearTimeout(currentSpeakTimer);currentSpeakTimer=null}if(button)setButton(button,"ready");if(button===currentButton)currentButton=null}`,
-    `function stopSpeech(){resetButton();post({action:"stop"}).catch(()=>{})}`,
+    `function stopSpeech(){speechTicket++;resetButton();post({action:"stop"}).catch(()=>{})}`,
     `function estimateMs(text){let words=text.split(/\\s+/).filter(Boolean).length;return Math.max(3000,Math.min(120000,words*360))}`,
     `function failureLabel(result){let reason=result?.reason;if(reason==="disabled")return"Enable Read aloud in settings";if(reason==="kokoro-unavailable")return"Install Read aloud voice model";if(reason==="empty")return"Nothing to read";return"No voice available"}`,
-    `async function click(item,copyText,conversationId,button){try{button?.blur?.();if(globalThis.codexLinuxConversationIsSpeaking?.()){globalThis.codexLinuxConversationStopSpeaking?.();resetButton(button);return}if(button?.dataset.codexLinuxReadAloudState==="speaking"){stopSpeech();return}let text=clean(copyText||item?.content||"");if(text.length<2)return;setButton(button,"loading","Starting voice");let result=await post({action:"speak",source:"button",text}).then(e=>e.body).catch(()=>({spoken:!1,reason:"request-failed"}));log("[linux-read-aloud] click",{conversationId:conversationId||null,textLength:text.length,spoken:result?.spoken===!0,engine:result?.engine||null,reason:result?.reason||null,missing:Array.isArray(result?.missing)?result.missing.join(","):null});if(result?.spoken){currentButton=button;setButton(button,"speaking");currentSpeakTimer=setTimeout(()=>resetButton(button),estimateMs(text));return}flash(button,failureLabel(result))}catch{flash(button,"No voice available")}}`,
+    `async function click(item,copyText,conversationId,button){let ticket;try{button?.blur?.();if(globalThis.codexLinuxConversationIsSpeaking?.()){speechTicket++;globalThis.codexLinuxConversationStopSpeaking?.();resetButton();setButton(button,"ready");return}if(button?.dataset.codexLinuxReadAloudState==="speaking"){stopSpeech();return}let text=clean(copyText||item?.content||"");if(text.length<2)return;ticket=++speechTicket;resetButton();currentButton=button;setButton(button,"loading","Starting voice");let result=await post({action:"speak",source:"button",text}).then(e=>e.body).catch(()=>({spoken:!1,reason:"request-failed"}));if(ticket!==speechTicket)return;log("[linux-read-aloud] click",{conversationId:conversationId||null,textLength:text.length,spoken:result?.spoken===!0,engine:result?.engine||null,reason:result?.reason||null,missing:Array.isArray(result?.missing)?result.missing.join(","):null});if(result?.spoken){setButton(button,"speaking");currentSpeakTimer=setTimeout(()=>{ticket===speechTicket&&resetButton(button)},estimateMs(text));return}flash(button,failureLabel(result),ticket)}catch{flash(button,"No voice available",ticket)}}`,
     `function setupLabel(result){let reason=result?.reason;if(reason==="cancelled")return"Cancelled";if(reason==="missing-files")return"Folder is missing model files";if(reason==="python-unavailable")return"Python 3.10-3.13 required";if(reason==="voice-unavailable")return"Voice backend missing";return result?.ok?"Voice ready":"Setup failed"}`,
     `async function setup(mode,button){let original=button?.dataset.codexLinuxReadAloudOriginalLabel||button?.textContent||"";if(button&&!button.dataset.codexLinuxReadAloudOriginalLabel)button.dataset.codexLinuxReadAloudOriginalLabel=original;try{button&&(button.disabled=!0,button.textContent=mode==="download"?"Downloading...":"Choosing...");let result=await post({action:"setup",mode},mode==="download"?9e5:6e4).then(e=>e.body).catch(()=>({ok:!1,reason:"request-failed"}));button&&(button.textContent=setupLabel(result));setTimeout(()=>{button&&(button.textContent=original,button.disabled=!1)},1800);return result}catch{button&&(button.textContent="Setup failed",setTimeout(()=>{button.textContent=original,button.disabled=!1},1800))}}`,
     `function installStyle(){if(document.getElementById("codex-linux-read-aloud-style"))return;let e=document.createElement("style");e.id="codex-linux-read-aloud-style";e.textContent=".codex-linux-read-aloud-row{display:flex;align-items:center;margin-top:4px}.codex-linux-read-aloud-button{width:28px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--token-border);background:transparent;color:var(--text-secondary,var(--token-description-foreground));border-radius:6px;padding:0;cursor:pointer}.codex-linux-read-aloud-icon{width:15px;height:15px}.codex-linux-read-aloud-button:hover{background:var(--token-list-hover-background,rgba(127,127,127,.12));color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-button:disabled{opacity:.65;cursor:default}.codex-linux-read-aloud-button[data-codex-linux-read-aloud-state=speaking]{background:var(--token-list-hover-background,rgba(127,127,127,.14));color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-button[data-codex-linux-read-aloud-state=error]{color:var(--token-error-foreground,#c00);border-color:currentColor}.codex-linux-read-aloud-settings{display:flex;flex-direction:column;gap:8px;margin-top:24px}.codex-linux-read-aloud-settings-title{font-size:15px;font-weight:500;color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-settings-group{display:flex;flex-direction:column;border:1px solid var(--token-border);border-radius:10px}.codex-linux-read-aloud-settings-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px}.codex-linux-read-aloud-settings-row+.codex-linux-read-aloud-settings-row{border-top:1px solid var(--token-border)}.codex-linux-read-aloud-settings-row[hidden],.codex-linux-read-aloud-settings-controls[hidden],.codex-linux-read-aloud-settings-error[hidden]{display:none}.codex-linux-read-aloud-settings-text{display:flex;flex-direction:column;gap:2px;min-width:0}.codex-linux-read-aloud-settings-label{font-size:14px;color:var(--text-primary,var(--token-foreground))}.codex-linux-read-aloud-settings-description{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-secondary,var(--token-description-foreground))}.codex-linux-read-aloud-settings-error{color:var(--token-error-foreground,#c00)}.codex-linux-read-aloud-settings-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}.codex-linux-read-aloud-settings-button{border:1px solid var(--token-border);border-radius:6px;padding:4px 8px;font-size:13px;background:transparent;color:var(--text-primary,var(--token-foreground));cursor:pointer}.codex-linux-read-aloud-settings-button:disabled{opacity:.6;cursor:default}.codex-linux-read-aloud-settings-help{display:inline-flex;width:26px;height:26px;align-items:center;justify-content:center;border:1px solid var(--token-border);border-radius:999px;font-size:13px;color:var(--text-secondary,var(--token-description-foreground));user-select:none}.codex-linux-read-aloud-settings-range{width:144px}.codex-linux-read-aloud-settings-value{width:48px;text-align:right;font-size:13px;color:var(--text-secondary,var(--token-description-foreground))}.codex-linux-read-aloud-switch{position:relative;width:34px;height:20px;flex:none;border:0;border-radius:999px;padding:0;background:var(--token-border,rgba(127,127,127,.35));cursor:pointer;transition:background .15s}.codex-linux-read-aloud-switch:after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}.codex-linux-read-aloud-switch[aria-checked=true]{background:var(--text-primary,var(--token-foreground,#0a84ff))}.codex-linux-read-aloud-switch[aria-checked=true]:after{transform:translateX(14px)}.codex-linux-read-aloud-switch:disabled{opacity:.6;cursor:default}";document.head.appendChild(e)}`,
@@ -275,9 +275,7 @@ function applyIndexRuntimePatch(source) {
 }
 
 function ensureReadAloudRuntime(source) {
-  if (source.includes(RUNTIME_VERSION)) {
-    return source;
-  }
+  if (inspectReadAloudRuntime(source).state === "patched") return source;
   return `${source}\n${readAloudRuntimeSource()}`;
 }
 
@@ -384,12 +382,387 @@ function applyAssistantRenderPatch(source) {
 const RUNTIME_ENTRY_NEEDLES = ["codex-host-chunked-message-v1", "as __webpack_require__}"];
 const RUNTIME_ENTRY_EXPORT = /export\{[A-Za-z_$][\w$]* as __webpack_require__\}/;
 
+const READ_ALOUD_RUNTIME_GLOBALS = ["codexLinuxReadAloudVersion", "codexLinuxReadAloudClick", "codexLinuxReadAloudSetup", "codexLinuxReadAloudMountSettings", "codexLinuxReadAloudGetSetting", "codexLinuxReadAloudSetSetting"];
+const READ_ALOUD_WRITE_OPERATORS = ["=", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "^=", "|=", "&&=", "||=", "??=", "++", "--"];
+const readAloudDependencyFacts = new Map();
+
+function runtimeStartsWrite(source) {
+  const suffix = source.replace(/^\s*(?:\)\s*)*/u, "");
+  return READ_ALOUD_WRITE_OPERATORS.some(operator => suffix.startsWith(operator) &&
+    (operator !== "=" || suffix[1] !== "=" && suffix[1] !== ">"));
+}
+
+function runtimePatternWrites(source, start, end, lexical) {
+  if (!/^\s*(?:\)\s*)*[,}\]]/u.test(source.slice(end))) return false;
+  // Keep parentheses around a complete member outside the replacement range.
+  // Parentheses that form its receiver stay part of the assignment target.
+  while (source[start] === "(") {
+    let depth = 0, close = -1;
+    for (let index = start; index < source.length; index++) {
+      if (!lexical.isCode(index)) continue;
+      if (source[index] === "(") depth++;
+      else if (source[index] === ")" && --depth === 0) { close = index; break; }
+    }
+    if (close < end) break;
+    start++;
+    while (/\s/u.test(source[start] ?? "") && start < source.length) start++;
+  }
+  const opened = [], patterns = [];
+  for (let index = 0; index < source.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    if (source[index] === "[" || source[index] === "{") opened.push(index);
+    else if (source[index] === "]" || source[index] === "}") {
+      const open = opened.pop();
+      if (open < start && index >= end) patterns.push({ open, close: index });
+    }
+  }
+  for (const { open, close } of patterns) {
+    const tail = source.slice(close + 1).replace(/^\s*(?:\)\s*)*/u, "");
+    const assignment = tail.startsWith("=") && tail[1] !== "=" && tail[1] !== ">";
+    const iteration = /^(?:of|in)\b/u.test(tail) && /\bfor(?:\s+await)?\s*\(\s*$/u.test(source.slice(0, open));
+    if (!assignment && !iteration) continue;
+    const pattern = source.slice(open, close + 1);
+    const replaced = source.slice(open, start) + "(0)" + source.slice(end, close + 1);
+    const probe = value => assignment ? `(${value}=null)` : `for(${value} of []){}`;
+    try { new Script(probe(pattern)); } catch { continue; }
+    try { new Script(probe(replaced)); } catch { return true; }
+  }
+  return false;
+}
+
+function runtimeMatches(source, pattern, root = false) {
+  const lexical = createJavaScriptLexicalIndex(source);
+  return [...source.matchAll(pattern)].filter(match => lexical.isCode(match.index) && (!root || lexical.isRoot(match.index)));
+}
+
+function runtimeOne(values, reason) {
+  if (values.length !== 1) throw new Error(`${reason} matched ${values.length} times`);
+  return values[0];
+}
+
+function runtimeOwnClaims(source) {
+  const identifier = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu;
+  const decode = token => token.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)));
+  if (!source.includes("codexLinuxReadAloud") && !source.includes(RUNTIME_VERSION) &&
+      !source.includes("\\u") && !source.includes("\\x")) return [];
+  const lexical = createJavaScriptLexicalIndex(source), claims = [];
+  const destructive = (start, end) => runtimeStartsWrite(source.slice(end)) ||
+    /(?:\bdelete|\+\+|--)\s*\(*\s*(?:(?:globalThis|window|self)\s*\)*\s*(?:\?\.|\.)\s*)?$/u.test(source.slice(0, start));
+  for (const token of source.matchAll(identifier)) {
+    if (!lexical.isCode(token.index)) continue;
+    const decoded = decode(token[0]);
+    if (!READ_ALOUD_RUNTIME_GLOBALS.includes(decoded)) continue;
+    const receiver = /(?:\(+\s*)?(?:globalThis|window|self)\s*\)*\s*(?:\?\.|\.)\s*$/u.exec(source.slice(0, token.index));
+    if (destructive(token.index, token.index + token[0].length) || receiver && runtimePatternWrites(source, receiver.index, token.index + token[0].length, lexical)) claims.push(token.index);
+  }
+  for (const match of source.matchAll(/(?:\(+\s*)?(?:globalThis|window|self)\s*\)*\s*(?:\?\.)?\s*\[\s*(["'`])((?:\\.|[^\\\n])*?)\1\s*\]/gu)) {
+    if (!lexical.isCode(match.index)) continue;
+    const name = decode(match[2]).replace(/\\x([0-9a-fA-F]{2})/gu, (_, value) => String.fromCharCode(parseInt(value, 16)));
+    if (READ_ALOUD_RUNTIME_GLOBALS.includes(name) && (destructive(match.index, match.index + match[0].length) || runtimePatternWrites(source, match.index, match.index + match[0].length, lexical))) claims.push(match.index);
+  }
+  for (const match of source.matchAll(/\bconst VERSION="kokoro-explicit-v6"/gu)) {
+    if (lexical.isCode(match.index)) claims.push(match.index);
+  }
+  for (const match of source.matchAll(/(?:Object\s*\.\s*defineProperty|Reflect\s*\.\s*(?:defineProperty|deleteProperty|set))\s*\(\s*(?:globalThis|window|self)\s*,\s*(["'`])((?:\\.|[^\\\n])*?)\1/gu)) {
+    if (!lexical.isCode(match.index)) continue;
+    const name = decode(match[2]).replace(/\\x([0-9a-fA-F]{2})/gu, (_, value) => String.fromCharCode(parseInt(value, 16)));
+    if (READ_ALOUD_RUNTIME_GLOBALS.includes(name)) claims.push(match.index);
+  }
+  return claims;
+}
+
+function inspectReadAloudRuntime(source) {
+  const expected = readAloudRuntimeSource(), lexical = createJavaScriptLexicalIndex(source), blocks = [];
+  for (let index = source.indexOf(expected); index >= 0; index = source.indexOf(expected, index + 1)) {
+    if (lexical.isCode(index)) blocks.push({ start: index, end: index + expected.length, root: lexical.isRoot(index) });
+  }
+  const claims = runtimeOwnClaims(source);
+  if (blocks.length === 0 && claims.length === 0) return { state: "current" };
+  if (blocks.length !== 1 || !blocks[0].root || claims.some(index => index < blocks[0].start || index >= blocks[0].end)) {
+    throw new Error("Incomplete, duplicate or misplaced Read Aloud runtime");
+  }
+  return { state: "patched", block: blocks[0] };
+}
+
+function runtimeBindingScopes(source, script, lexical) {
+  const parentheses = new Map(), stack = [], scopes = [];
+  let probeName = "__codexReadAloudScopeProbe";
+  while (source.includes(probeName)) probeName += "_";
+  const parses = text => { try { new Script('"use strict";\n' + text); return true; } catch { return false; } };
+  const parameterShadows = (parameters, name) => parses(`function probe(${parameters}){let ${probeName};}`) &&
+    !parses(`function probe(${parameters}){let ${name};}`);
+  for (let index = 0; index < source.length; index++) {
+    if (!lexical.isCode(index)) continue;
+    if (source[index] === "(") stack.push(index);
+    else if (source[index] === ")") parentheses.set(index, stack.pop());
+  }
+  for (let open = 0; open < source.length; open++) {
+    if (source[open] !== "{" || !lexical.isCode(open)) continue;
+    const end = lexical.matchingBrace(open);
+    if (end < 0) continue;
+    const prefix = source.slice(0, open).trimEnd(), close = prefix.length - 1;
+    const parameterOpen = prefix[close] === ")" ? parentheses.get(close) : null;
+    const beforeParameters = parameterOpen == null ? "" : source.slice(0, parameterOpen).trimEnd();
+    const control = /\b(if|for|while|switch|with)\s*$/u.test(beforeParameters);
+    const functionScope = prefix.endsWith("=>") || /\bstatic$/u.test(prefix) || parameterOpen != null && !control;
+    const namedFunction = /\bfunction\s*\*?\s*([\w$]+)\s*$/u.exec(beforeParameters);
+    const expressionName = namedFunction && /(?:[=(:,\[]|\breturn)\s*$/u.test(beforeParameters.slice(0, namedFunction.index)) ? namedFunction[1] : null;
+    const insertion = script.slice(0, open + 1), remainder = script.slice(open + 1);
+    let validBlock;
+    const shadows = name => {
+      if (expressionName === name) return true;
+      if (validBlock == null) validBlock = parses(insertion + `let ${probeName};` + remainder);
+      if (!validBlock || parses(insertion + `let ${name};` + remainder)) return false;
+      return functionScope || !parses(insertion + `var ${name};` + remainder);
+    };
+    scopes.push({ start: open, end, shadows });
+    if (expressionName) scopes.push({ start: namedFunction.index, end, shadows: name => name === expressionName });
+    if (parameterOpen != null && functionScope) scopes.push({ start: parameterOpen, end: open, shadows: name => parameterShadows(source.slice(parameterOpen + 1, close), name) });
+    if (parameterOpen != null && /\bfor\s*$/u.test(beforeParameters)) {
+      const header = source.slice(parameterOpen + 1, close);
+      const separator = [...header.matchAll(/;|\b(?:of|in)\b/gu)].find(match => lexical.isCode(parameterOpen + 1 + match.index));
+      const declaration = separator == null ? "" : header.slice(0, separator.index) + (separator[0] === ";" ? "" : "=null");
+      if (/^\s*(?:let|const)\s/u.test(declaration)) scopes.push({ start: parameterOpen, end, shadows: name =>
+        parses(`function probe(){${declaration};let ${probeName};}`) && !parses(`function probe(){${declaration};let ${name};}`) });
+    }
+  }
+  for (const arrow of source.matchAll(/=>/gu)) {
+    if (!lexical.isCode(arrow.index)) continue;
+    const prefix = source.slice(0, arrow.index).trimEnd(), close = prefix.length - 1;
+    const parameterOpen = prefix[close] === ")" ? parentheses.get(close) : null;
+    const single = /([A-Za-z_$][\w$]*)$/u.exec(prefix);
+    const parameters = parameterOpen == null ? single?.[1] : source.slice(parameterOpen + 1, close);
+    if (parameters == null) continue;
+    let body = arrow.index + 2;
+    while (/\s/u.test(source[body] ?? "") && body < source.length) body++;
+    let end = body, depth = 0;
+    if (source[body] === "{") end = lexical.matchingBrace(body);
+    else for (; end < source.length; end++) {
+      if (!lexical.isCode(end)) continue;
+      const char = source[end];
+      if ("([{".includes(char)) depth++;
+      else if (")]}".includes(char)) { if (depth === 0) break; depth--; }
+      else if (depth === 0 && (char === "," || char === ";")) break;
+    }
+    scopes.push({ start: parameterOpen ?? prefix.length - parameters.length, end, shadows: name => parameterShadows(parameters, name) });
+  }
+  return (name, index) => scopes.some(scope => scope.start <= index && index < scope.end && scope.shadows(name));
+}
+
+function runtimeAssertRootBinding(source, name, authorized) {
+  const lexical = createJavaScriptLexicalIndex(source);
+  let script = source;
+  const masked = runtimeMatches(source, /\b(?:import\*as [\w$]+ from"[^"\n]+";|export\{[^}]+\};)/gu, true);
+  for (const match of [...masked].reverse()) script = script.slice(0, match.index) + " ".repeat(match[0].length) + script.slice(match.index + match[0].length);
+  script = script.replace(/import\.meta/gu, (value, index) => lexical.isCode(index) ? "({})       " : value);
+  const shadowed = runtimeBindingScopes(source, script, lexical);
+  const parsesReplacement = (match, replacement) => {
+    try { new Script('"use strict";\n' + script.slice(0, match.index) + replacement + script.slice(match.index + match[0].length)); return true; }
+    catch { return false; }
+  };
+  const references = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])+/gu;
+  for (const match of source.matchAll(references)) {
+    if (!lexical.isCode(match.index) || /[\w$.]/u.test(source[match.index - 1] ?? "")) continue;
+    const decoded = match[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu, (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)));
+    if (decoded !== name || authorized.includes(match.index) || masked.some(row => row.index <= match.index && match.index < row.index + row[0].length)) continue;
+    const suffix = source.slice(match.index + match[0].length), prefix = source.slice(0, match.index);
+    if (!lexical.isRoot(match.index) && !runtimeStartsWrite(suffix) && !/^\s*(?:\)\s*)*(?:[,}\]]|of\b|in\b)/u.test(suffix) && !/(?:\+\+|--)\s*\(*\s*$/u.test(prefix)) continue;
+    if (parsesReplacement(match, "(0)") || parsesReplacement(match, name + ":(0)") || shadowed(name, match.index)) continue;
+    throw new Error("Native runtime binding has an additional declaration or write: " + name);
+  }
+}
+
+function inspectRuntimeEntry(source) {
+  const id = "[A-Za-z_$][\\w$]*";
+  const exported = runtimeOne(runtimeMatches(source, new RegExp(`\\bexport\\{(${id}) as __webpack_require__\\}`, "gu"), true), "native require export")[1];
+  const alias = runtimeOne(runtimeMatches(source, new RegExp(`\\bvar ${escapeRegExp(exported)}=(${id});`, "gu"), true), "native require export binding");
+  const requireName = alias[1];
+  const head = runtimeOne(runtimeMatches(source, new RegExp(`\\bfunction ${escapeRegExp(requireName)}\\((${id})\\)\\{`, "gu"), true), "native require function");
+  const open = head.index + head[0].length - 1, close = findMatchingBrace(source, open);
+  const requireBody = source.slice(open + 1, close);
+  const invocation = runtimeOne(runtimeMatches(requireBody, new RegExp(`(${id})\\[${escapeRegExp(head[1])}\\]\\.call\\((${id})\\.exports,\\2,\\2\\.exports,${escapeRegExp(requireName)}\\)`, "gu")), "native module invocation");
+  const table = invocation[1];
+  const tableHead = runtimeOne(runtimeMatches(source, new RegExp(`(?<![\\w$.])${escapeRegExp(table)}=\\{`, "gu"), true), "native bootstrap registry");
+  const tableOpen = tableHead.index + tableHead[0].length - 1, tableClose = findMatchingBrace(source, tableOpen);
+  runtimeAssertRootBinding(source, exported, [alias.index + "var ".length]);
+  runtimeAssertRootBinding(source, requireName, [head.index + "function ".length]);
+  runtimeAssertRootBinding(source, table, [tableHead.index]);
+  const body = source.slice(tableOpen + 1, tableClose), bodyLexical = createJavaScriptLexicalIndex(body);
+  const factories = [];
+  for (const match of body.matchAll(new RegExp(`(?:^|,)([A-Za-z0-9_$]+)\\((${id}),(${id}),(${id})\\)\\{`, "gu"))) {
+    const at = match.index + (match[0][0] === "," ? 1 : 0);
+    if (!bodyLexical.isRoot(at)) continue;
+    const factoryOpen = match.index + match[0].length - 1, factoryClose = findMatchingBrace(body, factoryOpen);
+    factories.push({ moduleId: match[1], params: match.slice(2, 5), moduleSource: body.slice(factoryOpen + 1, factoryClose), start: tableOpen + factoryOpen + 2 });
+  }
+  const decoder = runtimeOne(factories.filter(factory => runtimeMatches(factory.moduleSource, /\b(?:let|const) ([\w$]+)="codex-host-chunked-message-v1"/gu, true).length === 1), "native host decoder");
+  const marker = runtimeMatches(decoder.moduleSource, /\b(?:let|const) ([\w$]+)="codex-host-chunked-message-v1"/gu, true)[0][1];
+  const publication = runtimeOne(runtimeMatches(decoder.moduleSource, new RegExp(`${escapeRegExp(decoder.params[2])}\\.d\\(${escapeRegExp(decoder.params[1])},\\{\\},\\{(${id}):${escapeRegExp(marker)},(${id}):function\\((${id})\\)\\{`, "gu"), true), "native decoder publication");
+  const validatorOpen = publication.index + publication[0].length - 1, validatorClose = findMatchingBrace(decoder.moduleSource, validatorOpen);
+  const validator = decoder.moduleSource.slice(validatorOpen + 1, validatorClose), parameter = publication[3];
+  for (const field of ["marker", "transferId", "sequence", "kind", "tokens"]) {
+    if (!validator.includes(JSON.stringify(field))) throw new Error("Native decoder field contract changed");
+  }
+  if (!runtimeMatches(validator, new RegExp(`${escapeRegExp(parameter)}\\.marker===${escapeRegExp(marker)}`, "gu")).length ||
+      !runtimeMatches(validator, new RegExp(`Number\\.isSafeInteger\\(${escapeRegExp(parameter)}\\.sequence\\)`, "gu")).length ||
+      !runtimeMatches(validator, new RegExp(`Array\\.isArray\\(${escapeRegExp(parameter)}\\.tokens\\)`, "gu")).length) throw new Error("Native decoder validation changed");
+  const { findRspackRequireBinding } = require("../../scripts/patches/lib/rspack-module-assets.js");
+  const decoderConsumers = factories.flatMap(factory => {
+    if (factory === decoder) return [];
+    return runtimeMatches(factory.moduleSource, new RegExp(`(${id})=${escapeRegExp(factory.params[2])}\\("${escapeRegExp(decoder.moduleId)}"\\)`, "gu"), true)
+      .filter(match => findRspackRequireBinding(factory, match[1])?.moduleId === decoder.moduleId)
+      .map(match => ({ factory, name: escapeRegExp(match[1]) }));
+  });
+  const validatorOwner = runtimeOne(decoderConsumers.filter(row => runtimeMatches(row.factory.moduleSource,
+    new RegExp(`(?:\\(0,${row.name}\\.${escapeRegExp(publication[2])}\\)|${row.name}\\.${escapeRegExp(publication[2])})\\(`, "gu")).length), "native host validator consumer").factory;
+  const receiver = runtimeOne(runtimeMatches(validatorOwner.moduleSource, new RegExp(`${escapeRegExp(validatorOwner.params[2])}\\.d\\(${escapeRegExp(validatorOwner.params[1])},\\{\\},\\{(${id}):class\\{`, "gu"), true), "native host receiver publication")[1];
+  const markerOwner = runtimeOne(decoderConsumers.filter(row => runtimeMatches(row.factory.moduleSource,
+    new RegExp(`\\.marker===${row.name}\\.${escapeRegExp(publication[1])}(?![\\w$])`, "gu")).length), "native host marker consumer").factory;
+  const receiverUses = runtimeMatches(markerOwner.moduleSource, new RegExp(`(${id})=${escapeRegExp(markerOwner.params[2])}\\("${escapeRegExp(validatorOwner.moduleId)}"\\)`, "gu"), true)
+    .filter(match => findRspackRequireBinding(markerOwner, match[1])?.moduleId === validatorOwner.moduleId &&
+      runtimeMatches(markerOwner.moduleSource, new RegExp(`\\bnew ${escapeRegExp(match[1])}\\.${escapeRegExp(receiver)}(?![\\w$])`, "gu")).length);
+  runtimeOne(receiverUses, "native host receiver construction");
+  if (!runtimeMatches(markerOwner.moduleSource, /\.receive\(/gu).length) throw new Error("Native host receiver is not consumed");
+  const imports = runtimeMatches(source, /\bimport\*as ([\w$]+) from"([^"\n]+)";/gu, true).map(match => {
+    if (runtimeMatches(source, new RegExp(`${escapeRegExp(requireName)}\\.C\\(${escapeRegExp(match[1])}\\)`, "gu"), true).length !== 1) throw new Error("Native imported chunk registration changed");
+    return match[2];
+  });
+  if (imports.length === 0) throw new Error("Missing native startup imports");
+  const startup = runtimeOne(runtimeMatches(source, new RegExp(`\\bvar (${id})=${escapeRegExp(requireName)}\\.O\\(void 0,(\\[[^\\]]*\\]),\\(\\)=>${escapeRegExp(requireName)}\\("([^"\\n]+)"\\)\\);${escapeRegExp(requireName)}\\.O\\(\\1\\);`, "gu"), true), "native startup invocation");
+  const prefix = source.slice(0, startup.index).trimEnd();
+  if (prefix && !/[;}]/u.test(prefix.at(-1))) throw new Error("Native startup is not an unconditional declaration");
+  const chunks = JSON.parse(startup[2]);
+  if (!Array.isArray(chunks) || !chunks.length || chunks.some(value => typeof value !== "string" && typeof value !== "number")) throw new Error("Native startup chunk set changed");
+  return { requireName, exported, decoderId: decoder.moduleId, imports, chunks: chunks.map(String), startupId: startup[3], bootstrapModules: factories.map(factory => factory.moduleId) };
+}
+
+function runtimeAssetNames(extractedDir) {
+  const base = path.join(extractedDir, "webview", "assets"), names = [];
+  function visit(directory, prefix) {
+    if (!fs.lstatSync(directory).isDirectory()) throw new Error("Read Aloud asset inventory directory is not regular");
+    for (const name of fs.readdirSync(directory).sort()) {
+      const file = path.join(directory, name), relative = prefix + name, stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink()) throw new Error("Read Aloud asset inventory contains a symlink");
+      if (stat.isDirectory()) visit(file, relative + "/");
+      else if (stat.isFile() && /\.(?:c|m)?js$/u.test(name)) names.push("webview/assets/" + relative);
+    }
+  }
+  visit(base, "");
+  return names;
+}
+
+function runtimeHtmlScripts(source) {
+  const scripts = [];
+  for (const match of source.replace(/<!--[\s\S]*?-->/gu, "").matchAll(/<script\b([^>]*)>[\s\S]*?<\/script\s*>/giu)) {
+    const attrs = new Map();
+    for (const attr of match[1].matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/gu)) {
+      const name = attr[1].toLowerCase();
+      if (attrs.has(name)) throw new Error("Duplicate native HTML script attribute");
+      attrs.set(name, attr[3]);
+    }
+    if (attrs.get("type") !== "module" || !attrs.has("src")) continue;
+    const src = attrs.get("src");
+    if (!/^\/?(?:\.\/)?assets\/[A-Za-z0-9_./-]+\.(?:m?js)$/u.test(src) || src.split("/").some(part => part === "..")) throw new Error("Unsupported native HTML module edge");
+    scripts.push("webview/" + src.replace(/^\/?(?:\.\/)?/u, ""));
+  }
+  if (!scripts.length || new Set(scripts).size !== scripts.length) throw new Error("Missing or duplicate native HTML script edge");
+  return scripts;
+}
+
+function runtimeDependencyFacts(source) {
+  const digest = require("node:crypto").createHash("sha256").update(source).digest("hex");
+  if (readAloudDependencyFacts.has(digest)) return readAloudDependencyFacts.get(digest);
+  const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
+  const chunks = runtimeOne(runtimeMatches(source, /\bexport const __rspack_esm_ids=(\[[^\]]*\])/gu, true), "native dependency chunk registration");
+  const facts = { chunks: JSON.parse(chunks[1]).map(String), modules: [...rspackModuleFactories(source)].map(factory => factory.moduleId) };
+  if (readAloudDependencyFacts.size > 32) readAloudDependencyFacts.clear();
+  readAloudDependencyFacts.set(digest, facts);
+  return facts;
+}
+
+function applyReadAloudRuntimeToExtractedApp(extractedDir) {
+  const reject = error => { warn(error.message, "read aloud webview runtime patch"); return { matched: 0, changed: 0, changedAssets: [], reason: error.message }; };
+  let edits, names, hashes, written;
+  const digest = bytes => require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+  try {
+    names = runtimeAssetNames(extractedDir); hashes = new Map();
+    const snapshots = new Map(), roles = [], claims = [];
+    const read = name => {
+      if (!snapshots.has(name)) {
+        let file = extractedDir;
+        const parts = name.split("/");
+        for (const [index, part] of parts.entries()) {
+          file = path.join(file, part);
+          const stat = fs.lstatSync(file);
+          if (index === parts.length - 1 ? !stat.isFile() : !stat.isDirectory()) throw new Error("Native runtime dependency path is not regular");
+        }
+        const source = fs.readFileSync(file, "utf8"), hash = digest(source);
+        if (hashes.has(name) && hashes.get(name) !== hash) throw new Error("Native runtime dependency changed during qualification");
+        snapshots.set(name, source);
+        hashes.set(name, hash);
+      }
+      return snapshots.get(name);
+    };
+    for (const name of names) {
+      const value = fs.readFileSync(path.join(extractedDir, name), "utf8"); hashes.set(name, digest(value));
+      if (runtimeOwnClaims(value).length) claims.push(name);
+    }
+    for (const html of ["webview/index.html", "webview/detached-window.html"]) {
+      const scripts = runtimeHtmlScripts(read(html));
+      const owners = [];
+      for (const name of scripts) {
+        const text = read(name);
+        if (RUNTIME_ENTRY_EXPORT.test(text) || runtimeOwnClaims(text).length) owners.push({ name, text, native: inspectRuntimeEntry(text), own: inspectReadAloudRuntime(text) });
+      }
+      const owner = runtimeOne(owners, "native window runtime entry");
+      const registeredChunks = new Set(), modules = new Set(owner.native.bootstrapModules);
+      for (const imported of owner.native.imports) {
+        if (!/^\.\/[A-Za-z0-9_./-]+\.js$/u.test(imported) || imported.split("/").some(part => part === "..")) throw new Error("Unsupported native entry import");
+        const name = path.posix.normalize(path.posix.join(path.posix.dirname(owner.name), imported));
+        if (!scripts.includes(name)) throw new Error("Native startup import is outside its HTML load edge");
+        const facts = runtimeDependencyFacts(read(name));
+        facts.chunks.forEach(id => registeredChunks.add(id)); facts.modules.forEach(id => modules.add(id));
+      }
+      if (owner.native.chunks.some(id => !registeredChunks.has(id)) || !modules.has(owner.native.startupId)) throw new Error("Native startup chunks or producer are unavailable");
+      roles.push(owner);
+    }
+    if (new Set(roles.map(row => row.name)).size !== 2) throw new Error("Native window runtime roles overlap");
+    if (new Set(roles.map(row => row.own.state)).size !== 1) throw new Error("Mixed Read Aloud runtime entry cohort");
+    if (claims.some(name => !roles.some(row => row.name === name))) throw new Error("Orphan Read Aloud runtime peer");
+    written = new Set(roles.filter(row => row.own.state === "current").map(row => row.name));
+    for (const owner of roles) {
+      const patched = ensureReadAloudRuntime(owner.text);
+      if (inspectReadAloudRuntime(patched).state !== "patched") throw new Error("Read Aloud runtime poststate is incomplete");
+      snapshots.set(owner.name, owner.text);
+    }
+    edits = [...snapshots].map(([assetName, source]) => ({ assetName, source, patchedSource: written.has(assetName) ? ensureReadAloudRuntime(source) : source }));
+  } catch (error) { return reject(error); }
+  const verify = () => {
+    const current = runtimeAssetNames(extractedDir);
+    if (JSON.stringify(current) !== JSON.stringify(names)) throw new Error("Read Aloud asset inventory changed before commit");
+    for (const [name, hash] of hashes) {
+      if (digest(fs.readFileSync(path.join(extractedDir, name))) !== hash) throw new Error(`Read Aloud dependency changed before commit: ${name}`);
+    }
+  };
+  verify();
+  const originalByFile = new Map(edits.map(edit => [path.join(extractedDir, edit.assetName), Buffer.from(edit.source)]));
+  const result = commitMainEdits(extractedDir, edits, { writeFileSync(file, bytes) {
+    const restoring = originalByFile.get(file)?.equals(bytes);
+    if (!restoring) verify();
+    fs.writeFileSync(file, bytes);
+    if (!restoring) hashes.set(path.relative(extractedDir, file).split(path.sep).join("/"), digest(bytes));
+  } });
+  return { matched: 1, ...result };
+}
+
 function applyRuntimeEntryPatch(source) {
-  if (!RUNTIME_ENTRY_EXPORT.test(source) || !source.includes(RUNTIME_ENTRY_NEEDLES[0])) {
-    console.warn("WARN: Could not find rspack webview runtime entry contract - skipping read aloud webview runtime patch");
+  try {
+    inspectRuntimeEntry(source);
+    return ensureReadAloudRuntime(source);
+  } catch (error) {
+    warn("Could not find complete rspack webview runtime entry contract - " + error.message, "read aloud webview runtime patch");
     return source;
   }
-  return ensureReadAloudRuntime(source);
 }
 
 function applyAssistantAssetPatch(source) {
@@ -491,13 +864,16 @@ module.exports = {
     },
     {
       id: "webview-runtime",
-      phase: "webview-asset",
+      phase: "extracted-app:pre-webview",
       order: 20610,
       ciPolicy: "optional",
       assetNeedles: RUNTIME_ENTRY_NEEDLES,
       missingDescription: "rspack webview runtime entry",
       skipDescription: "read aloud webview runtime patch",
-      apply: applyRuntimeEntryPatch,
+      apply: applyReadAloudRuntimeToExtractedApp,
+      status: result => result?.matched !== 1
+        ? { status: "skipped-optional", reason: result?.reason ?? "missing complete runtime entry cohort" }
+        : result.changed > 0 ? "applied" : "already-applied",
     },
     {
       id: "assistant-runtime",
