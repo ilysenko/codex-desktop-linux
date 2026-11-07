@@ -20,10 +20,13 @@ const {
 const {
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
+const { applyExtractedAppPatchDescriptors, normalizePatchDescriptors } = require("../../scripts/patches/engine.js");
+const { enabledFeatureFailuresFromReport } = require("../../scripts/lib/patch-report.js");
 const {
   applyApiKeyModelMarkerPatch,
   applyApiKeyServiceTierGatePatch,
   patchApiKeyServiceTierGate,
+  patchApiKeyModelMarker,
   serviceTierGateState,
   applyApiKeyServiceTierResolverPatch,
   applyFallbackFastTierPatch,
@@ -31,7 +34,10 @@ const {
 } = require("./patch.js");
 
 const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
-const { findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
+const { inspectModelCatalogOwner } = require("../../scripts/patches/lib/model-composer-owners.js");
+const current = require("../../scripts/patches/lib/fixtures/current-model-composer.json");
+const { applyApiKeyModelVisibilityPatch } = require("../api-key-model-visibility/patch.js");
+const { rspackModuleFactories, findUniqueRspackModuleCopies } = require("../../scripts/patches/lib/rspack-module-assets.js");
 
 function gateSnapshot(source) { return { moduleSource: source, start: 0, params: ["e", "t", "n"] }; }
 function patchGateFixture(source) { return applyApiKeyServiceTierGatePatch(source, gateSnapshot(source)); }
@@ -56,7 +62,18 @@ function currentGateFixture() {
 }
 
 function currentModelFixture() {
-  return 'function i({additionalAvailableModels:e,apiKeyDaybreakSupported:t=!1,authMethod:n,availableModels:a,defaultModel:s,enabledReasoningEfforts:o,hasConfiguredModelCatalog:l,includeUltraReasoningEffort:u,isCustomModelProvider:d=!1,models:c,useHiddenModels:p}){let h=[],f=null,m=c.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>"max"===e)),g=u&&c.some(e=>e.supportedReasoningEfforts.some(({reasoningEffort:e})=>"ultra"===e));return c.forEach(i=>{if(function({additionalAvailableModels:e,apiKeyDaybreakSupported:t,authMethod:n,availableModels:r,hasConfiguredModelCatalog:i,isCustomModelProvider:a,model:s,useHiddenModels:o}){let l=s.availableAccessPrograms?.cyber;return("apikey"!==n||!!t||null==l||!(l.length>0)||!!l.includes("standard"))&&(e?.has(s.model)===!0||"codex-auto-review"!==s.model&&(i&&!s.hidden||(o&&!a&&"amazonBedrock"!==n?r.has(s.model)||"apikey"===n&&t&&!s.hidden&&l?.some(e=>"standard"!==e)===!0:!s.hidden)))}({additionalAvailableModels:e,apiKeyDaybreakSupported:t,authMethod:n,availableModels:a,hasConfiguredModelCatalog:l,isCustomModelProvider:d,model:i,useHiddenModels:p})){let e=u?i.supportedReasoningEfforts:i.supportedReasoningEfforts.filter(({reasoningEffort:e})=>"ultra"!==e),t=("copilot"===n?[e.find(e=>"medium"===e.reasoningEffort)??{reasoningEffort:"medium",description:"medium effort"}]:e).filter(({reasoningEffort:e})=>(0,r.eE)(e)&&o.has(e)),a={...i,supportedReasoningEfforts:t};h.push(a),i.isDefault&&(f=a)}}),null==f&&(f=h.find(e=>e.model===s)??null),{models:h,defaultModel:f,hasModelSupportingMaxReasoningEffort:m,hasModelSupportingUltraReasoningEffort:g}}';
+  const predicate = 'function({additionalAvailableModels:extra,apiKeyDaybreakSupported:daybreak,authMethod:auth,availableModels:allow,hasConfiguredModelCatalog:configured,isCustomModelProvider:custom,model:item,useHiddenModels:hidden}){let programs=item.availableAccessPrograms?.cyber;return("apikey"!==auth||!!daybreak||null==programs||!(programs.length>0)||!!programs.includes("standard"))&&(extra?.has(item.model)===!0||"codex-auto-review"!==item.model&&(configured&&!item.hidden||(hidden&&!custom&&"amazonBedrock"!==auth?allow.has(item.model)||"apikey"===auth&&daybreak&&!item.hidden&&programs?.some(program=>"standard"!==program)===!0:!item.hidden)))}';
+  return 'var guard=n("effort-guard");n.d(t,{},{catalog:function({additionalAvailableModels:extra,apiKeyDaybreakSupported:daybreak=!1,authMethod:auth,availableModels:allow,defaultModel:fallback,enabledReasoningEfforts:enabled,hasConfiguredModelCatalog:configured,includeUltraReasoningEffort:ultra,isCustomModelProvider:custom=!1,models:models,useHiddenModels:hidden}){let output=[],defaultModel=null,maximum=!1,ultraFlag=!1;return models.forEach(item=>{if(' + predicate + '({additionalAvailableModels:extra,apiKeyDaybreakSupported:daybreak,authMethod:auth,availableModels:allow,hasConfiguredModelCatalog:configured,isCustomModelProvider:custom,model:item,useHiddenModels:hidden})){let raw=ultra?item.supportedReasoningEfforts:item.supportedReasoningEfforts.filter(({reasoningEffort:effort})=>"ultra"!==effort),filtered=("copilot"===auth?[raw.find(e=>"medium"===e.reasoningEffort)??{reasoningEffort:"medium",description:"medium effort"}]:raw).filter(({reasoningEffort:effort})=>(0,guard.allowed)(effort)&&enabled.has(effort)),normalized={...item,supportedReasoningEfforts:filtered};output.push(normalized),item.isDefault&&(defaultModel=normalized)}}),null==defaultModel&&(defaultModel=output.find(item=>item.model===fallback)??null),{models:output,defaultModel:defaultModel,hasModelSupportingMaxReasoningEffort:maximum,hasModelSupportingUltraReasoningEffort:ultraFlag}}})';
+}
+
+const MODEL_MARKER = "codexLinuxApiKeyServiceTierModel";
+function modelSnapshot(source) { return { moduleSource: source, start: 0, params: ["e", "t", "n"] }; }
+function patchModelFixture(source) { return applyApiKeyModelMarkerPatch(source, {factorySnapshot: modelSnapshot(source)}); }
+function modelChunk(source = currentModelFixture(), id = "catalogOwner") { return gateChunk(source, id); }
+function modelNormalizer(source) {
+  const owner = inspectModelCatalogOwner(modelSnapshot(source));
+  assert.equal(owner.ok, true, owner.reason);
+  return Function("guard", `return (${source.slice(owner.owner.start, owner.owner.end)});`)({allowed: () => true});
 }
 
 function currentResolverFixture() {
@@ -154,7 +171,7 @@ test("api-key-service-tier stays disabled until listed in features.json", () => 
     const loaded = loadLinuxFeaturePatchDescriptors({ featuresRoot });
     assert.deepEqual(
       loaded.map((descriptor) => [descriptor.id, descriptor.phase, descriptor.ciPolicy]),
-      DESCRIPTOR_IDS.map((id, index) => [`feature:api-key-service-tier:${id}`, index === 0 ? "extracted-app:pre-webview" : "webview-asset", "optional"]),
+      DESCRIPTOR_IDS.map((id, index) => [`feature:api-key-service-tier:${id}`, index <= 1 ? "extracted-app:pre-webview" : "webview-asset", "optional"]),
     );
   });
 });
@@ -167,7 +184,9 @@ test("descriptors find their owners by content needles, not chunk names", () => 
     "api-key-service-tier-resolver": currentResolverFixture() + "supportsIndependentSpeedModes",
     "api-key-service-tier-fallback": currentOptionsFixture() + "Description for the Ultrafast service tier",
   };
-  for (const descriptor of descriptors.slice(1)) {
+  assert.equal(descriptors[1].phase, "extracted-app:pre-webview");
+  assert.equal(descriptors[1].assetNeedles, undefined);
+  for (const descriptor of descriptors.slice(2)) {
     assert.equal(descriptor.pattern, undefined);
     assert.equal(descriptor.assetPattern, undefined);
     assert.equal(descriptor.assetMatch, undefined);
@@ -178,9 +197,9 @@ test("descriptors find their owners by content needles, not chunk names", () => 
   }
 });
 
-test("every patch warns and stays byte-identical when its contract disappears", () => {
+test("model marker refuses missing owners while resolver and fallback warn byte-identically", () => {
+  assert.throws(() => applyApiKeyModelMarkerPatch("function drifted(){}"), /Missing or ambiguous/);
   for (const [patchFn, message] of [
-    [applyApiKeyModelMarkerPatch, "Could not find model list mapping - skipping API key model service tier marker patch"],
     [applyApiKeyServiceTierResolverPatch, "Could not find service tier resolver - skipping API key service tier resolver patch"],
     [applyFallbackFastTierPatch, "Could not find service tier option helpers - skipping API key fallback fast tier patch"],
   ]) {
@@ -330,31 +349,176 @@ test("gate cohort restores earlier and partially written later copies after a la
   });
 });
 
-test("model list entries are marked only when loaded for API-key hosts", () => {
-  const patched = applyPatchTwice(applyApiKeyModelMarkerPatch, currentModelFixture());
-  assert.match(
-    patched,
-    /a=\{\.\.\.i,supportedReasoningEfforts:t,codexLinuxApiKeyServiceTierModel:"apikey"===n\}/,
-  );
-  const catalog = Function("r", `${patched};return i;`)({ eE: () => true });
-  const run = (authMethod) => catalog({
-    authMethod,
-    availableModels: new Set(["gpt-5"]),
-    defaultModel: "gpt-5",
-    enabledReasoningEfforts: new Set(["medium"]),
-    includeUltraReasoningEffort: false,
-    models: [{ model: "gpt-5", hidden: false, isDefault: true, supportedReasoningEfforts: [] }],
-    useHiddenModels: false,
-  });
-  assert.equal(run("apikey").models[0].codexLinuxApiKeyServiceTierModel, true);
-  assert.equal(run("chatgpt").models[0].codexLinuxApiKeyServiceTierModel, false);
+test("model marker recomputes each host identity and catalog refresh without losing provider data", () => {
+  const source = currentModelFixture(), patched = applyPatchTwice(patchModelFixture, source);
+  const normalize = modelNormalizer(patched);
+  const efforts = [{reasoningEffort: "medium", description: "medium"}, {reasoningEffort: "high", description: "high"}, {reasoningEffort: "ultra", description: "ultra"}];
+  const tiers = [{id: "priority", name: "Provider fast"}];
+  const input = {model: "custom", hidden: false, isDefault: true, supportedReasoningEfforts: efforts,
+    serviceTiers: tiers, extraProviderField: {keep: true}, [MODEL_MARKER]: true};
+  const options = {availableModels: new Set(["custom"]), defaultModel: "custom", enabledReasoningEfforts: new Set(["medium", "high"]), models: [input]};
+  for (const authMethod of ["apikey", "chatgpt", "personalAccessToken", "amazonBedrock", "copilot", null, "unknown", "apikey"]) {
+    const result = normalize({...options, authMethod}), model = result.models[0];
+    assert.equal(model[MODEL_MARKER], authMethod === "apikey", String(authMethod));
+    assert.equal(model.serviceTiers, tiers);
+    assert.equal(model.extraProviderField, input.extraProviderField);
+    assert.equal(result.defaultModel, model);
+    assert.deepEqual(model.supportedReasoningEfforts.map(e => e.reasoningEffort), authMethod === "copilot" ? ["medium"] : ["medium", "high"]);
+    assert.deepEqual({...model, [MODEL_MARKER]: undefined}, {...modelNormalizer(source)({...options, authMethod}).models[0], [MODEL_MARKER]: undefined});
+  }
+  const refreshedTiers = [{id: "batch", name: "Batch"}];
+  const refreshed = normalize({...options, authMethod: "apikey", models: [{...input, serviceTiers: refreshedTiers}]});
+  assert.equal(refreshed.models[0].serviceTiers, refreshedTiers);
+  assert.equal(refreshed.models[0][MODEL_MARKER], true);
+  assert.equal(input[MODEL_MARKER], true);
+  assert.equal(input.supportedReasoningEfforts, efforts);
+  assert.deepEqual(tiers, [{id: "priority", name: "Provider fast"}]);
 });
 
-test("model list marker rejects the superseded pre-Daybreak signature byte-identically", () => {
-  const source = currentModelFixture().replace("apiKeyDaybreakSupported:t=!1,", "");
-  assert.deepEqual(captureWarnings(() => {
-    assert.equal(applyApiKeyModelMarkerPatch(source), source);
-  }), ["WARN: Could not find model list mapping - skipping API key model service tier marker patch"]);
+test("model marker binds the published output and rejects drift, shadows and stale snapshots", () => {
+  const source = currentModelFixture();
+  for (const [from, to] of [
+    ["apiKeyDaybreakSupported:daybreak=!1,", ""],
+    ["n.d(t,", "n.d(wrongExports,"],
+    ["models.forEach(item=>", "models.forEach(auth=>"],
+    ["normalized={...item,", "normalized={...wrongModel,"],
+    ["output.push(normalized)", "otherOutput.push(normalized)"],
+    ["supportedReasoningEfforts:filtered}", "supportedReasoningEfforts:otherEfforts}"],
+    ["authMethod:auth,availableModels:allow,defaultModel", "authMethod:otherAuth,availableModels:allow,defaultModel"],
+    ["return models.forEach(", "models.forEach("],
+  ]) {
+    assert.ok(source.includes(from), from);
+    assert.throws(() => patchModelFixture(source.replace(from, to)), /Unsupported/, from);
+  }
+  assert.throws(() => applyApiKeyModelMarkerPatch(source), /Missing or ambiguous/);
+  assert.throws(() => applyApiKeyModelMarkerPatch(source, {factorySnapshot: {...modelSnapshot(source), moduleSource: "stale"}}), /Stale/);
+  assert.throws(() => applyApiKeyModelMarkerPatch(modelChunk(source).replace("}};", `},second(e,t,n){${source}}};`)), /ambiguous/);
+});
+
+test("opaque, orphan, partial, duplicate and wrong-auth model markers never qualify as applied", () => {
+  const source = currentModelFixture(), patched = patchModelFixture(source);
+  const contribution = `,${MODEL_MARKER}:"apikey"===auth`;
+  for (const body of [source + `/*${MODEL_MARKER}:"apikey"===auth}*/`, source + `const example='${MODEL_MARKER}:"apikey"===auth}';`,
+    patched + `/*${MODEL_MARKER}*/`, patched.replace(contribution, `,${MODEL_MARKER}:"apikey"===otherAuth`),
+    patched.replace(contribution, `,${MODEL_MARKER}:!0`), patched.replace(contribution, `,${MODEL_MARKER}:"apikey"===auth,extra:1`),
+    patched.replace(contribution, contribution + contribution)]) {
+    assert.throws(() => patchModelFixture(body), /Orphan|noncanonical|Unsupported/);
+  }
+  for (const opaque of ["const example=`" + modelChunk(source) + "`;", "/*" + modelChunk(source) + "*/", JSON.stringify(modelChunk(source))]) {
+    assert.throws(() => applyApiKeyModelMarkerPatch(opaque), /Opaque|Missing/);
+  }
+  assert.throws(() => applyApiKeyModelMarkerPatch(`/*${MODEL_MARKER}*/` + modelChunk(source)), /Orphan/);
+  assert.throws(() => applyApiKeyModelMarkerPatch(modelChunk(source).replace("}};", `},other(e,t,n){const example="${MODEL_MARKER}";}};`)), /Orphan/);
+});
+
+test("model marker changes only its exact output contribution in the retained signed factory", () => {
+  const source = current.catalog.moduleSource;
+  const patched = applyApiKeyModelMarkerPatch(source, {factorySnapshot: current.catalog});
+  const contribution = `,${MODEL_MARKER}:"apikey"===n`;
+  assert.equal(patched.replace(contribution, ""), source);
+  assert.equal(applyApiKeyModelMarkerPatch(patched, {factorySnapshot: {...current.catalog, moduleSource: patched}}), patched);
+  assert.equal(applyApiKeyModelMarkerPatch(modelChunk(source, "RenamedIdentity")), modelChunk(patched, "RenamedIdentity"));
+  assert.equal(spawnSync(process.execPath, ["--check"], {input: patched}).status, 0);
+});
+
+test("model marker preserves UP44 visibility and canonical Copilot effort contributions", () => {
+  const source = currentModelFixture().replace('filtered=("copilot"===auth?[raw.find(e=>"medium"===e.reasoningEffort)??{reasoningEffort:"medium",description:"medium effort"}]:raw).filter(',
+    'filtered=/*codexLinuxCopilotReasoningEffort*/[...raw].filter(');
+  const visible = applyApiKeyModelVisibilityPatch(source, {factorySnapshot: modelSnapshot(source)});
+  const patched = patchModelFixture(visible);
+  assert.equal(patched.replace(`,${MODEL_MARKER}:"apikey"===auth`, ""), visible);
+  assert.equal(patchModelFixture(patched), patched);
+  assert.equal(applyApiKeyModelVisibilityPatch(patched, {factorySnapshot: modelSnapshot(patched)}), patched);
+});
+
+test("catalog auth cannot be shadowed at the normalized output", () => {
+  const source = currentModelFixture().replace('filtered=("copilot"===auth?[raw.find(e=>"medium"===e.reasoningEffort)??{reasoningEffort:"medium",description:"medium effort"}]:raw).filter(',
+    'filtered=/*codexLinuxCopilotReasoningEffort*/[...raw].filter(');
+  for (const declaration of ["let auth;", "let {auth}=identity;", "let [auth]=identity;", "var auth;", "function auth(){}"]) {
+    const shadowed = source.replace(',normalized={...item,', `;${declaration}let normalized={...item,`);
+    assert.equal(inspectModelCatalogOwner(modelSnapshot(shadowed)).ok, true, declaration);
+    assert.throws(() => patchModelFixture(shadowed), /auth scope binding/, declaration);
+  }
+  const hoisted = source.replace('item.isDefault&&(defaultModel=normalized)}})', 'item.isDefault&&(defaultModel=normalized)}var auth;})');
+  assert.equal(inspectModelCatalogOwner(modelSnapshot(hoisted)).ok, true);
+  assert.throws(() => patchModelFixture(hoisted), /auth scope binding/);
+});
+
+test("enabled model descriptor reports the complete cohort and its exact repeat", () => {
+  withFeatureConfig(["api-key-service-tier"], featuresRoot => {
+    const loaded = normalizePatchDescriptors(loadLinuxFeaturePatchDescriptors({featuresRoot}))
+      .filter(descriptor => descriptor.id.endsWith(":api-key-service-tier-model"));
+    assert.equal(loaded.length, 1);
+    withExtractedApp({"a.js": modelChunk(), "b.js": modelChunk()}, (app) => {
+      for (const status of ["applied", "already-applied"]) {
+        const report = createPatchReport();
+        report.enabledFeatures = ["api-key-service-tier"];
+        assert.deepEqual(captureWarnings(() => applyExtractedAppPatchDescriptors(app, loaded, {}, report, "extracted-app:pre-webview")), []);
+        assert.equal(report.patches[0].status, status);
+        assert.deepEqual(enabledFeatureFailuresFromReport(report), []);
+      }
+    });
+  });
+});
+
+test("model cohort commits all copies, ignores needle-only consumers and repeats without writes", () => {
+  const sibling = '},consumer(e,t,n){let keep="hasModelSupportingUltraReasoningEffort apiKeyDaybreakSupported codex-auto-review";}';
+  const source = modelChunk().replace("}};", sibling + "};");
+  withExtractedApp({"a.js": source, "b.js": modelChunk(), "consumer.js": asChunk('let keep="hasModelSupportingUltraReasoningEffort apiKeyDaybreakSupported codex-auto-review";')}, (app, assets) => {
+    const before = fs.readFileSync(path.join(assets, "consumer.js"), "utf8");
+    fs.chmodSync(path.join(assets, "a.js"), 0o640);
+    const result = patchApiKeyModelMarker(app);
+    assert.equal(result.matched, 2);
+    assert.equal(result.changed, 2);
+    assert.ok(fs.readFileSync(path.join(assets, "a.js"), "utf8").endsWith(sibling + "};"));
+    assert.equal(fs.readFileSync(path.join(assets, "consumer.js"), "utf8"), before);
+    let writes = 0;
+    const repeat = patchApiKeyModelMarker(app, {}, {writeFileSync: () => {writes++;}});
+    assert.equal(repeat.changed, 0);
+    assert.equal(repeat.matched, 2);
+    assert.equal(writes, 0);
+    assert.equal(fs.statSync(path.join(assets, "a.js")).mode & 0o777, 0o640);
+  });
+});
+
+test("model cohort refuses damaged, opaque, hidden, mixed or orphan copies before any writes", () => {
+  const source = currentModelFixture(), patched = patchModelFixture(source);
+  const cases = [
+    {"a.js": modelChunk(), "b.js": modelChunk(source.replace("apiKeyDaybreakSupported:daybreak=!1,", ""))},
+    {"a.js": modelChunk(), "b.js": modelChunk(source.replace("supportedReasoningEfforts:filtered}", `supportedReasoningEfforts:filtered,${MODEL_MARKER}:!0}`))},
+    {"a.js": modelChunk(), "b.js": modelChunk(patched)},
+    {"a.js": modelChunk(), "b.js": modelChunk("let hidden=true;")},
+    {"a.js": modelChunk(), "b.js": modelChunk("let hidden=true;", '"catalogO\\u0077ner"')},
+    {"a.js": modelChunk(), "b.js": "const example=`" + modelChunk() + "`;"},
+    {"a.js": modelChunk(), "b.js": "/*" + modelChunk() + "*/"},
+    {"a.js": modelChunk(), "b.js": `const example='${MODEL_MARKER}:"apikey"===auth}';`},
+    {"a.js": modelChunk(source, "first"), "b.js": modelChunk(source, "second")},
+    {},
+  ];
+  for (const chunks of cases) withExtractedApp(chunks, (app, assets) => {
+    let writes = 0;
+    assert.throws(() => patchApiKeyModelMarker(app, {}, {writeFileSync: () => {writes++;}}));
+    assert.equal(writes, 0);
+    for (const [name, bytes] of Object.entries(chunks)) assert.equal(fs.readFileSync(path.join(assets, name), "utf8"), bytes);
+  });
+});
+
+test("model cohort rolls back a partially written later file and retains every mode", () => {
+  const chunks = {"a.js": modelChunk(), "b.js": modelChunk(), "c.js": modelChunk()};
+  withExtractedApp(chunks, (app, assets) => {
+    for (const [index, name] of Object.keys(chunks).entries()) fs.chmodSync(path.join(assets, name), 0o640 + index);
+    let writes = 0;
+    assert.throws(() => patchApiKeyModelMarker(app, {}, {writeFileSync: (filename, bytes) => {
+      writes++;
+      if (writes === 2) {fs.writeFileSync(filename, bytes.subarray(0, 37)); throw new Error("model later write fault");}
+      fs.writeFileSync(filename, bytes);
+    }}), /model later write fault/);
+    assert.equal(writes, 4);
+    for (const [index, [name, bytes]] of Object.entries(chunks).entries()) {
+      assert.equal(fs.readFileSync(path.join(assets, name), "utf8"), bytes);
+      assert.equal(fs.statSync(path.join(assets, name)).mode & 0o777, 0o640 + index);
+    }
+  });
 });
 
 test("speed options and resolver round-trip synthetic fast for an API-key model without tiers", () => {
@@ -409,7 +573,7 @@ test("rspack chunks patch every gate copy and report a drifted owner separately"
     const chunks = {
       "11.aaaa.js": gateChunk(),
       "12.bbbb.js": gateChunk(),
-      "13.cccc.js": asChunk(currentModelFixture(), currentOptionsFixture() + 'let q="Description for the Ultrafast service tier";'),
+      "13.cccc.js": modelChunk().replace("}};", '},optionsOwner(e,t,n){' + currentOptionsFixture() + 'let q="Description for the Ultrafast service tier";}};'),
       "14.dddd.js": asChunk(currentResolverFixture().replace("t===a?u(e)", "t===a?drift(e)") + "let z=\"supportsIndependentSpeedModes\";"),
     };
     withExtractedApp(chunks, (tempApp, asyncDir) => {
@@ -453,10 +617,10 @@ test("official signed webview owners patch once, idempotently, and still parse",
   const assetsDir = path.join(signedApp, "webview", "assets");
   const counts = {};
   for (const descriptor of descriptors) {
-    const copies = descriptor.id === "api-key-service-tier-gate"
+    const copies = ["api-key-service-tier-gate", "api-key-service-tier-model"].includes(descriptor.id)
       ? findUniqueRspackModuleCopies(assetsDir, {
-        sourceMatch: source => source.includes("serviceTierAccess:"),
-        matchModule: (source, module) => serviceTierGateState(source, module).kind === "current",
+        sourceMatch: source => source.includes(descriptor.id === "api-key-service-tier-gate" ? "serviceTierAccess:" : "apiKeyDaybreakSupported"),
+        matchModule: (source, module) => descriptor.id === "api-key-service-tier-gate" ? serviceTierGateState(source, module).kind === "current" : inspectModelCatalogOwner(module).ok,
       }) : null;
     const assets = copies?.map(copy => copy.assetName) ?? findWebviewAssetsContaining(signedApp, descriptor.assetNeedles);
     assert.ok(assets.length > 0, descriptor.id);
@@ -465,7 +629,7 @@ test("official signed webview owners patch once, idempotently, and still parse",
       const copy = copies?.find(copy => copy.assetName === asset);
       const apply = copy == null ? descriptor.apply : text => {
         const body = text.slice(copy.start, text.length - (source.length - copy.end));
-        return text.slice(0, copy.start) + applyApiKeyServiceTierGatePatch(body, copy) + text.slice(text.length - (source.length - copy.end));
+        return text.slice(0, copy.start) + (descriptor.id === "api-key-service-tier-gate" ? applyApiKeyServiceTierGatePatch(body, copy) : applyApiKeyModelMarkerPatch(body, {factorySnapshot: {...copy, moduleSource: body}})) + text.slice(text.length - (source.length - copy.end));
       };
       let patched;
       assert.deepEqual(captureWarnings(() => {

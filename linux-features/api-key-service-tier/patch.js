@@ -1,10 +1,13 @@
 "use strict";
 
 const path = require("node:path");
+const { Script } = require("node:vm");
 const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
 const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
 const { findRspackRequireBinding, findUniqueRspackModuleCopies, patchRspackModuleCopies } =
   require("../../scripts/patches/lib/rspack-module-assets.js");
+const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
+const { inspectModelCatalogOwner } = require("../../scripts/patches/lib/model-composer-owners.js");
 
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
 const PATCH_MARKER = "codexLinuxApiKeyFastTier";
@@ -162,39 +165,105 @@ function patchApiKeyServiceTierGate(extractedDir, options = {}) {
 
 // --- Model catalog marker ----------------------------------------------------
 
-const PATCHED_MODEL_MARKER = new RegExp(`${MODEL_MARKER}:"apikey"===${JS_IDENT}\\}`);
+const MODEL_DESCRIPTION = "current API key service tier model bundle";
+const modelMarkerCount = source => source.split(MODEL_MARKER).length - 1;
+const identifiesModelOwner = source => source.includes(MODEL_MARKER) || MODEL_NEEDLES.every(needle => source.includes(needle));
 
-function modelListPattern() {
-  return new RegExp(
-    `(function(?: ${JS_IDENT})?\\(\\{additionalAvailableModels:${JS_IDENT},apiKeyDaybreakSupported:${JS_IDENT}=!1,` +
-      `authMethod:(${JS_IDENT}),availableModels:${JS_IDENT},defaultModel:${JS_IDENT},` +
-      `enabledReasoningEfforts:${JS_IDENT},hasConfiguredModelCatalog:${JS_IDENT},` +
-      `includeUltraReasoningEffort:${JS_IDENT},isCustomModelProvider:${JS_IDENT}=!1,` +
-      `models:${JS_IDENT},useHiddenModels:${JS_IDENT}\\}\\)` +
-      `\\{[\\s\\S]{0,2400}?[,;]${JS_IDENT}=\\{\\.\\.\\.${JS_IDENT},supportedReasoningEfforts:${JS_IDENT})(\\})` +
-      `(?=[\\s\\S]{0,1200}?hasModelSupportingUltraReasoningEffort)`,
-    "g",
-  );
+// The generic registry walker is textual. Qualify its header as actual root
+// code before allowing it to inspect factories in comments or example strings.
+function requireModelRegistry(source) {
+  const headers = [...source.matchAll(/\bexport\s+const\s+__webpack_modules__\s*=\s*\{/gu)];
+  if (headers.length !== 1) throw new Error(`Missing or ambiguous ${MODEL_DESCRIPTION} registry`);
+  const [header] = headers;
+  const prefix = createJavaScriptLexicalIndex(source.slice(0, header.index + header[0].length));
+  if (!prefix.isRoot(header.index)) throw new Error(`Opaque or nested ${MODEL_DESCRIPTION} registry`);
 }
 
-function applyApiKeyModelMarkerPatch(source) {
-  if (PATCHED_MODEL_MARKER.test(source)) {
+function inspectModelMarker(source, snapshot) {
+  const module = { ...snapshot, moduleSource: source };
+  const found = inspectModelCatalogOwner(module);
+  if (!found.ok) throw new Error(`Unsupported ${MODEL_DESCRIPTION}: ${found.reason}`);
+  const { normalization, inputs, loop, visibility } = found;
+  const lexical = createJavaScriptLexicalIndex(source);
+  const captured = ["additional", "daybreak", "auth", "available", "configured", "custom", "hidden", "ultra", "enabled"];
+  if (captured.some(role => inputs[role] === loop.model) || visibility.owner.start !== loop.range.end ||
+      source.slice(visibility.call.end, normalization.sourceRange.start) !== "){let " ||
+      lexical.matchingBrace(visibility.call.end + 1) !== normalization.outputRange.end) {
+    throw new Error(`Unsupported ${MODEL_DESCRIPTION} normalization binding`);
+  }
+  // The captured auth must resolve to the catalog parameter at the insertion.
+  // Syntax-only probes catch lexical/destructured/function declarations and
+  // hoisted vars without executing the factory or rejecting unrelated locals
+  // inside sibling functions. These are the three scopes enclosing the field.
+  const loopOpen = loop.range.end - "{if(".length;
+  const scopes = [found.owner.body,
+    {start: loopOpen + 1, end: lexical.matchingBrace(loopOpen)},
+    {start: visibility.call.end + 2, end: normalization.outputRange.end}];
+  for (const scope of scopes) {
+    try { new Script(`function modelMarkerScope(){${source.slice(scope.start, scope.end)};let ${inputs.auth};}`); }
+    catch { throw new Error(`Unsupported ${MODEL_DESCRIPTION} auth scope binding`); }
+  }
+  const output = source.slice(normalization.outputRange.start, normalization.outputRange.end);
+  const prefix = `${normalization.output}={...${loop.model},supportedReasoningEfforts:${normalization.filteredEfforts}`;
+  const close = output.indexOf("};");
+  if (!output.startsWith(prefix) || close < prefix.length) throw new Error(`Unsupported ${MODEL_DESCRIPTION} output`);
+  const contribution = `,${MODEL_MARKER}:"apikey"===${inputs.auth}`;
+  const applied = output.slice(0, close).endsWith(contribution) && modelMarkerCount(source) === 1;
+  if (!applied && modelMarkerCount(source) !== 0) throw new Error(`Orphan or noncanonical ${MODEL_DESCRIPTION} marker`);
+  return { applied, insertion: normalization.outputRange.start + close, contribution };
+}
+
+function patchModelFactory(source, snapshot) {
+  const state = inspectModelMarker(source, snapshot);
+  if (state.applied) {
+    const start = state.insertion - state.contribution.length;
+    const native = source.slice(0, start) + source.slice(state.insertion);
+    const original = inspectModelMarker(native, snapshot);
+    if (original.applied || native.slice(0, original.insertion) + original.contribution + native.slice(original.insertion) !== source) {
+      throw new Error(`Noncanonical ${MODEL_DESCRIPTION} replay`);
+    }
     return source;
   }
-  const matches = [...source.matchAll(modelListPattern())];
-  if (matches.length === 1) {
-    const [, prefix, authMethodVar, suffix] = matches[0];
-    return spliceMatch(
-      source,
-      matches[0],
-      `${prefix},${MODEL_MARKER}:"apikey"===${authMethodVar}${suffix}`,
-    );
+  const patched = source.slice(0, state.insertion) + state.contribution + source.slice(state.insertion);
+  if (!inspectModelMarker(patched, snapshot).applied || patchModelFactory(patched, snapshot) !== patched) {
+    throw new Error(`Incomplete ${MODEL_DESCRIPTION} insertion`);
   }
-  warn(
-    matches.length > 1 ? "Model list mapping is ambiguous" : "Could not find model list mapping",
-    "API key model service tier marker patch",
-  );
-  return source;
+  return patched;
+}
+
+function applyApiKeyModelMarkerPatch(source, context = {}) {
+  if (context.factorySnapshot != null) {
+    if (context.factorySnapshot.moduleSource !== source) throw new Error("Stale model catalog factory snapshot");
+    return patchModelFactory(source, context.factorySnapshot);
+  }
+  requireModelRegistry(source);
+  const candidates = [...rspackModuleFactories(source, "model-catalog.js")]
+    .filter(module => identifiesModelOwner(module.moduleSource) && inspectModelCatalogOwner(module).ok);
+  if (candidates.length !== 1) throw new Error(`Missing or ambiguous ${MODEL_DESCRIPTION} factory`);
+  const [module] = candidates;
+  if (modelMarkerCount(source) !== modelMarkerCount(module.moduleSource)) throw new Error(`Orphan ${MODEL_DESCRIPTION} marker`);
+  return source.slice(0, module.start) + patchModelFactory(module.moduleSource, module) + source.slice(module.end);
+}
+
+function patchApiKeyModelMarker(extractedDir, _context = {}, options = {}) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  const markerAssets = new Set();
+  const copies = findUniqueRspackModuleCopies(assetsDir, {
+    description: MODEL_DESCRIPTION,
+    sourceMatch(source, name) {
+      if (source.includes(MODEL_MARKER)) markerAssets.add(name);
+      return identifiesModelOwner(source);
+    },
+    matchModule: (source, module) => identifiesModelOwner(source) && inspectModelCatalogOwner(module).ok,
+  });
+  for (const copy of copies) {
+    requireModelRegistry(copy.source);
+    inspectModelMarker(copy.moduleSource, copy);
+    if (modelMarkerCount(copy.source) !== modelMarkerCount(copy.moduleSource)) throw new Error(`Orphan ${MODEL_DESCRIPTION} marker`);
+    markerAssets.delete(copy.assetName);
+  }
+  if (markerAssets.size > 0) throw new Error(`Orphan ${MODEL_DESCRIPTION} marker in ${[...markerAssets].join(", ")}`);
+  return patchRspackModuleCopies(assetsDir, copies, patchModelFactory, options);
 }
 
 // --- Service tier resolver ---------------------------------------------------
@@ -331,13 +400,10 @@ const descriptors = [
   },
   {
     id: "api-key-service-tier-model",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20605,
     ciPolicy: "optional",
-    assetNeedles: MODEL_NEEDLES,
-    missingDescription: "current API key service tier model bundle",
-    skipDescription: "API key model service tier marker patch",
-    apply: applyApiKeyModelMarkerPatch,
+    apply: patchApiKeyModelMarker,
   },
   {
     id: "api-key-service-tier-resolver",
@@ -364,6 +430,7 @@ const descriptors = [
 module.exports = {
   FALLBACK_FAST_TIER_HELPER,
   applyApiKeyModelMarkerPatch,
+  patchApiKeyModelMarker,
   applyApiKeyServiceTierGatePatch,
   patchApiKeyServiceTierGate,
   applyApiKeyServiceTierResolverPatch,

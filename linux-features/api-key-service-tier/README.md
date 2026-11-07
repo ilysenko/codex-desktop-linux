@@ -51,12 +51,16 @@ provider explicitly documents such a model alias.
   speed-mode requirements and pending state. Loaded API-key hosts receive Fast
   access only after host loading completes; changing the authentication method
   invalidates the access memo even between two non-account identities.
+- The model catalog recomputes its API-key marker from that catalog's auth
+  input on every normalization. Identity switches replace any stale marker;
+  provider model fields, `serviceTiers`, and upstream reasoning-effort filtering
+  remain intact.
 - If an API-key host's active model has no `serviceTiers` metadata, the UI
   synthesizes one `fast` option so the selector can send
   `serviceTier: "fast"`.
 - ChatGPT-, personal-access-token-, and Amazon Bedrock-authenticated hosts still
   use upstream account requirements for official Fast mode and do not receive
-  synthetic API-key service-tier access or metadata.
+  synthetic API-key service-tier access or tiers.
 
 ## Implementation
 
@@ -67,11 +71,16 @@ API-key models, the service-tier resolver, and the active-model speed option
 list. The synthetic Fast helper is declared inside the same webpack module as
 each function that calls it. The gate validates its factory imports, host/auth
 query, native entitlement resolver and memoized outputs before preparing every
-physical copy of its module. All copies must be pristine or exactly patched;
-a missing, ambiguous, drifted or partially patched owner refuses the whole gate
-cohort before writes. A later write failure rolls back earlier copies. The
-other three patches leave a missing or drifted owner chunk unchanged and report
-a warning.
+physical copy of its module. The model marker validates the published catalog's
+auth input, loop model, normalized output, and returned catalog through the shared
+owner inspector. Only its exact output-field insertion qualifies as applied;
+marker text in comments, strings, other objects, or another auth binding refuses
+the patch. Both the gate and model patches prepare every physical copy before
+writes. All copies must be pristine or exactly patched; a missing, ambiguous,
+drifted, orphan, or partially patched owner refuses that patch's whole cohort.
+A later write failure restores every attempted file, including a partially
+written file. The resolver and option-list patches leave a missing or drifted
+owner chunk unchanged and report a warning.
 
 ## Risks
 
