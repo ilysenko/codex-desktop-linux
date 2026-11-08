@@ -170,13 +170,25 @@ The slider uses that same qualified picker and native reset dependency, prepares
 every physical copy, and accepts only its exact configured helper and two
 threshold changes. Hidden damage, mixed or orphan contributions refuse the
 cohort before writes; a later write fault restores every attempted file.
-The local resolver and local composer are each patched in one chunk. Upstream inlines the model-settings hook into every composer surface,
+The local composer is patched in one chunk. Upstream inlines the model-settings hook into every composer surface,
 so the existing-chat selection patch is applied to each copy and warns about
 any copy that drifted.
 
-The local resolver contract follows the current signed stable package's
-`removeXHigh` filter and preset loop. The local composer takes its slider
-config from either of two ChatGPT-gated upstream sources; the configured list
+The local resolver validates the current published resolver, model normalizer,
+exact supported model/effort intersection, native fallback arrays, and native
+uniqBy import/interop use. Its effort predicate and label formatter dependencies
+are qualified across every physical copy. Only a runtime config marked by this
+feature lowers the preset-loop minimum from three surviving pairs to one.
+Unmarked configs, the native `removeXHigh` filter, stable deduplication, list
+order, and both fallback thresholds retain their upstream behavior. Unsupported
+pairs are never synthesized. The resolver prepares every physical copy before
+one transaction, requires exact inverse/replay, and rejects hidden damage,
+mixed states, or orphan contributions before writes. The captured helpers must
+be actual synchronous module-level declarations, and the native static loader
+interop/publication calls must not be replaced by extra critical-method uses.
+
+The local composer takes its slider config from either of two ChatGPT-gated
+upstream sources; the configured list
 replaces whichever one is active. An enabled feature's descriptor mismatch
 rejects the build/update candidate and preserves the working installation.
 The composer context requires the current separate host-ID binding; the retired

@@ -1,0 +1,41 @@
+{
+  "version": "26.1103.32239",
+  "owners": {
+    "O5Ra": {
+      "asset": {
+        "path": "webview/assets/async/182735.d3d917f28d.js",
+        "bytes": 8273821,
+        "mode": "0644",
+        "sha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830"
+      },
+      "start": 7801501,
+      "end": 7801934,
+      "moduleId": "O5Ra",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "n.d(t,{},{K:function(e,{stripGptPrefix:t=!1}={}){if(!e.trimStart().toLowerCase().startsWith(\"gpt\"))return e;let n=/^gpt-\\d/iu.test(e.trimStart())?\" \":\"-\",r=e.split(/(\\s+)/).map(e=>0===e.trim().length?e:e.split(\"-\").map((e,t)=>\"gpt\"===e.toLowerCase()?\"GPT\":\"oai\"===e.toLowerCase()?\"OAI\":t>0&&e.length>0?`${e[0]?.toUpperCase()??\"\"}${e.slice(1)}`:e).join(n).replace(/^GPT (?=\\d)/u,\"GPT-\")).join(\"\");return t?r.replace(/^GPT-/iu,\"\"):r}})",
+      "bodySha256": "071707b1565668752a87be6122701b425eef3b140054efa25f27b98a846f75ac"
+    },
+    "FQih": {
+      "asset": {
+        "path": "webview/assets/async/972499.b9f8eb2bc4.js",
+        "bytes": 186114,
+        "mode": "0644",
+        "sha256": "cf2fa4d96dbc7c9b09036d9f43e67c62d25645068a6c253fcd0aab54e3373fdf"
+      },
+      "start": 109192,
+      "end": 109449,
+      "moduleId": "FQih",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "let r=348410==n.j?[\"minimal\",\"low\",\"medium\",\"high\",\"xhigh\",\"max\"]:null;n.d(t,{},{UB:\"gpt-5.5\",UL:r,eE:function(e){return\"none\"===e||\"minimal\"===e||\"low\"===e||\"medium\"===e||\"high\"===e||\"xhigh\"===e||\"max\"===e||\"ultra\"===e||\"persistent\"===e},qz:\"gpt-reserve\"})",
+      "bodySha256": "7baf8057f18f40f60047e0d46c6ecd5b1c660f5ea3b2fe4fc80eaacd6febafb3"
+    }
+  }
+}

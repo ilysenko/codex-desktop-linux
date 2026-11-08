@@ -16,14 +16,11 @@ const {
   EXISTING_CHAT_OPTIMISTIC_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
-  LOCAL_COMPOSER_RESOLVER_MARKER,
   applyExistingChatOptimisticPatch,
   applyLocalComposerConfigPatch,
-  applyLocalComposerResolverPatch,
   existingChatOptimisticContract,
   normalizePresets,
   localComposerConfigContract,
-  localComposerResolverContract,
   upstreamDefaultSelectionAssetMatch,
   upstreamDefaultSelectionContract,
 } = require("./patch.js");
@@ -48,17 +45,6 @@ function rspackChunk(modules) {
 }
 
 // Evaluates one factory of an rspack chunk fixture and returns its exports.
-function localComposerResolverFixture(name = "LocalPower") {
-  return [
-    `function ${name}(e,{removeXHigh:t=false,sliderModelsConfig:n,stripGptPrefix:r=true}={}){`,
-    "if(n!=null){let i=MapModels(e,{stripGptPrefix:r});for(let a of n.presets){",
-    'let n=a.filter(({reasoning_effort:e})=>!t||"xhigh"!==e).flatMap(({model:e,reasoning_effort:t})=>{let n=i.find(n=>n.model===e&&n.reasoningEffort===t);return null==n?[]:[n]}),o=unique(resolve(n,e,r),({id:e})=>e);',
-    "if(o.length>=3)return o}}let i=fallbackA(e);if(i.length>=3)return i;",
-    "let a=fallbackB(e);return a.length>=3?a:[]}",
-    "function Next(){}",
-  ].join("");
-}
-
 function localComposerFixture(name = "LocalComposer") {
   return [
     `function ${name}(available,serverConfig,conversationId,manualSelection){`,
@@ -182,83 +168,16 @@ test("upstream Default compatibility wrappers use the current complete registry 
   assert.equal(upstreamDefaultSelectionAssetMatch(source,"async/default.js",{feature:{manifest:{presets:[]},settings:{}}}),false);
 });
 
-test("local composer uses configured pairs and lowers only its config threshold", () => {
+test("local composer config supplies configured pairs and fallback", () => {
   const presets = context([
     { model: "gpt-5.6-sol", effort: "medium", default: true },
     { model: "gpt-5.6-sol", effort: "high" },
     { model: "gpt-6-astra", effort: "high" },
   ]);
-  const resolverSource = localComposerResolverFixture();
-  assert.equal(localComposerResolverContract(resolverSource), "current");
-  const patchedResolver = applyLocalComposerResolverPatch(resolverSource, presets);
-  assert.equal(localComposerResolverContract(patchedResolver), "applied");
-  assert.equal(applyLocalComposerResolverPatch(patchedResolver, presets), patchedResolver);
-  assert.equal(
-    (patchedResolver.match(new RegExp(LOCAL_COMPOSER_RESOLVER_MARKER, "g")) ?? []).length,
-    1,
-  );
-  const resolverGlobals = {
-    fallbackA: () => [],
-    fallbackB: () => [],
-    MapModels: (models) => models,
-    resolve: (entries) => entries.map(({ model, reasoningEffort }) => ({
-      id: `${model}:${reasoningEffort}`,
-      model,
-      reasoningEffort,
-    })),
-    unique: (entries) => entries,
-  };
-  const onePairConfig = {
-    codexLinuxDefaultPresets: true,
-    presets: [[{ model: "gpt-5.6-sol", reasoning_effort: "high" }]],
-  };
   const available = [
     { model: "gpt-5.6-sol", reasoningEffort: "high" },
     { model: "gpt-5.6-sol", reasoningEffort: "xhigh" },
   ];
-  assert.equal(
-    evaluate(
-      patchedResolver,
-      "LocalPower(available,{sliderModelsConfig:config}).length",
-      { ...resolverGlobals, config: onePairConfig, available },
-    ),
-    1,
-  );
-  assert.equal(
-    evaluate(
-      patchedResolver,
-      "LocalPower(available,{sliderModelsConfig:config}).length",
-      { ...resolverGlobals, config: { presets: onePairConfig.presets }, available },
-    ),
-    0,
-  );
-
-  const twoPairConfig = {
-    codexLinuxDefaultPresets: true,
-    presets: [[
-      { model: "missing", reasoning_effort: "high" },
-      { model: "gpt-5.6-sol", reasoning_effort: "xhigh" },
-      { model: "gpt-5.6-sol", reasoning_effort: "high" },
-    ]],
-  };
-  for (const removeXHigh of [false, true]) {
-    assert.deepEqual(
-      plain(evaluate(
-        patchedResolver,
-        "LocalPower(available,{sliderModelsConfig:config,removeXHigh}).map(({id})=>id)",
-        { ...resolverGlobals, available, config: twoPairConfig, removeXHigh },
-      )),
-      removeXHigh ? ["gpt-5.6-sol:high"] : ["gpt-5.6-sol:xhigh", "gpt-5.6-sol:high"],
-    );
-  }
-  assert.deepEqual(
-    plain(evaluate(patchedResolver, "LocalPower([],{sliderModelsConfig:config})", {
-      ...resolverGlobals, config: twoPairConfig,
-      fallbackA: () => [{ id: "upstream-a" }, { id: "upstream-b" }, { id: "upstream-c" }],
-    })),
-    [{ id: "upstream-a" }, { id: "upstream-b" }, { id: "upstream-c" }],
-  );
-
   const composerSource = localComposerFixture();
   assert.equal(localComposerConfigContract(composerSource), "current");
   const patchedComposer = applyLocalComposerConfigPatch(composerSource, presets);
@@ -554,20 +473,16 @@ test("existing-chat patch fails closed on drift, duplicate, and partial states",
 test("local composer patches fail closed on drift, duplicate, and partial states", () => {
   const presets = context([{ model: "gpt-5.6-sol", effort: "medium", default: true }]);
   for (const [apply, fixture, marker] of [
-    [applyLocalComposerResolverPatch, localComposerResolverFixture, LOCAL_COMPOSER_RESOLVER_MARKER],
     [applyLocalComposerConfigPatch, localComposerFixture, LOCAL_COMPOSER_CONFIG_MARKER],
   ]) {
     for (const source of [
       "function unrelated(){}",
       fixture("One") + fixture("Two"),
       `${marker};${fixture()}`,
-      ...(apply === applyLocalComposerResolverPatch ? [
-        fixture().replace("removeXHigh:", "changed:"),
-        fixture().replace("if(o.length>=3)return o", "if(o.length>=4)return o"),
-      ] : [fixture().replace(
+      fixture().replace(
         "[conversationId,hostId,host.cwd]",
         "[conversationId,host.hostId,host.cwd]",
-      )]),
+      ),
     ]) {
       const { result, warnings } = withCapturedWarnings(() => apply(source, presets));
       assert.equal(result, source);
