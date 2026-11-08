@@ -61,6 +61,10 @@ cd codex-desktop-linux
 | NixOS or another Nix system | `nix run github:ilysenko/codex-desktop-linux` | Builds and runs the flake output; see [Nix](docs/nix.md) |
 | Atomic desktops or another distribution | `make build-app && make appimage` | Produces a local AppImage without the native updater |
 
+For a local Nix build, use `./scripts/nix-local.sh build '#codex-desktop'`.
+This selects a Git input before Nix imports source, excluding `.git/` and
+untracked or ignored build outputs; see [local flake inputs](docs/nix.md#local-checkout-inputs).
+
 Gentoo's application merge ignores `EMERGE_DEFAULT_OPTS` to install through the
 generated ebuild rather than reuse a binary package. Global Portage settings are unchanged.
 Gentoo has a phase-aware dependency and package-resource framework for audited

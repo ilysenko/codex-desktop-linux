@@ -53,6 +53,9 @@
         flakeSourceCommit = self.rev or (self.dirtyRev or "");
         flakeSourceRemote = "https://github.com/ilysenko/codex-desktop-linux.git";
         flakeSourceDateEpoch = toString (self.lastModified or 1);
+        # This filters derivation sources only, after the flake input has
+        # already been fetched. Local callers must use scripts/nix-local.sh
+        # so the initial import uses Git instead of copying an entire path.
         sourceRoot = lib.cleanSourceWith {
           src = ./.;
           filter = path: type:

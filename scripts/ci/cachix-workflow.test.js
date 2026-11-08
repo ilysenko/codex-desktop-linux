@@ -19,6 +19,6 @@ test("Cachix publishes every audited Nix runtime for both architectures", () => 
   assert.match(workflow, /codex-desktop-maximal-shallow-watch/);
   assert.match(workflow, /nix-installer/);
   assert.doesNotMatch(workflow, /if \[ -n "\$CACHIX_AUTH_TOKEN"/);
-  assert.match(workflow, /nix build/);
+  assert.match(workflow, /\.\/scripts\/nix-local\.sh build/);
   assert.doesNotMatch(workflow, /codexDmg|nativeModulesSource/);
 });

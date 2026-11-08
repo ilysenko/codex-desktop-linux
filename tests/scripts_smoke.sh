@@ -15,11 +15,13 @@ assert_executable scripts/rebuild-candidate.sh
 assert_executable scripts/select-latest-package.sh
 assert_executable scripts/ci/update-nix-hashes.sh
 assert_executable scripts/ci/validate-nix-pins.sh
+assert_executable scripts/nix-local.sh
 assert_file assets/openai-codex-linux-repository-key.gpg.base64
 assert_file nix/upstream-linux-packages.json
 
 bash -n install.sh launcher/start.sh.template scripts/install-deps.sh \
   scripts/rebuild-candidate.sh scripts/select-latest-package.sh \
+  scripts/nix-local.sh \
   tests/install_deps_pacman_rust_matrix.sh
 bash -n scripts/lib/*.sh scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/build-appimage.sh
 bash -n scripts/build-gentoo.sh scripts/install-gentoo.sh

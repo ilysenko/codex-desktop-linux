@@ -22,5 +22,5 @@ NODE
 "$REPO_DIR/scripts/ci/update-nix-hashes.sh" check
 
 if command -v nix >/dev/null 2>&1; then
-    nix flake check --no-build
+    "$REPO_DIR/scripts/nix-local.sh" flake check --no-build
 fi

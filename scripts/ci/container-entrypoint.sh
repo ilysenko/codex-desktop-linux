@@ -123,8 +123,8 @@ run_install_deps() {
 
 run_nix() {
     export NIX_CONFIG="${NIX_CONFIG:-experimental-features = nix-command flakes}"
-    nix flake check --no-write-lock-file --option sandbox false
-    nix build .#codex-desktop --no-link --option sandbox false
+    ./scripts/nix-local.sh flake check --no-write-lock-file --option sandbox false
+    ./scripts/nix-local.sh build '#codex-desktop' --no-link --option sandbox false
 }
 
 [ -n "$CI_JOB" ] || die "missing job"

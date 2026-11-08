@@ -23,18 +23,55 @@ interpreter metadata beyond the first 2 KiB, where the bundled libc detector
 can no longer see it. The derivation relocates that metadata into verified
 `patchelf` padding so the detector selects glibc without using Electron's
 unsafe report fallback. These checks run against both official architectures.
-Builds apply the required core compatibility patch to `resources/app.asar`;
-the official ELF and native-module payload stays byte-for-byte intact. Optional
-ASAR features remain disabled unless explicitly selected.
+When no required core patch or optional ASAR feature is active, builds preserve
+`resources/app.asar` byte-for-byte. The ELF and native modules come from upstream,
+with the Nix runtime adjustments described above. Optional ASAR features remain
+disabled unless explicitly selected.
 
 ```bash
 nix run github:ilysenko/codex-desktop-linux
-nix build .#codex-desktop
+./scripts/nix-local.sh build '#codex-desktop'
 ```
 
 Supported systems are `x86_64-linux` and `aarch64-linux`. The flake maps these
 to upstream `amd64` and `arm64` packages. It does not replace Electron or build
 upstream native modules.
+
+## Local checkout inputs
+
+Run local flake commands through `scripts/nix-local.sh`:
+
+```bash
+./scripts/nix-local.sh build '#codex-desktop' --no-link
+./scripts/nix-local.sh develop
+./scripts/nix-local.sh flake check --no-build
+./scripts/nix-local.sh flake metadata --json
+```
+
+The entrypoint uses an explicit `git+file://` reference to this checkout,
+including linked Git worktrees. Nix selects Git-tracked files **before** it
+imports the flake source, so `.git/`, untracked files, and ignored build outputs
+such as `dist/`, `target/`, and `codex-app/` never enter that initial snapshot.
+Tracked files use their current working-tree contents, including uncommitted
+edits. Run `git add` for new source files before testing them; a tracked file
+remains included even if a later `.gitignore` rule matches it. The wrapper
+requires a Git checkout and refuses to fall back to a whole-directory import.
+It accepts `#output` or `.#output` immediately after build/run/develop/eval and
+forwards subsequent Nix options unchanged.
+
+Avoid `path:.` and `path:/absolute/path/to/codex-desktop-linux`. A `path:` input
+copies the entire directory into the Nix store before `flake.nix` is evaluated;
+the `sourceRoot` filter only reduces later derivation sources. The flake cannot
+filter its own initial import. Nix normally detects Git for bare `.` references,
+but the explicit Git entrypoint also prevents a missing `.git` from silently
+turning them into path inputs.
+
+When another flake uses this checkout as an input, select Git there too:
+
+```nix
+inputs.codex-desktop-linux.url =
+  "git+file:///absolute/path/to/codex-desktop-linux";
+```
 
 ## Flake outputs
 
@@ -53,7 +90,7 @@ and packaging workflows; it is not a mutable updater for a Nix store package.
 
 ```bash
 nix run github:ilysenko/codex-desktop-linux#codex-desktop
-nix build .#codex-desktop-computer-use-ui
+./scripts/nix-local.sh build '#codex-desktop-computer-use-ui'
 ```
 
 ## Features
@@ -182,7 +219,7 @@ that behavior is intentional.
 Enter the flake development environment with:
 
 ```bash
-nix develop
+./scripts/nix-local.sh develop
 ```
 
 It provides the baseline source-verification tools. Rust helper development
@@ -190,8 +227,8 @@ still uses the repository Cargo workspaces. Before sending a Nix change, test
 evaluation and the audited host-architecture runtime:
 
 ```bash
-nix flake check
-nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).nix-runtime
+./scripts/nix-local.sh flake check
+./scripts/nix-local.sh build "#checks.$(nix eval --impure --raw --expr builtins.currentSystem).nix-runtime"
 ```
 
 ## Updating pins
@@ -213,8 +250,8 @@ merges that pull request only after the repository's required checks pass.
 Validate changes with:
 
 ```bash
-nix flake check
-nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).nix-runtime
+./scripts/nix-local.sh flake check
+./scripts/nix-local.sh build "#checks.$(nix eval --impure --raw --expr builtins.currentSystem).nix-runtime"
 ```
 
 Nix outputs keep the **ChatGPT Community** desktop identity and shared upstream
