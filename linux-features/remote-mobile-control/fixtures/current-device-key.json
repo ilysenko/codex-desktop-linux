@@ -1,0 +1,29 @@
+{
+  "provenance": {
+    "version": "26.1103.32239",
+    "architecture": "amd64",
+    "asset": ".vite/build/early-bootstrap-920-a204a41244c4b913.js",
+    "assetSha256": "92f04b9e66135f8b8542a6888351f5ef5eebc38a20b881fb58787e8b84f55c58",
+    "offsetUnit": "JavaScript UTF-16 code units",
+    "purpose": "Verbatim bounded native schema/classes/nonce/digest transplanted into a synthetic connected main-owner graph for finite qualification and controlled adapter behavior. No complete upstream factory execution."
+  },
+  "imports": "var $=r(86697),eM=r(35553),eD=r(55822),tD=r(67726);",
+  "roles": {
+    "base": "edM",
+    "provider": "edD",
+    "schema": "edP",
+    "schemaNamespace": "eM",
+    "moduleNamespace": "eD",
+    "pathNamespace": "$",
+    "loader": "edN",
+    "nonce": "edY",
+    "digest": "edG",
+    "noncePattern": "ed_"
+  },
+  "schema": "let edZ=eM.object({keyId:eM.string().min(1),publicKeySpkiDerBase64:eM.string().min(1),algorithm:eM.literal(\"ecdsa_p256_sha256\"),protectionClass:eM.enum([\"hardware_secure_enclave\",\"hardware_tpm\",\"os_protected_nonextractable\"])}),edX=eM.object({signatureDerBase64:eM.string().min(1),algorithm:eM.literal(\"ecdsa_p256_sha256\")}),edP=eM.object({createDeviceKey:eM.function({input:[eM.enum([\"hardware_only\",\"allow_os_protected_nonextractable\"])],output:eM.promise(edZ)}),deleteDeviceKey:eM.function({input:[eM.string().min(1)],output:eM.promise(eM.void())}),getDeviceKeyPublic:eM.function({input:[eM.string().min(1)],output:eM.promise(edZ)}),signDeviceKey:eM.function({input:[eM.string().min(1),eM.instanceof(Buffer)],output:eM.promise(edX)})}),edN=(0,eD.createRequire)(__filename);",
+  "pair": "class edM{resourcesPath;addon=null;constructor(e){this.resourcesPath=e}createDeviceKey(e){return this.getAddon().createDeviceKey(e??\"hardware_only\")}deleteDeviceKey(e){return this.getAddon().deleteDeviceKey(e)}getDeviceKeyPublic(e){return this.getAddon().getDeviceKeyPublic(e)}signBytes(e,t){return this.getAddon().signDeviceKey(e,t)}getAddon(){if(null==this.resourcesPath)throw Error(\"Device keys require resourcesPath\");return null==this.addon&&(this.addon=edP.parse(edN((0,$.join)(this.resourcesPath,\"native\",\"remote-control-device-key.node\")))),this.addon}}let ed_=/^[A-Za-z0-9_-]+$/u;class edD extends edM{async signDeviceKey(e,t){var r;let n=(r=t,Buffer.from(JSON.stringify({domain:\"codex-device-key-sign-payload/v1\",payload:function(e){switch(e.type){case\"remoteControlClientConnection\":if(edY(e.nonce),\"remote_control_client_websocket\"!==e.audience)throw Error(\"Invalid remote-control device-key connection audience\");if(1!==e.scopes.length||\"remote_control_controller_websocket\"!==e.scopes[0])throw Error(\"Invalid remote-control device-key connection scopes\");return edG(e.tokenSha256Base64url),{accountUserId:e.accountUserId,audience:e.audience,clientId:e.clientId,nonce:e.nonce,scopes:e.scopes,sessionId:e.sessionId,targetOrigin:e.targetOrigin,targetPath:e.targetPath,tokenExpiresAt:e.tokenExpiresAt,tokenSha256Base64url:e.tokenSha256Base64url,type:e.type};case\"remoteControlClientEnrollment\":if(edY(e.nonce),\"remote_control_client_enrollment\"!==e.audience)throw Error(\"Invalid remote-control device-key enrollment audience\");return edG(e.deviceIdentitySha256Base64url),{accountUserId:e.accountUserId,audience:e.audience,challengeExpiresAt:e.challengeExpiresAt,challengeId:e.challengeId,clientId:e.clientId,deviceIdentitySha256Base64url:e.deviceIdentitySha256Base64url,nonce:e.nonce,targetOrigin:e.targetOrigin,targetPath:e.targetPath,type:e.type}}}(r)}),\"utf8\"));return{...await this.signBytes(e,n),signedPayloadBase64:n.toString(\"base64\")}}}",
+  "nonce": "function edY(e){if(!ed_.test(e)||Buffer.from(e,\"base64url\").length<32)throw Error(\"Invalid remote-control device-key nonce\")}",
+  "digest": "function edG(e){if(!ed_.test(e)||32!==Buffer.from(e,\"base64url\").length)throw Error(\"Invalid remote-control device-key SHA-256 digest\")}",
+  "construction": "this.remoteControlDeviceKeyClient=new edD((0,tD.b)({isPackaged:er.app.isPackaged,env:process.env,resourcesPath:process.resourcesPath})),this.executionHostRegistry",
+  "constructionArgs": "(0,tD.b)({isPackaged:er.app.isPackaged,env:process.env,resourcesPath:process.resourcesPath})"
+}

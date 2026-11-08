@@ -58,9 +58,10 @@ not been tested.
 What it changes:
 
 - Replaces the upstream native `remote-control-device-key.node` addon with a
-  Linux JavaScript ECDSA P-256 key store. The upstream device-key provider
-  still serializes and validates every signing payload; only its addon is
-  swapped.
+  Linux JavaScript ECDSA P-256 key store. The current native signing base,
+  Remote subclass, serialization domain, nonce and digest validators stay
+  unchanged. The Linux addon is accepted through the same native addon schema
+  before the Remote instance returns it from `getAddon()`.
 - Adds the bare `Remote-control client key material missing` 403 detail to the
   upstream re-enrollment predicate, which only recognizes the prefixed form.
 - Lets the remote-control Connections UI render on Linux when upstream marks
@@ -166,6 +167,16 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-enablement-bridge` | `shared-boundary` | Enables the current outbound remote-connections service on Linux without changing its service-owned auto-connect choices. |
 | `linux-remote-control-auto-connect-contract` | `outbound-control` | Validates the unique upstream service and settings caller that preserve an explicit auto-connect choice. |
 | `linux-remote-mobile-active-status` | `mobile-host` | Derives mobile active state from the local thread runtime. |
+
+The device-key descriptor prepares the complete routed main-process inventory
+before the webview pass. It requires the live startup-to-host graph, the native
+signing base and Remote subclass, their actual addon schema, and the device-key
+construction in that host's constructor. Opaque text, unrelated constructors,
+shadowed provider/schema names, duplicate or damaged carriers, and partial own
+artifacts are errors when the feature is enabled. Preparation retains an exact
+native inverse and requires canonical replay before a single transactional
+write. Existing key-store encryption, permissions, locking and migration
+strategies are unchanged.
 
 The official webview is an rspack build whose app code lives in lazily loaded
 `webview/assets/async/<id>.<hash>.js` chunks. Webview descriptors select their
@@ -319,7 +330,7 @@ Keychain diagnostics:
 Run the feature tests with:
 
 ```bash
-node --test linux-features/remote-mobile-control/test.js
+node --test linux-features/remote-mobile-control/*.test.js linux-features/remote-mobile-control/test.js
 ```
 
 ## Catalog subfeatures

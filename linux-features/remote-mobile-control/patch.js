@@ -4,36 +4,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { findMainProcessChunks, listWebviewScriptAssets } = require("../../scripts/patches/lib/assets.js");
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { prepareDeviceKeySource, applyDeviceKeyToExtractedApp } = require("./device-key-owner.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
-
 const DEVICE_KEY_ADDON_MARKER = "codexLinuxRemoteControlDeviceKeyAddon";
 
-// The upstream base provider routes every public method through getAddon();
-// its subclass serializes and validates signing payloads itself before
-// signBytes() hands the bytes to the addon. Linux keeps both classes and only
-// replaces the native addon of the subclass instance.
-function deviceKeyProviderPattern(flags = "u") {
-  return new RegExp(
-    `class (?<baseClass>${DEVICE_KEY_IDENT})\\{resourcesPath;addon=null;` +
-      `constructor\\((?<constructorArg>${DEVICE_KEY_IDENT})\\)\\{this\\.resourcesPath=\\k<constructorArg>\\}` +
-      `createDeviceKey\\((?<createArg>${DEVICE_KEY_IDENT})\\)\\{return this\\.getAddon\\(\\)\\.createDeviceKey\\(\\k<createArg>\\?\\?"hardware_only"\\)\\}` +
-      `deleteDeviceKey\\((?<deleteArg>${DEVICE_KEY_IDENT})\\)\\{return this\\.getAddon\\(\\)\\.deleteDeviceKey\\(\\k<deleteArg>\\)\\}` +
-      `getDeviceKeyPublic\\((?<publicArg>${DEVICE_KEY_IDENT})\\)\\{return this\\.getAddon\\(\\)\\.getDeviceKeyPublic\\(\\k<publicArg>\\)\\}` +
-      `signBytes\\((?<bytesKeyArg>${DEVICE_KEY_IDENT}),(?<bytesArg>${DEVICE_KEY_IDENT})\\)\\{return this\\.getAddon\\(\\)\\.signDeviceKey\\(\\k<bytesKeyArg>,\\k<bytesArg>\\)\\}` +
-      `getAddon\\(\\)\\{if\\(null==this\\.resourcesPath\\)throw Error` +
-      `\\("Device keys require resourcesPath"\\);return null==this\\.addon&&\\(this\\.addon=` +
-      `${DEVICE_KEY_IDENT}\\.parse\\(${DEVICE_KEY_IDENT}\\([^;]{0,300}?"remote-control-device-key\\.node"\\)\\)\\)\\),this\\.addon\\}\\}` +
-      `(?:let ${DEVICE_KEY_IDENT}=/[^/\\n]{1,120}/u;)?` +
-      `class (?<providerClass>${DEVICE_KEY_IDENT}) extends \\k<baseClass>\\{` +
-      `async signDeviceKey\\((?<keyArg>${DEVICE_KEY_IDENT}),(?<payloadArg>${DEVICE_KEY_IDENT})\\)\\{` +
-      `(?:(?!getAddon|class )[\\s\\S]){0,4000}?"codex-device-key-sign-payload/v1"(?:(?!getAddon|class )[\\s\\S]){0,4000}?` +
-      `return\\{\\.\\.\\.await this\\.signBytes\\(\\k<keyArg>,(?<serializedPayloadVar>${DEVICE_KEY_IDENT})\\),` +
-      `signedPayloadBase64:\\k<serializedPayloadVar>\\.toString\\("base64"\\)\\}\\}\\}`,
-    flags,
-  );
-}
 const REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER = "codexLinuxRemoteControlOutboundTabGate";
 const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
 const REMOTE_CONTROL_LOAD_GATE_MARKER = "codexLinuxRemoteControlLoadGateEnabled";
@@ -177,93 +153,24 @@ function linuxDeviceKeyProviderSource({ childProcessVar, cryptoVar, fsVar, pathV
     `signDeviceKey:async(codexLinuxRemoteControlKeyId,codexLinuxRemoteControlSerializedPayload)=>codexLinuxWithRemoteControlKeyStoreLock(()=>{if(!Buffer.isBuffer(codexLinuxRemoteControlSerializedPayload))throw Error(\`Linux remote control device key payload must be serialized\`);let e=codexLinuxReadRemoteControlDeviceKeyStore(),t=codexLinuxRemoteControlMigrateDeviceKeyStore(e)??e;t!==e&&codexLinuxWriteRemoteControlDeviceKeyStore(t);let n=t.keys?.[codexLinuxRemoteControlKeyId];if(n==null)throw Error(\`Linux remote control device key not found\`);let i=(0,${cryptoVar}.createPrivateKey)(codexLinuxRemoteControlPrivateKeyPem(n)),a=(0,${cryptoVar}.sign)(\`sha256\`,codexLinuxRemoteControlSerializedPayload,i).toString(\`base64\`);return{algorithm:n.algorithm,signatureDerBase64:a}})`,
     "}}",
     // Keep upstream payload serialization and validation; replace only the addon.
-    `function ${DEVICE_KEY_CLIENT_MARKER}(e){let t=new e(null),n=${DEVICE_KEY_ADDON_MARKER}();return t.getAddon=()=>n,t}`,
+    `function ${DEVICE_KEY_CLIENT_MARKER}(e,t){let n=new e(null),r=t.parse(${DEVICE_KEY_ADDON_MARKER}());return n.getAddon=()=>r,n}`,
   ].join("");
 }
 
-function deviceKeyPatchState(source) {
-  const providerMatches = [...source.matchAll(deviceKeyProviderPattern("gu"))];
-  if (providerMatches.length !== 1) {
-    return { kind: providerMatches.length > 1 ? "ambiguous" : "partial" };
-  }
-  const providerMatch = providerMatches[0];
-  const providerSource = linuxDeviceKeyProviderSource({
+function remoteDeviceKeyRuntimeSource() {
+  return linuxDeviceKeyProviderSource({
     childProcessVar: "codexLinuxRemoteControlChildProcess",
     cryptoVar: "codexLinuxRemoteControlCrypto",
     fsVar: "codexLinuxRemoteControlFs",
     pathVar: "codexLinuxRemoteControlPath",
   });
-  const providerSourceCount = source.split(providerSource).length - 1;
-  const providerClass = escapeRegExp(providerMatch.groups.providerClass);
-  const currentConstructionPattern = new RegExp(
-    `this\\.remoteControlDeviceKeyClient=new ${providerClass}\\((?<args>[\\s\\S]{1,300}?)\\),this\\.executionHostRegistry`,
-    "gu",
-  );
-  const patchedConstructionPattern = new RegExp(
-    `this\\.remoteControlDeviceKeyClient=process\\.platform===\`linux\`\\?` +
-      `${DEVICE_KEY_CLIENT_MARKER}\\(${providerClass}\\):new ${providerClass}\\((?<args>[\\s\\S]{1,300}?)\\),` +
-      `this\\.executionHostRegistry`,
-    "gu",
-  );
-  const currentConstructions = [...source.matchAll(currentConstructionPattern)];
-  const patchedConstructions = [...source.matchAll(patchedConstructionPattern)];
-  const providerStart = providerMatch.index;
-
-  if (currentConstructions.length === 1 && patchedConstructions.length === 0 &&
-      providerSourceCount === 0 && !source.includes(DEVICE_KEY_CLIENT_MARKER) &&
-      !source.includes(DEVICE_KEY_ADDON_MARKER) &&
-      /[;}]$/u.test(source.slice(Math.max(0, providerStart - 1), providerStart))) {
-    return {
-      kind: "current",
-      providerStart,
-      providerClass: providerMatch.groups.providerClass,
-      construction: currentConstructions[0],
-      providerSource,
-    };
-  }
-  if (currentConstructions.length === 0 && patchedConstructions.length === 1 &&
-      providerSourceCount === 1 && source.indexOf(providerSource) + providerSource.length === providerStart) {
-    return { kind: "patched" };
-  }
-  if (currentConstructions.length > 0 && patchedConstructions.length > 0) {
-    return { kind: "mixed" };
-  }
-  if (currentConstructions.length > 1 || patchedConstructions.length > 1 || providerSourceCount > 1) {
-    return { kind: "ambiguous" };
-  }
-  return { kind: "partial" };
 }
 
 function applyLinuxRemoteControlDeviceKeyPatch(source) {
-  const state = deviceKeyPatchState(source);
-  if (state.kind === "patched") {
-    return source;
-  }
-  if (state.kind !== "current") {
-    if (source.includes(DEVICE_KEY_CLIENT_MARKER) || source.includes(DEVICE_KEY_ADDON_MARKER)) {
-      console.warn("WARN: Found incomplete Linux remote-control device-key patch - refusing partial state");
-    } else {
-      console.warn("WARN: Could not find remote-control device-key bundle needles - skipping Linux remote-control device-key patch");
-    }
-    return source;
-  }
-
-  const { construction, providerClass, providerSource, providerStart } = state;
-  // The construction follows the provider in upstream; patch it first so the
-  // provider offset stays valid either way.
-  const constructionEnd = construction.index + construction[0].length;
-  const patchedConstruction =
-    `this.remoteControlDeviceKeyClient=process.platform===\`linux\`?${DEVICE_KEY_CLIENT_MARKER}(${providerClass}):` +
-    `new ${providerClass}(${construction.groups.args}),this.executionHostRegistry`;
-  const withConstruction = construction.index > providerStart
-    ? source.slice(0, construction.index) + patchedConstruction + source.slice(constructionEnd)
-    : null;
-  if (withConstruction == null) {
-    console.warn("WARN: Remote-control device-key client is constructed before its provider - skipping Linux remote-control device-key patch");
-    return source;
-  }
-  const patched = withConstruction.slice(0, providerStart) + providerSource + withConstruction.slice(providerStart);
-  return deviceKeyPatchState(patched).kind === "patched" ? patched : source;
+  return prepareDeviceKeySource(source, remoteDeviceKeyRuntimeSource()).patchedSource;
+}
+function applyLinuxRemoteControlDeviceKeyExtractedApp(extractedDir, context = {}) {
+  return applyDeviceKeyToExtractedApp(extractedDir, remoteDeviceKeyRuntimeSource(), context.deviceKeyWriteOptions);
 }
 
 const REMOTE_CONTROL_KEY_MATERIAL_403_MESSAGE =
@@ -1369,10 +1276,10 @@ function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
 module.exports = [
   {
     id: "linux-remote-control-device-key",
-    phase: "main-bundle",
+    phase: "extracted-app:pre-webview",
     order: 20_100,
     ciPolicy: "optional",
-    apply: applyLinuxRemoteControlDeviceKeyPatch,
+    apply: applyLinuxRemoteControlDeviceKeyExtractedApp,
   },
   {
     id: "linux-remote-control-client-revocation-recovery",
@@ -1580,3 +1487,5 @@ module.exports.applyLinuxRemoteControlFeatureSyncPatch = applyLinuxRemoteControl
 module.exports.applyLinuxRemoteControlVisibilityPatch = applyLinuxRemoteControlVisibilityPatch;
 module.exports.applyLinuxRemoteControlCopyPatch = applyLinuxRemoteControlCopyPatch;
 module.exports.applyLinuxRemoteControlSettingsUxPatch = applyLinuxRemoteControlSettingsUxPatch;
+
+module.exports.applyLinuxRemoteControlDeviceKeyExtractedApp = applyLinuxRemoteControlDeviceKeyExtractedApp;
