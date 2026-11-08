@@ -176,3 +176,42 @@ test("readonly dependency drift rejects before writes; interrupted asset write r
   fs.writeFileSync(path.join(assets, "async/orphan.js"), `const orphan="${MARKER}";`);
   assert.throws(() => apply(app), /orphan filter marker/);
 }));
+
+test("root function-head guard preserves the exact native UP79 preparation output", () => {
+  const hash = value => require("node:crypto").createHash("sha256").update(value).digest("hex");
+  const plan = prepare(snapshots());
+  const rows = plan.edits.map(row => ({ assetName: row.assetName, source: hash(row.source), patchedSource: hash(row.patchedSource) }));
+  // Captured with the accepted scope before this authority-only follow-up.
+  assert.equal(hash(JSON.stringify(rows)), "f9bc6091ce262631b4f2c2a69757c8f00740a01533fae56f009e63ed4a03b572");
+  assert.equal(plan.edits.filter(row => row.source !== row.patchedSource).length, 2);
+});
+
+test("root function-head guard rejects coherent generators replacing UP79 published consumers or imports", () => {
+  for (const [role, suffix] of [
+    ["toggles", "function* eH(){return null}"],
+    ["search", "function* tL(){return null}"],
+    ["toggles", "async/*head*/function /*star*/ * /*name*/ eH({x}={}){return null}"],
+    ["search", "function\n*\n tL({x}={}){return null}"],
+    ["toggles", "function* ef(){return null}"],
+    ["search", "function /*head*/ * /*name*/ eW({x}={}){return null}"],
+  ]) {
+    const input = fixtureSources(), old = snapshots(input)[role][0];
+    input[old.assetName] = old.source.slice(0, old.end) + suffix + old.source.slice(old.end);
+    const cohort = snapshots(input), copy = cohort[role][0], before = JSON.stringify(input);
+    new (require("node:vm").Script)(`"use strict";(function(${copy.params}){${copy.moduleSource}\n});`);
+    assert.throws(() => prepare(cohort), /root function authority|redeclared import authority|redeclared factory parameter authority/);
+    assert.equal(JSON.stringify(input), before);
+  }
+});
+
+test("root function-head census ignores nested/opaque UP79 text and rejects root provider collisions", () => {
+  const copy = { params: ["e", "t", "n"], start: 0,
+    moduleSource: 'var p=n("native");function owner(){function* owner(){return null}return p}const text="function* owner(){}";/* function* owner(){} */' };
+  assert.equal(scope.rootFunction(copy, "owner").name, "owner");
+  assert.equal(scope.requireImport(copy, "p", copy.moduleSource.indexOf("return p") + 7, "native").moduleId, "native");
+  for (const name of ["owner", "p", "n"]) {
+    const changed = { ...copy, moduleSource: copy.moduleSource + `function /*head*/ * /*name*/ ${name}({x}={}){return null}` };
+    if (name === "owner") assert.throws(() => scope.rootFunction(changed, name), /root function authority/);
+    else assert.throws(() => scope.requireImport(changed, "p", changed.moduleSource.indexOf("return p") + 7, "native"), /redeclared import authority/);
+  }
+});

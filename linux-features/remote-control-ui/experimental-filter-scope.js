@@ -62,6 +62,37 @@ function normalized(snapshot, body = snapshot.moduleSource) {
 }
 
 const contexts = new WeakMap();
+// This authority census deliberately stops at the opening parenthesis. A
+// generator or a declaration with nested parameter syntax can replace a root
+// binding even when it is outside the bounded native frame inventory below.
+function rootFunctionHeads(body, lexical) {
+  function trivia(at) {
+    while (at < body.length) {
+      if (/\s/u.test(body[at])) { at++;continue; }
+      if (body.startsWith("/*", at)) {
+        const end = body.indexOf("*/", at + 2);if (end < 0) fail("function-head comment");
+        at = end + 2;continue;
+      }
+      if (body.startsWith("//", at)) {
+        at += 2;while (at < body.length && !/[\r\n\u2028\u2029]/u.test(body[at])) at++;
+        continue;
+      }
+      break;
+    }
+    return at;
+  }
+  const heads = [];
+  for (const keyword of body.matchAll(/\bfunction\b/gu)) {
+    if (!lexical.isRoot(keyword.index) || !lexical.isCode(keyword.index)) continue;
+    let at = trivia(keyword.index + keyword[0].length), generator = false;
+    if (body[at] === "*") { generator = true;at = trivia(at + 1); }
+    const name = new RegExp(`^${ID}`, "u").exec(body.slice(at))?.[0];
+    if (name == null) continue;
+    at = trivia(at + name.length);
+    if (body[at] === "(") heads.push({ name, start: keyword.index, generator });
+  }
+  return heads;
+}
 function context(copy) {
   let value = contexts.get(copy);
   if (value?.body === copy.moduleSource && value.parameters === copy.params.join(",")) return value;
@@ -95,7 +126,8 @@ function context(copy) {
     functions.push({ name: null, params: match[1] ?? match[2], start: match.index, open, end: end + 1,
       source: body.slice(match.index, end + 1), root: false, locals: new Map() });
   }
-  value = { body, parameters: copy.params.join(","), lexical, functions, blockLocals: new Map(), statementBlocks: new Map() };
+  value = { body, parameters: copy.params.join(","), lexical, functions,
+    rootFunctionHeads: rootFunctionHeads(body, lexical), blockLocals: new Map(), statementBlocks: new Map() };
   contexts.set(copy, value);
   return value;
 }
@@ -141,8 +173,10 @@ function unshadowed(copy, name, at) {
   if (blockBound(copy, name, at)) fail("captured block binding " + name);
 }
 function rootFunction(copy, name) {
-  const rows = context(copy).functions.filter(scope => scope.root && scope.name === name);
-  if (rows.length !== 1) fail("root function " + name);
+  const ctx = context(copy), heads = ctx.rootFunctionHeads.filter(head => head.name === name);
+  const rows = ctx.functions.filter(scope => scope.root && scope.name === name);
+  if (heads.length !== 1 || heads[0].generator || rows.length !== 1 ||
+      heads[0].start !== rows[0].start + rows[0].source.indexOf("function")) fail("root function authority " + name);
   return rows[0];
 }
 function enclosingFunction(copy, at) {
@@ -163,7 +197,7 @@ function requireImport(copy, name, at, expectedId = null) {
     if (!write || token.index === initializer) continue;
     if (!enclosingFunctions(copy, token.index).some(scope => locallyBound(scope, name)) && !blockBound(copy, name, token.index)) fail("reassigned import " + name);
   }
-  for (const scope of ctx.functions) if (scope.root && scope.name === name) fail("redeclared import " + name);
+  if (ctx.rootFunctionHeads.some(head => head.name === name || head.name === copy.params[2])) fail("redeclared import authority " + name);
   return binding;
 }
 function stableRootFunction(copy, name) {
@@ -177,6 +211,7 @@ function stableRootFunction(copy, name) {
 }
 function stableFactoryParameters(copy) {
   const ctx = context(copy);
+  if (ctx.rootFunctionHeads.some(head => copy.params.includes(head.name))) fail("redeclared factory parameter authority");
   for (const name of copy.params.slice(1)) for (const token of copy.moduleSource.matchAll(new RegExp(`(?<![\\w$.])${escape(name)}(?![\\w$])`, "gu"))) {
     if (!ctx.lexical.isCode(token.index) || /^\s*:/u.test(copy.moduleSource.slice(token.index + name.length))) continue;
     const tail = copy.moduleSource.slice(token.index + name.length);
