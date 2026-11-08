@@ -37,8 +37,8 @@ test("current native read contribution is byte-identical to the existing API and
   assert.equal(require("node:crypto").createHash("sha256").update(p.patchedSource).digest("hex"), "297c1bdd9749e13045a388a741c0057129a00fdb46854870808e8db4f598e201", "established3bflegacy329Boutput is preserved without retaining the retired matcher");
   assert.equal(p.nativeSource, c.moduleSource);
   assert.equal(prepareStatusReadSource({ ...c, moduleSource: p.patchedSource }).patchedSource, p.patchedSource);
-  const wait = old.applyLinuxRemoteControlStatusWaitPatch(c.moduleSource), both = prepareStatusReadSource({ ...c, moduleSource: wait });
-  assert.equal(both.nativeSource, wait);assert.equal(both.patchedSource, old.applyLinuxRemoteControlStatusWaitPatch(p.patchedSource));
+  const wait = old.applyLinuxRemoteControlStatusWaitPatch(c.moduleSource, { factorySnapshot: c }), both = prepareStatusReadSource({ ...c, moduleSource: wait });
+  assert.equal(both.nativeSource, wait);assert.equal(both.patchedSource, old.applyLinuxRemoteControlStatusWaitPatch(p.patchedSource, { factorySnapshot: { ...c, moduleSource: p.patchedSource } }));
   const inverse = prepareStatusReadSource({ ...c, moduleSource: both.patchedSource });
   assert.equal(inverse.nativeSource, wait);assert.equal(inspectHostStatusOwner({ ...c, moduleSource: both.patchedSource }).waitPeer, true);
 });
@@ -94,7 +94,7 @@ test("coherent own binding, intrinsic, wrong-host, mutable provider and partial 
     { ...c, moduleSource: c.moduleSource + ';a=other;' },
     { ...c, moduleSource: c.moduleSource + `/*${READ_MARKER}*/` },
   ]) assert.throws(() => prepareStatusReadSource(bad));
-  const wait = old.applyLinuxRemoteControlStatusWaitPatch(c.moduleSource);
+  const wait = old.applyLinuxRemoteControlStatusWaitPatch(c.moduleSource, { factorySnapshot: c });
   assert.throws(() => prepareStatusReadSource(mutate({ ...c, moduleSource: wait }, WAIT_EXPRESSION, WAIT_EXPRESSION.replace("3e4", "3e5"))));
   const read = prepareStatusReadSource(c).patchedSource;
   assert.throws(() => prepareStatusReadSource(mutate({ ...c, moduleSource: read }, 'e.startsWith(`remote-ssh`)', 'e.startsWith(`remote-wsl`)')));

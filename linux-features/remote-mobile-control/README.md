@@ -184,7 +184,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-mobile-conversation-hydration` | `mobile-host` | Extends upstream's hydration queue to recover unknown local conversations from ordered turn and item notifications. |
 | `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |
 | `linux-remote-control-status-read-guard` | `shared-boundary` | Skips the initial Linux read for exact `remote-ssh` / `remote-control:` prefixes while retaining native reads for other hosts, notifications and cleanup. |
-| `linux-remote-control-status-wait` | `shared-boundary` | Gives the selected host a Linux-specific connection convergence window without changing host ownership. |
+| `linux-remote-control-status-wait` | `shared-boundary` | Gives each supplied host a 30-second Linux connection window (5 seconds otherwise), preserving native watcher settlement and caller ownership. |
 | `linux-remote-control-enable-for-host-params` | `shared-boundary` | Qualifies the native selected-host client, status mapper and public fallback caller, then emits parameterless enable/disable requests without changing host choice. |
 | `linux-remote-control-enablement-bridge` | `shared-boundary` | Qualifies the native gate hook, live component and late service facade, then enables the current outbound service on Linux while retaining service-owned auto-connect choices. |
 | `linux-remote-control-auto-connect-contract` | `outbound-control` | Validates the unique upstream service and settings caller that preserve an explicit auto-connect choice. |
@@ -302,6 +302,14 @@ either order. Each wait invocation observes the host supplied by its caller;
 its existing API has only `ignoreCurrentError`, with native settlement and
 timeout behavior. These source contracts do not add a cancellation input or
 change the host manager's ownership rules.
+
+The connection-wait descriptor reuses that complete owner and read-only graph
+before changing the native timeout scalar to 30 seconds for a Linux user agent,
+or keeping 5 seconds otherwise. Initial connected/error results, the exact
+`ignoreCurrentError` identity, watcher settlement and timer/handle cleanup retain
+their native behavior. Its inverse removes only the wait contribution, preserving
+the read guard in either order; running the wait descriptor alone adds no read
+guard. Missing, mixed or damaged physical peers fail before any asset write.
 
 The official webview is an rspack build whose app code lives in lazily loaded
 `webview/assets/async/<id>.<hash>.js` chunks. Cohort descriptors qualify their

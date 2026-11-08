@@ -14,6 +14,7 @@ const { prepareBridgeSource, applyBridgePatch } = require("./enablement-bridge.j
 const { applyNativeRemoteCopy } = require("./remote-copy.js");
 const { applyOutboundTab } = require("./outbound-tab-owner.js");
 const { prepareStatusReadString, applyStatusReadPatch } = require("./host-status.js");
+const { prepareStatusWaitString, applyStatusWaitPatch } = require("./host-status-wait.js");
 const { prepareTerminalSource, applyTerminalStatus } = require("./terminal-status.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
@@ -26,7 +27,6 @@ const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
   "codexLinuxRemoteMobileConversationHydration";
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
 const REMOTE_MOBILE_ACTIVE_STATUS_MARKER = "codexLinuxRemoteMobileActiveStatus";
-const REMOTE_CONTROL_STATUS_WAIT_MARKER = "codexLinuxRemoteControlStatusWaitMs";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER = "codexLinuxRemoteMobileLocalAppServerArgs";
 const REMOTE_MOBILE_APP_SERVER_BASE_ARGS_NEEDLE = '["-c","features.code_mode_host=true"]';
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_HELPER =
@@ -455,23 +455,13 @@ function applyLinuxRemoteControlStatusReadGuardPatch(source, context = {}) {
   return prepareStatusReadString(source, context);
 }
 
-const REMOTE_CONTROL_STATUS_WAIT_PATTERN =
-  /(setTimeout\(\(\)=>\{[A-Za-z_$][\w$]*\(Error\("Timed out waiting for remote control to connect"\)\)\},)5e3\)/gu;
-
-function applyLinuxRemoteControlStatusWaitPatch(source) {
-  const markers = source.split(REMOTE_CONTROL_STATUS_WAIT_MARKER).length - 1;
-  const matches = [...source.matchAll(REMOTE_CONTROL_STATUS_WAIT_PATTERN)];
-  if (markers === 1 && matches.length === 0) {
-    return source;
-  }
-  if (markers !== 0 || matches.length !== 1 || !source.includes('methods:"remoteControl/status/changed"')) {
-    console.warn("WARN: Could not find unique remote-control status wait timeout - skipping Linux remote-control status wait patch");
-    return source;
-  }
-  return source.replace(
-    REMOTE_CONTROL_STATUS_WAIT_PATTERN,
-    `$1typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)?3e4:5e3/*${REMOTE_CONTROL_STATUS_WAIT_MARKER}*/)`,
-  );
+// Keep the native supplied-host status watcher and settlement lifetime. Only
+// its timeout scalar changes after the complete reader/lifecycle cohort qualifies.
+function applyLinuxRemoteControlStatusWaitPatch(source, context = {}) {
+  return prepareStatusWaitString(source, context);
+}
+function applyLinuxRemoteControlStatusWaitExtractedAppPatch(extractedDir, context = {}) {
+  return applyStatusWaitPatch(extractedDir, context.statusWaitWriteOptions);
 }
 
 function applyLinuxRemoteControlEnablementBridgePatch(source, context = {}) {
@@ -873,13 +863,10 @@ module.exports = [
   },
   {
     id: "linux-remote-control-status-wait",
-    phase: "webview-asset",
-    assetNeedles: ["Timed out waiting for remote control to connect"],
+    phase: "extracted-app:pre-webview",
     order: 20_154,
     ciPolicy: "optional",
-    missingDescription: "app-server manager signals bundle",
-    skipDescription: "Linux remote-control status wait patch",
-    apply: applyLinuxRemoteControlStatusWaitPatch,
+    apply: applyLinuxRemoteControlStatusWaitExtractedAppPatch,
   },
   {
     id: "linux-remote-control-enable-for-host-params",

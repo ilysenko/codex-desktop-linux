@@ -370,13 +370,6 @@ function currentHostStatusReadGraphRegistry() {
   return `export const __webpack_modules__={${rows.map(row => `${JSON.stringify(row.moduleId)}(${row.params.join(",")}){${row.moduleSource}}`).join(",")}};`;
 }
 
-function syntheticCurrentStatusWaitBundle() {
-  return [
-    'function p(e,t,n,r){return n.subscribe({type:"notification",key:{hostId:t},methods:"remoteControl/status/changed",listener:()=>{}})}',
-    'function m(e,t,{ignoreCurrentError:n=!1}={}){return new Promise((n,r)=>{let a,s=!1,o=e=>{s||(s=!0,clearTimeout(l),a?.(),e instanceof Error?r(e):n(e))},l=setTimeout(()=>{o(Error("Timed out waiting for remote control to connect"))},5e3);a=e.watch(()=>{}),s&&a()})}',
-  ].join("");
-}
-
 function syntheticAppMainActiveStatusBundle() {
   return [
     'let o={active:"Subscribed: active",follower:"Subscribed: follower",inactive:"Subscribed: idle","needs-resume":"Needs resume","read-only":"Read-only snapshot"};',
@@ -1016,7 +1009,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-mobile-conversation-hydration", "webview-asset"],
       ["linux-remote-terminal-status-recovery", "extracted-app:pre-webview"],
       ["linux-remote-control-status-read-guard", "extracted-app:pre-webview"],
-      ["linux-remote-control-status-wait", "webview-asset"],
+      ["linux-remote-control-status-wait", "extracted-app:pre-webview"],
       ["linux-remote-control-enable-for-host-params", "extracted-app:pre-webview"],
       ["linux-remote-control-enablement-bridge", "extracted-app:pre-webview"],
       ["linux-remote-control-auto-connect-contract", "extracted-app:post-webview"],
@@ -1035,7 +1028,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "linux-remote-connections-refresh": syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-mobile-reasoning-summary-none": syntheticCurrentReasoningSummaryTurnStartBundle(),
       "linux-remote-mobile-conversation-hydration": syntheticCurrentConversationHydrationBundle(),
-      "linux-remote-control-status-wait": syntheticCurrentStatusWaitBundle(),
       "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
     };
     for (const descriptor of descriptors.filter((candidate) => candidate.phase === "webview-asset")) {
@@ -2152,7 +2144,7 @@ test("Linux remote terminal status recovery escapes current minified function al
 });
 
 test("Linux remote-control status wait supports the current rspack bundle", () => {
-  const source = syntheticCurrentStatusWaitBundle();
+  const source = currentHostStatusReaderRegistry();
   const patched = applyLinuxRemoteControlStatusWaitPatch(source);
 
   assert.notEqual(patched, source);
@@ -2161,16 +2153,14 @@ test("Linux remote-control status wait supports the current rspack bundle", () =
 });
 
 test("Linux remote-control status wait rejects duplicate, missing, and partial timeouts", () => {
-  const source = syntheticCurrentStatusWaitBundle();
+  const source = currentHostStatusReaderRegistry();
   for (const drifted of [
     source + source,
     source.replace("},5e3);a=e.watch", "},F5t);a=e.watch"),
     source.replace('methods:"remoteControl/status/changed"', 'methods:"remoteControl/status/other"'),
     source + "/*codexLinuxRemoteControlStatusWaitMs*/",
   ]) {
-    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlStatusWaitPatch(drifted));
-    assert.equal(result, drifted);
-    assert.match(warnings.join("\n"), /unique remote-control status wait timeout/);
+    assert.throws(() => applyLinuxRemoteControlStatusWaitPatch(drifted));
   }
 });
 
