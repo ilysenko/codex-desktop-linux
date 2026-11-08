@@ -6,6 +6,8 @@ const { findRspackExportPublication } = require("./rspack-export-publication.js"
 const { findRspackRequireBinding } = require("./rspack-module-assets.js");
 
 const ID = "[A-Za-z_$][\\w$]*";
+const IDENTIFIER_TOKEN = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[$_\p{ID_Start}])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[$_\u200C\u200D\p{ID_Continue}])*/gu;
+const identifierCensus = new WeakMap();
 const RX = (text) => new RegExp(text, "gu");
 const escaped = escapeRegExp;
 function unsupported(reason) { return { ok: false, reason }; }
@@ -81,9 +83,46 @@ function parsesScope(body, parameters = "", suffix = "") {
 function declares(body, parameters, name) {
   return parsesScope(body, parameters) && !parsesScope(body, parameters, `let ${name};`);
 }
+function identifiers(owner) {
+  let found=identifierCensus.get(owner);
+  if(found==null){
+    found=[...owner.text.matchAll(IDENTIFIER_TOKEN)].filter(token=>owner.lexical.isCode(token.index)).map(token=>({
+      index:token.index,text:token[0],name:token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu,
+        (_,braced,fixed)=>String.fromCodePoint(parseInt(braced??fixed,16))),
+    }));identifierCensus.set(owner,found);
+  }
+  return found;
+}
+function nextCode(owner,at) {
+  let lineBreak=false;
+  while(at<owner.text.length){
+    if(/\s/u.test(owner.text[at])){lineBreak||=/[\r\n\u2028\u2029]/u.test(owner.text[at++]);continue}
+    if(owner.text.startsWith("/*",at)){const end=owner.text.indexOf("*/",at+2);if(end<0)return{at:owner.text.length,lineBreak};lineBreak||=/[\r\n\u2028\u2029]/u.test(owner.text.slice(at,end+2));at=end+2;continue}
+    if(owner.text.startsWith("//",at)){const end=owner.text.slice(at+2).search(/[\r\n\u2028\u2029]/u);if(end<0)return{at:owner.text.length,lineBreak};at+=end+2;continue}
+    break;
+  }
+  return{at,lineBreak};
+}
+function previousCode(owner,at){while(at>=0&&(!owner.lexical.isCode(at)||/\s/u.test(owner.text[at])))at--;return at;}
+function memberKey(owner,at){
+  let previous=previousCode(owner,at-1);if(owner.text[previous]==="#")return true;if(owner.text[previous]!==".")return false;
+  let punctuation="";for(let count=0;count<3&&previous>=0;count++){punctuation=owner.text[previous]+punctuation;previous=previousCode(owner,previous-1)}
+  return punctuation!=="...";
+}
 function writes(owner, name, root = false) {
-  const direct = matches(owner, RX(`(?<![\\w$.])${escaped(name)}\\s*(?:\\+\\+|--|(?:\\?\\?|\\|\\||&&|[+*/%&|^\\-])?=(?!=|>))`), root);
-  const destructured = matches(owner, /[\[{]([^\[\]{}]*)[\]}]\s*=(?!=|>)/gu, root).filter(match => {
+  const direct=identifiers(owner).filter(token=>{
+    if(token.name!==name||memberKey(owner,token.index)||root&&!owner.lexical.isRoot(token.index))return false;
+    const after=nextCode(owner,token.index+token.text.length),tail=owner.text.slice(after.at);
+    if(/^(?:(?:\*\*|>>>|>>|<<|\?\?|\|\||&&|[+*/%&|^\-])?=(?!=|>))/u.test(tail))return true;
+    if(!after.lineBreak&&/^(?:\+\+|--)/u.test(tail))return true;
+    const end=previousCode(owner,token.index-1),start=previousCode(owner,end-1);
+    if(end!==start+1||!["++","--"].includes(owner.text.slice(start,end+1)))return false;
+    // Syntax distinguishes an actual prefix update from a preceding postfix
+    // update in another statement, without evaluating the native callback.
+    if(!parsesScope(owner.text))reject("unsupported native binding update scope");
+    return!parsesScope(owner.text.slice(0,token.index)+"(0)"+owner.text.slice(token.index+token.text.length));
+  });
+  const destructured = matches(owner, /[\[{]((?:\\u\{[0-9a-fA-F]+\}|[^\[\]{}])*)[\]}]\s*=(?!=|>)/gu, root).filter(match => {
     const before = owner.text.slice(0, match.index).trimEnd();
     if (/\b(?:var|let|const)$/u.test(before)) return false;
     return sourceReferences(match[1], name).length > 0;
@@ -121,9 +160,8 @@ function noShadow(owner, name, site, declarationBody = null) {
 }
 function sourceReferences(expression, name) {
   const owner = frame(expression);
-  return matches(owner, RX(`(?<![\\w$])${escaped(name)}(?![\\w$])`)).filter(match =>
-    (owner.text[match.index - 1] !== "." || owner.text.slice(match.index - 3, match.index) === "...") &&
-    !/^\s*:/u.test(owner.text.slice(match.index + match[0].length)));
+  return identifiers(owner).filter(token=>token.name===name&&!memberKey(owner,token.index)&&
+    owner.text[nextCode(owner,token.index+token.text.length).at]!==":");
 }
 
 // Pure inspection only. Every returned range is half-open and addresses the

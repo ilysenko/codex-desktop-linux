@@ -242,6 +242,38 @@ test("settings: native bindings survive production existing-chat optimistic inse
   assert.deepEqual([result.active.hostId, result.write.hostId], ["ec", "eC"]);
   assert.equal(result.nextTurn.optimistic.selection, "a");
 });
+test("catalog: complete literal and Unicode direct assignment/update writes cannot replace captured auth", () => {
+  const native=inspectModelCatalogOwner(current.catalog);assert(native.ok);
+  const name=native.inputs.auth,spelled=[name,"\\u"+name.codePointAt(0).toString(16).padStart(4,"0"),"\\u{"+name.codePointAt(0).toString(16)+"}"];
+  const operators=["=","+=","-=","*=","/=","%=","**=","<<=",">>=",">>>=","&=","^=","|=","&&=","||=","??="];
+  for(const target of spelled){
+    const changes=[...operators.map(operator=>`${target}${operator}1;`),`${target}++;`,`${target}--;`,`++${target};`,`--${target};`,
+      `${target}/*owned*/>>>=1;`,`${target}\n>>>=1;`,`[${target}]=foreign;`,`({...${target}}=foreign);`];
+    for(const insertion of changes){
+      const source=current.catalog.moduleSource.slice(0,native.owner.body.start)+insertion+current.catalog.moduleSource.slice(native.owner.body.start);
+      assert.doesNotThrow(()=>new (require("node:vm").Script)(source),insertion);
+      const snapshot={...current.catalog,moduleSource:source};assert.equal(inspectModelCatalogOwner(snapshot).ok,false,insertion);
+    }
+  }
+});
+test("catalog: auth write census retains complete other identifiers member keys opaque data and postfix boundaries", () => {
+  const native=inspectModelCatalogOwner(current.catalog),name=native.inputs.auth;
+  const harmless=[`let ${name}Other=0;${name}Other>>>=1;`,`let ${name}λ=0;${name}λ>>>=1;`,
+    `let ${name}\\u03bb=0;${name}\\u03bb>>>=1;`,`const harmless={${name}:1};harmless.${name}>>>=1;`,
+    `const harmless={${name}};`,`const opaque="\\\\u006e=foreign;n>>>=1";/*n>>>=1*/`,
+    `let unrelated=0;unrelated++;\n${name};`,`function localRead(${name}){return ${name}}`];
+  for(const insertion of harmless){const source=current.catalog.moduleSource.slice(0,native.owner.body.start)+insertion+current.catalog.moduleSource.slice(native.owner.body.start);
+    const result=inspectModelCatalogOwner({...current.catalog,moduleSource:source});assert.equal(result.ok,true,`${insertion}: ${result.reason}`);}
+});
+test("catalog: original escaped and shift auth witnesses refuse all three production String entrypoints", () => {
+  const native=inspectModelCatalogOwner(current.catalog),name=native.inputs.auth;
+  for(const insertion of ["\\u"+name.codePointAt(0).toString(16).padStart(4,"0")+'="chatgpt";',name+">>>=0;"]){
+    const source=current.catalog.moduleSource.slice(0,native.owner.body.start)+insertion+current.catalog.moduleSource.slice(native.owner.body.start),snapshot={...current.catalog,moduleSource:source};
+    for(const transform of catalogTransforms)assert.throws(()=>transform(source,{factorySnapshot:snapshot}),undefined,transform.name+": "+insertion);
+  }
+});
+
+
 
 
 test("catalog: native return and effort callback binding ownership are required", () => {
