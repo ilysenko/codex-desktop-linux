@@ -184,6 +184,20 @@ native inverse and requires canonical replay before a single transactional
 write. Existing key-store encryption, permissions, locking and migration
 strategies are unchanged.
 
+The feature-sync descriptor also prepares the complete main-process inventory
+before the ordinary webview pass. It qualifies the live startup/constructor
+connection-registry and published-assignment wiring, complete native sync owner,
+allowlist, compression schema and actual equality-getter/import bindings. The
+small helper lives at the qualified factory root and requires an uncaptured Node
+`process` global. Its existing behavior adds `remote_control: true` only to a
+clone of the supplied enablement for a Linux literal `local` host; other hosts
+and platforms retain the original enablement object. Native assignment readiness,
+per-record generations, current connection-map identity, disconnected resets,
+propagation/enrollment acknowledgements, prewarm cleanup and error handling stay
+intact. A complete physical inventory, exact native inverse and canonical replay
+are required before a transactional write; a matching request string alone is
+insufficient.
+
 The load-gate descriptor prepares an extracted-webview transaction before the
 ordinary webview pass. It qualifies the complete current inline `mC` owner,
 its published native hook callee, stable factory imports and shared atom/gate

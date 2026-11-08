@@ -8,6 +8,7 @@ const { prepareDeviceKeySource, applyDeviceKeyToExtractedApp } = require("./devi
 const { prepareRemoteLoadGateSource, applyRemoteLoadGate } = require("./remote-load-gate.js");
 const { applyHostToggleSource, applyHostTogglePatch } = require("./host-toggle.js");
 const { applyRemoteMobileVisibility: applyLinuxRemoteControlVisibilityPatch } = require("./remote-control-visibility.js");
+const { prepareFeatureSyncSource, applyFeatureSyncToExtractedApp } = require("./feature-sync-owner.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
@@ -15,7 +16,6 @@ const DEVICE_KEY_ADDON_MARKER = "codexLinuxRemoteControlDeviceKeyAddon";
 
 const REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER = "codexLinuxRemoteControlOutboundTabGate";
 const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
-const REMOTE_CONTROL_FEATURE_SYNC_MARKER = "codexLinuxRemoteControlFeatureSyncEnabled";
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
   "codexLinuxRemoteMobileConversationHydration";
@@ -493,47 +493,13 @@ function applyLinuxRemoteControlLoadGateExtractedAppPatch(extractedDir, context 
   return applyRemoteLoadGate(extractedDir, context.loadGateWriteOptions);
 }
 
-// The main process syncs experimental feature enablement to every connected
-// app server (`experimentalFeature/enablement/set`). Linux enables
-// `remote_control` for the local Desktop app server only; Remote SSH, WSL and
-// cloud hosts keep the upstream enablement.
-const REMOTE_CONTROL_FEATURE_SYNC_HELPER =
-  `function ${REMOTE_CONTROL_FEATURE_SYNC_MARKER}(e,t){return"linux"===process.platform&&"local"===t?{...e,remote_control:!0}:e}`;
-
-function remoteControlFeatureSyncPattern(patched) {
-  const enablement = patched
-    ? `${REMOTE_CONTROL_FEATURE_SYNC_MARKER}\\((?<enablement>${DEVICE_KEY_IDENT}),\\k<record>\\.connection\\.hostId\\)`
-    : `(?<enablement>${DEVICE_KEY_IDENT})`;
-  return new RegExp(
-    `(?<record>${DEVICE_KEY_IDENT})\\.connection\\.sendAppServerRequest\\("experimentalFeature/enablement/set",` +
-      `\\{enablement:${enablement}\\},(?<guard>${DEVICE_KEY_IDENT})\\)`,
-    "gu",
-  );
-}
-
+// Keep the native live connection/assignment transaction; only its supplied
+// local-host enablement gains the Linux remote_control alternative.
 function applyLinuxRemoteControlFeatureSyncPatch(source) {
-  const pristine = [...source.matchAll(remoteControlFeatureSyncPattern(false))];
-  const patched = [...source.matchAll(remoteControlFeatureSyncPattern(true))];
-  const helpers = source.split(REMOTE_CONTROL_FEATURE_SYNC_HELPER).length - 1;
-  const markers = source.split(REMOTE_CONTROL_FEATURE_SYNC_MARKER).length - 1;
-  if (pristine.length === 0 && patched.length === 1 && helpers === 1 && markers === 2) return source;
-  if (pristine.length !== 1 || patched.length !== 0 || markers !== 0 ||
-      !source.includes("async sendEnablement(") || !source.includes(".remote_plugin=")) {
-    console.warn(
-      "WARN: Could not find unique app-server experimental feature enablement sync - skipping Linux remote-control feature sync patch",
-    );
-    return source;
-  }
-  const [match] = pristine;
-  const { record, enablement, guard } = match.groups;
-  const replacement = `${record}.connection.sendAppServerRequest("experimentalFeature/enablement/set",` +
-    `{enablement:${REMOTE_CONTROL_FEATURE_SYNC_MARKER}(${enablement},${record}.connection.hostId)},${guard})`;
-  const withSync = source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
-  // rspack main chunks are CommonJS scripts: a top-level declaration is
-  // visible to every module factory in the chunk.
-  const strict = '"use strict";';
-  const insertAt = withSync.startsWith(strict) ? strict.length : 0;
-  return withSync.slice(0, insertAt) + REMOTE_CONTROL_FEATURE_SYNC_HELPER + withSync.slice(insertAt);
+  return prepareFeatureSyncSource(source).patchedSource;
+}
+function applyLinuxRemoteControlFeatureSyncExtractedAppPatch(extractedDir, context = {}) {
+  return applyFeatureSyncToExtractedApp(extractedDir, context.featureSyncWriteOptions);
 }
 
 function replaceLinuxRemoteControlCopy(source) {
@@ -1210,10 +1176,10 @@ module.exports = [
   },
   {
     id: "linux-remote-control-feature-sync",
-    phase: "main-bundle",
+    phase: "extracted-app:pre-webview",
     order: 20_119,
     ciPolicy: "optional",
-    apply: applyLinuxRemoteControlFeatureSyncPatch,
+    apply: applyLinuxRemoteControlFeatureSyncExtractedAppPatch,
   },
   {
     // Every chunk that embeds the visibility module carries its own copy.
@@ -1386,3 +1352,5 @@ module.exports.applyLinuxRemoteControlSettingsUxPatch = applyLinuxRemoteControlS
 module.exports.applyLinuxRemoteControlDeviceKeyExtractedApp = applyLinuxRemoteControlDeviceKeyExtractedApp;
 
 module.exports.applyLinuxRemoteControlLoadGateExtractedAppPatch = applyLinuxRemoteControlLoadGateExtractedAppPatch;
+
+module.exports.applyLinuxRemoteControlFeatureSyncExtractedAppPatch = applyLinuxRemoteControlFeatureSyncExtractedAppPatch;

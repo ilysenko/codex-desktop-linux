@@ -50,6 +50,7 @@ const {
 } = require("./patch.js");
 const remoteMobilePatchDescriptors = require("./patch.js");
 const remoteLoadGateHarness = require("./fixtures/remote-load-gate-harness.js");
+const remoteFeatureSyncHarness = require("./fixtures/feature-sync-harness.js");
 const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -226,7 +227,7 @@ function syntheticRemoteConnectionVisibilityBundle() {
 
 // The main-process experimental feature enablement sync of the signed chunk.
 function syntheticAppMainFeatureSyncBundle() {
-  return '"use strict";exports.ids=[45],exports.modules={57240(e,t,r){class Sync{constructor(e){this.disposed=!1,this.evaluations=e}async sendEnablement(e,t){let r=await this.evaluations.readExecutionAssignments(),n=r.values.experimentalFeatureGates,i=function(e,t){let r={memories:!1};return r.remote_plugin=t,r}(r.defaultEnableFeatures,n.curatedRemoteMarketplace);i.mcp_connection_sharing=n.shareCodexAppTools??!1;let s=()=>{};let a=!1;try{let t=await e.connection.sendAppServerRequest("experimentalFeature/enablement/set",{enablement:i},s);a=null!=t.enablement.daybreak_program_propagation}catch(e){throw e}return a}}t.Sync=Sync}};';
+  return remoteFeatureSyncHarness.fixture();
 }
 
 function syntheticCurrentVisibilityBundle() {
@@ -969,9 +970,9 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
   fs.mkdirSync(path.join(assetsDir, "async"), { recursive: true });
   fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
   const main = {
-    deviceKey: syntheticMainBundle() + syntheticAutoConnectServiceBundle() + syntheticRecoverableErrorPredicateBundle(),
+    deviceKey: remoteFeatureSyncHarness.addToSource(syntheticMainBundle()) + syntheticAutoConnectServiceBundle() + syntheticRecoverableErrorPredicateBundle(),
     appServer: syntheticCurrentLocalAppServerLaunchChunk(),
-    featureSync: syntheticAppMainFeatureSyncBundle(),
+    featureSync: 'exports.ids=[45],exports.modules={57240(e,t,r){e.exports={}}};',
     ...overrides.main,
   };
   for (const [key, name] of Object.entries(RSPACK_REMOTE_MOBILE_MAIN)) {
@@ -1013,7 +1014,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-client-revocation-recovery", "main-bundle"],
       ["linux-remote-mobile-app-server-remote-control", "extracted-app:post-webview"],
       ["linux-remote-control-load-gate", "extracted-app:pre-webview"],
-      ["linux-remote-control-feature-sync", "main-bundle"],
+      ["linux-remote-control-feature-sync", "extracted-app:pre-webview"],
       ["linux-remote-control-visibility", "extracted-app:pre-webview"],
       ["linux-remote-control-copy", "webview-asset"],
       ["linux-remote-control-settings-ux", "webview-asset"],
@@ -1959,49 +1960,25 @@ test("Linux remote-control load gate rejects non-current and ambiguous shapes", 
 });
 
 test("Linux remote-control feature sync enables remote_control for the local app server only", async () => {
-  const source = syntheticAppMainFeatureSyncBundle();
-  const patched = applyLinuxRemoteControlFeatureSyncPatch(source);
-
+  const source = syntheticAppMainFeatureSyncBundle(), patched = applyLinuxRemoteControlFeatureSyncPatch(source);
   assert.notEqual(patched, source);
-  assert.ok(patched.startsWith('"use strict";function codexLinuxRemoteControlFeatureSyncEnabled(e,t){'));
+  assert.ok(patched.includes('function codexLinuxRemoteControlFeatureSyncEnabled(e,t){'));
   assert.match(patched, /\{enablement:codexLinuxRemoteControlFeatureSyncEnabled\(i,e\.connection\.hostId\)\},s\)/);
   assert.equal(applyLinuxRemoteControlFeatureSyncPatch(patched), patched);
   new vm.Script(patched);
-
-  for (const platform of ["linux", "darwin"]) {
-    const exports = {};
-    vm.runInNewContext(patched, { exports, process: { platform } });
-    const factoryExports = {};
-    exports.modules[57240]({}, factoryExports, () => ({}));
-    const sync = new factoryExports.Sync({
-      readExecutionAssignments: async () => ({ defaultEnableFeatures: {}, values: { experimentalFeatureGates: { curatedRemoteMarketplace: true } } }),
-    });
-    const sent = [];
-    for (const hostId of ["local", "remote-ssh-discovered:devpod", "durable"]) {
-      await sync.sendEnablement({
-        connection: { hostId, sendAppServerRequest: async (method, params) => { sent.push({ hostId, method, params }); return { enablement: {} }; } },
-      }, 1);
-    }
-    assert.deepEqual(sent.map(({ hostId, params }) => [hostId, params.enablement.remote_control, params.enablement.remote_plugin]), [
-      ["local", platform === "linux" ? true : undefined, true],
-      ["remote-ssh-discovered:devpod", undefined, true],
-      ["durable", undefined, true],
-    ]);
+  for (const platform of ["linux", "darwin"]) for (const host of ["local", "remote-ssh-discovered:devpod", "durable"]) {
+    const scene = remoteFeatureSyncHarness.scene(patched, { platform, host });await scene.run();
+    assert.equal(scene.calls[0].args.enablement.remote_control, platform === "linux" && host === "local" ? true : undefined);
+    assert.equal(scene.record.acknowledgedGeneration, 1);
   }
 });
 
-test("Linux remote-control feature sync warns on unrelated, ambiguous, or partial chunks", () => {
-  const source = syntheticAppMainFeatureSyncBundle();
-  const patched = applyLinuxRemoteControlFeatureSyncPatch(source);
+test("Linux remote-control feature sync rejects unrelated, ambiguous, or partial chunks", () => {
+  const source = syntheticAppMainFeatureSyncBundle(), patched = applyLinuxRemoteControlFeatureSyncPatch(source);
   const call = 'e.connection.sendAppServerRequest("experimentalFeature/enablement/set",{enablement:i},s)';
-  for (const drifted of [
-    'exports.ids=[87],exports.modules={1(e){"use strict"}};',
-    source.replace(call, `${call},${call}`),
-    patched.replace('"use strict";function codexLinuxRemoteControlFeatureSyncEnabled(e,t){return"linux"===process.platform&&"local"===t?{...e,remote_control:!0}:e}', '"use strict";'),
-  ]) {
-    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlFeatureSyncPatch(drifted));
-    assert.equal(result, drifted);
-    assert.match(warnings.join("\n"), /experimental feature enablement sync/);
+  for (const drifted of ['exports.ids=[87],exports.modules={1(e){"use strict"}};', source.replace(call, `${call},${call}`),
+    patched.replace('function codexLinuxRemoteControlFeatureSyncEnabled(e,t){return"linux"===process.platform&&"local"===t?{...e,remote_control:!0}:e}', "")]) {
+    assert.throws(() => applyLinuxRemoteControlFeatureSyncPatch(drifted), /Unsupported current Remote feature-sync contract/);
   }
 });
 
@@ -3408,7 +3385,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(readMain("deviceKey"), /codexLinuxRemoteControlDeviceKeyClient/);
         assert.match(readMain("appServer"), /codexLinuxRemoteMobileLocalAppServerArgs/);
         assert.match(readMain("appServer"), /`--remote-control`/);
-        assert.match(readMain("featureSync"), /\{\.\.\.e,remote_control:!0\}/);
+        assert.match(readMain("deviceKey"), /\{\.\.\.e,remote_control:!0\}/);
         assert.match(readAsset("loadGate"), /codexLinuxRemoteControlLoadGateEnabled/);
         for (const key of ["visibility", "visibilityCopy"]) {
           assert.match(readAsset(key), /codexLinuxRemoteControlVisibilityEnabled/);
@@ -3581,8 +3558,13 @@ test(
   "signed main-process chunk syncs remote_control enablement for the local app server",
   { skip: SIGNED_APP == null },
   () => {
-    const { patched } = applyToSignedChunks(applyLinuxRemoteControlFeatureSyncPatch);
-    assert.match(patched, /sendAppServerRequest\("experimentalFeature\/enablement\/set",\{enablement:codexLinuxRemoteControlFeatureSyncEnabled\([\w$]+,[\w$]+\.connection\.hostId\)\},[\w$]+\)/u);
+    const carriers = signedMainProcessChunks().filter(row => row.source.includes("app-server-feature-enablement"));
+    assert.equal(carriers.length, 1);
+    const { prepareFeatureSyncSource } = require("./feature-sync-owner.js");
+    const first = prepareFeatureSyncSource(carriers[0].source), repeat = prepareFeatureSyncSource(first.patchedSource);
+    assert.equal(repeat.nativeSource, carriers[0].source);
+    assert.equal(repeat.patchedSource, first.patchedSource);
+    assert.match(first.patchedSource, /sendAppServerRequest\("experimentalFeature\/enablement\/set",\{enablement:codexLinuxRemoteControlFeatureSyncEnabled\([\w$]+,[\w$]+\.connection\.hostId\)\},[\w$]+\)/u);
   },
 );
 
