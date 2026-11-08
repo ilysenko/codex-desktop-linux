@@ -1,0 +1,76 @@
+{
+  "version": "26.1103.32239",
+  "owners": {
+    "Eklu": {
+      "moduleId": "Eklu",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "start": 23325,
+      "end": 24180,
+      "moduleSource": "var r=n(\"zTeN\"),i=n(\"OWtl\");let a=(0,r.bD)(i.u,e=>null),o=(0,r.bD)(i.u,e=>null),l=(0,r.bD)(i.u,e=>null),s=(0,r.T1)(i.u,(e,{scope:t})=>{let n=null,r=!1,i=null;return e=>{let l=n;t.set(a,e.target,e.selection),n=e,null!=l&&l.resolve(!1),null!=i&&clearTimeout(i),i=setTimeout(()=>{i=null,async function e(){var l,s;if(r||null==n)return;let d=n;n=null,r=!0,t.set(o,d.target,d.selection);let u=!1;try{u=await d.write()}catch{}l=t,s=d,l.get(o,s.target)===s.selection&&(l.set(o,s.target,null),l.get(a,s.target)===s.selection&&l.set(a,s.target,null)),d.resolve(u),r=!1,null!=n&&null==i&&e()}()},320)}});n.d(t,{},{BG:function({conversationId:e,hasConversation:t,hostId:n,cwd:r}){return null!=e&&t?[\"conversation\",e]:[\"default\",n,r]},EX:a,HM:function(e,t,n,r){return new Promise(i=>{e.get(s,JSON.stringify(t))({resolve:i,selection:n,target:t,write:r})})},pu:l,si:o})",
+      "bodySha256": "66dc254858b357e082f869083cb2b828ce1d4192f7b06c0d5bd265ac7451dee5",
+      "asset": "webview/assets/async/321808.c362f3c7ed.js"
+    },
+    "Vlts": {
+      "moduleId": "Vlts",
+      "params": [
+        "e",
+        "t"
+      ],
+      "start": 269,
+      "end": 7647,
+      "moduleSource": "var n=Symbol.for(\"react.transitional.element\"),r=Symbol.for(\"react.portal\"),o=Symbol.for(\"react.fragment\"),u=Symbol.for(\"react.strict_mode\"),c=Symbol.for(\"react.profiler\"),s=Symbol.for(\"react.consumer\"),i=Symbol.for(\"react.context\"),a=Symbol.for(\"react.forward_ref\"),f=Symbol.for(\"react.suspense\"),l=Symbol.for(\"react.memo\"),p=Symbol.for(\"react.lazy\"),y=Symbol.for(\"react.activity\"),_=Symbol.iterator,d={isMounted:function(){return!1},enqueueForceUpdate:function(){},enqueueReplaceState:function(){},enqueueSetState:function(){}},h=Object.assign,m={};function v(e,t,n){this.props=e,this.context=t,this.refs=m,this.updater=n||d}function b(){}function S(e,t,n){this.props=e,this.context=t,this.refs=m,this.updater=n||d}v.prototype.isReactComponent={},v.prototype.setState=function(e,t){if(\"object\"!=typeof e&&\"function\"!=typeof e&&null!=e)throw Error(\"takes an object of state variables to update or a function which returns an object of state variables.\");this.updater.enqueueSetState(this,e,t,\"setState\")},v.prototype.forceUpdate=function(e){this.updater.enqueueForceUpdate(this,e,\"forceUpdate\")},b.prototype=v.prototype;var E=S.prototype=new b;E.constructor=S,h(E,v.prototype),E.isPureReactComponent=!0;var w=Array.isArray;function g(){}var R={H:null,A:null,T:null,S:null},H=Object.prototype.hasOwnProperty;function C(e,t,r){var o=r.ref;return{$$typeof:n,type:e,key:t,ref:void 0!==o?o:null,props:r}}function j(e){return\"object\"==typeof e&&null!==e&&e.$$typeof===n}var k=/\\/+/g;function T(e,t){var n,r;return\"object\"==typeof e&&null!==e&&null!=e.key?(n=\"\"+e.key,r={\"=\":\"=0\",\":\":\"=2\"},\"$\"+n.replace(/[=:]/g,function(e){return r[e]})):t.toString(36)}function $(e,t,o){if(null==e)return e;var u=[],c=0;return!function e(t,o,u,c,s){var i,a,f,l=typeof t;(\"undefined\"===l||\"boolean\"===l)&&(t=null);var y=!1;if(null===t)y=!0;else switch(l){case\"bigint\":case\"string\":case\"number\":y=!0;break;case\"object\":switch(t.$$typeof){case n:case r:y=!0;break;case p:return e((y=t._init)(t._payload),o,u,c,s)}}if(y)return s=s(t),y=\"\"===c?\".\"+T(t,0):c,w(s)?(u=\"\",null!=y&&(u=y.replace(k,\"$&/\")+\"/\"),e(s,o,u,\"\",function(e){return e})):null!=s&&(j(s)&&(i=s,a=u+(null==s.key||t&&t.key===s.key?\"\":(\"\"+s.key).replace(k,\"$&/\")+\"/\")+y,s=C(i.type,a,i.props)),o.push(s)),1;y=0;var d=\"\"===c?\".\":c+\":\";if(w(t))for(var h=0;h<t.length;h++)l=d+T(c=t[h],h),y+=e(c,o,u,l,s);else if(\"function\"==typeof(h=null===(f=t)||\"object\"!=typeof f?null:\"function\"==typeof(f=_&&f[_]||f[\"@@iterator\"])?f:null))for(t=h.call(t),h=0;!(c=t.next()).done;)l=d+T(c=c.value,h++),y+=e(c,o,u,l,s);else if(\"object\"===l){if(\"function\"==typeof t.then)return e(function(e){switch(e.status){case\"fulfilled\":return e.value;case\"rejected\":throw e.reason;default:switch(\"string\"==typeof e.status?e.then(g,g):(e.status=\"pending\",e.then(function(t){\"pending\"===e.status&&(e.status=\"fulfilled\",e.value=t)},function(t){\"pending\"===e.status&&(e.status=\"rejected\",e.reason=t)})),e.status){case\"fulfilled\":return e.value;case\"rejected\":throw e.reason}}throw e}(t),o,u,c,s);throw Error(\"Objects are not valid as a React child (found: \"+(\"[object Object]\"===(o=String(t))?\"object with keys {\"+Object.keys(t).join(\", \")+\"}\":o)+\"). If you meant to render a collection of children, use an array instead.\")}return y}(e,u,\"\",\"\",function(e){return t.call(o,e,c++)}),u}function A(e){if(-1===e._status){var t=e._result;(t=t()).then(function(t){(0===e._status||-1===e._status)&&(e._status=1,e._result=t)},function(t){(0===e._status||-1===e._status)&&(e._status=2,e._result=t)}),-1===e._status&&(e._status=0,e._result=t)}if(1===e._status)return e._result.default;throw e._result}var O=\"function\"==typeof reportError?reportError:function(e){if(\"object\"==typeof window&&\"function\"==typeof window.ErrorEvent){var t=new window.ErrorEvent(\"error\",{bubbles:!0,cancelable:!0,message:\"object\"==typeof e&&null!==e&&\"string\"==typeof e.message?String(e.message):String(e),error:e});if(!window.dispatchEvent(t))return}else if(\"object\"==typeof process&&\"function\"==typeof process.emit)return void process.emit(\"uncaughtException\",e);console.error(e)};t.Activity=y,t.Children={map:$,forEach:function(e,t,n){$(e,function(){t.apply(this,arguments)},n)},count:function(e){var t=0;return $(e,function(){t++}),t},toArray:function(e){return $(e,function(e){return e})||[]},only:function(e){if(!j(e))throw Error(\"React.Children.only expected to receive a single React element child.\");return e}},t.Component=v,t.Fragment=o,t.Profiler=c,t.PureComponent=S,t.StrictMode=u,t.Suspense=f,t.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE=R,t.__COMPILER_RUNTIME={__proto__:null,c:function(e){return R.H.useMemoCache(e)}},t.cache=function(e){return function(){return e.apply(null,arguments)}},t.cacheSignal=function(){return null},t.cloneElement=function(e,t,n){if(null==e)throw Error(\"The argument must be a React element, but you passed \"+e+\".\");var r=h({},e.props),o=e.key;if(null!=t)for(u in void 0!==t.key&&(o=\"\"+t.key),t)H.call(t,u)&&\"key\"!==u&&\"__self\"!==u&&\"__source\"!==u&&(\"ref\"!==u||void 0!==t.ref)&&(r[u]=t[u]);var u=arguments.length-2;if(1===u)r.children=n;else if(1<u){for(var c=Array(u),s=0;s<u;s++)c[s]=arguments[s+2];r.children=c}return C(e.type,o,r)},t.createContext=function(e){return(e={$$typeof:i,_currentValue:e,_currentValue2:e,_threadCount:0,Provider:null,Consumer:null}).Provider=e,e.Consumer={$$typeof:s,_context:e},e},t.createElement=function(e,t,n){var r,o={},u=null;if(null!=t)for(r in void 0!==t.key&&(u=\"\"+t.key),t)H.call(t,r)&&\"key\"!==r&&\"__self\"!==r&&\"__source\"!==r&&(o[r]=t[r]);var c=arguments.length-2;if(1===c)o.children=n;else if(1<c){for(var s=Array(c),i=0;i<c;i++)s[i]=arguments[i+2];o.children=s}if(e&&e.defaultProps)for(r in c=e.defaultProps)void 0===o[r]&&(o[r]=c[r]);return C(e,u,o)},t.createRef=function(){return{current:null}},t.forwardRef=function(e){return{$$typeof:a,render:e}},t.isValidElement=j,t.lazy=function(e){return{$$typeof:p,_payload:{_status:-1,_result:e},_init:A}},t.memo=function(e,t){return{$$typeof:l,type:e,compare:void 0===t?null:t}},t.startTransition=function(e){var t=R.T,n={};R.T=n;try{var r=e(),o=R.S;null!==o&&o(n,r),\"object\"==typeof r&&null!==r&&\"function\"==typeof r.then&&r.then(g,O)}catch(e){O(e)}finally{null!==t&&null!==n.types&&(t.types=n.types),R.T=t}},t.unstable_useCacheRefresh=function(){return R.H.useCacheRefresh()},t.use=function(e){return R.H.use(e)},t.useActionState=function(e,t,n){return R.H.useActionState(e,t,n)},t.useCallback=function(e,t){return R.H.useCallback(e,t)},t.useContext=function(e){return R.H.useContext(e)},t.useDebugValue=function(){},t.useDeferredValue=function(e,t){return R.H.useDeferredValue(e,t)},t.useEffect=function(e,t){return R.H.useEffect(e,t)},t.useEffectEvent=function(e){return R.H.useEffectEvent(e)},t.useId=function(){return R.H.useId()},t.useImperativeHandle=function(e,t,n){return R.H.useImperativeHandle(e,t,n)},t.useInsertionEffect=function(e,t){return R.H.useInsertionEffect(e,t)},t.useLayoutEffect=function(e,t){return R.H.useLayoutEffect(e,t)},t.useMemo=function(e,t){return R.H.useMemo(e,t)},t.useOptimistic=function(e,t){return R.H.useOptimistic(e,t)},t.useReducer=function(e,t,n){return R.H.useReducer(e,t,n)},t.useRef=function(e){return R.H.useRef(e)},t.useState=function(e){return R.H.useState(e)},t.useSyncExternalStore=function(e,t,n){return R.H.useSyncExternalStore(e,t,n)},t.useTransition=function(){return R.H.useTransition()},t.version=\"19.2.7\"",
+      "bodySha256": "9599e966eecc172bfd28436aa5a82a5e77ba52a2c8935c4264919bd6ac8646f0",
+      "asset": "webview/assets/727403.da6b00f04b.js"
+    },
+    "zd8w": {
+      "moduleId": "zd8w",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "start": 7694,
+      "end": 7713,
+      "moduleSource": "e.exports=n(\"Vlts\")",
+      "bodySha256": "c77dbfd8a9c60e2a4bbb7db76868184c8c047b3a6cc9c7b9f764aedcc2aa6ffa",
+      "asset": "webview/assets/727403.da6b00f04b.js"
+    }
+  },
+  "assets": {
+    "webview/assets/async/321808.c362f3c7ed.js": {
+      "kind": "file",
+      "sha256": "cd6dcde823cb50f337eefc401edc5c30d28f5f3efb43c0e75172a14c35b41ab9",
+      "bytes": 81278,
+      "mode": "0644"
+    },
+    "webview/assets/727403.da6b00f04b.js": {
+      "kind": "file",
+      "sha256": "6ea73cd01f995eb8c543bcf50d120ff512d25c291948cb05acdfdadddc02d1f0",
+      "bytes": 7762,
+      "mode": "0644"
+    }
+  },
+  "entryProvenance": {
+    "html": {
+      "kind": "file",
+      "sha256": "d88cf9288f1a5d08bc557ebc732056482194e83e6dbe489fa8c4740346e6489f",
+      "bytes": 10406,
+      "mode": "0644"
+    },
+    "scripts": [
+      "/assets/782259.7a3e865ee5.js",
+      "/assets/727403.da6b00f04b.js",
+      "/assets/158624.0baba19172.js",
+      "/assets/348410.cd4ae3f30c.js"
+    ],
+    "manifest": {
+      "path": "/home/vgm/codex-desktop-linux/.scratch/upstream-26.1029.61003-compatibility/execution/latest-stable-26.1103.32239-inputs/amd64/asar-extracted-manifest.json.gz",
+      "sha256": "2b610ac1a5bc1a2b6ff07660e0273e3b49fdd5c4e064fe5a46bf144591576cb4"
+    },
+    "selectedPlusEntryBytes": 15638736
+  }
+}

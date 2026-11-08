@@ -13,12 +13,9 @@ const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript
 const { patchExtractedApp } = require("../../scripts/patches/runner.js");
 const {
   EFFORT_TO_THINKING_EFFORT,
-  EXISTING_CHAT_OPTIMISTIC_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
-  applyExistingChatOptimisticPatch,
   applyLocalComposerConfigPatch,
-  existingChatOptimisticContract,
   normalizePresets,
   localComposerConfigContract,
   upstreamDefaultSelectionAssetMatch,
@@ -58,23 +55,6 @@ function localComposerFixture(name = "LocalComposer") {
     "let reset=(0,Picker.zae)(Ue,null==He?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
     "render({onSelectDefault:reset});",
     "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
-    "function Next(){}",
-  ].join("");
-}
-
-function existingChatStateFixture(stateName = "q8a") {
-  return [
-    `function ${stateName}(e,t,n){`,
-    'let store=e,host={authMethod:t??"chatgpt"},isChatGptAuth=host?.authMethod==="chatgpt",',
-    'target=n??["conversation","thread"],hasManagedNewThreadSettings=!1,',
-    "setModelAndReasoningEffortForNextTurn=()=>true,",
-    'error=Error("No conversation available for next-turn model update"),',
-    "de=async(t,n,r)=>{let i=target,o={model:t,reasoningEffort:n,serviceTier:r?.threadSettings.serviceTier};",
-    "void 0!==o.serviceTier&&store.set(I.pu,{conversationId:i},null),",
-    "store.set(I.EX,i,o),await (async()=>!0)().finally(()=>{store.get(I.EX,i)===o&&store.set(I.EX,i,null)});return o};",
-    "return{hasManagedNewThreadSettings:hasManagedNewThreadSettings,",
-    "setModelAndReasoningEffortForNextTurn:setModelAndReasoningEffortForNextTurn,",
-    "setModelAndReasoningEffort:de,error}}",
     "function Next(){}",
   ].join("");
 }
@@ -386,88 +366,6 @@ test("local composer config supplies configured pairs and fallback", () => {
       model: "gpt-5.6-sol",
     },
   ]);
-});
-
-test("existing chats retain configured optimistic selections until another selection replaces them", async () => {
-  const presets = context([
-    { model: "gpt-5.6-sol", effort: "medium", default: true },
-    { model: "gpt-5.6-sol", effort: "xhigh" },
-  ]);
-  const source = existingChatStateFixture();
-  assert.equal(existingChatOptimisticContract(source), "current");
-  const patched = applyExistingChatOptimisticPatch(source, presets);
-  assert.equal(existingChatOptimisticContract(patched), "applied");
-  assert.equal(applyExistingChatOptimisticPatch(patched, presets), patched);
-  assert.equal(
-    (patched.match(new RegExp(EXISTING_CHAT_OPTIMISTIC_MARKER, "g")) ?? []).length,
-    2,
-  );
-
-  const state = new Map();
-  const key = (_atom, target) => JSON.stringify(target);
-  const store = {
-    get(atom, target) {
-      return state.get(`${atom}:${key(atom, target)}`);
-    },
-    set(atom, target, value) {
-      state.set(`${atom}:${key(atom, target)}`, value);
-    },
-  };
-  const globals = {
-    I: { EX: "pending", pu: "service-tier" },
-    store,
-  };
-  const configured = await evaluate(
-    patched,
-    "q8a(store).setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
-    { ...globals },
-  );
-  const target = ["conversation", "thread"];
-  assert.strictEqual(store.get("pending", target), configured);
-
-  const translatedConfigured = await evaluate(
-    patched,
-    "q8a(store).setModelAndReasoningEffort('gpt-5.6-sol','standard')",
-    { ...globals },
-  );
-  assert.equal(translatedConfigured.codexLinuxKeepOptimisticSelection, true);
-
-  const nonChatGptConfigured = await evaluate(
-    patched,
-    "q8a(store,'api-key').setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
-    { ...globals },
-  );
-  assert.equal(nonChatGptConfigured.codexLinuxKeepOptimisticSelection, false);
-
-  const newThreadConfigured = await evaluate(
-    patched,
-    "q8a(store,undefined,['default','local','/repo']).setModelAndReasoningEffort('gpt-5.6-sol','xhigh')",
-    { ...globals },
-  );
-  assert.equal(newThreadConfigured.codexLinuxKeepOptimisticSelection, false);
-
-  const manual = await evaluate(
-    patched,
-    "q8a(store).setModelAndReasoningEffort('gpt-6-astra','standard')",
-    { ...globals },
-  );
-  assert.equal(manual.codexLinuxKeepOptimisticSelection, false);
-  assert.equal(store.get("pending", target), null);
-});
-
-test("existing-chat patch fails closed on drift, duplicate, and partial states", () => {
-  const presets = context([{ model: "gpt-5.6-sol", effort: "medium", default: true }]);
-  for (const source of [
-    "function unrelated(){}",
-    existingChatStateFixture("qOne") + existingChatStateFixture("qTwo"),
-    `${EXISTING_CHAT_OPTIMISTIC_MARKER};${existingChatStateFixture()}`,
-  ]) {
-    const { result, warnings } = withCapturedWarnings(() =>
-      applyExistingChatOptimisticPatch(source, presets),
-    );
-    assert.equal(result, source);
-    assert.equal(warnings.length, 1);
-  }
 });
 
 test("local composer patches fail closed on drift, duplicate, and partial states", () => {

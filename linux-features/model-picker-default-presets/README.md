@@ -6,11 +6,20 @@ effort pairs. It does not change the manual model list, API-key, Copilot, or
 Aeon-managed sessions, account entitlements, workspace policy, or upstream
 Ultra/XHigh gates.
 
-For an existing chat, configured pairs are kept as the composer's optimistic
-selection after the upstream next-turn settings RPC completes. This avoids a
-race where a long conversation can briefly expose stale thread metadata and
-reset the picker. Selecting a model/effort pair outside this feature's list
-removes that local override and restores the normal upstream behavior.
+For an existing chat, a configured choice stays visible after its native write
+succeeds while thread metadata catches up. Both direct next-turn writes and
+the ordinary queued current-selection path keep their native RPCs, targets,
+service-tier fields, errors, and queue behavior. A rejected write follows native
+cleanup and does not leave the rejected pair selected.
+
+The temporary hold belongs to the latest choice in the current native host,
+conversation, profile, authentication, and client-readiness context. A newer
+choice or a committed context change supersedes older work. Actual thread model
+and effort metadata release the hold after acknowledgement; an account-default
+fallback alone is not acknowledgement. Later native refreshes then remain
+visible. Selecting a pair outside the configured list restores normal upstream
+behavior. This state stays in memory and does not change account-default
+persistence.
 
 The stock Settings page controls which reasoning efforts are visible and
 whether Ultra may appear in the picker. It does not currently configure the
@@ -170,9 +179,13 @@ The slider uses that same qualified picker and native reset dependency, prepares
 every physical copy, and accepts only its exact configured helper and two
 threshold changes. Hidden damage, mixed or orphan contributions refuse the
 cohort before writes; a later write fault restores every attempted file.
-The local composer is patched in one chunk. Upstream inlines the model-settings hook into every composer surface,
-so the existing-chat selection patch is applied to each copy and warns about
-any copy that drifted.
+The local composer is patched in one chunk. Upstream inlines the model-settings
+hook into every composer surface. The existing-chat patch qualifies every
+physical settings copy and its actual native queue, target, metadata, and React
+hook references before one transaction. Its exact inverse and replay must
+agree; hidden damage, stale configuration, orphan contributions, or mixed copies
+refuse before writes. It composes with the canonical Copilot effort-persistence
+contribution while preserving both native permission and persistence routing.
 
 The local resolver validates the current published resolver, model normalizer,
 exact supported model/effort intersection, native fallback arrays, and native

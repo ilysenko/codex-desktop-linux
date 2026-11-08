@@ -2,6 +2,7 @@
 const {auditPickerReset,patchPickerSlider}=require("./picker-reset.js");
 
 const {patchLocalResolver}=require("./local-resolver.js");
+const {patchExistingChatSelections}=require("./existing-chat-selection.js");
 const {patchPresetCatalog}=require("./catalog-integration.js");
 const DefaultSelection=require("./upstream-default-selection.js");
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
@@ -14,9 +15,6 @@ const catalogAuthority=require("./native-catalog-authority.js");
 const LOCAL_DEFAULT_PATCH_MARKER = "codex-linux-model-picker-default-presets-local-default";
 const LOCAL_COMPOSER_CONFIG_MARKER =
   "codex-linux-model-picker-default-presets-local-composer-config";
-const EXISTING_CHAT_OPTIMISTIC_MARKER =
-  "codex-linux-model-picker-default-presets-existing-chat-optimistic-selection";
-const EXISTING_CHAT_PRESET_IDS_KEY = "codexLinuxExistingChatDefaultPresetIds";
 const IDENT = "[A-Za-z_$][\\w$]*";
 const EFFORT_TO_THINKING_EFFORT = Object.freeze({
   none: "zero",
@@ -260,118 +258,8 @@ function localComposerConfigContract(source) {
   return "mixed";
 }
 
-function modelSettingsStateSection(source) {
-  return uniqueFunctionWithMarkers(source, [
-    "hasManagedNewThreadSettings:",
-    "setModelAndReasoningEffortForNextTurn:",
-    "No conversation available for next-turn model update",
-    "reasoningEffort:",
-    "serviceTier:",
-  ]);
-}
-
-function modelSettingsOptimisticTarget(section) {
-  const source = section?.source ?? "";
-  const id = "[A-Za-z_$][\\w$]*";
-  const pattern = new RegExp(
-    `(?<selection>${id})=\\{model:(?<model>${id}),reasoningEffort:(?<effort>${id}),` +
-      `serviceTier:(?<serviceTier>[^;}]+)\\};[\\s\\S]{0,400}?` +
-      `(?<store>${id})\\.set\\((?<atom>${id}(?:\\.${id})?),(?<target>${id}),\\k<selection>\\),[\\s\\S]{0,800}?` +
-      `\\.finally\\(\\(\\)=>\\{(?<cleanup>\\k<store>\\.get\\(\\k<atom>,\\k<target>\\)===` +
-      `\\k<selection>&&\\k<store>\\.set\\(\\k<atom>,\\k<target>,null\\))\\}\\)`,
-    "gu",
-  );
-  const matches = [...source.matchAll(pattern)];
-  return matches.length === 1 ? matches[0] : null;
-}
-
-function chatGptAuthVariable(section) {
-  const matches = [
-    ...(section?.source ?? "").matchAll(
-      /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod===(["'`])chatgpt\2(?=[,;])/gu,
-    ),
-  ];
-  return matches.length === 1 ? matches[0][1] : null;
-}
-
-function existingChatPresetRuntime(presets) {
-  const ids = new Set();
-  for (const { modelSlug, thinkingEffort } of presets) {
-    ids.add(`${modelSlug}:${THINKING_EFFORT_TO_EFFORT[thinkingEffort]}`);
-    ids.add(`${modelSlug}:${thinkingEffort}`);
-  }
-  return `const ${EXISTING_CHAT_PRESET_IDS_KEY}=new Set(${JSON.stringify([...ids])});`;
-}
-
-function existingChatOptimisticContract(source) {
-  const markerCount = source.split(EXISTING_CHAT_OPTIMISTIC_MARKER).length - 1;
-  const presetIdsCount = source.split(EXISTING_CHAT_PRESET_IDS_KEY).length - 1;
-  const modelState = modelSettingsStateSection(source);
-  if (markerCount === 0 && presetIdsCount === 0) {
-    if (modelState == null) return "drifted";
-    return modelSettingsOptimisticTarget(modelState) != null &&
-      chatGptAuthVariable(modelState) != null
-      ? "current"
-      : "drifted";
-  }
-  if (
-    markerCount === 2 &&
-    presetIdsCount === 2 &&
-    modelState != null &&
-    modelState.source.includes(".codexLinuxKeepOptimisticSelection!==!0&&") &&
-    modelState.source.includes(`&&${EXISTING_CHAT_PRESET_IDS_KEY}.has(`)
-  ) {
-    return "applied";
-  }
-  return "mixed";
-}
-
-function applyExistingChatOptimisticPatch(source, context = {}) {
-  const presets = normalizePresets(context);
-  if (presets.length === 0) return source;
-  const contract = existingChatOptimisticContract(source);
-  if (contract === "applied") return source;
-  if (contract !== "current") {
-    warn(
-      "Could not find one coherent existing-chat optimistic model-selection contract",
-      "model picker Default existing-chat selection patch",
-    );
-    return source;
-  }
-
-  const modelState = modelSettingsStateSection(source);
-  const optimisticTarget = modelSettingsOptimisticTarget(modelState);
-  const chatGptAuth = chatGptAuthVariable(modelState);
-  if (optimisticTarget == null || chatGptAuth == null) {
-    return source;
-  }
-
-  const { groups } = optimisticTarget;
-  let patchedModelState = modelState.source.replace(
-    optimisticTarget[0],
-    optimisticTarget[0]
-      .replace(
-        `serviceTier:${groups.serviceTier}`,
-        `serviceTier:${groups.serviceTier},codexLinuxKeepOptimisticSelection:${chatGptAuth}&&${groups.target}[0]===\`conversation\`&&${EXISTING_CHAT_PRESET_IDS_KEY}.has(${groups.model}+\`:\`+${groups.effort})/*${EXISTING_CHAT_OPTIMISTIC_MARKER}*/`,
-      )
-      .replace(
-        groups.cleanup,
-        `${groups.selection}.codexLinuxKeepOptimisticSelection!==!0&&${groups.cleanup}/*${EXISTING_CHAT_OPTIMISTIC_MARKER}*/`,
-      ),
-  );
-  patchedModelState = patchedModelState.replace("{", `{${existingChatPresetRuntime(presets)}`);
-  const patchedSource =
-    source.slice(0, modelState.start) +
-    patchedModelState +
-    source.slice(modelState.end);
-  if (existingChatOptimisticContract(patchedSource) !== "applied") {
-    warn(
-      "Could not apply the complete existing-chat optimistic model-selection contract",
-      "model picker Default existing-chat selection patch",
-    );
-    return source;
-  }
-  return patchedSource;
+function patchExistingChatSelection(extractedDir,context={},options={}) {
+  return patchExistingChatSelections(extractedDir,normalizePresets(context),THINKING_EFFORT_TO_EFFORT,context,options);
 }
 
 function applyLocalComposerConfigPatch(source, context = {}) {
@@ -477,18 +365,11 @@ const descriptors = [
   },
   {
     id: "model-picker-default-presets-existing-chat-optimistic-selection",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20_801,
     ciPolicy: "optional",
-    assetNeedles: [
-      "No conversation available for next-turn model update",
-      "setModelAndReasoningEffortForNextTurn:",
-      "hasManagedNewThreadSettings:",
-    ],
     enabled: (context = {}) => normalizePresets(context).length > 0,
-    missingDescription: "existing-chat model settings state bundle",
-    skipDescription: "model picker Default existing-chat selection patch",
-    apply: applyExistingChatOptimisticPatch,
+    apply: patchExistingChatSelection,
   },
   {
     id: "model-picker-default-presets-local-composer-config",
@@ -511,16 +392,14 @@ const descriptors = [
 
 module.exports = {
   EFFORT_TO_THINKING_EFFORT,
-  EXISTING_CHAT_OPTIMISTIC_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   THINKING_EFFORT_TO_EFFORT,
   patchCatalog,
-  applyExistingChatOptimisticPatch,
+  patchExistingChatSelection,
   applyLocalComposerConfigPatch,
   descriptors,
   normalizePresets,
-  existingChatOptimisticContract,
   localComposerConfig,
   localComposerConfigContract,
   upstreamDefaultSelectionAssetMatch,
