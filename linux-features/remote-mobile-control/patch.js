@@ -7,6 +7,7 @@ const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js"
 const { prepareDeviceKeySource, applyDeviceKeyToExtractedApp } = require("./device-key-owner.js");
 const { prepareRemoteLoadGateSource, applyRemoteLoadGate } = require("./remote-load-gate.js");
 const { applyHostToggleSource, applyHostTogglePatch } = require("./host-toggle.js");
+const { applyRemoteMobileVisibility: applyLinuxRemoteControlVisibilityPatch } = require("./remote-control-visibility.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
@@ -24,8 +25,6 @@ const REMOTE_MOBILE_ACTIVE_STATUS_MARKER = "codexLinuxRemoteMobileActiveStatus";
 const REMOTE_CONTROL_STATUS_READ_GUARD_MARKER = "codexLinuxRemoteControlShouldReadStatus";
 const REMOTE_CONTROL_STATUS_WAIT_MARKER = "codexLinuxRemoteControlStatusWaitMs";
 const REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER = "codexLinuxRemoteControlResetMobileSetupAfterRevoke";
-const REMOTE_CONTROL_VISIBILITY_MARKER = "codexLinuxRemoteControlVisibilityEnabled";
-const REMOTE_CONTROL_UI_VISIBILITY_MARKER = "codexLinuxRemoteControlUiVisibilityEnabled";
 const REMOTE_CONTROL_COPY_MARKER = "codexLinuxRemoteControlCopy";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER = "codexLinuxRemoteMobileLocalAppServerArgs";
 const REMOTE_MOBILE_APP_SERVER_BASE_ARGS_NEEDLE = '["-c","features.code_mode_host=true"]';
@@ -535,57 +534,6 @@ function applyLinuxRemoteControlFeatureSyncPatch(source) {
   const strict = '"use strict";';
   const insertAt = withSync.startsWith(strict) ? strict.length : 0;
   return withSync.slice(0, insertAt) + REMOTE_CONTROL_FEATURE_SYNC_HELPER + withSync.slice(insertAt);
-}
-
-// rspack duplicates the visibility module into every async chunk that uses
-// it, so each copy carries the same owner and is patched independently.
-function remoteControlVisibilityContract(source) {
-  const ownerPattern = /function ([A-Za-z_$][\w$]*)\(\{remoteControlConnectionsState:([A-Za-z_$][\w$]*),slingshotEnabled:([A-Za-z_$][\w$]*)\}\)\{([^{}]*)\}/gu;
-  const owners = [...source.matchAll(ownerPattern)];
-  if (owners.length !== 1) return null;
-
-  const [owner] = owners;
-  const [, , stateVar, slingshotVar, body] = owner;
-  const current =
-    `return ${slingshotVar}&&(${stateVar}?.available??!0)&&${stateVar}?.accessRequired!==!0`;
-  const patchedMarker = `${REMOTE_CONTROL_VISIBILITY_MARKER}(?:\\*/\\*${REMOTE_CONTROL_UI_VISIBILITY_MARKER})?`;
-  const patchedPattern = new RegExp(
-    `^let ([A-Za-z_$][\\w$]*)=typeof navigator!=\`undefined\`&&navigator\\.userAgent\\.includes\\(\`Linux\`\\);` +
-      `/\\*${patchedMarker}\\*/return\\(\\1\\|\\|${escapeRegExp(slingshotVar)}\\)&&` +
-      `\\(\\1\\|\\|\\(${escapeRegExp(stateVar)}\\?\\.available\\?\\?!0\\)\\)&&` +
-      `${escapeRegExp(stateVar)}\\?\\.accessRequired!==!0$`,
-    "u",
-  );
-  const state = body === current ? "current" : patchedPattern.test(body) ? "patched" : null;
-  if (state == null) return null;
-
-  return {
-    body,
-    bodyIndex: owner.index + owner[0].indexOf(body),
-    slingshotVar,
-    state,
-    stateVar,
-  };
-}
-
-function applyLinuxRemoteControlVisibilityPatch(source) {
-  const contract = remoteControlVisibilityContract(source);
-  if (contract == null) {
-    console.warn("WARN: Could not find unique remote-control visibility gate - skipping Linux remote-control visibility patch");
-    return source;
-  }
-  if (contract.state === "patched") {
-    return source;
-  }
-
-  const { body, bodyIndex, slingshotVar, stateVar } = contract;
-  // A fresh local name: the owner's minified parameters may be any letter.
-  const linux = "codexLinuxRemoteControlOnLinux";
-  const replacement =
-    `let ${linux}=typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`);` +
-    `/*${REMOTE_CONTROL_VISIBILITY_MARKER}*/return(${linux}||${slingshotVar})&&` +
-    `(${linux}||(${stateVar}?.available??!0))&&${stateVar}?.accessRequired!==!0`;
-  return source.slice(0, bodyIndex) + replacement + source.slice(bodyIndex + body.length);
 }
 
 function replaceLinuxRemoteControlCopy(source) {
@@ -1270,12 +1218,9 @@ module.exports = [
   {
     // Every chunk that embeds the visibility module carries its own copy.
     id: "linux-remote-control-visibility",
-    phase: "webview-asset",
-    assetNeedles: ["remoteControlConnectionsState:", "slingshotEnabled:", "accessRequired!==!0"],
+    phase: "extracted-app:pre-webview",
     order: 20_120,
     ciPolicy: "optional",
-    missingDescription: "remote-control connections visibility bundle",
-    skipDescription: "Linux remote-control visibility patch",
     apply: applyLinuxRemoteControlVisibilityPatch,
   },
   {

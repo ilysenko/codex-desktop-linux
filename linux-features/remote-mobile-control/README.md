@@ -64,8 +64,10 @@ What it changes:
   before the Remote instance returns it from `getAddon()`.
 - Adds the bare `Remote-control client key material missing` 403 detail to the
   upstream re-enrollment predicate, which only recognizes the prefixed form.
-- Lets the remote-control Connections UI render on Linux when upstream marks
-  the feature unavailable or withholds the remote-control visibility rollout.
+- Lets the remote-control Connections UI render on Linux before outbound
+  loading is enabled or when an endpoint is unavailable, while retaining the
+  native access-required refusal. Account authorization, enrollment, MFA and
+  the actual connection list remain native.
 - Keeps the `Control other devices` settings tab reachable on Linux so this
   desktop can authorize outbound control of another enrolled device.
 - Lets the outbound Remote environment loader proceed on Linux after calling
@@ -157,7 +159,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-mobile-app-server-remote-control` | `mobile-host` | Starts a native Desktop-owned app-server or proxies Desktop RPCs to a declarative owner. |
 | `linux-remote-control-load-gate` | `outbound-control` | Allows remote-control environments to load in Connections. |
 | `linux-remote-control-feature-sync` | `shared-boundary` | Enables `remote_control` in the main-process experimental feature sync only for the local app server and excludes Remote SSH, WSL, and cloud hosts. |
-| `linux-remote-control-visibility` | `outbound-control` | Exposes remote-control Connections UI when the server permits it. |
+| `linux-remote-control-visibility` | `outbound-control` | Opens the Linux Connections view for pre-enable/unavailable states while retaining native access-required denial and actual account/enrollment/list data. |
 | `linux-remote-control-copy` | `shared-boundary` | Rewrites Linux copy shared by host setup and outbound Connections. |
 | `linux-remote-control-settings-ux` | `shared-boundary` | Adapts the shared Connections copy and outbound-control visibility without reviving the retired upstream SSH installer. |
 | `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state (the `codex-mobile-has-connected-device` application state) only after the last external controller is removed. |
@@ -191,6 +193,22 @@ inverse removes only this load-gate contribution. The remote-connections entry
 and remote-control subview UI transactions accept that precise contribution in
 either order, preserve each other's bytes, and repeat unchanged. Their optional
 feature folders do not depend on one another.
+
+The visibility descriptor prepares all copies of the published predicate,
+state-reading hook and tab selector before one atomic transaction. It proves
+the native catalog-state owner and uses the same feature's load-gate inspector
+and native-hook validator as read-only dependencies. Its transaction never
+applies the load-gate producer's proposed edits. Missing, changed or mixed
+peers, orphan markers and stale dependency rows are rejected before writes.
+
+The actual Remote-mobile visibility adapter and the Remote Control UI adapter
+share exact native, UI-only, mobile-only and joint contribution forms. Their
+registered APIs compose in either order, preserve the other contribution, and
+repeat unchanged. Removing either contribution retains the exact other form;
+removing both restores native visibility bytes while the independent entry and
+load-gate contributions remain intact. Every physical copy follows the same
+state. RMC-only and UI-only feature-source closures load and apply without the
+disabled sibling folder.
 
 The official webview is an rspack build whose app code lives in lazily loaded
 `webview/assets/async/<id>.<hash>.js` chunks. Cohort descriptors qualify their

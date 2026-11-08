@@ -33,10 +33,11 @@ original result and exceptions on other platforms.
 The subview preparer specifies exact mobile-only and joint contribution forms,
 including inverse removal of either contribution. Those forms preserve the
 mobile adaptation that can display pre-enable/unavailable views, and always
-retain the access-required refusal. This protocol does not qualify the current
-remote-mobile-control descriptor: UP83 must adopt and verify its real adapter
-in both orders before combined mobile behavior is accepted. The UI feature has
-no source dependency on the disabled mobile feature directory.
+retain the access-required refusal. The registered Remote-mobile and UI adapters qualify these forms in both
+orders, repeat unchanged, and preserve the independent entry and load-gate
+contributions. This is build-time source-contract evidence; account, pairing
+and runtime behavior retain their separate validation. The UI feature has no
+source dependency on the disabled mobile feature directory.
 
 The experimental-setting transaction qualifies both published filter copies,
 the native toggle and settings-search callers, and their selected-host list and

@@ -998,6 +998,9 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
   for (const [key, name] of Object.entries(RSPACK_REMOTE_MOBILE_ASSETS)) {
     fs.writeFileSync(path.join(assetsDir, name), assets[key]);
   }
+  require("./fixtures/remote-visibility-harness.js").installIntoExistingApp(tempApp, [
+    RSPACK_REMOTE_MOBILE_ASSETS.visibility, RSPACK_REMOTE_MOBILE_ASSETS.visibilityCopy,
+  ]);
   fs.writeFileSync(path.join(assetsDir, "app-test.png"), "");
   return { buildDir, assetsDir };
 }
@@ -1011,7 +1014,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-mobile-app-server-remote-control", "extracted-app:post-webview"],
       ["linux-remote-control-load-gate", "extracted-app:pre-webview"],
       ["linux-remote-control-feature-sync", "main-bundle"],
-      ["linux-remote-control-visibility", "webview-asset"],
+      ["linux-remote-control-visibility", "extracted-app:pre-webview"],
       ["linux-remote-control-copy", "webview-asset"],
       ["linux-remote-control-settings-ux", "webview-asset"],
       ["linux-remote-control-client-revoke-setup-reset", "webview-asset"],
@@ -1035,7 +1038,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     // by stable strings, and those strings occur in the current fixtures.
     const fixtures = {
       "linux-remote-control-load-gate": syntheticRemoteConnectionVisibilityBundle(),
-      "linux-remote-control-visibility": syntheticCurrentUsePluginVisibilityBundle(),
       "linux-remote-control-copy": syntheticMobileSetupDialogCopyBundle(),
       "linux-remote-control-settings-ux": syntheticOutboundTabGateBundle() + syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-control-client-revoke-setup-reset": syntheticCurrentRevokeSetupResetBundle(),
@@ -1073,6 +1075,9 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     const loadGate = byId("linux-remote-control-load-gate");
     assert.equal(loadGate.assetMatch, undefined);
     assert.equal(loadGate.phase, "extracted-app:pre-webview");
+    const visibility = byId("linux-remote-control-visibility");
+    assert.equal(visibility.phase, "extracted-app:pre-webview");
+    assert.equal(visibility.assetNeedles, undefined);
     const revoke = byId("linux-remote-control-client-revoke-setup-reset");
     const revokeOwner = syntheticCurrentRevokeSetupResetBundle();
     assert.equal(revoke.assetMatch(applyLinuxRemoteControlClientRevokeSetupResetPatch(revokeOwner)), true);
@@ -2000,28 +2005,9 @@ test("Linux remote-control feature sync warns on unrelated, ambiguous, or partia
   }
 });
 
-test("Linux remote-control visibility patch rejects an owner without the current access gate", () => {
-  const source = syntheticCurrentVisibilityBundle();
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteControlVisibilityPatch(source)
-  );
-
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("unique remote-control visibility gate")));
-});
-
-test("Linux remote-control visibility patch handles current use-plugin gate shape", () => {
-  const source = syntheticCurrentUsePluginVisibilityBundle();
-  const patched = applyLinuxRemoteControlVisibilityPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.match(patched, /navigator\.userAgent\.includes\(`Linux`\)/);
-  assert.match(patched, /return\(codexLinuxRemoteControlOnLinux\|\|t\)&&\(codexLinuxRemoteControlOnLinux\|\|\(e\?\.available\?\?!0\)\)&&e\?\.accessRequired!==!0/);
-  // A fresh local name cannot collide with minified parameters such as `n`.
-  const renamed = applyLinuxRemoteControlVisibilityPatch(source.replace("slingshotEnabled:t}){return t&&", "slingshotEnabled:n}){return n&&"));
-  assert.doesNotThrow(() => new Function(renamed.replace(/export\{[^}]*\};?$/, "")));
-  assert.equal(applyLinuxRemoteControlVisibilityPatch(patched), patched);
-});
+// Current registered visibility/cohort, peer ordering, inverse, rollback and
+// policy cases live in remote-control-visibility.test.js. Bare function-body
+// String matching is intentionally retired for this descriptor.
 
 test("Linux mobile setup copy does not refer to Mac-only Computer Use", () => {
   const source = syntheticMobileSetupDialogComputerUseBundle();
