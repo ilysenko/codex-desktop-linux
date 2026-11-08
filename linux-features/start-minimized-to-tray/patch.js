@@ -165,7 +165,7 @@ function backgroundContract(source, first) {
 
 function firstWindowContract(source, background) {
   const bg = escapeRegExp(background);
-  return unique(source, new RegExp(`let (${ID})=${ID}\\.deepLinks\\.isWakeOnlyLaunch\\(\\)&&!${ID}\\?null:await (${ID})\\.ensureWindow\\(\\{background:${bg}\\}\\);\\1\\?\\.once\\("show",\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),null==\\1\\|\\|${bg}\\|\\|(${ID})\\(\\1,!(${ID})\\)`, "g"));
+  return unique(source, new RegExp(`let (${ID})=${ID}\\.deepLinks\\.isWakeOnlyLaunch\\(\\)&&!${ID}\\?null:await (${ID})\\.ensureWindow\\(\\{background:${bg}\\}\\),${ID}=null==\\1\\?null:\\2\\.windowManager\\.getPersistenceWindowId\\(\\1\\);\\1\\?\\.once\\("show",\\(\\)=>\\{(${ID})\\.handleInitialWindowVisible\\(\\)\\}\\),null==\\1\\|\\|${bg}\\|\\|(${ID})\\(\\1,!(${ID})\\)`, "g"));
 }
 
 // The startup window-services call passes upstream's tray readiness predicate;

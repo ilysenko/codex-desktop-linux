@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 
 const IDENT = "[A-Za-z_$][\\w$]*";
 const MARKER = "codexLinuxUsageLimitSendAttempt";
@@ -13,23 +14,41 @@ const LOCAL_USAGE_GATE = new RegExp(
   "g",
 );
 
+function usageLimitReasonContract(source, gate) {
+  const after = source.slice(gate.index + gate[0].length, gate.index + gate[0].length + 20000);
+  const flag = escapeRegExp(gate.groups.flag);
+  const reason = [...after.matchAll(new RegExp(
+    `(?<name>${IDENT})=${flag}&&"usage-limit";`,
+    "g",
+  ))];
+  if (reason.length !== 1) return false;
+  const reasonName = escapeRegExp(reason[0].groups.name);
+  const reasons = [...after.matchAll(new RegExp(
+    `(?<name>${IDENT})=\\[[^\\]]{0,1500}(?:^|,)${reasonName}\\]\\.filter\\(Boolean\\)`,
+    "g",
+  ))];
+  if (reasons.length !== 1) return false;
+  const reasonsName = escapeRegExp(reasons[0].groups.name);
+  const joined = [...after.matchAll(new RegExp(
+    `let (?<name>${IDENT})=${reasonsName}\\.join\\(","\\);`,
+    "g",
+  ))];
+  return joined.length === 1 &&
+    after.split(`submitDisabledReasons:${joined[0].groups.name}`).length === 2;
+}
+
 function applyUsageLimitSendAttemptPatch(source) {
   if (source.includes(MARKER)) return source;
 
-  // Match the local Codex composer and its submit-disabled expression rather
-  // than an upstream chunk name, module ID, or minified binding.
+  // Match the local Codex composer and the complete semantic path from the
+  // account usage gate through its disabled-reason list and rendered prop.
   const rawGates = [...source.matchAll(LOCAL_USAGE_GATE)];
   if (rawGates.length !== 1) return source;
   const gates = rawGates.filter((gate) => {
     const before = source.slice(Math.max(0, gate.index - 1200), gate.index);
     if (!COMPOSER.test(before)) return false;
 
-    const after = source.slice(gate.index + gate[0].length, gate.index + gate[0].length + 20000);
-    const disabled = [...after.matchAll(new RegExp(
-      `(?:let|var|const) (?<name>${IDENT})=[^;]{0,1500}\\|\\|${gate.groups.flag};`,
-      "g",
-    ))];
-    return disabled.length === 1 && after.includes(`submitDisabled:${disabled[0].groups.name}`);
+    return usageLimitReasonContract(source, gate);
   });
   if (gates.length !== 1) return source;
 
@@ -46,7 +65,7 @@ function applyUsageLimitSendAttemptAppPatch(extractedDir) {
     if (!name.endsWith(".js")) continue;
     const file = path.join(assets, name);
     const source = fs.readFileSync(file, "utf8");
-    if (!COMPOSER.test(source) || !source.includes("submitDisabled:")) continue;
+    if (!COMPOSER.test(source) || !source.includes("submitDisabledReasons:")) continue;
     const patched = applyUsageLimitSendAttemptPatch(source);
     if (patched === source) {
       return { changed: 0, reason: "local Codex composer usage gate changed" };
