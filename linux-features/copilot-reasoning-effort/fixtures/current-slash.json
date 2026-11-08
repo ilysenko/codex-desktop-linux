@@ -1,0 +1,645 @@
+{
+  "provenance": {
+    "version": "26.1103.32239",
+    "arch": "amd64",
+    "signedFactory": {
+      "asset": "webview/assets/async/309406.490dc6734e.js",
+      "moduleId": "Ceox",
+      "bytes": 506911,
+      "sha256": "def972210a88f2eaa88f85ac499cb48dd0b5400e73dbaba96965725cfdf25e3d"
+    },
+    "actualFunctions": [
+      {
+        "name": "dp",
+        "start": 221912,
+        "open": 221926,
+        "params": "e",
+        "end": 224205,
+        "bytes": 2293,
+        "sha256": "5fdb600d5708d27aba22fe0adef4e077fef66736e009bbfa510da0b475b37edb"
+      },
+      {
+        "name": "dJ",
+        "start": 244150,
+        "open": 244164,
+        "params": "e",
+        "end": 255628,
+        "bytes": 11478,
+        "sha256": "2378409c4df18354a2b4d683fd39c705c9dcb6428d629ac3cc22df9d5723b47d"
+      },
+      {
+        "name": "h3",
+        "start": 286567,
+        "open": 286581,
+        "params": "e",
+        "end": 506347,
+        "bytes": 219780,
+        "sha256": "674b7a3b11ecad162831463cd7a9b3aec1842e6aee1815baa0c3f5b696b63b49"
+      }
+    ],
+    "fixturePolicy": "Synthetic reduced h3/dJ chain plus current2293B dp semantic function. Never evaluate the full official factory. Actual complete factory authority is validated from retained signed inputs/optional signed test and production normal run."
+  },
+  "synthetic": {
+    "params": [
+      "e",
+      "t",
+      "n"
+    ],
+    "source": "n.d(t,{ComposerContent:()=>h3});var a=n(\"QosV\"),c=n(\"zTeN\"),O=n(\"OWtl\"),g=n(\"Wf1j\"),au=n(\"an0a\"),P=n(\"EOo5\"),ty=n(\"j44z\"),lK=n(\"sU9s\"),S=n(\"tl5a\"),ac=n(\"YWOa\"),ah=n(\"hI9J\"),lW=n(\"moNn\"),nE=n(\"GO7r\"),nu=n(\"yGJW\"),lM=n(\"iRMi\"),rA=n(\"By8V\"),o=n(\"ABep\"),tC=n(\"Sd8U\");let ri=(0,c.i1)(O.u,()=>!1);function dp(e){let t,n,o,r,i,s,l,d,u,m,h,p,f,w,v=(0,a.c)(47),{conversationId:b,permissionsCwdOverride:x,permissionsHostId:y}=e,C=(0,c.gh)(O.u),I=(0,g.A)(),k=(0,au.K5)(b),A=(0,P.tn)(k.hostId),M=A?.requiresAuth??!0;v[0]!==k.hostId?(t={hostId:k.hostId},v[0]=k.hostId,v[1]=t):t=v[1];let{data:j,status:T}=(0,ty.Ym)(t);v[2]!==T?(n=(0,ty.SO)(T),v[2]=T,v[3]=n):n=v[3];let _=n,R=A?.authMethod===\"copilot\";v[4]!==b||v[5]!==x||v[6]!==y?(o={conversationId:b,cwdOverride:x,hostId:y},v[4]=b,v[5]=x,v[6]=y,v[7]=o):o=v[7];let{modelSettings:E,selectComposerModelAndReasoningEffort:L}=(0,lK.o)(o),D=(0,c._U)(S.jR,b);v[8]!==k.cwd||v[9]!==k.hostId?(r={cwd:k.cwd,hostId:k.hostId},v[8]=k.cwd,v[9]=k.hostId,v[10]=r):r=v[10];let{data:N}=(0,c._U)(ac.J8,r),U=D??N?.model_provider??null;v[11]!==I||v[12]!==j?.models||v[13]!==E.model||v[14]!==E.reasoningEffort||v[15]!==C||v[16]!==L?(i=(0,ah.uR)(j?.models,E.model),s=(0,ah.MD)(E.reasoningEffort,i),l=\"reasoning-efforts\",d=i.map(e=>{let{reasoningEffort:t}=e,n=I.formatMessage(lW.h[t]);return{id:t,title:n,Icon:{16:nE.UBC,20:nE.RGq},RightIcon:t===s?{16:nE.ALZ,20:nE.jFs}:void 0,onSelect:()=>{L(E.model,t,()=>{(0,nu.yy)(C,lM.CodexComposerReasoningEffortChanged,{reasoningEffort:t})})}}}),v[11]=I,v[12]=j?.models,v[13]=E.model,v[14]=E.reasoningEffort,v[15]=C,v[16]=L,v[17]=i,v[18]=s,v[19]=l,v[20]=d):(i=v[17],s=v[18],l=v[19],d=v[20]),v[21]!==l||v[22]!==d?(u={sections:[{id:l,items:d}]},v[21]=l,v[22]=d,v[23]=u):u=v[23];let B=u;v[24]!==I?(m=I.formatMessage({id:\"composer.reasoningSlashCommand.title\",defaultMessage:\"Reasoning\",description:\"Title for the reasoning slash command\"}),v[24]=I,v[25]=m):m=v[25],v[26]!==I||v[27]!==s?(h=I.formatMessage(lW.h[s]),v[26]=I,v[27]=s,v[28]=h):h=v[28],v[29]===Symbol.for(\"react.memo_cache_sentinel\")?(p={16:nE.UBC,20:nE.RGq},v[29]=p):p=v[29];let F=M&&_&&!R&&!0;return v[30]!==i||v[31]!==b||v[32]!==U||v[33]!==_||v[34]!==M||v[35]!==R||v[36]!==E||v[37]!==C||v[38]!==L||v[39]!==s?(f=[C,i,U,M,b,_,R,E,s,L,!0],v[30]=i,v[31]=b,v[32]=U,v[33]=_,v[34]=M,v[35]=R,v[36]=E,v[37]=C,v[38]=L,v[39]=s,v[40]=f):f=v[40],v[41]!==B||v[42]!==F||v[43]!==f||v[44]!==m||v[45]!==h?(w={id:\"reasoning\",title:m,description:h,requiresEmptyComposer:!1,Icon:p,submenu:B,enabled:F,dependencies:f},v[41]=B,v[42]=F,v[43]=f,v[44]=m,v[45]=h,v[46]=w):w=v[46],(0,rA.r6)(w),null}function dJ(e){let n,s,W,eo=(0,a.c)(11),{agentMode:ea,composerMode:er,hasGitRepo:ei,currentLocalExecutionCwd:es,currentLocalExecutionHostId:el,effectiveIdeContextStatus:ed,effectiveIsAutoContextOn:ec,isAeonThread:eu,isHomeComposer:em,onEnablePlanMode:eh,onOpenGoalEditor:ep,onSubmitInitPrompt:ef,permissionsCwdOverride:eg,permissionsHostId:ew,planSkill:ev,isPlanSkillLoading:eb,resolvedCwd:ex,serviceTierDefaults:ey,setIsStatusMenuOpen:eC,skillLookupRoots:eI}=e,eS=void 0!==eu&&eu,eM=(0,c.gh)(tC.PR);eo[0]!==eM?(n=(0,tC.ah)(eM),eo[0]=eM,eo[1]=n):n=eo[1];let eN=n,eV=(0,c._U)(S.qX,eN);eo[2]!==eN||eo[3]!==eV?(s=null==eN?null:{hostId:eV,threadId:eN},eo[2]=eN,eo[3]=eV,eo[4]=s):s=eo[4];let e$=(0,c._U)(eS?null:ri,s),eZ=!1;eo[5]!==er||eo[6]!==eN||eo[7]!==eg||eo[8]!==ew||eo[9]!==e$?(W=\"cloud\"===er||e$?null:(0,o.jsx)(dp,{conversationId:eN,permissionsCwdOverride:eg,permissionsHostId:ew}),eo[5]=er,eo[6]=eN,eo[7]=eg,eo[8]=ew,eo[9]=e$,eo[10]=W):W=eo[10];return(0,o.jsxs)(o.Fragment,{children:[W]})}function h3(e){let rn,r2=(0,a.c)(2);r2[0]!==e?(rn=e?(0,o.jsx)(dJ,{agentMode:e,composerMode:e,hasGitRepo:e,currentLocalExecutionCwd:e,currentLocalExecutionHostId:e,effectiveIdeContextStatus:e,effectiveIsAutoContextOn:e,isAeonThread:e,isHomeComposer:e,onEnablePlanMode:e,onOpenGoalEditor:e,onSubmitInitPrompt:e,permissionsCwdOverride:e,permissionsHostId:e,planSkill:e,isPlanSkillLoading:e,resolvedCwd:e,serviceTierDefaults:e,setIsStatusMenuOpen:e,skillLookupRoots:e}):null,r2[0]=e,r2[1]=rn):rn=r2[1];return(0,o.jsxs)(o.Fragment,{children:[rn]})}"
+  },
+  "command": {
+    "name": "dp",
+    "params": "e",
+    "source": "function dp(e){let t,n,o,r,i,s,l,d,u,m,h,p,f,w,v=(0,a.c)(47),{conversationId:b,permissionsCwdOverride:x,permissionsHostId:y}=e,C=(0,c.gh)(O.u),I=(0,g.A)(),k=(0,au.K5)(b),A=(0,P.tn)(k.hostId),M=A?.requiresAuth??!0;v[0]!==k.hostId?(t={hostId:k.hostId},v[0]=k.hostId,v[1]=t):t=v[1];let{data:j,status:T}=(0,ty.Ym)(t);v[2]!==T?(n=(0,ty.SO)(T),v[2]=T,v[3]=n):n=v[3];let _=n,R=A?.authMethod===\"copilot\";v[4]!==b||v[5]!==x||v[6]!==y?(o={conversationId:b,cwdOverride:x,hostId:y},v[4]=b,v[5]=x,v[6]=y,v[7]=o):o=v[7];let{modelSettings:E,selectComposerModelAndReasoningEffort:L}=(0,lK.o)(o),D=(0,c._U)(S.jR,b);v[8]!==k.cwd||v[9]!==k.hostId?(r={cwd:k.cwd,hostId:k.hostId},v[8]=k.cwd,v[9]=k.hostId,v[10]=r):r=v[10];let{data:N}=(0,c._U)(ac.J8,r),U=D??N?.model_provider??null;v[11]!==I||v[12]!==j?.models||v[13]!==E.model||v[14]!==E.reasoningEffort||v[15]!==C||v[16]!==L?(i=(0,ah.uR)(j?.models,E.model),s=(0,ah.MD)(E.reasoningEffort,i),l=\"reasoning-efforts\",d=i.map(e=>{let{reasoningEffort:t}=e,n=I.formatMessage(lW.h[t]);return{id:t,title:n,Icon:{16:nE.UBC,20:nE.RGq},RightIcon:t===s?{16:nE.ALZ,20:nE.jFs}:void 0,onSelect:()=>{L(E.model,t,()=>{(0,nu.yy)(C,lM.CodexComposerReasoningEffortChanged,{reasoningEffort:t})})}}}),v[11]=I,v[12]=j?.models,v[13]=E.model,v[14]=E.reasoningEffort,v[15]=C,v[16]=L,v[17]=i,v[18]=s,v[19]=l,v[20]=d):(i=v[17],s=v[18],l=v[19],d=v[20]),v[21]!==l||v[22]!==d?(u={sections:[{id:l,items:d}]},v[21]=l,v[22]=d,v[23]=u):u=v[23];let B=u;v[24]!==I?(m=I.formatMessage({id:\"composer.reasoningSlashCommand.title\",defaultMessage:\"Reasoning\",description:\"Title for the reasoning slash command\"}),v[24]=I,v[25]=m):m=v[25],v[26]!==I||v[27]!==s?(h=I.formatMessage(lW.h[s]),v[26]=I,v[27]=s,v[28]=h):h=v[28],v[29]===Symbol.for(\"react.memo_cache_sentinel\")?(p={16:nE.UBC,20:nE.RGq},v[29]=p):p=v[29];let F=M&&_&&!R&&!0;return v[30]!==i||v[31]!==b||v[32]!==U||v[33]!==_||v[34]!==M||v[35]!==R||v[36]!==E||v[37]!==C||v[38]!==L||v[39]!==s?(f=[C,i,U,M,b,_,R,E,s,L,!0],v[30]=i,v[31]=b,v[32]=U,v[33]=_,v[34]=M,v[35]=R,v[36]=E,v[37]=C,v[38]=L,v[39]=s,v[40]=f):f=v[40],v[41]!==B||v[42]!==F||v[43]!==f||v[44]!==m||v[45]!==h?(w={id:\"reasoning\",title:m,description:h,requiresEmptyComposer:!1,Icon:p,submenu:B,enabled:F,dependencies:f},v[41]=B,v[42]=F,v[43]=f,v[44]=m,v[45]=h,v[46]=w):w=v[46],(0,rA.r6)(w),null}"
+  },
+  "bindingCases": [
+    {
+      "name": "bare-formal",
+      "source": "function f(n){n=foreign}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "escaped-formal",
+      "source": "function f(\\u006e){\\u006e=foreign}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "body-let",
+      "source": "function f(){let n;n=foreign}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "body-var",
+      "source": "function f(){var n;n=foreign}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "body-const",
+      "source": "function f(){const n=foreign}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "body-destructure",
+      "source": "function f(){let {value:n}=foreign;n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "default-outer-write",
+      "source": "function f(e=(n=foreign)){let n}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "escaped-default-outer-write",
+      "source": "function f(e=(\\u006e=foreign)){let n}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "nested-default-outer-write",
+      "source": "function outer(){function f(e=(n=foreign)){let n}}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "root-function-name",
+      "source": "function n(){return false}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "for-let-is-not-function-shadow",
+      "source": "function f(){for(let n of values){}n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "catch-is-not-function-shadow",
+      "source": "function f(){try{}catch(n){}n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "block-let-is-not-function-shadow",
+      "source": "function f(){{let n;}n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "computed-key-outer-write",
+      "source": "const object={[n=foreign]:function f(){let n}}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "local-loop-only",
+      "source": "function f(){for(let n of values){n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "local-catch-only",
+      "source": "function f(){try{}catch(n){n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "local-block-only",
+      "source": "function f(){{let n;n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "catch-then-outer-write",
+      "source": "try{}catch(n){}n=foreign",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "catch-other-outer-write",
+      "source": "try{}catch(other){n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "finally-outer-write",
+      "source": "try{}catch(n){n=other}finally{n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "try-outer-write",
+      "source": "try{n=foreign}catch(n){n=other}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "member-catch-followed-by-block",
+      "source": "promise.catch(n)\n{n=other}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "optional-member-catch-followed-by-block",
+      "source": "promise?.catch(n)\n{n=other}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "escaped-catch-local",
+      "source": "try{}catch(\\u006e){\\u006e=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "catch-var-hoist-remains",
+      "source": "function f(){try{}catch(n){var n;n=other}n=foreign}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "alias-bare-formals",
+      "source": "function f(e,n,x){n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "default-list-no-alias",
+      "source": "function f(n,e=1){n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "body-shadow-default-header-no-alias",
+      "source": "function f(e=1){let n;n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "root-function-formal-same-name",
+      "source": "function n(n){n=other}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "computed-key-before-formal",
+      "source": "const object={[n=foreign]:function f(n){n=other}}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "expression-call-local",
+      "source": "const fn=a=>r(a)",
+      "expected": true,
+      "target": "a"
+    },
+    {
+      "name": "expression-call-comma-outside",
+      "source": "a=>r(a),a=foreign",
+      "expected": false,
+      "target": "a"
+    },
+    {
+      "name": "expression-call-ternary-outside",
+      "source": "const fn=flag?(a=>r(a)):(a=foreign)",
+      "expected": false,
+      "target": "a"
+    },
+    {
+      "name": "expression-call-default-outside",
+      "source": "function f(e=(a=>r(a)),x=(a=foreign)){}",
+      "expected": false,
+      "target": "a"
+    },
+    {
+      "name": "expression-call-computed-outside",
+      "source": "const object={[(a=>r(a),a=foreign)]:value}",
+      "expected": false,
+      "target": "a"
+    },
+    {
+      "name": "expression-tail-chain-untouched",
+      "source": "const fn=a=>r(a).next(a)",
+      "expected": true,
+      "target": "a"
+    },
+    {
+      "name": "expression-operator-untouched",
+      "source": "const fn=a=>r(a)+a",
+      "expected": true,
+      "target": "a"
+    },
+    {
+      "name": "expression-body-ternary-untouched",
+      "source": "const fn=a=>r(a)?(a=other):a",
+      "expected": true,
+      "target": "a"
+    },
+    {
+      "name": "expression-tag-untouched",
+      "source": "const fn=a=>r(a)`text`",
+      "expected": true,
+      "target": "a"
+    },
+    {
+      "name": "destructured-parameter",
+      "source": "function f({isSuccess:n}){n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "destructured-default-parameter",
+      "source": "function f(e,{windowZoom:n=1}={}){n++}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "label-local",
+      "source": "function f(){label:{let n;n=other;break label}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "label-outside-write",
+      "source": "function f(){label:{let n;n=other;break label}n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "plain-block-local",
+      "source": "function f(){{let n;n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "plain-block-outside-write",
+      "source": "function f(){{let n;n=other}n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "member-function-followed-var-block",
+      "source": "promise.function(n)\n{var n;n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "bare-call-followed-var-block",
+      "source": "promise(n)\n{var n;n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "fake-member-with-local-let",
+      "source": "promise.function(n)\n{let n;n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "class-method-parameter",
+      "source": "class C{method(n){n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "class-method-var",
+      "source": "class C{method(e){var n;n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "class-static-var",
+      "source": "class C{static{var n;n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "class-private-context",
+      "source": "class C{#value=1;method(e){let n=this.#value;n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "class-super-context",
+      "source": "class C extends Object{method(e){super.method();let n;n=other}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "generator-context",
+      "source": "function* f(e){let n;yield n;n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "async-generator-context",
+      "source": "async function* f(e){let n;yield await n;n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "root-var-write",
+      "source": "if(true){var n=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "escaped-root-write",
+      "source": "if(true){\\u006e=foreign}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-target-write",
+      "source": "([...n]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "object-target-write",
+      "source": "({value:n}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "label-reference-same-name",
+      "source": "function f(){n:{break n}}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "leading-string-arrow",
+      "source": "const object={hasSeen:(e,n)=>\"shown\"===read(n)}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "leading-regex-arrow",
+      "source": "const fn=n=>/text/.test(n)",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "leading-template-arrow",
+      "source": "const fn=n=>`text${n}`",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "comment-then-literal-arrow",
+      "source": "const fn=n=>/* note */\"text\"+n",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "literal-arrow-outside-write",
+      "source": "const fn=n=>\"text\"+n;n=foreign",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "literal-loop-body",
+      "source": "for(let n of values)\"text\";n=foreign",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-spaced",
+      "source": "([... n]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-spaced",
+      "source": "({... n}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-comment",
+      "source": "([.../*c*/n]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-newline",
+      "source": "([...\nn]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-escaped",
+      "source": "([... \\u006e]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "spread-array-read",
+      "source": "const value=[... n];",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "spread-object-read",
+      "source": "const value={... n};",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "member-write",
+      "source": "holder. /* note */ n=foreign;",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "object-division",
+      "source": "const value={} / (n=foreign) /1;",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "object-division-escaped",
+      "source": "const value={} / (\\u006e=foreign) /1;",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "object-division-comment",
+      "source": "const value={} /*note*/ / (n=foreign) /1;",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "return-object-division",
+      "source": "function f(){return {} / (n=foreign) /1;}",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "template-object-division",
+      "source": "const value=`${{} / (n=foreign) /1}`;",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "URL-template",
+      "source": "const value=`https://${host}/path`;",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-ascii-line-comment",
+      "source": "([...//c\nn]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-escaped-tight",
+      "source": "([...\\u006e]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-escaped-newline",
+      "source": "([...\n\\u006e]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-escaped-block-comment",
+      "source": "([.../*c*/\\u006e]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-array-escaped-line-comment",
+      "source": "([...//c\n\\u006e]=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-ascii-tight",
+      "source": "({...n}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-ascii-newline",
+      "source": "({...\nn}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-ascii-block-comment",
+      "source": "({.../*c*/n}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-ascii-line-comment",
+      "source": "({...//c\nn}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-escaped-tight",
+      "source": "({...\\u006e}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-escaped-space",
+      "source": "({... \\u006e}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-escaped-newline",
+      "source": "({...\n\\u006e}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-escaped-block-comment",
+      "source": "({.../*c*/\\u006e}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "rest-object-escaped-line-comment",
+      "source": "({...//c\n\\u006e}=values)",
+      "expected": false,
+      "target": "n"
+    },
+    {
+      "name": "local-rest-parameter",
+      "source": "function f(...n){n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "local-array-rest-parameter",
+      "source": "function f([...n]){n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "local-object-rest-parameter",
+      "source": "function f({...n}){n=other}",
+      "expected": true,
+      "target": "n"
+    },
+    {
+      "name": "local-escaped-rest-parameter",
+      "source": "function f(...\\u006e){\\u006e=other}",
+      "expected": true,
+      "target": "n"
+    }
+  ]
+}

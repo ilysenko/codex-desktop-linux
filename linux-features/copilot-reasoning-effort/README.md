@@ -40,8 +40,13 @@ feature to the generated app.
   feature preserves upstream guardian and full-access confirmation routes.
   All dropdown copies change together and only the exact Copilot gate removal
   qualifies as applied. Selection still goes through the current settings writer.
-- The slash-command owner keeps `/reasoning` enabled when the normal model and
-  effort prerequisites are present.
+- The reasoning slash command qualifies the complete published composer
+  factory and its returned command-host/command path, including active host,
+  model catalog, readiness and current model-settings selection. It removes
+  only the Copilot term from the native enabled gate; the scope-derived
+  conversation, cloud/query render guards, item registration and native
+  model/effort callback remain in place. All physical copies change together,
+  and only the exact contribution plus its native inverse qualify as applied.
 - Every copy of the model settings hook receives the same qualified default
   effort adapter. Its storage key includes the active host, native Copilot
   profile (`null` in the supported upstream package), and model. The Electron
@@ -85,3 +90,12 @@ ambiguous, damaged or partially patched model-catalog copies reject the
 candidate before changing any model-list asset. The enabled-feature build
 gate rejects a skipped or failed required descriptor; inspect its patch report
 before retrying against changed upstream source.
+
+The large published slash owner has an explicit feature-local 512 KiB inspection
+limit; context units and other model/composer owners retain their 256 KiB limit.
+Binding ownership uses the original complete source and actual callable context,
+with syntax-only probes that preserve defaults, labels, loops and local shadows.
+Semantic API uses must resolve to their actual factory imports. The original
+source is rejected when a code closing brace followed by a slash could hide a
+division expression from the lexical scanner; known template substitutions and
+opaque text remain valid. No upstream factory is executed during patching.
