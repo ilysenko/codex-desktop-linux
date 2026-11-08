@@ -397,10 +397,14 @@ function syntheticAppMainActiveStatusBundle() {
   ].join("");
 }
 
-function syntheticAppMainEnablementBridgeBundle() {
-  return [
-    'var su={Qg:"2055603567"};function p4(){let e,t,n,a,i=(0,c.c)(10),{checkGate:s,isLoading:r}=(0,ed.cn)();i[0]!==s?(e=s(su.Qg),i[0]=s,i[1]=e):e=i[1];let o=e;i[2]!==s||i[3]!==o?(t=s("1042620455")||o,i[2]=s,i[3]=o,i[4]=t):t=i[4];let l=t;return i[5]!==r||i[6]!==o||i[7]!==l?(n=()=>{let e=na.appServices.remoteConnections;r||null==e||e.setRemoteControlEnabled({enabled:l,oneToOnePairingInAppEnabled:o}).catch(e=>{y.v.warning("[remote-connections/gate-bridge] sync_failed",{safe:{remoteControlConnectionsEnabled:l},sensitive:{error:e}})})},a=[r,o,l],i[5]=r,i[6]=o,i[7]=l,i[8]=n,i[9]=a):(n=i[8],a=i[9]),(0,u.useEffect)(n,a),null}',
-  ].join("");
+// The test carrier combines unchanged native fragments with a synthetic root
+// import declaration. Only the adjacent native p9 function is executed in mocks.
+function currentEnablementBridgeRegistry() {
+  const fixture = require("./fixtures/current-enablement-bridge.json"), f = fixture.bridgeFragments;
+  const bridge = { moduleId: f.moduleId, params: f.params, moduleSource:
+    "var " + f.imports.map(row => `${row.local}=n(${JSON.stringify(row.moduleId)})`).join(",") + ";" + f.functions.map(row => row.source).join("") };
+  const rows = [bridge, fixture.pairing, fixture.hook, fixture.facades[0]];
+  return `export const __webpack_modules__={${rows.map(row => `${JSON.stringify(row.moduleId)}(${row.params.join(",")}){${row.moduleSource}}`).join(",")}};`;
 }
 
 // Actual bounded current native module. Adjacent owner tests execute only
@@ -988,7 +992,7 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
     settings: syntheticCurrentRevokeSetupResetBundle() + syntheticRemoteConnectionsSettingsCopyBundle() +
       syntheticOutboundTabGateBundle() + syntheticCurrentSettingsRefreshBundle(),
     mobileSetup: syntheticMobileSetupDialogCopyBundle() + syntheticMobileSetupDialogComputerUseBundle(),
-    bridge: syntheticAppMainEnablementBridgeBundle(),
+    bridge: currentEnablementBridgeRegistry(),
     hostToggle: currentHostToggleRegistry(),
     hostToggleCopy: currentHostToggleRegistry(["WbV5"], 1),
     hostToggleProviders: currentHostToggleRegistry(["Dgwo", "ihPm"]),
@@ -1026,7 +1030,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-status-read-guard", "webview-asset"],
       ["linux-remote-control-status-wait", "webview-asset"],
       ["linux-remote-control-enable-for-host-params", "extracted-app:pre-webview"],
-      ["linux-remote-control-enablement-bridge", "webview-asset"],
+      ["linux-remote-control-enablement-bridge", "extracted-app:pre-webview"],
       ["linux-remote-control-auto-connect-contract", "extracted-app:post-webview"],
       ["linux-remote-mobile-active-status", "webview-asset"],
     ];
@@ -1048,7 +1052,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "linux-remote-terminal-status-recovery": syntheticRemoteTerminalStatusBundle(),
       "linux-remote-control-status-read-guard": syntheticAppServerManagerStatusBundle(),
       "linux-remote-control-status-wait": syntheticCurrentStatusWaitBundle(),
-      "linux-remote-control-enablement-bridge": syntheticAppMainEnablementBridgeBundle(),
       "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
     };
     for (const descriptor of descriptors.filter((candidate) => candidate.phase === "webview-asset")) {
@@ -2520,123 +2523,28 @@ test("Linux remote mobile active-status patch treats active thread status as act
   );
 });
 
-function runEnablementBridge(patched, { userAgent = "X11; Linux x86_64", checkGate = () => false, isLoading = false, result } = {}) {
-  const calls = [];
-  const context = {
-    navigator: { userAgent },
-    c: { c: () => [] },
-    ed: { cn: () => ({ checkGate, isLoading }) },
-    u: { useEffect(callback) { callback(); } },
-    y: { v: { warning() {} } },
-    na: { appServices: { remoteConnections: { setRemoteControlEnabled(params) {
-      calls.push({ method: "setRemoteControlEnabled", params });
-      return Promise.resolve(result);
-    } } } },
-  };
-  vm.runInNewContext(`${patched};p4();`, context);
-  return calls;
-}
-
-test("Linux remote-control enablement bridge loads remote-control clients on Linux", async () => {
-  const source = syntheticAppMainEnablementBridgeBundle();
-  const patched = applyLinuxRemoteControlEnablementBridgePatch(source);
-
+test("Linux remote-control enablement bridge public entry delegates the qualified native carrier", () => {
+  const source = currentEnablementBridgeRegistry(), patched = applyLinuxRemoteControlEnablementBridgePatch(source);
   assert.notEqual(patched, source);
-  assert.match(patched, /let l=t\|\|\/\*codexLinuxRemoteControlEnablementBridge\*\/typeof navigator!=`undefined`&&navigator\.userAgent\.includes\(`Linux`\);return /);
+  assert.match(patched, /let l=t\|\|\/\*codexLinuxRemoteControlEnablementBridge\*\/typeof navigator/);
   assert.equal(applyLinuxRemoteControlEnablementBridgePatch(patched), patched);
-
-  const calls = runEnablementBridge(patched);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].method, "setRemoteControlEnabled");
-  assert.equal(calls[0].params.enabled, true);
-  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, false);
+  assert.equal(matchesLinuxRemoteControlEnablementBridgeContract(source), true);
+  assert.equal(matchesLinuxRemoteControlEnablementBridgeContract(patched), true);
 });
 
-test("Linux remote-control enablement bridge accepts the current service contract only", () => {
-  const current = syntheticAppMainEnablementBridgeBundle();
-  const patched = applyLinuxRemoteControlEnablementBridgePatch(current);
-  assert.notEqual(patched, current);
-  assert.match(patched, /\.setRemoteControlEnabled\(/u);
-  assert.equal(applyLinuxRemoteControlEnablementBridgePatch(patched), patched);
-
-  for (const retired of [
+test("Linux remote-control enablement bridge rejects retired, partial and unrelated owners", () => {
+  const current = currentEnablementBridgeRegistry();
+  for (const bad of [
+    'function unrelated(){return service.remoteConnections.setRemoteControlEnabled({enabled:true})}',
     current.replace(".setRemoteControlEnabled(", ".setRemoteConnectionsEnabled("),
-    current.replace('t=s("1042620455")||o', 't=s("1042620455")'),
+    current.replace('t=r("1042620455")||o', 't=r("1042620455")'),
     current.replace("[remote-connections/gate-bridge]", "[remote-connections/other]"),
+    current + "/*codexLinuxRemoteControlEnablementBridge*/",
+    current + current,
   ]) {
-    const { result, warnings } = captureWarnings(() =>
-      applyLinuxRemoteControlEnablementBridgePatch(retired),
-    );
-    assert.equal(result, retired);
-    assert.ok(warnings.some((warning) => warning.includes("enablement bridge owner")));
+    assert.throws(() => applyLinuxRemoteControlEnablementBridgePatch(bad));
+    assert.equal(matchesLinuxRemoteControlEnablementBridgeContract(bad), false);
   }
-});
-
-test("Linux remote-control enablement bridge rejects anchors outside its owner", () => {
-  const source = [
-    'var DF="[remote-connections/gate-bridge]";',
-    syntheticAppMainEnablementBridgeBundle().replace('"[remote-connections/gate-bridge] sync_failed"', "DF"),
-  ].join("");
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteControlEnablementBridgePatch(source),
-  );
-
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("owners=0")));
-});
-
-test("Linux remote-control enablement bridge rejects duplicate semantic owners byte-identically", () => {
-  const source = syntheticAppMainEnablementBridgeBundle().repeat(2);
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteControlEnablementBridgePatch(source),
-  );
-
-  assert.equal(matchesLinuxRemoteControlEnablementBridgeContract(source), false);
-  assert.equal(result, source);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /uniquely resolve current remote-control enablement bridge owner/);
-  assert.match(warnings[0], /owners=2/);
-});
-
-test("Linux remote-control enablement bridge reports current anchor drift instead of false success", () => {
-  const source =
-    "function OF(){return B.remoteConnections.setRemoteControlEnabled({enabled:true})}";
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteControlEnablementBridgePatch(source),
-  );
-
-  assert.equal(result, source);
-  assert.ok(
-    warnings.some((warning) =>
-      warning.includes("current remote-control enablement bridge owner"),
-    ),
-  );
-});
-
-test("Linux remote-control enablement bridge preserves the current second gate off Linux", () => {
-  const patched = applyLinuxRemoteControlEnablementBridgePatch(
-    syntheticAppMainEnablementBridgeBundle(),
-  );
-  const checkedGates = [];
-  const calls = runEnablementBridge(patched, {
-    userAgent: "Macintosh",
-    checkGate(gate) {
-      checkedGates.push(gate);
-      return gate === "2055603567";
-    },
-  });
-
-  assert.deepEqual(checkedGates, ["2055603567", "1042620455"]);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].params.enabled, true);
-  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, true);
-});
-
-test("Linux remote-control enablement bridge waits for current gates to load", () => {
-  const patched = applyLinuxRemoteControlEnablementBridgePatch(
-    syntheticAppMainEnablementBridgeBundle(),
-  );
-  assert.equal(runEnablementBridge(patched, { isLoading: true }).length, 0);
 });
 
 test("Linux remote-control host toggle public String entry delegates the qualified current module", () => {
@@ -2654,21 +2562,6 @@ test("Linux remote-control host toggle rejects the retired bare request and inco
     source.replace('"remoteControl/enable"', '"unrelated/enable"'),
     source + "/*codexLinuxRemoteControlEnableForHostParams*/",
   ]) assert.throws(() => applyLinuxRemoteControlEnableForHostParamsPatch(bad));
-});
-
-test("Linux remote-control enablement bridge preserves service-owned auto-connect choices", async () => {
-  const source = syntheticAppMainEnablementBridgeBundle();
-  const patched = applyLinuxRemoteControlEnablementBridgePatch(source);
-
-  assert.doesNotMatch(patched, /setAutoConnect|set-remote-connection-auto-connect/);
-
-  const calls = runEnablementBridge(patched, { result: { remoteControlConnections: [] } });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].method, "setRemoteControlEnabled");
-  assert.equal(calls[0].params.enabled, true);
-  assert.equal(calls[0].params.oneToOnePairingInAppEnabled, false);
 });
 
 test("upstream auto-connect service preserves an explicit settings choice", async () => {

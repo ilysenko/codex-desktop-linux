@@ -170,7 +170,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-status-read-guard` | `shared-boundary` | Sends `remoteControl/status/read` only to the local host, never Remote SSH or remote-control environment hosts. |
 | `linux-remote-control-status-wait` | `shared-boundary` | Gives the selected host a Linux-specific connection convergence window without changing host ownership. |
 | `linux-remote-control-enable-for-host-params` | `shared-boundary` | Qualifies the native selected-host client, status mapper and public fallback caller, then emits parameterless enable/disable requests without changing host choice. |
-| `linux-remote-control-enablement-bridge` | `shared-boundary` | Enables the current outbound remote-connections service on Linux without changing its service-owned auto-connect choices. |
+| `linux-remote-control-enablement-bridge` | `shared-boundary` | Qualifies the native gate hook, live component and late service facade, then enables the current outbound service on Linux while retaining service-owned auto-connect choices. |
 | `linux-remote-control-auto-connect-contract` | `outbound-control` | Validates the unique upstream service and settings caller that preserve an explicit auto-connect choice. |
 | `linux-remote-mobile-active-status` | `mobile-host` | Derives mobile active state from the local thread runtime. |
 
@@ -223,6 +223,17 @@ removing both restores native visibility bytes while the independent entry and
 load-gate contributions remain intact. Every physical copy follows the same
 state. RMC-only and UI-only feature-source closures load and apply without the
 disabled sibling folder.
+
+The outbound enablement bridge also prepares its complete webview cohort before
+the ordinary webview pass. Its bounded native component, direct parent and
+render slot must resolve to unique factory bindings. The published one-to-one
+gate, native context/Statsig hook result and every mutable `appServices` facade
+copy are read-only dependencies in the same transaction. A bare function or
+nearby log string is insufficient. The existing Linux contribution changes only
+the final enabled value: native hook order, memo caches, loading delay, effect
+dependencies and error reporting stay intact. The effect reads the current
+service through the native getter when it runs; the feature never caches a
+bootstrap-time service, changes pairing/MFA policy, or issues auto-connect calls.
 
 The official webview is an rspack build whose app code lives in lazily loaded
 `webview/assets/async/<id>.<hash>.js` chunks. Cohort descriptors qualify their
