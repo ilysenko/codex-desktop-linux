@@ -235,6 +235,24 @@ dependencies and error reporting stay intact. The effect reads the current
 service through the native getter when it runs; the feature never caches a
 bootstrap-time service, changes pairing/MFA policy, or issues auto-connect calls.
 
+The revoke setup-reset descriptor prepares a complete webview dependency
+transaction before the ordinary webview pass. Its owned callback belongs to the
+local client list: the native local-client atom, local query/snapshot, external
+client filter, successful revoke row and local settings caller must agree. The
+separate host-keyed SSH callback and outbound operations remain native. The
+qualifier leaves unrelated local UI copy outside this contract, so translated
+labels can coexist with the callback change.
+
+After a successful revoke, the callback keeps the native cache update and
+invalidation. Known zero external controllers reset the existing mobile setup
+key to `false`; unknown cache data never resets it. The helper reads the live
+`appServices.applicationState` getter at callback time and uses the native
+await/dispose wrapper for the returned write handle. Missing or failed writers
+remain best-effort and cannot turn a successful revoke into an error. The
+original mutation error, analytics and toast callbacks stay intact. All physical
+provider/facade copies participate as read-only dependencies; partial or modified
+own output must pass exact inverse and canonical replay before a write.
+
 The official webview is an rspack build whose app code lives in lazily loaded
 `webview/assets/async/<id>.<hash>.js` chunks. Cohort descriptors qualify their
 current module owners, physical copies and provider/caller dependencies before

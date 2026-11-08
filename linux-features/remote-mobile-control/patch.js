@@ -9,6 +9,7 @@ const { prepareRemoteLoadGateSource, applyRemoteLoadGate } = require("./remote-l
 const { applyHostToggleSource, applyHostTogglePatch } = require("./host-toggle.js");
 const { applyRemoteMobileVisibility: applyLinuxRemoteControlVisibilityPatch } = require("./remote-control-visibility.js");
 const { prepareFeatureSyncSource, applyFeatureSyncToExtractedApp } = require("./feature-sync-owner.js");
+const { prepareRevokeSetupResetSource, applyRevokeSetupReset } = require("./revoke-setup-reset-owner.js");
 const { prepareBridgeSource, applyBridgePatch } = require("./enablement-bridge.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
@@ -24,7 +25,6 @@ const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoC
 const REMOTE_MOBILE_ACTIVE_STATUS_MARKER = "codexLinuxRemoteMobileActiveStatus";
 const REMOTE_CONTROL_STATUS_READ_GUARD_MARKER = "codexLinuxRemoteControlShouldReadStatus";
 const REMOTE_CONTROL_STATUS_WAIT_MARKER = "codexLinuxRemoteControlStatusWaitMs";
-const REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER = "codexLinuxRemoteControlResetMobileSetupAfterRevoke";
 const REMOTE_CONTROL_COPY_MARKER = "codexLinuxRemoteControlCopy";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER = "codexLinuxRemoteMobileLocalAppServerArgs";
 const REMOTE_MOBILE_APP_SERVER_BASE_ARGS_NEEDLE = '["-c","features.code_mode_host=true"]';
@@ -336,74 +336,13 @@ function applyLinuxRemoteMobileAppServerRemoteControlExtractedAppPatch(extracted
   return { matched, changed };
 }
 
-// Global-state key of the mobile setup completion flag (upstream
-// `CODEX_MOBILE_SETUP_COMPLETED`), now owned by the main process
-// remote-connection preferences and written through `applicationState`.
-const REMOTE_CONTROL_MOBILE_SETUP_COMPLETED_KEY = "codex-mobile-has-connected-device";
-const REMOTE_CONTROL_REVOKE_PATTERN =
-  /onRevoked:([A-Za-z_$][\w$]*)=>\{([A-Za-z_$][\w$]*)\.setData\(([A-Za-z_$][\w$]*)=>\3\?\.filter\(\3=>\3\.clientId!==\1\)\),\2\.invalidate\(\)\}(?=,onRevokeResult:)/gu;
-
-function enclosingFunction(source, index) {
-  for (let start = source.lastIndexOf("function ", index); start !== -1; start = source.lastIndexOf("function ", start - 1)) {
-    const end = findMatchingBrace(source, source.indexOf("{", start));
-    if (end > index) return { start, end };
-  }
-  return null;
-}
-
-function revokeSetupResetContract(source) {
-  const revokes = [...source.matchAll(REMOTE_CONTROL_REVOKE_PATTERN)];
-  if (revokes.length !== 1 || !source.includes("remote-control-client-revoke-success")) return null;
-  const [revoke] = revokes;
-  const owner = enclosingFunction(source, revoke.index);
-  const factory = moduleFactoryAt(source, revoke.index);
-  if (owner == null || factory == null || factory.require == null) return null;
-  const ownerSource = source.slice(owner.start, owner.end + 1);
-  const localClients = [...ownerSource.matchAll(/localRemoteControlClientId:([A-Za-z_$][\w$]*)[,}]/gu)];
-  if (localClients.length !== 1) return null;
-  const localClientVar = localClients[0][1];
-  // The local client id is a component variable, not a module binding.
-  if (!new RegExp(`[,;{ ]${escapeRegExp(localClientVar)}=`, "u").test(ownerSource)) return null;
-  // The module reaches app services through one import binding; the component
-  // may shadow its minified name, so only module-scope code uses it.
-  const moduleSource = source.slice(factory.bodyStart, factory.end);
-  const services = new Set([...moduleSource.matchAll(/([A-Za-z_$][\w$]*)\.appServices\.remoteConnections/gu)].map((match) => match[1]));
-  if (services.size !== 1) return null;
-  const [servicesVar] = services;
-  const imports = [...moduleSource.matchAll(new RegExp(
-    `(?:\\bvar |,)${escapeRegExp(servicesVar)}=${escapeRegExp(factory.require)}\\("[^"]+"\\)`, "gu"))];
-  if (imports.length !== 1) return null;
-  return { revoke, factory, localClientVar, servicesVar };
-}
-
-function matchesLinuxRemoteControlClientRevokeSetupResetContract(source) {
-  return source.includes(REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER) || revokeSetupResetContract(source) != null;
-}
-
+// Successful local revoke owns the setup reset; the complete native query,
+// row mutation and late application-state service remain the authority.
 function applyLinuxRemoteControlClientRevokeSetupResetPatch(source) {
-  if (source.includes(REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER)) {
-    const calls = source.split(`${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(`).length - 1;
-    if (calls !== 2) {
-      console.warn("WARN: Found an incomplete remote-control revoke setup-reset patch - skipping setup reset patch");
-    }
-    return source;
-  }
-  const contract = revokeSetupResetContract(source);
-  if (contract == null) {
-    console.warn("WARN: Could not find remote-control revoke success handler - skipping setup reset patch");
-    return source;
-  }
-  const { revoke, factory, localClientVar, servicesVar } = contract;
-  const [needle, clientIdVar, queryVar, dataVar] = revoke;
-  const helper =
-    `function ${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(e,t,n){` +
-    "let r=e?.filter(e=>(e.clientId??e.client_id)!==t),i=r?.filter(e=>(e.clientId??e.client_id)!==n);" +
-    `return i?.length===0&&${servicesVar}.appServices?.applicationState?.write(${JSON.stringify(REMOTE_CONTROL_MOBILE_SETUP_COMPLETED_KEY)},!1)?.catch?.(()=>{}),r}`;
-  const replacement =
-    `onRevoked:${clientIdVar}=>{${queryVar}.setData(${dataVar}=>${REMOTE_CONTROL_REVOKE_SETUP_RESET_MARKER}(${dataVar},${clientIdVar},${localClientVar})),${queryVar}.invalidate()}`;
-  const helperAt = factory.bodyStart + (source.startsWith('"use strict";', factory.bodyStart) ? '"use strict";'.length : 0);
-  return source.slice(0, helperAt) + helper + source.slice(helperAt, revoke.index) + replacement +
-    source.slice(revoke.index + needle.length);
+  return prepareRevokeSetupResetSource(source).patchedSource;
+}
+function applyLinuxRemoteControlClientRevokeSetupResetExtractedAppPatch(extractedDir, context = {}) {
+  return applyRevokeSetupReset(extractedDir, context.revokeSetupResetWriteOptions);
 }
 
 function countText(source, needle) {
@@ -1162,14 +1101,10 @@ module.exports = [
   },
   {
     id: "linux-remote-control-client-revoke-setup-reset",
-    phase: "webview-asset",
-    assetNeedles: ["remote-control-client-revoke-success", "localRemoteControlClientId:"],
-    assetMatch: matchesLinuxRemoteControlClientRevokeSetupResetContract,
+    phase: "extracted-app:pre-webview",
     order: 20_138,
     ciPolicy: "optional",
-    missingDescription: "remote connections settings bundle",
-    skipDescription: "Linux remote-control client revoke setup reset patch",
-    apply: applyLinuxRemoteControlClientRevokeSetupResetPatch,
+    apply: applyLinuxRemoteControlClientRevokeSetupResetExtractedAppPatch,
   },
   {
     id: "linux-remote-connections-refresh",
@@ -1300,3 +1235,5 @@ module.exports.applyLinuxRemoteControlDeviceKeyExtractedApp = applyLinuxRemoteCo
 module.exports.applyLinuxRemoteControlLoadGateExtractedAppPatch = applyLinuxRemoteControlLoadGateExtractedAppPatch;
 
 module.exports.applyLinuxRemoteControlFeatureSyncExtractedAppPatch = applyLinuxRemoteControlFeatureSyncExtractedAppPatch;
+
+module.exports.applyLinuxRemoteControlClientRevokeSetupResetExtractedAppPatch = applyLinuxRemoteControlClientRevokeSetupResetExtractedAppPatch;

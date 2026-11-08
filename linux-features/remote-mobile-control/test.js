@@ -51,6 +51,7 @@ const {
 const remoteMobilePatchDescriptors = require("./patch.js");
 const remoteLoadGateHarness = require("./fixtures/remote-load-gate-harness.js");
 const remoteFeatureSyncHarness = require("./fixtures/feature-sync-harness.js");
+const remoteRevokeHarness = require("./fixtures/revoke-setup-reset-harness.js");
 const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -322,28 +323,15 @@ function loadRspackModule(source, moduleId, imports = {}, globals = {}) {
 // The settings page shadows the app-services import binding (`T`) inside the
 // component, as the signed bundle does.
 function syntheticCurrentRevokeSetupResetBundle() {
-  return rspackChunk(14625, [
-    'GrdY(e,t,n){n.d(t,{Settings:()=>ni});var T=n("GaA7"),k=n("track");',
-    'async function np(e){let t=T.appServices.remoteConnections;if(null==t)throw Error("Remote connections are unavailable");return t.setAutoConnect(e)}',
-    'function ni(e){let t,n,T,{snapshot:a,store:$}=e,ec=a.localClientId,x={localRemoteControlClientId:ec},ej=a.query,',
-    'Se={onRevoked:e=>{ej.setData(t=>t?.filter(t=>t.clientId!==e)),ej.invalidate()},onRevokeResult:e=>{(0,k.yy)($,"revoke",{result:e})}},',
-    'toast={id:"remote-control-client-revoke-success"};return{handler:Se.onRevoked,query:ej,x}}}',
-  ].join(""));
+  // Preserve the old integrated fixture's unrelated auto-connect caller.
+  return remoteRevokeHarness.source().replace("function eL(){}", syntheticAutoConnectSettingsCallerBundle() + "function eL(){}");
 }
 
 function loadRevokeSettings(patched, data) {
-  const writes = [];
-  const query = {
-    data,
-    setData(update) { this.data = update(this.data); },
-    invalidate() { this.invalidated = true; },
-  };
-  const { Settings } = loadRspackModule(patched, "GrdY", {
-    GaA7: { appServices: { remoteConnections: {}, applicationState: { write: (key, value) => { writes.push([key, value]); return Promise.resolve({ success: true }); } } } },
-    track: { yy() {} },
-  });
-  const { handler } = Settings({ snapshot: { localClientId: "desktop_1", query }, store: {} });
-  return { handler, query, writes };
+  // Execute only the selected owned callback/helper; never the native factory.
+  const observed = remoteRevokeHarness.behavior({ "async/settings.js": patched }, data);
+  observed.query.invalidate = function() { this.invalidated = true; };
+  return { handler: observed.callback, query: observed.query, writes: observed.writes };
 }
 
 // The outbound tab gate of the remote connections settings page.
@@ -1022,7 +1010,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-visibility", "extracted-app:pre-webview"],
       ["linux-remote-control-copy", "webview-asset"],
       ["linux-remote-control-settings-ux", "webview-asset"],
-      ["linux-remote-control-client-revoke-setup-reset", "webview-asset"],
+      ["linux-remote-control-client-revoke-setup-reset", "extracted-app:pre-webview"],
       ["linux-remote-connections-refresh", "webview-asset"],
       ["linux-remote-mobile-reasoning-summary-none", "webview-asset"],
       ["linux-remote-mobile-conversation-hydration", "webview-asset"],
@@ -1083,8 +1071,8 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(visibility.phase, "extracted-app:pre-webview");
     assert.equal(visibility.assetNeedles, undefined);
     const revoke = byId("linux-remote-control-client-revoke-setup-reset");
-    const revokeOwner = syntheticCurrentRevokeSetupResetBundle();
-    assert.equal(revoke.assetMatch(applyLinuxRemoteControlClientRevokeSetupResetPatch(revokeOwner)), true);
+    assert.equal(revoke.phase, "extracted-app:pre-webview");
+    assert.equal(revoke.assetMatch, undefined);
   });
 });
 
@@ -1867,7 +1855,8 @@ test("Linux remote-control client revoke resets current setup state after the la
   assert.notEqual(patched, source);
   assert.deepEqual(warnings, []);
   assert.match(patched, /GrdY\(e,t,n\)\{function codexLinuxRemoteControlResetMobileSetupAfterRevoke\(e,t,n\)\{/);
-  assert.match(patched, /T\.appServices\?\.applicationState\?\.write\("codex-mobile-has-connected-device",!1\)/);
+  assert.match(patched, /T\.appServices\?\.applicationState/);
+  assert.match(patched, /\(0,H\.P\)\(a\.write\("codex-mobile-has-connected-device",!1\)\)\.catch/);
   assert.match(patched, /ej\.setData\(t=>codexLinuxRemoteControlResetMobileSetupAfterRevoke\(t,e,ec\)\)/);
   assert.equal(applyLinuxRemoteControlClientRevokeSetupResetPatch(patched), patched);
 
@@ -1916,27 +1905,16 @@ test("Linux remote-control client revoke preserves current setup when the cache 
   assert.equal(query.invalidated, true);
 });
 
-test("Linux remote-control client revoke warns when a recognized bundle shape drifts", () => {
+test("Linux remote-control client revoke rejects changed native consumers and physical authority", () => {
   const current = syntheticCurrentRevokeSetupResetBundle();
-  const drifted = {
-    reordered: current.replace(
-      "onRevoked:e=>{ej.setData(t=>t?.filter(t=>t.clientId!==e)),ej.invalidate()}",
-      "onRevoked:e=>{ej.invalidate(),ej.setData(t=>t?.filter(t=>t.clientId!==e))}",
-    ),
-    // The local client id must belong to the component that owns the handler.
-    foreignLocalClient: current.replace("x={localRemoteControlClientId:ec},", "").replace(
-      "async function np(e){",
-      "function other(){let ec=1;return{localRemoteControlClientId:ec}}async function np(e){",
-    ),
-    // Injected module-scope code may only use the module's own import binding.
-    unboundAppServices: current.replace('var T=n("GaA7"),', "var "),
-    duplicateHandler: current.replace("return{handler:", "x2={onRevoked:e=>{ej.setData(t=>t?.filter(t=>t.clientId!==e)),ej.invalidate()},onRevokeResult:null};return{handler:"),
-  };
-  for (const [name, source] of Object.entries(drifted)) {
-    assert.notEqual(source, current, name);
-    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlClientRevokeSetupResetPatch(source));
-    assert.equal(result, source, name);
-    assert.ok(warnings.some((warning) => warning.includes("revoke success handler")), name);
+  for (const source of [
+    current.replace("$.query.snapshot(eh.y8)", "$.query.snapshot(eh.MN)"),
+    current.replace("ec=(0,u.Ul)(D.dZ)", "ec=(0,u.Ul)(D.BJ)"),
+    current.replace('T=n("GaA7"),', ""),
+    current.replace("function ey(", "function eR(){return null}function ey("),
+  ]) {
+    assert.notEqual(source, current);
+    assert.throws(() => applyLinuxRemoteControlClientRevokeSetupResetPatch(source), /Remote revoke setup-reset contract/);
   }
 });
 
