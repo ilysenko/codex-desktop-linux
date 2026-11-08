@@ -7,30 +7,21 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
-const crypto = require("node:crypto");
-const currentCatalog = require("./fixtures/current-chatgpt-catalog.json");
-const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
 
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 const { patchExtractedApp } = require("../../scripts/patches/runner.js");
 const {
-  CATALOG_PATCH_MARKER,
   EFFORT_TO_THINKING_EFFORT,
   EXISTING_CHAT_OPTIMISTIC_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
   LOCAL_COMPOSER_RESOLVER_MARKER,
   SLIDER_PATCH_MARKER,
-  applyCatalogPatch,
-  patchCatalog,
   applyExistingChatOptimisticPatch,
   applyLocalComposerConfigPatch,
   applyLocalComposerResolverPatch,
   applySliderMinimumPatch,
-  catalogAssetMatch,
-  catalogPatchContract,
-  codexLinuxModelPickerDefaultPresets,
   existingChatOptimisticContract,
   normalizePresets,
   localComposerConfigContract,
@@ -50,45 +41,6 @@ function context(presets) {
       settings: { presets },
     },
   };
-}
-
-// Reduced executable fixture of the current published modern normalizer.
-// The retained signed factory below is inspected and patched, never executed.
-function catalogFixture(name = "catalogOwner") {
-  const body = 'var schemaApi=n("schema");let schema=schemaApi.object({});n.d(t,{},{catalog:function(input){' +
-    'let parsed=schema.parse(input),models=new Map(parsed.models.map(model=>[model.slug,model])),options=parsed.options,' +
-    'slider=parsed.slider_settings.flatMap(item=>null==item?[]:[{modelSlug:item.model_slug,thinkingEffort:item.thinking_effort}]),' +
-    'defaults=Object.fromEntries([...models.values()].flatMap(item=>null==item.defaultThinkingEffort?[]:[[item.slug,item.defaultThinkingEffort]])),' +
-    'selected=parsed.default_model_slug??options[0]?.slug??"auto",tiers=parsed.serviceTiersByModelSlug;' +
-    'return{serviceTiersByModelSlug:tiers,modelConfigBySlug:Object.fromEntries(parsed.models.flatMap(model=>null==model?[]:[[model.slug,model]])),' +
-    '...Object.keys(defaults).length>0?{defaultThinkingEffortByModelSlug:defaults}:{},defaultModelSlug:selected,options:options,' +
-    '...slider.length>0?{sliderSettings:slider}:{},internalOptions:parsed.internalOptions,versionOptions:parsed.versionOptions,' +
-    '...null==parsed.workspace_model_policy?{}:{workspaceModelPolicy:parsed.workspace_model_policy}}}})';
-  return rspackChunk({[name]:body});
-}
-
-function normalizeCatalog(source, input) {
-  return rspackModuleExports(source, "catalogOwner").catalog({
-    models: [...input.options, ...input.internalOptions],
-    slider_settings: input.sliderSettings.map(item => ({model_slug:item.modelSlug,thinking_effort:item.thinkingEffort})),
-    default_model_slug: input.defaultModelSlug,
-    workspace_model_policy: input.workspaceModelPolicy,
-    serviceTiersByModelSlug: {keep: [{id:"priority"}]},
-    ...input,
-  });
-}
-
-function withCatalogAssets(chunks, callback) {
-  const app = fs.mkdtempSync(path.join(os.tmpdir(), "model-picker-catalog-"));
-  const assets = path.join(app, "webview", "assets");
-  try {
-    fs.mkdirSync(assets, {recursive:true});
-    for (const [name, source] of Object.entries(chunks)) {
-      fs.mkdirSync(path.dirname(path.join(assets,name)), {recursive:true});
-      fs.writeFileSync(path.join(assets,name),source);
-    }
-    callback(app, assets);
-  } finally { fs.rmSync(app,{recursive:true,force:true}); }
 }
 
 // rspack registers each module factory in one `__webpack_modules__` object.
@@ -327,237 +279,6 @@ test("rejects malformed preset settings", () => {
   }
 });
 
-test("runtime preserves order and resolves configured efforts from available models", () => {
-  const upstream = catalog();
-  const configured = normalizePresets(
-    context([
-      { model: "gpt-5.6-sol", effort: "high" },
-      { model: "version-model", effort: "xhigh" },
-      { model: "gpt-6-astra", effort: "medium", default: true },
-      { model: "internal-model", effort: "high" },
-    ]),
-  );
-  const result = codexLinuxModelPickerDefaultPresets(upstream, configured);
-  assert.deepEqual(result.sliderSettings, [
-    { modelSlug: "gpt-5.6-sol", thinkingEffort: "extended" },
-    { modelSlug: "version-model", thinkingEffort: "xhigh" },
-    { modelSlug: "gpt-6-astra", thinkingEffort: "standard" },
-    { modelSlug: "internal-model", thinkingEffort: "extended" },
-  ]);
-  assert.equal(result.defaultModelSlug, "gpt-6-astra");
-  assert.equal(result.defaultThinkingEffortByModelSlug["gpt-6-astra"], "standard");
-  assert.strictEqual(result.options, upstream.options);
-  assert.strictEqual(result.internalOptions, upstream.internalOptions);
-  assert.strictEqual(result.versionOptions, upstream.versionOptions);
-  assert.strictEqual(result.workspaceModelPolicy, upstream.workspaceModelPolicy);
-  assert.strictEqual(result.categories, upstream.categories);
-});
-
-test("runtime filters unavailable models and falls back from an unavailable default", () => {
-  const configured = normalizePresets(
-    context([
-      { model: "missing", effort: "medium", default: true },
-      { model: "gpt-5.6-sol", effort: "high" },
-      { model: "gpt-5.6-sol", effort: "ultra" },
-    ]),
-  );
-  const result = codexLinuxModelPickerDefaultPresets(catalog(), configured);
-  assert.deepEqual(result.sliderSettings, [
-    { modelSlug: "gpt-5.6-sol", thinkingEffort: "extended" },
-    { modelSlug: "gpt-5.6-sol", thinkingEffort: "ultra" },
-  ]);
-  assert.equal(result.defaultModelSlug, "gpt-5.6-sol");
-  assert.equal(result.defaultThinkingEffortByModelSlug["gpt-5.6-sol"], "extended");
-});
-
-test("runtime returns the exact upstream catalog when every pair is unavailable", () => {
-  const upstream = catalog();
-  const configured = normalizePresets(
-    context([{ model: "missing", effort: "ultra", default: true }]),
-  );
-  assert.strictEqual(codexLinuxModelPickerDefaultPresets(upstream, configured), upstream);
-});
-
-test("modern catalog patch is executable, preserves native data, and replays exactly", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true},{model:"gpt-5.6-sol",effort:"high"}]);
-  const source=catalogFixture(),patched=applyCatalogPatch(source,presets);
-  assert.equal(catalogPatchContract(source,presets),"current");
-  assert.equal(catalogPatchContract(patched,presets),"applied");
-  assert.equal(catalogAssetMatch(source,"",presets),true);
-  assert.equal(applyCatalogPatch(patched,presets),patched);
-  assert.equal(javascriptSourceParses(patched),true);
-  const input=catalog(),result=normalizeCatalog(patched,input);
-  assert.deepEqual(plain(result.sliderSettings),[{modelSlug:"gpt-6-astra",thinkingEffort:"standard"},{modelSlug:"gpt-5.6-sol",thinkingEffort:"extended"}]);
-  assert.equal(result.defaultModelSlug,"gpt-6-astra");
-  assert.equal(result.options,input.options);
-  assert.equal(result.internalOptions,input.internalOptions);
-  assert.equal(result.workspaceModelPolicy,input.workspaceModelPolicy);
-  assert.deepEqual(plain(result.serviceTiersByModelSlug),{keep:[{id:"priority"}]});
-  assert.throws(()=>applyCatalogPatch(patched,context([{model:"other",effort:"low",default:true}])),/Missing or ambiguous|stale/);
-});
-
-test("retained signed modern factory changes only helper and return wrapper without execution", () => {
-  const source=currentCatalog.moduleSource;
-  assert.equal(crypto.createHash("sha256").update(source).digest("hex"),currentCatalog.bodySha256);
-  const presets={...context([{model:"gpt-6-astra",effort:"medium",default:true}]),factorySnapshot:currentCatalog};
-  const patched=applyCatalogPatch(source,presets);
-  assert.equal(applyCatalogPatch(patched,{...presets,factorySnapshot:{...currentCatalog,moduleSource:patched}}),patched);
-  assert.equal(javascriptSourceParses(patched),true);
-  const nativeStart=patched.indexOf('var i=n("i5ac")');
-  const native=patched.slice(nativeStart).replace(` ${CATALOG_PATCH_MARKER}(`,"").replace(",codexLinuxDefaultPresetsConfigured)","");
-  assert.equal(native,source);
-  assert.throws(()=>applyCatalogPatch(source,{...presets,factorySnapshot:{...currentCatalog,moduleSource:"stale"}}),/Stale/);
-  assert.equal(applyCatalogPatch(rspackChunk({RenamedOwner:source}),presetsWithoutSnapshot(presets)),rspackChunk({RenamedOwner:patched}));
-});
-function presetsWithoutSnapshot(value) { const {factorySnapshot,...rest}=value;return rest; }
-
-test("modern qualification refuses missing, legacy, opaque, ambiguous and wrong native bindings", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]),source=catalogFixture();
-  const retired='function legacy(e){let slider=e.slider_settings.flatMap(e=>e);return{defaultModelSlug:e.defaultModelSlug,defaultThinkingEffortByModelSlug:e.defaultThinkingEffortByModelSlug,workspaceModelPolicy:e.workspaceModelPolicy}}';
-  const cases=["function unrelated(){}",retired,`/*${source}*/`,JSON.stringify(source),`const opaque=\`${source}\`;`,
-    source.replace('n.d(t,','foreign.d(t,'),source.replace('n.d(t,','n.d(other,'),
-    source.replace('schemaApi=n("schema")','schemaApi=foreign("schema")'),
-    source.replace('schema.parse(input)','schema.parse(other)'),source.replace('sliderSettings:slider','sliderSettings:other'),
-    source.replace('defaultModelSlug:selected','defaultModelSlug:other'),source.replace('options:options','options:foreign'),
-    source.replace('Object.fromEntries(parsed.models.flatMap','Object.fromEntries(other.models.flatMap'),
-    source.replace('return{serviceTiersByModelSlug:tiers','slider=[];return{serviceTiersByModelSlug:tiers'),
-    source.replace('let parsed=schema.parse(input)','let schema=foreign;let parsed=schema.parse(input)'),
-    source.replace('schema.parse(input)','input.parse(input)'),
-    source.replace('}};', '},second(e,t,n){'+[...rspackModuleFactories(source,"fixture.js")][0].moduleSource+'}};')];
-  for(const candidate of cases){assert.equal(catalogPatchContract(candidate,presets),"drifted");assert.throws(()=>applyCatalogPatch(candidate,presets));}
-});
-
-test("actual modern catalog rejects all-depth literal and Unicode owned binding changes", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]);
-  const beforeReturn=code=>currentCatalog.moduleSource.replace('return{serviceTiersByModelSlug:R',code+'return{serviceTiersByModelSlug:R');
-  const changes=[
-    'if(true){A=[]}', 'if(true){T={parse:()=>({})}}',
-    'if(true){\\u0041=[]}', 'if(true){\\u{41}=[]}', 'if(true){\\u0054={parse:()=>({})}}',
-    'if(true){o={}}', 'if(true){a=new Map}', 'if(true){x={}}', 'if(true){S="other"}',
-    'if(true){C=[]}', 'if(true){R={}}', 'if(true){e={}}',
-    'if(true){({A}=foreign)}', 'if(true){[\\u0041]=foreign}',
-    '(()=>{A=[]})();', '(()=>{\\u0054={}})();',
-    'if(true){var T;}', 'if(true){var \\u0054;}', 'var e;', 'var \\u0065;',
-    'function T(){}',
-    'let harmless=`${A=[]}`;', 'let harmless=`${\\u0054={}}`;',
-    'for(let q=0;q<1;q++){A=[]}',
-
-  ];
-  for(const code of changes){
-    const source=beforeReturn(code);
-    assert.equal(javascriptSourceParses(source),true,code);
-    assert.throws(()=>applyCatalogPatch(source,{...presets,factorySnapshot:{...currentCatalog,moduleSource:source}}),undefined,code);
-  }
-  for(const code of [';if(true){o=foreign}', ';if(true){\\u006f=foreign}']){
-    const source=currentCatalog.moduleSource+code;
-    assert.equal(javascriptSourceParses(source),true,code);
-    assert.throws(()=>applyCatalogPatch(source,{...presets,factorySnapshot:{...currentCatalog,moduleSource:source}}),undefined,code);
-  }
-});
-
-test("modern binding proof preserves real local shadows, opaque text and member keys", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]);
-  const harmless=[
-    'if(true){let A=[];A.push(1)}', 'if(true){const T={};T.value=1}',
-    'if(true){let \\u0041=[];\\u0041.push(1)}', 'if(true){const \\u0054={};\\u0054.value=1}',
-    '((A)=>{A=[]})([]);', '(\\u0041=>{\\u0041=[]})([]);', '((\\u0054)=>{\\u0054={}})({});',
-    '(()=>{let A=[];A=[]})();',
-    'let harmless={A:[],T:1};harmless.A=[];harmless["T"]=2;',
-    'let harmless={\\u0041(){return 1},T(){return 2}};',
-    '/* A=[];T={};\\u0041=[] */let harmless="A=[];T={};\\u0041=[]";',
-    'let harmless=/["\'{}]A=\\\\u0041/;',
-    'for(let A of [1]){A=2}', 'for(let \\u0041 of [1]){\\u0041=2}',
-    'if(true){let {A}={A:[]};A=[]}', 'let harmless=`A=[];${1}`;',
-
-  ];
-  for(const code of harmless){
-    const source=currentCatalog.moduleSource.replace('return{serviceTiersByModelSlug:R',code+'return{serviceTiersByModelSlug:R');
-    assert.equal(javascriptSourceParses(source),true,code);
-    const configured={...presets,factorySnapshot:{...currentCatalog,moduleSource:source}};
-    const patched=applyCatalogPatch(source,configured);
-    assert.equal(applyCatalogPatch(patched,{...configured,factorySnapshot:{...currentCatalog,moduleSource:patched}}),patched,code);
-  }
-});
-
-test("actual modern catalog nested-write cohorts refuse before every write", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]);
-  const pristine=rspackChunk({TFzY:currentCatalog.moduleSource});
-  for(const code of ['if(true){A=[]}','if(true){T={parse:()=>({})}}','if(true){\\u0041=[]}']){
-    const bad=currentCatalog.moduleSource.replace('return{serviceTiersByModelSlug:R',code+'return{serviceTiersByModelSlug:R');
-    const chunks={"a.js":pristine,"b.js":rspackChunk({TFzY:bad})};
-    withCatalogAssets(chunks,(app,assets)=>{
-      let writes=0;assert.throws(()=>patchCatalog(app,presets,{writeFileSync:()=>{writes++;}}));assert.equal(writes,0,code);
-      for(const [name,bytes] of Object.entries(chunks))assert.equal(fs.readFileSync(path.join(assets,name),"utf8"),bytes,code);
-    });
-  }
-});
-
-test("modern #1659 quote-bearing regex and braces retain surrounding bytes", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]);
-  const prefix='const t=e=>e;function yT(e){let n=e.trim();n=n.replace(/^[`"\\\'\\u201c\\u201d\\u2018\\u2019]+|[`"\\\'\\u201c\\u201d\\u2018\\u2019]+$/g,``);return n}function isQuote(e){return"\\\""===e}';
-  const suffix='function Pan(){return(Pan=t((()=>{Nan=/[\\t\\n!-,./:-@[-`\\f{-}$\\x80-\\uFFFF]/g})))()}var Nan;export{Pan,isQuote,yT};';
-  const source=prefix+rspackChunk({TFzY:currentCatalog.moduleSource})+suffix;
-  assert.equal(javascriptSourceParses(source),true);
-  const patched=applyCatalogPatch(source,presets);
-  assert.equal(javascriptSourceParses(patched),true);
-  assert.equal(patched.startsWith(prefix),true);
-  assert.equal(patched.endsWith(suffix),true);
-  assert.equal(applyCatalogPatch(patched,presets),patched);
-});
-
-test("catalog refuses orphan, partial, duplicated or mismatched canonical contributions", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]),source=catalogFixture(),patched=applyCatalogPatch(source,presets);
-  for(const candidate of [source+`/*${CATALOG_PATCH_MARKER}*/`,source+`const x="${CATALOG_PATCH_MARKER}";`,
-    patched.replace(` ${CATALOG_PATCH_MARKER}(`," "),patched.replace(",codexLinuxDefaultPresetsConfigured)",")"),
-    patched.replace('const codexLinuxDefaultPresetsConfigured=', 'const other='),
-    patched.replace(` ${CATALOG_PATCH_MARKER}(`,` ${CATALOG_PATCH_MARKER}(${CATALOG_PATCH_MARKER}(`),
-    patched+`/*codexLinuxDefaultPresetsConfigured*/`])assert.throws(()=>applyCatalogPatch(candidate,presets));
-});
-
-test("catalog cohort validates every physical copy, preserves modes and unrelated consumers", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]);
-  const consumer=rspackChunk({consumer:'let text=".slider_settings.flatMap( serviceTiersByModelSlug: modelConfigBySlug: workspaceModelPolicy:";'});
-  withCatalogAssets({"a.js":catalogFixture(),"nested/b.js":catalogFixture(),"consumer.js":consumer},(app,assets)=>{
-    fs.chmodSync(path.join(assets,"a.js"),0o640);
-    const result=patchCatalog(app,presets);assert.equal(result.matched,2);assert.equal(result.changed,2);
-    let writes=0;const repeat=patchCatalog(app,presets,{writeFileSync:()=>{writes++;}});
-    assert.equal(repeat.changed,0);assert.equal(repeat.matched,2);assert.equal(writes,0);
-    assert.equal(fs.statSync(path.join(assets,"a.js")).mode&0o777,0o640);
-    assert.equal(fs.readFileSync(path.join(assets,"consumer.js"),"utf8"),consumer);
-  });
-});
-
-test("catalog refuses missing, mixed, hidden, damaged, escaped or orphan cohorts before writes", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]),source=catalogFixture(),patched=applyCatalogPatch(source,presets);
-  const cases=[{}, {"a.js":source,"b.js":patched},{"a.js":source,"b.js":rspackChunk({catalogOwner:"let hidden=true;"})},
-    {"a.js":source,"b.js":source.replace("catalogOwner(e,t,n)",'"catalogO\\u0077ner"(e,t,n)').replace("sliderSettings:slider","sliderSettings:other")},
-    {"a.js":source,"b.js":source.replace("sliderSettings:slider","sliderSettings:other")},
-    {"a.js":source,"b.js":`/*${source}*/`},{"a.js":source,"b.js":`const x=\`${source}\`;`},
-    {"a.js":source,"orphan.js":`const x="${CATALOG_PATCH_MARKER}";`},{"a.js":source,"b.js":catalogFixture("otherOwner")},{"a.js":source,"b.js":source+"}"}];
-  for(const chunks of cases)withCatalogAssets(chunks,(app,assets)=>{let writes=0;assert.throws(()=>patchCatalog(app,presets,{writeFileSync:()=>{writes++;}}));assert.equal(writes,0);for(const [name,bytes]of Object.entries(chunks))assert.equal(fs.readFileSync(path.join(assets,name),"utf8"),bytes);});
-});
-
-test("catalog syntax failures refuse every copy before writes", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]);
-  const original=codexLinuxModelPickerDefaultPresets.toString;
-  try {
-    codexLinuxModelPickerDefaultPresets.toString=()=>"function broken(";
-    withCatalogAssets({"a.js":catalogFixture(),"b.js":catalogFixture()},(app,assets)=>{
-      let writes=0;assert.throws(()=>patchCatalog(app,presets,{writeFileSync:()=>{writes++;}}));assert.equal(writes,0);
-      assert.equal(fs.readFileSync(path.join(assets,"a.js"),"utf8"),catalogFixture());
-    });
-  } finally {codexLinuxModelPickerDefaultPresets.toString=original;}
-});
-
-test("catalog transaction restores every attempted file and mode after partial later write", () => {
-  const presets=context([{model:"gpt-6-astra",effort:"medium",default:true}]),chunks={"a.js":catalogFixture(),"b.js":catalogFixture(),"c.js":catalogFixture()};
-  withCatalogAssets(chunks,(app,assets)=>{
-    for(const [i,name]of Object.keys(chunks).entries())fs.chmodSync(path.join(assets,name),0o640+i);
-    let writes=0;assert.throws(()=>patchCatalog(app,presets,{writeFileSync:(filename,bytes)=>{writes++;if(writes===2){fs.writeFileSync(filename,bytes.subarray(0,31));throw Error("catalog later fault");}fs.writeFileSync(filename,bytes);}}),/catalog later fault/);
-    assert.equal(writes,4);for(const [i,[name,bytes]]of Object.entries(chunks).entries()){assert.equal(fs.readFileSync(path.join(assets,name),"utf8"),bytes);assert.equal(fs.statSync(path.join(assets,name)).mode&0o777,0o640+i);}
-  });
-});
-
 test("slider minimum makes two entries a slider while one stays fixed", () => {
   const presets = context([
     { model: "gpt-6-astra", effort: "medium", default: true },
@@ -600,13 +321,12 @@ test("slider minimum makes two entries a slider while one stays fixed", () => {
   );
 });
 
-test("upstream Default option uses configured presets while version options keep their models", () => {
+test("upstream Default option reads ordered catalog slider while version options keep their models", () => {
   const presets = context([
     { model: "gpt-6-astra", effort: "medium", default: true },
     { model: "gpt-5.6-sol", effort: "high" },
   ]);
-  const catalogSource = applyCatalogPatch(catalogFixture(), presets);
-  const merged = normalizeCatalog(catalogSource, catalog({ sliderSettings: [] }));
+  const merged = catalog({sliderSettings:normalizePresets(presets).map(({modelSlug,thinkingEffort})=>({modelSlug,thinkingEffort}))});
   const { nX: buildPickerOptions } = rspackModuleExports(defaultOptionBuilderFixture(), "TuVM");
   const defaults = buildPickerOptions(merged, { includeSyntheticDefault: true });
   assert.deepEqual(plain(defaults.defaultOption.powerSettings), [
@@ -1226,12 +946,8 @@ test("local composer patches fail closed on drift, duplicate, and partial states
   assert.equal(warnings.length, 1);
 });
 
-test("empty manifest is a runtime passthrough used for compatibility auditing", () => {
+test("empty manifest leaves the slider descriptor disabled", () => {
   const passthrough = { feature: { manifest: { presets: [] }, settings: {} } };
-  const patchedCatalog = applyCatalogPatch(catalogFixture(), passthrough);
-  const upstream = catalog({ sliderSettings: [{ modelSlug: "server", thinkingEffort: "min" }] });
-  const expected = normalizeCatalog(catalogFixture(), upstream);
-  assert.deepEqual(plain(normalizeCatalog(patchedCatalog, upstream)), plain(expected));
   assert.equal(applySliderMinimumPatch(sliderFixture(), passthrough), sliderFixture());
   assert.equal(sliderAssetMatch(sliderFixture(), "fixture.js", passthrough), false);
 });
@@ -1309,59 +1025,24 @@ test("invalid user settings stop an enabled feature build", () => {
 });
 
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
-test("official rspack webview chunks satisfy every descriptor contract", {
-  skip: signedApp == null,
-}, () => {
-  const { listWebviewScriptAssets } = require("../../scripts/patches/lib/assets.js");
-  const { descriptors } = require("./patch.js");
-  const [scenario] = require("./feature.json").officialBundleAuditScenarios;
-  const assetsDir = path.join(signedApp, "webview", "assets");
-  const configured = context(scenario.settings.presets);
-  const passthrough = { feature: { manifest: { presets: [] }, settings: {} } };
-  const allNeedles = [...new Set(descriptors.flatMap(({ assetNeedles }) => assetNeedles ?? [".slider_settings.flatMap("]))];
-  const sources = new Map();
-  for (const assetName of listWebviewScriptAssets(signedApp)) {
-    const source = fs.readFileSync(path.join(assetsDir, assetName), "utf8");
-    if (allNeedles.some((needle) => source.includes(needle))) sources.set(assetName, source);
+test("official rspack webview satisfies all configured descriptors through the production runner", {skip:signedApp==null},()=>{
+ const {listWebviewScriptAssets}=require("../../scripts/patches/lib/assets.js");
+ const {createPatchReport}=require("../../scripts/lib/patch-report.js");
+ const cacheRoot=path.join(process.env.XDG_CACHE_HOME??path.join(os.homedir(),".cache"),"codex-desktop-dev");
+ fs.mkdirSync(cacheRoot,{recursive:true});
+ const root=fs.mkdtempSync(path.join(cacheRoot,"presets-signed-audit-")),assets=path.join(root,"app","webview","assets"),app=path.join(root,"app"),config=path.join(root,"features.json");
+ const [scenario]=require("./feature.json").officialBundleAuditScenarios;
+ try{
+  fs.mkdirSync(assets,{recursive:true});
+  for(const name of listWebviewScriptAssets(signedApp)){
+   const from=path.join(signedApp,"webview","assets",name),to=path.join(assets,name);fs.mkdirSync(path.dirname(to),{recursive:true});fs.copyFileSync(from,to,fs.constants.COPYFILE_FICLONE);fs.chmodSync(to,fs.statSync(from).mode&0o777);
   }
-  const patched = new Map();
-  for (const descriptor of descriptors) {
-    for (const featureContext of [configured, passthrough]) {
-      if (descriptor.enabled?.(featureContext) === false) continue;
-      const candidates = [...sources.keys()].filter((assetName) =>
-        (descriptor.assetNeedles ?? [".slider_settings.flatMap("]).every((needle) => sources.get(assetName).includes(needle))
-      );
-      assert.ok(candidates.length > 0, `${descriptor.id} has no needle candidates`);
-      const targets = descriptor.assetMatch == null
-        ? candidates
-        : candidates.filter((assetName) =>
-          descriptor.assetMatch(patched.get(assetName) ?? sources.get(assetName), assetName, featureContext)
-        );
-      assert.ok(
-        descriptor.assetMatch == null ? targets.length > 0 : targets.length === 1,
-        `${descriptor.id} matched ${targets.length} official chunks`,
-      );
-      for (const assetName of targets) {
-        const source = featureContext === passthrough ? sources.get(assetName) : patched.get(assetName) ?? sources.get(assetName);
-        const { result, warnings } = withCapturedWarnings(() =>
-          (descriptor.id.endsWith("-catalog") ? applyCatalogPatch : descriptor.apply)(source, featureContext)
-        );
-        assert.deepEqual(warnings, [], `${descriptor.id} warned on ${assetName}`);
-        assert.equal((descriptor.id.endsWith("-catalog") ? applyCatalogPatch : descriptor.apply)(result, featureContext), result);
-        if (featureContext === configured && result !== source) {
-          assert.equal(javascriptSourceParses(result), true, `${descriptor.id} broke ${assetName}`);
-          patched.set(assetName, result);
-        }
-      }
-    }
-  }
-  // Catalog, slider, local resolver, local composer, and seven inlined
-  // model-settings copies (one per composer surface) are patched.
-  assert.equal(patched.size, 11);
-  // The reset-effect audit still holds on the slider-patched picker.
-  const resetDescriptor = descriptors.find(({ id }) => id.endsWith("upstream-reset-effect"));
-  assert.equal(
-    [...patched.values()].filter((source) => resetDescriptor.assetMatch(source, "", configured)).length,
-    1,
-  );
+  fs.writeFileSync(config,JSON.stringify({enabled:["model-picker-default-presets"],settings:{"model-picker-default-presets":scenario.settings}}));
+  const options={featuresRoot:path.resolve(__dirname,".."),featuresConfigPath:config};
+  const run=()=>{const report=createPatchReport();const {warnings}=withCapturedWarnings(()=>patchExtractedApp(app,{...options,report}));assert.deepEqual(warnings,[]);assert.equal(report.patches.length,7);assert(report.patches.every(p=>["applied","already-applied"].includes(p.status)),JSON.stringify(report.patches));return report;};
+  const first=run(),before=new Map(listWebviewScriptAssets(app).map(name=>[name,fs.readFileSync(path.join(assets,name))]));
+  assert(first.patches.some(p=>p.name.endsWith("-catalog")));
+  const repeat=run();assert(repeat.patches.every(p=>p.status==="already-applied"),JSON.stringify(repeat.patches));
+  for(const[name,bytes]of before)assert.deepEqual(fs.readFileSync(path.join(assets,name)),bytes,name);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
 });

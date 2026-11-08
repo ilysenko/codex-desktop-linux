@@ -1,0 +1,25 @@
+{
+  "version": "26.1103.32239",
+  "p4N2": {
+    "asset": "webview/assets/async/182735.d3d917f28d.js",
+    "moduleId": "p4N2",
+    "start": 3240051,
+    "end": 3241403,
+    "params": [
+      "e",
+      "t",
+      "n"
+    ],
+    "moduleSource": "n.d(t,{HP:()=>_,_p:()=>y,eg:()=>h,f5:()=>E,is:()=>g,lB:()=>f,uO:()=>m,zh:()=>v});var r=n(\"zTeN\"),i=n(\"SPnB\"),a=n(\"OWtl\"),s=n(\"Nwp9\"),o=n(\"Zplx\"),l=n(\"lBzi\"),u=n(\"bC5j\"),d=n(\"TFzY\"),c=n(\"Bl5H\"),p=n(\"qJjJ\");let h=(0,s.m3)(\"chatgpt-last-selected-model-v1\",null),f=(0,s.m3)(\"chatgpt-last-selected-home-model-v1\",null),m=(0,r.vP)(a.u,()=>null),_=(0,r.i1)(a.u,(e,{get:t})=>{if(\"tpp\"===e)return t(p.CU);let n=t(h),r=t(l.c8).data,a=null==n?void 0:(0,c.j)(t(i.e0),r,n.slug,n.thinkingEffort),s=n;null!=n&&null!=a&&(s=null==a.thinkingEffort?null:{...n,thinkingEffort:a.thinkingEffort});let o=null==e?(0,d.ay)(r):void 0,u=null!=s&&(null==o||null==r||null!=(0,d.un)(r,s))?s:null,f=r?.workspaceModelPolicy?.newThreadPrecedence===\"prefer_policy\"?o??u:u??o,m=f?.slug??r?.defaultModelSlug??\"auto\";return{slug:m,thinkingEffort:f?.thinkingEffort??null,versionId:f?.versionId??(0,d.ie)(r,m)}});function g(e,t,n){v(e,t,n),e.set(f,n),(0,o.v9)(e,n)}function v(e,t,n){e.set(m,{accountId:e.get(i.chatGptAuthenticatedAccountId$),userId:e.get(i.chatGptAuthenticatedUserId$),conversationId:t,model:n})}function y(e,t,n){\"tpp\"===t?(0,p.Z$)(e,n,{isUserSelection:!0}):e.set(h,n)}function E(e,t){let n=(0,d.xe)(e,t.slug)?.model_lane===\"instant\"?(0,u.P)(e,t.slug):e;return null!=(0,d.un)(n,t)||n?.sliderSettings?.some(e=>e.modelSlug===t.slug&&e.thinkingEffort===t.thinkingEffort)===!0}",
+    "bodySha256": "6bc97e5f59eade710e798b49cecf6da09510332a1bfe0f52cc6558da33c60e6a"
+  },
+  "normalNewThreadPolicy": {
+    "source": "let a=o.data,s=(0,A.ay)(a),d=e(T.lB)??e(T.eg),c=null==d?void 0:(0,D.j)(e(i.e0),a,d.slug,d.thinkingEffort),p=d;null!=d&&null!=c&&(p=null==c.thinkingEffort?null:{...d,thinkingEffort:c.thinkingEffort});let h=null!=p&&(0,T.f5)(a,p)?p:null,f=a.workspaceModelPolicy?.newThreadPrecedence===\"prefer_policy\"?s??h:h??s",
+    "parentBodySha256": "eadee4e4687aea3c76809a4b657cf320d93232a9a063f888bd8bdcac66edccd5",
+    "utf16": [
+      2886,
+      3194
+    ],
+    "scope": "Normal policy/user branch before premium recovery and committing overrides; tests do not claim those paths"
+  }
+}

@@ -1,18 +1,13 @@
 "use strict";
 
-const path = require("node:path");
-const { Script } = require("node:vm");
+const {patchPresetCatalog}=require("./catalog-integration.js");
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 const {
-  findMatchingBrace, createJavaScriptLexicalIndex,
+  findMatchingBrace,
 } = require("../../scripts/patches/lib/minified-js.js");
 
-const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
-const { findRspackRequireBinding, rspackModuleFactories, findUniqueRspackModuleCopies, patchRspackModuleCopies } =
-  require("../../scripts/patches/lib/rspack-module-assets.js");
+const catalogAuthority=require("./native-catalog-authority.js");
 
-const CATALOG_PATCH_MARKER = "codexLinuxModelPickerDefaultPresets";
-const CATALOG_CONFIG_NAME = "codexLinuxDefaultPresetsConfigured";
 const SLIDER_PATCH_MARKER = "codex-linux-model-picker-default-presets-slider-minimum";
 const LOCAL_DEFAULT_PATCH_MARKER = "codex-linux-model-picker-default-presets-local-default";
 const LOCAL_COMPOSER_CONFIG_MARKER =
@@ -134,32 +129,6 @@ function normalizePresets(context = {}) {
   return normalized;
 }
 
-function codexLinuxModelPickerDefaultPresets(catalog, configured) {
-  if (configured.length === 0) {
-    return catalog;
-  }
-  const options = [
-    ...(catalog?.options ?? []),
-    ...(catalog?.internalOptions ?? []),
-    ...(catalog?.versionOptions?.flatMap((version) => version?.options ?? []) ?? []),
-  ];
-  const supported = configured.filter(preset => options.some(option => option?.slug === preset.modelSlug));
-  if (supported.length === 0) return catalog;
-  const selectedDefault = supported.find(preset => preset.isDefault) ?? supported[0];
-  return {
-    ...catalog,
-    sliderSettings: supported.map((preset) => ({
-      modelSlug: preset.modelSlug,
-      thinkingEffort: preset.thinkingEffort,
-    })),
-    defaultModelSlug: selectedDefault.modelSlug,
-    defaultThinkingEffortByModelSlug: {
-      ...catalog.defaultThinkingEffortByModelSlug,
-      [selectedDefault.modelSlug]: selectedDefault.thinkingEffort,
-    },
-  };
-}
-
 function functionSections(source) {
   const sections = [];
   const pattern = /function(?: [A-Za-z_$][\w$]*)?\([^)]*\)\{/g;
@@ -219,245 +188,8 @@ function uniqueFunctionWithMarkers(source, markers) {
   return leafMatches.length === 1 ? leafMatches[0] : null;
 }
 
-const CATALOG_DESCRIPTION = "current ChatGPT model catalog normalizer";
-const CATALOG_NEEDLES = [".slider_settings.flatMap(", "serviceTiersByModelSlug:", "modelConfigBySlug:", "workspaceModelPolicy:"];
-const catalogMarkerCount = source => [CATALOG_PATCH_MARKER, CATALOG_CONFIG_NAME]
-  .reduce((total, name) => total + source.split(name).length - 1, 0);
-
-function catalogRuntimeHelper(presets) {
-  return `${codexLinuxModelPickerDefaultPresets.toString()}const ${CATALOG_CONFIG_NAME}=${JSON.stringify(presets)};`;
-}
-
-function requireCatalogRegistry(source) {
-  const headers = [...source.matchAll(/\bexport\s+const\s+__webpack_modules__\s*=\s*\{/gu)];
-  if (headers.length !== 1) throw new Error(`Missing or ambiguous ${CATALOG_DESCRIPTION} registry`);
-  const header = headers[0];
-  if (!createJavaScriptLexicalIndex(source.slice(0, header.index + header[0].length)).isRoot(header.index)) {
-    throw new Error(`Opaque or nested ${CATALOG_DESCRIPTION} registry`);
-  }
-}
-
-function catalogOne(source, expression, description, root = true) {
-  const lexical = createJavaScriptLexicalIndex(source);
-  const found = [...source.matchAll(expression)].filter(match =>
-    root ? lexical.isRoot(match.index) : lexical.isCode(match.index));
-  if (found.length !== 1) throw new Error(`Missing or ambiguous ${CATALOG_DESCRIPTION} ${description}`);
-  return found[0];
-}
-
-function catalogPublication(source, snapshot) {
-  const module = { ...snapshot, moduleSource: source };
-  const lexical = createJavaScriptLexicalIndex(source);
-  const keys = [...source.matchAll(new RegExp(`(${IDENT}):function\\(`, "gu"))]
-    .filter(match => lexical.isCode(match.index)).map(match => match[1]);
-  const found = [...new Set(keys)].flatMap(key => {
-    const publication = findRspackExportPublication(module, key);
-    return publication?.fn != null && new RegExp(`^${IDENT}$`, "u").test(publication.fn.params) &&
-      CATALOG_NEEDLES.every(needle => publication.fn.body.includes(needle)) ? [publication] : [];
-  });
-  if (found.length !== 1) throw new Error(`Missing or ambiguous ${CATALOG_DESCRIPTION} publication`);
-  return found[0];
-}
-
-function catalogReturnedObject(source, publication, applied = false) {
-  const { start, end } = publication.fn;
-  const bodyStart = source.indexOf("{", start) + 1, bodyEnd = end - 1;
-  const body = source.slice(bodyStart, bodyEnd), lexical = createJavaScriptLexicalIndex(source);
-  const returned = catalogOne(body, /\breturn\b/gu, "native return");
-  const returnEnd = bodyStart + returned.index + returned[0].length;
-  let open = returnEnd;
-  while (/\s/u.test(source[open] ?? "") && open < bodyEnd) open++;
-  let wrapperStart = null;
-  if (applied) {
-    const prefix = `${CATALOG_PATCH_MARKER}(`;
-    if (!source.startsWith(prefix, open) || source[open - 1] !== " ") {
-      throw new Error(`Noncanonical ${CATALOG_DESCRIPTION} wrapper`);
-    }
-    wrapperStart = open - 1;
-    open += prefix.length;
-  }
-  const close = lexical.matchingBrace(open);
-  const suffix = applied ? `,${CATALOG_CONFIG_NAME})` : "";
-  if (source[open] !== "{" || close < open || source.slice(close + 1, bodyEnd).trimEnd() !== suffix) {
-    throw new Error(`Unsupported ${CATALOG_DESCRIPTION} final return object`);
-  }
-  return { open, close, wrapperStart, suffix, bodyStart, bodyEnd };
-}
-
-const catalogBindingProofs = new Map();
-
-// Native publication and initializer ownership are established separately.
-// Project only that proven initializer's binder to a fresh local and treat the
-// captured binding as a parameter of a syntax-only probe. The existing Rspack
-// parameter-authority checker then rejects writes/redeclarations at any depth,
-// including escaped spellings, while retaining real local shadows/member keys.
-// This synthetic publication is only a readonly-binding proof, never an owner.
-function requireStableCatalogBinding(source, name, initializer = null) {
-  const key = `${name}:${initializer ?? -1}:${source}`;
-  let stable = catalogBindingProofs.get(key);
-  if (stable == null) {
-    let prefix = "__codexCatalogBinding";
-    while (source.includes(prefix) || name.startsWith(prefix)) prefix += "$";
-    let projected = source;
-    if (initializer != null) {
-      if (source.slice(initializer, initializer + name.length) !== name) {
-        throw new Error(`Unsupported ${CATALOG_DESCRIPTION} initializer binding`);
-      }
-      projected = source.slice(0, initializer) + `${prefix}Initial` + source.slice(initializer + name.length);
-    }
-    // Normalize only this identifier's code spellings in the probe, so an
-    // escaped local parameter/key has the same lexical-shadow treatment as
-    // its literal spelling. Native source bytes are never normalized.
-    const lexical = createJavaScriptLexicalIndex(projected);
-    const tokens = /(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[A-Za-z_$])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[\w$])*/gu;
-    const spellings = [...projected.matchAll(tokens)].filter(token => lexical.isCode(token.index) &&
-      token[0].replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu,
-        (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed,16))) === name);
-    for (const token of spellings.reverse()) {
-      projected = projected.slice(0,token.index) + name + projected.slice(token.index + token[0].length);
-    }
-    const requireName = `${prefix}Require`, value = `${prefix}Value`;
-    const probe = `${requireName}.d(${name},{},{proof:${value}});function ${value}(){}${projected}`;
-    try {
-      stable = findRspackExportPublication({moduleSource:probe,params:[`${prefix}Module`,name,requireName]},"proof")?.expression === value;
-    } catch { stable = false; }
-    if (catalogBindingProofs.size === 32) catalogBindingProofs.delete(catalogBindingProofs.keys().next().value);
-    catalogBindingProofs.set(key, stable);
-  }
-  if (!stable) throw new Error(`Unstable ${CATALOG_DESCRIPTION} binding: ${name}`);
-}
-
-// Latest signed stable has one published schema-normalizing function. The
-// legacy catalog+flattened-selection-resolver format is deliberately absent.
-function inspectNativeCatalog(source, snapshot) {
-  if (catalogMarkerCount(source) !== 0) throw new Error(`Orphan ${CATALOG_DESCRIPTION} contribution`);
-  const publication = catalogPublication(source, snapshot);
-  const returned = catalogReturnedObject(source, publication);
-  const body = source.slice(returned.bodyStart, returned.bodyEnd);
-  const parsed = catalogOne(body, new RegExp(`(?:let |,)(?<parsed>${IDENT})=(?<schema>${IDENT})\\.parse\\((?<argument>${IDENT})\\),`, "gu"), "schema input").groups;
-  if (parsed.argument !== publication.fn.params || new Set(Object.values(parsed)).size !== 3) {
-    throw new Error(`Unsupported ${CATALOG_DESCRIPTION} input binding`);
-  }
-  try { new Script(`function catalogSchemaScope(){${body};let ${parsed.schema};}`); }
-  catch { throw new Error(`Shadowed ${CATALOG_DESCRIPTION} schema binding`); }
-  const factory = { ...snapshot, moduleSource: source };
-  const schema = catalogOne(source, new RegExp(`(?<name>${escapeRegExp(parsed.schema)})=(?<namespace>${IDENT})\\.object\\(`, "gu"), "schema declaration").groups;
-  if (findRspackRequireBinding(factory, schema.namespace) == null) {
-    throw new Error(`Unsupported ${CATALOG_DESCRIPTION} schema import`);
-  }
-  for (const name of [parsed.schema, schema.namespace]) {
-    const initializer = catalogOne(source, new RegExp(`(?<![\\w$.])${escapeRegExp(name)}=(?!=|>)`, "gu"), "factory binding");
-    requireStableCatalogBinding(source, name, initializer.index);
-  }
-  const input = escapeRegExp(parsed.parsed);
-  const slider = catalogOne(body, new RegExp(`(?<slider>${IDENT})=${input}\\.slider_settings\\.flatMap\\((?<item>${IDENT})=>null==\\k<item>\\?\\[\\]:\\[\\{modelSlug:\\k<item>\\.model_slug,thinkingEffort:\\k<item>\\.thinking_effort\\}\\]\\)`, "gu"), "slider source").groups;
-  const defaults = catalogOne(body, new RegExp(`(?<defaults>${IDENT})=Object\\.fromEntries\\(\\[\\.\\.\\.(?<models>${IDENT})\\.values\\(\\)\\]\\.flatMap\\((?<item>${IDENT})=>null==\\k<item>\\.defaultThinkingEffort\\?\\[\\]:\\[\\[\\k<item>\\.slug,\\k<item>\\.defaultThinkingEffort\\]\\]\\)\\)`, "gu"), "default efforts").groups;
-  const selected = catalogOne(body, new RegExp(`(?<selected>${IDENT})=${input}\\.default_model_slug\\?\\?(?<options>${IDENT})\\[0\\]\\?\\.slug\\?\\?(?:${IDENT}|"[^"\\n]*")`, "gu"), "default model").groups;
-  const roles = [parsed.parsed, slider.slider, defaults.defaults, defaults.models, selected.selected, selected.options];
-  if (new Set([...roles, parsed.argument, parsed.schema]).size !== roles.length + 2) {
-    throw new Error(`Aliased ${CATALOG_DESCRIPTION} native role`);
-  }
-  for (const name of roles) {
-    const initializer = catalogOne(body, new RegExp(`(?<![\\w$.])${escapeRegExp(name)}=(?!=|>)`, "gu"), "native binding");
-    requireStableCatalogBinding(body, name, initializer.index);
-  }
-  requireStableCatalogBinding(body, parsed.argument);
-  const fields = source.slice(returned.open + 1, returned.close);
-  const field = (text, description) => catalogOne(fields, new RegExp(text, "gu"), description);
-  const tiers = field(`serviceTiersByModelSlug:(?<tiers>${IDENT})(?=,)`, "service-tier output").groups.tiers;
-  if ([...roles, parsed.argument, parsed.schema].includes(tiers)) throw new Error(`Aliased ${CATALOG_DESCRIPTION} tier binding`);
-  const tierInitializer = catalogOne(body, new RegExp(`(?<![\\w$.])${escapeRegExp(tiers)}=(?!=|>)`, "gu"), "tier binding");
-  requireStableCatalogBinding(body, tiers, tierInitializer.index);
-  field(`modelConfigBySlug:Object\\.fromEntries\\(${input}\\.models\\.flatMap\\(`, "model metadata output");
-  field(`\\.\\.\\.Object\\.keys\\(${escapeRegExp(defaults.defaults)}\\)\\.length>0\\?\\{defaultThinkingEffortByModelSlug:${escapeRegExp(defaults.defaults)}\\}:\\{\\}`, "default effort output");
-  field(`defaultModelSlug:${escapeRegExp(selected.selected)}(?=,)`, "default model output");
-  field(`options:${escapeRegExp(selected.options)}(?=,)`, "available options output");
-  field(`\\.\\.\\.${escapeRegExp(slider.slider)}\\.length>0\\?\\{sliderSettings:${escapeRegExp(slider.slider)}\\}:\\{\\}`, "slider output");
-  field(`\\.\\.\\.null==${input}\\.workspace_model_policy\\?\\{\\}:\\{workspaceModelPolicy:`, "workspace policy output");
-  if (!fields.includes(`null==${parsed.parsed}.workspace_model_policy?{}:{workspaceModelPolicy:`)) {
-    throw new Error(`Unsupported ${CATALOG_DESCRIPTION} workspace policy source`);
-  }
-  return { publication, ...returned };
-}
-
-function patchCatalogFactory(source, snapshot, presets) {
-  if (!Array.isArray(snapshot?.params) || snapshot.params.length !== 3 ||
-      new Set(snapshot.params).size !== 3 || snapshot.params.some(name => !new RegExp(`^${IDENT}$`, "u").test(name))) {
-    throw new Error(`Invalid ${CATALOG_DESCRIPTION} factory parameters`);
-  }
-  try { new Script(`"use strict";function catalogFactory(${snapshot.params.join(",")}){${source}}`); }
-  catch { throw new Error(`Invalid ${CATALOG_DESCRIPTION} factory syntax`); }
-  const helper = catalogRuntimeHelper(presets);
-  if (catalogMarkerCount(source) > 0) {
-    if (!source.startsWith(helper)) throw new Error(`Orphan or stale ${CATALOG_DESCRIPTION} helper`);
-    const candidate = source.slice(helper.length);
-    const publication = catalogPublication(candidate, snapshot);
-    const returned = catalogReturnedObject(candidate, publication, true);
-    const native = candidate.slice(0, returned.wrapperStart) + candidate.slice(returned.open, returned.close + 1) +
-      candidate.slice(returned.close + 1 + returned.suffix.length);
-    const original = inspectNativeCatalog(native, snapshot);
-    const replay = helper + native.slice(0, original.open) + ` ${CATALOG_PATCH_MARKER}(` +
-      native.slice(original.open, original.close + 1) + `,${CATALOG_CONFIG_NAME})` + native.slice(original.close + 1);
-    if (replay !== source) throw new Error(`Noncanonical ${CATALOG_DESCRIPTION} replay`);
-    return source;
-  }
-  const found = inspectNativeCatalog(source, snapshot);
-  const patched = helper + source.slice(0, found.open) + ` ${CATALOG_PATCH_MARKER}(` +
-    source.slice(found.open, found.close + 1) + `,${CATALOG_CONFIG_NAME})` + source.slice(found.close + 1);
-  if (patchCatalogFactory(patched, snapshot, presets) !== patched) throw new Error(`Incomplete ${CATALOG_DESCRIPTION} insertion`);
-  return patched;
-}
-
-function catalogCandidates(source) {
-  return CATALOG_NEEDLES.every(needle => source.includes(needle)) || catalogMarkerCount(source) > 0;
-}
-
-function applyCatalogPatch(source, context = {}) {
-  const presets = normalizePresets(context);
-  if (context.factorySnapshot != null) {
-    if (context.factorySnapshot.moduleSource !== source) throw new Error("Stale ChatGPT catalog snapshot");
-    return patchCatalogFactory(source, context.factorySnapshot, presets);
-  }
-  requireCatalogRegistry(source);
-  if (!javascriptSourceParses(source)) throw new Error(`Invalid ${CATALOG_DESCRIPTION} asset syntax`);
-  const modules = [...rspackModuleFactories(source, "chatgpt-catalog.js")].filter(module => {
-    if (!catalogCandidates(module.moduleSource)) return false;
-    try { patchCatalogFactory(module.moduleSource, module, presets); return true; } catch { return false; }
-  });
-  if (modules.length !== 1) throw new Error(`Missing or ambiguous ${CATALOG_DESCRIPTION} factory`);
-  const [module] = modules;
-  if (catalogMarkerCount(source) !== catalogMarkerCount(module.moduleSource)) throw new Error(`Orphan ${CATALOG_DESCRIPTION} marker`);
-  return source.slice(0, module.start) + patchCatalogFactory(module.moduleSource, module, presets) + source.slice(module.end);
-}
-
-function catalogPatchContract(source, context = {}) {
-  try { return applyCatalogPatch(source, context) === source ? "applied" : "current"; }
-  catch { return "drifted"; }
-}
-
-function patchCatalog(extractedDir, context = {}, options = {}) {
-  const presets = normalizePresets(context), markerAssets = new Set();
-  const assetsDir = path.join(extractedDir, "webview", "assets");
-  const copies = findUniqueRspackModuleCopies(assetsDir, {
-    description: CATALOG_DESCRIPTION,
-    sourceMatch(source, name) {
-      if (catalogMarkerCount(source) > 0) markerAssets.add(name);
-      return catalogCandidates(source);
-    },
-    matchModule(source, module) {
-      if (!catalogCandidates(source)) return false;
-      try { patchCatalogFactory(source, module, presets); return true; } catch { return false; }
-    },
-  });
-  for (const copy of copies) {
-    requireCatalogRegistry(copy.source);
-    if (!javascriptSourceParses(copy.source)) throw new Error(`Invalid ${CATALOG_DESCRIPTION} asset syntax`);
-    patchCatalogFactory(copy.moduleSource, copy, presets);
-    if (catalogMarkerCount(copy.source) !== catalogMarkerCount(copy.moduleSource)) throw new Error(`Orphan ${CATALOG_DESCRIPTION} marker`);
-    markerAssets.delete(copy.assetName);
-  }
-  if (markerAssets.size > 0) throw new Error(`Orphan ${CATALOG_DESCRIPTION} marker in ${[...markerAssets].join(", ")}`);
-  return patchRspackModuleCopies(assetsDir, copies, (source, snapshot) => patchCatalogFactory(source, snapshot, presets), options);
+function patchCatalog(extractedDir,context={},options={}) {
+  return patchPresetCatalog(extractedDir,normalizePresets(context),{...catalogAuthority,reasoningEffortNames:THINKING_EFFORT_TO_EFFORT},options);
 }
 
 function sliderResolverSection(source) {
@@ -1133,10 +865,6 @@ function applyLocalComposerConfigPatch(source, context = {}) {
   return patchedSource;
 }
 
-function catalogAssetMatch(source, _assetName, context = {}) {
-  return catalogPatchContract(source, context) !== "drifted";
-}
-
 function sliderAssetMatch(source, _assetName, context = {}) {
   const presets = normalizePresets(context);
   return presets.length > 0 && sliderPatchContract(source) !== "drifted";
@@ -1237,7 +965,6 @@ const descriptors = [
 ];
 
 module.exports = {
-  CATALOG_PATCH_MARKER,
   EFFORT_TO_THINKING_EFFORT,
   EXISTING_CHAT_OPTIMISTIC_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
@@ -1245,15 +972,11 @@ module.exports = {
   LOCAL_DEFAULT_PATCH_MARKER,
   THINKING_EFFORT_TO_EFFORT,
   SLIDER_PATCH_MARKER,
-  applyCatalogPatch,
   patchCatalog,
   applyExistingChatOptimisticPatch,
   applyLocalComposerConfigPatch,
   applyLocalComposerResolverPatch,
   applySliderMinimumPatch,
-  catalogAssetMatch,
-  catalogPatchContract,
-  codexLinuxModelPickerDefaultPresets,
   descriptors,
   normalizePresets,
   existingChatOptimisticContract,
