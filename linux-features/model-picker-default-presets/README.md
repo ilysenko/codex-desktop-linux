@@ -166,8 +166,11 @@ only the exact configured slider contribution on repeat. The unrestricted reset
 resolver dependency also proves its original factory loader and exports bindings
 before trusting its publication.
 
-The picker slider, local resolver, and local composer are each patched in one
-chunk. Upstream inlines the model-settings hook into every composer surface,
+The slider uses that same qualified picker and native reset dependency, prepares
+every physical copy, and accepts only its exact configured helper and two
+threshold changes. Hidden damage, mixed or orphan contributions refuse the
+cohort before writes; a later write fault restores every attempted file.
+The local resolver and local composer are each patched in one chunk. Upstream inlines the model-settings hook into every composer surface,
 so the existing-chat selection patch is applied to each copy and warns about
 any copy that drifted.
 

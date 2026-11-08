@@ -99,7 +99,41 @@ function auditPickerReset(extractedDir,ids=[],options={}) {
  const dependency=requireResetDependency(assets,copies,ids);
  return {...patchRspackModuleCopies(assets,copies,(source,module)=>{if(resetFactoryState(source,module,ids).kind==="missing")throw Error(`Missing or drifted ${DESCRIPTION}`);return source;},options),dependency};
 }
+function applyPickerSlider(source,module,ids) {
+ if(ids.length===0)return source;
+ const state=resetFactoryState(source,module,ids);
+ if(state.kind==="slider")return source;
+ if(state.kind!=="native")throw Error("Missing, ambiguous or partial current Default slider factory");
+ const names=[...module.params,...Object.values(state.owner.groups)];
+ if(names.includes("Set")||names.some(name=>name.startsWith("codexLinux")))throw Error("Default slider helper binding collides with native scope");
+ const open=source.indexOf("{",state.owner.publication.fn.start),helper=sliderContribution(ids);
+ let patched=source.slice(0,open+1)+helper+source.slice(open+1);
+ for(const name of [state.owner.groups.filtered,state.owner.groups.selectionsCache]){
+  const before=`${name}.length>=3`;if(patched.split(before).length!==2)throw Error("Ambiguous Default slider threshold");
+  patched=patched.replace(before,`${name}.length>=codexLinuxDefaultPresetMinimum(${name})`);
+ }
+ if(resetFactoryState(patched,module,ids).kind!=="slider")throw Error("Default slider failed canonical replay");
+ try{new Script(`"use strict";(function(${module.params.join(",")}){${patched}})`);}catch{throw Error("Default slider generated invalid syntax");}
+ return patched;
+}
+function patchPickerSlider(extractedDir,ids,options={}) {
+ if(ids.length===0)return{matched:0,changed:0,changedAssets:[]};
+ const assets=path.join(extractedDir,"webview","assets"),markerAssets=new Map();
+ const copies=findUniqueRspackModuleCopies(assets,{
+  description:"current Default slider factory",
+  sourceMatch(source,name){if(source.includes(SLIDER_MARKER))markerAssets.set(name,source);return source.includes(SLIDER_MARKER)||NEEDLES.every(n=>source.includes(n));},
+  matchModule:(source,module)=>resetFactoryState(source,module,ids).kind!=="missing",
+ });
+ for(const copy of copies){requireRegistry(copy.source);
+  if(copy.source.split(SLIDER_MARKER).length!==copy.moduleSource.split(SLIDER_MARKER).length)throw Error("Orphan Default slider marker");
+  markerAssets.delete(copy.assetName);
+ }
+ if(markerAssets.size)throw Error("Orphan Default slider marker asset");
+ requireResetDependency(assets,copies,ids);
+ return patchRspackModuleCopies(assets,copies,(source,module)=>applyPickerSlider(source,module,ids),options);
+}
+
 function isPickerResetAsset(source,ids=[]) {
  try{requireRegistry(source);return [...require("../../scripts/patches/lib/rspack-module-assets.js").rspackModuleFactories(source,"reset-effect.js")].filter(module=>resetFactoryState(module.moduleSource,module,ids).kind!=="missing").length===1;}catch{return false;}
 }
-module.exports={nativeResetOwner,nativeResetResolver,requireResetDependency,resetFactoryState,auditPickerReset,isPickerResetAsset};
+module.exports={nativeResetOwner,nativeResetResolver,requireResetDependency,resetFactoryState,auditPickerReset,isPickerResetAsset,applyPickerSlider,patchPickerSlider};

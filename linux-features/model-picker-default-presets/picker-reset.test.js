@@ -24,8 +24,8 @@ test("reset audit reads every physical copy, remains unchanged on repeat and pre
 test("reset audit refuses damaged hidden copies and ambiguous/opaque factories with zero writes",()=>{for(const bad of [source.replace('resetContextKey:','wrongKey:'),'const damaged=true;'])app({'a.js':chunk(),'hidden/b.js':chunk(bad)},root=>{let writes=0;assert.throws(()=>auditPickerReset(root,[],{writeFileSync(){writes++}}),/drifted/);assert.equal(writes,0);});app({'a.js':chunk(),'b.js':chunk(source,'differentIdentity')},root=>assert.throws(()=>auditPickerReset(root),/multiple/));app({'a.js':`/*${chunk()}*/`},root=>assert.throws(()=>auditPickerReset(root),/opaque/));});
 
 test("reset audit recognizes only the exact configured slider contribution and refuses mixed replicas",()=>{
- const {applySliderMinimumPatch}=require("./patch.js"),context={feature:{settings:{presets:[{model:"a",effort:"medium",default:true},{model:"b",effort:"medium"}]}}};
- const changed=applySliderMinimumPatch(source,context),ids=["a:medium","b:medium"];
+ const {applyPickerSlider}=require("./picker-reset.js"),ids=["a:medium","b:medium"];
+ const changed=applyPickerSlider(source,current,ids);
  assert.notEqual(changed,source);assert.equal(resetFactoryState(changed,current,ids).kind,"slider");assert.equal(resetFactoryState(changed,current,ids).native,source);
  for(const text of [changed.replace('"a:medium"','"other:medium"'),changed.replace('?2:3','?1:3'),changed+`/*codex-linux-model-picker-default-presets-slider-minimum*/`])assert.equal(resetFactoryState(text,current,ids).kind,"missing");
  app({'a.js':chunk(changed),'b.js':chunk(changed)},root=>assert.equal(auditPickerReset(root,ids).changed,0));

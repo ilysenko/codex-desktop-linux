@@ -1,5 +1,5 @@
 "use strict";
-const {auditPickerReset}=require("./picker-reset.js");
+const {auditPickerReset,patchPickerSlider}=require("./picker-reset.js");
 
 const {patchPresetCatalog}=require("./catalog-integration.js");
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
@@ -9,7 +9,6 @@ const {
 
 const catalogAuthority=require("./native-catalog-authority.js");
 
-const SLIDER_PATCH_MARKER = "codex-linux-model-picker-default-presets-slider-minimum";
 const LOCAL_DEFAULT_PATCH_MARKER = "codex-linux-model-picker-default-presets-local-default";
 const LOCAL_COMPOSER_CONFIG_MARKER =
   "codex-linux-model-picker-default-presets-local-composer-config";
@@ -184,15 +183,6 @@ function patchCatalog(extractedDir,context={},options={}) {
   return patchPresetCatalog(extractedDir,normalizePresets(context),{...catalogAuthority,reasoningEffortNames:THINKING_EFFORT_TO_EFFORT},options);
 }
 
-function sliderResolverSection(source) {
-  return uniqueFunctionWithMarkers(source, [
-    "powerSelectionsWithXHigh",
-    "fallbackPowerSelection",
-    "show_xhigh_in_simple_picker",
-    "canInitializePowerPicker",
-  ]);
-}
-
 // The merged picker builds its Default option from the catalog slider settings
 // alone whenever the catalog provides any; version options keep their own
 // model list. The configured presets replace the catalog slider settings, so
@@ -253,68 +243,6 @@ function upstreamDefaultSelectionAssetMatch(source, _assetName, context = {}) {
 function uniqueMatch(source, pattern) {
   const matches = [...source.matchAll(pattern)];
   return matches.length === 1 ? matches[0] : null;
-}
-
-function sliderPatchContract(source) {
-  const markerCount = source.split(SLIDER_PATCH_MARKER).length - 1;
-  const sliderSection = sliderResolverSection(source);
-  if (markerCount === 0) {
-    return sliderSection != null &&
-      (sliderSection.source.match(/\.length>=3/g) ?? []).length === 2
-      ? "current" : "drifted";
-  }
-  if (
-    markerCount === 1 &&
-    sliderSection != null &&
-    sliderSection.source.includes(`/*${SLIDER_PATCH_MARKER}*/`) &&
-    (sliderSection.source.match(/\.length>=codexLinuxDefaultPresetMinimum\(/g) ?? []).length === 2 &&
-    !sliderSection.source.includes(".length>=3")
-  ) {
-    return "applied";
-  }
-  return "mixed";
-}
-
-function applySliderMinimumPatch(source, context = {}) {
-  const presets = normalizePresets(context);
-  if (presets.length === 0) {
-    return source;
-  }
-  if (typeof source !== "string") {
-    warn("Asset source is not a string", "model picker Default slider minimum patch");
-    return source;
-  }
-
-  const contract = sliderPatchContract(source);
-  if (contract === "applied") {
-    return source;
-  }
-  if (contract !== "current") {
-    warn(
-      "Could not find one coherent ChatGPT model picker slider resolver contract",
-      "model picker Default slider minimum patch",
-    );
-    return source;
-  }
-
-  const sliderSection = sliderResolverSection(source);
-  const configuredIds = presets.map(
-    ({ modelSlug, thinkingEffort }) =>
-      `${modelSlug}:${THINKING_EFFORT_TO_EFFORT[thinkingEffort]}`,
-  );
-  const patchedSliderSection = sliderSection.source
-    .replace(
-      "{",
-      `{/*${SLIDER_PATCH_MARKER}*/let codexLinuxDefaultPresetIds=new Set(${JSON.stringify(
-        configuredIds,
-      )}),codexLinuxDefaultPresetMinimum=codexLinuxSelections=>codexLinuxSelections.every(codexLinuxSelection=>codexLinuxDefaultPresetIds.has(codexLinuxSelection.id))?2:3;`,
-    )
-    .replace(
-      /([A-Za-z_$][\w$]*)\.length>=3/g,
-      "$1.length>=codexLinuxDefaultPresetMinimum($1)",
-    );
-  return source.slice(0, sliderSection.start) + patchedSliderSection +
-    source.slice(sliderSection.end);
 }
 
 function localComposerResolverSection(source) {
@@ -662,11 +590,6 @@ function applyLocalComposerConfigPatch(source, context = {}) {
   return patchedSource;
 }
 
-function sliderAssetMatch(source, _assetName, context = {}) {
-  const presets = normalizePresets(context);
-  return presets.length > 0 && sliderPatchContract(source) !== "drifted";
-}
-
 const descriptors = [
   {
     id: "model-picker-default-presets-upstream-default-selection",
@@ -701,15 +624,11 @@ const descriptors = [
   },
   {
     id: "model-picker-default-presets-slider-minimum",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20_799,
     ciPolicy: "optional",
-    assetNeedles: ["show_xhigh_in_simple_picker", "powerSelectionsWithXHigh"],
     enabled: (context = {}) => normalizePresets(context).length > 0,
-    assetMatch: sliderAssetMatch,
-    missingDescription: "ChatGPT model picker slider resolver bundle",
-    skipDescription: "model picker Default slider minimum patch",
-    apply: applySliderMinimumPatch,
+    apply: (dir,context={}) => patchPickerSlider(dir,normalizePresets(context).map(({modelSlug,thinkingEffort})=>`${modelSlug}:${THINKING_EFFORT_TO_EFFORT[thinkingEffort]}`)),
   },
   {
     id: "model-picker-default-presets-local-composer-resolver",
@@ -764,20 +683,16 @@ module.exports = {
   LOCAL_COMPOSER_RESOLVER_MARKER,
   LOCAL_DEFAULT_PATCH_MARKER,
   THINKING_EFFORT_TO_EFFORT,
-  SLIDER_PATCH_MARKER,
   patchCatalog,
   applyExistingChatOptimisticPatch,
   applyLocalComposerConfigPatch,
   applyLocalComposerResolverPatch,
-  applySliderMinimumPatch,
   descriptors,
   normalizePresets,
   existingChatOptimisticContract,
   localComposerConfig,
   localComposerConfigContract,
   localComposerResolverContract,
-  sliderAssetMatch,
-  sliderPatchContract,
   upstreamDefaultSelectionAssetMatch,
   upstreamDefaultSelectionContract,
 };

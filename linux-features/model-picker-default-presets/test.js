@@ -17,17 +17,13 @@ const {
   LOCAL_DEFAULT_PATCH_MARKER,
   LOCAL_COMPOSER_CONFIG_MARKER,
   LOCAL_COMPOSER_RESOLVER_MARKER,
-  SLIDER_PATCH_MARKER,
   applyExistingChatOptimisticPatch,
   applyLocalComposerConfigPatch,
   applyLocalComposerResolverPatch,
-  applySliderMinimumPatch,
   existingChatOptimisticContract,
   normalizePresets,
   localComposerConfigContract,
   localComposerResolverContract,
-  sliderAssetMatch,
-  sliderPatchContract,
   upstreamDefaultSelectionAssetMatch,
   upstreamDefaultSelectionContract,
 } = require("./patch.js");
@@ -93,17 +89,6 @@ function defaultOptionBuilderFixture(module = defaultOptionBuilderModule()) {
     Aaaa: 'function c(e,t,n){return"unrelated"}n.d(t,{c:()=>c})',
     TuVM: module,
   });
-}
-
-function sliderFixture(name = "Wkr") {
-  return [
-    `function ${name}(e){`,
-    "let powerSelectionsWithXHigh=e,fallbackPowerSelection=e,",
-    "show_xhigh_in_simple_picker=true,canInitializePowerPicker=true;",
-    "if(powerSelectionsWithXHigh.length>=3)return powerSelectionsWithXHigh;",
-    "return fallbackPowerSelection.length>=3?fallbackPowerSelection:[]}",
-    "function Next(){}",
-  ].join("");
 }
 
 function localComposerResolverFixture(name = "LocalPower") {
@@ -258,48 +243,6 @@ test("rejects malformed preset settings", () => {
   }
 });
 
-test("slider minimum makes two entries a slider while one stays fixed", () => {
-  const presets = context([
-    { model: "gpt-6-astra", effort: "medium", default: true },
-    { model: "gpt-5.6-sol", effort: "high" },
-    { model: "model-low", effort: "low" },
-    { model: "model-none", effort: "none" },
-    { model: "model-max", effort: "max" },
-  ]);
-  const source = sliderFixture();
-  assert.equal(sliderPatchContract(source), "current");
-  assert.equal(sliderAssetMatch(source, "fixture.js", presets), true);
-  const patched = applySliderMinimumPatch(source, presets);
-  assert.equal(sliderPatchContract(patched), "applied");
-  assert.equal((patched.match(new RegExp(SLIDER_PATCH_MARKER, "g")) ?? []).length, 1);
-  assert.equal((patched.match(new RegExp(LOCAL_DEFAULT_PATCH_MARKER, "g")) ?? []).length, 0);
-  assert.equal(applySliderMinimumPatch(patched, presets), patched);
-  const configured = [
-    { id: "gpt-6-astra:medium" },
-    { id: "gpt-5.6-sol:high" },
-    { id: "model-low:low" },
-    { id: "model-none:none" },
-    { id: "model-max:max" },
-  ];
-  assert.deepEqual(plain(evaluate(patched, "Wkr(input)", { input: configured.slice(0, 1) })), []);
-  assert.deepEqual(
-    plain(evaluate(patched, "Wkr(input)", { input: configured.slice(0, 2) })),
-    configured.slice(0, 2),
-  );
-  assert.deepEqual(
-    plain(evaluate(patched, "Wkr(input)", { input: configured })),
-    configured,
-  );
-  assert.deepEqual(
-    plain(
-      evaluate(patched, "Wkr(input)", {
-        input: [{ id: "server-a:low" }, { id: "server-b:high" }],
-      }),
-    ),
-    [],
-  );
-});
-
 test("upstream Default option reads ordered catalog slider while version options keep their models", () => {
   const presets = context([
     { model: "gpt-6-astra", effort: "medium", default: true },
@@ -347,22 +290,6 @@ test("upstream Default-selection compatibility audit fails closed on missing and
   }
   // Without the rspack module registry the builder cannot be scoped.
   assert.equal(upstreamDefaultSelectionContract(module), "drifted");
-});
-
-test("slider patch fails closed on drift, duplicate, and partial states", () => {
-  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
-  for (const source of [
-    "function unrelated(){}",
-    sliderFixture("One") + sliderFixture("Two"),
-    sliderFixture().replace("{", `{/*${SLIDER_PATCH_MARKER}*/`),
-    sliderFixture().replace("powerSelectionsWithXHigh.length>=3", "powerSelectionsWithXHigh.length>=2"),
-  ]) {
-    const { result, warnings } = withCapturedWarnings(() =>
-      applySliderMinimumPatch(source, presets),
-    );
-    assert.equal(result, source);
-    assert.equal(warnings.length, 1);
-  }
 });
 
 test("local composer uses configured pairs and lowers only its config threshold", () => {
@@ -774,8 +701,8 @@ test("local composer patches fail closed on drift, duplicate, and partial states
 
 test("empty manifest leaves the slider descriptor disabled", () => {
   const passthrough = { feature: { manifest: { presets: [] }, settings: {} } };
-  assert.equal(applySliderMinimumPatch(sliderFixture(), passthrough), sliderFixture());
-  assert.equal(sliderAssetMatch(sliderFixture(), "fixture.js", passthrough), false);
+  const slider=require("./patch.js").descriptors.find(descriptor=>descriptor.id.endsWith("-slider-minimum"));
+  assert.equal(slider.enabled(passthrough),false);
 });
 
 test("feature descriptors load alone and alongside ui-tweaks", () => {
