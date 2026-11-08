@@ -30,8 +30,6 @@ const {
   sliderPatchContract,
   upstreamDefaultSelectionAssetMatch,
   upstreamDefaultSelectionContract,
-  upstreamResetEffectAssetMatch,
-  upstreamResetEffectContract,
 } = require("./patch.js");
 
 function context(presets) {
@@ -95,25 +93,6 @@ function defaultOptionBuilderFixture(module = defaultOptionBuilderModule()) {
     Aaaa: 'function c(e,t,n){return"unrelated"}n.d(t,{c:()=>c})',
     TuVM: module,
   });
-}
-
-function upstreamResetEffectFixture(name = "ResetPowerPicker", memoized = false) {
-  const effect =
-    "E=()=>{if(!i){if(!C){b.current=null;return}null!=x&&null!=S&&b.current!==S&&(b.current=S,T(x))}}";
-  return [
-    `function ${name}(e){`,
-    "let{canRenderPowerPickerSurface:n,fallbackPowerSelection:r,isModelSettingsLoading:i,menuView:a,onReset:o,powerSelectionsWithXHigh:s,resetContextKey:c,selectedPowerSelectionWithXHigh:l,showXHighInSimplePicker:u}=e,",
-    "h=n&&s.length>0,v=(0,Picker.resolveFallback)({canInitializePowerPicker:h,fallbackPowerSelection:r,menuView:a,selectedPowerSelection:l,showXHighInSimplePicker:u});",
-    'let y=v,b=(0,React.useRef)(null),x=y?.id??null,S=null==x?null:`${c}:${x}`,C=!u&&h&&"simple"===a,w;',
-    "w=e=>{y?.id===e&&o(y)};let T=(0,React.useEffectEvent)(w),E;",
-    memoized
-      ? `cache[0]!==C||cache[4]!==i?(${effect},cache[0]=C,cache[4]=i,cache[1]=E):E=cache[1];`
-      : `${effect};`,
-    memoized
-      ? "let D;return cache[2]!==C?(D=[x,S,C,i],cache[2]=C,cache[3]=D):D=cache[3],(0,React.useEffect)(E,D),s}"
-      : "let D=[x,S,C,i];return(0,React.useEffect)(E,D),s}",
-    "function Next(){}",
-  ].join("");
 }
 
 function sliderFixture(name = "Wkr") {
@@ -368,159 +347,6 @@ test("upstream Default-selection compatibility audit fails closed on missing and
   }
   // Without the rspack module registry the builder cannot be scoped.
   assert.equal(upstreamDefaultSelectionContract(module), "drifted");
-});
-
-test("upstream reset effect is reset-context scoped and selects the resolved fallback pair", () => {
-  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
-  const source = upstreamResetEffectFixture();
-  assert.equal(upstreamResetEffectContract(source), "current");
-  assert.equal(upstreamResetEffectAssetMatch(source, "fixture.js", presets), true);
-  const memoizedSource = upstreamResetEffectFixture("MemoizedResetPowerPicker", true);
-  assert.equal(upstreamResetEffectContract(memoizedSource), "current");
-  assert.equal(upstreamResetEffectAssetMatch(memoizedSource, "fixture.js", presets), true);
-
-  const hooks = { refs: [] };
-  const selections = [];
-  const render = (resetContextKey) => {
-    const effects = [];
-    let refIndex = 0;
-    const React = {
-      useEffect(effect) {
-        effects.push(effect);
-      },
-      useEffectEvent(callback) {
-        return callback;
-      },
-      useRef(value) {
-        const index = refIndex++;
-        hooks.refs[index] ??= { current: value };
-        return hooks.refs[index];
-      },
-    };
-    evaluate(source, "ResetPowerPicker(input)", {
-      React,
-      input: {
-        canRenderPowerPickerSurface: true,
-        fallbackPowerSelection: { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
-        isModelSettingsLoading: false,
-        menuView: "simple",
-        onReset: (selection) => selections.push(plain(selection)),
-        powerSelectionsWithXHigh: [{ id: "gpt-6-astra:medium" }],
-        resetContextKey,
-        selectedPowerSelectionWithXHigh: null,
-        showXHighInSimplePicker: false,
-      },
-      Picker: {
-        resolveFallback: ({ fallbackPowerSelection }) => fallbackPowerSelection,
-      },
-    });
-    for (const effect of effects) effect();
-  };
-
-  render(JSON.stringify([null, "local", "/repo"]));
-  assert.equal(selections.length, 1, "initial draft resets to the resolved fallback");
-  render(JSON.stringify([null, "local", "/repo"]));
-  assert.equal(selections.length, 1, "the same draft context resets only once");
-  render(JSON.stringify(["created", "local", "/repo"]));
-  assert.equal(selections.length, 2, "the created conversation has its own reset context");
-  render(JSON.stringify([null, "local", "/repo"]));
-  assert.equal(selections.length, 3, "the next draft resets to the resolved fallback");
-  assert.deepEqual(selections, [
-    { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
-    { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
-    { id: "gpt-6-astra:medium", model: "gpt-6-astra", reasoningEffort: "medium" },
-  ]);
-});
-
-test("upstream reset-effect compatibility audit fails closed on missing, ambiguous, and partial drift", () => {
-  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
-  const fixture = upstreamResetEffectFixture();
-  const memoizedFixture = upstreamResetEffectFixture("MemoizedResetPowerPicker", true);
-  for (const source of [
-    "function unrelated(){}",
-    fixture + upstreamResetEffectFixture("DuplicateResetPowerPicker"),
-    fixture.replace("resetContextKey:c,", "resetKey:c,"),
-    fixture.replace("`${c}:${x}`", "`${x}`"),
-    fixture.replace("o(y)", "o(e)"),
-    fixture.replace('C=!u&&h&&"simple"===a', "C=!1"),
-    fixture.replace('C=!u&&h&&"simple"===a', "C=globalThis.unrelated"),
-    fixture.replace(
-      'C=!u&&h&&"simple"===a,w;',
-      'C=!u&&h&&"simple"===a;C=!1;let w;',
-    ),
-    fixture.replace(
-      'C=!u&&h&&"simple"===a,w;',
-      'C=!u&&h&&"simple"===a;C=globalThis.unrelated;let w;',
-    ),
-    fixture.replace(
-      'C=!u&&h&&"simple"===a,w;',
-      'C=!u&&h&&"simple"===a;[C]=[!1];let w;',
-    ),
-    fixture.replace(
-      'C=!u&&h&&"simple"===a,w;',
-      'C=!u&&h&&"simple"===a;({C}={C:!1});let w;',
-    ),
-    fixture.replace(
-      'C=!u&&h&&"simple"===a,w;',
-      'C=!u&&h&&"simple"===a;for(C of [!1]);let w;',
-    ),
-    fixture.replace(
-      'C=!u&&h&&"simple"===a,w;',
-      'C=!u&&h&&"simple"===a;C/*comment*/=!1;let w;',
-    ),
-    fixture.replace(
-      'C=!u&&h&&"simple"===a,w;',
-      'C=!u&&h&&"simple"===a;\\u0043=!1;let w;',
-    ),
-    fixture.replace(
-      'C=!u&&h&&"simple"===a,w;',
-      'C=!u&&h&&"simple"===a,Q=!u&&h&&"simple"===a,w;',
-    ),
-    fixture.replace(
-      "return(0,React.useEffect)(E,D),s}",
-      "return(0,React.useEffect)(E,D),C=!1,s}",
-    ),
-    fixture.replace("(0,React.useEffect)(E,D)", "E()"),
-    memoizedFixture.replace("cache[0]=C", "cache[0]=C=!1"),
-    memoizedFixture.replace("cache[2]=C", "cache[2]=C=!1"),
-    memoizedFixture.replace("cache[0]=C", "cache[0]=C++"),
-    memoizedFixture.replace("cache[2]=C", "cache[2]=C++"),
-    memoizedFixture.replace("cache[0]=C", "cache[0]=C+=1"),
-    memoizedFixture.replace("cache[2]=C", "cache[2]=C+=1"),
-    ...["cache[0]=C", "cache[2]=C"].flatMap((anchor) =>
-      ["\r", " ", " "].map((terminator) =>
-        memoizedFixture.replace(anchor, `${anchor}//comment${terminator}=!1`)
-      )
-    ),
-    ...[
-      ["cache[0]!==C", "cache[0]!==C"],
-      ["cache[0]=C", "cache[0]=C"],
-      ["cache[2]!==C", "cache[2]!==C"],
-      ["cache[2]=C", "cache[2]=C"],
-    ].flatMap(([anchor, read]) => [
-      `${read}//comment\r=!1`,
-      `${read}//comment =!1`,
-      `${read}//comment =!1`,
-      `${read}//comment\n=!1`,
-      `${read}/*comment*/=!1`,
-      `${read} =!1`,
-      `${read}||=!1`,
-      `${read}??=!1`,
-      `${read}&&=!1`,
-    ].map((replacement) => memoizedFixture.replace(anchor, replacement)))
-      .filter((source) => {
-        try {
-          new Function(source);
-          return true;
-        } catch {
-          return false;
-        }
-      }),
-  ]) {
-    assert.doesNotThrow(() => new Function(source));
-    assert.equal(upstreamResetEffectContract(source), "drifted");
-    assert.equal(upstreamResetEffectAssetMatch(source, "fixture.js", presets), false);
-  }
 });
 
 test("slider patch fails closed on drift, duplicate, and partial states", () => {

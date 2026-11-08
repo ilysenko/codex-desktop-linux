@@ -158,6 +158,14 @@ refuses before writes. A later write fault restores every attempted file and
 preserves its mode. The retired separate catalog/selection-resolver format is
 rejected.
 
+The reset-effect audit validates the complete published native picker factory,
+including its imports and actual imported reset resolver publication, props,
+memoized fallback, reset context, latest callback, and effect dependencies.
+It checks every physical copy without changing native behavior, and recognizes
+only the exact configured slider contribution on repeat. The unrestricted reset
+resolver dependency also proves its original factory loader and exports bindings
+before trusting its publication.
+
 The picker slider, local resolver, and local composer are each patched in one
 chunk. Upstream inlines the model-settings hook into every composer surface,
 so the existing-chat selection patch is applied to each copy and warns about
