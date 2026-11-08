@@ -181,10 +181,30 @@ replaces whichever one is active. An enabled feature's descriptor mismatch
 rejects the build/update candidate and preserves the working installation.
 The composer context requires the current separate host-ID binding; the retired
 host-object context shape is rejected.
+The upstream Default-selection descriptor is a read-only extracted-app audit.
+It qualifies the synchronous native declarations behind the published Default,
+ordinary-version, common-pair, and model-predicate paths, every physical copy,
+and the actual named catalog-resolver and model-predicate dependencies before
+reporting success. A bounded static census permits only the native loader
+interop and publication method uses; owned replacements of those critical
+methods refuse the audit, while genuine local shadows retain their meaning. The Default option uses
+non-empty catalog slider settings exclusively; its native empty-slider fallback
+is retained. Ordinary version options keep the native model/effort choices and
+matching catalog pairs. The separate paid-model fallback branch uses the shared
+catalog slider while retaining the version metadata.
+
+The audit accepts a catalog already changed by this feature only through the
+catalog contract's exact inverse and replay under the same configuration, and
+rejects mixed pristine/applied dependency copies. It writes no source and adds
+no Default-builder wrapper. The vendor deduplication import, default interop,
+and native call routing are qualified without executing or replacing that
+vendor. Tests execute selected small native helpers and controlled new-thread
+fragments; a test deduplication stub does not verify the bundled vendor body or
+GUI behavior.
+
 The official-bundle CI audit includes populated presets so all seven
-descriptors are checked, including the upstream Default-option compatibility
-audit (the merged picker's Default option must use the catalog slider settings
-exclusively) and the upstream reset-effect audit.
+descriptors are checked, including the upstream Default-selection and
+reset-effect audits.
 
 ## Test
 

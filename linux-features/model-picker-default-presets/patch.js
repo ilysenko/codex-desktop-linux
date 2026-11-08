@@ -2,6 +2,7 @@
 const {auditPickerReset,patchPickerSlider}=require("./picker-reset.js");
 
 const {patchPresetCatalog}=require("./catalog-integration.js");
+const DefaultSelection=require("./upstream-default-selection.js");
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 const {
   findMatchingBrace,
@@ -137,36 +138,6 @@ function functionSections(source) {
   return sections;
 }
 
-// rspack chunks register `__webpack_modules__={id(e,t,n){...},...}`; minified
-// helper names repeat across module factories, so related functions are looked
-// up only inside the factory that owns a matched section.
-function enclosingModuleFactory(source, index) {
-  const registry = "__webpack_modules__={";
-  const registryStart = source.indexOf(registry);
-  if (registryStart < 0 || source.indexOf(registry, registryStart + 1) >= 0) return null;
-  const entry = /(?:"[^"\\]*"|[\w$]+)\([^()]*\)\{/y;
-  let cursor = registryStart + registry.length;
-  while (cursor < source.length && source[cursor] !== "}") {
-    entry.lastIndex = cursor;
-    const match = entry.exec(source);
-    if (match == null) return null;
-    const open = cursor + match[0].length - 1;
-    const close = findMatchingBrace(source, open);
-    if (close < 0) return null;
-    if (index > open && index < close) {
-      return {
-        bodyStart: open + 1,
-        end: close + 1,
-        source: source.slice(cursor, close + 1),
-        start: cursor,
-      };
-    }
-    cursor = close + 1;
-    if (source[cursor] === ",") cursor += 1;
-  }
-  return null;
-}
-
 function uniqueFunctionWithMarkers(source, markers) {
   const matches = functionSections(source).filter((section) =>
     markers.every((marker) => section.source.includes(marker)),
@@ -183,66 +154,19 @@ function patchCatalog(extractedDir,context={},options={}) {
   return patchPresetCatalog(extractedDir,normalizePresets(context),{...catalogAuthority,reasoningEffortNames:THINKING_EFFORT_TO_EFFORT},options);
 }
 
-// The merged picker builds its Default option from the catalog slider settings
-// alone whenever the catalog provides any; version options keep their own
-// model list. The configured presets replace the catalog slider settings, so
-// this owner must keep using them exclusively for Default.
-function defaultOptionBuilderSection(source) {
-  return uniqueFunctionWithMarkers(source, [
-    "includeSyntheticDefault:",
-    "paidModelFallbackEnabled:",
-    ".sliderSettings?.length?",
-    "defaultOption:",
-  ]);
+// Read-only current Default routing audit. The feature-local owner qualifies
+// original factory authority and every physical owner/dependency copy.
+function upstreamDefaultSelectionContract(source,context={}) {
+  return DefaultSelection.upstreamDefaultSelectionContract(source,context);
 }
-
-function upstreamDefaultSelectionContract(source) {
-  const section = defaultOptionBuilderSection(source);
-  const catalogParameter = new RegExp(`^function(?: ${IDENT})?\\((${IDENT}),\\{`, "u")
-    .exec(section?.source ?? "")?.[1];
-  if (catalogParameter == null) return "drifted";
-  const catalog = escapeRegExp(catalogParameter);
-  const sliderSettings = uniqueMatch(
-    section.source,
-    new RegExp(
-      `(${IDENT})=${catalog}\\?\\.sliderSettings\\?\\.length\\?${catalog}\\.sliderSettings:${IDENT}\\(`,
-      "gu",
-    ),
-  )?.[1];
-  if (sliderSettings == null) return "drifted";
-  const defaultOption = uniqueMatch(
-    section.source,
-    new RegExp(
-      `defaultOption:${IDENT}\\|\\|${IDENT}\\?\\{\\.\\.\\.(${IDENT})\\(${catalog},${IDENT},` +
-        `${escapeRegExp(sliderSettings)}\\),isDefault:!0\\}:void 0`,
-      "gu",
-    ),
-  );
-  if (defaultOption == null) return "drifted";
-  // The option builder lives in the same rspack module factory and must expose
-  // its third argument as the power settings.
-  const moduleFactory = enclosingModuleFactory(source, section.start);
-  const builders = functionSections(moduleFactory?.source ?? "").filter((candidate) =>
-    candidate.source.startsWith(`function ${defaultOption[1]}(`)
-  );
-  if (builders.length !== 1) return "drifted";
-  const builder = new RegExp(
-    `^function ${escapeRegExp(defaultOption[1])}\\(${IDENT},${IDENT},(${IDENT})\\)\\{`,
-    "u",
-  ).exec(builders[0].source);
-  return builder != null && builders[0].source.endsWith(`powerSettings:${builder[1]}}}`)
-    ? "current"
-    : "drifted";
+function upstreamDefaultSelectionAssetMatch(source,_assetName,context={}) {
+  return normalizePresets(context).length>0&&upstreamDefaultSelectionContract(source,context)==="current";
 }
-
-function upstreamDefaultSelectionAssetMatch(source, _assetName, context = {}) {
-  return normalizePresets(context).length > 0 &&
-    upstreamDefaultSelectionContract(source) === "current";
+function inspectUpstreamDefaultSelectionOwner(source,snapshot) {
+  return DefaultSelection.inspectUpstreamDefaultSelectionOwner(source,snapshot);
 }
-
-function uniqueMatch(source, pattern) {
-  const matches = [...source.matchAll(pattern)];
-  return matches.length === 1 ? matches[0] : null;
+function auditUpstreamDefaultSelection(extractedDir,context={},options={}) {
+  return DefaultSelection.auditUpstreamDefaultSelection(extractedDir,normalizePresets(context),options);
 }
 
 function localComposerResolverSection(source) {
@@ -593,15 +517,11 @@ function applyLocalComposerConfigPatch(source, context = {}) {
 const descriptors = [
   {
     id: "model-picker-default-presets-upstream-default-selection",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20_797,
     ciPolicy: "optional",
-    assetNeedles: ["includeSyntheticDefault:", "paidModelFallbackEnabled:", ".sliderSettings?.length?"],
     enabled: (context = {}) => normalizePresets(context).length > 0,
-    assetMatch: upstreamDefaultSelectionAssetMatch,
-    missingDescription: "upstream merged model picker Default-selection bundle",
-    skipDescription: "model picker upstream Default-selection compatibility audit",
-    apply: (source) => source,
+    apply: auditUpstreamDefaultSelection,
   },
   {
     id: "model-picker-default-presets-upstream-reset-effect",
@@ -695,4 +615,6 @@ module.exports = {
   localComposerResolverContract,
   upstreamDefaultSelectionAssetMatch,
   upstreamDefaultSelectionContract,
+  inspectUpstreamDefaultSelectionOwner,
+  auditUpstreamDefaultSelection,
 };

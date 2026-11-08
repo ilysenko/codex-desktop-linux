@@ -1,0 +1,18 @@
+{
+  "version": "26.1103.32239",
+  "architecture": "amd64",
+  "relativeAsset": "webview/assets/async/182735.d3d917f28d.js",
+  "assetSha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
+  "start": 3233901,
+  "end": 3235504,
+  "byteStart": 3234138,
+  "byteEnd": 3235741,
+  "moduleId": "TuVM",
+  "params": [
+    "e",
+    "t",
+    "n"
+  ],
+  "moduleSource": "var r=n(\"i5ac\"),i=n.n(r),a=n(\"TWUU\"),s=n(\"TFzY\");function o(e,t,{isTppConversation:n=!1}={}){let r=e?.sliderSettings?.filter(({modelSlug:e})=>t.some(({slug:t})=>t===e))??[];return u(e,t,i()([...l(t,n),...r],({modelSlug:e,thinkingEffort:t})=>`${e}:${t??\"\"}`))}function l(e,t){return e.flatMap(({slug:e,thinkingEffort:n})=>t&&null==n?[]:[{modelSlug:e,thinkingEffort:n??null}])}function u(e,t,n){let r=n.flatMap(({modelSlug:n,thinkingEffort:r})=>t.find(e=>e.slug===n&&(e.thinkingEffort??null)===r)??(0,s.un)(e,{slug:n,thinkingEffort:r})??[]);return{isDefault:!1,options:i()([...t,...r],({slug:e,thinkingEffort:t})=>`${e}:${t??\"\"}`),powerSettings:n}}n.d(t,{},{OY:function(e,t){let n=e?.versionOptions?.find(e=>e.id===t.versionId&&e.slugs.includes(t.slug))??e?.versionOptions?.find(e=>e.options.some(e=>(0,s.VK)(e,t))||null==t.thinkingEffort&&e.slugs.includes(t.slug)||e.options.some(e=>e.slug===t.slug));if(n?.id!==\"latest\"||n.options.some(({slug:e})=>e===t.slug))return n;let r=e?.versionOptions?.filter(({id:e,slugs:n})=>\"latest\"!==e&&n.includes(t.slug));return r?.length===1?r[0]:n},kA:o,nX:function(e,{isTppConversation:t=!1,includeSyntheticDefault:n=!1,paidModelFallbackEnabled:r=!1}){let i=e?.versionOptions?.find(({slugs:t,options:n})=>t.includes(e.defaultModelSlug)&&n.length>0)?.options??e?.versionOptions?.find(({slugs:e})=>e.some(a.GA))?.options??e?.options??[],s=e?.sliderSettings?.length?e.sliderSettings:l(i,t);return{defaultOption:n||r?{...u(e,i,s),isDefault:!0}:void 0,versionOptions:e?.versionOptions?.map(n=>({...r?u(e,n.options,s):o(e,n.options,{isTppConversation:t}),version:n}))??[]}}})",
+  "bodySha256": "c5d0ab2a48a23f56d0f75bdf3364c5eff09ce3feedb2530ecbbac8f3b7812810"
+}

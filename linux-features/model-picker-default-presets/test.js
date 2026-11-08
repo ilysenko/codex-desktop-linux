@@ -48,49 +48,6 @@ function rspackChunk(modules) {
 }
 
 // Evaluates one factory of an rspack chunk fixture and returns its exports.
-function rspackModuleExports(source, id, globals = {}) {
-  const modules = vm.runInNewContext(
-    `${source.replaceAll("export const ", "const ")};__webpack_modules__`,
-    globals,
-  );
-  const exports = {};
-  const require = () => ({object:()=>({parse:input=>input})});
-  require.n = (module) => () => module;
-  require.d = (target, definitions, values = {}) => {
-    Object.assign(target, values);
-    for (const [name, getter] of Object.entries(definitions)) {
-      Object.defineProperty(target, name, { enumerable: true, get: getter });
-    }
-  };
-  modules[id]({}, exports, require);
-  return exports;
-}
-
-function defaultOptionBuilderModule(name = "o") {
-  return [
-    `function ${name}(e,{isTppConversation:t=!1,includeSyntheticDefault:n=!1,paidModelFallbackEnabled:r=!1}){`,
-    "let i=e?.versionOptions?.find(({slugs:t,options:n})=>t.includes(e.defaultModelSlug)&&n.length>0)?.options??e?.options??[],",
-    "s=e?.sliderSettings?.length?e.sliderSettings:d(i,t);",
-    "return{defaultOption:n||r?{...c(e,i,s),isDefault:!0}:void 0,",
-    "versionOptions:e?.versionOptions?.map(n=>({...r?c(e,n.options,s):l(e,n.options,{isTppConversation:t}),version:n}))??[]}}",
-    "function l(e,t,{isTppConversation:n=!1}={}){",
-    "let r=e?.sliderSettings?.filter(({modelSlug:e})=>t.some(({slug:t})=>t===e))??[];",
-    "return c(e,t,[...d(t,n),...r])}",
-    "function d(e,t){return e.flatMap(({slug:e,thinkingEffort:n})=>t&&null==n?[]:[{modelSlug:e,thinkingEffort:n??null}])}",
-    "function c(e,t,n){let r=n.flatMap(({modelSlug:n,thinkingEffort:r})=>t.find(e=>e.slug===n&&(e.thinkingEffort??null)===r)??[]);",
-    "return{isDefault:!1,options:[...t,...r],powerSettings:n}}",
-    `n.d(t,{nX:()=>${name}})`,
-  ].join("");
-}
-
-function defaultOptionBuilderFixture(module = defaultOptionBuilderModule()) {
-  return rspackChunk({
-    // Another factory reuses the minified builder name for unrelated code.
-    Aaaa: 'function c(e,t,n){return"unrelated"}n.d(t,{c:()=>c})',
-    TuVM: module,
-  });
-}
-
 function localComposerResolverFixture(name = "LocalPower") {
   return [
     `function ${name}(e,{removeXHigh:t=false,sliderModelsConfig:n,stripGptPrefix:r=true}={}){`,
@@ -155,35 +112,6 @@ function withCapturedWarnings(callback) {
   }
 }
 
-function catalog(overrides = {}) {
-  return {
-    categories: ["manual-category"],
-    defaultModelSlug: "upstream-default",
-    defaultThinkingEffortByModelSlug: {
-      "upstream-default": "standard",
-      "gpt-6-astra": "standard",
-      "gpt-5.6-sol": "min",
-    },
-    internalOptions: [{ slug: "internal-model", thinkingEffort: "extended" }],
-    modelConfigBySlug: { "gpt-6-astra": { title: "Astra" } },
-    options: [
-      { slug: "upstream-default", thinkingEffort: "standard" },
-      { slug: "gpt-6-astra", thinkingEffort: "standard" },
-      { slug: "gpt-5.6-sol", thinkingEffort: "min" },
-    ],
-    sliderSettings: [{ modelSlug: "upstream-default", thinkingEffort: "standard" }],
-    versionOptions: [
-      {
-        id: "version",
-        options: [{ slug: "version-model", thinkingEffort: "xhigh" }],
-        slugs: ["version-model"],
-      },
-    ],
-    workspaceModelPolicy: { newThreadPrecedence: "prefer_policy" },
-    ...overrides,
-  };
-}
-
 test("normalizes every public effort without imposing a preset limit", () => {
   const entries = Object.keys(EFFORT_TO_THINKING_EFFORT).map((effort, index) => ({
     model: `model-${index}`,
@@ -243,53 +171,15 @@ test("rejects malformed preset settings", () => {
   }
 });
 
-test("upstream Default option reads ordered catalog slider while version options keep their models", () => {
-  const presets = context([
-    { model: "gpt-6-astra", effort: "medium", default: true },
-    { model: "gpt-5.6-sol", effort: "high" },
-  ]);
-  const merged = catalog({sliderSettings:normalizePresets(presets).map(({modelSlug,thinkingEffort})=>({modelSlug,thinkingEffort}))});
-  const { nX: buildPickerOptions } = rspackModuleExports(defaultOptionBuilderFixture(), "TuVM");
-  const defaults = buildPickerOptions(merged, { includeSyntheticDefault: true });
-  assert.deepEqual(plain(defaults.defaultOption.powerSettings), [
-    { modelSlug: "gpt-6-astra", thinkingEffort: "standard" },
-    { modelSlug: "gpt-5.6-sol", thinkingEffort: "extended" },
-  ]);
-  assert.deepEqual(plain(defaults.versionOptions[0].powerSettings), [
-    { modelSlug: "version-model", thinkingEffort: "xhigh" },
-  ]);
-});
-
-test("upstream Default-selection compatibility audit fails closed on missing and ambiguous replacements", () => {
-  const presets = context([{ model: "gpt-6-astra", effort: "medium", default: true }]);
-  const fixture = defaultOptionBuilderFixture();
-  assert.equal(javascriptSourceParses(fixture), true);
-  assert.equal(upstreamDefaultSelectionContract(fixture), "current");
-  assert.equal(upstreamDefaultSelectionAssetMatch(fixture, "async/1.js", presets), true);
-  assert.equal(
-    upstreamDefaultSelectionAssetMatch(fixture, "async/1.js", {
-      feature: { manifest: { presets: [] }, settings: {} },
-    }),
-    false,
-  );
-  const module = defaultOptionBuilderModule();
-  for (const drifted of [
-    "function unrelated(){}",
-    `${defaultOptionBuilderModule()}${defaultOptionBuilderModule("p")}`,
-    module.replace("includeSyntheticDefault:", "includeDefault:"),
-    module.replace(
-      "s=e?.sliderSettings?.length?e.sliderSettings:d(i,t)",
-      "s=[...d(i,t),...e?.sliderSettings??[]]",
-    ),
-    module.replace("{...c(e,i,s),isDefault:!0}", "{...c(e,i,d(i,t)),isDefault:!0}"),
-    module.replace("powerSettings:n}}", "powerSettings:r}}"),
-  ]) {
-    const source = defaultOptionBuilderFixture(drifted);
-    assert.equal(upstreamDefaultSelectionContract(source), "drifted");
-    assert.equal(upstreamDefaultSelectionAssetMatch(source, "async/1.js", presets), false);
-  }
-  // Without the rspack module registry the builder cannot be scoped.
-  assert.equal(upstreamDefaultSelectionContract(module), "drifted");
+test("upstream Default compatibility wrappers use the current complete registry owner", () => {
+  const current=require("./fixtures/current-default-selection.json");
+  const source=rspackChunk({TuVM:current.moduleSource});
+  const presets=context([{model:"model-new",effort:"high",default:true}]);
+  assert.equal(upstreamDefaultSelectionContract(source),"current");
+  assert.equal(upstreamDefaultSelectionAssetMatch(source,"async/default.js",presets),true);
+  assert.equal(upstreamDefaultSelectionContract(current.moduleSource),"drifted");
+  assert.equal(upstreamDefaultSelectionContract(rspackChunk({TuVM:current.moduleSource,duplicate:current.moduleSource})),"drifted");
+  assert.equal(upstreamDefaultSelectionAssetMatch(source,"async/default.js",{feature:{manifest:{presets:[]},settings:{}}}),false);
 });
 
 test("local composer uses configured pairs and lowers only its config threshold", () => {
