@@ -6,15 +6,12 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const vm = require("node:vm");
 
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 const { patchExtractedApp } = require("../../scripts/patches/runner.js");
 const {
   EFFORT_TO_THINKING_EFFORT,
-  LOCAL_DEFAULT_PATCH_MARKER,
-  LOCAL_COMPOSER_CONFIG_MARKER,
   applyLocalComposerConfigPatch,
   normalizePresets,
   localComposerConfigContract,
@@ -39,32 +36,6 @@ function rspackChunk(modules) {
     Object.entries(modules).map(([id, body]) => `${id}(e,t,n){${body}}`).join(","),
     "};",
   ].join("");
-}
-
-// Evaluates one factory of an rspack chunk fixture and returns its exports.
-function localComposerFixture(name = "LocalComposer") {
-  return [
-    `function ${name}(available,serverConfig,conversationId,manualSelection){`,
-    "let host={hostId:`local`,cwd:`/repo`},hostId=host.hostId;",
-    "modelsForPicker(available);let{setDefaultModelAndReasoningEffort:setDefault}=selection,draftSelection=null;",
-    "let He=available.find(Wqr),Ue=Power(available,{includeUltraInSlider:true,sliderModelsConfig:hosted?hostedConfig:serverConfig,stripGptPrefix:true}),",
-    "Ge=Ue,Ke=(0,Picker.zae)(Ge,null==He?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
-    "picker({resetContextKey:JSON.stringify([conversationId,hostId,host.cwd])});",
-    "composer.mode.local.model.custom;async function choose(e,t){let n=normalize(e);await (null==draftSelection?select(n,t):draftSelection.setModelAndReasoningEffort(n,t))}",
-    "function normalize(e){return e}let selected=manualSelection?choose(`gpt-5.6-sol`,`high`):null;",
-    "let reset=(0,Picker.zae)(Ue,null==He?void 0:`${He.model}:${He.defaultReasoningEffort}`);",
-    "render({onSelectDefault:reset});",
-    "return{powerSelections:Ue,fallback:Ke,reset,selected}}",
-    "function Next(){}",
-  ].join("");
-}
-
-function evaluate(source, expression, globals = {}) {
-  return vm.runInNewContext(`${source};${expression}`, globals);
-}
-
-function plain(value) {
-  return JSON.parse(JSON.stringify(value));
 }
 
 function withCapturedWarnings(callback) {
@@ -148,258 +119,11 @@ test("upstream Default compatibility wrappers use the current complete registry 
   assert.equal(upstreamDefaultSelectionAssetMatch(source,"async/default.js",{feature:{manifest:{presets:[]},settings:{}}}),false);
 });
 
-test("local composer config supplies configured pairs and fallback", () => {
-  const presets = context([
-    { model: "gpt-5.6-sol", effort: "medium", default: true },
-    { model: "gpt-5.6-sol", effort: "high" },
-    { model: "gpt-6-astra", effort: "high" },
-  ]);
-  const available = [
-    { model: "gpt-5.6-sol", reasoningEffort: "high" },
-    { model: "gpt-5.6-sol", reasoningEffort: "xhigh" },
-  ];
-  const composerSource = localComposerFixture();
-  assert.equal(localComposerConfigContract(composerSource), "current");
-  const patchedComposer = applyLocalComposerConfigPatch(composerSource, presets);
-  assert.equal(localComposerConfigContract(patchedComposer), "applied");
-  assert.equal(applyLocalComposerConfigPatch(patchedComposer, presets), patchedComposer);
-  assert.equal(
-    (patchedComposer.match(new RegExp(LOCAL_COMPOSER_CONFIG_MARKER, "g")) ?? []).length,
-    1,
-  );
-  assert.match(patchedComposer, /gpt-5\.6-sol:medium/);
-  assert.ok(patchedComposer.includes(
-    "sliderModelsConfig:(hosted?hostedConfig:serverConfig)==null?" +
-      "(hosted?hostedConfig:serverConfig):codexLinuxLocalDefaultPresetConfig",
-  ));
-  const runComposer = ({
-    available,
-    conversationId = null,
-    hookState = { refs: [] },
-    hosted = false,
-    hostedConfig = null,
-    serverConfig = {},
-    manualSelection = false,
-  }) => {
-    const effects = [];
-    const selections = [];
-    let refIndex = 0;
-    const globals = {
-      React: {
-        useEffect(effect) {
-          effects.push(effect);
-        },
-        useRef(value) {
-          const index = refIndex++;
-          hookState.refs[index] ??= { current: value };
-          return hookState.refs[index];
-        },
-      },
-      available,
-      composer: { mode: { local: { model: { custom: null } } } },
-      conversationId,
-      draft: null,
-      hosted,
-      hostedConfig,
-      manualSelection,
-      modelsForPicker() {},
-      picker() {},
-      render() {},
-      selection: { setDefaultModelAndReasoningEffort() {} },
-      serverConfig,
-      Wqr: ({ isDefault }) => isDefault === true,
-      Picker: {
-        zae: (selections, id) =>
-          selections.find((selection) => selection.id === id) ?? selections[0],
-      },
-      Power: (models, { sliderModelsConfig }) => {
-        if (sliderModelsConfig == null) return models;
-        const availableIds = new Set(models.map(({ id }) => id));
-        const configured = sliderModelsConfig.presets[0].flatMap(
-          ({ model, reasoning_effort: effort }) => {
-            const id = `${model}:${effort}`;
-            return availableIds.has(id) ? [{ id, model, reasoningEffort: effort }] : [];
-          },
-        );
-        return configured.length > 0 ? configured : models;
-      },
-      select: (model, effort, _callback, options) => {
-        selections.push({ effort, model, options });
-        return options ?? null;
-      },
-    };
-    const result = plain(
-      evaluate(
-        patchedComposer,
-        "LocalComposer(available,serverConfig,conversationId,manualSelection)",
-        globals,
-      ),
-    );
-    for (const effect of effects) effect();
-    return { result, selections: plain(selections) };
-  };
-  const unavailableDefault = runComposer({
-    available: [
-      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
-      {
-        id: "upstream:medium",
-        model: "upstream",
-        defaultReasoningEffort: "medium",
-        isDefault: true,
-      },
-    ],
-  });
-  assert.equal(unavailableDefault.result.fallback.id, "gpt-5.6-sol:high");
-  assert.equal(unavailableDefault.result.reset.id, "gpt-5.6-sol:high");
-  assert.deepEqual(unavailableDefault.selections, []);
-
-  const hostedConfigured = runComposer({
-    available: [
-      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
-      { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
-    ],
-    hosted: true,
-    hostedConfig: {},
-    serverConfig: null,
-  });
-  assert.equal(hostedConfigured.result.fallback.id, "gpt-5.6-sol:medium");
-  assert.deepEqual(
-    hostedConfigured.result.powerSelections.map(({ id }) => id),
-    ["gpt-5.6-sol:medium", "gpt-5.6-sol:high"],
-  );
-
-  const configuredDefault = runComposer({
-    available: [
-      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
-      { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
-    ],
-  });
-  assert.deepEqual(configuredDefault.selections, []);
-
-  const gatedOut = runComposer({
-    available: [
-      {
-        id: "upstream:medium",
-        model: "upstream",
-        defaultReasoningEffort: "medium",
-        isDefault: true,
-      },
-    ],
-    serverConfig: null,
-  });
-  assert.equal(gatedOut.result.fallback.id, "upstream:medium");
-  assert.equal(gatedOut.result.reset.id, "upstream:medium");
-  assert.deepEqual(gatedOut.selections, []);
-
-  const gatedManualSelection = runComposer({
-    available: [
-      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
-    ],
-    manualSelection: true,
-    serverConfig: null,
-  });
-  assert.deepEqual(gatedManualSelection.selections, [
-    { effort: "high", model: "gpt-5.6-sol" },
-  ]);
-
-  const completeFallback = runComposer({
-    available: [
-      {
-        id: "upstream:medium",
-        model: "upstream",
-        defaultReasoningEffort: "medium",
-        isDefault: true,
-      },
-    ],
-  });
-  assert.equal(completeFallback.result.fallback.id, "upstream:medium");
-  assert.equal(completeFallback.result.reset.id, "upstream:medium");
-  assert.deepEqual(completeFallback.selections, []);
-
-  const existingConversation = runComposer({
-    available: [
-      { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
-    ],
-    conversationId: "existing",
-  });
-  assert.deepEqual(existingConversation.selections, []);
-
-  const existingConfiguredSelection = runComposer({
-    available: [
-      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
-    ],
-    conversationId: "existing",
-    manualSelection: true,
-  });
-  assert.deepEqual(existingConfiguredSelection.selections, [
-    {
-      effort: "high",
-      model: "gpt-5.6-sol",
-    },
-  ]);
-
-  const lifecycleHooks = { refs: [] };
-  const lifecycleAvailable = [
-    { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
-  ];
-  const firstDraft = runComposer({ available: lifecycleAvailable, hookState: lifecycleHooks });
-  const createdConversation = runComposer({
-    available: lifecycleAvailable,
-    conversationId: "created",
-    hookState: lifecycleHooks,
-  });
-  const nextDraft = runComposer({ available: lifecycleAvailable, hookState: lifecycleHooks });
-  assert.equal(firstDraft.selections.length, 0);
-  assert.equal(createdConversation.selections.length, 0);
-  assert.equal(nextDraft.selections.length, 0);
-
-  const manuallySelected = runComposer({
-    available: [
-      { id: "gpt-5.6-sol:medium", model: "gpt-5.6-sol", reasoningEffort: "medium" },
-      { id: "gpt-5.6-sol:high", model: "gpt-5.6-sol", reasoningEffort: "high" },
-    ],
-    manualSelection: true,
-  });
-  assert.deepEqual(manuallySelected.selections, [
-    {
-      effort: "high",
-      model: "gpt-5.6-sol",
-    },
-  ]);
-});
-
-test("local composer patches fail closed on drift, duplicate, and partial states", () => {
-  const presets = context([{ model: "gpt-5.6-sol", effort: "medium", default: true }]);
-  for (const [apply, fixture, marker] of [
-    [applyLocalComposerConfigPatch, localComposerFixture, LOCAL_COMPOSER_CONFIG_MARKER],
-  ]) {
-    for (const source of [
-      "function unrelated(){}",
-      fixture("One") + fixture("Two"),
-      `${marker};${fixture()}`,
-      fixture().replace(
-        "[conversationId,hostId,host.cwd]",
-        "[conversationId,host.hostId,host.cwd]",
-      ),
-    ]) {
-      const { result, warnings } = withCapturedWarnings(() => apply(source, presets));
-      assert.equal(result, source);
-      assert.equal(warnings.length, 1);
-    }
-  }
-
-  const driftedComposer = localComposerFixture().replace(
-    /let reset=\(0,Picker\.zae\)\([^;]+;/u,
-    "let reset=null;",
-  );
-  const decoy =
-    "function Decoy(y,z){let x=(0,Picker.zae)(y,null==z?void 0:`${z.model}:${z.defaultReasoningEffort}`);return x}";
-  const driftedWithDecoy = driftedComposer + decoy;
-  const { result, warnings } = withCapturedWarnings(() =>
-    applyLocalComposerConfigPatch(driftedWithDecoy, presets),
-  );
-  assert.equal(result, driftedWithDecoy);
-  assert.equal(warnings.length, 1);
+test("local composer compatibility wrappers require the actual registry and exact config replay",()=>{
+ const current=require("./fixtures/current-composer-config.json"),source=`export const __webpack_modules__={cyhU(${current.params}){${current.moduleSource}}};`,presets=context([{model:"model-new",effort:"high",default:true}]);
+ assert.equal(localComposerConfigContract(source,presets),"current");
+ const patched=applyLocalComposerConfigPatch(source,presets);assert.equal(localComposerConfigContract(patched,presets),"applied");assert.equal(applyLocalComposerConfigPatch(patched,presets),patched);
+ assert.equal(localComposerConfigContract(current.moduleSource,presets),"drifted");assert.throws(()=>applyLocalComposerConfigPatch(current.moduleSource,presets));
 });
 
 test("empty manifest leaves the slider descriptor disabled", () => {

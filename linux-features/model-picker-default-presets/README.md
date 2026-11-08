@@ -3,7 +3,7 @@
 This opt-in feature replaces the server-provided **Default** model-picker slider
 for ChatGPT-authenticated chats with an ordered list of model and reasoning
 effort pairs. It does not change the manual model list, API-key, Copilot, or
-Aeon-managed sessions, account entitlements, workspace policy, or upstream
+native managed-provider routing, account entitlements, workspace policy, or upstream
 Ultra/XHigh gates.
 
 For an existing chat, a configured choice stays visible after its native write
@@ -179,7 +179,8 @@ The slider uses that same qualified picker and native reset dependency, prepares
 every physical copy, and accepts only its exact configured helper and two
 threshold changes. Hidden damage, mixed or orphan contributions refuse the
 cohort before writes; a later write fault restores every attempted file.
-The local composer is patched in one chunk. Upstream inlines the model-settings
+The composer config descriptor prepares every physical caller copy before one
+transaction. Upstream inlines the model-settings
 hook into every composer surface. The existing-chat patch qualifies every
 physical settings copy and its actual native queue, target, metadata, and React
 hook references before one transaction. Its exact inverse and replay must
@@ -200,12 +201,34 @@ mixed states, or orphan contributions before writes. The captured helpers must
 be actual synchronous module-level declarations, and the native static loader
 interop/publication calls must not be replaced by extra critical-method uses.
 
-The local composer takes its slider config from either of two ChatGPT-gated
-upstream sources; the configured list
-replaces whichever one is active. An enabled feature's descriptor mismatch
-rejects the build/update candidate and preserves the working installation.
-The composer context requires the current separate host-ID binding; the retired
-host-object context shape is rejected.
+The composer keeps its two native config sources. Without a cloud context,
+the caller selects the local source only for host ChatGPT auth and outside its
+native Aeon delegate guard. That source also keeps the local-host,
+active-profile/provider, model-catalog and reserve-mode checks. A non-null cloud
+context selects the global source, which uses global ChatGPT auth loading,
+token, account and user checks. Host auth and global auth remain separate;
+the feature adds no blanket managed/cloud exclusion. The configured list is
+substituted only after the selected native parsed config is non-null. Native
+absence, rollout fallback and empty groups keep their upstream behavior.
+
+The runtime marker consumed by the local resolver is added to the feature-owned
+object after native schema parsing. The effective selected-profile query,
+its host/cwd cache key and the caller's host, permissions and context arguments
+remain native; no profile parameter or profile cache is added. Config data is
+serialized with escaped string literals so opaque model names cannot impersonate
+another feature's source marker, while runtime strings stay unchanged.
+
+The caller audit follows the actual native Default callback, model normalizer,
+per-conversation selector and fresh-selector memo dependency. The separately
+available account-default setter is not substituted for that route. The native
+home bridge, client-ready/availability checks and reset calls stay unchanged.
+Configured pairs still pass through the native local resolver's supported-pair
+intersection; unsupported pairs are never synthesized here. Missing, hidden,
+mixed, stale or partial owner/dependency copies fail before writes. A partial
+write restores every attempted asset and its mode. Exact inverse/replay retains
+sibling contributions, including the canonical Copilot dropdown gate, and the
+composer retains the separate host-ID context binding.
+
 The upstream Default-selection descriptor is a read-only extracted-app audit.
 It qualifies the synchronous native declarations behind the published Default,
 ordinary-version, common-pair, and model-predicate paths, every physical copy,

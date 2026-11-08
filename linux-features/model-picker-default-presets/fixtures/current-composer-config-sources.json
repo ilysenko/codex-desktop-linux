@@ -1,0 +1,70 @@
+{
+  "version": "26.1103.32239",
+  "owners": {
+    "agZi": {
+      "moduleId": "agZi",
+      "params": [
+        "e",
+        "l",
+        "t"
+      ],
+      "start": 6657,
+      "end": 7445,
+      "moduleSource": "var i=t(\"SZCv\"),n=t.n(i),a=t(\"zTeN\"),o=t(\"OeLR\"),r=t(\"ASxG\"),s=t(\"tl5a\"),d=t(\"YWOa\"),u=t(\"SPnB\"),c=t(\"eLmE\"),f=t(\"OWtl\"),m=t(\"JYRT\");let g=r.object({presets:r.array(r.array(r.object({model:r.string().min(1),reasoning_effort:r.string().min(1)})))}),p=(0,a.un)(f.u,({get:e})=>{let l=e(u.PO);if(l.authLoading||\"chatgpt\"!==l.authMethod||!1===l.hasChatGptToken||null==l.authenticatedAccountId||null==l.userId)return null;let t=g.safeParse(e(m.X,\"423260384\")?.value);return t.success&&t.data.presets.some(e=>e.length>0)?t.data:null},{isEqual:n()}),h=(0,a.i1)(f.u,({conversationId:e,hostId:l,cwd:t},{get:i})=>{if(\"local\"!==l)return null;let n=i(d.J8,{hostId:l,cwd:t}).data;return null==n||(i(s.jR,e)??n.model_provider??\"openai\")!==\"openai\"||(0,o.bo)(n)||i(c.qM,l)?null:i(p)});t.d(l,{},{I:p,m:h})",
+      "bodySha256": "c6b295177ef3083bef00628c606574400b2efc892ee761675e03f0fa378fdb17",
+      "asset": "webview/assets/async/177472.42f91dd590.js"
+    },
+    "fNL0": {
+      "moduleId": "fNL0",
+      "params": [
+        "e",
+        "t",
+        "a"
+      ],
+      "start": 61997,
+      "end": 62052,
+      "moduleSource": "let n=(0,a(\"zd8w\").createContext)(null);a.d(t,{},{r:n})",
+      "bodySha256": "36622f32172a67db0bb489e3b3b852feaa7aaf72b9c73d86fc2ada5e0e4d62b4",
+      "asset": "webview/assets/async/161445.832141020f.js"
+    },
+    "OeLR": {
+      "moduleId": "OeLR",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "start": 10133,
+      "end": 11022,
+      "moduleSource": "var r=n(\"ASxG\");let a=r.record(r.string(),r.json()),i=348410==n.j?{otel:null}:null;function o(e){let t=a.safeParse(e);return t.success?t.data:null}n.d(t,{},{Bj:function({cwd:e=null,includeLayers:t=!1,...n}){return{cwd:e,includeLayers:t,...n}},JF:i,Y$:function(e){let t=o(e.profiles),n=\"string\"==typeof e.profile?o(t?.[e.profile]):null;if(null==n)return e;let r={...e};for(let[e,t]of Object.entries(n))null!=t&&(r[e]=t);return r},bo:function(e){return\"string\"==typeof e?.model_catalog_json&&e.model_catalog_json.trim().length>0},cc:function(e){let t=e?.model_provider,n=o(e?.model_providers);return\"string\"==typeof t&&null!=n&&Object.hasOwn(n,t)},pd:function(e,t,n){let r=n?`profiles.${n}.`:\"\";return{edits:[{keyPath:`${r}model`,value:e,mergeStrategy:\"upsert\"},{keyPath:`${r}model_reasoning_effort`,value:t,mergeStrategy:\"upsert\"}],filePath:null,expectedVersion:null,reloadUserConfig:!0}}})",
+      "bodySha256": "0bbd68b9d87896019f1eeee5b42ba76ae09c03dae793929a9a8851f6da71aef7",
+      "asset": "webview/assets/async/972499.b9f8eb2bc4.js"
+    },
+    "YWOa": {
+      "moduleId": "YWOa",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "start": 2235914,
+      "end": 2236630,
+      "moduleSource": "var r=n(\"S2r0\"),i=n(\"zTeN\"),a=n(\"OeLR\"),s=n(\"tl5a\"),o=n(\"wCOm\"),l=n(\"B81s\"),u=n(\"OWtl\"),d=n(\"rvFo\");let c=[\"user-saved-config\"];function p({scope:e,queryClient:t,hostId:n,cwd:i,enabled:a}){return(0,r.j)({enabled:a,queryFn:async()=>{try{let r=await (0,l.W9)(e,t,n,i,!1);return(0,o.Y$)(r.config)}catch{return null}},queryKey:[...c,n,i],staleTime:d.D.FIVE_MINUTES})}let h=(0,i.vU)(u.u,({cwd:e=null,hostId:t},{get:n,queryClient:r,scope:i})=>p({scope:i,queryClient:r,hostId:t,cwd:e,enabled:n(s.Dj).includes(t)}));n.d(t,{},{J8:h,Od:c,Tb:async function(e,t,n){let r=t.getQueryData([...c,n,null]);if(null!=r)return(0,a.bo)(r);try{let r=await (0,l.W9)(e,t,n,null,!1);return(0,a.bo)((0,o.Y$)(r.config))}catch{return!1}},lZ:p})",
+      "bodySha256": "1960e2c74acf81c1a5df78b6f4f53fa00724a7e2c56fe056367ed959d7a927ee",
+      "asset": "webview/assets/async/182735.d3d917f28d.js"
+    },
+    "wCOm": {
+      "moduleId": "wCOm",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "start": 2238501,
+      "end": 2238846,
+      "moduleSource": "var r=n(\"Fkn8\"),i=n(\"OeLR\"),a=n(\"Dgwo\");n.d(t,{Y$:()=>i.Y$,cc:()=>i.cc},{Xg:async function(e,t,n){let r={includeLayers:!1,cwd:t??null},a=null==n?await e.sendRequest(\"config/read\",r):await e.sendRequest(\"config/read\",r,n);return(0,i.Y$)(a.config)},ig:async function(e,t,n,i){let s=await (0,a.V)(e,t).readSerializedConfig(n,i);return(0,r.iu)(s)}})",
+      "bodySha256": "6652f74992303b4ece35b3b1b56216da22105b979f3f4fdac113a928e88406c5",
+      "asset": "webview/assets/async/182735.d3d917f28d.js"
+    }
+  }
+}
