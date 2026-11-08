@@ -31,9 +31,21 @@ remote-mobile-control descriptor: UP83 must adopt and verify its real adapter
 in both orders before combined mobile behavior is accepted. The UI feature has
 no source dependency on the disabled mobile feature directory.
 
-The experimental-filter descriptor keeps its separate asset contract. Neither
-UI transaction changes catalog data, account authorization, enrollment,
-connection lists, service ownership, or mobile-host runtime state.
+The experimental-setting transaction qualifies both published filter copies,
+the native toggle and settings-search callers, and their selected-host list and
+configuration-write owner. It removes only the `remote_control` exclusion.
+The native beta-stage requirement, memories, multi-agent, plugin, realtime,
+chronicle and workspace-dependency exclusions remain intact; the toggle caller
+also retains its separate Request user input exclusion. Provider values remain
+live symbolic reads. Complete canonical functions repeat unchanged; missing or
+changed callers/providers, partial copies, and stale dependency rows are
+rejected before an atomic commit. The previous bare flat-filter matcher is
+retired.
+
+These UI transactions do not change catalog data, account authorization,
+enrollment, feature values, connection lists, service ownership, or mobile-host
+runtime state. Experimental changes still use the original selected-host
+configuration mutation and its native error/invalidation behavior.
 
 Enable it locally in `linux-features/features.json` with:
 
