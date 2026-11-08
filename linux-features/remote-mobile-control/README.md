@@ -167,7 +167,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |
 | `linux-remote-control-status-read-guard` | `shared-boundary` | Sends `remoteControl/status/read` only to the local host, never Remote SSH or remote-control environment hosts. |
 | `linux-remote-control-status-wait` | `shared-boundary` | Gives the selected host a Linux-specific connection convergence window without changing host ownership. |
-| `linux-remote-control-enable-for-host-params` | `shared-boundary` | Uses the current enable/disable RPC parameter contract without choosing which host is targeted. |
+| `linux-remote-control-enable-for-host-params` | `shared-boundary` | Qualifies the native selected-host client, status mapper and public fallback caller, then emits parameterless enable/disable requests without changing host choice. |
 | `linux-remote-control-enablement-bridge` | `shared-boundary` | Enables the current outbound remote-connections service on Linux without changing its service-owned auto-connect choices. |
 | `linux-remote-control-auto-connect-contract` | `outbound-control` | Validates the unique upstream service and settings caller that preserve an explicit auto-connect choice. |
 | `linux-remote-mobile-active-status` | `mobile-host` | Derives mobile active state from the local thread runtime. |
@@ -193,10 +193,12 @@ either order, preserve each other's bytes, and repeat unchanged. Their optional
 feature folders do not depend on one another.
 
 The official webview is an rspack build whose app code lives in lazily loaded
-`webview/assets/async/<id>.<hash>.js` chunks. Webview descriptors select their
-chunks by stable strings (Statsig gate ids, RPC methods, log messages, i18n
-ids), never by file name. Modules that rspack duplicates into several chunks
-(the visibility owner and the host toggle request) are patched in every copy.
+`webview/assets/async/<id>.<hash>.js` chunks. Cohort descriptors qualify their
+current module owners, physical copies and provider/caller dependencies before
+writing. Ordinary webview descriptors select chunks by stable strings (Statsig
+gate ids, RPC methods, log messages, i18n ids), never by file name. Modules that
+rspack duplicates into several chunks (the visibility owner and the host toggle
+request) are patched in every copy.
 Injected helpers are declared inside the owning module factory and reach other
 modules only through that module's own import bindings.
 
@@ -357,3 +359,12 @@ The community feature catalog lists these user-facing capabilities separately:
 These declarations use `enabledWhen: "parent"`: all are included whenever this
 feature is built. They add no independent configuration switches and do not
 report runtime activation, permissions, external dependencies or backend health.
+
+The per-host enable/disable adapter is prepared as a complete Rspack cohort
+before the ordinary webview pass. Every physical request copy and its native
+client/status/caller dependencies must qualify together; a partial or damaged
+peer is rejected before writes. The adapter preserves the native current-client
+and later-notification race checks, response value and errors. Its only request
+change is `null` to `void 0`. The separate local Desktop `appServices` branch,
+outbound enrollment, permission/MFA policy and native wait lifetime remain
+upstream-owned. A bare `sendRequest` substring is not a supported source contract.

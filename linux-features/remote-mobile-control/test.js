@@ -402,12 +402,12 @@ function syntheticAppMainEnablementBridgeBundle() {
   ].join("");
 }
 
-// The host toggle request module (embedded in every chunk offering the toggle).
-function syntheticCurrentAppMainEnablementBridgeBundle() {
-  return [
-    syntheticAppMainEnablementBridgeBundle(),
-    'async function s(e,t,n,{shouldApplyStatus:r=()=>!0}={}){let o=e.get(i.AP,t),l=await (0,a.V)(e,t).sendRequest(n?"remoteControl/enable":"remoteControl/disable",null),c=e.get(i.AP,t);return!r()||(0,i.Lt)(e,t,l),l}',
-  ].join("");
+// Actual bounded current native module. Adjacent owner tests execute only
+// its request callback with injected providers; no Desktop bootstrap or RPC.
+function currentHostToggleRegistry(moduleIds = ["WbV5"], targetCopy = 0) {
+  const modules = require("./fixtures/current-host-toggle.json").modules;
+  const rows = moduleIds.map(id => modules.filter(row => row.moduleId === id)[id === "WbV5" ? targetCopy : 0]);
+  return `export const __webpack_modules__={${rows.map(row => `${JSON.stringify(row.moduleId)}(${row.params.join(",")}){${row.moduleSource}}`).join(",")}};`;
 }
 
 function syntheticAutoConnectServiceBundle() {
@@ -950,6 +950,10 @@ const RSPACK_REMOTE_MOBILE_ASSETS = {
   settings: "async/14625.95f35fcee5.js",
   mobileSetup: "async/996150.d04d0c8dc8.js",
   bridge: "async/855047.05049c3449.js",
+  hostToggle: "async/24194.1111111111.js",
+  hostToggleCopy: "async/24195.2222222222.js",
+  hostToggleProviders: "async/24196.3333333333.js",
+  hostToggleCaller: "async/24197.4444444444.js",
   activeStatus: "async/86296.cc31aba811.js",
 };
 const RSPACK_REMOTE_MOBILE_MAIN = {
@@ -983,7 +987,11 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
     settings: syntheticCurrentRevokeSetupResetBundle() + syntheticRemoteConnectionsSettingsCopyBundle() +
       syntheticOutboundTabGateBundle() + syntheticCurrentSettingsRefreshBundle(),
     mobileSetup: syntheticMobileSetupDialogCopyBundle() + syntheticMobileSetupDialogComputerUseBundle(),
-    bridge: syntheticCurrentAppMainEnablementBridgeBundle(),
+    bridge: syntheticAppMainEnablementBridgeBundle(),
+    hostToggle: currentHostToggleRegistry(),
+    hostToggleCopy: currentHostToggleRegistry(["WbV5"], 1),
+    hostToggleProviders: currentHostToggleRegistry(["Dgwo", "ihPm"]),
+    hostToggleCaller: currentHostToggleRegistry(["UIre"]),
     activeStatus: syntheticAppMainActiveStatusBundle(),
     ...overrides.assets,
   };
@@ -1013,7 +1021,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-terminal-status-recovery", "webview-asset"],
       ["linux-remote-control-status-read-guard", "webview-asset"],
       ["linux-remote-control-status-wait", "webview-asset"],
-      ["linux-remote-control-enable-for-host-params", "webview-asset"],
+      ["linux-remote-control-enable-for-host-params", "extracted-app:pre-webview"],
       ["linux-remote-control-enablement-bridge", "webview-asset"],
       ["linux-remote-control-auto-connect-contract", "extracted-app:post-webview"],
       ["linux-remote-mobile-active-status", "webview-asset"],
@@ -1037,7 +1045,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "linux-remote-terminal-status-recovery": syntheticRemoteTerminalStatusBundle(),
       "linux-remote-control-status-read-guard": syntheticAppServerManagerStatusBundle(),
       "linux-remote-control-status-wait": syntheticCurrentStatusWaitBundle(),
-      "linux-remote-control-enable-for-host-params": syntheticCurrentAppMainEnablementBridgeBundle(),
       "linux-remote-control-enablement-bridge": syntheticAppMainEnablementBridgeBundle(),
       "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
     };
@@ -1056,7 +1063,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     }
     const byId = (id) => descriptors.find((descriptor) => descriptor.id === `feature:remote-mobile-control:${id}`);
     // Modules duplicated across chunks are patched in every copy.
-    for (const id of ["linux-remote-control-visibility", "linux-remote-control-enable-for-host-params", "linux-remote-control-copy"]) {
+    for (const id of ["linux-remote-control-visibility", "linux-remote-control-copy"]) {
       assert.equal(byId(id).assetMatch, undefined, id);
     }
     const hydration = byId("linux-remote-mobile-conversation-hydration");
@@ -2669,48 +2676,21 @@ test("Linux remote-control enablement bridge waits for current gates to load", (
   assert.equal(runEnablementBridge(patched, { isLoading: true }).length, 0);
 });
 
-test("Linux remote-control host toggle omits params for the current request module", async () => {
-  const source = syntheticCurrentAppMainEnablementBridgeBundle();
+test("Linux remote-control host toggle public String entry delegates the qualified current module", () => {
+  const source = currentHostToggleRegistry();
   const patched = applyLinuxRemoteControlEnableForHostParamsPatch(source);
-
   assert.notEqual(patched, source);
   assert.match(patched, /"remoteControl\/disable",void 0\/\*codexLinuxRemoteControlEnableForHostParams\*\/\)/);
-  assert.doesNotMatch(patched, /"remoteControl\/disable",null/);
   assert.equal(applyLinuxRemoteControlEnableForHostParamsPatch(patched), patched);
-  // The bridge and the toggle are separate contracts.
-  assert.equal(applyLinuxRemoteControlEnablementBridgePatch(patched).includes("codexLinuxRemoteControlEnableForHostParams"), true);
-
-  const calls = [];
-  const statuses = [];
-  const context = {
-    i: { AP: "status", Lt: (_store, _host, status) => statuses.push(status) },
-    a: { V: () => ({
-      sendRequest(method, params) {
-        calls.push({ method, params });
-        return Promise.resolve({ status: "enabled" });
-      },
-    }) },
-    store: { get: () => null },
-  };
-  await vm.runInNewContext(`${patched};s(store,"local",true);`, context);
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].method, "remoteControl/enable");
-  assert.equal(calls[0].params, undefined);
-  assert.deepEqual(JSON.parse(JSON.stringify(statuses)), [{ status: "enabled" }]);
 });
 
-test("Linux remote-control host toggle params patch warns when its request drifts", () => {
-  const current = syntheticCurrentAppMainEnablementBridgeBundle();
-  for (const source of [
-    'async function s(e,t,n){return(0,a.V)(e,t).sendRequest((n?"remoteControl/enable":"remoteControl/disable"),null)}',
-    current + current,
-    current + "/*codexLinuxRemoteControlEnableForHostParams*/",
-  ]) {
-    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlEnableForHostParamsPatch(source));
-    assert.equal(result, source);
-    assert.ok(warnings.some((warning) => warning.includes("unique remote-control enable-for-host request")));
-  }
+test("Linux remote-control host toggle rejects the retired bare request and incomplete contributions", () => {
+  const source = currentHostToggleRegistry();
+  for (const bad of [
+    'async function unused(e,t,n){return(0,a.V)(e,t).sendRequest(n?"remoteControl/enable":"remoteControl/disable",null)}',
+    source.replace('"remoteControl/enable"', '"unrelated/enable"'),
+    source + "/*codexLinuxRemoteControlEnableForHostParams*/",
+  ]) assert.throws(() => applyLinuxRemoteControlEnableForHostParamsPatch(bad));
 });
 
 test("Linux remote-control enablement bridge preserves service-owned auto-connect choices", async () => {
@@ -3463,7 +3443,10 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(signals, /codexLinuxRemoteMobileReasoningSummaryNone/);
         assert.match(signals, /codexLinuxRemoteMobileConversationHydration/);
         assert.match(readAsset("bridge"), /codexLinuxRemoteControlEnablementBridge/);
-        assert.match(readAsset("bridge"), /codexLinuxRemoteControlEnableForHostParams/);
+        for (const key of ["hostToggle", "hostToggleCopy"]) {
+          assert.match(readAsset(key), /codexLinuxRemoteControlEnableForHostParams/);
+        }
+        assert.equal(readAsset("hostToggleCaller"), currentHostToggleRegistry(["UIre"]));
         assert.match(readAsset("activeStatus"), /codexLinuxRemoteMobileActiveStatus/);
 
         const statuses = Object.fromEntries(report.patches

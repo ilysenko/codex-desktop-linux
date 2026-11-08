@@ -1,0 +1,71 @@
+{
+  "version": "26.1103.32239",
+  "provenance": "Signed retained original ASAR sources; bounded native modules, not synthetic production snapshots",
+  "modules": [
+    {
+      "asset": "webview/assets/async/366057.b32c7c19c0.js",
+      "moduleId": "WbV5",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "var a=n(\"Dgwo\"),i=n(\"ihPm\");n.d(t,{},{p:async function(e,t,n,{shouldApplyStatus:r=()=>!0}={}){let s=e.get(i.AP,t),o=await (0,a.V)(e,t).sendRequest(n?\"remoteControl/enable\":\"remoteControl/disable\",null),l=e.get(i.AP,t),c=l!==s&&(l?.status===\"connected\"||l?.status===\"errored\");return!r()||n&&c||(0,i.Lt)(e,t,o),o}})",
+      "rawAssetSha256": "57b63a09e1c5ec3742492871e19cfe832ae1bcfefa8be2859ce8de1de5f3abad",
+      "rawAssetBytes": 664139,
+      "bodySha256": "6a00cce42dbe21b052a8a5ca0621c06b3b569d4050cb338f8f22e32246f7f144"
+    },
+    {
+      "asset": "webview/assets/async/621444.df9b29bc75.js",
+      "moduleId": "WbV5",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "var o=n(\"Dgwo\"),s=n(\"ihPm\");n.d(t,{},{p:async function(e,t,n,{shouldApplyStatus:i=()=>!0}={}){let r=e.get(s.AP,t),a=await (0,o.V)(e,t).sendRequest(n?\"remoteControl/enable\":\"remoteControl/disable\",null),l=e.get(s.AP,t),c=l!==r&&(l?.status===\"connected\"||l?.status===\"errored\");return!i()||n&&c||(0,s.Lt)(e,t,a),a}})",
+      "rawAssetSha256": "07075e37b3fb33fdf29ef6bb0e648551fca3d3d9b08fb665bc8d455273c26d04",
+      "rawAssetBytes": 204078,
+      "bodySha256": "dc93d129330aabea92543cfdfe7320b7616e6565b163fa527b866b7a43a18768"
+    },
+    {
+      "asset": "webview/assets/async/996150.cedcc632ff.js",
+      "moduleId": "UIre",
+      "params": [
+        "e",
+        "r",
+        "t"
+      ],
+      "moduleSource": "var c=t(\"WbV5\"),l=t(\"ihPm\"),i=t(\"GaA7\"),o=t(\"kfGJ\"),n=t(\"yFN5\");async function a(e,r,t){let l=i.appServices.remoteControlEnvironments;return null!=l&&r===o.fI?(await l.setLocalEnabled({enabled:t}),(0,n.V)(e,t,{force:!0})):(0,c.p)(e,r,t)}t.d(r,{},{A:async function(e,r,t){if(!t)return a(e,r,!1);(0,l.UV)(e,r,!1);let c=(0,l.Hf)(e,r,{ignoreCurrentError:!0});try{let t=a(e,r,!0);return await Promise.race([c,t.then(()=>c)])}catch(t){throw(0,l.UV)(e,r,!0),t}}})",
+      "rawAssetSha256": "49634ee5dfdcf05b09f1e9f3a598ab106e12f90d9242d92cc2944a251a07d6c2",
+      "rawAssetBytes": 128924,
+      "bodySha256": "f114b405c7d74566f6d8348d84f2c98cd74a8a9168ab3b3500c0e9a92e9f8e40"
+    },
+    {
+      "asset": "webview/assets/async/182735.d3d917f28d.js",
+      "moduleId": "Dgwo",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "var r=n(\"SRbQ\"),i=n(\"Fkn8\"),a=n(\"zTeN\"),s=n(\"DBCl\"),o=n(\"l00C\"),l=n(\"CfsC\"),u=n(\"OWtl\");let d=(0,a.vP)(u.u,()=>null),c=(0,a.bD)(u.u,e=>null);n.d(t,{},{V:function(e,t){let n={stack:[],error:void 0,hasError:!1};try{let a,u=e.get(o.M4,t),p=e.get(d);if(null!=p&&\"disconnected\"!==u.status&&(\"unavailable\"!==u.status||!e.get(l.D).includes(t)))try{return p.forHost(t)}catch{}let{client:h}=u;if(null!=h)return h.rpc;let f=e.get(c,t);if(null!=f)return f;let m=(0,s.udX)(),_=(0,r.mS)(n,new i.AX(()=>m.promise),!1),g=(0,r.mS)(n,_(),!1).dup();g.onRpcBroken(()=>{}),e.set(c,t,()=>g);let v=null,y=null!=p,E=!1,I=!1,C=()=>{I=!0,a?.()},T=()=>{I||null!=v||(C(),e.set(c,t,null),m.reject(Error(`AppServerManager RPC is unavailable for hostId: ${t}`)))};return a=e.watch(({get:n})=>{let r=n(o.M4,t),i=n(d),a=n(l.D).includes(t);E=E||a,y=y||null!=i;let s=\"request-only\"===r.status?r.requestClient:r.client;if(null!=v){s!==v&&(C(),g[Symbol.dispose]());return}null!=s?(v=s,e.set(c,t,null),m.resolve(v.rpc.dup())):null==i&&(y||\"disconnected\"===r.status)?T():(null!=i||E)&&!a&&queueMicrotask(()=>{e.get(l.D).includes(t)||T()})}),I&&a(),g}catch(e){n.error=e,n.hasError=!0}finally{(0,r.hk)(n)}},p:d})",
+      "rawAssetSha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
+      "rawAssetBytes": 8273821,
+      "bodySha256": "526ed71b97d1f182a64f1416dcab4f2b04da29f2efe5a57229a2a5b0c14a10fa"
+    },
+    {
+      "asset": "webview/assets/async/182735.d3d917f28d.js",
+      "moduleId": "ihPm",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "var r=n(\"zTeN\"),i=n(\"dbK8\"),a=n(\"q77y\"),s=n(\"OWtl\"),o=n(\"WFY2\");class l extends Error{constructor(){super(\"Remote control failed to connect\"),this.name=\"RemoteControlConnectionFailedError\"}}let u=(0,r.bD)(s.u,e=>null),d=(0,r.bD)(s.u,e=>!1),c=(0,r.i1)(s.u,(e,{get:t})=>{let n=t(u,e);return!t(d,e)&&(n?.status===\"connecting\"||n?.status===\"connected\")});function p(e,t,n){n?.status===\"connected\"&&e.set(d,t,!1),e.set(u,t,n)}function h(e,t){if(null==e||\"connecting\"===e.status||\"disabled\"===e.status||e===t)return null;switch(e.status){case\"connected\":return e;case\"errored\":return new l}}n.d(t,{},{AP:u,Hf:function(e,t,{ignoreCurrentError:n=!1}={}){let r=e.get(u,t),i=n&&r?.status===\"errored\"?r:null,a=h(r,i);return a instanceof Error?Promise.reject(a):null!=a?Promise.resolve(a):new Promise((n,r)=>{let a,s=!1,o=e=>{s||(s=!0,clearTimeout(l),a?.(),e instanceof Error?r(e):n(e))},l=setTimeout(()=>{o(Error(\"Timed out waiting for remote control to connect\"))},5e3);a=e.watch(({get:e})=>{let n=h(e(u,t),i);null!=n&&o(n)}),s&&a()})},Lt:p,TV:l,UL:function(e,t,n,r){let s;if((0,i.C)(t))return()=>{};let l=new AbortController,d=()=>!l.signal.aborted&&(r?.()??!0),c=e.get(u,t),h=n.subscribe({type:\"notification\",key:{hostId:t},methods:\"remoteControl/status/changed\",listener:({params:n})=>{d()&&p(e,t,n)}}),f=()=>{l.signal.aborted||(l.abort(),h[Symbol.dispose](),s?.[Symbol.dispose]())};return h.onRpcBroken(f),h.then(e=>{d()?(s=e,e.onRpcBroken(f)):e[Symbol.dispose]()},f),(0,a.P)(n.sendRequest(\"remoteControl/status/read\",void 0),l.signal).then(n=>{e.get(u,t)===c&&d()&&p(e,t,n)}).catch(e=>{d()&&o.v.error(\"Failed to read remote-control status\",{safe:{},sensitive:{error:e}})}),f},UV:function(e,t,n){e.set(d,t,n)},Zg:c})",
+      "rawAssetSha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
+      "rawAssetBytes": 8273821,
+      "bodySha256": "6231696d02c0332edf1810ce1b527f508534b361cae5e119ba38aad3dadcf3aa"
+    }
+  ]
+}

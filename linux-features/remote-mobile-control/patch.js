@@ -6,6 +6,7 @@ const { findMainProcessChunks, listWebviewScriptAssets } = require("../../script
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { prepareDeviceKeySource, applyDeviceKeyToExtractedApp } = require("./device-key-owner.js");
 const { prepareRemoteLoadGateSource, applyRemoteLoadGate } = require("./remote-load-gate.js");
+const { applyHostToggleSource, applyHostTogglePatch } = require("./host-toggle.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
@@ -18,7 +19,6 @@ const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningS
 const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
   "codexLinuxRemoteMobileConversationHydration";
 const REMOTE_CONTROL_ENABLEMENT_BRIDGE_MARKER = "codexLinuxRemoteControlEnablementBridge";
-const REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER = "codexLinuxRemoteControlEnableForHostParams";
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
 const REMOTE_MOBILE_ACTIVE_STATUS_MARKER = "codexLinuxRemoteMobileActiveStatus";
 const REMOTE_CONTROL_STATUS_READ_GUARD_MARKER = "codexLinuxRemoteControlShouldReadStatus";
@@ -949,23 +949,10 @@ function applyLinuxRemoteControlEnablementBridgePatch(source) {
   return source.slice(0, needleIndex) + replacement + source.slice(needleIndex + needle.length);
 }
 
-const REMOTE_CONTROL_ENABLE_FOR_HOST_PATTERN =
-  /(\.sendRequest\([A-Za-z_$][\w$]*\?"remoteControl\/enable":"remoteControl\/disable",)null\)/gu;
-
-// The remote-control toggle sends `null` params; Linux app servers expect the
-// parameterless request shape (`void 0`).
-function applyLinuxRemoteControlEnableForHostParamsPatch(source) {
-  const markers = source.split(REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER).length - 1;
-  const matches = [...source.matchAll(REMOTE_CONTROL_ENABLE_FOR_HOST_PATTERN)];
-  if (markers === 1 && matches.length === 0) return source;
-  if (markers !== 0 || matches.length !== 1) {
-    console.warn("WARN: Could not find unique remote-control enable-for-host request - skipping Linux remote-control host params patch");
-    return source;
-  }
-  return source.replace(
-    REMOTE_CONTROL_ENABLE_FOR_HOST_PATTERN,
-    `$1void 0/*${REMOTE_CONTROL_ENABLE_FOR_HOST_PARAMS_MARKER}*/)`,
-  );
+// Keep the native selected-host client and status race logic. Only the owned
+// parameter scalar changes; the registered entry qualifies the complete cohort.
+function applyLinuxRemoteControlEnableForHostParamsPatch(source, context = {}) {
+  return applyHostToggleSource(source, context);
 }
 
 const REMOTE_MOBILE_ACTIVE_STATUS_PATTERN =
@@ -1385,15 +1372,11 @@ module.exports = [
     apply: applyLinuxRemoteControlStatusWaitPatch,
   },
   {
-    // The toggle module is embedded in every chunk that offers the toggle.
     id: "linux-remote-control-enable-for-host-params",
-    phase: "webview-asset",
-    assetNeedles: ['?"remoteControl/enable":"remoteControl/disable"'],
+    phase: "extracted-app:pre-webview",
     order: 20_155,
     ciPolicy: "optional",
-    missingDescription: "app main remote-control host toggle bundle",
-    skipDescription: "Linux remote-control host toggle params patch",
-    apply: applyLinuxRemoteControlEnableForHostParamsPatch,
+    apply: applyHostTogglePatch,
   },
   {
     id: "linux-remote-control-enablement-bridge",
