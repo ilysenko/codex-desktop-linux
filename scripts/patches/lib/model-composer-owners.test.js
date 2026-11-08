@@ -207,7 +207,8 @@ test("settings: callback shadows and reassigned host/writer/RPC roles are reject
 const { applyApiKeyModelVisibilityPatch } = require("../../../linux-features/api-key-model-visibility/patch.js");
 const { applyApiKeyModelMarkerPatch } = require("../../../linux-features/api-key-service-tier/patch.js");
 const { applyCopilotReasoningEffortModelListPatch } = require("../../../linux-features/copilot-reasoning-effort/patch.js");
-const { applyExistingChatOptimisticPatch } = require("../../../linux-features/model-picker-default-presets/patch.js");
+const Presets = require("../../../linux-features/model-picker-default-presets/patch.js");
+const { prepareExistingChatSelection } = require("../../../linux-features/model-picker-default-presets/existing-chat-selection.js");
 const catalogTransforms = [applyApiKeyModelVisibilityPatch, applyApiKeyModelMarkerPatch, applyCopilotReasoningEffortModelListPatch];
 function permutations(values) {
   return values.length === 0 ? [[]] : values.flatMap((value, index) => permutations(values.filter((_, at) => at !== index)).map(tail => [value, ...tail]));
@@ -231,17 +232,22 @@ for (const transforms of [...catalogTransforms.map(value => [value]), ...permuta
   });
 }
 
-test("settings: native bindings survive production existing-chat optimistic insertion", () => {
+test("settings: native bindings survive the qualified production existing-chat selection insertion", () => {
   const context = { feature: { settings: { presets: [{ model: "gpt-6-astra", effort: "medium", default: true }] } } };
-  const source = applyExistingChatOptimisticPatch(current.settings.moduleSource, context);
+  const presets = Presets.normalizePresets(context);
+  const prepared = prepareExistingChatSelection(current.settings.moduleSource, current.settings, presets, Presets.THINKING_EFFORT_TO_EFFORT);
+  const source = prepared.patchedSource;
   assert.notEqual(source, current.settings.moduleSource);
-  assert.equal(applyExistingChatOptimisticPatch(source, context), source);
+  const repeat = prepareExistingChatSelection(source, { ...current.settings, moduleSource: source }, presets, Presets.THINKING_EFFORT_TO_EFFORT);
+  assert.equal(repeat.patchedSource, source);
+  assert.equal(repeat.nativeSource, current.settings.moduleSource);
   const result = inspectModelSettingsOwner({ ...current.settings, moduleSource: source });
   assert.equal(result.ok, true, result.reason);
   assert.equal(result.profile.expression, "eA.profile");
   assert.deepEqual([result.active.hostId, result.write.hostId], ["ec", "eC"]);
   assert.equal(result.nextTurn.optimistic.selection, "a");
 });
+
 test("catalog: complete literal and Unicode direct assignment/update writes cannot replace captured auth", () => {
   const native=inspectModelCatalogOwner(current.catalog);assert(native.ok);
   const name=native.inputs.auth,spelled=[name,"\\u"+name.codePointAt(0).toString(16).padStart(4,"0"),"\\u{"+name.codePointAt(0).toString(16)+"}"];
@@ -272,8 +278,6 @@ test("catalog: original escaped and shift auth witnesses refuse all three produc
     for(const transform of catalogTransforms)assert.throws(()=>transform(source,{factorySnapshot:snapshot}),undefined,transform.name+": "+insertion);
   }
 });
-
-
 
 
 test("catalog: native return and effort callback binding ownership are required", () => {
