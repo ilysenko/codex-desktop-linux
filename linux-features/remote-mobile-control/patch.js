@@ -12,6 +12,7 @@ const { prepareFeatureSyncSource, applyFeatureSyncToExtractedApp } = require("./
 const { prepareRevokeSetupResetSource, applyRevokeSetupReset } = require("./revoke-setup-reset-owner.js");
 const { prepareBridgeSource, applyBridgePatch } = require("./enablement-bridge.js");
 const { applyNativeRemoteCopy } = require("./remote-copy.js");
+const { prepareTerminalSource, applyTerminalStatus } = require("./terminal-status.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
@@ -469,110 +470,12 @@ function applyLinuxRemoteConnectionsRefreshPatch(source) {
   return source.slice(0, matches[0].index) + replacement + source.slice(matches[0].index + needle.length);
 }
 
-// rspack chunks hold many module factories keyed by hashed ids:
-// `__webpack_modules__={abCd(e,t,n){...},...}`. Returns the body bounds of the
-// factory that contains `index`, so injected helpers share its module scope.
-function moduleFactoryAt(source, index) {
-  const objectStart = source.indexOf("__webpack_modules__={");
-  if (objectStart === -1) return null;
-  const header = /([A-Za-z0-9_$]+|"[^"]*")\(([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*){0,2})?\)\{/y;
-  let cursor = objectStart + "__webpack_modules__={".length;
-  while (cursor < source.length) {
-    header.lastIndex = cursor;
-    const match = header.exec(source);
-    if (!match) return null;
-    const open = cursor + match[0].length - 1;
-    const end = findMatchingBrace(source, open);
-    if (end === -1) return null;
-    if (index > open && index < end) {
-      return { bodyStart: open + 1, end, require: (match[2] ?? "").split(",")[2] ?? null };
-    }
-    cursor = end + 1;
-    if (source[cursor] !== ",") return null;
-    cursor += 1;
-  }
-  return null;
-}
-
-const REMOTE_USER_INPUT_REQUEST_HELPER =
-  "function codexLinuxRemoteHasUserInputRequest(e){try{return Array.isArray(e)&&e.some(e=>e?.method===`item/tool/requestUserInput`||e?.method===`item/tool/requestOptionPicker`||e?.method===`item/tool/requestSetupCodexContextPicker`||e?.method===`item/tool/call`&&(e?.params?.tool===`request_onboarding_input`||e?.params?.tool===`request_option_picker`||e?.params?.tool===`setup_codex_context_picker`||e?.params?.tool===`setup_codex_step`))}catch{return!1}}";
-const REMOTE_TERMINAL_STATUS_PATTERN =
-  /function ([A-Za-z_$][\w$]*)\(\{hasInProgressOwnedWork:([A-Za-z_$][\w$]*),isResponseInProgress:([A-Za-z_$][\w$]*),latestTurnHasSystemError:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{return \2\?"loading":\6\?\.type==="systemError"\?"error":\6\?\.type==="active"\?"loading":"needs_resume"===\5\?"idle":\4\?"error":!0===\3\?"loading":"idle"\}/gu;
-const REMOTE_TERMINAL_STATUS_PATCHED_PATTERN =
-  /function [A-Za-z_$][\w$]*\(\{hasInProgressOwnedWork:[A-Za-z_$][\w$]*,isResponseInProgress:[A-Za-z_$][\w$]*,latestTurnHasSystemError:[A-Za-z_$][\w$]*,resumeState:[A-Za-z_$][\w$]*,threadRuntimeStatus:[A-Za-z_$][\w$]*,hasUserInputRequest:codexLinuxRemoteHasUserInputRequestPending=!0\}\)\{let codexLinuxRemoteTerminalStatusActive=/gu;
-const REMOTE_TERMINAL_STATUS_CALL_PATTERN =
-  /hasInProgressOwnedWork:[^{}]*latestTurnHasSystemError:([A-Za-z_$][\w$]*)\?\.latestTurnError!=null(?=\}\))/gu;
-const REMOTE_TERMINAL_STATUS_PATCHED_CALL_PATTERN =
-  /hasInProgressOwnedWork:[^{}]*latestTurnHasSystemError:([A-Za-z_$][\w$]*)\?\.latestTurnError!=null,hasUserInputRequest:codexLinuxRemoteHasUserInputRequest\(\1\?\.requests\)(?=\}\))/gu;
-const REMOTE_PENDING_USER_INPUT_PATTERN =
-  /("needs_resume"===[A-Za-z_$][\w$]*\?([A-Za-z_$][\w$]*)\?\.type==="active"&&\2\.activeFlags\.includes\("waitingOnApproval"\)&&\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\(([A-Za-z_$][\w$]*)\)\?\{blocking:!0,kind:"approval",source:[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\}:\2\?\.type==="active"&&\2\.activeFlags\.includes\("waitingOnUserInput"\))(&&codexLinuxRemoteHasUserInputRequest\(\3\))?(?=\?\{autoResolution:null,blocking:!0,kind:"input",requestId:[A-Za-z_$][\w$]*,source:"userInput"\}:null:)/gu;
-
-// A thread can keep a stale `waitingOnUserInput` runtime flag after its
-// mobile-side request was answered or dropped. Linux reports it as loading or
-// as an input request only while a user-input request is actually pending.
+// The complete native host/thread state cohort owns terminal recovery.
 function applyLinuxRemoteTerminalStatusRecoveryPatch(source) {
-  const terminal = [...source.matchAll(REMOTE_TERMINAL_STATUS_PATTERN)];
-  const patchedTerminal = [...source.matchAll(REMOTE_TERMINAL_STATUS_PATCHED_PATTERN)];
-  const calls = [...source.matchAll(REMOTE_TERMINAL_STATUS_CALL_PATTERN)];
-  const patchedCalls = [...source.matchAll(REMOTE_TERMINAL_STATUS_PATCHED_CALL_PATTERN)];
-  const pending = [...source.matchAll(REMOTE_PENDING_USER_INPUT_PATTERN)];
-  const pristinePending = pending.filter((match) => match[4] == null);
-  const helpers = source.split(REMOTE_USER_INPUT_REQUEST_HELPER).length - 1;
-  if (terminal.length === 0 && patchedTerminal.length === 1 && calls.length === 0 &&
-      patchedCalls.length === 2 && pending.length === 1 && pristinePending.length === 0 && helpers > 0) {
-    return source;
-  }
-  if (terminal.length !== 1 || patchedTerminal.length !== 0 || calls.length !== 2 || patchedCalls.length !== 0 ||
-      pending.length !== 1 || pristinePending.length !== 1 || helpers !== 0 ||
-      source.includes("codexLinuxRemoteTerminalStatus")) {
-    console.warn(
-      "WARN: Could not find unique remote terminal status, pending-request, and caller contracts - skipping Linux remote terminal status recovery patch",
-    );
-    return source;
-  }
-
-  const [, fnName, ownedWorkVar, responseProgressVar, systemErrorVar, resumeStateVar, runtimeStatusVar] = terminal[0];
-  const terminalReplacement =
-    `function ${fnName}({hasInProgressOwnedWork:${ownedWorkVar},isResponseInProgress:${responseProgressVar},latestTurnHasSystemError:${systemErrorVar},resumeState:${resumeStateVar},threadRuntimeStatus:${runtimeStatusVar},hasUserInputRequest:codexLinuxRemoteHasUserInputRequestPending=!0}){` +
-    `let codexLinuxRemoteTerminalStatusActive=${runtimeStatusVar}?.type==="active",` +
-    `codexLinuxRemoteTerminalStatusActiveFlags=Array.isArray(${runtimeStatusVar}?.activeFlags)?${runtimeStatusVar}.activeFlags:null,` +
-    `codexLinuxRemoteTerminalStatusWaitingOnUserInput=codexLinuxRemoteTerminalStatusActiveFlags?.includes("waitingOnUserInput")===!0,` +
-    `codexLinuxRemoteTerminalStatusLoading=codexLinuxRemoteTerminalStatusActive&&(${responseProgressVar}===!0||codexLinuxRemoteTerminalStatusActiveFlags==null||codexLinuxRemoteTerminalStatusActiveFlags.length>0&&(!codexLinuxRemoteTerminalStatusWaitingOnUserInput||codexLinuxRemoteHasUserInputRequestPending===!0));` +
-    `return ${ownedWorkVar}?"loading":${runtimeStatusVar}?.type==="systemError"?"error":codexLinuxRemoteTerminalStatusLoading?"loading":"needs_resume"===${resumeStateVar}?"idle":${systemErrorVar}?"error":!0===${responseProgressVar}?"loading":"idle"}`;
-
-  const edits = [
-    { index: terminal[0].index, length: terminal[0][0].length, replacement: terminalReplacement },
-    ...calls.map((call) => ({
-      index: call.index,
-      length: call[0].length,
-      replacement: `${call[0]},hasUserInputRequest:codexLinuxRemoteHasUserInputRequest(${call[1]}?.requests)`,
-    })),
-    {
-      index: pristinePending[0].index,
-      length: pristinePending[0][0].length,
-      replacement: `${pristinePending[0][1]}&&codexLinuxRemoteHasUserInputRequest(${pristinePending[0][3]})`,
-    },
-  ];
-  // Every module that calls the helper declares its own copy: modules reach
-  // each other only through the webpack require function.
-  const helperModules = new Map();
-  for (const index of [...calls.map((call) => call.index), pristinePending[0].index]) {
-    const factory = moduleFactoryAt(source, index);
-    if (factory == null) {
-      console.warn("WARN: Remote terminal status caller is outside an rspack module factory - skipping Linux remote terminal status recovery patch");
-      return source;
-    }
-    helperModules.set(factory.bodyStart, factory);
-  }
-  for (const bodyStart of helperModules.keys()) {
-    const at = bodyStart + (source.startsWith('"use strict";', bodyStart) ? '"use strict";'.length : 0);
-    edits.push({ index: at, length: 0, replacement: REMOTE_USER_INPUT_REQUEST_HELPER });
-  }
-  edits.sort((left, right) => right.index - left.index);
-  return edits.reduce(
-    (patched, edit) => patched.slice(0, edit.index) + edit.replacement + patched.slice(edit.index + edit.length),
-    source,
-  );
+  return prepareTerminalSource(source);
+}
+function applyLinuxRemoteTerminalStatusRecoveryExtractedAppPatch(extractedDir, context = {}) {
+  return applyTerminalStatus(extractedDir, context.terminalStatusWriteOptions);
 }
 
 const REMOTE_CONTROL_STATUS_READ_HELPER =
@@ -1081,13 +984,10 @@ module.exports = [
   },
   {
     id: "linux-remote-terminal-status-recovery",
-    phase: "webview-asset",
-    assetNeedles: ["hasInProgressOwnedWork:", "latestTurnHasSystemError:", "mcpServerElicitationKind:"],
+    phase: "extracted-app:pre-webview",
     order: 20_152,
     ciPolicy: "optional",
-    missingDescription: "app-server conversation manager bundle",
-    skipDescription: "Linux remote terminal status recovery patch",
-    apply: applyLinuxRemoteTerminalStatusRecoveryPatch,
+    apply: applyLinuxRemoteTerminalStatusRecoveryExtractedAppPatch,
   },
   {
     id: "linux-remote-control-status-read-guard",
@@ -1179,3 +1079,5 @@ module.exports.applyLinuxRemoteControlLoadGateExtractedAppPatch = applyLinuxRemo
 module.exports.applyLinuxRemoteControlFeatureSyncExtractedAppPatch = applyLinuxRemoteControlFeatureSyncExtractedAppPatch;
 
 module.exports.applyLinuxRemoteControlClientRevokeSetupResetExtractedAppPatch = applyLinuxRemoteControlClientRevokeSetupResetExtractedAppPatch;
+
+module.exports.applyLinuxRemoteTerminalStatusRecoveryExtractedAppPatch = applyLinuxRemoteTerminalStatusRecoveryExtractedAppPatch;

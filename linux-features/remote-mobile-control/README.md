@@ -260,6 +260,23 @@ original mutation error, analytics and toast callbacks stay intact. All physical
 provider/facade copies participate as read-only dependencies; partial or modified
 own output must pass exact inverse and canonical replay before a write.
 
+The terminal-status recovery descriptor qualifies its three complete small
+native modules and all physical copies in one transaction. The reducer, list
+and sidebar callers, pending-input resolver, shared atom factory and scope must
+agree. Selected native summary/runtime/request atom publications, host/thread
+keying and the current thread-to-host selector are read-only dependencies. The
+patch preserves current per-host data selection, unread/MCP/approval/async input
+branches and the native reducer's error/owned-work/response priorities. A stale
+`waitingOnUserInput` flag stops implying active input after the matching pending
+request disappears. Direct reducer calls that omit the new pending-request
+parameter retain the established conservative default; no new global selected-
+host state is introduced.
+
+Its String entry requires the complete qualified native cohort. Marker-only,
+partial, mixed-copy or altered output cannot report success: exact inverse and
+canonical replay precede an atomic write. A failed write restores all original
+target bytes, and native provider bytes and file modes stay unchanged.
+
 The official webview is an rspack build whose app code lives in lazily loaded
 `webview/assets/async/<id>.<hash>.js` chunks. Cohort descriptors qualify their
 current module owners, physical copies and provider/caller dependencies before

@@ -1,0 +1,67 @@
+{
+  "version": "26.1103.32239",
+  "provenance": "Three retained signed native small modules; tests execute selected pure callbacks under controlled dependencies, never a module factory.",
+  "raw": {
+    "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/182735.d3d917f28d.js",
+    "sha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
+    "bytes": 8273821
+  },
+  "modules": [
+    {
+      "moduleId": "EU9a",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "var r=n(\"SZCv\"),i=n.n(r),a=n(\"zTeN\"),s=n(\"DBCl\"),o=n(\"tl5a\"),l=n(\"JBvZ\"),u=n(\"Ioto\"),d=n(\"OWtl\"),c=n(\"R54d\");let p=(0,a.i1)(d.u,({conversationId:e,hostId:t,isTeamRow:n},{get:r,scope:i})=>{let a=n?\"shared\":(0,c.p)(i,t,e);return{hostId:\"shared\"===a?s.iwv:r(l.kf,{conversationId:e,hostId:t}),threadAccess:a}},{isEqual:i()}),h=(0,a.i1)(d.u,({conversationId:e,hostId:t},{get:n})=>{let r=n(o.pC,{conversationId:e,hostId:t}),i=n(o.ok,{hostId:t,threadId:e}),a=i?.resumeState,s=i?.summary.threadRuntimeStatus;return m({hasInProgressOwnedWork:n(u.Oz,e),isResponseInProgress:i?.isResponseInProgress??null,resumeState:a??(null==r?null:\"needs_resume\"),threadRuntimeStatus:\"needs_resume\"===a||s?.type===\"notLoaded\"?r?.threadRuntimeStatus??s??null:s??r?.threadRuntimeStatus??null,latestTurnHasSystemError:i?.latestTurnError!=null})},{key:({conversationId:e,hostId:t})=>`${t}:${e}`}),f=(0,a.i1)(d.u,(e,{get:t})=>t(h,{conversationId:e,hostId:t(o.qX,e)}));function m({hasInProgressOwnedWork:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){return e?\"loading\":i?.type===\"systemError\"?\"error\":i?.type===\"active\"?\"loading\":\"needs_resume\"===r?\"idle\":n?\"error\":!0===t?\"loading\":\"idle\"}n.d(t,{},{RV:p,eL:f,sX:m,tP:h})",
+      "start": 4922628,
+      "end": 4923862,
+      "bytes": 1234,
+      "sourceSha256": "e75c46e9272055467b4a705cae6b4c51152d3026258b29e80a994c8565237d19",
+      "roles": {
+        "terminal": true,
+        "pending": false
+      },
+      "role": "terminal"
+    },
+    {
+      "moduleId": "e9KY",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "var r=n(\"KUdL\"),i=n.n(r),a=n(\"zTeN\"),s=n(\"tl5a\"),o=n(\"ZU27\"),l=n(\"EU9a\"),u=n(\"sZJm\"),d=n(\"qMca\"),c=n(\"OWtl\"),p=n(\"Oj9r\"),h=n(\"V3rO\"),f=n(\"moBM\"),m=n(\"mR55\"),_=n(\"m22M\"),g=n(\"LATD\");let v=(0,a.vP)(h.l7,{conversationId:null,isCreating:!1}),y=(0,a.i1)(p.GD,(e,{get:t})=>null==e?null:\"loading\"===t(S,e).type?e:t(f.sU)?t(g.B,e).findLast(e=>\"loading\"===t(S,e).type)??null:null),E=(0,a.i1)(p.GD,(e,{get:t})=>{if(!t(f.sU))return[];let n=[...t(o.It.tabIds$),...t(o.VZ.tabIds$)],r=new Map(n.map((e,t)=>[e,t]));return i()(t(g.B,e),e=>r.get(`${m.y0}${e}`)??n.length)},{isEqual:(e,t)=>e.length===t.length&&e.every((e,n)=>e===t[n])}),I=(0,a.i1)(p.GD,(e,{get:t})=>{if(!t(f.sU))return null;let{conversationId:n}=t(v);return null!=e&&null!=n&&t(g.B,e).includes(n)?n:null}),C=(0,a.i1)(p.GD,(e,{get:t})=>{if(null==e)return null;let n=`${m.y0}${e}`;return t(o.It.tabById$,n)?.title??t(o.VZ.tabById$,n)?.title??t(_.N,e)}),T=(0,a.i1)(c.u,(e,{get:t})=>t(A,null==e?null:{hostId:t(s.qX,e),threadId:e})),A=(0,a.i1)(c.u,(e,{get:t})=>{if(null==e)return{type:\"idle\",unread:!1};let{hostId:n,threadId:r}=e,i=t(s.pC,{conversationId:r,hostId:n}),a=t(s.ok,e),o=a?.resumeState,d=a?.summary.threadRuntimeStatus,c=(0,l.sX)({hasInProgressOwnedWork:!1,isResponseInProgress:a?.isResponseInProgress??null,resumeState:o??(null==i?null:\"needs_resume\"),threadRuntimeStatus:\"needs_resume\"===o||d?.type===\"notLoaded\"?i?.threadRuntimeStatus??d??null:d??i?.threadRuntimeStatus??null,latestTurnHasSystemError:a?.latestTurnError!=null}),p=t(u.Z,{hostId:n,conversationId:r});return{type:p?.kind===\"input\"&&p.blocking?\"idle\":c,unread:(a?.summary.hasUnreadTurn??i?.hasUnreadTurn)===!0}},{isEqual:(e,t)=>e.type===t.type&&e.unread===t.unread}),S=(0,a.i1)(c.u,(e,{get:t})=>{let n=t(T,e);return null!=e&&\"loading\"===n.type&&t(d.D0,e)?{...n,type:\"idle\"}:n},{isEqual:(e,t)=>e.type===t.type&&e.unread===t.unread}),b=(0,a.i1)(c.u,(e,{get:t})=>{if(null==e)return\"idle\";if(t(u.Z,{hostId:t(s.qX,e),conversationId:e}))return\"waiting\";let n=t(S,e);return n.unread?\"unread\":\"loading\"===n.type?\"active\":\"idle\"}),w=(0,a.i1)(p.GD,(e,{get:t})=>{if(null==e)return{type:\"idle\",unread:!1};if(!t(f.sU))return t(S,e);let n=[e,...t(g.B,e)].map(e=>t(b,e));return n.some(e=>\"waiting\"===e||\"unread\"===e)?{type:\"idle\",unread:!0}:n.includes(\"active\")?{type:\"loading\",unread:!1}:{type:\"idle\",unread:!1}},{isEqual:(e,t)=>e.type===t.type&&e.unread===t.unread});n.d(t,{},{Lv:S,NJ:v,Tr:T,XQ:A,cc:E,ow:w,rq:I,tB:C,wP:y})",
+      "start": 5047673,
+      "end": 5050105,
+      "bytes": 2432,
+      "sourceSha256": "0f880e3e3c65eb035180ecaacbc0995cc8f7b6528d8df9f01feb5b7071ab7a31",
+      "roles": {
+        "terminal": true,
+        "pending": false
+      },
+      "role": "statusCaller"
+    },
+    {
+      "moduleId": "sZJm",
+      "params": [
+        "e",
+        "t",
+        "n"
+      ],
+      "moduleSource": "n.d(t,{Z:()=>f});var r=n(\"SZCv\"),i=n.n(r),a=n(\"zTeN\"),s=n(\"tl5a\"),o=n(\"BgXp\"),l=n(\"vc9M\"),u=n(\"MtDh\"),d=n(\"JQtI\"),c=n(\"HAYt\"),p=n(\"OWtl\");let h=(0,a.i1)(p.u,(e,{get:t})=>{let n=t(s.ok,e);if(null==n||\"off\"!==t(u.NU,e.threadId)||(0,d.N)(n.summary.threadStartKind,n.summary.threadSource))return null;let r=n.unansweredAsyncQuestions;if(null==r)return null;let i=r.questionIds.find(n=>{let i=t(c.TH,{...e,entityKey:r.entityKey,itemId:n});return null==i||null==i.lastSubmission&&!i.isSkipped});return null==i?null:{...e,entityKey:r.entityKey,itemId:i}},{isEqual:i(),owner:e=>e.threadId}),f=(0,a.i1)(p.u,({conversationId:e,hostId:t},{get:n})=>{let r=n(s.hF,{hostId:t,threadId:e}),i=function({mcpServerElicitationKind:e,pendingRequestType:t,requests:n,resumeState:r,threadRuntimeStatus:i,userInputRequestId:a}){var s;if(null==n||null==r)return null;return\"mcpServerElicitation\"===t&&(\"formElicitation\"===(s=e)||\"openaiForm\"===s||\"legacyOpenAIForm\"===s)?\"needs_resume\"!==r||i?.type===\"active\"&&(i.activeFlags.includes(\"waitingOnUserInput\")||i.activeFlags.includes(\"waitingOnApproval\")&&(0,l.PZ)(n))?{autoResolution:null,blocking:!0,kind:\"input\",requestId:null,source:\"mcp\"}:null:\"needs_resume\"===r?i?.type===\"active\"&&i.activeFlags.includes(\"waitingOnApproval\")&&(0,l.PZ)(n)?{blocking:!0,kind:\"approval\",source:m(t)}:i?.type===\"active\"&&i.activeFlags.includes(\"waitingOnUserInput\")?{autoResolution:null,blocking:!0,kind:\"input\",requestId:a,source:\"userInput\"}:null:(0,l.w_)(t)?{blocking:!0,kind:\"approval\",source:m(t)}:\"userInput\"===t?{autoResolution:null,blocking:!0,kind:\"input\",requestId:a,source:\"userInput\"}:null}({mcpServerElicitationKind:r?.pendingRequest?.kind===\"mcpServerElicitation\"?r.pendingRequest.elicitationKind:null,pendingRequestType:r?.pendingRequest?.kind??null,requests:r?.requests??null,resumeState:r?.resumeState??null,threadRuntimeStatus:r?.threadRuntimeStatus??null,userInputRequestId:r?.pendingRequest?.kind===\"userInput\"?r.pendingRequest.userInputRequestId:null});if(null!=i){if(\"input\"!==i.kind||null==i.requestId)return i;let r=n(o.r,{conversationId:e,hostId:t});return{...i,autoResolution:r?.requestId===i.requestId?r.resolutionState:null}}let a=n(h,{hostId:t,threadId:e});return null==a?null:{autoResolution:null,blocking:!1,kind:\"input\",questionKey:a,requestId:null,source:\"userInputAsync\"}},{isEqual:i(),key:({conversationId:e,hostId:t})=>`${t}:${e}`});function m(e){return\"mcpServerElicitation\"===e?\"mcp\":\"permissionRequest\"===e?\"permission\":\"approval\"}",
+      "start": 5250729,
+      "end": 5253207,
+      "bytes": 2478,
+      "sourceSha256": "3c45ca779002f1ada7a123742ddfea117d33302ee0410265328544e718b81c27",
+      "roles": {
+        "terminal": false,
+        "pending": true
+      },
+      "role": "pendingInput"
+    }
+  ],
+  "legacyPatchedBundleSha256": "9f387bd2cb6b4e03a697e29bbe565c9f0eed651e5e3ba8cb32e693bb20c5a3d2",
+  "legacyEvidence": "Current f940 legacy String API output on these three exact native modules, before production entry migration; preserved as output regression reference. No old implementation retained."
+}

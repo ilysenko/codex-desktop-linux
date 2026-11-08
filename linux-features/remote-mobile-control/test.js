@@ -52,6 +52,7 @@ const remoteMobilePatchDescriptors = require("./patch.js");
 const remoteLoadGateHarness = require("./fixtures/remote-load-gate-harness.js");
 const remoteFeatureSyncHarness = require("./fixtures/feature-sync-harness.js");
 const remoteRevokeHarness = require("./fixtures/revoke-setup-reset-harness.js");
+const remoteTerminalHarness = require("./fixtures/terminal-status-harness.js");
 const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -357,11 +358,7 @@ function syntheticCurrentConversationHydrationBundle() {
 // Three modules of the signed chunk: the terminal status reducer with its
 // list-state caller, the sidebar caller, and the pending-request resolver.
 function syntheticRemoteTerminalStatusBundle() {
-  return rspackChunk(24191, [
-    'EU9a(e,t,n){var a=n("jotai"),o=n("state"),u=n("work");let h=(0,a.i1)(0,({conversationId:e,hostId:t},{get:n})=>{let r=n(o.pC,{conversationId:e,hostId:t}),i=n(o.ok,{hostId:t,threadId:e}),a=i?.resumeState,s=i?.summary.threadRuntimeStatus;return m({hasInProgressOwnedWork:n(u.Oz,e),isResponseInProgress:i?.isResponseInProgress??null,resumeState:a??(null==r?null:"needs_resume"),threadRuntimeStatus:"needs_resume"===a||s?.type==="notLoaded"?r?.threadRuntimeStatus??s??null:s??r?.threadRuntimeStatus??null,latestTurnHasSystemError:i?.latestTurnError!=null})});function m({hasInProgressOwnedWork:e,isResponseInProgress:t,latestTurnHasSystemError:n,resumeState:r,threadRuntimeStatus:i}){return e?"loading":i?.type==="systemError"?"error":i?.type==="active"?"loading":"needs_resume"===r?"idle":n?"error":!0===t?"loading":"idle"}n.d(t,{sX:()=>m},{h})}',
-    'e9KY(e,t,n){var a=n("jotai"),s=n("state"),l=n("EU9a"),u=n("sZJm");let A=(0,a.i1)(0,(e,{get:t})=>{let{hostId:n,threadId:r}=e,i=t(s.pC,{conversationId:r,hostId:n}),a=t(s.ok,e),o=a?.resumeState,d=a?.summary.threadRuntimeStatus,c=(0,l.sX)({hasInProgressOwnedWork:!1,isResponseInProgress:a?.isResponseInProgress??null,resumeState:o??(null==i?null:"needs_resume"),threadRuntimeStatus:"needs_resume"===o||d?.type==="notLoaded"?i?.threadRuntimeStatus??d??null:d??i?.threadRuntimeStatus??null,latestTurnHasSystemError:a?.latestTurnError!=null}),p=t(u.Z,{hostId:n,conversationId:r});return{type:p?.kind==="input"&&p.blocking?"idle":c}});n.d(t,{},{A})}',
-    'sZJm(e,t,n){var a=n("jotai"),s=n("threads"),l=n("approvals");let f=(0,a.i1)(0,({conversationId:e,hostId:t},{get:n})=>{let r=n(s.hF,{hostId:t,threadId:e}),i=function({mcpServerElicitationKind:e,pendingRequestType:t,requests:n,resumeState:r,threadRuntimeStatus:i,userInputRequestId:a}){if(null==n||null==r)return null;return"needs_resume"===r?i?.type==="active"&&i.activeFlags.includes("waitingOnApproval")&&(0,l.PZ)(n)?{blocking:!0,kind:"approval",source:m(t)}:i?.type==="active"&&i.activeFlags.includes("waitingOnUserInput")?{autoResolution:null,blocking:!0,kind:"input",requestId:a,source:"userInput"}:null:(0,l.w_)(t)?{blocking:!0,kind:"approval",source:m(t)}:"userInput"===t?{autoResolution:null,blocking:!0,kind:"input",requestId:a,source:"userInput"}:null}({mcpServerElicitationKind:null,pendingRequestType:r?.pendingRequest?.kind??null,requests:r?.requests??null,resumeState:r?.resumeState??null,threadRuntimeStatus:r?.threadRuntimeStatus??null,userInputRequestId:r?.pendingRequest?.userInputRequestId??null});return i});function m(e){return"approval"}n.d(t,{Z:()=>f})}',
-  ].join(","));
+  return remoteTerminalHarness.source();
 }
 
 function syntheticAppServerManagerStatusBundle() {
@@ -1014,7 +1011,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-connections-refresh", "webview-asset"],
       ["linux-remote-mobile-reasoning-summary-none", "webview-asset"],
       ["linux-remote-mobile-conversation-hydration", "webview-asset"],
-      ["linux-remote-terminal-status-recovery", "webview-asset"],
+      ["linux-remote-terminal-status-recovery", "extracted-app:pre-webview"],
       ["linux-remote-control-status-read-guard", "webview-asset"],
       ["linux-remote-control-status-wait", "webview-asset"],
       ["linux-remote-control-enable-for-host-params", "extracted-app:pre-webview"],
@@ -1036,7 +1033,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "linux-remote-connections-refresh": syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-mobile-reasoning-summary-none": syntheticCurrentReasoningSummaryTurnStartBundle(),
       "linux-remote-mobile-conversation-hydration": syntheticCurrentConversationHydrationBundle(),
-      "linux-remote-terminal-status-recovery": syntheticRemoteTerminalStatusBundle(),
       "linux-remote-control-status-read-guard": syntheticAppServerManagerStatusBundle(),
       "linux-remote-control-status-wait": syntheticCurrentStatusWaitBundle(),
       "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
@@ -2207,13 +2203,8 @@ test("status guard warns instead of reporting an unrelated chunk as patched", ()
 });
 
 function loadTerminalStatusModules(patched) {
-  const jotai = { i1: (_scope, read) => read };
-  const terminal = loadRspackModule(patched, "EU9a", { jotai, state: { pC: "pC", ok: "ok" }, work: { Oz: "Oz" } });
-  const isApproval = (requests) => Array.isArray(requests) && requests.some((request) => request.method.endsWith("/requestApproval"));
-  const pending = loadRspackModule(patched, "sZJm", {
-    jotai, threads: { hF: "hF" }, approvals: { PZ: isApproval, w_: (type) => type === "approval" },
-  });
-  return { terminal, pending };
+  // Execute only selected native pure read callbacks with controlled providers.
+  return remoteTerminalHarness.behavior(patched);
 }
 
 test("Linux remote terminal status recovery treats stale waiting input as idle", () => {
@@ -2274,9 +2265,21 @@ test("Linux remote terminal status recovery treats stale waiting input as idle",
   });
   assert.equal(atom(listState([])), "idle");
   assert.equal(atom(listState([{ method: "item/tool/requestUserInput" }])), "loading");
+  const states = new Map([
+    ["local:thread-a", listState([])],
+    ["remote-ssh-other:thread-b", listState([{ method: "item/tool/requestUserInput" }])],
+  ]);
+  const observedKeys = [];
+  const keyedGet = (key, args) => {
+    if (key === "ok") { observedKeys.push([args.hostId, args.threadId]);return states.get(`${args.hostId}:${args.threadId}`); }
+    return key === "Oz" ? false : null;
+  };
+  assert.equal(terminal.h({ conversationId: "thread-a", hostId: "local" }, { get: keyedGet }), "idle");
+  assert.equal(terminal.h({ conversationId: "thread-b", hostId: "remote-ssh-other" }, { get: keyedGet }), "loading");
+  assert.deepEqual(observedKeys, [["local", "thread-a"], ["remote-ssh-other", "thread-b"]]);
 
   const resolve = (state) => {
-    const result = pending.Z({ conversationId: "thread", hostId: "local" }, { get: () => state });
+    const result = pending.Z({ conversationId: "thread", hostId: "local" }, { get: key => key === "hF" ? state : null });
     return result == null ? null : result.kind === "input" ? "response" : result.kind;
   };
   const needsResume = (requests, activeFlags) => ({
@@ -2309,33 +2312,19 @@ test("Linux remote terminal status recovery rejects partial current-bundle drift
 
   for (const driftedSource of driftedSources) {
     assert.notEqual(driftedSource, source);
-    const { result, warnings } = captureWarnings(() =>
-      applyLinuxRemoteTerminalStatusRecoveryPatch(driftedSource),
-    );
-    assert.equal(result, driftedSource);
-    assert.ok(
-      warnings.some((warning) =>
-        warning.includes("skipping Linux remote terminal status recovery patch"),
-      ),
-    );
+    assert.throws(() => applyLinuxRemoteTerminalStatusRecoveryPatch(driftedSource), /Remote terminal/);
   }
 });
 
-test("Linux remote terminal status recovery warns on unrelated chunks", () => {
-  const source = "const remoteMobileConversationChunk={threadRuntimeStatus:null};";
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteTerminalStatusRecoveryPatch(source),
-  );
-
-  assert.equal(result, source);
-  assert.match(warnings.join("\n"), /skipping Linux remote terminal status recovery patch/);
+test("Linux remote terminal status recovery rejects unrelated chunks", () => {
+  assert.throws(() => applyLinuxRemoteTerminalStatusRecoveryPatch("const unrelated={threadRuntimeStatus:null};"), /Remote terminal/);
 });
 
 test("Linux remote terminal status recovery escapes current minified function aliases", () => {
   const source = syntheticRemoteTerminalStatusBundle()
     .replace("return m({", "return $m({")
     .replace("function m({", "function $m({")
-    .replace("sX:()=>m}", "sX:()=>$m}");
+    .replace("sX:m,", "sX:$m,");
   const patched = applyLinuxRemoteTerminalStatusRecoveryPatch(source);
 
   assert.notEqual(patched, source);
