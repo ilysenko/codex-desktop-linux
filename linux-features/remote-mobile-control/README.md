@@ -82,9 +82,10 @@ What it changes:
   completed item is also restored when its local started state was absent.
   The upstream request queue, notification timestamps, automation capability,
   turn merge policy, retry, and discard lifecycle remain intact.
-- Keeps the current abortable Remote status subscriptions and their disposable
-  cleanup; skips the initial status RPC for Linux Remote SSH and outbound-control
-  hosts while preserving local-host reads and notification delivery.
+- Keeps native abortable Remote status subscriptions and disposable cleanup.
+  On Linux, host identifiers beginning with `remote-ssh` or `remote-control:`
+  skip only the initial status RPC. Other host identifiers retain their native
+  read behavior, and notification delivery stays active.
 - Recovers stale remote terminal status when `waitingOnUserInput` remains active
   after the matching input request has already cleared.
 - Keeps local Linux Remote turns on `summary = "none"` unless a turn explicitly
@@ -182,7 +183,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Prevents inherited or rollout-forced reasoning summaries from polluting this host's mobile transcript. |
 | `linux-remote-mobile-conversation-hydration` | `mobile-host` | Extends upstream's hydration queue to recover unknown local conversations from ordered turn and item notifications. |
 | `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |
-| `linux-remote-control-status-read-guard` | `shared-boundary` | Sends `remoteControl/status/read` only to the local host, never Remote SSH or remote-control environment hosts. |
+| `linux-remote-control-status-read-guard` | `shared-boundary` | Skips the initial Linux read for exact `remote-ssh` / `remote-control:` prefixes while retaining native reads for other hosts, notifications and cleanup. |
 | `linux-remote-control-status-wait` | `shared-boundary` | Gives the selected host a Linux-specific connection convergence window without changing host ownership. |
 | `linux-remote-control-enable-for-host-params` | `shared-boundary` | Qualifies the native selected-host client, status mapper and public fallback caller, then emits parameterless enable/disable requests without changing host choice. |
 | `linux-remote-control-enablement-bridge` | `shared-boundary` | Qualifies the native gate hook, live component and late service facade, then enables the current outbound service on Linux while retaining service-owned auto-connect choices. |
@@ -284,6 +285,23 @@ Its String entry requires the complete qualified native cohort. Marker-only,
 partial, mixed-copy or altered output cannot report success: exact inverse and
 canonical replay precede an atomic write. A failed write restores all original
 target bytes, and native provider bytes and file modes stay unchanged.
+
+The status-read guard prepares the complete native host-state owner and its
+published subscription lifecycle before the ordinary webview pass. The native
+classifier chain must still resolve its literal `durable` early skip. The native
+manager keeps a map per host, replaces old connections and tears down their
+subscriptions; the published caller passes the same host, client and current
+predicate to the reader. The initial-snapshot check prevents a late read result
+from replacing a newer notification, and the native abort/disposal path stays
+intact. Every physical owner and read-only lifecycle/provider/facade copy must
+qualify together before the transaction writes.
+
+The reader's own inverse removes only its read guard. It preserves the exact
+canonical Linux wait-window contribution in the same small status module in
+either order. Each wait invocation observes the host supplied by its caller;
+its existing API has only `ignoreCurrentError`, with native settlement and
+timeout behavior. These source contracts do not add a cancellation input or
+change the host manager's ownership rules.
 
 The official webview is an rspack build whose app code lives in lazily loaded
 `webview/assets/async/<id>.<hash>.js` chunks. Cohort descriptors qualify their

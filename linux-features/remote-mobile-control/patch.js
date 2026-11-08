@@ -13,6 +13,7 @@ const { prepareRevokeSetupResetSource, applyRevokeSetupReset } = require("./revo
 const { prepareBridgeSource, applyBridgePatch } = require("./enablement-bridge.js");
 const { applyNativeRemoteCopy } = require("./remote-copy.js");
 const { applyOutboundTab } = require("./outbound-tab-owner.js");
+const { prepareStatusReadString, applyStatusReadPatch } = require("./host-status.js");
 const { prepareTerminalSource, applyTerminalStatus } = require("./terminal-status.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
@@ -25,7 +26,6 @@ const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
   "codexLinuxRemoteMobileConversationHydration";
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
 const REMOTE_MOBILE_ACTIVE_STATUS_MARKER = "codexLinuxRemoteMobileActiveStatus";
-const REMOTE_CONTROL_STATUS_READ_GUARD_MARKER = "codexLinuxRemoteControlShouldReadStatus";
 const REMOTE_CONTROL_STATUS_WAIT_MARKER = "codexLinuxRemoteControlStatusWaitMs";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER = "codexLinuxRemoteMobileLocalAppServerArgs";
 const REMOTE_MOBILE_APP_SERVER_BASE_ARGS_NEEDLE = '["-c","features.code_mode_host=true"]';
@@ -322,9 +322,7 @@ function applyLinuxRemoteControlClientRevokeSetupResetExtractedAppPatch(extracte
   return applyRevokeSetupReset(extractedDir, context.revokeSetupResetWriteOptions);
 }
 
-function countText(source, needle) {
-  return source.split(needle).length - 1;
-}
+
 
 function matchesLinuxRemoteControlEnablementBridgeContract(source, context = {}) {
   try { prepareBridgeSource(source, context); return true; } catch { return false; }
@@ -451,103 +449,10 @@ function applyLinuxRemoteTerminalStatusRecoveryExtractedAppPatch(extractedDir, c
   return applyTerminalStatus(extractedDir, context.terminalStatusWriteOptions);
 }
 
-const REMOTE_CONTROL_STATUS_READ_HELPER =
-  `function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(e){return !(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)&&typeof e==\`string\`&&(e.startsWith(\`remote-ssh\`)||e.startsWith(\`remote-control:\`)))}`;
 
-function remoteControlStatusReadPattern(patched = false) {
-  const I = DEVICE_KEY_IDENT;
-  const guard = patched ? `${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}\\(\\k<host>\\)\\?` : "";
-  const blocked = patched
-    ? `:\\(\\k<active>\\(\\)&&\\k<setter>\\(\\k<store>,\\k<host>,\\{status:\\x60disabled\\x60,available:!1,accessRequired:!1\\}\\),void 0\\)`
-    : "";
-  return new RegExp(
-    String.raw`function (?<fn>${I})\((?<store>${I}),(?<host>${I}),(?<client>${I}),(?<current>${I})\)\{let (?<resolved>${I});if\(\(0,${I}\.${I}\)\(\k<host>\)\)return\(\)=>\{\}` +
-      String.raw`;let (?<abort>${I})=new AbortController,(?<active>${I})=\(\)=>!\k<abort>\.signal\.aborted&&\(\k<current>\?\.\(\)\?\?!0\),(?<initial>${I})=\k<store>\.get\((?<atom>${I}),\k<host>\)` +
-      String.raw`,(?<subscription>${I})=\k<client>\.subscribe\(\{type:"notification",key:\{hostId:\k<host>\},methods:"remoteControl/status/changed",listener:\(\{params:(?<params>${I})\}\)=>\{\k<active>\(\)&&(?<setter>${I})\(\k<store>,\k<host>,\k<params>\)\}\}\)` +
-      String.raw`,(?<cleanup>${I})=\(\)=>\{\k<abort>\.signal\.aborted\|\|\(\k<abort>\.abort\(\),\k<subscription>\[Symbol\.dispose\]\(\),\k<resolved>\?\.\[Symbol\.dispose\]\(\)\)\}` +
-      String.raw`;return \k<subscription>\.onRpcBroken\(\k<cleanup>` +
-      String.raw`\),\k<subscription>\.then\((?<ready>${I})=>\{\k<active>\(\)\?\(\k<resolved>=\k<ready>,\k<ready>\.onRpcBroken\(\k<cleanup>\)\):\k<ready>\[Symbol\.dispose\]\(\)\},\k<cleanup>\),` +
-      guard +
-      String.raw`(?<read>\(0,${I}\.${I}\)\(\k<client>\.sendRequest\("remoteControl/status/read",void 0\),\k<abort>\.signal\)\.then\((?<result>${I})=>\{\k<store>\.get\(\k<atom>,\k<host>\)===\k<initial>&&\k<active>\(\)&&\k<setter>\(\k<store>,\k<host>,\k<result>\)\}\)\.catch\((?<error>${I})=>\{\k<active>\(\)&&${I}\.${I}\.error\("Failed to read remote-control status",\{safe:\{\},sensitive:\{error:\k<error>\}\}\)\}\))` +
-      blocked + String.raw`,\k<cleanup>\}`,
-    "gu",
-  );
-}
 
-function applyLinuxRemoteControlStatusReadGuardPatch(source) {
-  const pristine = [...source.matchAll(remoteControlStatusReadPattern())];
-  const patched = [...source.matchAll(remoteControlStatusReadPattern(true))];
-  const helperCount = source.split(REMOTE_CONTROL_STATUS_READ_HELPER).length - 1;
-  const markerCount = source.split(REMOTE_CONTROL_STATUS_READ_GUARD_MARKER).length - 1;
-  if (pristine.length === 0 && patched.length === 1 && helperCount === 1 && markerCount === 2) {
-    return source;
-  }
-  if (
-    pristine.length === 0 && patched.length === 0 && helperCount === 1 && markerCount === 2 &&
-    countText(source, 'sendRequest("remoteControl/status/read",void 0)') === 1 &&
-    countText(source, 'methods:"remoteControl/status/changed"') === 1 &&
-    source.includes(`${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(`) &&
-    new RegExp(`[A-Za-z_$][\\w$]*:function\\([^)]*\\)\\{function ${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}\\(`, "u").test(source) &&
-    source.includes('{status:`disabled`,available:!1,accessRequired:!1}')
-  ) {
-    return source;
-  }
-  if (pristine.length === 0 && patched.length === 0 && markerCount === 0) {
-    const candidates = [];
-    for (const log of source.matchAll(/"Failed to read remote-control status"/gu)) {
-      const headers = [...source.slice(0, log.index).matchAll(
-        /[A-Za-z_$][\w$]*:function\((?<store>[A-Za-z_$][\w$]*),(?<host>[A-Za-z_$][\w$]*),(?<client>[A-Za-z_$][\w$]*),(?<current>[A-Za-z_$][\w$]*)\)\{/gu,
-      )];
-      const header = headers.at(-1) ?? null;
-      const start = header?.index ?? -1;
-      const open = start === -1 ? -1 : start + header[0].length - 1;
-      const end = open === -1 ? -1 : findMatchingBrace(source, open);
-      if (end < log.index) continue;
-      const owner = source.slice(start, end + 1);
-      const listener = /listener:\(\{params:(?<params>[A-Za-z_$][\w$]*)\}\)=>\{(?<active>[A-Za-z_$][\w$]*)\(\)&&(?<setter>[A-Za-z_$][\w$]*)\((?<listenerStore>[A-Za-z_$][\w$]*),(?<listenerHost>[A-Za-z_$][\w$]*),\k<params>\)\}/u.exec(owner);
-      const cleanup = /,([A-Za-z_$][\w$]*)=\(\)=>\{[\s\S]{0,300}?\};return /u.exec(owner);
-      const readStart = /\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\([A-Za-z_$][\w$]*\.sendRequest\("remoteControl\/status\/read",void 0\),[A-Za-z_$][\w$]*\.signal\)/u.exec(owner);
-      const readEnd = cleanup == null ? -1 : owner.lastIndexOf(`,${cleanup[1]}}`);
-      const readText = readStart == null || readEnd <= readStart.index ? null : owner.slice(readStart.index, readEnd);
-      const read = readText == null || !readText.endsWith("})") ||
-        countText(readText, '"Failed to read remote-control status"') !== 1
-        ? null
-        : { 0: readText, index: readStart.index, groups: { read: readText } };
-      if (
-        header != null && listener != null && read != null &&
-        listener.groups.listenerStore === header.groups.store &&
-        listener.groups.listenerHost === header.groups.host &&
-        countText(owner, 'methods:"remoteControl/status/changed"') === 1 &&
-        countText(owner, 'sendRequest("remoteControl/status/read",void 0)') === 1 &&
-        countText(owner, "new AbortController") === 1 &&
-        countText(owner, ".onRpcBroken(") === 2
-      ) {
-        candidates.push({ start, openOffset: open - start, owner, header, listener, read });
-      }
-    }
-    if (candidates.length === 1) {
-      const { start, openOffset, owner, header, listener, read } = candidates[0];
-      const { store, host } = header.groups;
-      const { active, setter } = listener.groups;
-      const guardedRead = `${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${host})?${read.groups.read}:` +
-        `(${active}()&&${setter}(${store},${host},{status:\`disabled\`,available:!1,accessRequired:!1}),void 0)`;
-      let replacedOwner = owner.slice(0, read.index) + guardedRead + owner.slice(read.index + read[0].length);
-      replacedOwner = replacedOwner.slice(0, openOffset + 1) + REMOTE_CONTROL_STATUS_READ_HELPER +
-        replacedOwner.slice(openOffset + 1);
-      return source.slice(0, start) + replacedOwner + source.slice(start + owner.length);
-    }
-  }
-  if (pristine.length !== 1 || patched.length !== 0 || markerCount !== 0) {
-    console.warn("WARN: Could not find unique complete remote-control status subscription - skipping Linux remote-control status guard patch");
-    return source;
-  }
-  const [match] = pristine;
-  const { host, active, setter, store, read } = match.groups;
-  const guardedRead = `${REMOTE_CONTROL_STATUS_READ_GUARD_MARKER}(${host})?${read}:` +
-    `(${active}()&&${setter}(${store},${host},{status:\`disabled\`,available:!1,accessRequired:!1}),void 0)`;
-  // The helper is a statement-level declaration in the subscription's module.
-  return source.slice(0, match.index) + REMOTE_CONTROL_STATUS_READ_HELPER +
-    match[0].replace(read, guardedRead) + source.slice(match.index + match[0].length);
+function applyLinuxRemoteControlStatusReadGuardPatch(source, context = {}) {
+  return prepareStatusReadString(source, context);
 }
 
 const REMOTE_CONTROL_STATUS_WAIT_PATTERN =
@@ -961,13 +866,10 @@ module.exports = [
   },
   {
     id: "linux-remote-control-status-read-guard",
-    phase: "webview-asset",
-    assetNeedles: ['"remoteControl/status/read",void 0', "Failed to read remote-control status"],
+    phase: "extracted-app:pre-webview",
     order: 20_153,
     ciPolicy: "optional",
-    missingDescription: "app-server manager signals bundle",
-    skipDescription: "Linux remote-control status read guard patch",
-    apply: applyLinuxRemoteControlStatusReadGuardPatch,
+    apply: applyStatusReadPatch,
   },
   {
     id: "linux-remote-control-status-wait",

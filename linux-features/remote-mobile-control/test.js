@@ -360,11 +360,14 @@ function syntheticRemoteTerminalStatusBundle() {
   return remoteTerminalHarness.source();
 }
 
-function syntheticAppServerManagerStatusBundle() {
-  return [
-    "var o={v:{error(){}}},i={C:e=>ou(e)},a={P:e=>e},u={};function h(e,t,n){return e.set(u,t,n)}",
-    'function p(e,t,n,r){let s;if((0,i.C)(t))return()=>{};let l=new AbortController,d=()=>!l.signal.aborted&&(r?.()??!0),c=e.get(u,t),p=n.subscribe({type:"notification",key:{hostId:t},methods:"remoteControl/status/changed",listener:({params:n})=>{d()&&h(e,t,n)}}),f=()=>{l.signal.aborted||(l.abort(),p[Symbol.dispose](),s?.[Symbol.dispose]())};return p.onRpcBroken(f),p.then(e=>{d()?(s=e,e.onRpcBroken(f)):e[Symbol.dispose]()},f),(0,a.P)(n.sendRequest("remoteControl/status/read",void 0),l.signal).then(n=>{e.get(u,t)===c&&d()&&h(e,t,n)}).catch(e=>{d()&&o.v.error("Failed to read remote-control status",{safe:{},sensitive:{error:e}})}),f}',
-  ].join("");
+function currentHostStatusReaderRegistry() {
+  const row = require("./fixtures/current-host-toggle.json").modules.find(row => row.moduleId === "ihPm");
+  return `export const __webpack_modules__={${JSON.stringify(row.moduleId)}(${row.params.join(",")}){${row.moduleSource}}};`;
+}
+
+function currentHostStatusReadGraphRegistry() {
+  const rows = require("./fixtures/current-host-status-graph.json").modules;
+  return `export const __webpack_modules__={${rows.map(row => `${JSON.stringify(row.moduleId)}(${row.params.join(",")}){${row.moduleSource}}`).join(",")}};`;
 }
 
 function syntheticCurrentStatusWaitBundle() {
@@ -934,6 +937,7 @@ const RSPACK_REMOTE_MOBILE_ASSETS = {
   loadGate: "async/24191.7b05d5cf83.js",
   terminalStatus: "async/24192.0a1b2c3d4e.js",
   managerSignals: "async/24193.1a2b3c4d5e.js",
+  statusReadGraph: "async/24198.5555555555.js",
   visibility: "async/435221.eac941d988.js",
   visibilityCopy: "async/446738.83dee6513b.js",
   settings: "async/14625.95f35fcee5.js",
@@ -969,8 +973,8 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
   const assets = {
     loadGate: syntheticRemoteConnectionVisibilityBundle(),
     terminalStatus: syntheticRemoteTerminalStatusBundle(),
-    managerSignals: syntheticAppServerManagerStatusBundle() + syntheticCurrentStatusWaitBundle() +
-      syntheticCurrentReasoningSummaryTurnStartBundle() + syntheticCurrentConversationHydrationBundle(),
+    managerSignals: syntheticCurrentReasoningSummaryTurnStartBundle() + syntheticCurrentConversationHydrationBundle(),
+    statusReadGraph: currentHostStatusReadGraphRegistry(),
     visibility: syntheticCurrentUsePluginVisibilityBundle(),
     visibilityCopy: syntheticCurrentUsePluginVisibilityBundle().replace("slingshotEnabled:t}){return t&&", "slingshotEnabled:n}){return n&&"),
     settings: syntheticCurrentRevokeSetupResetBundle() + syntheticRemoteConnectionsSettingsCopyBundle() +
@@ -1011,7 +1015,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-mobile-reasoning-summary-none", "webview-asset"],
       ["linux-remote-mobile-conversation-hydration", "webview-asset"],
       ["linux-remote-terminal-status-recovery", "extracted-app:pre-webview"],
-      ["linux-remote-control-status-read-guard", "webview-asset"],
+      ["linux-remote-control-status-read-guard", "extracted-app:pre-webview"],
       ["linux-remote-control-status-wait", "webview-asset"],
       ["linux-remote-control-enable-for-host-params", "extracted-app:pre-webview"],
       ["linux-remote-control-enablement-bridge", "extracted-app:pre-webview"],
@@ -1031,7 +1035,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "linux-remote-connections-refresh": syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-mobile-reasoning-summary-none": syntheticCurrentReasoningSummaryTurnStartBundle(),
       "linux-remote-mobile-conversation-hydration": syntheticCurrentConversationHydrationBundle(),
-      "linux-remote-control-status-read-guard": syntheticAppServerManagerStatusBundle(),
       "linux-remote-control-status-wait": syntheticCurrentStatusWaitBundle(),
       "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
     };
@@ -2000,163 +2003,22 @@ test("Linux remote-connections refresh patch warns when upstream refresh needles
   }
 });
 
-function remoteStatusHarness({ userAgent = "X11; Linux x86_64", skip = false } = {}) {
-  const source = syntheticAppServerManagerStatusBundle();
-  const patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
+test("status read public entry delegates only the complete native owned module", () => {
+  const source = currentHostStatusReaderRegistry(), patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
   assert.notEqual(patched, source);
+  assert.equal(patched.length - source.length, 329);
   assert.equal(applyLinuxRemoteControlStatusReadGuardPatch(patched), patched);
-  const errors = [];
-  const context = {
-    module: { exports: {} },
-    navigator: { userAgent },
-    ou: () => skip,
-    AbortController,
-    Symbol,
-  };
-  vm.runInNewContext(`${patched};o.v.error=(...args)=>errors.push(args);module.exports=p;`,
-    { ...context, errors });
-  const SO = context.module.exports;
-  const values = new Map();
-  const store = {
-    get: (_atom, hostId) => values.get(hostId) ?? null,
-    set: (_atom, hostId, value) => values.set(hostId, value),
-  };
-  function connect(hostId, isCurrent) {
-    let resolveRead, rejectRead, resolveSubscription, listener;
-    const calls = [];
-    const broken = [];
-    let disposals = 0;
-    const subscription = new Promise((resolve) => { resolveSubscription = resolve; });
-    subscription[Symbol.dispose] = () => { disposals += 1; };
-    subscription.onRpcBroken = (callback) => broken.push(callback);
-    const cleanup = SO(store, hostId, {
-      subscribe(options) {
-        assert.equal(options.key.hostId, hostId);
-        assert.equal(options.methods, "remoteControl/status/changed");
-        listener = options.listener;
-        return subscription;
-      },
-      sendRequest(method, params) {
-        calls.push({ method, params });
-        return new Promise((resolve, reject) => { resolveRead = resolve; rejectRead = reject; });
-      },
-    }, isCurrent);
-    return {
-      calls, cleanup, broken,
-      notify: (params) => listener({ params }),
-      resolveRead: (status) => resolveRead(status),
-      rejectRead: (error) => rejectRead(error),
-      resolveSubscription: () => resolveSubscription({
-        [Symbol.dispose]() { disposals += 1; },
-        onRpcBroken: (callback) => broken.push(callback),
-      }),
-      disposals: () => disposals,
-    };
-  }
-  return { connect, values, errors };
-}
-
-test("Linux remote-control status guard skips remote reads and retains disposable notifications", async () => {
-  const { connect, values } = remoteStatusHarness();
-  for (const hostId of ["remote-ssh-discovered:dev", "remote-control:env_test"]) {
-    const connection = connect(hostId);
-    assert.deepEqual(connection.calls, []);
-    assert.deepEqual(JSON.parse(JSON.stringify(values.get(hostId))), {
-      status: "disabled", available: false, accessRequired: false,
-    });
-    connection.notify({ status: "connected" });
-    assert.equal(values.get(hostId).status, "connected");
-    connection.resolveSubscription();
-    await new Promise((resolve) => setImmediate(resolve));
-    connection.cleanup();
-    connection.cleanup();
-    assert.equal(connection.disposals(), 2);
-    connection.notify({ status: "disabled" });
-    assert.equal(values.get(hostId).status, "connected");
-  }
+  assert.match(patched, /codexLinuxRemoteControlShouldReadStatus/);
 });
 
-test("local status reads preserve RPC parameters and cannot overwrite a newer notification", async () => {
-  const { connect, values } = remoteStatusHarness();
-  const connection = connect("local");
-  assert.deepEqual(connection.calls, [{ method: "remoteControl/status/read", params: undefined }]);
-  connection.notify({ status: "connected" });
-  connection.resolveRead({ status: "disabled" });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(values.get("local").status, "connected");
-  connection.cleanup();
-});
-
-test("local status reads stop applying responses after disposal, stale ownership, or RPC break", async () => {
-  const { connect, values, errors } = remoteStatusHarness();
-  const disposed = connect("local");
-  disposed.cleanup();
-  disposed.resolveRead({ status: "connected" });
-  disposed.resolveSubscription();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(values.has("local"), false);
-  assert.equal(disposed.disposals(), 2);
-
-  let current = true;
-  const stale = connect("local", () => current);
-  current = false;
-  stale.notify({ status: "connected" });
-  stale.resolveRead({ status: "connected" });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(values.has("local"), false);
-  stale.cleanup();
-
-  const broken = connect("local");
-  broken.broken[0]();
-  broken.rejectRead(new Error("RPC broke"));
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(values.has("local"), false);
-  assert.deepEqual(errors, []);
-});
-
-test("status guard preserves local responses and non-Linux remote reads", async () => {
-  for (const [userAgent, hostId] of [["Linux", "local"], ["Macintosh", "remote-ssh:test"]]) {
-    const { connect, values } = remoteStatusHarness({ userAgent });
-    const connection = connect(hostId);
-    assert.equal(connection.calls.length, 1);
-    connection.resolveRead({ status: "connected" });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(values.get(hostId).status, "connected");
-    connection.cleanup();
-  }
-  const skipped = remoteStatusHarness({ skip: true }).connect("durable");
-  assert.deepEqual(skipped.calls, []);
-  assert.equal(typeof skipped.cleanup, "function");
-});
-
-test("status guard rejects incomplete, duplicate, mixed, and marker-only contracts", () => {
-  const source = syntheticAppServerManagerStatusBundle();
-  const patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
-  const drifted = [
-    source.replace("new AbortController", "new Controller"),
-    source.replace("p.onRpcBroken(f)", "p.onRpcBroken(other)"),
-    source.replace("d()&&h(e,t,n)", "h(e,t,n)"),
-    source.replace("let s;if((0,i.C)(t))", "if((0,i.C)(t))"),
+test("status read public entry rejects retired bare callbacks, partial and unrelated source", () => {
+  const source = currentHostStatusReaderRegistry();
+  for (const bad of [
+    'function unrelated(){return client.sendRequest("remoteControl/status/read",void 0)}',
+    source.replace('"remoteControl/status/read"', '"other/read"'),
     source + source,
-    source + patched,
-    patched + patched,
     source + "/*codexLinuxRemoteControlShouldReadStatus*/",
-    patched.replace("available:!1", "available:!0"),
-    patched.replace("remoteControl/status/read", "remoteControl/status/replaced"),
-    "function codexLinuxRemoteControlShouldReadStatus(){}",
-  ];
-  for (const candidate of drifted) {
-    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlStatusReadGuardPatch(candidate));
-    assert.equal(result, candidate);
-    assert.match(warnings.join("\n"), /unique complete remote-control status subscription/);
-  }
-});
-
-test("status guard warns instead of reporting an unrelated chunk as patched", () => {
-  const source = "export function unrelatedStatus(){return null}";
-  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlStatusReadGuardPatch(source));
-  assert.equal(result, source);
-  assert.match(warnings.join("\n"), /unique complete remote-control status subscription/);
+  ]) assert.throws(() => applyLinuxRemoteControlStatusReadGuardPatch(bad));
 });
 
 function loadTerminalStatusModules(patched) {
@@ -3166,8 +3028,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(readAsset("mobileSetup"), /apps on your Mac/);
         assert.match(readAsset("terminalStatus"), /codexLinuxRemoteTerminalStatusWaitingOnUserInput/);
         const signals = readAsset("managerSignals");
-        assert.match(signals, /codexLinuxRemoteControlShouldReadStatus/);
-        assert.match(signals, /codexLinuxRemoteControlStatusWaitMs/);
+        assert.match(readAsset("hostToggleProviders"), /codexLinuxRemoteControlShouldReadStatus/);
+        assert.match(readAsset("hostToggleProviders"), /codexLinuxRemoteControlStatusWaitMs/);
         assert.match(signals, /codexLinuxRemoteMobileReasoningSummaryNone/);
         assert.match(signals, /codexLinuxRemoteMobileConversationHydration/);
         assert.match(readAsset("bridge"), /codexLinuxRemoteControlEnablementBridge/);
