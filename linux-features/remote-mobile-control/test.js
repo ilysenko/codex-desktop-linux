@@ -43,7 +43,6 @@ const {
   applyLinuxRemoteControlStatusReadGuardPatch,
   applyLinuxRemoteControlStatusWaitPatch,
   applyLinuxRemoteConnectionsRefreshPatch,
-  applyLinuxRemoteControlSettingsUxPatch,
   applyLinuxRemoteControlVisibilityPatch,
   matchesLinuxRemoteControlEnablementBridgeContract,
   validateLinuxRemoteControlAutoConnectContract,
@@ -1006,7 +1005,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-feature-sync", "extracted-app:pre-webview"],
       ["linux-remote-control-visibility", "extracted-app:pre-webview"],
       ["linux-remote-control-copy", "extracted-app:pre-webview"],
-      ["linux-remote-control-settings-ux", "webview-asset"],
+      ["linux-remote-control-settings-ux", "extracted-app:pre-webview"],
       ["linux-remote-control-client-revoke-setup-reset", "extracted-app:pre-webview"],
       ["linux-remote-connections-refresh", "webview-asset"],
       ["linux-remote-mobile-reasoning-summary-none", "webview-asset"],
@@ -1028,7 +1027,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     // by stable strings, and those strings occur in the current fixtures.
     const fixtures = {
       "linux-remote-control-load-gate": syntheticRemoteConnectionVisibilityBundle(),
-      "linux-remote-control-settings-ux": syntheticOutboundTabGateBundle() + syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-control-client-revoke-setup-reset": syntheticCurrentRevokeSetupResetBundle(),
       "linux-remote-connections-refresh": syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-mobile-reasoning-summary-none": syntheticCurrentReasoningSummaryTurnStartBundle(),
@@ -1966,49 +1964,8 @@ test("Linux remote-control feature sync rejects unrelated, ambiguous, or partial
 // fail-closed cohort cases live in remote-copy.test.js. String replacement of
 // isolated Mac text is intentionally retired.
 
-test("Linux remote-control settings UX preserves native copy and the retired SSH installer", () => {
-  const retiredInstallAction = "function ro(e){switch(e.kind){case`install-codex`:return null;default:return e}}";
-  const source = syntheticRemoteConnectionsSettingsCopyBundle() + retiredInstallAction + syntheticOutboundTabGateBundle();
-  const patched = applyLinuxRemoteControlSettingsUxPatch(source);
-  assert.notEqual(patched, source);
-  assert.ok(patched.includes(syntheticRemoteConnectionsSettingsCopyBundle()));
-  assert.ok(patched.includes(retiredInstallAction));
-  assert.doesNotMatch(patched, /codexLinuxRemoteControlCopy|codexLinuxRemoteControlSshInstall/);
-  assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
-});
-
-test("Linux remote-control settings UX patch bypasses outbound tab hide gate on Linux", () => {
-  const source = [
-    "function $n(e,t){return e.displayName.localeCompare(t.displayName)}",
-    'function Uo(){let l=(0,G.Zj)("782640499"),u=(0,G.Zj)(on),z=Ge(),B=!l,Se=null==f,Ce=null==p,Ke=z&&!0,qe=B&&(z||!1),Je=z&&!0;return qe}',
-  ].join("");
-  const patched = applyLinuxRemoteControlSettingsUxPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteControlOutboundTabGate/);
-  assert.match(patched, /B=\/\*codexLinuxRemoteControlOutboundTabGate\*\/\(typeof navigator!=`undefined`&&navigator\.userAgent\.includes\(`Linux`\)\|\|!l\)/);
-  assert.doesNotMatch(patched, /B=!l/);
-  assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
-
-  const context = {
-    Ge: () => true,
-    G: { Zj: () => true },
-    f: [],
-    navigator: { userAgent: "Linux" },
-    on: "gate",
-    p: [],
-  };
-  vm.runInNewContext(`${patched};globalThis.__visible=Uo();`, context);
-  assert.equal(context.__visible, true);
-});
-
-test("Linux remote-control settings UX patch warns when outbound tab gate consumer drifts", () => {
-  const source = 'function Uo(){let l=(0,G.Zj)("782640499"),u=(0,G.Zj)(on),z=Ge(),B=l,Se=null==f;return B&&z}';
-  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
-
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("outbound tab gate consumer")));
-});
+// The qualified outbound initializer/consumer/provider cohort, detector policy,
+// retired actions and fail-closed extracted API are covered in outbound-tab-owner.test.js.
 
 test("Linux remote-connections refresh patch shortens polling and refreshes on resume signals", () => {
   const source = syntheticCurrentSettingsRefreshBundle();
@@ -2355,15 +2312,6 @@ test("Linux remote-control status wait rejects duplicate, missing, and partial t
   }
 });
 
-test("Linux remote-control settings UX patch does not require retired SSH installer anchors", () => {
-  const source = syntheticRemoteConnectionsSettingsCopyBundle() + syntheticOutboundTabGateBundle();
-  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
-
-  assert.notEqual(result, source);
-  assert.match(result, /Control this Mac/);
-  assert.deepEqual(warnings, []);
-});
-
 test("remote mobile feature patch report records feature metadata", () => {
   withTempFeatureRoot(["remote-mobile-control"], (root) => {
     const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-report-"));
@@ -2384,8 +2332,8 @@ test("remote mobile feature patch report records feature metadata", () => {
       );
       assert.equal(settingsPatch.sourceKind, "feature");
       assert.equal(settingsPatch.featureId, "remote-mobile-control");
-      assert.equal(settingsPatch.status, "applied");
-      assert.equal(settingsPatch.warnings, undefined);
+      assert.equal(settingsPatch.status, "skipped-optional");
+      assert.ok(settingsPatch.warnings.some(warning => warning.includes("outbound Connections owner")));
 
       const enablementBridgePatch = report.patches.find(
         (patch) =>
@@ -2395,7 +2343,7 @@ test("remote mobile feature patch report records feature metadata", () => {
       assert.equal(enablementBridgePatch.status, "skipped-optional");
       assert.ok(
         enablementBridgePatch.warnings.some((warning) =>
-          warning.includes("app main bundle"),
+          warning.includes("native live Remote enablement bridge"),
         ),
       );
     } finally {
@@ -3207,7 +3155,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           assert.match(readAsset(key), /codexLinuxRemoteControlVisibilityEnabled/);
         }
         const settings = readAsset("settings");
-        assert.match(settings, /codexLinuxRemoteControlOutboundTabGate/);
+        assert.doesNotMatch(settings, /codexLinuxRemoteControlOutboundTabGate/);
+        assert.ok(settings.includes(syntheticOutboundTabGateBundle()));
         assert.match(settings, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);
         assert.match(settings, /codexLinuxRemoteConnectionsRefreshNow/);
         assert.match(settings, /window\.setInterval\(\(\)=>\{n\(\)\},5e3\)/);
@@ -3239,7 +3188,6 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           "linux-remote-control-load-gate",
           "linux-remote-control-feature-sync",
           "linux-remote-control-visibility",
-          "linux-remote-control-settings-ux",
           "linux-remote-control-client-revoke-setup-reset",
           "linux-remote-connections-refresh",
           "linux-remote-mobile-reasoning-summary-none",
@@ -3253,9 +3201,10 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         ]) {
           assert.equal(statuses[id], "applied", id);
         }
-        // This legacy synthetic app has no native copy cohort. The complete
-        // selected native cohort is covered independently in remote-copy.test.js.
+        // This legacy toy lacks the complete native copy/outbound cohorts.
+        // Dedicated copy/outbound tests qualify the real selected native paths.
         assert.equal(statuses["linux-remote-control-copy"], "skipped-optional");
+        assert.equal(statuses["linux-remote-control-settings-ux"], "skipped-optional");
         assert.equal(statuses["linux-remote-control-auto-connect-contract"], "already-applied");
 
         const secondReport = createPatchReport();

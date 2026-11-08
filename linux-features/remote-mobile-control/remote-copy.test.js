@@ -183,11 +183,11 @@ test("no-op atomic preflight rejects stale bytes and symlink dependencies withou
 test("actual84 and85 APIs compose in either order and preserve every native copy byte", () => {
   let expected;
   for (const order of [[84, 85], [85, 84]]) temporary(root => {
-    const input = sources(), name = "async/remote-copy-settings.js";writeApp(root, input);
+    const input = require("./fixtures/outbound-tab-harness.js").withCopySources(), name = "async/remote-copy-settings.js";writeApp(root, input);
     const apply = id => {
       if (id === 84) { assert.equal(apply84(root).changed, 0);return; }
-      const file = path.join(root, "webview/assets", name), source = fs.readFileSync(file, "utf8");
-      const result = apply85(source);fs.writeFileSync(file, result);
+      const before = readApp(root, input);const result = apply85(root);
+      assert.equal(result.changed, JSON.stringify(before) === JSON.stringify(input) ? 1 : 0);
     };
     for (const id of order) apply(id);
     const output = readApp(root, input);

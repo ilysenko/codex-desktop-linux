@@ -12,13 +12,13 @@ const { prepareFeatureSyncSource, applyFeatureSyncToExtractedApp } = require("./
 const { prepareRevokeSetupResetSource, applyRevokeSetupReset } = require("./revoke-setup-reset-owner.js");
 const { prepareBridgeSource, applyBridgePatch } = require("./enablement-bridge.js");
 const { applyNativeRemoteCopy } = require("./remote-copy.js");
+const { applyOutboundTab } = require("./outbound-tab-owner.js");
 const { prepareTerminalSource, applyTerminalStatus } = require("./terminal-status.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
 const DEVICE_KEY_ADDON_MARKER = "codexLinuxRemoteControlDeviceKeyAddon";
 
-const REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER = "codexLinuxRemoteControlOutboundTabGate";
 const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
@@ -391,35 +391,8 @@ function applyLinuxRemoteControlCopyPatch(extractedDir, context = {}) {
   return applyNativeRemoteCopy(extractedDir, context.remoteCopyWriteOptions);
 }
 
-function applyLinuxRemoteControlSettingsUxPatch(source) {
-  return applyLinuxRemoteControlOutboundTabGatePatch(source);
-}
-
-function applyLinuxRemoteControlOutboundTabGatePatch(source) {
-  if (source.includes(REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER)) {
-    return source;
-  }
-
-  const gates = [...source.matchAll(/([A-Za-z_$][\w$]*)=\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\("782640499"\)/gu)];
-  if (gates.length !== 1) {
-    console.warn("WARN: Could not find unique remote-control outbound tab gate - skipping Linux outbound tab gate patch");
-    return source;
-  }
-
-  const [, hiddenGateVar] = gates[0];
-  const negatedGate = new RegExp(
-    `([A-Za-z_$][\\w$]*)=!${escapeRegExp(hiddenGateVar)}(?=,[A-Za-z_$][\\w$]*=null==[A-Za-z_$][\\w$]*[,;])`,
-    "gu",
-  );
-  const consumers = [...source.matchAll(negatedGate)];
-  if (consumers.length !== 1) {
-    console.warn("WARN: Could not find remote-control outbound tab gate consumer - skipping Linux outbound tab gate patch");
-    return source;
-  }
-  return source.replace(
-    negatedGate,
-    `$1=/*${REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER}*/(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)||!${hiddenGateVar})`,
-  );
+function applyLinuxRemoteControlSettingsUxPatch(extractedDir, context = {}) {
+  return applyOutboundTab(extractedDir, context.outboundTabWriteOptions);
 }
 
 // The settings page polls remote connections every 15s from an effect
@@ -936,12 +909,9 @@ module.exports = [
   },
   {
     id: "linux-remote-control-settings-ux",
-    phase: "webview-asset",
-    assetNeedles: ['"782640499"', '"settings.remoteConnections.refresh"'],
+    phase: "extracted-app:pre-webview",
     order: 20_135,
     ciPolicy: "optional",
-    missingDescription: "remote connections settings bundle",
-    skipDescription: "Linux remote-control settings UX patch",
     apply: applyLinuxRemoteControlSettingsUxPatch,
   },
   {

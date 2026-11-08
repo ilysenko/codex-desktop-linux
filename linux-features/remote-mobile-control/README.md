@@ -136,6 +136,14 @@ What it changes:
   ambiguous or drifted selected branches and links fail closed. A successful
   first or repeated qualification reports `already-applied` with no ASAR byte
   changes and no injected copy marker.
+- Opens the outbound Connections flow on Linux after qualifying its current
+  settings owner, native hide-gate subscription, tab resolver and selected
+  consumers. The original subscription still runs once. Linux detection retains
+  the existing Electron user-agent policy; other user agents retain the native
+  hide-gate result. Native availability/access-required denial, authentication,
+  pairing and local-client requirements still apply. Inbound setup, SSH routes,
+  native copy and the retired SSH installer actions remain unchanged. Missing,
+  ambiguous, orphaned or drifted owned state fails closed before any asset write.
 - Declaratively stages `.codex-linux/cold-start.d/remote-mobile-control`, a
   feature-owned cold-start hook that starts the app-server daemon with `remote-control start`
   through the official Codex executable bundled in the Linux package. It does
@@ -168,7 +176,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-feature-sync` | `shared-boundary` | Enables `remote_control` in the main-process experimental feature sync only for the local app server and excludes Remote SSH, WSL, and cloud hosts. |
 | `linux-remote-control-visibility` | `outbound-control` | Opens the Linux Connections view for pre-enable/unavailable states while retaining native access-required denial and actual account/enrollment/list data. |
 | `linux-remote-control-copy` | `shared-boundary` | Qualifies native Linux PC branches, macOS capability guards, other-computer pairing copy, formatter forwarding and selected Connections search data without rewriting text. |
-| `linux-remote-control-settings-ux` | `shared-boundary` | Adapts outbound-control visibility while preserving native copy and the retired upstream SSH installer. |
+| `linux-remote-control-settings-ux` | `shared-boundary` | Qualifies the native hide-gate subscription, outbound consumers and tab resolver, then adds the Linux user-agent alternative only to the owned outbound flag while retaining native policy and retired actions. |
 | `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state (the `codex-mobile-has-connected-device` application state) only after the last external controller is removed. |
 | `linux-remote-connections-refresh` | `shared-boundary` | Refreshes the shared Connections list without starting or enabling any host runtime. |
 | `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Prevents inherited or rollout-forced reasoning summaries from polluting this host's mobile transcript. |
