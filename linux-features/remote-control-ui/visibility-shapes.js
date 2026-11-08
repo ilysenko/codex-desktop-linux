@@ -1,0 +1,44 @@
+"use strict";
+// Bounded current native grammar: identifiers and static import IDs are resolved separately.
+module.exports = {
+  "booleanCaller": {
+    "params": [
+      "e",
+      "t",
+      "n"
+    ],
+    "moduleSource": "var r=n(\"zTeN\");n(\"ChYf\");var i=n(\"j9xU\"),a=n(\"PIwo\"),s=n(\"OWtl\"),o=n(\"Sd8U\"),l=n(\"o4oB\"),u=n(\"ndjw\"),d=n(\"qixt\"),c=n(\"OMIV\");function p(){return!0}let h=(0,r.un)(s.u,({get:e})=>p()?\"/settings/connections/ssh\":null),f=(0,r.un)(s.u,({get:e})=>e(i.s8)||e(u.Ro)&&e(i.m$)),m=(0,r.un)(o.PR,({get:e})=>e(i.F6)&&(e(c.JW,\"1678134557\")||!e(i.s8)||e(l.S)?.type!==\"remote\")),_=(0,r.un)(o.PR,({get:e})=>e(a.bc)&&(e(c.JW,\"1678134557\")||e(l.S)?.type!==\"local\"||e(c.JW,\"3296668107\"))),g=(0,r.un)(s.u,({get:e})=>!e(f)||e(d.e2)||!e(c.JW,\"1678134557\")&&!e(c.JW,\"1753900615\")),v=(0,r.un)(s.u,({get:e})=>!1),y=(0,r.un)(s.u,({get:e})=>!1);n.d(t,{},{CC:p,FZ:v,G8:m,Kc:g,Sn:f,XO:_,k5:y,m4:h})"
+  },
+  "boolean": {
+    "params": [
+      "e",
+      "t",
+      "n"
+    ],
+    "moduleSource": "var r=n(\"zTeN\"),i=n(\"tl5a\"),a=n(\"B81s\"),s=n(\"OWtl\"),o=n(\"hZax\"),l=n(\"OMIV\"),u=n(\"kx7U\");let d=(0,r.un)(s.u,({get:e})=>{let t=e(i.Dc),{data:n}=e(a.I2,t),r=e(l.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let s=n?.config.features;return null==s||\"object\"!=typeof s||Array.isArray(s)?r:Object.getOwnPropertyDescriptor(s,\"remote_connections\")?.value===!0||r});function c(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,r.Ul)(d)},bc:d,mC:function(){return(0,o.Zj)(\"1042620455\")},mw:function(){let e=(0,r.Ul)(u.u8)??[];return{remoteConnections:e,enabledRemoteHostIdSet:new Set(e.flatMap(c))}}})"
+  },
+  "state": {
+    "params": [
+      "e",
+      "t",
+      "n"
+    ],
+    "moduleSource": "var r=n(\"zTeN\"),i=n(\"rljs\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"kx7U\"),l=n(\"OWtl\"),u=n(\"ndjw\"),d=n(\"RFDv\"),c=n(\"r6TF\"),p=n(\"OMIV\");let h=(0,r.un)(l.u,()=>!0),f=(0,r.un)(l.u,({get:e})=>e(h)&&\"local\"===e(u.fm,e(a.Dc)).kind),m=(0,r.un)(l.u,({get:e})=>{let t=e(a.Dc),n=e(s.I2,t);if(e(p.JW,\"4114442250\"))return\"enabled\";if(n.isLoading)return\"loading\";let r=n.data?.config;if(r?.[\"features.remote_connections\"]===!0)return\"enabled\";let i=r?.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?\"disabled\":Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0?\"enabled\":\"disabled\"}),_=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).some(t=>\"connected\"===e(a.y2,t.hostId))),g=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).length>0),v=(0,r.un)(l.u,({get:e})=>{let t=e(m);if(\"loading\"===t)return!0;if(\"disabled\"===t)return!1;if(e(o.kj))return!0;let n=e(a.Dj);return e(c.Kj).some(({hostId:t})=>{if(!n.includes(t)||!e(i.EX,t))return!0;let r=e(a.y2,t);return\"connecting\"===r||\"restarting\"===r})}),y=(0,r.i1)(l.u,({localProjectActionsEnabled:e},{get:t})=>{let n=t(_),r=t(d.$G);return\"project\"===r&&!e&&n?\"connection\":r});n.d(t,{},{$e:y,Lk:h,T$:f,cC:v,e:m,gK:g,xm:_})"
+  },
+  "stateCaller": {
+    "params": [
+      "e",
+      "t",
+      "n"
+    ],
+    "moduleSource": "var a=n(\"zTeN\"),r=n(\"eFn4\"),i=n(\"OWtl\"),s=n(\"DZgh\"),o=n(\"cpC0\"),l=n(\"RFDv\"),c=n(\"y5af\"),d=n(\"v8tC\"),u=n(\"Rrp3\"),h=n(\"Og9d\");let p=(0,a.i1)(i.u,(e,{get:t})=>g(t,e));function g(e,{mode:t,sidebarMode:n}){return(e(o.xm)||\"connection\"===t)&&(\"codex\"===n||(0,l.sV)(e(r.rQ)))}n.d(t,{},{Db:function(e,{tasks:t,conversationByKey:n,visibleKeys:a,allKeys:r},i){if(\"manual\"!==e.get(s.by).chatSortMode)return;let o=e=>e.flatMap(e=>{let t=n.get(e);return t?.source===\"codex\"?[t.threadKey]:[]});(0,h.ZG)(e,(0,u.q5)({allKeys:r,nextVisibleKeys:i.filter(e=>n.has(e)),preserveUnloadedStoredKeys:!0,storedOrder:e.get(h.t6)})),(0,d.Gd)(e,{tasks:t,visibleThreadIds:(0,c.jF)(o(a),t),nextVisibleThreadIds:(0,c.jF)(o(i),t)})},FQ:g,R$:p})"
+  },
+  "navigationCaller": {
+    "params": [
+      "e",
+      "o",
+      "t"
+    ],
+    "moduleSource": "var c=t(\"ABep\"),n=t(\"QosV\"),s=t(\"HZfM\"),r=t(\"PIwo\");t.d(o,{},{RemoteConnectionsPage:function(){let e,o=(0,n.c)(2);if(!(0,r.Ik)()){let e;return o[0]===Symbol.for(\"react.memo_cache_sentinel\")?(e=(0,c.jsx)(s.C5,{to:\"/\",replace:!0}),o[0]=e):e=o[0],e}return o[1]===Symbol.for(\"react.memo_cache_sentinel\")?(e=(0,c.jsx)(s.C5,{to:\"/settings/connections\",replace:!0}),o[1]=e):e=o[1],e}})"
+  }
+};

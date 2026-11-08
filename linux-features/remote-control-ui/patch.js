@@ -8,23 +8,7 @@ function warn(message, patchName) {
   console.warn(`WARN: ${message} — skipping ${patchName}`);
 }
 
-// The remote connections atoms read the Statsig gate through the jotai getter:
-// `get(gates.JW,"4114442250")`.
-const REMOTE_CONNECTIONS_GATE_PATTERN =
-  /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?),"4114442250"\)(?!\|\|navigator\.userAgent\.includes\(`Linux`\))/g;
-const PATCHED_REMOTE_CONNECTIONS_GATE = `"4114442250")||${LINUX_GATE})`;
-
-function applyRemoteConnectionsVisibilityPatch(source) {
-  const patched = source.replace(
-    REMOTE_CONNECTIONS_GATE_PATTERN,
-    (_match, getter, gate) => `(${getter}(${gate},"4114442250")||${LINUX_GATE})`,
-  );
-  if (patched !== source || source.includes(PATCHED_REMOTE_CONNECTIONS_GATE)) {
-    return patched;
-  }
-  warn("Could not find remote connections Statsig gate", "remote control UI remote connections visibility patch");
-  return source;
-}
+const { applyRemoteConnectionsVisibility } = require("./remote-connections-visibility.js");
 
 function applyRemoteControlConnectionsVisibilityPatch(source) {
   const contract = remoteControlConnectionsVisibilityContract(source);
@@ -115,13 +99,10 @@ module.exports = {
   descriptors: [
     {
       id: "remote-connections-visibility",
-      phase: "webview-asset",
+      phase: "extracted-app:pre-webview",
       order: 20500,
       ciPolicy: "optional",
-      assetNeedles: ['"4114442250"', '"features.remote_connections"'],
-      missingDescription: "remote connection visibility bundle",
-      skipDescription: "remote control UI remote connections visibility patch",
-      apply: applyRemoteConnectionsVisibilityPatch,
+      apply: applyRemoteConnectionsVisibility,
     },
     {
       id: "remote-control-connections-visibility",

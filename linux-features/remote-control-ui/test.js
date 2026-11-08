@@ -72,7 +72,7 @@ test("remote-control UI feature stays disabled until listed in features.json", (
   });
 });
 
-test("remote-control UI feature exposes optional webview asset descriptors when enabled", () => {
+test("remote-control UI feature exposes its cohort and optional asset descriptors when enabled", () => {
   withTempFeatureConfig(["remote-control-ui"], (root) => {
     assert.deepEqual(enabledLinuxFeatureIds({ featuresRoot: root }), ["remote-control-ui"]);
 
@@ -81,7 +81,7 @@ test("remote-control UI feature exposes optional webview asset descriptors when 
     assert.deepEqual(
       patches.map((patch) => [patch.name, patch.phase, patch.ciPolicy]),
       [
-        ["feature:remote-control-ui:remote-connections-visibility", "webview-asset", "optional"],
+        ["feature:remote-control-ui:remote-connections-visibility", "extracted-app:pre-webview", "optional"],
         ["feature:remote-control-ui:remote-control-connections-visibility", "webview-asset", "optional"],
         ["feature:remote-control-ui:experimental-features", "webview-asset", "optional"],
       ],
@@ -91,9 +91,6 @@ test("remote-control UI feature exposes optional webview asset descriptors when 
 
 // rspack/SWC fixtures: jotai atoms read the Statsig gate through their getter,
 // strings are double-quoted and comparisons are literal-first.
-const REMOTE_CONNECTIONS_SOURCE =
-  'let d=(0,r.un)(s.u,({get:e})=>{let t=e(i.Dc),{data:n}=e(a.I2,t),r=e(l.JW,"4114442250");if(!0===n?.config["features.remote_connections"])return!0;let s=n?.config.features;return null==s||"object"!=typeof s||Array.isArray(s)?r:Object.getOwnPropertyDescriptor(s,"remote_connections")?.value===!0||r});' +
-  'let m=(0,r.un)(l.u,({get:e})=>{let t=e(a.Dc),n=e(s.I2,t);if(e(p.JW,"4114442250"))return"enabled";if(n.isLoading)return"loading";return"disabled"});';
 const REMOTE_CONTROL_CONNECTIONS_SOURCE =
   "function r({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}";
 const EXPERIMENTAL_FEATURES_SOURCE =
@@ -104,22 +101,8 @@ function rspackChunk(id, modules) {
 }
 
 test("remote-control UI feature patches are idempotent and fail soft", () => {
-  const remoteConnectionsPatch = featurePatches.find((patch) => patch.id === "remote-connections-visibility");
   const remoteControlConnectionsPatch = featurePatches.find((patch) => patch.id === "remote-control-connections-visibility");
   const experimentalFeaturesPatch = featurePatches.find((patch) => patch.id === "experimental-features");
-
-  const remoteConnectionsPatched = remoteConnectionsPatch.apply(REMOTE_CONNECTIONS_SOURCE, {});
-  assert.match(remoteConnectionsPatched, /r=\(e\(l\.JW,"4114442250"\)\|\|navigator\.userAgent\.includes\(`Linux`\)\);/);
-  assert.match(remoteConnectionsPatched, /if\(\(e\(p\.JW,"4114442250"\)\|\|navigator\.userAgent\.includes\(`Linux`\)\)\)return"enabled"/);
-  assert.equal(remoteConnectionsPatch.apply(remoteConnectionsPatched, {}), remoteConnectionsPatched);
-  const atoms = new Function("navigator", "r", "s", "i", "a", "l", "p",
-    `${remoteConnectionsPatched.replaceAll("let ", "var ")};return{d,m}`);
-  const get = (gate) => (atom) => atom === "gate" ? gate : atom === "config" ? { data: { config: {} }, isLoading: false } : null;
-  const result = atoms({ userAgent: "X11; Linux x86_64" }, { un: (_scope, read) => read }, { u: 0, I2: "config" },
-    { Dc: "host" }, { I2: "config", Dc: "host" }, { JW: "gate", u: 0 }, { JW: "gate" });
-  const linuxGet = (atom, _arg) => get(false)(atom);
-  assert.equal(result.d({ get: linuxGet }), true);
-  assert.equal(result.m({ get: linuxGet }), "enabled");
 
   const currentRemoteControlConnectionsPatched = remoteControlConnectionsPatch.apply(REMOTE_CONTROL_CONNECTIONS_SOURCE, {});
   assert.match(currentRemoteControlConnectionsPatched, /\(t\|\|navigator\.userAgent\.includes\(`Linux`\)\)&&\(e\?\.available\?\?!0\)/);
@@ -153,8 +136,6 @@ test("remote-control UI feature patches are idempotent and fail soft", () => {
   assert.equal(visible({ stage: "beta", name: "multi_agent" }), false);
 
   for (const [patch, drifted, message] of [
-    [remoteConnectionsPatch, "real codex bundle", /Could not find remote connections Statsig gate/],
-    [remoteConnectionsPatch, 'const unrelated=flag||navigator.userAgent.includes(`Linux`);const gate=get("4114442250")', /Could not find remote connections Statsig gate/],
     [remoteControlConnectionsPatch, "const unrelated=(flag||navigator.userAgent.includes(`Linux`))&&other;function RD(){return enabled&&state?.available}", /Could not find remote control connections visibility gate/],
     [experimentalFeaturesPatch, EXPERIMENTAL_FEATURES_SOURCE.replaceAll('"', "`"), /Could not find remote_control experimental feature filter/],
     [experimentalFeaturesPatch, EXPERIMENTAL_FEATURES_SOURCE + EXPERIMENTAL_FEATURES_SOURCE, /Could not find remote_control experimental feature filter/],
@@ -166,7 +147,7 @@ test("remote-control UI feature patches are idempotent and fail soft", () => {
 });
 
 test("remote-control UI descriptors find rspack chunks by content", () => {
-  for (const patch of featurePatches) {
+  for (const patch of featurePatches.filter(row => row.phase === "webview-asset")) {
     assert.equal(patch.pattern, undefined, patch.id);
     assert.equal(patch.assetPattern, undefined, patch.id);
     assert.equal(patch.assetMatch, undefined, `${patch.id} patches every chunk copy of its module`);
@@ -174,7 +155,6 @@ test("remote-control UI descriptors find rspack chunks by content", () => {
   }
   const needles = Object.fromEntries(featurePatches.map((patch) => [patch.id, patch.assetNeedles]));
   const has = (id, source) => needles[id].every((needle) => source.includes(needle));
-  assert.equal(has("remote-connections-visibility", REMOTE_CONNECTIONS_SOURCE), true);
   assert.equal(has("remote-control-connections-visibility", REMOTE_CONTROL_CONNECTIONS_SOURCE), true);
   assert.equal(has("experimental-features", EXPERIMENTAL_FEATURES_SOURCE), true);
   assert.equal(has("experimental-features", featurePatches[2].apply(EXPERIMENTAL_FEATURES_SOURCE, {})), true);
@@ -234,7 +214,7 @@ test("remote-control UI feature patches every rspack chunk copy and records patc
         fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
 
         const chunks = {
-          "async/24191.7b05d5cf83.js": rspackChunk(24191, `PIwo(e,t,n){${REMOTE_CONNECTIONS_SOURCE}}`),
+          ...require("./visibility.test-helpers.js").fixtureSources(),
           "async/435221.eac941d988.js": rspackChunk(435221, `uodG(e,t,n){${REMOTE_CONTROL_CONNECTIONS_SOURCE}n.d(t,{Zi:()=>r})}`),
           "async/446738.83dee6513b.js": rspackChunk(446738, `uodG(e,s,t){${REMOTE_CONTROL_CONNECTIONS_SOURCE.replace("slingshotEnabled:t}){return t&&", "slingshotEnabled:s}){return s&&")}t.d(s,{Zi:()=>r})}`),
           "async/208689.77fb5123f8.js": rspackChunk(208689, EXPERIMENTAL_FEATURES_SOURCE),
@@ -251,7 +231,9 @@ test("remote-control UI feature patches every rspack chunk copy and records patc
         );
 
         const read = (name) => fs.readFileSync(path.join(assetsDir, name), "utf8");
-        assert.equal(read("async/24191.7b05d5cf83.js").split("||navigator.userAgent.includes(`Linux`)").length - 1, 2);
+        for (const role of ["boolean", "state"]) {
+          assert.equal(read(`async/${role}-0.js`).split("codexLinuxRemoteConnectionsVisibility").length - 1, 1);
+        }
         for (const name of ["async/435221.eac941d988.js", "async/446738.83dee6513b.js"]) {
           assert.match(read(name), /\|\|navigator\.userAgent\.includes\(`Linux`\)\)&&\(e\?\.available/);
         }
@@ -280,6 +262,12 @@ const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
 test("signed webview chunks satisfy every remote-control UI contract", { skip: !signedApp }, () => {
   const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
   for (const patch of featurePatches) {
+    if (patch.id === "remote-connections-visibility") {
+      const { locateRemoteConnectionsVisibility } = require("./remote-connections-visibility.js");
+      const prepared = locateRemoteConnectionsVisibility(path.join(signedApp, "webview/assets"));
+      assert.ok(prepared.edits.length > 0);
+      continue;
+    }
     const names = findWebviewAssetsContaining(signedApp, patch.assetNeedles);
     assert.ok(names.length > 0, patch.id);
     for (const name of names) {
