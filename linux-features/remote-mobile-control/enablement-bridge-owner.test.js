@@ -106,3 +106,20 @@ test("native render declaration cannot capture a factory loader parameter", () =
   const bad = change(snapshot(), "function gF(e)", "function n(e)");
   assert.throws(() => prepareBridgeOwner(bad), /native owner\/caller\/render binding/);
 });
+
+test("all critical root heads reject later complex-parameter, generator and commented declarations", () => {
+  const c = snapshot();
+  for (const name of ["p9", "p5", "gF"]) for (const declaration of [
+    `function ${name}(unused=()=>{}){return null}`,
+    `function* ${name}(){return null}`,
+    `function /* head */ * /* name */ ${name}(){return null}`,
+  ]) assert.throws(() => prepareBridgeOwner({ ...c, moduleSource: c.moduleSource + declaration }), /native owner\/caller\/render binding/);
+});
+
+test("native gate hook and context helper cannot be replaced by uninventoried function forms", () => {
+  for (const name of ["u", "f"]) for (const declaration of [
+    `function ${name}(unused=()=>{}){return null}`,
+    `function* ${name}(){return null}`,
+    `function /* head */ ${name}(unused=()=>{}){return null}`,
+  ]) assert.throws(() => inspectNativeGateHook({ ...fixture.hook, start: 0, moduleSource: fixture.hook.moduleSource + declaration }, "cn"));
+});
