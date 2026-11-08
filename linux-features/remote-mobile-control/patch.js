@@ -5,6 +5,7 @@ const path = require("node:path");
 const { findMainProcessChunks, listWebviewScriptAssets } = require("../../scripts/patches/lib/assets.js");
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { prepareDeviceKeySource, applyDeviceKeyToExtractedApp } = require("./device-key-owner.js");
+const { prepareRemoteLoadGateSource, applyRemoteLoadGate } = require("./remote-load-gate.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
@@ -12,16 +13,7 @@ const DEVICE_KEY_ADDON_MARKER = "codexLinuxRemoteControlDeviceKeyAddon";
 
 const REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER = "codexLinuxRemoteControlOutboundTabGate";
 const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
-const REMOTE_CONTROL_LOAD_GATE_MARKER = "codexLinuxRemoteControlLoadGateEnabled";
 const REMOTE_CONTROL_FEATURE_SYNC_MARKER = "codexLinuxRemoteControlFeatureSyncEnabled";
-// The remote-control environment loader asks a Statsig gate hook, reached
-// through a module import binding: `function p(){return(0,o.Zj)("1042620455")}`.
-const REMOTE_CONTROL_LOAD_GATE_NEEDLE =
-  /(?<prefix>(?:[A-Za-z_$][\w$]*:)?function)(?: (?<functionName>[A-Za-z_$][\w$]*))?\(\)\{return\(0,(?<gateHook>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\("1042620455"\)\}/gu;
-const REMOTE_CONTROL_LOAD_GATE_PATCHED =
-  /(?<prefix>(?:[A-Za-z_$][\w$]*:)?function)(?: (?<functionName>[A-Za-z_$][\w$]*))?\(\)\{return codexLinuxRemoteControlLoadGateEnabled\(\)\|\|\(0,(?<gateHook>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\("1042620455"\)\}function codexLinuxRemoteControlLoadGateEnabled\(\)\{/gu;
-const REMOTE_CONTROL_LOAD_GATE_PATCHED_INLINE =
-  /(?<prefix>[A-Za-z_$][\w$]*:function)\(\)\{return codexLinuxRemoteControlLoadGateEnabled\(\)\|\|\(0,(?<gateHook>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\("1042620455"\);function codexLinuxRemoteControlLoadGateEnabled\(\)\{/gu;
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
   "codexLinuxRemoteMobileConversationHydration";
@@ -495,32 +487,11 @@ function validateLinuxRemoteControlAutoConnectContract(extractedDir) {
   return { matched: true, changed: false };
 }
 
-function matchesLinuxRemoteControlLoadGateContract(source) {
-  return [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_NEEDLE)].length +
-    [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED)].length +
-    [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED_INLINE)].length === 1;
-}
-
 function applyLinuxRemoteControlLoadGatePatch(source) {
-  const pristine = [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_NEEDLE)];
-  const patched = [
-    ...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED),
-    ...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED_INLINE),
-  ];
-  const markers = source.split(REMOTE_CONTROL_LOAD_GATE_MARKER).length - 1;
-  if (pristine.length === 0 && patched.length === 1 && markers === 2) return source;
-  if (pristine.length !== 1 || patched.length !== 0 || markers !== 0) {
-    console.warn("WARN: Could not find unique remote-control loader rollout gate - skipping Linux remote-control load gate patch");
-    return source;
-  }
-  const [match] = pristine;
-  const { prefix, functionName, gateHook } = match.groups;
-  const declaration = `${prefix}${functionName == null ? "" : ` ${functionName}`}`;
-  const helper = `function ${REMOTE_CONTROL_LOAD_GATE_MARKER}(){return"undefined"!=typeof navigator&&navigator.userAgent.includes("Linux")}`;
-  const replacement = functionName == null
-    ? `${declaration}(){return ${REMOTE_CONTROL_LOAD_GATE_MARKER}()||(0,${gateHook})("1042620455");${helper}}`
-    : `${declaration}(){return ${REMOTE_CONTROL_LOAD_GATE_MARKER}()||(0,${gateHook})("1042620455")}${helper}`;
-  return source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
+  return prepareRemoteLoadGateSource(source).patchedSource;
+}
+function applyLinuxRemoteControlLoadGateExtractedAppPatch(extractedDir, context = {}) {
+  return applyRemoteLoadGate(extractedDir, context.loadGateWriteOptions);
 }
 
 // The main process syncs experimental feature enablement to every connected
@@ -1297,14 +1268,10 @@ module.exports = [
   },
   {
     id: "linux-remote-control-load-gate",
-    phase: "webview-asset",
-    assetNeedles: ['"1042620455"', '"features.remote_connections"'],
-    assetMatch: matchesLinuxRemoteControlLoadGateContract,
+    phase: "extracted-app:pre-webview",
     order: 20_118,
     ciPolicy: "optional",
-    missingDescription: "remote-control loader gate bundle",
-    skipDescription: "Linux remote-control load gate patch",
-    apply: applyLinuxRemoteControlLoadGatePatch,
+    apply: applyLinuxRemoteControlLoadGateExtractedAppPatch,
   },
   {
     id: "linux-remote-control-feature-sync",
@@ -1489,3 +1456,5 @@ module.exports.applyLinuxRemoteControlCopyPatch = applyLinuxRemoteControlCopyPat
 module.exports.applyLinuxRemoteControlSettingsUxPatch = applyLinuxRemoteControlSettingsUxPatch;
 
 module.exports.applyLinuxRemoteControlDeviceKeyExtractedApp = applyLinuxRemoteControlDeviceKeyExtractedApp;
+
+module.exports.applyLinuxRemoteControlLoadGateExtractedAppPatch = applyLinuxRemoteControlLoadGateExtractedAppPatch;

@@ -68,6 +68,10 @@ What it changes:
   the feature unavailable or withholds the remote-control visibility rollout.
 - Keeps the `Control other devices` settings tab reachable on Linux so this
   desktop can authorize outbound control of another enrolled device.
+- Lets the outbound Remote environment loader proceed on Linux after calling
+  the original rollout hook once with its original gate ID. Other platforms
+  return the original hook result without coercion; native hook failures still
+  propagate before the platform lookup.
 - Refreshes the remote Connections settings state every 5 seconds and
   immediately after focus, visibility, online, or resume signals.
 - Extends the current upstream event-discovery queue to buffer late
@@ -177,6 +181,16 @@ artifacts are errors when the feature is enabled. Preparation retains an exact
 native inverse and requires canonical replay before a single transactional
 write. Existing key-store encryption, permissions, locking and migration
 strategies are unchanged.
+
+The load-gate descriptor prepares an extracted-webview transaction before the
+ordinary webview pass. It qualifies the complete current inline `mC` owner,
+its published native hook callee, stable factory imports and shared atom/gate
+providers. Every physical copy must agree before the transaction writes; a
+marker, partial cohort or changed native call is insufficient. Its exact native
+inverse removes only this load-gate contribution. The remote-connections entry
+and remote-control subview UI transactions accept that precise contribution in
+either order, preserve each other's bytes, and repeat unchanged. Their optional
+feature folders do not depend on one another.
 
 The official webview is an rspack build whose app code lives in lazily loaded
 `webview/assets/async/<id>.<hash>.js` chunks. Webview descriptors select their

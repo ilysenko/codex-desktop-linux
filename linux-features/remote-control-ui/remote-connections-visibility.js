@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const shapes = require("./visibility-shapes.js");
+const { projectLoadGatePeer } = require("./load-gate-peer.js");
 const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
 const { findUniqueRspackModuleCopies, findRspackRequireBinding } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
@@ -79,7 +80,8 @@ function gate(snapshot) {
 }
 
 function qualify(snapshot, role) {
-  let body = snapshot.moduleSource, applied = false;
+  const loadGatePeer = role === "boolean" ? projectLoadGatePeer(snapshot) : { moduleSource: snapshot.moduleSource, active: false };
+  let body = loadGatePeer.moduleSource, applied = false;
   if (role === "boolean" || role === "state") {
     const { call } = gate(snapshot);
     const canonical = `(${call}||typeof navigator!==\`undefined\`&&navigator.userAgent.includes(\`Linux\`))/*${MARKER}*/`;
@@ -94,7 +96,7 @@ function qualify(snapshot, role) {
   if (actual.text !== expected.text) fail("changed " + role + " owner grammar");
   const required = role === "boolean" ? ["bc", "Ik"] : role === "state" ? ["e", "xm"] : role === "booleanCaller" ? ["XO"] : role === "navigationCaller" ? ["RemoteConnectionsPage"] : ["FQ"];
   for (const key of required) if (findRspackExportPublication({ ...snapshot, moduleSource: body }, key) == null) fail("missing " + role + " publication " + key);
-  return { ...actual, applied };
+  return { ...actual, applied, loadGatePeer: loadGatePeer.active };
 }
 
 // Pure: validates the complete cohort and returns source edits; no writes and
@@ -114,6 +116,7 @@ function prepareRemoteConnectionsVisibility(cohort) {
     const imports = qualified[role][0].imports.map(row => row.moduleId);
     if (qualified[role].some(row => JSON.stringify(row.imports.map(item => item.moduleId)) !== JSON.stringify(imports))) fail("inconsistent physical peer imports");
   }
+  if (qualified.boolean.some(row => row.loadGatePeer !== qualified.boolean[0].loadGatePeer)) fail("partially applied load-gate peer");
   const boolean = qualified.boolean[0].imports, state = qualified.state[0].imports;
   for (const [left, right] of [[0, 0], [1, 2], [2, 3], [3, 5], [5, 9], [6, 4]]) {
     if (boolean[left].moduleId !== state[right].moduleId) fail("gate roots disagree on shared provider");

@@ -49,6 +49,7 @@ const {
   validateLinuxRemoteControlAutoConnectContract,
 } = require("./patch.js");
 const remoteMobilePatchDescriptors = require("./patch.js");
+const remoteLoadGateHarness = require("./fixtures/remote-load-gate-harness.js");
 const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -220,7 +221,7 @@ function syntheticRecoverableErrorPredicateBundle() {
 
 // The remote-control loader gate module of the signed webview chunk.
 function syntheticRemoteConnectionVisibilityBundle() {
-  return rspackChunk(24191, 'PIwo(e,t,n){var o=n("statsig");let d={key:"features.remote_connections"};function c(){return!0}function p(){return(0,o.Zj)("1042620455")}function h(){return[]}n.d(t,{Ik:()=>c,mC:()=>p,mw:()=>h})}');
+  return remoteLoadGateHarness.source();
 }
 
 // The main-process experimental feature enablement sync of the signed chunk.
@@ -1000,7 +1001,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-device-key", "extracted-app:pre-webview"],
       ["linux-remote-control-client-revocation-recovery", "main-bundle"],
       ["linux-remote-mobile-app-server-remote-control", "extracted-app:post-webview"],
-      ["linux-remote-control-load-gate", "webview-asset"],
+      ["linux-remote-control-load-gate", "extracted-app:pre-webview"],
       ["linux-remote-control-feature-sync", "main-bundle"],
       ["linux-remote-control-visibility", "webview-asset"],
       ["linux-remote-control-copy", "webview-asset"],
@@ -1063,9 +1064,8 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(hydration.assetMatch(applyLinuxRemoteMobileConversationHydrationPatch(hydrationOwner)), true);
     assert.equal(hydration.assetMatch(hydrationOwner + hydrationOwner), false);
     const loadGate = byId("linux-remote-control-load-gate");
-    const loadGateOwner = syntheticRemoteConnectionVisibilityBundle();
-    assert.equal(loadGate.assetMatch(applyLinuxRemoteControlLoadGatePatch(loadGateOwner)), true);
-    assert.equal(loadGate.assetMatch(loadGateOwner + loadGateOwner), false);
+    assert.equal(loadGate.assetMatch, undefined);
+    assert.equal(loadGate.phase, "extracted-app:pre-webview");
     const revoke = byId("linux-remote-control-client-revoke-setup-reset");
     const revokeOwner = syntheticCurrentRevokeSetupResetBundle();
     assert.equal(revoke.assetMatch(applyLinuxRemoteControlClientRevokeSetupResetPatch(revokeOwner)), true);
@@ -1924,30 +1924,25 @@ test("Linux remote-control client revoke warns when a recognized bundle shape dr
   }
 });
 
-test("Linux remote-control load gate enables remote-control environment loading", () => {
+test("Linux remote-control load gate keeps the native subscription before the Linux alternative", () => {
   const source = syntheticRemoteConnectionVisibilityBundle();
   const patched = applyLinuxRemoteControlLoadGatePatch(source);
-
   assert.notEqual(patched, source);
-  assert.match(patched, /function p\(\)\{return codexLinuxRemoteControlLoadGateEnabled\(\)\|\|\(0,o\.Zj\)\("1042620455"\)\}function codexLinuxRemoteControlLoadGateEnabled\(\)\{/);
+  assert.match(patched, /const codexLinuxRemoteControlNativeLoadGateResult=\(0,o\.Zj\)\("1042620455"\);return typeof navigator/u);
   assert.equal(applyLinuxRemoteControlLoadGatePatch(patched), patched);
-  const gates = [];
   for (const userAgent of ["X11; Linux x86_64", "Macintosh"]) {
-    const { mC } = loadRspackModule(patched, "PIwo", { statsig: { Zj: (gate) => { gates.push(gate); return false; } } }, { navigator: { userAgent } });
-    assert.equal(mC(), userAgent.includes("Linux"));
+    const observed = remoteLoadGateHarness.callMC({ "async/load-gate.js": patched }, userAgent, false);
+    assert.equal(observed.result, userAgent.includes("Linux"));
+    assert.deepEqual(observed.calls, ["1042620455"]);
+    assert.deepEqual(observed.trace, ["native", "platform"]);
   }
-  assert.deepEqual(gates, ["1042620455"]);
 });
 
 test("Linux remote-control load gate rejects non-current and ambiguous shapes", () => {
   const current = syntheticRemoteConnectionVisibilityBundle();
-  for (const source of [
-    "function f(){return c(`1042620455`)}",
-    current.replace('function p(){return(0,o.Zj)("1042620455")}', 'function p(){return(0,o.Zj)("1042620455")}function q(){return(0,o.Zj)("1042620455")}'),
-  ]) {
-    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlLoadGatePatch(source));
-    assert.equal(result, source);
-    assert.match(warnings.join("\n"), /unique remote-control loader rollout gate/);
+  for (const source of ["function f(){return c(`1042620455`)}", current + current,
+    current.replace('mC:function(){return(0,o.Zj)("1042620455")}', 'mC:function(){return true}')]) {
+    assert.throws(() => applyLinuxRemoteControlLoadGatePatch(source), /Remote load gate|Rspack/);
   }
 });
 

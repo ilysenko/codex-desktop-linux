@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const shapes = require("./control-visibility-shapes.js");
+const { projectLoadGatePeer } = require("./load-gate-peer.js");
 const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
 const { findUniqueRspackModuleCopies, findRspackRequireBinding } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
@@ -107,7 +108,8 @@ function visibilityProof(copy) {
 }
 
 function dependencyProof(copy, role) {
-  let body = copy.moduleSource, entry = false;
+  const loadGatePeer = role === "gate" ? projectLoadGatePeer(copy) : { moduleSource: copy.moduleSource, active: false };
+  let body = loadGatePeer.moduleSource, entry = false;
   if (role === "gate" && body.includes(ENTRY)) {
     const calls = [...body.matchAll(new RegExp(`${IDENT}\\(${IDENT}\\.JW,"4114442250"\\)`, "gu"))];
     if (calls.length !== 1 || body.split(ENTRY).length !== 2) fail("entry gate contribution");
@@ -121,7 +123,7 @@ function dependencyProof(copy, role) {
   if (actual.text !== normalized(shapes[role]).text) fail("changed " + role + " dependency grammar");
   const key = role === "catalog" ? "h9" : "mC";
   if (findRspackExportPublication({ ...copy, moduleSource: body }, key) == null) fail("missing " + role + " publication");
-  return { ...actual, entry };
+  return { ...actual, entry, loadGatePeer: loadGatePeer.active };
 }
 
 // Pure build-time contribution preparation. The mobile contribution exposes
@@ -143,6 +145,7 @@ function prepareRemoteControlConnectionsVisibility(cohort, contribution = "ui", 
   const first = proofs.visibility[0];
   if (proofs.visibility.some(proof => proof.ui !== first.ui || proof.mobile !== first.mobile)) fail("partially applied visibility cohort");
   if (proofs.gate.some(proof => proof.entry !== proofs.gate[0].entry)) fail("partial entry dependency");
+  if (proofs.gate.some(proof => proof.loadGatePeer !== proofs.gate[0].loadGatePeer)) fail("partial load-gate dependency");
   const visibility = first.imports, catalog = proofs.catalog[0].imports, gate = proofs.gate[0].imports;
   if (visibility[2].moduleId !== cohort.catalog[0].moduleId || visibility[3].moduleId !== cohort.gate[0].moduleId ||
       visibility[1].moduleId !== catalog[1].moduleId || visibility[1].moduleId !== gate[0].moduleId ||

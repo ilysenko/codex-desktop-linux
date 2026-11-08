@@ -19,9 +19,16 @@ The remote-control subview patch also prepares an atomic cohort. It qualifies
 all physical copies of the published visibility predicate, state-reading hook,
 and tab selector, together with the catalog-state and rollout-hook modules.
 Its gate dependency accepts pristine source or the exact UP77 canonical entry
-contribution. UI-only Linux adaptation adds a platform alternative to the
+contribution, together with the qualified mobile load-gate contribution. UI-only Linux adaptation adds a platform alternative to the
 slingshot flag while retaining catalog availability and access requirements.
 The entry and subview transactions work in either order and repeat unchanged.
+Their complete rollout-owner checks also accept the exact mobile load-gate
+contribution in `mC`. Only that qualified contribution is projected to native
+source for validation; existing entry, subview and loading-state bytes stay
+intact. The three real adapters compose in either order and repeat unchanged,
+without importing the other optional feature directory. The mobile load gate
+calls its native hook once before the Linux alternative and preserves the
+original result and exceptions on other platforms.
 
 The subview preparer specifies exact mobile-only and joint contribution forms,
 including inverse removal of either contribution. Those forms preserve the
