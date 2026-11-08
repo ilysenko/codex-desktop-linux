@@ -42,7 +42,6 @@ const {
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxRemoteControlStatusReadGuardPatch,
   applyLinuxRemoteControlStatusWaitPatch,
-  applyLinuxRemoteConnectionsRefreshPatch,
   applyLinuxRemoteControlVisibilityPatch,
   matchesLinuxRemoteControlEnablementBridgeContract,
   validateLinuxRemoteControlAutoConnectContract,
@@ -1004,7 +1003,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-copy", "extracted-app:pre-webview"],
       ["linux-remote-control-settings-ux", "extracted-app:pre-webview"],
       ["linux-remote-control-client-revoke-setup-reset", "extracted-app:pre-webview"],
-      ["linux-remote-connections-refresh", "webview-asset"],
+      ["linux-remote-connections-refresh", "extracted-app:pre-webview"],
       ["linux-remote-mobile-reasoning-summary-none", "webview-asset"],
       ["linux-remote-mobile-conversation-hydration", "webview-asset"],
       ["linux-remote-terminal-status-recovery", "extracted-app:pre-webview"],
@@ -1025,7 +1024,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     const fixtures = {
       "linux-remote-control-load-gate": syntheticRemoteConnectionVisibilityBundle(),
       "linux-remote-control-client-revoke-setup-reset": syntheticCurrentRevokeSetupResetBundle(),
-      "linux-remote-connections-refresh": syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-mobile-reasoning-summary-none": syntheticCurrentReasoningSummaryTurnStartBundle(),
       "linux-remote-mobile-conversation-hydration": syntheticCurrentConversationHydrationBundle(),
       "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
@@ -1962,38 +1960,8 @@ test("Linux remote-control feature sync rejects unrelated, ambiguous, or partial
 // The qualified outbound initializer/consumer/provider cohort, detector policy,
 // retired actions and fail-closed extracted API are covered in outbound-tab-owner.test.js.
 
-test("Linux remote-connections refresh patch shortens polling and refreshes on resume signals", () => {
-  const source = syntheticCurrentSettingsRefreshBundle();
-  const patched = applyLinuxRemoteConnectionsRefreshPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.match(patched, /r=window\.setInterval\(\(\)=>\{n\(\)\},5e3\);/);
-  assert.doesNotMatch(patched, /15e3/);
-  assert.match(patched, /codexLinuxRemoteConnectionsRefreshNow/);
-  assert.match(patched, /codexLinuxRemoteConnectionsRefreshTimer=null/);
-  assert.match(patched, /codexLinuxRemoteConnectionsRefreshLast=0/);
-  assert.match(patched, /e-codexLinuxRemoteConnectionsRefreshLast<1e3/);
-  assert.match(patched, /document\.addEventListener\(`visibilitychange`,codexLinuxRemoteConnectionsRefreshNow\)/);
-  assert.match(patched, /window\.addEventListener\(`focus`,codexLinuxRemoteConnectionsRefreshNow\)/);
-  assert.match(patched, /window\.addEventListener\(`online`,codexLinuxRemoteConnectionsRefreshNow\)/);
-  assert.match(patched, /window\.addEventListener\(`resume`,codexLinuxRemoteConnectionsRefreshNow\)/);
-  assert.match(patched, /window\.clearTimeout\(codexLinuxRemoteConnectionsRefreshTimer\)/);
-  assert.match(patched, /document\.removeEventListener\(`visibilitychange`,codexLinuxRemoteConnectionsRefreshNow\)/);
-  assert.match(patched, /window\.removeEventListener\(`resume`,codexLinuxRemoteConnectionsRefreshNow\)/);
-  assert.equal(applyLinuxRemoteConnectionsRefreshPatch(patched), patched);
-});
-
-test("Linux remote-connections refresh patch warns when upstream refresh needles drift", () => {
-  for (const source of [
-    'const marker={id:"settings.remoteConnections.refresh"};window.setInterval(()=>marker,15e3);',
-    syntheticCurrentSettingsRefreshBundle().replace("15e3", "Yn"),
-    syntheticCurrentSettingsRefreshBundle().repeat(2),
-  ]) {
-    const { result, warnings } = captureWarnings(() => applyLinuxRemoteConnectionsRefreshPatch(source));
-    assert.equal(result, source);
-    assert.ok(warnings.some((warning) => warning.includes("unique remote-connections auto-refresh effect")));
-  }
-});
+// Current refresh/effect/caller/provider qualification and executable lifecycle
+// coverage live in connections-refresh-owner.test.js. Legacy bare shapes are retired.
 
 test("status read public entry delegates only the complete native owned module", () => {
   const source = currentHostStatusReaderRegistry(), patched = applyLinuxRemoteControlStatusReadGuardPatch(source);
@@ -3010,8 +2978,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.doesNotMatch(settings, /codexLinuxRemoteControlOutboundTabGate/);
         assert.ok(settings.includes(syntheticOutboundTabGateBundle()));
         assert.match(settings, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);
-        assert.match(settings, /codexLinuxRemoteConnectionsRefreshNow/);
-        assert.match(settings, /window\.setInterval\(\(\)=>\{n\(\)\},5e3\)/);
+        assert.doesNotMatch(settings, /codexLinuxRemoteConnectionsRefreshNow/);
+        assert.ok(settings.includes(syntheticCurrentSettingsRefreshBundle()));
         assert.match(settings, /Control this Mac/);
         assert.match(settings, /SSH connections from this Mac/);
         assert.match(readAsset("mobileSetup"), /Connect your phone to this Mac/);
@@ -3041,7 +3009,6 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           "linux-remote-control-feature-sync",
           "linux-remote-control-visibility",
           "linux-remote-control-client-revoke-setup-reset",
-          "linux-remote-connections-refresh",
           "linux-remote-mobile-reasoning-summary-none",
           "linux-remote-mobile-conversation-hydration",
           "linux-remote-terminal-status-recovery",
@@ -3053,10 +3020,11 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         ]) {
           assert.equal(statuses[id], "applied", id);
         }
-        // This legacy toy lacks the complete native copy/outbound cohorts.
-        // Dedicated copy/outbound tests qualify the real selected native paths.
+        // This legacy toy lacks complete native copy/outbound/refresh cohorts.
+        // Dedicated native tests positively qualify each selected production path.
         assert.equal(statuses["linux-remote-control-copy"], "skipped-optional");
         assert.equal(statuses["linux-remote-control-settings-ux"], "skipped-optional");
+        assert.equal(statuses["linux-remote-connections-refresh"], "skipped-optional");
         assert.equal(statuses["linux-remote-control-auto-connect-contract"], "already-applied");
 
         const secondReport = createPatchReport();

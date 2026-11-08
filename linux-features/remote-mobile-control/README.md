@@ -145,6 +145,15 @@ What it changes:
   pairing and local-client requirements still apply. Inbound setup, SSH routes,
   native copy and the retired SSH installer actions remain unchanged. Missing,
   ambiguous, orphaned or drifted owned state fails closed before any asset write.
+- Preserves the current Connections refresh behavior after qualifying its live
+  native callback and effect: five-second polling plus visible focus, online,
+  resume and visibility refresh. Triggers use the same current service list and
+  retain mutation-pending suppression, native availability and abort handling.
+  Concurrent work is coalesced; event bursts retain the existing one-second
+  throttle. Unmount aborts pending work and removes intervals, delayed timers
+  and every listener. Only the effect body changes; service methods and policy
+  remain upstream-owned. Unpublished, captured, partial or orphaned state fails
+  closed rather than accepting a marker alone.
 - Declaratively stages `.codex-linux/cold-start.d/remote-mobile-control`, a
   feature-owned cold-start hook that starts the app-server daemon with `remote-control start`
   through the official Codex executable bundled in the Linux package. It does
@@ -179,7 +188,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-copy` | `shared-boundary` | Qualifies native Linux PC branches, macOS capability guards, other-computer pairing copy, formatter forwarding and selected Connections search data without rewriting text. |
 | `linux-remote-control-settings-ux` | `shared-boundary` | Qualifies the native hide-gate subscription, outbound consumers and tab resolver, then adds the Linux user-agent alternative only to the owned outbound flag while retaining native policy and retired actions. |
 | `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state (the `codex-mobile-has-connected-device` application state) only after the last external controller is removed. |
-| `linux-remote-connections-refresh` | `shared-boundary` | Refreshes the shared Connections list without starting or enabling any host runtime. |
+| `linux-remote-connections-refresh` | `shared-boundary` | Qualifies the native live refresh callback, effect/event bridges and providers, then retains five-second polling and visible focus/online/resume refresh with coalescing and complete cleanup. It never starts or enables a host runtime. |
 | `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Prevents inherited or rollout-forced reasoning summaries from polluting this host's mobile transcript. |
 | `linux-remote-mobile-conversation-hydration` | `mobile-host` | Extends upstream's hydration queue to recover unknown local conversations from ordered turn and item notifications. |
 | `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |

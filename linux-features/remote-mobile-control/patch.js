@@ -13,6 +13,7 @@ const { prepareRevokeSetupResetSource, applyRevokeSetupReset } = require("./revo
 const { prepareBridgeSource, applyBridgePatch } = require("./enablement-bridge.js");
 const { applyNativeRemoteCopy } = require("./remote-copy.js");
 const { applyOutboundTab } = require("./outbound-tab-owner.js");
+const { applyConnectionsRefresh } = require("./connections-refresh-owner.js");
 const { prepareStatusReadString, applyStatusReadPatch } = require("./host-status.js");
 const { prepareStatusWaitString, applyStatusWaitPatch } = require("./host-status-wait.js");
 const { prepareTerminalSource, applyTerminalStatus } = require("./terminal-status.js");
@@ -21,7 +22,6 @@ const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
 const DEVICE_KEY_ADDON_MARKER = "codexLinuxRemoteControlDeviceKeyAddon";
 
-const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
 const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
   "codexLinuxRemoteMobileConversationHydration";
@@ -396,49 +396,8 @@ function applyLinuxRemoteControlSettingsUxPatch(extractedDir, context = {}) {
 // The settings page polls remote connections every 15s from an effect
 // (`window.setInterval(()=>{n()},15e3)`). Linux polls every 5s and also
 // refreshes when the window becomes visible, focused, online, or resumes.
-function applyLinuxRemoteConnectionsRefreshPatch(source) {
-  if (source.includes(REMOTE_CONNECTIONS_REFRESH_MARKER)) {
-    return source;
-  }
-
-  const effectPattern =
-    /([A-Za-z_$][\w$]*)=\(\)=>\{let ([A-Za-z_$][\w$]*)=null,([A-Za-z_$][\w$]*)=!1,([A-Za-z_$][\w$]*)=async\(\)=>\{\3\|\|\(\3=!0,\2=new AbortController,await \(async\(\)=>\{await ([A-Za-z_$][\w$]*)\(\2\.signal\)\}\)\(\)\.finally\(\(\)=>\{\2=null,\3=!1\}\)\)\},([A-Za-z_$][\w$]*)=window\.setInterval\(\(\)=>\{\4\(\)\},15e3\);return\(\)=>\{\2\?\.abort\(\),window\.clearInterval\(\6\)\}\}/gu;
-  let matches = [...source.matchAll(effectPattern)];
-  let modern = false;
-  if (matches.length === 0) {
-    const modernEffectPattern =
-      /([A-Za-z_$][\w$]*)=\(\)=>\{let ([A-Za-z_$][\w$]*)=null,([A-Za-z_$][\w$]*)=!1,([A-Za-z_$][\w$]*)=window\.setInterval\(\(\)=>\{\(async\(\)=>\{\3\|\|\(\3=!0,\2=new AbortController,await \(async\(\)=>\{await ([A-Za-z_$][\w$]*)\(\2\.signal\)\}\)\(\)\.finally\(\(\)=>\{\2=null,\3=!1\}\)\)\}\)\(\)\},15e3\);return\(\)=>\{\2\?\.abort\(\),window\.clearInterval\(\4\)\}\}/gu;
-    matches = [...source.matchAll(modernEffectPattern)];
-    modern = matches.length === 1;
-  }
-  if (matches.length !== 1) {
-    console.warn("WARN: Could not find unique remote-connections auto-refresh effect - skipping Linux remote-connections refresh patch");
-    return source;
-  }
-
-  const needle = matches[0][0];
-  const effectVar = matches[0][1];
-  const abortVar = matches[0][2];
-  const pendingVar = matches[0][3];
-  const refreshVar = modern ? "codexLinuxRemoteConnectionsRefresh" : matches[0][4];
-  const intervalVar = modern ? matches[0][4] : matches[0][6];
-  const refreshEventVar = modern ? matches[0][5] : matches[0][5];
-  const replacement =
-    `${effectVar}=()=>{let ${abortVar}=null,${pendingVar}=!1,${refreshVar}=async()=>{${pendingVar}||(${pendingVar}=!0,${abortVar}=new AbortController,await(async()=>{await ${refreshEventVar}(${abortVar}.signal)})().finally(()=>{${abortVar}=null,${pendingVar}=!1}))},` +
-    `codexLinuxRemoteConnectionsRefreshTimer=null,codexLinuxRemoteConnectionsRefreshLast=0,${REMOTE_CONNECTIONS_REFRESH_MARKER}=()=>{if(document.visibilityState===\`hidden\`)return;let e=Date.now(),t=()=>{codexLinuxRemoteConnectionsRefreshLast=Date.now(),codexLinuxRemoteConnectionsRefreshTimer=null,${refreshVar}()};if(e-codexLinuxRemoteConnectionsRefreshLast<1e3){codexLinuxRemoteConnectionsRefreshTimer!=null&&window.clearTimeout(codexLinuxRemoteConnectionsRefreshTimer),codexLinuxRemoteConnectionsRefreshTimer=window.setTimeout(t,1e3-(e-codexLinuxRemoteConnectionsRefreshLast));return}t()},` +
-    `${intervalVar}=window.setInterval(()=>{${refreshVar}()},5e3);` +
-    `document.addEventListener(\`visibilitychange\`,${REMOTE_CONNECTIONS_REFRESH_MARKER}),` +
-    `window.addEventListener(\`focus\`,${REMOTE_CONNECTIONS_REFRESH_MARKER}),` +
-    `window.addEventListener(\`online\`,${REMOTE_CONNECTIONS_REFRESH_MARKER}),` +
-    `window.addEventListener(\`resume\`,${REMOTE_CONNECTIONS_REFRESH_MARKER});` +
-    `return()=>{${abortVar}?.abort(),window.clearInterval(${intervalVar}),` +
-    `codexLinuxRemoteConnectionsRefreshTimer!=null&&window.clearTimeout(codexLinuxRemoteConnectionsRefreshTimer),` +
-    `document.removeEventListener(\`visibilitychange\`,${REMOTE_CONNECTIONS_REFRESH_MARKER}),` +
-    `window.removeEventListener(\`focus\`,${REMOTE_CONNECTIONS_REFRESH_MARKER}),` +
-    `window.removeEventListener(\`online\`,${REMOTE_CONNECTIONS_REFRESH_MARKER}),` +
-    `window.removeEventListener(\`resume\`,${REMOTE_CONNECTIONS_REFRESH_MARKER})}}`;
-
-  return source.slice(0, matches[0].index) + replacement + source.slice(matches[0].index + needle.length);
+function applyLinuxRemoteConnectionsRefreshPatch(extractedDir, context = {}) {
+  return applyConnectionsRefresh(extractedDir, context.connectionsRefreshWriteOptions);
 }
 
 // The complete native host/thread state cohort owns terminal recovery.
@@ -818,12 +777,9 @@ module.exports = [
   },
   {
     id: "linux-remote-connections-refresh",
-    phase: "webview-asset",
-    assetNeedles: ['"settings.remoteConnections.refresh"', "window.setInterval("],
+    phase: "extracted-app:pre-webview",
     order: 20_140,
     ciPolicy: "optional",
-    missingDescription: "remote connections settings bundle",
-    skipDescription: "Linux remote-connections refresh patch",
     apply: applyLinuxRemoteConnectionsRefreshPatch,
   },
   {
