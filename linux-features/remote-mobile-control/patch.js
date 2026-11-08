@@ -11,6 +11,7 @@ const { applyRemoteMobileVisibility: applyLinuxRemoteControlVisibilityPatch } = 
 const { prepareFeatureSyncSource, applyFeatureSyncToExtractedApp } = require("./feature-sync-owner.js");
 const { prepareRevokeSetupResetSource, applyRevokeSetupReset } = require("./revoke-setup-reset-owner.js");
 const { prepareBridgeSource, applyBridgePatch } = require("./enablement-bridge.js");
+const { applyNativeRemoteCopy } = require("./remote-copy.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
@@ -25,7 +26,6 @@ const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoC
 const REMOTE_MOBILE_ACTIVE_STATUS_MARKER = "codexLinuxRemoteMobileActiveStatus";
 const REMOTE_CONTROL_STATUS_READ_GUARD_MARKER = "codexLinuxRemoteControlShouldReadStatus";
 const REMOTE_CONTROL_STATUS_WAIT_MARKER = "codexLinuxRemoteControlStatusWaitMs";
-const REMOTE_CONTROL_COPY_MARKER = "codexLinuxRemoteControlCopy";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER = "codexLinuxRemoteMobileLocalAppServerArgs";
 const REMOTE_MOBILE_APP_SERVER_BASE_ARGS_NEEDLE = '["-c","features.code_mode_host=true"]';
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_HELPER =
@@ -37,30 +37,6 @@ const REMOTE_MOBILE_APP_SERVER_STARTUP_GUARD_HELPER =
   "function codexLinuxStartupCommandAppServerArgs(e,t){if(t==null||process.platform!==`linux`)return e;let n=e.indexOf(`app-server`);return n>=0&&e[n+1]===`proxy`?[...e.slice(0,n),`app-server`,`--analytics-default-enabled`]:e.filter(e=>e!==`--remote-control`)}";
 const REMOTE_MOBILE_APP_SERVER_STARTUP_ARGS_PATTERN =
   /\.\.\.([A-Za-z_$][\w$]*)\.args,\.\.\.([A-Za-z_$][\w$]*)\.startupCommand\?\.args\?\?\[\]/gu;
-const REMOTE_CONTROL_LINUX_COPY_REPLACEMENTS = [
-  ["Keep this Mac awake", "Keep this Linux desktop awake"],
-  ["Devices that can control this Mac", "Devices that can control this Linux desktop"],
-  ["Control this Mac from your phone or other device", "Control this Linux desktop from your phone or other device"],
-  ["Add device to control this Mac remotely", "Add device to control this Linux desktop remotely"],
-  ["Control other devices from this Mac", "Control other devices from this Linux desktop"],
-  ["Authorize this Mac to control other devices signed in to your ChatGPT account", "Authorize this Linux desktop to control other devices signed in to your ChatGPT account"],
-  ["Allow this Mac to be discovered and controlled", "Allow this Linux desktop to be discovered and controlled"],
-  ["Control this Mac", "Control this Linux desktop"],
-  ["Devices you can control from this Mac", "Devices you can control from this Linux desktop"],
-  ["SSH connections from this Mac", "SSH connections from this Linux desktop"],
-  ["Use your Mac apps while locked", "Use your Linux apps while locked"],
-  ["Control Mac apps from your phone", "Control Linux apps from your phone"],
-  ["Let Codex control the apps on your Mac.", "Let Codex control apps on this Linux desktop."],
-  ["Let Codex control the apps on your Mac", "Let Codex control apps on this Linux desktop"],
-  ["Let ChatGPT control apps on your Mac", "Let ChatGPT control apps on this Linux desktop"],
-  ["connected to ChatGPT on a Mac", "connected to ChatGPT on this Linux desktop"],
-  ["Connect a device to this Mac", "Connect a device to this Linux desktop"],
-  ["Connect your phone to this Mac", "Connect your phone to this Linux desktop"],
-  ["Add device to control this Mac remotely", "Add a device to control this Linux desktop remotely"],
-  ["Keep Mac awake", "Keep Linux desktop awake"],
-  ["this Mac", "this Linux desktop"],
-  ["local Mac", "local Linux desktop"],
-];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -408,45 +384,14 @@ function applyLinuxRemoteControlFeatureSyncExtractedAppPatch(extractedDir, conte
   return applyFeatureSyncToExtractedApp(extractedDir, context.featureSyncWriteOptions);
 }
 
-function replaceLinuxRemoteControlCopy(source) {
-  let patched = source;
-  let changed = false;
-  for (const [macCopy, linuxCopy] of REMOTE_CONTROL_LINUX_COPY_REPLACEMENTS) {
-    if (patched.includes(macCopy)) {
-      patched = patched.split(macCopy).join(linuxCopy);
-      changed = true;
-    }
-  }
-  return { patched, changed };
-}
-
-function applyLinuxRemoteControlCopyPatch(source) {
-  const hasMarker = source.includes(REMOTE_CONTROL_COPY_MARKER);
-  const { patched, changed } = replaceLinuxRemoteControlCopy(source);
-  if (!changed) {
-    if (hasMarker) {
-      return source;
-    }
-    if (
-      !source.includes("this Mac") &&
-      !source.includes("Keep this Mac awake") &&
-      !source.includes("Control this Mac") &&
-      !source.includes("local Mac") &&
-      !source.includes("settings.remoteConnections")
-    ) {
-      return source;
-    }
-    console.warn("WARN: Could not find remote-control Mac copy - skipping Linux remote-control copy patch");
-    return source;
-  }
-  return hasMarker ? patched : `/*${REMOTE_CONTROL_COPY_MARKER}*/${patched}`;
+// Native Linux already selects PC copy and hides macOS-only locked Computer Use.
+// The extracted-app validator must qualify the complete selected copy cohort.
+function applyLinuxRemoteControlCopyPatch(extractedDir, context = {}) {
+  return applyNativeRemoteCopy(extractedDir, context.remoteCopyWriteOptions);
 }
 
 function applyLinuxRemoteControlSettingsUxPatch(source) {
-  let patched = replaceLinuxRemoteControlCopy(source).patched;
-  patched = applyLinuxRemoteControlOutboundTabGatePatch(patched);
-
-  return patched;
+  return applyLinuxRemoteControlOutboundTabGatePatch(source);
 }
 
 function applyLinuxRemoteControlOutboundTabGatePatch(source) {
@@ -1079,14 +1024,11 @@ module.exports = [
     apply: applyLinuxRemoteControlVisibilityPatch,
   },
   {
-    // The remote connections settings page and the mobile setup dialog.
+    // Qualify the native Linux PC branches, peer instructions and search data.
     id: "linux-remote-control-copy",
-    phase: "webview-asset",
-    assetNeedles: ['this Mac",description:"'],
+    phase: "extracted-app:pre-webview",
     order: 20_130,
     ciPolicy: "optional",
-    missingDescription: "remote-control settings or mobile setup bundle",
-    skipDescription: "Linux remote-control copy patch",
     apply: applyLinuxRemoteControlCopyPatch,
   },
   {

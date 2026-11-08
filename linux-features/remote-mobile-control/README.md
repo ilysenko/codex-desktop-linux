@@ -127,8 +127,15 @@ What it changes:
   `codex app-server proxy` when a declarative service owns the control socket.
   The proxy forwards the complete Desktop RPC stream instead of splitting
   enablement, pairing, status, and conversation RPCs between two processes.
-- Updates Remote settings and mobile setup copy so the experimental Linux flow
-  is not described as Mac-only.
+- Validates native Remote settings, host setup and Connections copy without
+  rewriting it. The current Linux platform path selects upstream PC messages;
+  macOS-only locked Computer Use stays behind its native macOS and capability
+  guards. Pairing instructions describe the other computer and retain native
+  Mac/PC labels. Existing message IDs, localized formatting, interpolation
+  values and selected Connections search records remain unchanged. Missing,
+  ambiguous or drifted selected branches and links fail closed. A successful
+  first or repeated qualification reports `already-applied` with no ASAR byte
+  changes and no injected copy marker.
 - Declaratively stages `.codex-linux/cold-start.d/remote-mobile-control`, a
   feature-owned cold-start hook that starts the app-server daemon with `remote-control start`
   through the official Codex executable bundled in the Linux package. It does
@@ -160,8 +167,8 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-load-gate` | `outbound-control` | Allows remote-control environments to load in Connections. |
 | `linux-remote-control-feature-sync` | `shared-boundary` | Enables `remote_control` in the main-process experimental feature sync only for the local app server and excludes Remote SSH, WSL, and cloud hosts. |
 | `linux-remote-control-visibility` | `outbound-control` | Opens the Linux Connections view for pre-enable/unavailable states while retaining native access-required denial and actual account/enrollment/list data. |
-| `linux-remote-control-copy` | `shared-boundary` | Rewrites Linux copy shared by host setup and outbound Connections. |
-| `linux-remote-control-settings-ux` | `shared-boundary` | Adapts the shared Connections copy and outbound-control visibility without reviving the retired upstream SSH installer. |
+| `linux-remote-control-copy` | `shared-boundary` | Qualifies native Linux PC branches, macOS capability guards, other-computer pairing copy, formatter forwarding and selected Connections search data without rewriting text. |
+| `linux-remote-control-settings-ux` | `shared-boundary` | Adapts outbound-control visibility while preserving native copy and the retired upstream SSH installer. |
 | `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state (the `codex-mobile-has-connected-device` application state) only after the last external controller is removed. |
 | `linux-remote-connections-refresh` | `shared-boundary` | Refreshes the shared Connections list without starting or enabling any host runtime. |
 | `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Prevents inherited or rollout-forced reasoning summaries from polluting this host's mobile transcript. |

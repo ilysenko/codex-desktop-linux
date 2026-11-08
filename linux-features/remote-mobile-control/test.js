@@ -1008,7 +1008,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-load-gate", "extracted-app:pre-webview"],
       ["linux-remote-control-feature-sync", "extracted-app:pre-webview"],
       ["linux-remote-control-visibility", "extracted-app:pre-webview"],
-      ["linux-remote-control-copy", "webview-asset"],
+      ["linux-remote-control-copy", "extracted-app:pre-webview"],
       ["linux-remote-control-settings-ux", "webview-asset"],
       ["linux-remote-control-client-revoke-setup-reset", "extracted-app:pre-webview"],
       ["linux-remote-connections-refresh", "webview-asset"],
@@ -1031,7 +1031,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     // by stable strings, and those strings occur in the current fixtures.
     const fixtures = {
       "linux-remote-control-load-gate": syntheticRemoteConnectionVisibilityBundle(),
-      "linux-remote-control-copy": syntheticMobileSetupDialogCopyBundle(),
       "linux-remote-control-settings-ux": syntheticOutboundTabGateBundle() + syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-control-client-revoke-setup-reset": syntheticCurrentRevokeSetupResetBundle(),
       "linux-remote-connections-refresh": syntheticCurrentSettingsRefreshBundle(),
@@ -1967,61 +1966,18 @@ test("Linux remote-control feature sync rejects unrelated, ambiguous, or partial
 // policy cases live in remote-control-visibility.test.js. Bare function-body
 // String matching is intentionally retired for this descriptor.
 
-test("Linux mobile setup copy does not refer to Mac-only Computer Use", () => {
-  const source = syntheticMobileSetupDialogComputerUseBundle();
-  const patched = applyLinuxRemoteControlCopyPatch(source);
+// Native-copy branch, peer instruction, locale forwarding, search, no-op and
+// fail-closed cohort cases live in remote-copy.test.js. String replacement of
+// isolated Mac text is intentionally retired.
 
-  assert.notEqual(patched, source);
-  assert.doesNotMatch(patched, /apps on your Mac/);
-  assert.match(patched, /apps on this Linux desktop/);
-  assert.match(patched, /codexLinuxRemoteControlCopy/);
-  assert.equal(applyLinuxRemoteControlCopyPatch(patched), patched);
-});
-
-test("Linux remote-control settings copy does not refer to this Mac", () => {
-  const source = syntheticRemoteConnectionsSettingsCopyBundle();
-  const patched = applyLinuxRemoteControlCopyPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.doesNotMatch(patched, /defaultMessage:"[^"]*Mac/);
-  assert.match(patched, /Control this Linux desktop/);
-  assert.match(patched, /Devices that can control this Linux desktop/);
-  assert.match(patched, /Devices you can control from this Linux desktop/);
-  assert.match(patched, /SSH connections from this Linux desktop/);
-  assert.match(patched, /Keep this Linux desktop awake/);
-  assert.match(patched, /connected to ChatGPT on this Linux desktop/);
-  assert.doesNotMatch(patched, /connected to ChatGPT on a Mac/);
-  assert.equal(applyLinuxRemoteControlCopyPatch(patched), patched);
-});
-
-test("Linux mobile setup dialog copy does not refer to Mac-only setup", () => {
-  const source = syntheticMobileSetupDialogCopyBundle();
-  const patched = applyLinuxRemoteControlCopyPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.doesNotMatch(patched, /defaultMessage:"[^"]*Mac/);
-  assert.match(patched, /Use your Linux apps while locked/);
-  assert.match(patched, /Control Linux apps from your phone/);
-  assert.match(patched, /apps on this Linux desktop/);
-  assert.match(patched, /Connect your phone to this Linux desktop/);
-  assert.equal(applyLinuxRemoteControlCopyPatch(patched), patched);
-});
-
-test("Linux remote-control settings UX preserves the retired upstream SSH installer", () => {
-  const retiredInstallAction =
-    "function ro({action:e,disabled:t,hostId:n,onAuthenticate:r,onReconnect:i,onRestart:a}){if(e==null)return null;switch(e.kind){case`install-codex`:return null;case`login`:return{label:e.label,onClick:()=>r(n)};case`restart`:return{label:e.label,onClick:a};case`reconnect`:return{label:e.label,onClick:i};case`settings`:return null}}";
-  const source = syntheticRemoteConnectionsSettingsCopyBundle() + retiredInstallAction;
+test("Linux remote-control settings UX preserves native copy and the retired SSH installer", () => {
+  const retiredInstallAction = "function ro(e){switch(e.kind){case`install-codex`:return null;default:return e}}";
+  const source = syntheticRemoteConnectionsSettingsCopyBundle() + retiredInstallAction + syntheticOutboundTabGateBundle();
   const patched = applyLinuxRemoteControlSettingsUxPatch(source);
-
   assert.notEqual(patched, source);
-  assert.match(patched, /case`install-codex`:return null/);
-  assert.doesNotMatch(patched, /codexLinuxRemoteControlSshInstall/);
-  assert.match(patched, /Control this Linux desktop/);
-  assert.match(patched, /Devices that can control this Linux desktop/);
-  assert.match(patched, /Keep this Linux desktop awake/);
-  assert.match(patched, /SSH connections from this Linux desktop/);
-  assert.doesNotMatch(patched, /Control this Mac/);
-  assert.doesNotMatch(patched, /this Mac/);
+  assert.ok(patched.includes(syntheticRemoteConnectionsSettingsCopyBundle()));
+  assert.ok(patched.includes(retiredInstallAction));
+  assert.doesNotMatch(patched, /codexLinuxRemoteControlCopy|codexLinuxRemoteControlSshInstall/);
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
 });
 
@@ -2415,7 +2371,7 @@ test("Linux remote-control settings UX patch does not require retired SSH instal
   const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
 
   assert.notEqual(result, source);
-  assert.match(result, /Control this Linux desktop/);
+  assert.match(result, /Control this Mac/);
   assert.deepEqual(warnings, []);
 });
 
@@ -3266,10 +3222,10 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(settings, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);
         assert.match(settings, /codexLinuxRemoteConnectionsRefreshNow/);
         assert.match(settings, /window\.setInterval\(\(\)=>\{n\(\)\},5e3\)/);
-        assert.match(settings, /Control this Linux desktop/);
-        assert.match(settings, /SSH connections from this Linux desktop/);
-        assert.match(readAsset("mobileSetup"), /Connect your phone to this Linux desktop/);
-        assert.match(readAsset("mobileSetup"), /apps on this Linux desktop/);
+        assert.match(settings, /Control this Mac/);
+        assert.match(settings, /SSH connections from this Mac/);
+        assert.match(readAsset("mobileSetup"), /Connect your phone to this Mac/);
+        assert.match(readAsset("mobileSetup"), /apps on your Mac/);
         assert.match(readAsset("terminalStatus"), /codexLinuxRemoteTerminalStatusWaitingOnUserInput/);
         const signals = readAsset("managerSignals");
         assert.match(signals, /codexLinuxRemoteControlShouldReadStatus/);
@@ -3294,7 +3250,6 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           "linux-remote-control-load-gate",
           "linux-remote-control-feature-sync",
           "linux-remote-control-visibility",
-          "linux-remote-control-copy",
           "linux-remote-control-settings-ux",
           "linux-remote-control-client-revoke-setup-reset",
           "linux-remote-connections-refresh",
@@ -3309,6 +3264,9 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         ]) {
           assert.equal(statuses[id], "applied", id);
         }
+        // This legacy synthetic app has no native copy cohort. The complete
+        // selected native cohort is covered independently in remote-copy.test.js.
+        assert.equal(statuses["linux-remote-control-copy"], "skipped-optional");
         assert.equal(statuses["linux-remote-control-auto-connect-contract"], "already-applied");
 
         const secondReport = createPatchReport();

@@ -95,9 +95,9 @@ test("marker-only, partial, duplicate and tampered canonical contributions never
  rejected(change(h.sources(),text=>text.replace("function eR(e){",`function eR(e){const orphan=\"${MARKER}\";`)));
 });
 
-test("current copy changes compose in both orders without locking unrelated UI labels",()=>{
- const {applyLinuxRemoteControlCopyPatch:copy}=require("./patch.js"),native=h.sources(),copyFirst=change(native,copy),a=patched(copyFirst),b=change(patched(native),copy);assert.deepEqual(a,b);assert.deepEqual(patched(a),a);assert.deepEqual(h.transition(a,prepare(h.snapshots(a)),"nativeSource"),copyFirst);
- const label=change(native,text=>text.replace("Devices that can control this Mac","Custom local device list title"));assert.doesNotThrow(()=>prepare(h.snapshots(label)));
+test("unrelated UI label changes compose with revoke reset in both orders",()=>{
+ const native=h.sources(),label=text=>text.replace("Devices that can control this Mac","Custom local device list title"),labelFirst=change(native,label);assert.notDeepEqual(labelFirst,native);
+ const a=patched(labelFirst),b=change(patched(native),label);assert.deepEqual(a,b);assert.deepEqual(patched(a),a);assert.deepEqual(h.transition(a,prepare(h.snapshots(a)),"nativeSource"),labelFirst);assert.doesNotThrow(()=>prepare(h.snapshots(labelFirst)));
 });
 
 test("all physical providers and facade copies validate atomically before writes",()=>temporary(root=>{
