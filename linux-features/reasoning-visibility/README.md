@@ -70,6 +70,13 @@ CODEX_SIGNED_EXTRACTED_APP=/path/to/extracted/app.asar \
   node --test linux-features/reasoning-visibility/test.js linux-features/reasoning-visibility/*.test.js
 ```
 
+Run the shared summary-request composition and placement suites with
+
+```bash
+node --test linux-features/remote-mobile-control/summary-contract.test.js \
+  linux-features/remote-mobile-control/summary-contract-placement.test.js
+```
+
 Set `CODEX_SIGNED_EXTRACTED_APP` to a retained extraction of the currently
 verified official ASAR to include real-owner and complete patch-runner checks.
 They use independent disk-cache copies and do not launch the app or send a model

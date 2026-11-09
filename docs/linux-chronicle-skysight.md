@@ -19,14 +19,15 @@ system.
 
 ### Capture Lifecycle
 
-Having either feature installed, enabling Chronicle, or polling
-Chronicle permissions/status does not start continuous desktop capture. The
-event-stream recording path uses bounded session evidence by default and does
-not start the Skysight daemon.
+Installing either feature or enabling Chronicle/Skysight at build time stages
+capture support. Continuous capture requires a runtime opt-in through the
+recorder enable control, a Chronicle tray toggle, or an explicit Skysight start.
+Permissions and status polling read capture state. The event-stream recording
+path uses bounded session evidence by default, and continuous daemon startup
+follows the explicit runtime capture opt-in.
 
-Continuous capture starts only through an explicit Skysight start or Chronicle
-tray action. Each start records a `source` and `owner` in `status.json`; direct
-starts default to `source: cli` and `owner: manual-continuous`. A recording may
+Each continuous-capture start records a `source` and `owner` in `status.json`.
+Direct starts default to `source: cli` and `owner: manual-continuous`. A recording may
 use an owner such as `recording-session:<id>`. Finalizing, canceling, or
 expiring that recording, and clean shutdown of its event-stream MCP server,
 requests stop only when the persisted owner exactly matches that session.

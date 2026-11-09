@@ -36,8 +36,8 @@ Remove the feature ID and rebuild to disable it; no user data cleanup is needed.
 
 ## Validation and limitations
 
-The patch targets the current signed stable Linux package `26.1103.31037` on
-`amd64` and `arm64`. It has no display-server-specific behavior. A prior local
+The patch targets the latest signed stable OpenAI Linux package on `amd64` and
+`arm64`. It has no display-server-specific behavior. A prior local
 workaround was confirmed to restore follow-ups on CachyOS/X11 with Nix and
 package `26.901.51231`; no obsolete package-specific branch is retained here.
 

@@ -565,10 +565,11 @@ that enabled candidate.
 ## Adding Tweaks
 
 Add each tweak as a focused module under `patches/`, register it from `patch.js`,
-document its JSON settings here, and add coverage in `test.js`.
+document its JSON settings here, and add focused adjacent coverage in
+`*.test.js`. The aggregate `test.js` also covers feature loading and composition.
 
 Run the feature tests with:
 
 ```bash
-node --test linux-features/ui-tweaks/test.js
+node --test linux-features/ui-tweaks/test.js linux-features/ui-tweaks/*.test.js
 ```

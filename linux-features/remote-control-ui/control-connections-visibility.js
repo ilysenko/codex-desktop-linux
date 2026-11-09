@@ -126,9 +126,10 @@ function dependencyProof(copy, role) {
   return { ...actual, entry, loadGatePeer: loadGatePeer.active };
 }
 
-// Pure build-time contribution preparation. The mobile contribution exposes
-// the exact future sibling protocol; the UI descriptor requests only "ui".
-// This is not proof that the existing UP83 descriptor uses this interface.
+// Pure build-time preparation for UI and mobile/joint contributions. The UI
+// descriptor requests "ui". Adjacent tests exercise this local preparation
+// interface and its inverses. The registered mobile adapter has separate
+// production-entry composition tests.
 function prepareRemoteControlConnectionsVisibility(cohort, contribution = "ui", enabled = true) {
   if (!["ui", "mobile"].includes(contribution)) fail("unknown contribution");
   if (typeof enabled !== "boolean") fail("invalid contribution state");

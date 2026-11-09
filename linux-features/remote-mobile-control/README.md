@@ -84,8 +84,10 @@ What it changes:
   turn merge policy, retry, and discard lifecycle remain intact.
 - Keeps native abortable Remote status subscriptions and disposable cleanup.
   On Linux, host identifiers beginning with `remote-ssh` or `remote-control:`
-  skip only the initial status RPC. Other host identifiers retain their native
-  read behavior, and notification delivery stays active.
+  skip the initial status RPC and immediately publish the same host's
+  disabled/unavailable fallback while its subscription owner is current.
+  Native notifications continue updating that host. Other host identifiers
+  retain their native initial reads.
 - Recovers stale remote terminal status when `waitingOnUserInput` remains active
   after the matching input request has already cleared.
 - Lets the native current-conversation activity indicator use an active runtime
@@ -220,7 +222,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Defaults local durable summaries to `none` while preserving effective settings, model/per-turn choices, and an enabled Reasoning Visibility session preference. |
 | `linux-remote-mobile-conversation-hydration` | `mobile-host` | Extends upstream's hydration queue to recover unknown local conversations from ordered turn and item notifications. |
 | `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |
-| `linux-remote-control-status-read-guard` | `shared-boundary` | Skips the initial Linux read for exact `remote-ssh` / `remote-control:` prefixes while retaining native reads for other hosts, notifications and cleanup. |
+| `linux-remote-control-status-read-guard` | `shared-boundary` | Publishes a same-host disabled/unavailable fallback in place of the initial Linux read for exact `remote-ssh` / `remote-control:` prefixes, retaining native reads for other hosts, notifications and cleanup. |
 | `linux-remote-control-status-wait` | `shared-boundary` | Gives each supplied host a 30-second Linux connection window (5 seconds otherwise), preserving native watcher settlement and caller ownership. |
 | `linux-remote-control-enable-for-host-params` | `shared-boundary` | Qualifies the native selected-host client, status mapper and public fallback caller, then emits parameterless enable/disable requests without changing host choice. |
 | `linux-remote-control-enablement-bridge` | `shared-boundary` | Qualifies the native gate hook, live component and late service facade, then enables the current outbound service on Linux while retaining service-owned auto-connect choices. |
@@ -328,7 +330,12 @@ published subscription lifecycle before the ordinary webview pass. The native
 classifier chain must still resolve its literal `durable` early skip. The native
 manager keeps a map per host, replaces old connections and tears down their
 subscriptions; the published caller passes the same host, client and current
-predicate to the reader. The initial-snapshot check prevents a late read result
+predicate to the reader. For matching Linux host prefixes, the qualified
+reader immediately stores `{status: "disabled", available: false,
+accessRequired: false}` for the supplied host when its abort/current-owner guard
+is active. This initial fallback is available before the first native status
+notification, and the native notification subscription continues updating that
+same host. The initial-snapshot check prevents a late read result
 from replacing a newer notification, and the native abort/disposal path stays
 intact. Every physical owner and read-only lifecycle/provider/facade copy must
 qualify together before the transaction writes.

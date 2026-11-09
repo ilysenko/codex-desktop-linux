@@ -69,7 +69,7 @@ test("the native published tab selector remains unchanged across the UI contribu
   }
 });
 
-test("the future mobile/joint protocol composes and inverses exactly without qualifying the existing UP83 adapter", () => {
+test("the mobile and joint preparation interface composes and inverses exactly", () => {
   const original = fixtureSources(), ui = transition(original), mobile = transition(original, "mobile");
   const jointA = transition(ui, "mobile"), jointB = transition(mobile);
   assert.deepEqual(jointA, jointB);
