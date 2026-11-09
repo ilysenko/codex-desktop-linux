@@ -249,6 +249,36 @@ test("native metadata proves that every AppHost spread after its explicit edge c
   ]) refuseBoth(...pair);
 });
 
+test("native metadata preserves its first emitter and replays after independent global function declarations", () => {
+  const raw = '"use strict";' + fixture;
+  const patched = patch(raw), runtime = runtimeFrom(patched);
+  const helpers = "function trayReady(){return false}function trayLabel(value){return value}";
+  const together = '"use strict";' + helpers + patched.slice('"use strict";'.length);
+  assert.equal(patch(together), together);
+  assert.equal(together.replace(runtime, "").replace(LINUX_BRANCH, ""), '"use strict";' + helpers + fixture);
+  const opposite = patch('"use strict";' + helpers + fixture);
+  assert.equal(patch(opposite), opposite);
+  assert.equal(opposite.replace(runtime, "").replace(LINUX_BRANCH, ""), '"use strict";' + helpers + fixture);
+  assert.equal(patch(raw), patched);
+});
+
+test("native metadata refuses opaque, expression, conditional and shadowed runtime declarations", () => {
+  const patched = patch(fixture), runtime = runtimeFrom(patched);
+  const cases = [
+    patched.replace(runtime, "/*" + runtime + "*/"),
+    patched.replace(runtime, "const unusedRuntime=" + runtime + ";"),
+    patched.replace(runtime, "async " + runtime),
+    patched.replace(runtime, "0," + runtime + ";"),
+    patched.replace(runtime, "if(false)" + runtime),
+    patched.replace(runtime, "function unused(){" + runtime + "}"),
+    patched + "\ncodexLinuxNativeApplicatio\\u006es=()=>null;",
+  ];
+  for (const source of cases) {
+    assert.doesNotThrow(() => new vm.Script(source));
+    assert.throws(() => patch(source), /native Applications contract drift/);
+  }
+});
+
 test("native metadata requires the complete canonical runtime at its directive-safe location", () => {
   const patched = patch('"use strict";' + fixture), runtime = runtimeFrom(patched);
   for (const source of [

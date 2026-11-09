@@ -436,9 +436,18 @@ function analyze(source) {
     return { ...info, runtime, state: "current" };
   }
   if (markers !== 1 || runtimes !== 1) throw drift("incomplete native Applications runtime");
-  const without = source.replace(runtime, ""), point = runtimeInsertionPoint(without);
-  if (source !== without.slice(0, point) + runtime + without.slice(point)) throw drift("native runtime is outside the original directive prologue");
-  const lexical = createJavaScriptLexicalIndex(source);
+  const without = source.replace(runtime, ""), directiveEnd = runtimeInsertionPoint(without);
+  const point = source.indexOf(runtime), lexical = createJavaScriptLexicalIndex(source);
+  if (point < directiveEnd || !lexical.isRoot(point) || !scopeOwnsBinding(source, "", RUNTIME_NAME)) {
+    throw drift("native runtime is not a global declaration after the original directives");
+  }
+  let probe = "__codexNativeApplicationsDeclarationProbe";
+  while (source.includes(probe)) probe += "$";
+  try {
+    new Script(source.slice(0, point) + "\n;const " + probe + "=0;\n");
+    new Script(source.slice(0, point) + "const " + probe + "=0;" + source.slice(point + runtime.length) + "\n");
+  }
+  catch { throw drift("native runtime is not an unconditional global declaration"); }
   const references = bindingReferences(source, lexical, RUNTIME_NAME, point + "function ".length);
   const expected = info.insert + LINUX_BRANCH.indexOf(RUNTIME_NAME);
   if (references.length !== 1 || references[0].start !== expected) throw drift("native runtime binding is replaced or shadowed");
