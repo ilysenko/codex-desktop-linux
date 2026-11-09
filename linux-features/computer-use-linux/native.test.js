@@ -498,7 +498,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   const {name, arguments: a} = r.params;
   if (name === 'get_tree_page') {
     // Another caller's snapshot replaces the cache before this page.
-    if (++pages === ${replaceOnPage ?? 0}) { cache = []; id = 'fixture-replaced'; }
+    if (++pages === ${replaceOnPage ?? 0}) {
+      cache = Array.from({length:${nodes}}, (_, index) => ({index, role:'push button', name:'Node '+index+' of call replaced'}));
+      id = 'fixture-replaced';
+    }
     if (a.snapshot_id !== undefined && a.snapshot_id !== id)
       return reply({structuredContent:{nodes:[], offset:a.offset ?? 0, next_offset:null, node_count:0, message:'snapshot_id is not the cached snapshot'}, content:[]});
     const start = Math.min(a.offset ?? 0, cache.length), end = Math.min(start + 100, cache.length);

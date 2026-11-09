@@ -100,7 +100,7 @@ export function createNativeBackendService({
     let used = Buffer.byteLength(JSON.stringify(rest));
     const snapshotId = typeof data.snapshot_id === 'string' && data.snapshot_id ? data.snapshot_id : undefined;
     const spilled = data.accessibility_tree_spill?.node_count;
-    let offset = nodes.length, total = Number.isInteger(spilled) ? spilled : nodes.length;
+    let offset = nodes.length, total = Number.isInteger(spilled) ? spilled : undefined;
     let replaced = false;
     while (offset !== null && offset !== undefined) {
       const { data: page } = await callTool('get_tree_page', snapshotId ? { offset, snapshot_id: snapshotId } : { offset });
@@ -115,9 +115,10 @@ export function createNativeBackendService({
     }
     const tree = { ...rest, accessibility_tree: nodes };
     if (replaced) {
+      const count = total === undefined ? `${nodes.length} nodes` : `${nodes.length} of ${total} nodes`;
       tree.accessibility_tree_truncated = true;
-      tree.accessibility_tree_note = `Partial tree: ${nodes.length} of ${total} nodes; a newer snapshot replaced this one while it was paged. Call get_app_state again for the whole tree.`;
-    } else if (nodes.length < total) {
+      tree.accessibility_tree_note = `Partial tree: ${count}; a newer snapshot replaced this one while it was paged. Call get_app_state again for the whole tree.`;
+    } else if (total !== undefined && nodes.length < total) {
       tree.accessibility_tree_truncated = true;
       tree.accessibility_tree_note = `Partial tree: ${nodes.length} of ${total} nodes fit the host bridge. Request a narrower target or a smaller maxNodes for the rest.`;
     }
