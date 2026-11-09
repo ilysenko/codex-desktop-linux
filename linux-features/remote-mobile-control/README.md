@@ -224,7 +224,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-status-wait` | `shared-boundary` | Gives each supplied host a 30-second Linux connection window (5 seconds otherwise), preserving native watcher settlement and caller ownership. |
 | `linux-remote-control-enable-for-host-params` | `shared-boundary` | Qualifies the native selected-host client, status mapper and public fallback caller, then emits parameterless enable/disable requests without changing host choice. |
 | `linux-remote-control-enablement-bridge` | `shared-boundary` | Qualifies the native gate hook, live component and late service facade, then enables the current outbound service on Linux while retaining service-owned auto-connect choices. |
-| `linux-remote-control-auto-connect-contract` | `outbound-control` | Validates the unique upstream service and settings caller that preserve an explicit auto-connect choice. |
+| `linux-remote-control-auto-connect-contract` | `outbound-control` | Validates the live native service, persistent handler, Settings mutation/UI consumers, bootstrap and every late facade copy without changing ASAR bytes. |
 | `linux-remote-mobile-active-status` | `mobile-host` | Derives mobile active state from the local thread runtime. |
 
 The device-key descriptor prepares the complete routed main-process inventory
@@ -396,6 +396,28 @@ The main RPC boundaries are:
   `setRemoteControlEnabled`, `refreshRemoteControl`, and `setAutoConnect`;
 - shared host routing: `set-experimental-feature-enablement-for-host`
   and `refresh-remote-connections`.
+
+Native auto-connect qualification is a no-op. The live main host must create
+and publish the same persistent handler/service. Settings must call the native
+late `appServices.remoteConnections` getter through its real mutation, guarded
+callback, returned connection lists and both row controls. All selected physical
+copies are checked before the no-op result, including the bootstrap initializer
+and both native facade copies. A main service alone cannot qualify as a Settings
+caller. Critical class methods and fields must have unique native ownership,
+including quoted and computed literal member names. Unknown computed members,
+later service spreads whose keys cannot be proved, service-key overrides and a
+discarded or nonterminal Settings return fail qualification. The native fixed-key
+system-services and visualization spreads retain their bounded producer and
+construction links; unrelated provider implementations remain upstream-owned.
+
+The native handler writes the selected host's boolean before awaiting refresh.
+It retains explicit `false` with `??`, preserves other hosts, and keeps the
+written choice if refresh rejects. Linux adds no retry or rollback policy.
+Finite tests execute only selected native methods, callbacks and expressions
+with controlled dependencies; shared-store reader tests do not establish a real
+process restart, GUI acceptance or live service behavior. Qualification checks
+literal eager binding authority and the bounded native consumers; upstream
+transport and deeper runtime object mutation remain upstream dependencies.
 
 Remote mobile daemon requirement:
 

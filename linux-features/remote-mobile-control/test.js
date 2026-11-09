@@ -314,8 +314,7 @@ function loadRspackModule(source, moduleId, imports = {}, globals = {}) {
 // The settings page shadows the app-services import binding (`T`) inside the
 // component, as the signed bundle does.
 function syntheticCurrentRevokeSetupResetBundle() {
-  // Preserve the old integrated fixture's unrelated auto-connect caller.
-  return remoteRevokeHarness.source().replace("function eL(){}", syntheticAutoConnectSettingsCallerBundle() + "function eL(){}");
+  return remoteRevokeHarness.source();
 }
 
 function loadRevokeSettings(patched, data) {
@@ -376,13 +375,6 @@ function currentHostToggleRegistry(moduleIds = ["WbV5"], targetCopy = 0) {
   return `export const __webpack_modules__={${rows.map(row => `${JSON.stringify(row.moduleId)}(${row.params.join(",")}){${row.moduleSource}}`).join(",")}};`;
 }
 
-function syntheticAutoConnectServiceBundle() {
-  return "class ConnectionsService{constructor(e){this.connections=e}setAutoConnect(e){return this.connections.setRemoteConnectionAutoConnect(e.hostId,e.autoConnect)}}";
-}
-
-function syntheticAutoConnectSettingsCallerBundle() {
-  return 'async function np(e){let t=T.appServices.remoteConnections;if(null==t)throw Error("Remote connections are unavailable");return t.setAutoConnect(e)}';
-}
 
 function withTempFeatureRoot(enabled, fn) {
   // Mirror the repository layout so the copied patch module resolves the
@@ -937,7 +929,7 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
   fs.mkdirSync(path.join(assetsDir, "async"), { recursive: true });
   fs.writeFileSync(path.join(tempApp, "package.json"), JSON.stringify({ name: "codex" }));
   const main = {
-    deviceKey: remoteFeatureSyncHarness.addToSource(syntheticMainBundle()) + syntheticAutoConnectServiceBundle() + syntheticRecoverableErrorPredicateBundle(),
+    deviceKey: remoteFeatureSyncHarness.addToSource(syntheticMainBundle()) + syntheticRecoverableErrorPredicateBundle(),
     appServer: syntheticCurrentLocalAppServerLaunchChunk(),
     featureSync: 'exports.ids=[45],exports.modules={57240(e,t,r){e.exports={}}};',
     ...overrides.main,
@@ -1820,56 +1812,15 @@ test("Linux remote-control host toggle rejects the retired bare request and inco
   ]) assert.throws(() => applyLinuxRemoteControlEnableForHostParamsPatch(bad));
 });
 
-test("upstream auto-connect service preserves an explicit settings choice", async () => {
+test("auto-connect refuses the incomplete historical service/caller toy", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-auto-connect-contract-"));
   try {
-    const buildDir = path.join(root, ".vite", "build");
-    const assetsDir = path.join(root, "webview", "assets");
-    fs.mkdirSync(buildDir, { recursive: true });
-    fs.mkdirSync(path.join(assetsDir, "async"), { recursive: true });
-    const serviceSource = syntheticAutoConnectServiceBundle();
-    const callerSource = syntheticAutoConnectSettingsCallerBundle();
-    fs.writeFileSync(path.join(buildDir, "early-bootstrap-45-628adb74a9c47df1.js"), serviceSource);
-    // The settings page is a lazily loaded rspack chunk.
-    fs.writeFileSync(path.join(assetsDir, "async", "14625.95f35fcee5.js"), callerSource);
-
-    assert.deepEqual(validateLinuxRemoteControlAutoConnectContract(root), {
-      matched: true,
-      changed: false,
-    });
-
-    const calls = [];
-    const context = {
-      T: { appServices: { remoteConnections: null } },
-      module: { exports: {} },
-    };
-    vm.runInNewContext(`${serviceSource};module.exports=ConnectionsService;`, context);
-    const service = new context.module.exports({
-      setRemoteConnectionAutoConnect(hostId, autoConnect) {
-        calls.push({ hostId, autoConnect });
-        return Promise.resolve({ hostId, autoConnect });
-      },
-    });
-    context.T.appServices.remoteConnections = service;
-    vm.runInNewContext(`${callerSource};this.callAutoConnect=np;`, context);
-
-    await context.callAutoConnect({ hostId: "host-1", autoConnect: false });
-    await context.callAutoConnect({ hostId: "host-1", autoConnect: true });
-    assert.deepEqual(calls, [
-      { hostId: "host-1", autoConnect: false },
-      { hostId: "host-1", autoConnect: true },
-    ]);
-
-    fs.appendFileSync(path.join(buildDir, "early-bootstrap-45-628adb74a9c47df1.js"), serviceSource);
-    const { result, warnings } = captureWarnings(() =>
-      validateLinuxRemoteControlAutoConnectContract(root),
-    );
-    assert.equal(result.matched, false);
-    assert.match(result.reason, /service=2, caller=1/);
-    assert.equal(warnings.length, 1);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+    fs.mkdirSync(path.join(root,".vite/build"),{recursive:true});
+    fs.mkdirSync(path.join(root,"webview/assets/async"),{recursive:true});
+    fs.writeFileSync(path.join(root,".vite/build/early-bootstrap-45-628adb74a9c47df1.js"),"class ConnectionsService{setAutoConnect(e){return this.connections.setRemoteConnectionAutoConnect(e.hostId,e.autoConnect)}}");
+    fs.writeFileSync(path.join(root,"webview/assets/async/toy.js"),'async function np(e){let t=T.appServices.remoteConnections;if(null==t)throw Error("Remote connections are unavailable");return t.setAutoConnect(e)}');
+    assert.throws(()=>validateLinuxRemoteControlAutoConnectContract(root),/Remote auto-connect|auto-connect settings/);
+  } finally { fs.rmSync(root,{recursive:true,force:true}); }
 });
 
 test("patched Linux device-key provider signs upstream-canonical enrollment and connection payloads", async () => {
@@ -2585,13 +2536,13 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         ]) {
           assert.equal(statuses[id], "applied", id);
         }
-        // This legacy toy lacks complete native copy/outbound/refresh/hydration cohorts.
+        // This legacy toy lacks complete native copy/outbound/refresh/hydration/auto-connect cohorts.
         // Dedicated native tests positively qualify each selected production path.
         assert.equal(statuses["linux-remote-control-copy"], "skipped-optional");
         assert.equal(statuses["linux-remote-control-settings-ux"], "skipped-optional");
         assert.equal(statuses["linux-remote-connections-refresh"], "skipped-optional");
         assert.equal(statuses["linux-remote-mobile-conversation-hydration"], "skipped-optional");
-        assert.equal(statuses["linux-remote-control-auto-connect-contract"], "already-applied");
+        assert.equal(statuses["linux-remote-control-auto-connect-contract"], "skipped-optional");
 
         const secondReport = createPatchReport();
         patchExtractedApp(tempApp, { ...patchOptions, report: secondReport });

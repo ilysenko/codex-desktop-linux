@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { findMainProcessChunks, listWebviewScriptAssets } = require("../../scripts/patches/lib/assets.js");
+const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { prepareDeviceKeySource, applyDeviceKeyToExtractedApp } = require("./device-key-owner.js");
 const { prepareRemoteLoadGateSource, applyRemoteLoadGate } = require("./remote-load-gate.js");
@@ -14,6 +14,7 @@ const { prepareBridgeSource, applyBridgePatch } = require("./enablement-bridge.j
 const { applyNativeRemoteCopy } = require("./remote-copy.js");
 const { applyOutboundTab } = require("./outbound-tab-owner.js");
 const { applyConnectionsRefresh } = require("./connections-refresh-owner.js");
+const { applyAutoConnect } = require("./auto-connect-contract.js");
 const { prepareStatusReadString, applyStatusReadPatch } = require("./host-status.js");
 const { prepareStatusWaitString, applyStatusWaitPatch } = require("./host-status-wait.js");
 const { prepareTerminalSource, applyTerminalStatus } = require("./terminal-status.js");
@@ -327,43 +328,10 @@ function matchesLinuxRemoteControlEnablementBridgeContract(source, context = {})
   try { prepareBridgeSource(source, context); return true; } catch { return false; }
 }
 
-function findSemanticMatches(dir, names, regex) {
-  const matches = [];
-  for (const name of names) {
-    const source = fs.readFileSync(path.join(dir, name), "utf8");
-    const pattern = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
-    for (const _match of source.matchAll(pattern)) matches.push(name);
-  }
-  return matches;
-}
-
-// The main process owns auto-connect choices; the settings page only forwards
-// the user's choice to that service. Linux relies on that ownership instead of
-// patching auto-connect, so the contract is verified on both sides.
-function validateLinuxRemoteControlAutoConnectContract(extractedDir) {
-  const buildDir = path.join(extractedDir, ".vite", "build");
-  const serviceMatches = findSemanticMatches(
-    buildDir,
-    fs.existsSync(buildDir) ? fs.readdirSync(buildDir).filter((name) => name.endsWith(".js")).sort() : [],
-    /setAutoConnect\((?<params>[A-Za-z_$][\w$]*)\)\{return this\.(?<service>[A-Za-z_$][\w$]*)\.setRemoteConnectionAutoConnect\(\k<params>\.hostId,\k<params>\.autoConnect\)\}/u,
-  );
-  const callerMatches = findSemanticMatches(
-    path.join(extractedDir, "webview", "assets"),
-    listWebviewScriptAssets(extractedDir),
-    /async function [A-Za-z_$][\w$]*\((?<choice>[A-Za-z_$][\w$]*)\)\{let (?<service>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\.appServices\.remoteConnections;if\(null==\k<service>\)throw Error\("Remote connections are unavailable"\);return \k<service>\.setAutoConnect\(\k<choice>\)\}/u,
-  );
-  const currentServiceOwnerMatches = findSemanticMatches(
-    buildDir,
-    fs.existsSync(buildDir) ? fs.readdirSync(buildDir).filter((name) => name.endsWith(".js")).sort() : [],
-    /async setRemoteControlEnabled\([A-Za-z_$][\w$]*\)\{[\s\S]{0,1000}?"Remote control connections are unavailable"[\s\S]{0,1000}?\}getState\([A-Za-z_$][\w$]*\)\{return this\.[A-Za-z_$][\w$]*\.appServerConnectionState\([A-Za-z_$][\w$]*\)\}setAutoConnect\((?<params>[A-Za-z_$][\w$]*)\)\{return this\.(?<service>[A-Za-z_$][\w$]*)\.setRemoteConnectionAutoConnect\(\k<params>\.hostId,\k<params>\.autoConnect\)\}/u,
-  );
-  const callerCount = callerMatches.length + currentServiceOwnerMatches.length;
-  if (serviceMatches.length !== 1 || callerCount !== 1) {
-    const reason = `could not uniquely resolve upstream auto-connect service and caller (service=${serviceMatches.length}, caller=${callerCount})`;
-    console.warn(`WARN: ${reason}`);
-    return { matched: false, changed: false, reason };
-  }
-  return { matched: true, changed: false };
+// Native main state and the actual Settings controls jointly own auto-connect.
+// Qualification is a complete no-op cohort, including every late facade copy.
+function validateLinuxRemoteControlAutoConnectContract(extractedDir, context = {}) {
+  return applyAutoConnect(extractedDir, context.autoConnectReadOptions);
 }
 
 function applyLinuxRemoteControlLoadGatePatch(source) {
