@@ -269,6 +269,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.49: its
+  `rmcp` goes from 3.5.1 to 3.9.0, which clears RUSTSEC-2026-0457, -0461 and
+  -0462 for the backend. Tool output schemas now list nullable fields as
+  required, as `rmcp` 3.9.0 generates them. The backend already sent those
+  fields as `null`, so results are unchanged. The `rmcp` 1.5.0 that Read Aloud
+  and Record & Replay use is not part of this sync and is still in the range
+  of RUSTSEC-2026-0462; like the backend they build the stdio transport only,
+  not the HTTP client transports the advisory is about.
 - A successful pixelflux click, scroll or drag in a Selkies container
   notifies the Codex avatar cursor, as the other pointer routes do. These
   routes had skipped it since the pixelflux backend arrived.
