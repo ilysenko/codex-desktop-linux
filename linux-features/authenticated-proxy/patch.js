@@ -178,6 +178,8 @@ const descriptors = [
     phase: "main-bundle",
     order: 125,
     ciPolicy: "optional",
+    assetMatch: (source) => source.includes("main app.whenReady resolved") ||
+      HELPER_NAMES.some(name => source.includes(name)),
     apply: applyAuthenticatedProxyPatch,
   },
 ];

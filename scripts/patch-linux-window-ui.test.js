@@ -146,16 +146,19 @@ test("CLI rejects drift in an explicitly enabled feature", (t) => {
   const report = path.join(root, "report.json");
   fs.writeFileSync(config, '{"enabled":["frameless-titlebar"]}\n');
 
-  const result = childProcess.spawnSync(
-    process.execPath,
-    [path.join(__dirname, "patch-linux-window-ui.js"), "--report-json", report, "--enforce-critical", root],
-    {
-      encoding: "utf8",
-      env: { ...process.env, CODEX_LINUX_FEATURES_CONFIG: config },
-    },
-  );
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /explicitly enabled feature patches drifted/);
+  for (const legacyValue of [undefined, "0"]) {
+    const env = { ...process.env, CODEX_LINUX_FEATURES_CONFIG: config };
+    delete env.CODEX_ENFORCE_CRITICAL_PATCHES;
+    if (legacyValue != null) env.CODEX_ENFORCE_CRITICAL_PATCHES = legacyValue;
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [path.join(__dirname, "patch-linux-window-ui.js"), "--report-json", report, "--enforce-critical", root],
+      { encoding: "utf8", env },
+    );
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /explicitly enabled feature patches drifted/);
+    assert.doesNotMatch(result.stderr, /CODEX_ENFORCE_CRITICAL_PATCHES|to bypass/);
+  }
 });
 
 function patchFeatureFixture(t, moduleSource, manifest = {}) {

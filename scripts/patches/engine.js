@@ -245,7 +245,7 @@ function strategyMetadata(strategies) {
   return Array.isArray(strategies) && strategies.length > 0 ? { strategies } : null;
 }
 
-function recordDescriptorError(report, descriptor, error, context, strategies = null) {
+function recordDescriptorError(report, descriptor, error, context, strategies = null, extraMetadata = null) {
   recordDescriptorPatch(
     report,
     descriptor,
@@ -254,7 +254,7 @@ function recordDescriptorError(report, descriptor, error, context, strategies = 
       : descriptorFailureStatus(descriptor),
     describePatchError(descriptor, error),
     context,
-    { error: true, ...(strategyMetadata(strategies) ?? {}) },
+    { error: true, ...(strategyMetadata(strategies) ?? {}), ...(extraMetadata ?? {}) },
   );
 }
 
@@ -347,10 +347,10 @@ function applyMainBundlePatchDescriptors(source, descriptors, context, report) {
   return { patchedSource: patched, warnings, coreWarnings, requiredCoreWarnings };
 }
 
-// Applies main-process descriptors to the rspack chunk set. Each descriptor
-// is tried against every chunk; only the chunks it actually changes keep the
-// result. A descriptor that changes no chunk reports the diagnostics of the
-// chunks it tried, so a moved or removed anchor still fails closed.
+// Applies main-process descriptors to the rspack chunk set. An optional
+// assetMatch selects the candidates offered to apply; unscoped descriptors use
+// every chunk. Only changed chunks retain the output. A descriptor that changes
+// no chunk retains the candidate diagnostics, so moved anchors fail closed.
 function applyMainProcessChunkPatchDescriptors(chunks, descriptors, context, report) {
   const sources = chunks.map(({ name, source }) => ({ name, source }));
   for (const descriptor of descriptors.filter((patch) => patch.phase === PHASE_MAIN_BUNDLE)) {
@@ -365,6 +365,7 @@ function applyMainProcessChunkPatchDescriptors(chunks, descriptors, context, rep
 
     // Collect each chunk's warnings silently; only the outcome's warnings are
     // printed below, so a miss on unrelated chunks does not flood build logs.
+    const unmatched = Symbol("unmatched main-process candidate");
     const attempts = sources.map((chunk) => {
       const originalWarn = console.warn;
       console.warn = () => {};
@@ -372,15 +373,35 @@ function applyMainProcessChunkPatchDescriptors(chunks, descriptors, context, rep
       try {
         result = runDescriptorApply(
           descriptor,
-          () => descriptor.apply(chunk.source, context),
+          () => descriptor.assetMatch != null && !descriptor.assetMatch(chunk.source, chunk.name, context)
+            ? unmatched
+            : descriptor.apply(chunk.source, context),
           chunk.source,
         );
       } finally {
         console.warn = originalWarn;
       }
-      return { chunk, result, changed: result.error == null && result.value !== chunk.source };
-    });
+      const matched = result.value !== unmatched;
+      return { chunk, result, matched, changed: matched && result.error == null && result.value !== chunk.source };
+    }).filter((attempt) => attempt.matched);
     const changed = attempts.filter((attempt) => attempt.changed);
+    const cleanNoop = attempts.some((attempt) => attempt.result.error == null && attempt.result.warnings.length === 0);
+    const integrity = attempts.find((attempt) => isPatchIntegrityError(attempt.result.error));
+    const failed = integrity ?? attempts.find((attempt) => attempt.result.error != null);
+    const failureIsDecisive = integrity != null || descriptor.assetMatch != null ||
+      (changed.length === 0 && !cleanNoop);
+    if (failed != null && failureIsDecisive) {
+      const warnings = [...failed.result.warnings, `WARN: ${describePatchError(descriptor, failed.result.error)}`];
+      for (const warning of warnings) console.warn(warning);
+      context.reportWarnings = warnings;
+      recordDescriptorError(report, descriptor, failed.result.error, context, failed.result.strategies, {
+        chunks: [failed.chunk.name],
+        candidateChunks: attempts.map((attempt) => attempt.chunk.name),
+      });
+      delete context.reportWarnings;
+      rethrowPatchIntegrityError(failed.result.error);
+      continue;
+    }
     if (changed.length > 0) {
       const warnings = changed.flatMap((attempt) => attempt.result.warnings);
       for (const warning of warnings) console.warn(warning);
@@ -405,32 +426,24 @@ function applyMainProcessChunkPatchDescriptors(chunks, descriptors, context, rep
 
     // Nothing changed. A clean no-op on some chunk means the contract is
     // already satisfied; otherwise report the first diagnostic.
-    if (attempts.some((attempt) => attempt.result.error == null && attempt.result.warnings.length === 0)) {
+    if (cleanNoop) {
       recordDescriptorPatch(
         report,
         descriptor,
         patchStatusFromDescriptorChange(descriptor, false, []),
         null,
         context,
+        descriptor.assetMatch == null ? null : { chunks: attempts.map((attempt) => attempt.chunk.name) },
       );
       continue;
     }
-    const integrity = attempts.find((attempt) => isPatchIntegrityError(attempt.result.error));
-    const failed = integrity ?? attempts.find((attempt) => attempt.result.error != null);
     const warnings = attempts.flatMap((attempt) => attempt.result.warnings);
-    if (failed != null && warnings.length === 0) {
-      console.warn(`WARN: ${describePatchError(descriptor, failed.result.error)}`);
-      context.reportWarnings = [`WARN: ${describePatchError(descriptor, failed.result.error)}`];
-      recordDescriptorError(report, descriptor, failed.result.error, context, failed.result.strategies);
-      delete context.reportWarnings;
-      rethrowPatchIntegrityError(failed.result.error);
-      continue;
-    }
     const reason = `${descriptor.id} matched no main-process chunk` +
       (warnings[0] == null ? "" : `: ${warnings[0].replace(/^WARN:\s*/, "")}`);
     console.warn(`WARN: ${reason}`);
     context.reportWarnings = [`WARN: ${reason}`];
-    recordDescriptorPatch(report, descriptor, descriptorFailureStatus(descriptor), reason, context);
+    recordDescriptorPatch(report, descriptor, descriptorFailureStatus(descriptor), reason, context,
+      descriptor.assetMatch == null ? null : { chunks: attempts.map((attempt) => attempt.chunk.name) });
     delete context.reportWarnings;
   }
   return sources;

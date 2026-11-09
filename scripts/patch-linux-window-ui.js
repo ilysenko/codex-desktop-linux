@@ -80,8 +80,7 @@ function main() {
         console.error(`  - ${failure.name} (${failure.status})${failure.reason ? `: ${failure.reason}` : ""}`);
       }
       console.error(
-        "Aborting: required patches or explicitly enabled feature patches drifted. " +
-          "Set CODEX_ENFORCE_CRITICAL_PATCHES=0 to bypass (emergency builds only).",
+        "Aborting: required patches or explicitly enabled feature patches drifted.",
       );
       process.exit(1);
     }

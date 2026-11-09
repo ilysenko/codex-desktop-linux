@@ -11,6 +11,7 @@ const PATCH_MARKER = "codex-linux-global-dictation-v3";
 const {
   installPortalBackend,
   inspectGlobalShortcutsPortal,
+  portalOwnerFailureReason,
   literal,
   platformIs,
 } = require("../../scripts/patches/lib/global-shortcuts-portal.js");
@@ -684,7 +685,7 @@ function applyGlobalDictationToExtractedApp(extractedDir) {
     return { assetName, source, metadata, inspected: inspectWithPortal(source, metadata) };
   });
   const owners = records.filter(record => record.metadata.owner);
-  if (owners.length !== 1) return reject("Missing or ambiguous live dictation owner cohort");
+  if (owners.length !== 1) return reject(portalOwnerFailureReason(records, "Missing or ambiguous live dictation owner cohort"));
   const owner = owners[0], identity = owner.metadata.owner.id;
   const cohort = records.filter(record => record.metadata.factoryIds.includes(identity) || hasOwnArtifact(record.source) || hasEscapedOwnName(record.source) || record.metadata.state === "drifted");
   if (cohort.length !== 1 || cohort[0] !== owner) return reject("Duplicate, damaged or partial dictation owner cohort");

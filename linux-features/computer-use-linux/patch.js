@@ -29,6 +29,8 @@ module.exports = [
     phase: "main-bundle",
     order: 20_100,
     ciPolicy: "optional",
+    assetMatch: (source) => source.includes("setRemoteHostedPIPContentComputerUseCursorLocationHandler") ||
+      source.includes("codexLinuxRegisterComputerUseCursorHandler"),
     apply: applyLinuxComputerUseAvatarCursorBridgePatch,
   }),
   mainBundlePatch({
@@ -36,6 +38,7 @@ module.exports = [
     phase: "main-bundle",
     order: 20_110,
     ciPolicy: "optional",
+    assetMatch: (source) => source.includes("CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE"),
     apply: applyLinuxComputerUseFeaturePatch,
   }),
   mainBundlePatch({
@@ -43,6 +46,7 @@ module.exports = [
     phase: "main-bundle",
     order: 20_120,
     ciPolicy: "optional",
+    assetMatch: (source) => source.includes("autoInstallOptOutKey") && source.includes(".computerUse"),
     apply: applyLinuxComputerUsePluginGatePatch,
   }),
   extractedAppPatch({
