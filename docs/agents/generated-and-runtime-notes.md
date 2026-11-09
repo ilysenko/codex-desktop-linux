@@ -82,3 +82,23 @@ New injected state and request adapters resolve the current native owner or
 use their feature-owned state hooks. Source inspection and generated-code
 checks establish the consumer scope. Live GUI state operations and IPC
 subscriptions retain their separate runtime validation scope.
+
+## Review delivery protocol
+
+The signed `26.1103.60933` package bundles CLI `0.167.0-alpha.3.2`. Its offline
+schema exports contain 322 files by default and 470 with experimental methods.
+Both exports define the app-server `ReviewDelivery` string enum as `inline`.
+`ReviewStartParams.delivery` permits omission, `null`, or `inline`. An
+independent review thread starts with `thread/start`, and `review/start` then
+uses that thread's ID.
+
+The Desktop review UI also has an `inline`/`detached` preference. Its detached
+path creates a `code_review` conversation and submits an ordinary text turn.
+That preference and its translated labels retain their UI meaning. A
+repository-owned app-server request constructor follows the generated wire
+schema for its delivery field.
+
+The consumer audit found zero repository-owned `review/start` request
+constructors or `ReviewDelivery` consumers. Its evidence consists of signed CLI
+identity, offline schema exports and static source/client classification. Real
+review completion has a separate runtime evidence scope.
