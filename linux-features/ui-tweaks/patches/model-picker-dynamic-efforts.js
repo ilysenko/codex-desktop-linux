@@ -63,7 +63,28 @@ function stableInitializer(body, name, at) {
   }
 }
 
-function requireRenderedPowerSelections(copy, body, call) {
+function requireRootReference(props, name, reference) {
+  const lexical = createJavaScriptLexicalIndex(props);
+  const properties = [...props.matchAll(new RegExp(`(?<![\\w$.])(?:${q(name)}|"${q(name)}"|'${q(name)}')\\s*:`, "gu"))]
+    .filter(match => lexical.isRoot(match.index + match[0].length - 1));
+  const property = one(properties, `missing or ambiguous native ${name} input`);
+  const overlays = [...props.matchAll(/\.\.\.|\[/gu)]
+    .filter(match => {
+      if (!lexical.isRoot(match.index)) return false;
+      if (match[0] === "...") return true;
+      let previous = match.index - 1;
+      while (previous >= 0 && (!lexical.isCode(previous) || /\s/u.test(props[previous]))) {
+        previous--;
+      }
+      return previous < 0 || props[previous] === ",";
+    });
+  if (overlays.length || !new RegExp(`^${q(reference)}(?=,|$)`, "u")
+    .test(props.slice(property.index + property[0].length))) {
+    throw new Error(`Current dynamic Power efforts: disconnected native ${name} input`);
+  }
+}
+
+function requireRenderedPowerSelections(copy, body, call, returnedMenuProps) {
   const lexical = createJavaScriptLexicalIndex(body);
   stableInitializer(body, call[1], call.index);
   const effective = one(matches(body, new RegExp(`(?<![\\w$.])(${ID})=${q(call[1])};`, "gu"), true),
@@ -73,19 +94,12 @@ function requireRenderedPowerSelections(copy, body, call) {
   }
   const power = one(matches(body, new RegExp(`(${ID})=\\(0,(${ID})\\.q\\)\\(\\{canRenderPowerPickerSurface:`, "gu"), true),
     "missing native Power selection hook");
+  stableInitializer(body, power[1], power.index);
   const open = body.indexOf("{", power.index);
   const props = body.slice(open + 1, lexical.matchingBrace(open));
-  if (!props.includes(`powerSelectionsWithXHigh:${effective},`)) {
-    throw new Error("Current dynamic Power efforts: disconnected native Power selections");
-  }
+  requireRootReference(props, "powerSelectionsWithXHigh", effective);
   requireProvider(copy, power[2], "unb4");
-  const menus = matches(body, new RegExp(`\\(0,${ID}\\.jsx\\)\\((${ID})\\.i,\\{`, "gu"))
-    .filter(match => {
-      const start = match.index + match[0].length - 1;
-      return body.slice(start + 1, lexical.matchingBrace(start)).includes(`powerSelections:${power[1]},`);
-    });
-  const menu = one(menus, "Power hook output does not reach the returned native Work menu");
-  requireProvider(copy, menu[1], "dig0");
+  requireRootReference(returnedMenuProps, "powerSelections", power[1]);
 }
 
 function inspectDynamicResolver(copy) {
@@ -126,14 +140,14 @@ function inspectEffortConsumer(copy) {
   const nativeCopy = withModuleSource(copy, nativeSource);
   // This existing owner inspection proves the published mounted Work menu and
   // its returned native renderer. It preserves the default-view contribution.
-  inspectDefaultView(nativeCopy, "work");
+  const view = inspectDefaultView(nativeCopy, "work");
   const publication = findRspackExportPublication(nativeCopy, "M");
   if (!publication?.fn) throw new Error("Current dynamic Power efforts: missing Work consumer publication");
   const body = publication.fn.body;
   const call = one(matches(body, new RegExp(`(${ID})=\\(0,(${ID})\\.Qv\\)\\((${ID}),\\{sliderModelsConfig:([^;]{1,600}?),stripGptPrefix:!(${ID})\\}\\)`, "gu"), true),
     "missing native Work Power resolver call");
   requireProvider(nativeCopy, call[2], "TWUU");
-  requireRenderedPowerSelections(nativeCopy, body, call);
+  requireRenderedPowerSelections(nativeCopy, body, call, view.returnedMenuProps);
   const input = contribution.inspectEnabledPowerEffortInput(body, { namespace: call[2], models: call[3], strip: call[5] });
   const enabled = input.enabled;
   requireProvider(nativeCopy, input.reader, "zTeN");

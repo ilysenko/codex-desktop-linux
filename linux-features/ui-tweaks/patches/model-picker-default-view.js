@@ -152,7 +152,7 @@ function menuConsumer(copy, body, view, contract) {
     const opening = one(values("onOpenChange"), "missing native menu open callback")[1];
     requireProvider(copy, call[1], "ABep");
     requireProvider(copy, call[2], contract.renderer);
-    candidates.push({ toggle, opening, start: call.index, end: close + 2 });
+    candidates.push({ toggle, opening, props, start: call.index, end: close + 2 });
   }
   return one(candidates, "missing or ambiguous native menu consumer");
 }
@@ -234,12 +234,14 @@ function inspectDefaultView(copy, kind) {
       native: timer[0].replace(`("${patched ? "advanced" : "simple"}")`, '("simple")'),
       patched: timer[0].replace(`("${patched ? "advanced" : "simple"}")`, '("advanced")') },
   ];
+  let returnedMenuProps;
   if (kind === "work") {
     const derived = one(codeMatches(body, new RegExp(
       `(${ID})=!\\((${ID})\\.length<2\\)\\|\\|(${ID})\\?${escapeRegExp(view)}:"advanced"`, "gu")),
     "missing native Work view resolver");
     const consumer = menuConsumer(copy, body, derived[1], contract);
     requireReturnedMenu(body, consumer, kind);
+    returnedMenuProps = consumer.props;
     const callback = openingCallback(body, consumer.opening);
     if (timer.index < callback.start || timer.index + timer[0].length > callback.end) {
       throw new Error("Current model picker: close reset is outside the live Work callback");
@@ -271,6 +273,7 @@ function inspectDefaultView(copy, kind) {
   } else {
     const consumer = menuConsumer(copy, body, view, contract);
     requireReturnedMenu(body, consumer, kind);
+    returnedMenuProps = consumer.props;
     const callback = openingCallback(body, consumer.opening, true);
     const opening = one(codeMatches(body, new RegExp(
       `let (${ID})=(${ID})&&!(${ID})\\?"${patched ? "advanced" : "simple"}":${escapeRegExp(view)};if\\(\\1!==${escapeRegExp(view)}&&${escapeRegExp(setter)}\\(\\1\\),`, "gu")),
@@ -297,7 +300,8 @@ function inspectDefaultView(copy, kind) {
   if (copy.moduleSource.split(MARKER).length - 1 !== Number(patched)) {
     throw new Error("Current model picker: orphan advanced-view marker");
   }
-  return { kind, state: patched ? "patched" : "native", nativeSource: render("native"), patchedSource: render("patched") };
+  return { kind, state: patched ? "patched" : "native", nativeSource: render("native"),
+    patchedSource: render("patched"), returnedMenuProps };
 }
 
 function prepareDefaultView(copies) {

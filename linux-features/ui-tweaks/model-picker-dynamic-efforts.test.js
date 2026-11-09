@@ -194,8 +194,17 @@ test("UI resolver and Work contributions invert and repeat exactly while preserv
 test("consumer qualification rejects dead resolver output, disconnected menu inputs and replaced native Sets", () => {
   const mutations = [
     work.moduleSource.replace("powerSelections:oO", "powerSelections:[]"),
+    insertBeforeComponentReturn(work.moduleSource.replace("powerSelections:oO", "powerSelections:[]"),
+      "let unreturnedPicker=(0,o.jsx)(D.i,{powerSelections:oO,});"),
+    work.moduleSource.replace("powerSelections:oO", "powerSelections:[],unused:{powerSelections:oO}"),
+    work.moduleSource.replace("powerSelections:oO", 'powerSelections:oO,"powerSelections":[]'),
+    work.moduleSource.replace("powerSelections:oO", "powerSelections:oO,...unprovenProps"),
+    work.moduleSource.replace("powerSelections:oO", "powerSelections:oO,/* sibling */...{powerSelections:[]}"),
+    work.moduleSource.replace("powerSelections:oO", 'powerSelections:oO,/* sibling */["powerSelections"]:[]'),
     work.moduleSource.replace("powerSelectionsWithXHigh:oR", "powerSelectionsWithXHigh:[]"),
+    work.moduleSource.replace("powerSelectionsWithXHigh:oR", "powerSelectionsWithXHigh:[],unused:{powerSelectionsWithXHigh:oR}"),
     insertBeforeComponentReturn(work.moduleSource, "oT=[];"),
+    insertBeforeComponentReturn(work.moduleSource, "oO=[];"),
     insertBeforeComponentReturn(work.moduleSource, "nF=new Set();"),
   ];
   for (const source of mutations) {
