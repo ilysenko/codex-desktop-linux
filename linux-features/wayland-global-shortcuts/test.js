@@ -8,6 +8,127 @@ const fs = require("node:fs");
 const { applyWaylandGlobalShortcutsPatch, descriptors } = require("./patch.js");
 const { mainBundleFixture, applyFeatures } = require("../../scripts/patches/lib/global-shortcuts-portal.test-helpers.js");
 const { loadEnabledLinuxFeatures } = require("../../scripts/lib/linux-features.js");
+const { applyLinuxAppshotHotkeyPatch, descriptors: appshotsDescriptors } = require("../appshots/patch.js");
+const { appshotHotkeyState, linuxAppshotWaylandHelperSource } = require("../../scripts/patches/lib/appshot-hotkey-contract.js");
+
+function completeAppshotsFixture() {
+  const native = [
+    'function appshotBareAllowed(hotkey,platform=process.platform){return"darwin"===platform&&null!=appshotNormalize(hotkey)}',
+    'const appshotNativeMonitor=function(hotkey,onPressed,trigger="press"){if("darwin"!==process.platform)return null;let normalized=appshotNormalize(hotkey)??appshotFallback(hotkey);return null};',
+    'let nativeModifiers=new Set(["cmdorctrl","command","cmd","control","ctrl","alt","option","super"]),appshotModifiers=new Set([...nativeModifiers,"shift"]);',
+    'function appshotValidate(e,t=process.platform,r){let n=e.split("+").map(e=>e.trim()).filter(e=>e.length>0);if(0===n.length)return"Shortcut cannot be empty.";let i=!1,s=null;for(let e of n){let t=e.toLowerCase();if(appshotModifiers.has(t)){nativeModifiers.has(t)&&(i=!0);continue}if(null!=s)return"Shortcut must include exactly one non-modifier key.";s=e}return null==s?"Shortcut must include a non-modifier key.":i||r?.allowUnmodified?null:"Shortcut must include Cmd/Ctrl or Alt."}',
+    'class AppshotHotkeys{constructor(stored){void 0===stored?this.configuredHotkey="win32"===process.platform?"DoubleAlt":"DoubleCommand":this.configuredHotkey=stored}setHotkey(e){if(!this.getState().supported)return{success:!1,error:"Not supported.",state:this.getState()};if(null!=e){let t="win32"===process.platform&&windowsBare(e)?null:appshotValidate(e);if(null!=t)return{success:!1,error:t,state:this.getState()}}this.configuredHotkey=e;this.#setterProbe();return{success:!0,state:this.getState()}}#setterProbe(){}',
+  ].join("");
+  return mainBundleFixture().replace("class AppshotHotkeys{", native) +
+    "\n//# sourceMappingURL=appshots-combination.js.map";
+}
+
+for (const dictation of [false, true]) {
+  test(`AppShots complete contribution composes in both orders with Wayland and dictation=${dictation}`, () => {
+    const source = completeAppshotsFixture();
+    assert.equal(appshotHotkeyState(source).kind, "current");
+    const appshots = applyLinuxAppshotHotkeyPatch(source);
+    assert.notEqual(appshots, source);
+    assert.equal(appshotHotkeyState(appshots).kind, "patched");
+    const appshotsFirst = applyFeatures(appshots, { dictation, shortcuts: true });
+    const waylandFirst = applyLinuxAppshotHotkeyPatch(applyFeatures(source, { dictation, shortcuts: true }));
+    assert.notEqual(appshotsFirst, appshots);
+    assert.equal(appshotsFirst, waylandFirst);
+    assert.equal(appshotHotkeyState(appshotsFirst).kind, "patched");
+    assert.deepEqual(quiet(() => applyWaylandGlobalShortcutsPatch(appshotsFirst)),
+      { value: appshotsFirst, warnings: [] });
+    assert.equal(applyLinuxAppshotHotkeyPatch(appshotsFirst), appshotsFirst);
+    assert.deepEqual([...appshotsFirst.matchAll(/linuxCommandId:"([^"]+)"/gu)]
+      .map(match => match[1]).filter(id => !id.startsWith("globalDictation")).sort(), ACTION_IDS);
+    assert.doesNotThrow(() => new vm.Script(appshotsFirst));
+  });
+}
+
+test("AppShots combined availability retains platform, enablement, callbacks and bare-modifier policy", () => {
+  const source = applyWaylandGlobalShortcutsPatch(applyLinuxAppshotHotkeyPatch(completeAppshotsFixture()));
+  const registrations = [], events = [];
+  const context = {
+    process: { platform: "linux", env: { XDG_SESSION_TYPE: "wayland" } },
+    normalizeHotkey() {}, appshotNormalize: () => "normalized",
+    __appshotPressed: () => events.push("appshot"),
+    eA(accelerator, callbacks, options) {
+      const record = { accelerator, callbacks, options, unregistered: false };
+      registrations.push(record);
+      return { unregister() { record.unregistered = true; } };
+    },
+  };
+  vm.runInNewContext(linuxAppshotWaylandHelperSource(), context);
+  const Appshot = fixtureClass(source, "AppshotHotkeys", context);
+  const appshot = new Appshot();
+  appshot.enabled = true;
+  assert.equal(appshot.configuredHotkey, null);
+  assert.equal(appshot.getState().supported, true);
+  assert.equal(appshot.getState().linuxWayland, true);
+  appshot.reconcile();
+  assert.equal(registrations.length, 0);
+  appshot.configuredHotkey = "Ctrl+Alt+A";
+  appshot.reconcile();
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0].callbacks.linuxCommandId, "appshots");
+  assert.equal(registrations[0].options.bareModifierTrigger, "immediatePress");
+  registrations[0].callbacks.onPressed();
+  assert.deepEqual(events, ["appshot"]);
+  appshot.enabled = false;
+  assert.equal(appshot.getState().supported, false);
+  appshot.reconcile();
+  assert.equal(registrations[0].unregistered, true);
+  appshot.enabled = true;
+  context.process.platform = "win32";
+  assert.equal(appshot.getState().supported, false);
+  appshot.windowsCaptureNativeBridge = {};
+  assert.equal(appshot.getState().supported, true);
+  appshot.windowsCaptureNativeBridgeFailed = true;
+  assert.equal(appshot.getState().supported, false);
+  context.process.platform = "darwin";
+  assert.equal(appshot.getState().supported, true);
+  const start = source.indexOf("function appshotBareAllowed(");
+  const open = source.indexOf("{", start), end = findMatchingBrace(source, open);
+  const bareAllowed = vm.runInNewContext("(" + source.slice(start, end + 1) + ")", context);
+  assert.equal(bareAllowed("Control"), true);
+  context.process.platform = "linux";
+  assert.equal(bareAllowed("Control"), false);
+  context.process.env.XDG_SESSION_TYPE = "x11";
+  assert.equal(bareAllowed("Control"), true);
+});
+
+test("Wayland refuses partial, opaque, shadowed and ghost AppShots contributions before tagging", () => {
+  const native = completeAppshotsFixture();
+  const source = applyLinuxAppshotHotkeyPatch(native);
+  const helper = linuxAppshotWaylandHelperSource();
+  const ghost = source.replace(/getState\(\)\{return(\{supported:[^{}]+\})\}/u,
+    (_match, result) => `getState(){const ghost=()=>(${result});return{supported:false}}`);
+  const cases = [
+    native + "\n" + helper,
+    source.replace(helper, ""),
+    source.replace(helper, "/*" + helper + "*/"),
+    source.replace(helper, "function unused(){" + helper + "}"),
+    source.replace(helper, "const unreturnedHelper=" + helper + ";"),
+    source.replace(helper, "0," + helper + ";"),
+    source.replace(helper, "if(false)" + helper),
+    source.replace(helper, helper + helper),
+    source.replace('"shift","meta","win"', '"shift"'),
+    source.replace('new Set([...nativeModifiers,"shift","meta","win"])', "new Set([...nativeModifiers,'shift'])") +
+      '\n/*new Set([...nativeModifiers,"shift","meta","win"])*/',
+    source.replace('new Set([...nativeModifiers,"shift","meta","win"])', "new Set([...nativeModifiers,'shift'])") +
+      '\n;void new Set([...nativeModifiers,"shift","meta","win"]);',
+    source.replace('"linux"===process.platform?null:"DoubleCommand"', '"DoubleCommand"'),
+    source.replace('!this.windowsCaptureNativeBridgeFailed', 'this.windowsCaptureNativeBridgeFailed'),
+    source.replace('toLowerCase()===`wayland`', 'toLowerCase()===`x11`'),
+    source + "\ncodexLinuxAppshotIsWaylan\\u0064=()=>true;",
+    source.replace("class AppshotHotkeys{", "var codexLinuxAppshotIsWaylan\\u0064=()=>true;class AppshotHotkeys{"),
+    ghost,
+  ];
+  for (const candidate of cases) {
+    assert.notEqual(candidate, source);
+    assert.doesNotThrow(() => new vm.Script(candidate));
+    refused(candidate);
+  }
+});
 
 for (const dictation of [false, true]) {
   for (const shortcuts of [false, true]) {
@@ -390,4 +511,43 @@ for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRAC
     assert.equal(registered(data.root).status, "already-applied");
     for (const name of names) assert.equal(fs.readFileSync(path.join(directory, name), "utf8"), originals[name]);
   });
+}
+
+for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
+  const signedApp = process.env[variable];
+  test("signed complete AppShots and Wayland cohorts preserve both orders and replay " + variable,
+    { skip: !signedApp }, t => {
+      const directory = path.join(signedApp, ".vite/build"), data = inventory(t);
+      for (const name of fs.readdirSync(data.build)) fs.unlinkSync(path.join(data.build, name));
+      const names = fs.readdirSync(directory).filter(name => /^early-bootstrap(?:-\d+-[0-9a-f]+)?\.js$/u.test(name));
+      assert.equal(names.length, 19);
+      for (const name of names) fs.copyFileSync(path.join(directory, name), path.join(data.build, name));
+      const original = snapshot(data.build);
+      const applyAppshots = expectedChanges => {
+        for (const descriptor of appshotsDescriptors.filter(item => item.phase === "extracted-app:pre-webview")) {
+          const result = descriptor.apply(data.root);
+          assert.equal(result.changed, expectedChanges, descriptor.id);
+        }
+      };
+      applyAppshots(1);
+      const appshots = snapshot(data.build);
+      assert.equal(registered(data.root).status, "applied");
+      const combined = snapshot(data.build);
+      const changed = names.filter(name => combined[name] !== appshots[name]);
+      assert.equal(changed.length, 1);
+      const owner = changed[0];
+      assert.equal(stripOwn(combined[owner]), installPortalBackend(appshots[owner]));
+      assert.equal(appshotHotkeyState(combined[owner]).kind, "patched");
+      applyAppshots(0);
+      assert.equal(registered(data.root).status, "already-applied");
+      assert.deepEqual(snapshot(data.build), combined);
+      for (const name of names) fs.writeFileSync(path.join(data.build, name), original[name]);
+      assert.equal(registered(data.root).status, "applied");
+      applyAppshots(1);
+      assert.deepEqual(snapshot(data.build), combined);
+      assert.equal(registered(data.root).status, "already-applied");
+      applyAppshots(0);
+      assert.deepEqual(snapshot(data.build), combined);
+      for (const name of names) assert.equal(fs.readFileSync(path.join(directory, name), "utf8"), original[name]);
+    });
 }

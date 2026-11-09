@@ -6,6 +6,7 @@ const { Script } = require("node:vm");
 const { createJavaScriptLexicalIndex, escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
 const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
+const { appshotHotkeyState, linuxAppshotWaylandHelperSource } = require("../../scripts/patches/lib/appshot-hotkey-contract.js");
 const { IDENT, inspectGlobalShortcutsPortal, installPortalBackend } = require("../../scripts/patches/lib/global-shortcuts-portal.js");
 
 const PATCH_MARKER = "codex-linux-wayland-global-shortcuts-v1";
@@ -52,7 +53,7 @@ function assertReadOnlyBinding(owner, name, authorizedIndex, description) {
       (_, braced, fixed) => String.fromCodePoint(parseInt(braced || fixed, 16)));
     if (decoded !== name || token.index === authorizedIndex) continue;
     const parses = replacement => {
-      try { new Script("async function bindingProbe(){" + owner.text.slice(0, token.index) + replacement + owner.text.slice(token.index + token[0].length) + "}"); return true; }
+      try { new Script("async function bindingProbe(){" + owner.text.slice(0, token.index) + replacement + owner.text.slice(token.index + token[0].length) + "\n}"); return true; }
       catch { return false; }
     };
     if (!parses("(0)") && !parses(name + ":(0)")) throw new Error(description + " is shadowed or reassigned");
@@ -213,6 +214,81 @@ function registration(owner, register, id, accelerator, callback, options = "", 
 function requireText(owner, pattern, description, root = false) {
   one(matches(owner, pattern, root), description);
 }
+function requireAppshotModifierConsumer(factory, controller, modifierSite) {
+  const setter = method(controller, "setHotkey");
+  if (!new RegExp("^" + IDENT + "$", "u").test(setter.parameters)) throw new Error("AppShots setter parameters changed");
+  const argument = escapeRegExp(setter.parameters);
+  const validationHead = one(matches(setter, new RegExp(
+    "^if\\(!this\\.getState\\(\\)\\.supported\\)return\\{success:!1,error:\"Not supported\\.\",state:this\\.getState\\(\\)\\};if\\(null!=" + argument + "\\)\\{", "gu")),
+  "AppShots setter validation branch");
+  const validation = bodyAt(setter, validationHead, "AppShots setter validation");
+  const call = one(matches(validation, new RegExp(
+    "^let (?<failure>" + IDENT + ")=\"win32\"===process\\.platform&&" + IDENT + "\\(" + argument + "\\)\\?null:(?<validator>" + IDENT + ")\\(" + argument + "\\);if\\(null!=\\k<failure>\\)return\\{success:!1,error:\\k<failure>,state:this\\.getState\\(\\)\\}$", "gu")),
+  "AppShots setter validator consumption");
+  const name = call.groups.validator;
+  const declaration = one(matches(factory, new RegExp("\\bfunction " + escapeRegExp(name) +
+    "\\((?<argument>" + IDENT + "),(?<platform>" + IDENT + ")=process\\.platform,(?<options>" + IDENT + ")\\)\\{", "gu")),
+  "AppShots modifier validator declaration");
+  if (!evaluatedAt(factory, declaration.index)) throw new Error("AppShots modifier validator is not evaluated");
+  assertReadOnlyBinding(factory, name, declaration.index + "function ".length, "AppShots modifier validator");
+  const validator = bodyAt(factory, declaration, "AppShots modifier validator");
+  const parts = one(matches(validator, new RegExp("^let (?<parts>" + IDENT + ")=" +
+    escapeRegExp(declaration.groups.argument) + "\\.split\\(\"\\+\"\\)\\.map\\((?<item>" + IDENT + ")=>\\k<item>\\.trim\\(\\)\\)\\.filter\\((?<item2>" + IDENT + ")=>\\k<item2>\\.length>0\\);", "gu")),
+  "AppShots validator accelerator parsing");
+  const consume = one(matches(validator, new RegExp(
+    "let (?<primary>" + IDENT + ")=!1,(?<key>" + IDENT + ")=null;for\\(let (?<item>" + IDENT + ") of " + escapeRegExp(parts.groups.parts) +
+    "\\)\\{let (?<lower>" + IDENT + ")=\\k<item>\\.toLowerCase\\(\\);if\\((?<modifiers>" + IDENT + ")\\.has\\(\\k<lower>\\)\\)\\{(?<base>" + IDENT + ")\\.has\\(\\k<lower>\\)&&\\(\\k<primary>=!0\\);continue\\}if\\(null!=\\k<key>\\)return\"Shortcut must include exactly one non-modifier key\\.\";\\k<key>=\\k<item>\\}return null==\\k<key>\\?\"Shortcut must include a non-modifier key\\.\":\\k<primary>\\|\\|" +
+    escapeRegExp(declaration.groups.options) + "\\?\\.allowUnmodified\\?null:\"Shortcut must include Cmd/Ctrl or Alt\\.\"$", "gu")),
+  "AppShots active modifier-set consumption");
+  if (!evaluatedAt(validator, consume.index)) throw new Error("AppShots modifier-set consumption is unreachable");
+  const { base, modifiers } = consume.groups;
+  const tuple = one(matches(factory, new RegExp("\\blet " + escapeRegExp(base) +
+    "=new Set\\(\\[\"cmdorctrl\",\"command\",\"cmd\",\"control\",\"ctrl\",\"alt\",\"option\",\"super\"\\]\\)," +
+    escapeRegExp(modifiers) + "=new Set\\(\\[\\.\\.\\." + escapeRegExp(base) + ",\"shift\",\"meta\",\"win\"\\]\\)", "gu")),
+  "AppShots live modifier-set declarations");
+  if (!evaluatedAt(factory, tuple.index) || tuple.index + tuple[0].lastIndexOf("new Set") !== modifierSite.index) {
+    throw new Error("AppShots modifier-set contribution is outside the active declaration");
+  }
+  const baseIndex = tuple.index + "let ".length;
+  const modifiersIndex = tuple.index + tuple[0].indexOf("," + modifiers + "=new Set") + 1;
+  assertReadOnlyBinding(factory, base, baseIndex, "AppShots primary modifiers");
+  assertReadOnlyBinding(factory, modifiers, modifiersIndex, "AppShots allowed modifiers");
+  for (const [binding, count] of [[base, 3], [modifiers, 2]]) {
+    const references = matches(factory, new RegExp("(?<![\\w$])" + escapeRegExp(binding) + "(?![\\w$])", "gu"), false)
+      .filter(match => factory.text[match.index - 1] !== "." || factory.text.slice(match.index - 3, match.index) === "...");
+    if (references.length !== count) throw new Error("AppShots modifier-set references changed");
+  }
+}
+function requireAppshotAvailability(source, factory, controller) {
+  const state = method(controller, "getState");
+  const native = /^return\{supported:this\.enabled&&\("darwin"===process\.platform\|\|"win32"===process\.platform&&null!=this\.windowsCaptureNativeBridge&&!this\.windowsCaptureNativeBridgeFailed\),configuredHotkey:this\.configuredHotkey,isActive:null!=this\.registration\}$/gu;
+  if (matches(state, native).length === 1 && !decodeUnicode(source).includes("codexLinuxAppshotIsWayland")) return;
+  requireText(state, /^return\{supported:this\.enabled&&\("linux"===process\.platform\|\|"darwin"===process\.platform\|\|"win32"===process\.platform&&null!=this\.windowsCaptureNativeBridge&&!this\.windowsCaptureNativeBridgeFailed\),configuredHotkey:this\.configuredHotkey,isActive:null!=this\.registration,linuxWayland:codexLinuxAppshotIsWayland\(\)\}$/gu, "Appshot availability");
+  const contribution = appshotHotkeyState(source);
+  if (contribution.kind !== "patched") throw new Error("Incomplete AppShots hotkey contribution");
+  const sites = new Map(contribution.patterns.map(pattern => [pattern.role,
+    one(matches(factory, pattern.patched, false), "AppShots " + pattern.role + " code site")]));
+  const constructor = method(controller, "constructor");
+  const defaultPattern = contribution.patterns.find(pattern => pattern.role === "defaultShortcut");
+  requireText(constructor, defaultPattern.patched, "AppShots live default shortcut");
+  requireAppshotModifierConsumer(factory, controller, sites.get("modifiers"));
+  const owner = scope(source, 0, source.length);
+  const helper = one(matches(owner, new RegExp(escapeRegExp(linuxAppshotWaylandHelperSource()), "gu")),
+    "AppShots Wayland helper declaration");
+  let probe = "__codexAppshotDeclarationProbe";
+  while (source.includes(probe)) probe += "$";
+  new Script(source + "\n");
+  new Script(source + "\n;let " + probe + ";");
+  let declared = false;
+  try { new Script(source + "\n;let codexLinuxAppshotIsWayland;"); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    declared = true;
+  }
+  if (!declared || !evaluatedAt(owner, helper.index)) throw new Error("AppShots Wayland helper has no eager root declaration");
+  assertReadOnlyBinding(owner, "codexLinuxAppshotIsWayland", helper.index + "function ".length,
+    "AppShots Wayland helper");
+}
 function actionPlan(source, metadata) {
   if (!metadata.owner) throw new Error(metadata.reason || "Shared Portal owner is unavailable");
   const factory = scope(source, metadata.owner.factoryBody.start, metadata.owner.factoryBody.end);
@@ -229,7 +305,7 @@ function actionPlan(source, metadata) {
   const popout = registration(hotkeyMethod, register, "hotkeyWindow", escapeRegExp(accelerator), "onPressed:\\(\\)=>\\{this\\.handleHotkeyWindowHotkeyPressed\\(\\)\\}", ",\\{ownership:" + escapeRegExp(ownership) + "\\}");
 
   const appshot = constructedController(factory, producer, metadata, "appshotHotkeysService");
-  requireText(method(appshot, "getState"), /supported:this\.enabled&&\("darwin"===process\.platform\|\|"win32"===process\.platform&&null!=this\.windowsCaptureNativeBridge&&!this\.windowsCaptureNativeBridgeFailed\)/gu, "Appshot availability");
+  requireAppshotAvailability(source, factory, appshot);
   const appshotCall = registration(appshot, register, "appshots", "this\\.configuredHotkey", "onPressed:\\(\\)=>this\\.#[A-Za-z_$][\\w$]*\\(\\)", ',\\{bareModifierTrigger:"immediatePress"\\}', false);
   const appshotHeads = matches(appshot, /(?<![\w$.])(?:#[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*)\([^()]*\)\{/gu);
   const appshotMethod = one(appshotHeads.map(head => bodyAt(appshot, head, "Appshot method")).filter(body => body.start <= appshotCall.start && body.end > appshotCall.start), "Appshot registration method");

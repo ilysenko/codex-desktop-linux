@@ -17,6 +17,11 @@ Enable `wayland-global-shortcuts` in `linux-features/features.json` and rebuild.
 Global dictation is independently selected with `global-dictation`; either
 feature can be enabled alone or both can share one helper.
 
+With `appshots` enabled, AppShots owns Linux capture availability and its native
+bare-modifier policy. The Wayland adapter validates that complete contribution
+before tagging the same native callback. Both patch orders and repeated builds
+preserve the combined state.
+
 `make install-native` builds the native helper before packaging. Direct
 `./install.sh` builds require a prebuilt
 `global-dictation-linux/target/release/codex-global-dictation-linux` or
