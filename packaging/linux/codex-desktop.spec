@@ -4,6 +4,12 @@ Release:        __RPM_RELEASE__%{?dist}
 Summary:        ChatGPT Community for Linux
 License:        Proprietary
 ExclusiveArch:  __ARCH__
+# Preserve the signed upstream ELF and script payload during RPM assembly.
+%global debug_package %{nil}
+%global __debug_install_post %{nil}
+%global _build_id_links none
+# Retain the read-only RPATH check from the distro's build-root policy.
+%global __os_install_post %{?__brp_check_rpaths}
 %global __requires_exclude_from ^/opt/__PACKAGE_NAME__/.*$
 %global __provides_exclude_from ^/opt/__PACKAGE_NAME__/.*$
 %global codex_elf_suffix %{nil}
