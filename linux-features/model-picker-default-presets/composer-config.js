@@ -312,6 +312,10 @@ function returnedMenu(owner,route,c){
  const call=new RegExp(String.raw`\(0,(?<jsx>${ID})\.(?<create>${ID})\)\((?<namespace>${ID})\.(?<exportName>${ID}),$`,'u').exec(body.slice(0,open));if(!call)throw Error('Picker props do not belong to a native JSX call');
  const fragmentOpen=[...body.slice(0,open).matchAll(/\{/gu)].filter(x=>lex.isCode(x.index)&&lex.matchingBrace(x.index)>end).map(x=>x.index).pop();if(fragmentOpen==null)throw Error('Missing returned picker Fragment');
  const prefix=new RegExp(String.raw`(?<result>${ID})=\(0,${escapeRegExp(call.groups.jsx)}\.${escapeRegExp(call.groups.create)}\)\(${escapeRegExp(call.groups.jsx)}\.Fragment,$`,'u').exec(body.slice(0,fragmentOpen));if(!prefix||!lex.isRoot(prefix.index))throw Error('Native picker Fragment is not assigned to the returned node');
+ const fragmentEnd=lex.matchingBrace(fragmentOpen);
+ if(body[end+1]!==')'||body.slice(fragmentOpen+1,fragmentEnd)!=='children:'+body.slice(call.index,end+2)){
+  throw Error('Native Default picker must be the literal returned Fragment child');
+ }
  const returned=match(body,/\breturn\b/gu,'root picker return',true);if(returned.index>fragmentOpen||!new RegExp(String.raw`:${escapeRegExp(prefix.groups.result)}=${escapeRegExp(route.decl.cache)}\[\d+\],${escapeRegExp(prefix.groups.result)}$`,'u').test(body))throw Error('Picker node does not reach the render result');
  capture(body,[call.groups.namespace,call.groups.jsx],[owner.input]);return{...owner.imported(call.groups.namespace),exportName:call.groups.exportName,nativeOutputDefaultMember:true};
 }

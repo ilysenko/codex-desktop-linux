@@ -26,6 +26,23 @@ test('actual caller prepares, inverses and replays exactly; empty audit and inva
  for(const raw of [[],null,[{model:'x',effort:'wrong',default:true}],[{model:'x',effort:'high'}]])assert.throws(()=>Main.patchLocalComposerConfig('/never-read',{feature:{settings:{presets:raw}}}),/presets|default|effort/);
 });
 
+test('the native Default callback belongs to the rendered Fragment child',()=>{
+ const original=fixture.moduleSource;
+ for(const value of ['onSelectDefault:lk,','modelOptionsDisabled:tt,','reasoningEffortDisabled:ti,','lz=(0,o.jsx)(o.Fragment,{children:']){
+  assert.equal(original.split(value).length,2,value);
+ }
+ const ghost='(0,o.jsx)(D.i,{model:nX,modelOptions:n5,reasoningEffort:oS,selectionMode:oP,onSelectDefault:lk,modelOptionsDisabled:tt,reasoningEffortDisabled:ti})';
+ const mutant=original.replace('onSelectDefault:lk,','onSelectDefault:void 0,')
+  .replace('modelOptionsDisabled:tt,','"modelOptionsDisabled":tt,')
+  .replace('reasoningEffortDisabled:ti,','"reasoningEffortDisabled":ti,')
+  .replace('lz=(0,o.jsx)(o.Fragment,{children:',`lz=(0,o.jsx)(o.Fragment,{ghost:${ghost},children:`);
+ new vm.Script(`function nativeCaller(${fixture.params.join(',')}){${mutant}}`);
+ const {rspackModuleFactories}=require('../../scripts/patches/lib/rspack-module-assets.js');
+ const [snapshot]=rspackModuleFactories(chunk([changed(fixture,mutant)]),'quoted-key-ghost.js');
+ assert.equal(snapshot.moduleSource,mutant);
+ assert.throws(()=>C.prepareComposerFactory(mutant,snapshot,presets,map),/literal returned Fragment child/);
+});
+
 test('own config keeps public efforts and UTF16 data values without exposing sibling marker text',()=>{
  const efforts=['none','low','medium','high','xhigh','max','ultra'],input=Main.normalizePresets({feature:{settings:{presets:efforts.map((effort,i)=>({model:`model-${effort}`,effort,default:i===0}))}}});assert.deepEqual(Main.localComposerConfig(input).presets[0].map(x=>x.reasoning_effort),efforts);assert.equal(Main.localComposerConfig(input).codexLinuxDefaultPresets,true);
  const model='opaque"}/*codexLinuxCopilotEffortDropdown*/{\\\n🦊',p=[{modelSlug:model,thinkingEffort:'zero',isDefault:true}],a=C.prepareComposerFactory(fixture.moduleSource,fixture,p,map),runtime=ownRuntime(a.patchedSource);assert.deepEqual(plain(runtime.config),Main.localComposerConfig(p));assert.equal(a.patchedSource.includes(model),false);assert.equal(a.patchedSource.includes('codexLinuxCopilotEffortDropdown'),false);
