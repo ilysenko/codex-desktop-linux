@@ -17,6 +17,7 @@ require("./selected-text-more-details.test.js");
 require("./selected-text-annotation-submit.test.js");
 require("./reasoning-effort-labels.test.js");
 require("./reasoning-effort-labels-loader.test.js");
+require("./sidebar-project-name-loader.test.js");
 require("./model-picker-default-view.test.js");
 require("./model-picker-inline-list.test.js");
 require("./model-picker-dynamic-efforts.test.js");

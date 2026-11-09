@@ -410,6 +410,10 @@ Config keys:
   The default is `font-weight: 700 !important;`, so project names are bold
   without changing the fixed row geometry or forcing a color.
 
+With `enabled: false`, the engine records `skipped-disabled` before searching
+for the sidebar owner. Other enabled tweaks continue through their own
+contracts. Style validation runs when this tweak is applied.
+
 ### `selection.moreDetails`
 
 Restores **More details** beside **Add to chat** and **Ask in side chat** when

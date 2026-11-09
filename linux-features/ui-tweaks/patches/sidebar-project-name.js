@@ -129,6 +129,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_790,
     ciPolicy: "optional",
+    enabled: (context = {}) => sidebarProjectNameConfig(context).enabled !== false,
     assetNeedles: SIDEBAR_PROJECT_NAME_MARKERS,
     missingDescription: "projects sidebar bundle",
     skipDescription: "ui-tweaks sidebar project name style patch",
