@@ -21,7 +21,7 @@ desktops, dependencies, permissions, and troubleshooting.
 
 ## Supported operations
 
-The embedded backend tracks standalone computer-use-linux v0.7.47. GNOME
+The embedded backend tracks standalone computer-use-linux v0.7.48. GNOME
 scaled pointer sessions use portal EIS regions when available and retain the
 legacy route when negotiation fails. Selkies containers can set `PIXELFLUX_CU`
 and `PIXELFLUX_CU_TOKEN` to use their loopback computer-use API for capture and
@@ -61,7 +61,9 @@ tree traversal with `maxNodes` (1–10000) and `maxDepth` (0–64). The equivale
 `max_nodes` and `max_depth` spellings are accepted for direct backend parity.
 When the backend returns a large tree as its leading nodes, the host service pages
 the rest from the backend's cached snapshot with `get_tree_page` and returns the
-whole tree. If it would not fit the host bridge, the result keeps what fits, sets
+whole tree. Each page names the result's `snapshot_id`, so pages from a newer
+snapshot are refused. If the tree would not fit the host bridge, or a newer snapshot
+replaced it while it was paged, the result keeps what it has, sets
 `accessibility_tree_truncated`, and says so in `accessibility_tree_note`.
 `accessibility_tree_truncated` is also set when traversal itself stopped early.
 

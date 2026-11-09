@@ -1,6 +1,6 @@
 [package]
 name = "codex-computer-use-linux"
-version = "0.7.47"
+version = "0.7.48"
 edition = "2021"
 # File::try_lock, used by the indicator, is stable since Rust 1.89.
 rust-version = "1.89"

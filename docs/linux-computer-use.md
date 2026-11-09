@@ -45,7 +45,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.47. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.48. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -98,6 +98,21 @@ closes the query connection instead of leaving a blocked worker behind. Unix
 sockets, literal IP addresses, and `localhost` need no resolver helper. A remote
 hostname in `DISPLAY` requires `getent ahosts` for bounded name resolution;
 missing or failed resolution reports the X11 route as unavailable.
+
+Since the v0.7.48 sync, every tree result carries a `snapshot_id`:
+`get_app_state`, an `include_tree` observation and `get_tree_page`. The backend
+caches one tree, and each new tree replaces it. `click`, `scroll`,
+`perform_action` and `set_value` take the `snapshot_id` with an
+`element_index` (or, except on `scroll`, a selector), and `get_tree_page`
+takes it too. A call that names a replaced snapshot is refused before any
+window is raised or input is sent, since the index could name another element
+by then. Without `snapshot_id`, the element resolves in the latest tree. An
+`element_identifier` and a full capture-space `x`/`y` point are not checked; a
+`coordinate_space: "atspi"` click is, since it maps through the element. Each
+backend process has its own id prefix, so an id from before a restart is
+refused. The host bridge pages a large tree with the snapshot's id, so a tree
+replaced while it is paged comes back marked partial instead of mixing two
+trees.
 
 Element-targeted `click`, `scroll`, `perform_action` and `set_value` refuse an
 `element_index` or `element_identifier` from another app or window and ask for
@@ -486,6 +501,15 @@ query after the 1 s transition allowance, so a slow backend such as Hyprland is
 not cut off, while queries that keep reporting another window fail after about
 1 s instead of 11 s. A failed uinput move before a scroll drops the device, so
 the next action builds a fresh one.
+
+Since the v0.7.48 sync, a coordinate scroll on Wayland sends the wheel from
+the uinput absolute pointer, the device that moved the pointer. Before, the
+wheel went through ydotool's own device 35 ms after the move, and GNOME could
+route it to a stale pointer position, so XWayland windows did not scroll. The
+route no longer needs a ydotool daemon; an untargeted scroll still sends its
+wheel through ydotool, or the portal without the daemon. `left` and `right`
+now send a negative and a positive `REL_HWHEEL`, the kernel's signs, on the
+uinput and ydotool routes; both had them swapped.
 
 Since the v0.7.41 sync, the uinput absolute pointer follows the latest
 screenshot. When a later capture reports a different desktop size, the next

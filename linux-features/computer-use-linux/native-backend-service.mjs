@@ -13,7 +13,9 @@ function parseBackendJson(text) {
 // cached (and may also spill it to a private file the agent's sandbox cannot read).
 // The host pages the rest from that cache with get_tree_page, within the bridge's
 // size limit, so the agent gets the whole tree or an explicit partial one. Calls are
-// serialized, so no other snapshot replaces the cache between the two.
+// serialized, so no other snapshot should replace the cache between the two. Each
+// page names the result's snapshot_id anyway: a page from a replaced tree is refused,
+// and the tree comes back marked partial instead of mixing two trees.
 const treeBudgetMargin = 256 * 1024;
 
 // This host-side process owns the Rust backend. Failed or interrupted requests
@@ -96,9 +98,13 @@ export function createNativeBackendService({
     const nodes = Array.isArray(data.accessibility_tree) ? [...data.accessibility_tree] : [];
     if (!nodes.length) return rest;
     let used = Buffer.byteLength(JSON.stringify(rest));
-    let offset = nodes.length, total = nodes.length;
+    const snapshotId = typeof data.snapshot_id === 'string' && data.snapshot_id ? data.snapshot_id : undefined;
+    const spilled = data.accessibility_tree_spill?.node_count;
+    let offset = nodes.length, total = Number.isInteger(spilled) ? spilled : undefined;
+    let replaced = false;
     while (offset !== null && offset !== undefined) {
-      const { data: page } = await callTool('get_tree_page', { offset });
+      const { data: page } = await callTool('get_tree_page', snapshotId ? { offset, snapshot_id: snapshotId } : { offset });
+      if (snapshotId && page.snapshot_id !== snapshotId) { replaced = true; break; }
       total = Number.isInteger(page.node_count) ? page.node_count : total;
       if (!Array.isArray(page.nodes) || !page.nodes.length) break;
       const size = Buffer.byteLength(JSON.stringify(page.nodes));
@@ -108,7 +114,11 @@ export function createNativeBackendService({
       offset = page.next_offset;
     }
     const tree = { ...rest, accessibility_tree: nodes };
-    if (nodes.length < total) {
+    if (replaced) {
+      const count = total === undefined ? `${nodes.length} nodes` : `${nodes.length} of ${total} nodes`;
+      tree.accessibility_tree_truncated = true;
+      tree.accessibility_tree_note = `Partial tree: ${count}; a newer snapshot replaced this one while it was paged. Call get_app_state again for the whole tree.`;
+    } else if (total !== undefined && nodes.length < total) {
       tree.accessibility_tree_truncated = true;
       tree.accessibility_tree_note = `Partial tree: ${nodes.length} of ${total} nodes fit the host bridge. Request a narrower target or a smaller maxNodes for the rest.`;
     }

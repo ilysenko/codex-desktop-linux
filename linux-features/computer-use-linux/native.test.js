@@ -482,14 +482,14 @@ for (const captureMalformed of ['missing-image', 'uncropped']) {
 
 // Like the real backend: a large tree comes back as its leading nodes, the whole tree
 // stays cached, and get_tree_page pages it. Each snapshot replaces the cache.
-async function spillFixture(t, { nodes = 500, spill = true, nameBytes = 20, treeBudgetBytes } = {}) {
+async function spillFixture(t, { nodes = 500, spill = true, nameBytes = 20, treeBudgetBytes, replaceOnPage } = {}) {
   const { mkdtemp, writeFile: write, rm: remove } = await import('node:fs/promises');
   const { tmpdir: tmp } = await import('node:os');
   const { join: joinPath } = await import('node:path');
   const dir = await mkdtemp(joinPath(tmp(), 'cul-spill-native-'));
   const script = joinPath(dir, 'backend.cjs');
   await write(script, `
-let cache = [], sequence = 0;
+let cache = [], sequence = 0, id = '', pages = 0;
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
   const r = JSON.parse(line);
   const reply = result => process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n');
@@ -497,13 +497,21 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   if (r.method === 'notifications/initialized') return;
   const {name, arguments: a} = r.params;
   if (name === 'get_tree_page') {
+    // Another caller's snapshot replaces the cache before this page.
+    if (++pages === ${replaceOnPage ?? 0}) {
+      cache = Array.from({length:${nodes}}, (_, index) => ({index, role:'push button', name:'Node '+index+' of call replaced'}));
+      id = 'fixture-replaced';
+    }
+    if (a.snapshot_id !== undefined && a.snapshot_id !== id)
+      return reply({structuredContent:{nodes:[], offset:a.offset ?? 0, next_offset:null, node_count:0, message:'snapshot_id is not the cached snapshot'}, content:[]});
     const start = Math.min(a.offset ?? 0, cache.length), end = Math.min(start + 100, cache.length);
-    return reply({structuredContent:{nodes:cache.slice(start, end), offset:start, next_offset:end < cache.length ? end : null, node_count:cache.length, message:''}, content:[]});
+    return reply({structuredContent:{snapshot_id:id, nodes:cache.slice(start, end), offset:start, next_offset:end < cache.length ? end : null, node_count:cache.length, message:''}, content:[]});
   }
   const call = sequence++;
+  id = 'fixture-' + call;
   cache = Array.from({length:${nodes}}, (_, index) => ({index, role:'push button', name:'Node '+index+' of call '+call+' '+'x'.repeat(${nameBytes})}));
   // A failed spill write: no accessibility_tree_spill, only the leading nodes.
-  reply({structuredContent:{accessibility_tree:cache.slice(0, 3), accessibility_tree_truncated:false,
+  reply({structuredContent:{snapshot_id:id, accessibility_tree:cache.slice(0, 3), accessibility_tree_truncated:false,
     ...(${spill} ? {accessibility_tree_spill:{path:'/run/user/1000/codex-computer-use-linux/trees/tree-1-2-'+call+'.json', node_count:cache.length, bytes:1, inline_node_count:3}} : {})}, content:[]});
 });
 `);
@@ -529,6 +537,17 @@ test('a large tree reaches the agent whole, and concurrent snapshots each get th
   assert.ok(a.accessibility_tree.every(node => node.name.includes('of call 1 ')));
   assert.ok(b.accessibility_tree.every(node => node.name.includes('of call 2 ')));
   assert.equal(a.accessibility_tree.length, 500);
+});
+
+test('a tree replaced while it is paged comes back partial instead of mixed', async t => {
+  const service = await spillFixture(t, {replaceOnPage:3});
+  const state = await service.handleRpc({method:'get_app_state', app:'editor', params:{}});
+  assert.equal(state.snapshot_id, 'fixture-0');
+  // The leading 3 nodes and two 100-node pages, all from the first snapshot.
+  assert.equal(state.accessibility_tree.length, 203);
+  assert.ok(state.accessibility_tree.every(node => node.name.includes('of call 0 ')));
+  assert.equal(state.accessibility_tree_truncated, true);
+  assert.match(state.accessibility_tree_note, /203 of 500 nodes; a newer snapshot replaced this one/);
 });
 
 test('a tree the backend could not spill to a file is still returned whole', async t => {
