@@ -103,12 +103,16 @@ Since the v0.7.48 sync, every tree result carries a `snapshot_id`:
 `get_app_state`, an `include_tree` observation and `get_tree_page`. The backend
 caches one tree, and each new tree replaces it. `click`, `scroll`,
 `perform_action` and `set_value` take the `snapshot_id` with an
-`element_index` or selector, and `get_tree_page` takes it too. A call that
-names a replaced snapshot is refused before any window is raised or input is
-sent, since the index could name another element by then. Without
-`snapshot_id`, the element resolves in the latest tree. An
-`element_identifier` and a full `x`/`y` point are not checked. Each backend
-process has its own id prefix, so an id from before a restart is refused.
+`element_index` (or, except on `scroll`, a selector), and `get_tree_page`
+takes it too. A call that names a replaced snapshot is refused before any
+window is raised or input is sent, since the index could name another element
+by then. Without `snapshot_id`, the element resolves in the latest tree. An
+`element_identifier` and a full capture-space `x`/`y` point are not checked; a
+`coordinate_space: "atspi"` click is, since it maps through the element. Each
+backend process has its own id prefix, so an id from before a restart is
+refused. The host bridge pages a large tree with the snapshot's id, so a tree
+replaced while it is paged comes back marked partial instead of mixing two
+trees.
 
 Element-targeted `click`, `scroll`, `perform_action` and `set_value` refuse an
 `element_index` or `element_identifier` from another app or window and ask for

@@ -17,7 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   no longer drops it for XWayland windows, and the route needs no ydotool
   daemon. `left` and `right` scroll the way they say on the uinput and
   ydotool routes. `scroll` checks the target app's ownership of an
-  `element_index` when the call passes only `x` or only `y`.
+  `element_index` when the call passes only `x` or only `y`. The host bridge
+  pages a large tree with its `snapshot_id`, so a tree replaced while it is
+  paged comes back marked partial instead of mixing two trees.
 - Synchronize the embedded Computer Use backend to standalone v0.7.47.
   `setup_window_targeting` and `setup-window-targeting` install the user copy
   of the Codex GNOME Shell extension in `$XDG_DATA_HOME/gnome-shell/extensions`,

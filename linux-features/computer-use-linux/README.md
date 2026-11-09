@@ -61,7 +61,9 @@ tree traversal with `maxNodes` (1–10000) and `maxDepth` (0–64). The equivale
 `max_nodes` and `max_depth` spellings are accepted for direct backend parity.
 When the backend returns a large tree as its leading nodes, the host service pages
 the rest from the backend's cached snapshot with `get_tree_page` and returns the
-whole tree. If it would not fit the host bridge, the result keeps what fits, sets
+whole tree. Each page names the result's `snapshot_id`, so pages from a newer
+snapshot are refused. If the tree would not fit the host bridge, or a newer snapshot
+replaced it while it was paged, the result keeps what it has, sets
 `accessibility_tree_truncated`, and says so in `accessibility_tree_note`.
 `accessibility_tree_truncated` is also set when traversal itself stopped early.
 
