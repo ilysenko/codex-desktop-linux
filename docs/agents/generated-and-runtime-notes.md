@@ -61,3 +61,24 @@ not the active tree or the updater's recorded rollback artifact.
 Package manager output under `/opt/codex-desktop` is installed state, not a
 development source tree. Fix templates in the repository, rebuild a package,
 and reinstall rather than modifying `/opt` in place.
+
+## Shared Object bridge retirement
+
+The upstream Linux interface comparison records the retirement of
+`electronBridge.getSharedObjectSnapshotValue`, the
+`codex_desktop:get-shared-object-snapshot` IPC entry, the shared-object
+snapshot/set/subscribe/unsubscribe/update channels, and the main-process
+`sharedObjectRepository` between packages `26.1027.51404` and `26.1029.61003`.
+
+The `26.1103.60933` compatibility audit found zero repository-owned consumers
+across the tracked bridge, request, settings, launcher, updater and feature
+sources. A separate static census covered both architecture extracts, and nine
+actual repository generator outputs covered Chronicle/Record & Replay handlers,
+the Remote device-key provider, the Computer Use cursor bridge, sidebar styling
+and the Work Power resolver contribution. The complete feature-output census is
+part of final integration validation.
+
+New injected state and request adapters resolve the current native owner or
+use their feature-owned state hooks. Source inspection and generated-code
+checks establish the consumer scope. Live GUI state operations and IPC
+subscriptions retain their separate runtime validation scope.
