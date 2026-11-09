@@ -13,8 +13,14 @@ The transcript projection also keeps reasoning separate from tool groups.
 
 When active, the feature requests `detailed` reasoning summaries through the existing
 turn-start option. Explicit `model_reasoning_summary` configuration and explicit
-per-turn summary settings retain precedence, including `none`. It does not
-modify `config.toml`, models, reasoning effort, or stored conversations.
+per-turn summary settings retain precedence, including `none`. If
+`remote-mobile-control` is also selected, an active **Show reasoning summaries**
+session preference takes precedence over its extra `none` default for local Linux
+Remote durable turns. With the switch off, Remote Mobile Control keeps its own
+default; saved latest-thread settings, available model configuration, and
+per-turn choices continue through the native resolution order. A failed or
+unavailable configuration read preserves the native result. This feature does
+not modify `config.toml`, models, reasoning effort, or stored conversations.
 Models/providers may supply no summary. Only summaries actually sent by the
 backend can be displayed; unavailable internal reasoning cannot be recovered.
 Existing history without summary content cannot be filled retroactively.
@@ -45,8 +51,9 @@ The switch is saved in the current Electron profile's local storage under
 `codex-linux-reasoning-visibility`, consistent with other renderer preferences.
 It is independent of package selection and persists across launches. The active
 value is captured once per renderer session, so lazy-loaded chunks cannot mix
-on/off behavior. Turning it off and restarting restores upstream behavior,
-including the original summary-request defaults, without rebuilding. Stored
+on/off behavior. Turning it off and restarting restores the behavior of the
+other selected features and upstream, including their summary-request defaults,
+without rebuilding. Stored
 conversation content is not removed. Other open windows reflect the saved
 switch value; their active behavior changes after restart as well.
 
@@ -67,7 +74,10 @@ Set `CODEX_SIGNED_EXTRACTED_APP` to a retained extraction of the currently
 verified official ASAR to include real-owner and complete patch-runner checks.
 They use independent disk-cache copies and do not launch the app or send a model
 request. Scope regressions verify that helpers in unrelated modules cannot make
-an incomplete patch appear applied.
+an incomplete patch appear applied. Summary-request checks use bounded native
+source carriers and selected statements under mocks; they cover both feature
+orders, independent removal, complete physical copies, rollback, and priority
+behavior without executing an upstream turn, manager class, or module factory.
 
 Six semantic ASAR contracts cover activity classification, collapsed-turn
 persistence, transcript projection, summary requests, the native disclosure,

@@ -17,12 +17,12 @@ const { applyConnectionsRefresh } = require("./connections-refresh-owner.js");
 const { prepareStatusReadString, applyStatusReadPatch } = require("./host-status.js");
 const { prepareStatusWaitString, applyStatusWaitPatch } = require("./host-status-wait.js");
 const { prepareTerminalSource, applyTerminalStatus } = require("./terminal-status.js");
+const { prepareSummaryLayerSource, applySummaryLayer } = require("./summary-contract.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
 const DEVICE_KEY_ADDON_MARKER = "codexLinuxRemoteControlDeviceKeyAddon";
 
-const REMOTE_MOBILE_REASONING_SUMMARY_MARKER = "codexLinuxRemoteMobileReasoningSummaryNone";
 const REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER =
   "codexLinuxRemoteMobileConversationHydration";
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
@@ -540,171 +540,16 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
 }
 
 function applyLinuxRemoteMobileReasoningSummaryPatch(source) {
-  const logMarker = "Reasoning summary turn-start config resolved";
-  const logIndexes = [...source.matchAll(new RegExp(escapeRegExp(logMarker), "gu"))].map(
-    (match) => match.index,
-  );
-  if (logIndexes.length === 0) {
-    console.warn(
-      "WARN: Could not find reasoning-summary turn-start log marker - skipping Linux remote mobile summary patch",
-    );
+  try {
+    return prepareSummaryLayerSource(source, "mobile").patchedSource;
+  } catch (error) {
+    console.warn(`WARN: Linux remote-mobile reasoning summary contract: ${error.message}`);
     return source;
   }
-  if (logIndexes.length !== 1) {
-    console.warn(
-      "WARN: Found ambiguous reasoning-summary resolver/caller contracts - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
+}
 
-  const [logIndex] = logIndexes;
-  const functionStart = source.lastIndexOf("async function ", logIndex);
-  const turnStartPrefix = functionStart === -1 ? "" : source.slice(functionStart, logIndex);
-  const currentSummaryPattern =
-    /(?<prefix>let |,)(?<summary>[A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.summary\?\?"none";(?<latestSettings>[A-Za-z_$][\w$]*)\?\.summary!==void 0&&\(\k<summary>=\k<latestSettings>\.summary\),null!=(?<runtime>[A-Za-z_$][\w$]*)\.reasoningSummaryOverride&&\(\k<summary>=\k<runtime>\.reasoningSummaryOverride\),\k<summary>=null==(?<modelConfig>[A-Za-z_$][\w$]*)\?null:\k<modelConfig>\.model_reasoning_summary\?\?\k<summary>,void 0!==(?<request>[A-Za-z_$][\w$]*)\.summary&&\(\k<summary>=\k<request>\.summary\);/u;
-  const summaryMatches = [
-    ...turnStartPrefix.matchAll(new RegExp(currentSummaryPattern.source, "gu")),
-  ];
-  if (summaryMatches.length === 0) {
-    console.warn(
-      "WARN: Could not find reasoning-summary turn-start resolver - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-  if (summaryMatches.length !== 1) {
-    console.warn(
-      "WARN: Found ambiguous reasoning-summary resolver/caller contracts - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-
-  const [summaryMatch] = summaryMatches;
-  const { request: requestVar, summary: summaryVar } = summaryMatch.groups;
-  const modernResolverHeader =
-    /async function\(\{manager:(?<manager>[A-Za-z_$][\w$]*),conversationId:(?<conversation>[A-Za-z_$][\w$]*),operation:(?<operation>[A-Za-z_$][\w$]*),capabilities:/gu;
-  const modernPatchedResolverHeader =
-    /async function\(\{manager:(?<manager>[A-Za-z_$][\w$]*),conversationId:(?<conversation>[A-Za-z_$][\w$]*),operation:(?<operation>[A-Za-z_$][\w$]*),codexLinuxRemoteMobileHost:(?<mobile>[A-Za-z_$][\w$]*),capabilities:/gu;
-  const modernCaller =
-    /(?<prefix>[A-Za-z_$][\w$]*=\{manager:(?<manager>[A-Za-z_$][\w$]*),conversationId:(?<conversation>[A-Za-z_$][\w$]*),operation:[A-Za-z_$][\w$]*,)(?=turnStarts:)/gu;
-  const modernPatchedCaller =
-    /(?<prefix>[A-Za-z_$][\w$]*=\{manager:(?<manager>[A-Za-z_$][\w$]*),conversationId:(?<conversation>[A-Za-z_$][\w$]*),operation:[A-Za-z_$][\w$]*,)codexLinuxRemoteMobileHost:"local"===\k<manager>\.getHostId\(\)&&"durable"===\k<manager>\.getConversation\(\k<conversation>\)\?\.mode,(?=turnStarts:)/gu;
-  const modernHeaders = [...turnStartPrefix.matchAll(modernResolverHeader)];
-  const modernPatchedHeaders = [...turnStartPrefix.matchAll(modernPatchedResolverHeader)];
-  const modernCallers = [...source.matchAll(modernCaller)];
-  const modernPatchedCallers = [...source.matchAll(modernPatchedCaller)];
-  if (modernHeaders.length + modernPatchedHeaders.length > 0 || modernCallers.length + modernPatchedCallers.length > 0) {
-    const absoluteMatchStart = functionStart + summaryMatch.index;
-    const absoluteMatchEnd = absoluteMatchStart + summaryMatch[0].length;
-    const modernSuffix =
-      `/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
-      `navigator.userAgent.includes("Linux")&&codexLinuxRemoteMobileHost&&void 0===${requestVar}.summary&&(${summaryVar}="none");`;
-    const resolverIsPatched = source.startsWith(modernSuffix, absoluteMatchEnd);
-    if (
-      resolverIsPatched && modernHeaders.length === 0 && modernPatchedHeaders.length === 1 &&
-      modernCallers.length === 0 && modernPatchedCallers.length === 1
-    ) {
-      return source;
-    }
-    if (
-      resolverIsPatched || modernHeaders.length !== 1 || modernPatchedHeaders.length !== 0 ||
-      modernCallers.length !== 1 || modernPatchedCallers.length !== 0 ||
-      source.includes(REMOTE_MOBILE_REASONING_SUMMARY_MARKER)
-    ) {
-      console.warn(
-        "WARN: Found ambiguous or incomplete reasoning-summary resolver/caller contract - skipping Linux remote mobile summary patch",
-      );
-      return source;
-    }
-    const header = modernHeaders[0];
-    const caller = modernCallers[0];
-    const headerReplacement = header[0].replace(
-      `operation:${header.groups.operation},capabilities:`,
-      `operation:${header.groups.operation},codexLinuxRemoteMobileHost:codexLinuxRemoteMobileHost,capabilities:`,
-    );
-    const callerReplacement =
-      `${caller.groups.prefix}codexLinuxRemoteMobileHost:"local"===${caller.groups.manager}.getHostId()&&` +
-      `"durable"===${caller.groups.manager}.getConversation(${caller.groups.conversation})?.mode,`;
-    const edits = [
-      { index: absoluteMatchEnd, length: 0, replacement: modernSuffix },
-      { index: functionStart + header.index, length: header[0].length, replacement: headerReplacement },
-      { index: caller.index, length: caller[0].length, replacement: callerReplacement },
-    ].sort((left, right) => right.index - left.index);
-    return edits.reduce(
-      (patched, edit) => patched.slice(0, edit.index) + edit.replacement + patched.slice(edit.index + edit.length),
-      source,
-    );
-  }
-  const functionHeader = turnStartPrefix.match(/async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)[,)]/u);
-  const helperName = functionHeader?.[1];
-  if (helperName == null) {
-    console.warn(
-      "WARN: Could not find reasoning-summary turn-start helper - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-  const callerPrefix =
-    `(?<prefix>${escapeRegExp(helperName)}\\((?<manager>[A-Za-z_$][\\w$]*),` +
-      `[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,` +
-      `(?<conversation>[A-Za-z_$][\\w$]*),\\{)`;
-  const callerContract =
-    `(?=canUseProjectlessWorkspace:!(?<classifier>\\(0,[A-Za-z_$][\\w$]*\\.[A-Za-z_$][\\w$]*\\))\\(\\k<manager>\\.getHostId\\(\\)\\),[\\s\\S]{0,1000}?` +
-    `reasoningSummaryOverride:!0===\\k<manager>\\.getDefaultFeatureOverride\\("concurrent_reasoning_summaries"\\)\\|\\|[A-Za-z_$][\\w$]*\\?"detailed":null)`;
-  const pristineCallerMatches = [...source.matchAll(new RegExp(callerPrefix + callerContract, "gu"))];
-  const patchedCallerPattern = new RegExp(
-    callerPrefix +
-      `codexLinuxRemoteMobileHost:(?<patchedClassifier>\\(0,[A-Za-z_$][\\w$]*\\.[A-Za-z_$][\\w$]*\\))\\(\\k<manager>\\.getHostId\\(\\)\\)&&` +
-      `"durable"===\\k<conversation>\\.mode,` +
-      `(?=canUseProjectlessWorkspace:!\\k<patchedClassifier>\\(\\k<manager>\\.getHostId\\(\\)\\),[\\s\\S]{0,1000}?` +
-      `reasoningSummaryOverride:!0===\\k<manager>\\.getDefaultFeatureOverride\\("concurrent_reasoning_summaries"\\)\\|\\|[A-Za-z_$][\\w$]*\\?"detailed":null)`,
-    "gu",
-  );
-  const patchedCallerMatches = [...source.matchAll(patchedCallerPattern)];
-
-  const patchedResolverSuffix =
-    `/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
-    `navigator.userAgent.includes("Linux")&&${summaryMatch.groups.runtime}.codexLinuxRemoteMobileHost&&void 0===${requestVar}.summary&&(${summaryVar}="none");`;
-  const absoluteMatchStart = functionStart + summaryMatch.index;
-  const absoluteMatchEnd = absoluteMatchStart + summaryMatch[0].length;
-  const resolverIsPatched = source.startsWith(patchedResolverSuffix, absoluteMatchEnd);
-  const markerCount = source.split(REMOTE_MOBILE_REASONING_SUMMARY_MARKER).length - 1;
-  const completePristinePair =
-    !resolverIsPatched &&
-    markerCount === 0 &&
-    pristineCallerMatches.length === 1 &&
-    patchedCallerMatches.length === 0;
-  const completePatchedPair =
-    resolverIsPatched &&
-    markerCount === 1 &&
-    pristineCallerMatches.length === 0 &&
-    patchedCallerMatches.length === 1;
-
-  if (completePatchedPair) {
-    return source;
-  }
-  if (!completePristinePair) {
-    console.warn(
-      "WARN: Found ambiguous or incomplete reasoning-summary resolver/caller contract - skipping Linux remote mobile summary patch",
-    );
-    return source;
-  }
-
-  const replacement =
-    `${summaryMatch[0]}/*${REMOTE_MOBILE_REASONING_SUMMARY_MARKER}*/` +
-    `navigator.userAgent.includes("Linux")&&${summaryMatch.groups.runtime}.codexLinuxRemoteMobileHost&&void 0===${requestVar}.summary&&(${summaryVar}="none");`;
-  const [currentCallerMatch] = pristineCallerMatches;
-  const callerReplacement =
-    `${currentCallerMatch.groups.prefix}codexLinuxRemoteMobileHost:` +
-    `${currentCallerMatch.groups.classifier}(${currentCallerMatch.groups.manager}.getHostId())&&` +
-    `"durable"===${currentCallerMatch.groups.conversation}.mode,`;
-  const edits = [
-    { index: absoluteMatchStart, length: summaryMatch[0].length, replacement },
-    { index: currentCallerMatch.index, length: currentCallerMatch[0].length, replacement: callerReplacement },
-  ].sort((left, right) => right.index - left.index);
-  return edits.reduce(
-    (patched, edit) =>
-      `${patched.slice(0, edit.index)}${edit.replacement}${patched.slice(edit.index + edit.length)}`,
-    source,
-  );
+function applyLinuxRemoteMobileReasoningSummaryExtractedAppPatch(extractedDir, context = {}) {
+  return applySummaryLayer(extractedDir, "mobile", context.reasoningSummaryWriteOptions);
 }
 
 // Webview descriptors find their rspack chunks by stable strings (Statsig gate
@@ -784,13 +629,10 @@ module.exports = [
   },
   {
     id: "linux-remote-mobile-reasoning-summary-none",
-    phase: "webview-asset",
-    assetNeedles: ["Reasoning summary turn-start config resolved", "reasoningSummaryOverride", "canUseProjectlessWorkspace:"],
+    phase: "extracted-app:pre-webview",
     order: 20_149,
     ciPolicy: "optional",
-    missingDescription: "turn-start reasoning summary resolver",
-    skipDescription: "Linux remote-mobile reasoning summary patch",
-    apply: applyLinuxRemoteMobileReasoningSummaryPatch,
+    apply: applyLinuxRemoteMobileReasoningSummaryExtractedAppPatch,
   },
   {
     id: "linux-remote-mobile-conversation-hydration",
@@ -863,6 +705,7 @@ module.exports.applyLinuxRemoteMobileAppServerRemoteControlPatch =
 module.exports.hasLinuxRemoteMobileLocalAppServerRemoteControlPatch =
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch;
 module.exports.applyLinuxRemoteMobileReasoningSummaryPatch = applyLinuxRemoteMobileReasoningSummaryPatch;
+module.exports.applyLinuxRemoteMobileReasoningSummaryExtractedAppPatch = applyLinuxRemoteMobileReasoningSummaryExtractedAppPatch;
 module.exports.applyLinuxRemoteMobileConversationHydrationPatch =
   applyLinuxRemoteMobileConversationHydrationPatch;
 module.exports.applyLinuxRemoteTerminalStatusRecoveryPatch = applyLinuxRemoteTerminalStatusRecoveryPatch;

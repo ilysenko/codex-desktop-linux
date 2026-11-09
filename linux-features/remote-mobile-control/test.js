@@ -38,7 +38,6 @@ const {
   applyLinuxRemoteMobileAppServerRemoteControlPatch,
   applyLinuxRemoteMobileConversationHydrationPatch,
   hasLinuxRemoteMobileLocalAppServerRemoteControlPatch,
-  applyLinuxRemoteMobileReasoningSummaryPatch,
   applyLinuxRemoteTerminalStatusRecoveryPatch,
   applyLinuxRemoteControlStatusReadGuardPatch,
   applyLinuxRemoteControlStatusWaitPatch,
@@ -51,6 +50,7 @@ const remoteLoadGateHarness = require("./fixtures/remote-load-gate-harness.js");
 const remoteFeatureSyncHarness = require("./fixtures/feature-sync-harness.js");
 const remoteRevokeHarness = require("./fixtures/revoke-setup-reset-harness.js");
 const remoteTerminalHarness = require("./fixtures/terminal-status-harness.js");
+const { nativeCarrier: currentReasoningSummaryRegistry } = require("./summary-contract.test-helpers.js");
 const { findWebviewAssetsContaining } = require("../../scripts/patches/lib/assets.js");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -90,14 +90,6 @@ function validConnectionPayload(overrides = {}) {
     ignoredExtraField: "not-signed",
     ...overrides,
   };
-}
-
-function syntheticReasoningSummaryTurnStartBundle() {
-  return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
-}
-
-function syntheticCurrentReasoningSummaryTurnStartBundle() {
-  return 'async function HWt(e,t,n,r,i,a,o){let s=n.request,N=a.latestThreadSettings,S=a.initialParams,C=a.configRequirements,ye=N?.summary??"none";S?.summary!==void 0&&(ye=S.summary),null!=o.reasoningSummaryOverride&&(ye=o.reasoningSummaryOverride),ye=null==C?null:C.model_reasoning_summary??ye,void 0!==s.summary&&(ye=s.summary);logger.info("Reasoning summary turn-start config resolved",{safe:{summary:ye}});return{summary:ye}}async function QWt(e,t,n,r,i,a){let b="aeon"===n.context?.threadStartKind;return await HWt(e,t,n,r,i,a,{canUseProjectlessWorkspace:!(0,gh.ZJ)(e.getHostId()),canMaterializeHostRoots:!(0,gh.ZJ)(e.getHostId())&&!0,preserveWorkspaceSandboxPolicyWithDefault:(0,gh.ZJ)(e.getHostId()),carryProjectlessRuntimeRoots:!(0,gh.ZJ)(e.getHostId()),latestUseAppServerPermissionDefault:!0,reasoningSummaryOverride:!0===e.getDefaultFeatureOverride("concurrent_reasoning_summaries")||b?"detailed":null})}';
 }
 
 test("remote mobile README assigns every descriptor to one control topology", () => {
@@ -929,6 +921,7 @@ const RSPACK_REMOTE_MOBILE_ASSETS = {
   loadGate: "async/24191.7b05d5cf83.js",
   terminalStatus: "async/24192.0a1b2c3d4e.js",
   managerSignals: "async/24193.1a2b3c4d5e.js",
+  reasoningSummary: "async/24199.6666666666.js",
   statusReadGraph: "async/24198.5555555555.js",
   visibility: "async/435221.eac941d988.js",
   visibilityCopy: "async/446738.83dee6513b.js",
@@ -965,7 +958,8 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
   const assets = {
     loadGate: syntheticRemoteConnectionVisibilityBundle(),
     terminalStatus: syntheticRemoteTerminalStatusBundle(),
-    managerSignals: syntheticCurrentReasoningSummaryTurnStartBundle() + syntheticCurrentConversationHydrationBundle(),
+    managerSignals: syntheticCurrentConversationHydrationBundle(),
+    reasoningSummary: currentReasoningSummaryRegistry(),
     statusReadGraph: currentHostStatusReadGraphRegistry(),
     visibility: syntheticCurrentUsePluginVisibilityBundle(),
     visibilityCopy: syntheticCurrentUsePluginVisibilityBundle().replace("slingshotEnabled:t}){return t&&", "slingshotEnabled:n}){return n&&"),
@@ -1004,7 +998,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-settings-ux", "extracted-app:pre-webview"],
       ["linux-remote-control-client-revoke-setup-reset", "extracted-app:pre-webview"],
       ["linux-remote-connections-refresh", "extracted-app:pre-webview"],
-      ["linux-remote-mobile-reasoning-summary-none", "webview-asset"],
+      ["linux-remote-mobile-reasoning-summary-none", "extracted-app:pre-webview"],
       ["linux-remote-mobile-conversation-hydration", "webview-asset"],
       ["linux-remote-terminal-status-recovery", "extracted-app:pre-webview"],
       ["linux-remote-control-status-read-guard", "extracted-app:pre-webview"],
@@ -1024,7 +1018,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     const fixtures = {
       "linux-remote-control-load-gate": syntheticRemoteConnectionVisibilityBundle(),
       "linux-remote-control-client-revoke-setup-reset": syntheticCurrentRevokeSetupResetBundle(),
-      "linux-remote-mobile-reasoning-summary-none": syntheticCurrentReasoningSummaryTurnStartBundle(),
+      "linux-remote-mobile-reasoning-summary-none": currentReasoningSummaryRegistry(),
       "linux-remote-mobile-conversation-hydration": syntheticCurrentConversationHydrationBundle(),
       "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
     };
@@ -1651,185 +1645,6 @@ test("Linux remote mobile extracted-app patch rejects WSL-only and partial local
   } finally {
     fs.rmSync(tempApp, { recursive: true, force: true });
   }
-});
-
-test("retired reasoning-summary resolver is rejected byte-identically", () => {
-  const source = syntheticReasoningSummaryTurnStartBundle();
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteMobileReasoningSummaryPatch(source),
-  );
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
-});
-
-test("reasoning-summary resolver without model configuration is rejected byte-identically", () => {
-  const source = syntheticCurrentReasoningSummaryTurnStartBundle().replace(
-    "ye=null==C?null:C.model_reasoning_summary??ye,",
-    "",
-  );
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteMobileReasoningSummaryPatch(source),
-  );
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("turn-start resolver")));
-});
-
-test("reasoning-summary caller without the current Aeon override is rejected byte-identically", () => {
-  const source = syntheticCurrentReasoningSummaryTurnStartBundle().replace(
-    '||b?"detailed"',
-    '?"detailed"',
-  );
-  const { result, warnings } = captureWarnings(() => applyLinuxRemoteMobileReasoningSummaryPatch(source));
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("incomplete reasoning-summary")));
-});
-
-test("duplicate reasoning-summary owner pairs are rejected byte-identically", () => {
-  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
-  const source = owner + owner.replaceAll("HWt", "AWt").replaceAll("QWt", "BWt");
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteMobileReasoningSummaryPatch(source),
-  );
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("ambiguous reasoning-summary")));
-});
-
-test("mixed pristine and patched reasoning-summary owner pairs are rejected byte-identically", () => {
-  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
-  const patchedOwner = applyLinuxRemoteMobileReasoningSummaryPatch(owner);
-  const pristineOwner = owner.replaceAll("HWt", "AWt").replaceAll("QWt", "BWt");
-  const source = patchedOwner + pristineOwner;
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteMobileReasoningSummaryPatch(source),
-  );
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("ambiguous reasoning-summary")));
-});
-
-test("partial reasoning-summary owner pairs are rejected byte-identically", () => {
-  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(
-    syntheticCurrentReasoningSummaryTurnStartBundle(),
-  );
-  const partialSources = [
-    patched.replace(
-      'codexLinuxRemoteMobileHost:(0,gh.ZJ)(e.getHostId())&&"durable"===a.mode,',
-      "",
-    ),
-    patched.replace(
-      '/*codexLinuxRemoteMobileReasoningSummaryNone*/navigator.userAgent.includes("Linux")&&o.codexLinuxRemoteMobileHost&&void 0===s.summary&&(ye="none");',
-      "",
-    ),
-  ];
-  for (const source of partialSources) {
-    const { result, warnings } = captureWarnings(() =>
-      applyLinuxRemoteMobileReasoningSummaryPatch(source),
-    );
-    assert.equal(result, source);
-    assert.ok(warnings.some((warning) => warning.includes("incomplete reasoning-summary")));
-  }
-});
-
-test("a reasoning-summary resolver with ambiguous callers is rejected byte-identically", () => {
-  const owner = syntheticCurrentReasoningSummaryTurnStartBundle();
-  const callerStart = owner.indexOf("async function QWt");
-  const duplicateCaller = owner.slice(callerStart).replace("QWt", "RWt");
-  const source = owner + duplicateCaller;
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteMobileReasoningSummaryPatch(source),
-  );
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("ambiguous or incomplete")));
-});
-
-test("current reasoning-summary owner keeps durable mobile summaries off and preserves explicit summaries", async () => {
-  const source = syntheticCurrentReasoningSummaryTurnStartBundle();
-  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
-  assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteMobileReasoningSummaryNone/);
-  assert.match(patched, /codexLinuxRemoteMobileHost:\(0,gh\.ZJ\)\(e\.getHostId\(\)\)&&"durable"===a\.mode/);
-  assert.equal(applyLinuxRemoteMobileReasoningSummaryPatch(patched), patched);
-
-  const context = {
-    gh: { ZJ: (hostId) => hostId === "local" },
-    logger: { info() {} },
-    module: { exports: {} },
-    navigator: { userAgent: "X11; Linux x86_64" },
-  };
-  vm.runInNewContext(`${patched};module.exports=QWt;`, context);
-  const startTurn = context.module.exports;
-  const args = (request, mode) => [null, { request }, null, null, {
-    configRequirements: { model_reasoning_summary: "model" },
-    initialParams: { summary: "auto" },
-    latestThreadSettings: { summary: "auto" },
-    mode,
-  }];
-  const manager = (hostId) => ({
-    getDefaultFeatureOverride: () => true,
-    getHostId: () => hostId,
-  });
-  assert.equal((await startTurn(manager("local"), ...args({}, "durable"))).summary, "none");
-  assert.equal((await startTurn(manager("local"), ...args({}, "default"))).summary, "model");
-  assert.equal((await startTurn(manager("remote-ssh:dev"), ...args({}, "durable"))).summary, "model");
-  assert.equal(
-    (await startTurn(manager("local"), ...args({ summary: "concise" }, "durable"))).summary,
-    "concise",
-  );
-});
-
-test("Aeon summaries keep their upstream override outside local Linux durable turns", async () => {
-  const source = syntheticCurrentReasoningSummaryTurnStartBundle();
-  const patched = applyLinuxRemoteMobileReasoningSummaryPatch(source);
-  assert.notEqual(patched, source);
-  assert.equal(applyLinuxRemoteMobileReasoningSummaryPatch(patched), patched);
-  const context = {
-    gh: { ZJ: (hostId) => hostId === "local" },
-    logger: { info() {} },
-    module: { exports: {} },
-    navigator: { userAgent: "Linux" },
-  };
-  vm.runInNewContext(`${patched};module.exports=QWt;`, context);
-  for (const userAgent of ["Linux", "Macintosh"]) {
-    context.navigator.userAgent = userAgent;
-    for (const host of ["local", "remote-ssh:dev", "durable"]) {
-      for (const mode of ["durable", "default"]) {
-        for (const aeon of [true, false]) {
-          for (const explicit of [undefined, "concise", "none"]) {
-            for (const rollout of [true, false]) {
-              const result = await context.module.exports(
-                { getHostId: () => host, getDefaultFeatureOverride: () => rollout },
-                null,
-                {
-                  request: { summary: explicit },
-                  context: { threadStartKind: aeon ? "aeon" : "regular" },
-                },
-                null, null,
-                { mode, configRequirements: {}, initialParams: { summary: "auto" } },
-              );
-              const localDurable = userAgent === "Linux" && host === "local" && mode === "durable";
-              const inherited = aeon || rollout ? "detailed" : "auto";
-              const expected = explicit ?? (localDurable ? "none" : inherited);
-              assert.equal(
-                result.summary,
-                expected,
-                JSON.stringify({ userAgent, host, mode, aeon, explicit, rollout }),
-              );
-            }
-          }
-        }
-      }
-    }
-  }
-});
-
-test("Linux remote mobile reasoning-summary patch reports upstream drift", () => {
-  const source = "async function yY(){return 1}";
-  const { result, warnings } = captureWarnings(() =>
-    applyLinuxRemoteMobileReasoningSummaryPatch(source),
-  );
-  assert.equal(result, source);
-  assert.deepEqual(warnings, [
-    "WARN: Could not find reasoning-summary turn-start log marker - skipping Linux remote mobile summary patch",
-  ]);
 });
 
 test("Linux remote-control client revoke resets current setup state after the last client is removed", () => {
@@ -2988,7 +2803,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         const signals = readAsset("managerSignals");
         assert.match(readAsset("hostToggleProviders"), /codexLinuxRemoteControlShouldReadStatus/);
         assert.match(readAsset("hostToggleProviders"), /codexLinuxRemoteControlStatusWaitMs/);
-        assert.match(signals, /codexLinuxRemoteMobileReasoningSummaryNone/);
+        assert.match(readAsset("reasoningSummary"), /codexLinuxRemoteMobileReasoningSummaryNone/);
         assert.match(signals, /codexLinuxRemoteMobileConversationHydration/);
         assert.match(readAsset("bridge"), /codexLinuxRemoteControlEnablementBridge/);
         for (const key of ["hostToggle", "hostToggleCopy"]) {

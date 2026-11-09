@@ -88,10 +88,18 @@ What it changes:
   read behavior, and notification delivery stays active.
 - Recovers stale remote terminal status when `waitingOnUserInput` remains active
   after the matching input request has already cleared.
-- Keeps local Linux Remote turns on `summary = "none"` unless a turn explicitly
-  requests a reasoning summary, preventing Desktop's rollout gate from adding
-  repeated English reasoning titles to the mobile transcript. Outside local
-  Linux durable turns, it preserves upstream Aeon and rollout summary overrides.
+- Defaults local Linux Remote durable turns to `summary = "none"` when the
+  current turn and effective latest-thread settings have no summary value and
+  the available model configuration has no non-null `model_reasoning_summary`.
+  This suppresses prior-turn-only inheritance and automatic rollout/Aeon
+  summaries on that target. Saved latest-thread values, including `null`, block
+  this extra default and retain their native priority relative to automatic,
+  model, and per-turn choices. A failed or unavailable configuration read also
+  keeps the native result. Outside local Linux durable turns, upstream summary
+  resolution is unchanged. If `reasoning-visibility` is also selected and its
+  **Show reasoning summaries** switch is on for the current renderer session,
+  that explicit preference takes precedence over this extra `none` default;
+  model configuration and current per-turn choices still retain native priority.
 - Preserves the official Chrome Browser Use client. Upstream now routes browser
   RPCs through its browser service and owns backend eligibility and preferences;
   the retired client allowlist workaround is no longer staged.
@@ -143,7 +151,7 @@ What it changes:
   the existing Electron user-agent policy; other user agents retain the native
   hide-gate result. Native availability/access-required denial, authentication,
   pairing and local-client requirements still apply. Inbound setup, SSH routes,
-  native copy and the retired SSH installer actions remain unchanged. Missing,
+  native copy and the retired upstream SSH installer actions remain unchanged. Missing,
   ambiguous, orphaned or drifted owned state fails closed before any asset write.
 - Preserves the current Connections refresh behavior after qualifying its live
   native callback and effect: five-second polling plus visible focus, online,
@@ -189,7 +197,7 @@ feature descriptor to appear exactly once in this table.
 | `linux-remote-control-settings-ux` | `shared-boundary` | Qualifies the native hide-gate subscription, outbound consumers and tab resolver, then adds the Linux user-agent alternative only to the owned outbound flag while retaining native policy and retired actions. |
 | `linux-remote-control-client-revoke-setup-reset` | `mobile-host` | Resets this host's mobile setup state (the `codex-mobile-has-connected-device` application state) only after the last external controller is removed. |
 | `linux-remote-connections-refresh` | `shared-boundary` | Qualifies the native live refresh callback, effect/event bridges and providers, then retains five-second polling and visible focus/online/resume refresh with coalescing and complete cleanup. It never starts or enables a host runtime. |
-| `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Prevents inherited or rollout-forced reasoning summaries from polluting this host's mobile transcript. |
+| `linux-remote-mobile-reasoning-summary-none` | `mobile-host` | Defaults local durable summaries to `none` while preserving effective settings, model/per-turn choices, and an enabled Reasoning Visibility session preference. |
 | `linux-remote-mobile-conversation-hydration` | `mobile-host` | Extends upstream's hydration queue to recover unknown local conversations from ordered turn and item notifications. |
 | `linux-remote-terminal-status-recovery` | `mobile-host` | Reconciles stale mobile terminal state with actual pending requests. |
 | `linux-remote-control-status-read-guard` | `shared-boundary` | Skips the initial Linux read for exact `remote-ssh` / `remote-control:` prefixes while retaining native reads for other hosts, notifications and cleanup. |
