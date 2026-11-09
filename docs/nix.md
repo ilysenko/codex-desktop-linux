@@ -23,9 +23,11 @@ interpreter metadata beyond the first 2 KiB, where the bundled libc detector
 can no longer see it. The derivation relocates that metadata into verified
 `patchelf` padding so the detector selects glibc without using Electron's
 unsafe report fallback. These checks run against both official architectures.
-Builds apply the required core compatibility patch to `resources/app.asar`;
-the official ELF and native-module payload stays byte-for-byte intact. Optional
-ASAR features remain disabled unless explicitly selected.
+Builds apply the required core compatibility patch to `resources/app.asar`.
+The resulting ELF payload is checked against the architecture-specific manifest
+after these runtime adaptations. The package and directory installer also
+adjust script shebangs for the Nix environment. Optional ASAR features remain
+disabled unless explicitly selected.
 
 After ELF and script adaptations, both entrypoints synchronize the declared
 unpacked-file size and integrity metadata in `resources/app.asar`. Packed data,

@@ -20,8 +20,10 @@
 
 唯一的上游来源是 OpenAI 已签名的 Linux `.deb`。官方 Electron runtime、
 原生模块、内置 `codex` 和 `rg`、code-mode host、插件、库、locale 与 Owl
-metadata 均被直接复用。默认构建仅对 `resources/app.asar` 应用必要的兼容性补丁，
-并逐字节保留官方 ELF runtime 和内置工具。可选 Linux 扩展只有在明确选择后才会启用。
+metadata 均被直接复用。默认构建仅对 `resources/app.asar` 应用必要的兼容性补丁。
+原生软件包和 AppImage 逐字节保留官方 ELF runtime 和内置工具。Nix 基于通过哈希验证的
+固定上游输入，执行清单审计范围内的 ELF 动态链接器和 RUNPATH 调整、面向 libc 检测的
+受限 Electron 解释器重定位，以及脚本 shebang 适配。可选 Linux 扩展只有在明确选择后才会启用。
 
 <p align="center">
   <a href="#安装">安装</a> ·

@@ -23,9 +23,12 @@ easy to distinguish from OpenAI's separate **ChatGPT** package.
 OpenAI's signed Linux `.deb` is the only upstream source. The official
 Electron runtime, native modules, bundled `codex` and `rg`, code-mode host,
 plugins, libraries, locales, and Owl metadata are reused directly. A clean
-build applies only required compatibility patches to `resources/app.asar` and
-preserves the official ELF runtime and bundled tools byte-for-byte. Optional
-Linux features remain disabled unless explicitly selected.
+build applies only required compatibility patches to `resources/app.asar`.
+Native packages and AppImage preserve the official ELF runtime and bundled
+tools byte-for-byte. Nix adapts its verified pinned input through
+manifest-audited ELF linker and RUNPATH updates, bounded Electron interpreter
+relocation for libc detection, and script shebang updates. Optional Linux
+features remain disabled unless explicitly selected.
 
 <p align="center">
   <a href="#install">Install</a> ·

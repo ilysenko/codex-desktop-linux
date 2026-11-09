@@ -14,7 +14,7 @@
 
 برنامه سفارشی در منوی دسکتاپ با نام **ChatGPT Community** دیده می‌شود و آیکونی با `C` آبی دارد. نام بسته و دستور آن `codex-desktop` است و در `/opt/codex-desktop` نصب می‌شود؛ بنابراین از بسته جداگانه رسمی **ChatGPT** به‌راحتی قابل تشخیص است.
 
-تنها منبع upstream، بسته `.deb` امضاشده رسمی OpenAI است. Electron runtime رسمی، ماژول‌های native، ابزارهای bundled مانند `codex` و `rg`، میزبان code-mode، pluginها، libraryها، localeها و metadata مربوط به Owl مستقیماً استفاده می‌شوند. یک build تمیز فقط patchهای سازگاری ضروری را روی `resources/app.asar` اعمال می‌کند و runtimeهای ELF و ابزارهای bundled رسمی را بدون تغییر باینری نگه می‌دارد. قابلیت‌های اختیاری لینوکس فقط وقتی فعال می‌شوند که صراحتاً انتخاب شده باشند.
+تنها منبع upstream، بسته `.deb` امضاشده رسمی OpenAI است. Electron runtime رسمی، ماژول‌های native، ابزارهای bundled مانند `codex` و `rg`، میزبان code-mode، pluginها، libraryها، localeها و metadata مربوط به Owl مستقیماً استفاده می‌شوند. یک build تمیز فقط patchهای سازگاری ضروری را روی `resources/app.asar` اعمال می‌کند. بسته‌های native و AppImage، runtimeهای ELF و ابزارهای bundled رسمی را بدون تغییر باینری نگه می‌دارند. Nix ورودی upstream پین‌شده و اعتبارسنجی‌شده را با تغییرهای linker و RUNPATH در ELF مطابق manifest، جابه‌جایی محدود interpreter مربوط به Electron برای تشخیص libc و تنظیم shebang اسکریپت‌ها سازگار می‌کند. قابلیت‌های اختیاری لینوکس فقط وقتی فعال می‌شوند که صراحتاً انتخاب شده باشند.
 
 <p align="center">
   <a href="#نصب">نصب</a> ·

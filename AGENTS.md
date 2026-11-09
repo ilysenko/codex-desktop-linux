@@ -3,10 +3,12 @@
 ## Purpose
 
 This repository repackages OpenAI's signed official Linux `chatgpt` package as
-the independently named `codex-desktop` distribution. It preserves the
-official ELF/Electron payload and bundled tools, adds disabled-by-default Linux
-features, builds deb/RPM/pacman/AppImage/Nix outputs, and ships a Rust update
-manager that rebuilds from the signed stable APT repository.
+the independently named `codex-desktop` distribution. Native packages and
+AppImage preserve the official ELF/Electron payload and bundled tools. It adds
+disabled-by-default Linux features, builds deb/RPM/pacman/AppImage/Nix outputs,
+and ships a Rust update manager that rebuilds from the signed stable APT
+repository. Nix applies the audited runtime adaptations below to its verified
+pinned upstream input.
 
 ## Non-negotiable rules
 
@@ -75,6 +77,10 @@ feature `stage.sh`.
 
 - The official `ChatGPT`, Electron libraries, native modules, `codex`, `rg`,
   code-mode host, locales, and Owl metadata come directly from upstream.
+- Native packages and AppImage preserve the upstream ELF runtime and bundled
+  tools byte-for-byte. Nix may apply only the existing manifest-audited ELF
+  linker/RUNPATH changes, bounded Electron interpreter relocation for libc
+  detection, and Nix script shebang adaptations to its verified pinned input.
 - The compact wrapper sets desktop identity, loads declarative feature hooks,
   and forwards arguments/URIs. Upstream owns single-instance, deep links, tray,
   windows, and lifecycle.
