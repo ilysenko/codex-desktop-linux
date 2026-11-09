@@ -1,8 +1,6 @@
 "use strict";
 
-const MODEL_PICKER_INLINE_ASSET_PATTERN = /^app-initial-[^.]+\.js$/;
-const MODEL_PICKER_EFFORT_ASSET_PATTERN = MODEL_PICKER_INLINE_ASSET_PATTERN;
-const INLINE_MODEL_LIST_RUNTIME_MARKER = "codex-linux-inline-model-list";
+const MODEL_PICKER_EFFORT_ASSET_PATTERN = /^app-initial-[^.]+\.js$/;
 const DYNAMIC_POWER_EFFORTS_RUNTIME_MARKER =
   "codex-linux-dynamic-supported-reasoning-efforts";
 const JS_IDENT = "[A-Za-z_$][\\w$]*";
@@ -24,10 +22,6 @@ function enabled(context) {
   return modelPickerConfig(context).enabled !== false;
 }
 
-function escapedPattern(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function applyDefaultAdvancedViewPatch(source, context = {}) {
   if (!enabled(context)) return source;
   try {
@@ -43,123 +37,19 @@ function applyDefaultAdvancedViewToApp(extractedDir, context = {}) {
   return require("./model-picker-default-view.js").applyDefaultView(extractedDir, context.modelPickerWriteOptions);
 }
 
-function inlineModelListContract(source) {
-  const modelSubmenuPattern = new RegExp(
-    `([,;])(${JS_IDENT});(${JS_IDENT})\\[(\\d+)\\]!==(${JS_IDENT})\\.model\\|\\|` +
-      `\\3\\[(\\d+)\\]!==(${JS_IDENT})\\?\\(\\2=\\7\\|\\|\\5\\.model==null\\?null:` +
-      `\\(0,(${JS_IDENT})\\.jsx\\)\\((${JS_IDENT}),\\{submenu:\\5\\.model\\}\\),` +
-      `\\3\\[\\4\\]=\\5\\.model,\\3\\[\\6\\]=\\7,\\3\\[(\\d+)\\]=\\2\\)` +
-      `:\\2=\\3\\[\\10\\]`,
-    "g",
-  );
-  const submenuMatches = [...source.matchAll(modelSubmenuPattern)];
-  if (submenuMatches.length !== 1) {
-    return null;
-  }
-
-  const match = submenuMatches[0];
-  const submenuComponent = match[9];
-  const submenuMarker = `function ${submenuComponent}(`;
-  const submenuStart = source.indexOf(submenuMarker);
-  if (submenuStart < 0 || source.indexOf(submenuMarker, submenuStart + 1) >= 0) {
-    return null;
-  }
-  const submenuEnd = source.indexOf("function ", submenuStart + submenuMarker.length);
-  if (submenuEnd < 0) {
-    return null;
-  }
-
-  const submenuSection = source.slice(submenuStart, submenuEnd);
-  const jsxNamespace = match[8];
-  const titlePattern = new RegExp(
-    `\\(0,${escapedPattern(jsxNamespace)}\\.jsx\\)\\((${JS_IDENT})\\.Title,`,
-    "g",
-  );
-  const optionMapPattern = new RegExp(`\\.options\\.map\\((${JS_IDENT})\\)`, "g");
-  const titleMatches = [...submenuSection.matchAll(titlePattern)];
-  const optionMapMatches = [...submenuSection.matchAll(optionMapPattern)];
-  if (titleMatches.length !== 1 || optionMapMatches.length !== 1) {
-    return null;
-  }
-
-  const menuNamespace = titleMatches[0][1];
-  const optionRenderer = optionMapMatches[0][1];
-  const optionRendererPattern = new RegExp(
-    `function ${escapedPattern(optionRenderer)}\\((${JS_IDENT})\\)\\{return` +
-      `\\(0,${escapedPattern(jsxNamespace)}\\.jsx\\)` +
-      `\\(${escapedPattern(menuNamespace)}\\.Item,`,
-    "g",
-  );
-  if ([...source.matchAll(optionRendererPattern)].length !== 1) {
-    return null;
-  }
-
-  return {
-    cache: match[3],
-    config: match[5],
-    hide: match[7],
-    hideIndex: match[6],
-    jsxNamespace,
-    menuNamespace,
-    modelIndex: match[4],
-    optionRenderer,
-    original: match[0],
-    prefix: match[1],
-    result: match[2],
-    resultIndex: match[10],
-  };
-}
-
 function applyInlineModelListPatch(source, context = {}) {
+  if (!enabled(context)) return source;
   try {
-    if (typeof source !== "string") {
-      warn("Asset source is not a string");
-      return source;
-    }
-    if (!enabled(context) || source.includes(INLINE_MODEL_LIST_RUNTIME_MARKER)) {
-      return source;
-    }
-
-    const contract = inlineModelListContract(source);
-    if (contract == null) {
-      if (context.warnOnMissingMarkers === true) {
-        warn("Could not find the current advanced model submenu contract");
-      }
-      return source;
-    }
-
-    const {
-      cache,
-      config,
-      hide,
-      hideIndex,
-      jsxNamespace,
-      menuNamespace,
-      modelIndex,
-      optionRenderer,
-      original,
-      prefix,
-      result,
-      resultIndex,
-    } = contract;
-    const inlineModelList =
-      `(0,${jsxNamespace}.jsxs)(${jsxNamespace}.Fragment,{children:[` +
-      `(0,${jsxNamespace}.jsx)(${menuNamespace}.Title,{children:${config}.model.label}),` +
-      `(0,${jsxNamespace}.jsx)(\`div\`,{className:` +
-      "`vertical-scroll-fade-mask flex max-h-[250px] flex-col overflow-y-auto`" +
-      `,children:${config}.model.options.map(${optionRenderer})})]})` +
-      `/*${INLINE_MODEL_LIST_RUNTIME_MARKER}*/`;
-    const replacement =
-      `${prefix}${result};${cache}[${modelIndex}]!==${config}.model||` +
-      `${cache}[${hideIndex}]!==${hide}?(${result}=${hide}||${config}.model==null?null:` +
-      `${inlineModelList},${cache}[${modelIndex}]=${config}.model,` +
-      `${cache}[${hideIndex}]=${hide},${cache}[${resultIndex}]=${result})` +
-      `:${result}=${cache}[${resultIndex}]`;
-    return source.replace(original, replacement);
+    return require("./model-picker-inline-list.js").auditInlineModelListSource(source);
   } catch (error) {
-    warn(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+    warn(`Could not verify the current native inline model list: ${error.message}`);
     return source;
   }
+}
+
+function applyInlineModelListToApp(extractedDir, context = {}) {
+  if (!enabled(context)) return { matched: 0, changed: 0 };
+  return require("./model-picker-inline-list.js").auditInlineModelList(extractedDir);
 }
 
 function findDynamicPowerSelectionsFunction(source) {
@@ -261,15 +151,11 @@ const descriptors = [
   },
   {
     id: "model-picker-inline-model-list",
-    phase: "webview-asset",
+    phase: "extracted-app:post-webview",
     order: 20_796,
     ciPolicy: "optional",
     enabled,
-    pattern: MODEL_PICKER_INLINE_ASSET_PATTERN,
-    missingDescription: "composer model picker menu bundle",
-    skipDescription: "ui-tweaks model picker inline model list patch",
-    apply: (source, context = {}) =>
-      applyInlineModelListPatch(source, { ...context, warnOnMissingMarkers: true }),
+    apply: applyInlineModelListToApp,
   },
   {
     id: "model-picker-dynamic-supported-reasoning-efforts",
@@ -290,13 +176,12 @@ const descriptors = [
 
 module.exports = {
   DYNAMIC_POWER_EFFORTS_RUNTIME_MARKER,
-  INLINE_MODEL_LIST_RUNTIME_MARKER,
   MODEL_PICKER_EFFORT_ASSET_PATTERN,
-  MODEL_PICKER_INLINE_ASSET_PATTERN,
   applyDefaultAdvancedViewPatch,
   applyDefaultAdvancedViewToApp,
   applyDynamicSupportedReasoningEffortsPatch,
   applyInlineModelListPatch,
+  applyInlineModelListToApp,
   applyModelPickerModelListPatch,
   descriptors,
   findDynamicPowerSelectionsFunction,

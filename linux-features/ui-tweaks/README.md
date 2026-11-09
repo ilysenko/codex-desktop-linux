@@ -323,9 +323,17 @@ view toggles and a programmatic `showModelList: false` request retain their
 native behavior. The native view state replaces the retired persisted
 `composer-model-picker-menu-view-v1`/`-v2` keys.
 
-The inline-list and dynamic Power-effort descriptors still target the older
-picker shape and warn when enabled against the redesigned package. Their
-current-package ports are tracked separately from the advanced default.
+The current native advanced view already renders model options directly in its
+ModelList. The inline-list descriptor audits the published Work and ChatGPT
+renderer chain, the used row map, selection callback, keyboard navigation and
+returned advanced-view menu without writing ASAR assets. A successful first or
+repeat run reports `already-applied`. The relevant current-package factory
+hashes add an ABI guard after those semantic checks. A hash change requires
+re-verifying the native contract before accepting the new package.
+
+The dynamic Power-effort descriptor still targets the older picker shape and
+warns when enabled against the redesigned package. Its current-package port is
+tracked separately from the advanced default and native inline-list audit.
 
 Config keys:
 
