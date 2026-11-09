@@ -3,7 +3,8 @@ set -euo pipefail
 
 REPO_DIR="$(git rev-parse --show-toplevel)"
 MODE="${1:-all}"
-NODE_TEST_TIMEOUT_SECONDS="${NODE_TEST_TIMEOUT_SECONDS:-300}"
+# Complete native contract suites need headroom within the outer CI job budget.
+NODE_TEST_TIMEOUT_SECONDS="${NODE_TEST_TIMEOUT_SECONDS:-1200}"
 NODE_TEST_KILL_AFTER_SECONDS="${NODE_TEST_KILL_AFTER_SECONDS:-30}"
 
 cd "$REPO_DIR"
