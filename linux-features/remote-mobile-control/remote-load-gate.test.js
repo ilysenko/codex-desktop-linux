@@ -178,7 +178,18 @@ test("UI-only and mobile-only production builder trees work with the other featu
   for (const feature of ["remote-control-ui", "remote-mobile-control"]) {
     const tree = path.join(root, feature), destination = path.join(tree, "linux-features", feature);
     fs.mkdirSync(destination, { recursive: true });
-    for (const name of fs.readdirSync(__dirname.replace("remote-mobile-control", feature))) if (name.endsWith(".js") && !/(?:test|fixture)/u.test(name)) fs.copyFileSync(path.join(__dirname.replace("remote-mobile-control", feature), name), path.join(destination, name));
+    const source = path.resolve(__dirname, "..", feature);
+    fs.cpSync(source, destination, { recursive: true, verbatimSymlinks: true });
+    const pruned = spawnSync("bash", [
+      "--noprofile", "--norc", "-e", "-c",
+      'source "$1"\nremove_update_builder_test_files "$2"',
+      "prune-builder-feature",
+      path.resolve(__dirname, "../../scripts/lib/package-common.sh"),
+      destination,
+    ], { encoding: "utf8" });
+    assert.equal(pruned.status, 0, pruned.stderr);
+    assert.equal(fs.existsSync(path.join(destination, "fixtures")), false);
+    assert.equal(fs.existsSync(path.join(destination, "test.js")), false);
     fs.symlinkSync(path.resolve(__dirname, "../../scripts"), path.join(tree, "scripts"), "dir");
     assert.equal(fs.existsSync(path.join(tree, "linux-features", feature === "remote-control-ui" ? "remote-mobile-control" : "remote-control-ui")), false);
     const snapshots = h.snapshots(enable(h.sources()));
