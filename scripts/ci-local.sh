@@ -24,9 +24,9 @@ Targets:
   all                        Run pr plus install-deps, nix, and upstream
   core                       Run shell, Node patcher, and smoke tests
                              Run Rust tests when Cargo is available
-  deb                        Build and inspect the Debian package
-  rpm                        Build and inspect the RPM package
-  pacman                     Build and inspect the pacman package
+  deb                        Build the Debian package
+  rpm                        Build the RPM package
+  pacman                     Build the pacman package
   install-deps               Test install-deps on apt images and the Arch Rust matrix
   install-deps:ubuntu-22.04  Test install-deps on one apt image
   install-deps:ubuntu-24.04  Test install-deps on one apt image
