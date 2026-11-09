@@ -22,6 +22,18 @@
   },
   "officialBundleAuditScenarios": [
     {
+      "name": "model-picker",
+      "settings": {
+        "tweaks": {
+          "modelPicker": {
+            "showModelsByDefault": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    },
+    {
       "name": "custom-font-input",
       "settings": {
         "tweaks": {

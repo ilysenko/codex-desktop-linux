@@ -8,6 +8,7 @@ const {javascriptSourceParses}=require("../../scripts/patches/lib/javascript-syn
 const {requireStableCatalogBinding:stable}=require("./catalog-binding-authority.js");
 const {assertCriticalLoaderMethodUses}=require("./critical-loader-authority.js");
 const {findSynchronousFunctionDeclaration}=require("./synchronous-function-declaration.js");
+const {projectPowerEffortFunction,requirePowerEffortRoles}=require("../../scripts/patches/lib/model-power-effort-contribution.js");
 const ID="[A-Za-z_$][\\w$]*",JSON_STRING='"(?:\\\\.|[^"\\\\])*"';
 const MARKER="codex-linux-model-picker-default-presets-local-composer-resolver";
 const FLAG="codexLinuxIsConfiguredDefaultPresets";
@@ -54,7 +55,16 @@ function fallbackArray(f,name){
 function nativeLocalResolverOwner(source,module){
  if(!NEEDLES.every(needle=>source.includes(needle)))throw Error("Missing current local Default resolver body");
  const f=frame(source,module,true),keys=[...new Set([...source.matchAll(new RegExp(`(?<key>${ID}):function\\(`,"gu"))].filter(hit=>f.lexical.isCode(hit.index)).map(hit=>hit.groups.key))];
- const candidates=keys.flatMap(key=>{const publication=findRspackExportPublication(f.snapshot,key);if(!publication?.fn)return[];const fn=source.slice(publication.fn.start,publication.fn.end),match=QV_PATTERN.exec(fn);return match?[{key,publication,fn,groups:match.groups}]:[]});
+ const candidates=keys.flatMap(key=>{
+  const publication=findRspackExportPublication(f.snapshot,key);
+  if(!publication?.fn)return[];
+  const fn=source.slice(publication.fn.start,publication.fn.end);
+  const projection=projectPowerEffortFunction(fn);
+  const match=QV_PATTERN.exec(projection.nativeFunction);
+  if(!match)return[];
+  requirePowerEffortRoles(projection,match.groups);
+  return[{key,publication,fn,groups:match.groups}];
+ });
  const owner=one(candidates,"published resolver"),g=owner.groups;
  distinct([g.models,g.remove,g.config,g.strip],"resolver parameters");distinct([g.normalizer,g.unique,g.intersection,g.fallbackA,g.fallbackB],"captured resolver roles");
  noCapture([g.models,g.remove,g.config,g.strip,g.mapped,g.group,g.pairs,g.deduped,g.first,g.second],[g.normalizer,g.unique,g.intersection,g.fallbackA,g.fallbackB],"resolver captures");

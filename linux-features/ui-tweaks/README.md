@@ -305,15 +305,14 @@ Config keys:
 
 ### `modelPicker.showModelsByDefault`
 
-Makes the detailed model list the default Codex composer picker view. The model
-rows are rendered inline, so newly available families such as GPT-5.6 Luna,
-Terra, and Sol remain visible without first switching away from the compact
-Power slider or opening a nested Model submenu. The compact GPT-5.6 Power
-slider also derives Sol's positions from the model's `supportedReasoningEfforts`
-after the app filters that list through the reasoning efforts enabled in
-settings. Enabled efforts such as Max therefore appear without maintaining a
-separate hard-coded effort list. This tweak is disabled by default and must be
-enabled explicitly.
+Makes the detailed model list the default Work and ChatGPT composer picker view.
+The native advanced view renders model rows directly. The compact Work Power
+slider derives positions for every available model from its current
+`supportedReasoningEfforts` and the reasoning efforts enabled in settings.
+Enabled capabilities such as Max appear when supported. The native effort
+predicate, model labels, pair IDs, position indices and minimum of three
+positions remain in use. This tweak is disabled by default and must be enabled
+explicitly.
 
 The advanced-default descriptor follows the current native Work and ChatGPT
 picker components through their Rspack publications and imports. It changes
@@ -331,9 +330,26 @@ repeat run reports `already-applied`. The relevant current-package factory
 hashes add an ABI guard after those semantic checks. A hash change requires
 re-verifying the native contract before accepting the new package.
 
-The dynamic Power-effort descriptor still targets the older picker shape and
-warns when enabled against the redesigned package. Its current-package port is
-tracked separately from the advanced default and native inline-list audit.
+The dynamic Power-effort descriptor connects Work's existing enabled-effort
+subscription to its published compact resolver. Each call derives positions
+from the current catalog and enabled set, including after a model change,
+capability refresh or settings change. It preserves input model objects,
+capability arrays and the enabled set. Empty or unsupported capabilities produce
+no positions, and the native `removeXHigh` option still applies.
+
+For this opt-in Work surface, the dynamic catalog takes priority over the native
+remote-configured curated groups. That native input comes through the dynamic
+configuration client's `423260384` value in the qualified source chain. Explicit
+local presets from `model-picker-default-presets` carry
+`codexLinuxDefaultPresets: true` and keep their configured order and priority.
+Their choices are intersected with supported, enabled efforts. The resolver's
+other native callers retain their existing behavior because they omit the new
+enabled-effort option. ChatGPT's separate compact resolver retains its native
+selection policy.
+
+The signed-bundle `model-picker` audit scenario explicitly enables this setting
+and runs all three model-picker descriptors. It covers the advanced default,
+the native inline-list audit and the dynamic Work Power efforts together.
 
 Config keys:
 
