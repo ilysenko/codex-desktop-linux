@@ -279,6 +279,8 @@ function requireAppshotAvailability(source, factory, controller) {
   while (source.includes(probe)) probe += "$";
   new Script(source + "\n");
   new Script(source + "\n;let " + probe + ";");
+  new Script(source.slice(0, helper.index) + "const " + probe + "=0;" +
+    source.slice(helper.index + linuxAppshotWaylandHelperSource().length) + "\n");
   let declared = false;
   try { new Script(source + "\n;let codexLinuxAppshotIsWayland;"); }
   catch (error) {

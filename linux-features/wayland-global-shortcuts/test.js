@@ -108,6 +108,7 @@ test("Wayland refuses partial, opaque, shadowed and ghost AppShots contributions
     source.replace(helper, "/*" + helper + "*/"),
     source.replace(helper, "function unused(){" + helper + "}"),
     source.replace(helper, "const unreturnedHelper=" + helper + ";"),
+    source.replace(helper, "async " + helper),
     source.replace(helper, "0," + helper + ";"),
     source.replace(helper, "if(false)" + helper),
     source.replace(helper, helper + helper),
