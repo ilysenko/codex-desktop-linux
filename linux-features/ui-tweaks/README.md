@@ -374,6 +374,10 @@ Config keys:
 - `enabled`: `true` applies the tweak, `false` keeps the feature enabled but
   uses the upstream translated effort labels.
 
+The descriptor evaluates this setting before locale discovery. Explicit `false`
+records `skipped-disabled`, including when locale files are missing, duplicated
+or renamed. Other enabled UI tweaks continue through their own contracts.
+
 ### `sidebar.projectName`
 
 Styles project names in the left sidebar project list. A small stylesheet
