@@ -99,6 +99,9 @@ const UNMATCHABLE_ACCESSIBILITY_APP_FILTER: &str = "\0";
 /// the same snapshot.
 #[derive(Default)]
 struct CachedAccessibilitySnapshot {
+    /// The snapshot_id results return for this tree; empty before the first
+    /// store. Every store gets a new one.
+    id: String,
     nodes: Vec<AccessibilityNode>,
     pid: Option<u32>,
     window_id: Option<u64>,
@@ -171,6 +174,66 @@ enum TargetRaised {
     No,
 }
 
+/// Snapshot ids: a random prefix per server and a serial. The prefix keeps an
+/// id from an earlier server process from naming a snapshot of this one.
+struct SnapshotIds {
+    prefix: String,
+    serial: std::sync::atomic::AtomicU64,
+}
+
+impl Default for SnapshotIds {
+    fn default() -> Self {
+        Self {
+            prefix: format!(
+                "{:08x}",
+                getrandom::u32().unwrap_or_else(|_| std::process::id())
+            ),
+            serial: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl SnapshotIds {
+    fn next(&self) -> String {
+        let serial = self
+            .serial
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        format!("{}-{serial}", self.prefix)
+    }
+}
+
+/// Refuse a `snapshot_id` that does not name the cached snapshot `current`.
+/// Indices and selectors resolve only against the cached tree, so once a later
+/// get_app_state, include_tree or perform_action recovery replaced the named
+/// one, its indices may name other elements. `prefix` is this server's id
+/// prefix. An empty or blank id counts as absent, as other optional strings do.
+fn check_snapshot_id(
+    requested: Option<&str>,
+    current: &str,
+    prefix: &str,
+) -> std::result::Result<(), String> {
+    let Some(requested) = trimmed_nonempty(requested) else {
+        return Ok(());
+    };
+    if requested == current {
+        return Ok(());
+    }
+    let reason = if requested
+        .split_once('-')
+        .is_none_or(|(requested_prefix, _)| requested_prefix != prefix)
+    {
+        "this server did not issue it; it may come from a server process that has since exited"
+    } else if current.is_empty() {
+        "no tree is cached now, since the last tree read failed or perform_action recovery cleared it"
+    } else {
+        "a later get_app_state, include_tree or perform_action recovery replaced it"
+    };
+    Err(format!(
+        "snapshot_id {requested:?} is not the cached snapshot: {reason}, and its element indices could name other elements now. Call get_app_state and use the element_index values and snapshot_id it returns."
+    ))
+}
+
 #[derive(Clone)]
 struct AccessibilityRecoveryScope {
     params: GetAppStateParams,
@@ -186,6 +249,7 @@ struct RefreshedAccessibilitySnapshot {
 #[derive(Clone, Default)]
 pub struct ComputerUseLinux {
     last_snapshot: Arc<Mutex<CachedAccessibilitySnapshot>>,
+    snapshot_ids: Arc<SnapshotIds>,
     portal_pointer_session: Arc<Mutex<Option<PortalPointerSession>>>,
     portal_keyboard_session: Arc<Mutex<Option<PortalKeyboardSession>>>,
     /// Lazily-created uinput absolute pointer (preferred coordinate backend).
@@ -419,7 +483,7 @@ impl ComputerUseLinux {
 
     #[tool(
         name = "get_tree_page",
-        description = "Return a page of the accessibility tree from the latest get_app_state or include_tree snapshot, starting at node offset (default 0). Use it when a tree was too large to return inline (accessibility_tree_spill is set) and the host cannot read the spill file; page with next_offset until it is null. Element indices match the snapshot, so element_index actions work on these nodes. It does not read the desktop again.",
+        description = "Return a page of the accessibility tree from the latest get_app_state or include_tree snapshot, starting at node offset (default 0). Use it when a tree was too large to return inline (accessibility_tree_spill is set) and the host cannot read the spill file; page with next_offset until it is null. Element indices match the snapshot, so element_index actions work on these nodes. Pass the snapshot's snapshot_id to refuse a page from a tree a later snapshot replaced. It does not read the desktop again.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -431,12 +495,29 @@ impl ComputerUseLinux {
         &self,
         Parameters(params): Parameters<GetTreePageParams>,
     ) -> Json<GetTreePageOutput> {
-        let (nodes, detail) = self
+        let (id, nodes, detail) = self
             .last_snapshot
             .lock()
-            .map(|snapshot| (snapshot.nodes.clone(), snapshot.detail))
+            .map(|snapshot| (snapshot.id.clone(), snapshot.nodes.clone(), snapshot.detail))
             .unwrap_or_default();
-        Json(tree_page(&nodes, detail, params.offset.unwrap_or(0)))
+        let offset = params.offset.unwrap_or(0);
+        if let Err(message) = check_snapshot_id(
+            params.snapshot_id.as_deref(),
+            &id,
+            &self.snapshot_ids.prefix,
+        ) {
+            return Json(GetTreePageOutput {
+                snapshot_id: None,
+                nodes: TreeNodes::new(Vec::new(), detail),
+                offset,
+                next_offset: None,
+                node_count: 0,
+                message,
+            });
+        }
+        let mut page = tree_page(&nodes, detail, offset);
+        page.snapshot_id = (!id.is_empty()).then_some(id);
+        Json(page)
     }
 
     #[tool(
@@ -554,7 +635,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "get_app_state",
         output_schema = rmcp::handler::server::tool::schema_for_output::<GetAppStateOutput>(),
-        description = "Get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A window-targeted screenshot needs that window visible and already focused (outside Hyprland background mode); otherwise screenshot_error is set and the tree still returns, so use the screenshot tool to raise and capture it. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. Screenshot results always include coordinate_width, coordinate_height, scale, and format, plus quality for jpeg; callers can request jpeg/quality for compression before resizing.",
+        description = "Get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A window-targeted screenshot needs that window visible and already focused (outside Hyprland background mode); otherwise screenshot_error is set and the tree still returns, so use the screenshot tool to raise and capture it. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. The result's snapshot_id names the tree: element_index and selector actions that pass it are refused once a later tree replaced it. Screenshot results always include coordinate_width, coordinate_height, scale, and format, plus quality for jpeg; callers can request jpeg/quality for compression before resizing.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -756,27 +837,30 @@ impl ComputerUseLinux {
         if let Some(captured) = screenshot_captured {
             diagnostics.readiness.record_screenshot_result(captured);
         }
-        if accessibility_error.is_none() {
+        let snapshot_id = if accessibility_error.is_none() {
             // Record a pid only when the tree's roots were matched by it. A pid
             // with no AT-SPI root falls back to every app, or to an app-name
             // match that can be another app entirely; recording the pid then
             // would let that app's index pass the target check instead of
             // taking the per-node owner lookup.
-            self.commit_app_state_snapshot(
-                &accessibility_tree,
-                tree_root_pid,
-                window_context.as_ref(),
-                &params,
-                tree_scoped,
-                TreeShape {
-                    detail,
-                    window_scope: window_scope.clone(),
-                },
-            )
-            .await;
+            let id = self
+                .commit_app_state_snapshot(
+                    &accessibility_tree,
+                    tree_root_pid,
+                    window_context.as_ref(),
+                    &params,
+                    tree_scoped,
+                    TreeShape {
+                        detail,
+                        window_scope: window_scope.clone(),
+                    },
+                )
+                .await;
+            Some(id)
         } else {
-            self.commit_snapshot(&[], None).await;
-        }
+            self.commit_cleared_snapshot().await;
+            None
+        };
         let compacted_count = accessibility_tree.len();
         let mut message = if let Some(error) = &accessibility_error {
             format!("MCP registration is working, but AT-SPI tree extraction failed: {error}")
@@ -858,6 +942,7 @@ impl ComputerUseLinux {
             backend: "linux-atspi".to_string(),
             screenshot: screenshot.as_ref().map(ScreenshotSummary::from),
             screenshot_error,
+            snapshot_id,
             accessibility_tree: TreeNodes::new(Vec::new(), detail),
             accessibility_tree_raw_count,
             accessibility_tree_spill: None,
@@ -1259,6 +1344,20 @@ impl ComputerUseLinux {
     async fn dispatch_click(&self, mut params: ClickParams) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params.clone()));
         let input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
+        // Before the window is raised: a refused call changes nothing.
+        if let Err(message) = self.check_element_snapshot(
+            "click",
+            params.snapshot_id.as_deref(),
+            click_resolves_cached_element(&params),
+        ) {
+            return Json(ActionOutput {
+                ok: false,
+                implemented: true,
+                action: "click".to_string(),
+                message,
+                received,
+            });
+        }
         let mut portal_target_point = None;
         let mut input_focus = None;
         let mut owner_target = ElementOwnerTarget::pid(params.pid);
@@ -1794,6 +1893,24 @@ impl ComputerUseLinux {
     async fn dispatch_set_value(&self, params: SetValueParams) -> (ActionOutput, Option<bool>) {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let received = Some(serde_json::json!(params.clone()));
+        // An element_identifier names the object itself, not a snapshot node.
+        if let Err(message) = self.check_element_snapshot(
+            "set_value",
+            params.snapshot_id.as_deref(),
+            trimmed_nonempty(params.element_identifier.as_deref()).is_none()
+                && (params.element_index.is_some() || !params.selector().is_empty()),
+        ) {
+            return (
+                ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "set_value".to_string(),
+                    message,
+                    received,
+                },
+                None,
+            );
+        }
         if let Err(message) = self
             .check_element_action_target(
                 &params.target,
@@ -1901,6 +2018,19 @@ impl ComputerUseLinux {
             }
         };
         let input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
+        if let Err(message) = self.check_element_snapshot(
+            "scroll",
+            params.snapshot_id.as_deref(),
+            scroll_resolves_cached_element(&params),
+        ) {
+            return Json(ActionOutput {
+                ok: false,
+                implemented: true,
+                action: "scroll".to_string(),
+                message,
+                received,
+            });
+        }
         let mut portal_target_point = None;
         let mut owner_target = ElementOwnerTarget::pid(params.pid);
         // Raise/focus the target window first (parity with click) so wheel
@@ -2017,7 +2147,7 @@ impl ComputerUseLinux {
                 window_target = Some(portal_focus_target(target, &focus.requested_window));
             }
         }
-        if params.x.is_none() && params.y.is_none() {
+        if scroll_resolves_cached_element(&params) {
             if let Err(message) = self
                 .check_cached_element_target(
                     params.element_index,
@@ -2073,12 +2203,7 @@ impl ComputerUseLinux {
             }
             None => self.indicator.action("scroll").await,
         }
-        let (dx, dy) = match direction {
-            ScrollDirection::Up => (0, units),
-            ScrollDirection::Down => (0, -units),
-            ScrollDirection::Left => (units, 0),
-            ScrollDirection::Right => (-units, 0),
-        };
+        let (dx, dy) = wheel_deltas(direction, units);
         // Element centres are AT-SPI logical points; pixelflux wants capture pixels.
         let pixelflux_point = match (params.x.zip(params.y), params.element_index) {
             (None, Some(index)) if crate::pixelflux::PixelfluxConfig::from_env().is_some() => {
@@ -2153,31 +2278,40 @@ impl ComputerUseLinux {
         }
         // Coordinate scroll needs the same accurate positioning as click. Keep
         // the move and wheel event under one cancellation-safe input guard.
+        // The device sends both, so this route needs no ydotool daemon.
         if let Some((x, y)) = target_point {
-            let abs_pointer_ready =
-                if self.is_wayland_session() && ydotool_backend_available().await {
-                    match self.ensure_abs_pointer().await {
-                        Ok(ready) => ready,
-                        Err(failure) => {
-                            return Json(abs_pointer_not_sent(
-                                "scroll",
-                                &failure,
-                                self.pointer_retry_route().await,
-                                received,
-                            ))
-                        }
+            let abs_pointer_ready = if self.is_wayland_session() {
+                match self.ensure_abs_pointer().await {
+                    Ok(ready) => ready,
+                    Err(failure) => {
+                        return Json(abs_pointer_not_sent(
+                            "scroll",
+                            &failure,
+                            self.pointer_retry_route().await,
+                            received,
+                        ))
                     }
-                } else {
-                    false
-                };
+                }
+            } else {
+                false
+            };
             if abs_pointer_ready {
                 let pointer = Arc::clone(&self.abs_pointer);
                 let (input_guard, result) = run_cancellation_safe_input(input_guard, async move {
-                    let landing =
-                        run_abs_pointer(pointer, move |pointer| pointer.move_to(x, y)).await?;
-                    sleep(Duration::from_millis(35)).await;
-                    run_ydotool(&wheel_mousemove_args(dx, dy)).await?;
-                    Ok(landing)
+                    // Move and wheel must come from the same device: a wheel
+                    // event sent through ydotool right after this device jumps
+                    // the cursor can be routed with a stale pointer position
+                    // and dropped, so the window never scrolls.
+                    run_abs_pointer(pointer, move |pointer| {
+                        let landing = pointer.move_to(x, y)?;
+                        // spawn_blocking context: a blocking sleep is fine, and
+                        // it keeps the settle delay that the old ydotool path
+                        // had between motion and wheel.
+                        std::thread::sleep(Duration::from_millis(35));
+                        pointer.wheel(dx, dy)?;
+                        Ok(landing)
+                    })
+                    .await
                 })
                 .await;
                 let _input_guard = input_guard;
@@ -3242,8 +3376,8 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.47",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll moves the uinput pointer and sends only the wheel through ydotool. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
+    version = "0.7.48",
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -3682,6 +3816,10 @@ struct PostActionObservation {
     /// Post-action screenshot capture error when a requested `screenshot_after` capture failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     screenshot_error: Option<String>,
+    /// Names the post-action tree, which replaced the action's snapshot. Pass
+    /// it with element_index actions on that tree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_id: Option<String>,
     /// Post-action compacted AT-SPI accessibility tree when `include_tree=true` was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     accessibility_tree: Option<TreeNodes>,
@@ -4167,10 +4305,18 @@ struct GetTreePageParams {
     /// First node to return, counted from the start of the cached tree (default 0).
     #[serde(default)]
     offset: Option<usize>,
+    /// snapshot_id of the get_app_state or include_tree result being paged.
+    /// If a later snapshot replaced it, no nodes are returned.
+    #[serde(default)]
+    snapshot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct GetTreePageOutput {
+    /// The paged snapshot; pass it with element_index actions on these nodes.
+    /// Absent when no tree is cached or the named snapshot was replaced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_id: Option<String>,
     /// Nodes from `offset`, as many as fit in one result.
     nodes: TreeNodes,
     offset: usize,
@@ -4187,6 +4333,7 @@ fn tree_page(nodes: &[AccessibilityNode], detail: NodeDetail, offset: usize) -> 
     let node_count = nodes.len();
     if node_count == 0 {
         return GetTreePageOutput {
+            snapshot_id: None,
             nodes: TreeNodes::new(Vec::new(), detail),
             offset,
             next_offset: None,
@@ -4212,6 +4359,7 @@ fn tree_page(nodes: &[AccessibilityNode], detail: NodeDetail, offset: usize) -> 
         None => format!("Offset {offset} is past the end of the {node_count}-node tree."),
     };
     GetTreePageOutput {
+        snapshot_id: None,
         nodes: TreeNodes::new(rest[..fit].to_vec(), detail),
         offset: start,
         next_offset,
@@ -4303,6 +4451,11 @@ struct GetAppStateOutput {
     /// Screenshot metadata; the image itself is the first `image` content block.
     screenshot: Option<ScreenshotSummary>,
     screenshot_error: Option<String>,
+    /// Names this result's tree. Pass it with element_index or selector
+    /// actions and get_tree_page: a call against a tree a later snapshot
+    /// replaced is refused. Absent when the tree read failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_id: Option<String>,
     /// Compacted tree, or its leading nodes when the whole tree is in
     /// `accessibility_tree_spill`. Nodes use the compact encoding (empty and
     /// default fields left out, actions by name) unless verbose=true.
@@ -4343,6 +4496,12 @@ struct ClickParams {
     /// Element index from the latest get_app_state or include_tree snapshot.
     #[serde(default)]
     element_index: Option<u32>,
+    /// snapshot_id of the get_app_state or include_tree result the
+    /// element_index or selector comes from. If a later snapshot replaced
+    /// it, the call is refused before any input. Without it, the element
+    /// resolves in the latest snapshot.
+    #[serde(default)]
+    snapshot_id: Option<String>,
     /// Case-insensitive substring of the element's AT-SPI role.
     #[serde(default)]
     role: Option<String>,
@@ -4524,6 +4683,12 @@ struct ActionParams {
     /// Element index from the latest get_app_state or include_tree snapshot.
     #[serde(default)]
     element_index: Option<u32>,
+    /// snapshot_id of the get_app_state or include_tree result the
+    /// element_index or selector comes from. If a later snapshot replaced
+    /// it, the call is refused before any input. Without it, the element
+    /// resolves in the latest snapshot.
+    #[serde(default)]
+    snapshot_id: Option<String>,
     /// A node's object_ref from get_app_state or get_tree_page. It names the
     /// AT-SPI object itself, not a snapshot index, and wins over element_index
     /// and the selectors.
@@ -4568,6 +4733,12 @@ struct SetValueParams {
     /// Element index from the latest get_app_state or include_tree snapshot.
     #[serde(default)]
     element_index: Option<u32>,
+    /// snapshot_id of the get_app_state or include_tree result the
+    /// element_index or selector comes from. If a later snapshot replaced
+    /// it, the call is refused before any input. Without it, the element
+    /// resolves in the latest snapshot.
+    #[serde(default)]
+    snapshot_id: Option<String>,
     /// A node's object_ref from get_app_state or get_tree_page. It names the
     /// AT-SPI object itself, not a snapshot index, and wins over element_index
     /// and the selectors.
@@ -4614,6 +4785,12 @@ struct ScrollParams {
     /// Element index from the latest get_app_state or include_tree snapshot.
     #[serde(default)]
     element_index: Option<u32>,
+    /// snapshot_id of the get_app_state or include_tree result the
+    /// element_index comes from. If a later snapshot replaced it, the call
+    /// is refused before any input. Without it, the element resolves in the
+    /// latest snapshot.
+    #[serde(default)]
+    snapshot_id: Option<String>,
     /// Point x to scroll at in raw screenshot capture pixels: the coordinate_width and
     /// coordinate_height space. Divide preview pixels by the screenshot scale
     /// first. With relative=true, measured from the window screenshot's crop origin.
@@ -4667,6 +4844,20 @@ struct ScrollParams {
     relative: Option<bool>,
     #[serde(flatten)]
     capture: PostActionCaptureParams,
+}
+
+/// Whether a click resolves its element in the cached tree: an index or
+/// selector, unless a full capture-space point wins over it.
+fn click_resolves_cached_element(params: &ClickParams) -> bool {
+    (params.element_index.is_some() || !params.selector().is_empty())
+        && (params.x.zip(params.y).is_none()
+            || params.coordinate_space == ClickCoordinateSpace::Atspi)
+}
+
+/// Whether a scroll takes its point from a cached element: an element_index
+/// without a full x/y point. A lone x or y does not make a point.
+fn scroll_resolves_cached_element(params: &ScrollParams) -> bool {
+    params.element_index.is_some() && params.x.zip(params.y).is_none()
 }
 
 fn scroll_units(pages: Option<f64>) -> std::result::Result<i32, String> {
@@ -5544,7 +5735,7 @@ impl ComputerUseLinux {
                         .await
                         .unwrap_or(false) =>
                 {
-                    self.commit_snapshot(&[], None).await;
+                    self.commit_cleared_snapshot().await;
                     let error = "GNOME accessibility is disabled; call setup_accessibility first."
                         .to_string();
                     notes.push(format!("Post-action accessibility tree failed: {error}"));
@@ -5567,13 +5758,15 @@ impl ComputerUseLinux {
                         snapshot.window_scope.as_deref(),
                         narrowed_through_cache.as_ref(),
                     );
-                    self.commit_observed_snapshot(
-                        &nodes,
-                        snapshot.root_pid,
-                        tree_window,
-                        snapshot.window_scope.clone(),
-                    )
-                    .await;
+                    observation.snapshot_id = Some(
+                        self.commit_observed_snapshot(
+                            &nodes,
+                            snapshot.root_pid,
+                            tree_window,
+                            snapshot.window_scope.clone(),
+                        )
+                        .await,
+                    );
                     if let Some(warning) = unscoped_accessibility_tree_warning(
                         snapshot.scoped,
                         true,
@@ -5601,7 +5794,7 @@ impl ComputerUseLinux {
                     observation.accessibility_tree_truncated = Some(snapshot.truncated);
                 }
                 Err(error) => {
-                    self.commit_snapshot(&[], None).await;
+                    self.commit_cleared_snapshot().await;
                     let error = format!("{error:#}");
                     notes.push(format!("Post-action accessibility tree failed: {error}"));
                     observation.accessibility_tree = Some(TreeNodes::default());
@@ -6770,9 +6963,54 @@ impl ComputerUseLinux {
     /// Readers may perform slow AT-SPI owner checks before resolving a click
     /// or scroll again. Keep the snapshot stable for the whole input operation;
     /// otherwise a checked index could resolve to a different app's node.
+    #[cfg(test)]
     async fn commit_snapshot(&self, nodes: &[AccessibilityNode], target_pid: Option<u32>) {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         self.cache_snapshot(nodes, target_pid);
+    }
+
+    /// Drop the cached tree, under the input lock like every store.
+    async fn commit_cleared_snapshot(&self) {
+        let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
+        self.clear_snapshot();
+    }
+
+    /// Drop the cached tree and its spill file. The empty snapshot has no id,
+    /// so no result names it and every snapshot_id is refused until the next
+    /// tree is stored.
+    fn clear_snapshot(&self) {
+        self.tree_spiller.remove_current();
+        if let Ok(mut cached) = self.last_snapshot.lock() {
+            *cached = CachedAccessibilitySnapshot::default();
+        }
+    }
+
+    /// The snapshot_id of the cached tree, empty when none is cached.
+    fn cached_snapshot_id(&self) -> String {
+        self.last_snapshot
+            .lock()
+            .map(|snapshot| snapshot.id.clone())
+            .unwrap_or_default()
+    }
+
+    /// Refuse an element call whose `snapshot_id` names a replaced snapshot.
+    /// Callers hold the input lock, which every store takes, so the snapshot
+    /// checked here is the one the call then resolves its element in.
+    fn check_element_snapshot(
+        &self,
+        action: &str,
+        snapshot_id: Option<&str>,
+        names_cached_element: bool,
+    ) -> std::result::Result<(), String> {
+        if !names_cached_element {
+            return Ok(());
+        }
+        check_snapshot_id(
+            snapshot_id,
+            &self.cached_snapshot_id(),
+            &self.snapshot_ids.prefix,
+        )
+        .map_err(|message| format!("{action} was not sent: {message}"))
     }
 
     /// Commit a post-action tree with the window it was taken for and its
@@ -6783,7 +7021,7 @@ impl ComputerUseLinux {
         target_pid: Option<u32>,
         window: Option<(u64, String)>,
         window_scope: Option<String>,
-    ) {
+    ) -> String {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         self.store_snapshot_for(
             nodes,
@@ -6794,7 +7032,7 @@ impl ComputerUseLinux {
                 detail: NodeDetail::Compact,
                 window_scope,
             },
-        );
+        )
     }
 
     async fn commit_app_state_snapshot(
@@ -6805,42 +7043,45 @@ impl ComputerUseLinux {
         params: &GetAppStateParams,
         scoped: bool,
         shape: TreeShape,
-    ) {
+    ) -> String {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let recovery_scope = scoped.then(|| AccessibilityRecoveryScope {
             params: params.clone(),
             target_pid,
         });
-        self.store_snapshot(nodes, target_pid, recovery_scope, window, shape);
+        self.store_snapshot(nodes, target_pid, recovery_scope, window, shape)
     }
 
-    fn cache_snapshot(&self, nodes: &[AccessibilityNode], target_pid: Option<u32>) {
-        self.cache_snapshot_with_scope(nodes, target_pid, None);
+    #[cfg(test)]
+    fn cache_snapshot(&self, nodes: &[AccessibilityNode], target_pid: Option<u32>) -> String {
+        self.cache_snapshot_with_scope(nodes, target_pid, None)
     }
 
+    #[cfg(test)]
     fn cache_snapshot_with_scope(
         &self,
         nodes: &[AccessibilityNode],
         target_pid: Option<u32>,
         recovery_scope: Option<AccessibilityRecoveryScope>,
-    ) {
-        self.cache_snapshot_with_window(nodes, target_pid, recovery_scope, None);
+    ) -> String {
+        self.cache_snapshot_with_window(nodes, target_pid, recovery_scope, None)
     }
 
+    #[cfg(test)]
     fn cache_snapshot_with_window(
         &self,
         nodes: &[AccessibilityNode],
         target_pid: Option<u32>,
         recovery_scope: Option<AccessibilityRecoveryScope>,
         window: Option<&WindowInfo>,
-    ) {
+    ) -> String {
         self.store_snapshot(
             nodes,
             target_pid,
             recovery_scope,
             window,
             TreeShape::default(),
-        );
+        )
     }
 
     /// Replace the cached snapshot in one write, so its nodes, ownership,
@@ -6852,17 +7093,18 @@ impl ComputerUseLinux {
         recovery_scope: Option<AccessibilityRecoveryScope>,
         window: Option<&WindowInfo>,
         shape: TreeShape,
-    ) {
+    ) -> String {
         self.store_snapshot_for(
             nodes,
             target_pid,
             recovery_scope,
             window.map(|window| (window.window_id, window.backend.clone())),
             shape,
-        );
+        )
     }
 
-    /// store_snapshot for a window given as its id and backend.
+    /// store_snapshot for a window given as its id and backend. Returns the
+    /// new snapshot's id.
     fn store_snapshot_for(
         &self,
         nodes: &[AccessibilityNode],
@@ -6870,11 +7112,13 @@ impl ComputerUseLinux {
         recovery_scope: Option<AccessibilityRecoveryScope>,
         window: Option<(u64, String)>,
         shape: TreeShape,
-    ) {
+    ) -> String {
         // A spilled file matches only the snapshot it was written from.
         self.tree_spiller.remove_current();
+        let id = self.snapshot_ids.next();
         if let Ok(mut cached) = self.last_snapshot.lock() {
             *cached = CachedAccessibilitySnapshot {
+                id: id.clone(),
                 nodes: nodes.to_vec(),
                 pid: target_pid,
                 window_id: window.as_ref().map(|(window_id, _)| *window_id),
@@ -6884,11 +7128,12 @@ impl ComputerUseLinux {
                 window_scope: shape.window_scope,
             };
         }
+        id
     }
 
     #[cfg(test)]
     fn clear_cached_nodes(&self) {
-        self.cache_snapshot(&[], None);
+        self.clear_snapshot();
     }
 
     /// The window the cached snapshot was taken for, with its backend.
@@ -7416,6 +7661,15 @@ impl ComputerUseLinux {
     {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let received = Some(serde_json::json!(params.clone()));
+        // An element_identifier names the object itself, not a snapshot node.
+        if let Err(message) = self.check_element_snapshot(
+            "perform_action",
+            params.snapshot_id.as_deref(),
+            trimmed_nonempty(params.element_identifier.as_deref()).is_none()
+                && (params.element_index.is_some() || !params.selector().is_empty()),
+        ) {
+            return action_error_output(message, &received);
+        }
         if let Err(message) = self
             .check_element_action_target(
                 &params.target,
@@ -7533,7 +7787,7 @@ impl ComputerUseLinux {
         );
         // A recovery tree has not been shown to the caller. Its compacted
         // indices must never silently replace indices from get_app_state.
-        self.cache_snapshot(&[], None);
+        self.clear_snapshot();
         let recovered = match resolve_semantic_node(
             &nodes,
             &params.selector(),
@@ -9219,7 +9473,7 @@ fn abs_pointer_result(
                 implemented: true,
                 action: action.to_string(),
                 message: if action == "scroll" {
-                    "Pointer positioned through uinput; wheel input sent through ydotool."
+                    "Pointer positioned and wheel sent through the uinput absolute pointer."
                         .to_string()
                 } else {
                     "Action sent through the uinput absolute pointer.".to_string()
@@ -9867,6 +10121,21 @@ where
             outputs: vec![output],
             backend: KeyboardCommandBackend::Xdotool,
         }),
+    }
+}
+
+/// Wheel notches for a scroll in the kernel's signs: `REL_WHEEL` is positive
+/// up and `REL_HWHEEL` is positive right. libinput negates only the vertical
+/// axis, before per-device settings such as natural scrolling. Both wheel
+/// routes send them
+/// unchanged: the uinput pointer writes them, and `ydotool mousemove --wheel`
+/// writes its x to `REL_HWHEEL` and its y to `REL_WHEEL`.
+fn wheel_deltas(direction: ScrollDirection, units: i32) -> (i32, i32) {
+    match direction {
+        ScrollDirection::Up => (0, units),
+        ScrollDirection::Down => (0, -units),
+        ScrollDirection::Left => (-units, 0),
+        ScrollDirection::Right => (units, 0),
     }
 }
 
@@ -11549,6 +11818,39 @@ printf '%s %s\n' "${0##*/}" "$*" >> "$CUL_POINTER_TEST_LOG"
         assert!(!run.captured);
     }
 
+    /// A coordinate scroll on Wayland sends the move and the wheel through
+    /// the uinput pointer in kernel signs, with no ydotool daemon running.
+    #[test]
+    fn uinput_scroll_sends_kernel_signed_wheel_without_ydotool() {
+        let harness = PointerChildHarness::new("cul-uinput-scroll");
+        let missing_socket = harness.dir.join("missing.sock");
+        let run = harness.run(
+            "server::tests::pointer_dispatch_child",
+            "uinput-scroll-direction",
+            |command| {
+                command
+                    .env("CU_DISABLE_ABS_POINTER", "0")
+                    .env("YDOTOOL_SOCKET", &missing_socket);
+            },
+        );
+        assert!(!run.captured);
+        assert!(run.commands.is_empty(), "{}", run.commands);
+    }
+
+    /// An element call naming a replaced snapshot is refused before any
+    /// window is raised or input is sent, on every element tool.
+    #[test]
+    fn element_calls_naming_a_replaced_snapshot_send_nothing() {
+        let harness = PointerChildHarness::new("cul-stale-snapshot");
+        let run = harness.run(
+            "server::tests::pointer_dispatch_child",
+            "stale-snapshot",
+            |_| {},
+        );
+        assert!(!run.captured);
+        assert!(run.commands.is_empty(), "{}", run.commands);
+    }
+
     /// A uinput device sized for an earlier desktop is not reused: the
     /// compositor spreads its range across the current layout, so every
     /// point would land scaled and its result would carry no note (#389).
@@ -11643,7 +11945,14 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
         let sent = if mode == "x11-monitor-gap" {
             "xdotool mousemove -- 3000 1200 click"
         } else {
-            "ydotool mousemove --wheel"
+            // The uinput route emits the wheel from the absolute pointer
+            // device itself, so no wheel command is spawned.
+            assert!(
+                !run.commands.contains("mousemove --wheel"),
+                "{mode}: {}",
+                run.commands
+            );
+            return;
         };
         assert!(run.commands.contains(sent), "{mode}: {}", run.commands);
     }
@@ -11863,6 +12172,167 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                         .contains("Requested coordinate 2500,500 was clamped to 1919,500"),
                     "{}",
                     result.message
+                );
+            }
+            "uinput-scroll-direction" => {
+                use crate::abs_pointer::{tests::RecordedEvents, AbsPointer};
+                use evdev::RelativeAxisCode;
+                let events = RecordedEvents::default();
+                backend.cache_desktop_size(1920, 1080);
+                *backend.abs_pointer.lock().unwrap() =
+                    Some(AbsPointer::with_events(events.clone(), 1920, 1080));
+                for direction in ["left", "right", "up", "down"] {
+                    let scroll: ScrollParams = serde_json::from_value(
+                        serde_json::json!({"x":500,"y":400,"direction":direction}),
+                    )
+                    .unwrap();
+                    let result = backend.dispatch_scroll(scroll).await.0;
+                    assert!(result.ok, "{direction}: {}", result.message);
+                    assert_eq!(
+                        result.message,
+                        "Pointer positioned and wheel sent through the uinput absolute pointer."
+                    );
+                }
+                // The move comes first, then the wheel, from one device.
+                let abs = evdev::EventType::ABSOLUTE.0;
+                let rel = evdev::EventType::RELATIVE.0;
+                assert_eq!(
+                    events.all_events()[..4],
+                    [
+                        (abs, evdev::AbsoluteAxisCode::ABS_X.0, 500),
+                        (abs, evdev::AbsoluteAxisCode::ABS_Y.0, 400),
+                        (rel, RelativeAxisCode::REL_HWHEEL.0, -5),
+                        (rel, RelativeAxisCode::REL_WHEEL.0, 0),
+                    ]
+                );
+                // Each wheel call writes both axes; the unused one is 0.
+                let wheel: Vec<(u16, i32)> = events
+                    .wheel_events()
+                    .into_iter()
+                    .filter(|(_, value)| *value != 0)
+                    .collect();
+                assert_eq!(
+                    wheel,
+                    [
+                        (RelativeAxisCode::REL_HWHEEL.0, -5),
+                        (RelativeAxisCode::REL_HWHEEL.0, 5),
+                        (RelativeAxisCode::REL_WHEEL.0, 5),
+                        (RelativeAxisCode::REL_WHEEL.0, -5),
+                    ]
+                );
+            }
+            "stale-snapshot" => {
+                let node = AccessibilityNode {
+                    index: 0,
+                    parent_index: None,
+                    depth: 1,
+                    object_ref: ":1.10/org/a11y/atspi/accessible/7".to_string(),
+                    role: "entry".to_string(),
+                    name: Some("Name".to_string()),
+                    description: None,
+                    child_count: 0,
+                    bounds: Some(crate::atspi_tree::Bounds {
+                        x: 100,
+                        y: 100,
+                        width: 80,
+                        height: 20,
+                    }),
+                    states: vec!["enabled".to_string(), "editable".to_string()],
+                    actions: Vec::new(),
+                    value: None,
+                    text: None,
+                    supports_editable_text: true,
+                };
+                let first = backend.cache_snapshot(std::slice::from_ref(&node), None);
+                backend.cache_snapshot(std::slice::from_ref(&node), None);
+                let refused = |action: &str, ok: bool, message: &str| {
+                    assert!(!ok, "{action}: {message}");
+                    assert!(
+                        message.starts_with(&format!(
+                            "{action} was not sent: snapshot_id {first:?} is not the cached snapshot"
+                        )),
+                        "{message}"
+                    );
+                };
+                // The window target is refused before it is raised.
+                let click: ClickParams = serde_json::from_value(serde_json::json!({
+                    "element_index": 0, "snapshot_id": first, "window_id": 7
+                }))
+                .unwrap();
+                let result = backend.dispatch_click(click).await.0;
+                refused("click", result.ok, &result.message);
+                let click: ClickParams = serde_json::from_value(serde_json::json!({
+                    "role": "entry", "snapshot_id": first
+                }))
+                .unwrap();
+                let result = backend.dispatch_click(click).await.0;
+                refused("click", result.ok, &result.message);
+                let scroll: ScrollParams = serde_json::from_value(serde_json::json!({
+                    "element_index": 0, "snapshot_id": first, "direction": "down"
+                }))
+                .unwrap();
+                let result = backend.dispatch_scroll(scroll).await.0;
+                refused("scroll", result.ok, &result.message);
+                let set_value: SetValueParams = serde_json::from_value(serde_json::json!({
+                    "element_index": 0, "snapshot_id": first, "value": "typed"
+                }))
+                .unwrap();
+                let (result, verified) = backend.dispatch_set_value(set_value).await;
+                refused("set_value", result.ok, &result.message);
+                assert_eq!(verified, None);
+                let action: ActionParams = serde_json::from_value(serde_json::json!({
+                    "element_index": 0, "snapshot_id": first
+                }))
+                .unwrap();
+                let result = backend.perform_element_action(&action, None).await.0;
+                refused("perform_action", result.ok, &result.message);
+                // Scroll checks before raising its window too, and a lone x
+                // still takes the element's point.
+                let scroll: ScrollParams = serde_json::from_value(serde_json::json!({
+                    "element_index": 0, "snapshot_id": first, "direction": "down",
+                    "window_id": 7
+                }))
+                .unwrap();
+                let result = backend.dispatch_scroll(scroll).await.0;
+                refused("scroll", result.ok, &result.message);
+                let scroll: ScrollParams = serde_json::from_value(serde_json::json!({
+                    "element_index": 0, "snapshot_id": first, "direction": "down", "x": 500
+                }))
+                .unwrap();
+                let result = backend.dispatch_scroll(scroll).await.0;
+                refused("scroll", result.ok, &result.message);
+
+                // The current id, and a full point that wins over the index,
+                // pass the snapshot check and reach the input routes, which
+                // refuse here: this test session has no usable pointer.
+                let current = backend.cached_snapshot_id();
+                let passed = |action: &str, message: &str| {
+                    assert!(
+                        !message.starts_with(&format!("{action} was not sent: snapshot_id")),
+                        "{message}"
+                    );
+                };
+                for click in [
+                    serde_json::json!({"element_index": 0, "snapshot_id": current}),
+                    serde_json::json!({"element_index": 0, "snapshot_id": first, "x": 140, "y": 110}),
+                ] {
+                    let click: ClickParams = serde_json::from_value(click).unwrap();
+                    passed("click", &backend.dispatch_click(click).await.0.message);
+                }
+                for scroll in [
+                    serde_json::json!({"element_index": 0, "snapshot_id": current, "direction": "down"}),
+                    serde_json::json!({"element_index": 0, "snapshot_id": first, "direction": "down", "x": 140, "y": 110}),
+                ] {
+                    let scroll: ScrollParams = serde_json::from_value(scroll).unwrap();
+                    passed("scroll", &backend.dispatch_scroll(scroll).await.0.message);
+                }
+                let set_value: SetValueParams = serde_json::from_value(serde_json::json!({
+                    "element_index": 0, "snapshot_id": current, "value": "typed"
+                }))
+                .unwrap();
+                passed(
+                    "set_value",
+                    &backend.dispatch_set_value(set_value).await.0.message,
                 );
             }
             "x11-monitor-gap" | "uinput-monitor-gap" => {
@@ -12593,6 +13063,7 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
             backend: "linux-atspi".to_string(),
             screenshot: screenshot.map(ScreenshotSummary::from),
             screenshot_error: None,
+            snapshot_id: None,
             accessibility_tree: TreeNodes::default(),
             accessibility_tree_spill: None,
             accessibility_tree_raw_count: 0,
@@ -15726,6 +16197,16 @@ esac
             xdotool_scroll_timeout(0, 12),
             INPUT_COMMAND_TIMEOUT + Duration::from_millis(12)
         );
+    }
+
+    /// Left is a negative `REL_HWHEEL`, as on the portal route and X11
+    /// button 6. Left used to be positive, a scroll right.
+    #[test]
+    fn wheel_deltas_use_kernel_signs() {
+        assert_eq!(wheel_deltas(ScrollDirection::Up, 5), (0, 5));
+        assert_eq!(wheel_deltas(ScrollDirection::Down, 5), (0, -5));
+        assert_eq!(wheel_deltas(ScrollDirection::Left, 5), (-5, 0));
+        assert_eq!(wheel_deltas(ScrollDirection::Right, 5), (5, 0));
     }
 
     #[test]
@@ -20569,5 +21050,255 @@ mod pixelflux_routing_tests {
             .status()
             .unwrap();
         assert!(status.success(), "{status}");
+    }
+}
+
+#[cfg(test)]
+mod snapshot_handle_tests {
+    use super::*;
+
+    const FIRST_REF: &str = ":1.10/org/a11y/atspi/accessible/7";
+    const SECOND_REF: &str = ":1.20/org/a11y/atspi/accessible/7";
+    const IDENTIFIER_REF: &str = ":1.30/org/a11y/atspi/accessible/9";
+
+    fn node(object_ref: &str) -> AccessibilityNode {
+        AccessibilityNode {
+            index: 0,
+            parent_index: None,
+            depth: 1,
+            object_ref: object_ref.to_string(),
+            role: "push button".to_string(),
+            name: Some("Save".to_string()),
+            description: None,
+            child_count: 0,
+            bounds: None,
+            states: vec!["enabled".to_string()],
+            actions: vec![AccessibilityAction {
+                index: 0,
+                name: "click".to_string(),
+                description: String::new(),
+                keybinding: String::new(),
+            }],
+            value: None,
+            text: None,
+            supports_editable_text: false,
+        }
+    }
+
+    fn invocation() -> crate::atspi_tree::ActionInvocation {
+        crate::atspi_tree::ActionInvocation {
+            action_index: 0,
+            action_name: Some("click".to_string()),
+            ok: true,
+        }
+    }
+
+    #[test]
+    fn every_store_gets_a_new_id_and_servers_do_not_share_ids() {
+        let backend = ComputerUseLinux::default();
+        assert_eq!(backend.cached_snapshot_id(), "");
+        let first = backend.cache_snapshot(&[node(FIRST_REF)], None);
+        let second = backend.cache_snapshot(&[node(FIRST_REF)], None);
+        assert_ne!(first, second);
+        assert_eq!(backend.cached_snapshot_id(), second);
+        let (prefix, _) = first.split_once('-').unwrap();
+        assert!(second.starts_with(&format!("{prefix}-")), "{second}");
+        // A server started later, or another server, names its own snapshots.
+        let other = ComputerUseLinux::default().cache_snapshot(&[node(FIRST_REF)], None);
+        assert!(!other.starts_with(&format!("{prefix}-")), "{other}");
+    }
+
+    #[test]
+    fn snapshot_id_check() {
+        let check =
+            |requested: Option<&str>, current: &str| check_snapshot_id(requested, current, "ab");
+        assert_eq!(check(None, "ab-2"), Ok(()));
+        assert_eq!(check(Some("  "), "ab-2"), Ok(()));
+        assert_eq!(check(Some("ab-2"), "ab-2"), Ok(()));
+        assert_eq!(check(Some(" ab-2 "), "ab-2"), Ok(()));
+        assert_eq!(
+            check(Some("ab-1"), "ab-2"),
+            Err("snapshot_id \"ab-1\" is not the cached snapshot: a later get_app_state, include_tree or perform_action recovery replaced it, and its element indices could name other elements now. Call get_app_state and use the element_index values and snapshot_id it returns.".to_string())
+        );
+        let reason = |requested: &str, current: &str| {
+            let message = check(Some(requested), current).unwrap_err();
+            let (_, reason) = message.split_once("is not the cached snapshot: ").unwrap();
+            reason.split_once(", and its").unwrap().0.to_string()
+        };
+        assert_eq!(
+            reason("ab-1", ""),
+            "no tree is cached now, since the last tree read failed or perform_action recovery cleared it"
+        );
+        let foreign =
+            "this server did not issue it; it may come from a server process that has since exited";
+        assert_eq!(reason("cd-1", "ab-1"), foreign);
+        assert_eq!(reason("cd-1", ""), foreign);
+        assert_eq!(reason("ab1", "ab-1"), foreign);
+    }
+
+    #[test]
+    fn only_calls_that_resolve_a_cached_element_name_a_snapshot() {
+        let click =
+            |value: serde_json::Value| -> ClickParams { serde_json::from_value(value).unwrap() };
+        let scroll = |value: serde_json::Value| -> ScrollParams {
+            let mut value = value;
+            value["direction"] = "down".into();
+            serde_json::from_value(value).unwrap()
+        };
+        use serde_json::json;
+        assert!(click_resolves_cached_element(&click(
+            json!({"element_index": 1})
+        )));
+        assert!(click_resolves_cached_element(&click(
+            json!({"role": "button"})
+        )));
+        // A lone x falls back to the element, as the click target resolves it.
+        assert!(click_resolves_cached_element(&click(
+            json!({"element_index": 1, "x": 5})
+        )));
+        assert!(click_resolves_cached_element(&click(
+            json!({"element_index": 1, "x": 5, "y": 6, "coordinate_space": "atspi"})
+        )));
+        assert!(!click_resolves_cached_element(&click(
+            json!({"element_index": 1, "x": 5, "y": 6})
+        )));
+        assert!(!click_resolves_cached_element(&click(
+            json!({"x": 5, "y": 6})
+        )));
+        assert!(scroll_resolves_cached_element(&scroll(
+            json!({"element_index": 1})
+        )));
+        assert!(scroll_resolves_cached_element(&scroll(
+            json!({"element_index": 1, "x": 5})
+        )));
+        assert!(scroll_resolves_cached_element(&scroll(
+            json!({"element_index": 1, "y": 6})
+        )));
+        assert!(!scroll_resolves_cached_element(&scroll(
+            json!({"element_index": 1, "x": 5, "y": 6})
+        )));
+        assert!(!scroll_resolves_cached_element(&scroll(json!({"x": 5}))));
+    }
+
+    /// Two callers share one server and its one cached snapshot. After the
+    /// second caller's get_app_state, the first caller's index names a node
+    /// of the second tree; naming the first snapshot refuses it.
+    #[tokio::test]
+    async fn an_index_from_a_replaced_snapshot_is_refused() {
+        let backend = ComputerUseLinux::default();
+        let first = backend.cache_snapshot(&[node(FIRST_REF)], None);
+        let second = backend.cache_snapshot(&[node(SECOND_REF)], None);
+        let dispatched = Arc::new(Mutex::new(Vec::new()));
+        let run = |params: ActionParams| {
+            let dispatched = Arc::clone(&dispatched);
+            let backend = backend.clone();
+            async move {
+                backend
+                    .perform_element_action_with(
+                        &params,
+                        Some("click"),
+                        move |object_ref, _| {
+                            dispatched.lock().unwrap().push(object_ref);
+                            async { Ok(invocation()) }
+                        },
+                        |_| async { Err(anyhow::anyhow!("no recovery expected")) },
+                    )
+                    .await
+                    .0
+            }
+        };
+        let by_index = |snapshot_id: Option<&str>| ActionParams {
+            element_index: Some(0),
+            snapshot_id: snapshot_id.map(str::to_string),
+            ..Default::default()
+        };
+
+        let refused = run(by_index(Some(&first))).await;
+        assert!(!refused.ok);
+        assert!(
+            refused.message.starts_with(&format!(
+                "perform_action was not sent: snapshot_id {first:?} is not the cached snapshot: a later get_app_state"
+            )),
+            "{}",
+            refused.message
+        );
+        // A selector resolves in the cached tree too.
+        let by_selector = ActionParams {
+            role: Some("push button".to_string()),
+            snapshot_id: Some(first.clone()),
+            ..Default::default()
+        };
+        assert!(!run(by_selector).await.ok);
+        assert!(dispatched.lock().unwrap().is_empty());
+
+        assert!(run(by_index(Some(&second))).await.ok);
+        // Without snapshot_id the latest snapshot answers, as before.
+        assert!(run(by_index(None)).await.ok);
+        // An element_identifier names the object itself, not a snapshot node.
+        let by_identifier = ActionParams {
+            element_identifier: Some(IDENTIFIER_REF.to_string()),
+            snapshot_id: Some(first.clone()),
+            ..Default::default()
+        };
+        assert!(run(by_identifier).await.ok);
+        assert_eq!(
+            *dispatched.lock().unwrap(),
+            [SECOND_REF, SECOND_REF, IDENTIFIER_REF]
+        );
+    }
+
+    #[tokio::test]
+    async fn tree_pages_name_their_snapshot_and_refuse_a_replaced_one() {
+        let backend = ComputerUseLinux::default();
+        let page = |snapshot_id: Option<&str>| {
+            let backend = backend.clone();
+            let snapshot_id = snapshot_id.map(str::to_string);
+            async move {
+                backend
+                    .get_tree_page(Parameters(GetTreePageParams {
+                        offset: None,
+                        snapshot_id,
+                    }))
+                    .await
+                    .0
+            }
+        };
+        assert_eq!(page(None).await.snapshot_id, None);
+
+        let first = backend.cache_snapshot(&[node(FIRST_REF)], None);
+        let second = backend.cache_snapshot(&[node(SECOND_REF)], None);
+        for requested in [None, Some(second.as_str())] {
+            let current = page(requested).await;
+            assert_eq!(current.snapshot_id.as_deref(), Some(second.as_str()));
+            assert_eq!(current.node_count, 1);
+            assert_eq!(current.nodes.len(), 1);
+        }
+        let stale = page(Some(&first)).await;
+        assert_eq!(stale.snapshot_id, None);
+        assert_eq!(stale.node_count, 0);
+        assert!(stale.nodes.is_empty());
+        assert_eq!(stale.next_offset, None);
+        assert!(
+            stale
+                .message
+                .starts_with(&format!("snapshot_id {first:?} is not the cached snapshot")),
+            "{}",
+            stale.message
+        );
+
+        // A cleared cache names no snapshot and refuses every id.
+        backend.clear_snapshot();
+        assert_eq!(backend.cached_snapshot_id(), "");
+        let cleared = page(None).await;
+        assert_eq!(cleared.snapshot_id, None);
+        assert_eq!(cleared.node_count, 0);
+        let refused = page(Some(&second)).await;
+        assert!(
+            refused.message.starts_with(&format!(
+                "snapshot_id {second:?} is not the cached snapshot: no tree is cached now"
+            )),
+            "{}",
+            refused.message
+        );
     }
 }

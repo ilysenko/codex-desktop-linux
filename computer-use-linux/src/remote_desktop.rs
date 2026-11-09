@@ -739,7 +739,8 @@ pub async fn scroll(
 /// Wayland axis signs for `NotifyPointerAxisDiscrete`: negative means up/left,
 /// positive means down/right. Mutter converts these signs directly to scroll
 /// directions, and KDE's discrete portal path forwards them unchanged. The
-/// signs therefore differ from ydotool's `REL_WHEEL` convention.
+/// vertical sign is therefore the opposite of `REL_WHEEL`, while the
+/// horizontal one matches `REL_HWHEEL`.
 ///
 /// `COMPUTER_USE_LINUX_PORTAL_SCROLL_INVERT=1` explicitly reverses only vertical
 /// scrolling. It is not needed for either GNOME or KDE Plasma by default.
