@@ -19,13 +19,13 @@ const { prepareStatusWaitString, applyStatusWaitPatch } = require("./host-status
 const { prepareTerminalSource, applyTerminalStatus } = require("./terminal-status.js");
 const { prepareSummaryLayerSource, applySummaryLayer } = require("./summary-contract.js");
 const { prepareHydrationSource, applyHydration } = require("./hydration-owner.js");
+const { prepareActiveStatusSource, applyActiveStatus } = require("./active-status-owner.js");
 
 const DEVICE_KEY_CLIENT_MARKER = "codexLinuxRemoteControlDeviceKeyClient";
 const DEVICE_KEY_IDENT = "[A-Za-z_$][\\w$]*";
 const DEVICE_KEY_ADDON_MARKER = "codexLinuxRemoteControlDeviceKeyAddon";
 
 const REMOTE_CONTROL_AUTO_CONNECT_CLEANUP_MARKER = "codexLinuxRemoteControlAutoConnectCleanup";
-const REMOTE_MOBILE_ACTIVE_STATUS_MARKER = "codexLinuxRemoteMobileActiveStatus";
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_MARKER = "codexLinuxRemoteMobileLocalAppServerArgs";
 const REMOTE_MOBILE_APP_SERVER_BASE_ARGS_NEEDLE = '["-c","features.code_mode_host=true"]';
 const REMOTE_MOBILE_APP_SERVER_REMOTE_CONTROL_HELPER =
@@ -432,23 +432,17 @@ function applyLinuxRemoteControlEnableForHostParamsPatch(source, context = {}) {
   return applyHostToggleSource(source, context);
 }
 
-const REMOTE_MOBILE_ACTIVE_STATUS_PATTERN =
-  /function\(\{latestTurnStatus:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),streamRole:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{return null==\3\?"needs_resume"===\2\?"needs-resume":"read-only":"follower"===\3\.role\?"follower":\4\?\.type==="active"\|\|"inProgress"===\1\?"active":"inactive"\}/gu;
-
-// Mobile-started turns on the local host have no stream role yet; report them
-// as active from the runtime status instead of "needs resume"/"read-only".
+// Keep the native published row, keyed selector calls, flags and badge path.
+// Only the existing indicator's status precedence changes before role assignment.
 function applyLinuxRemoteMobileActiveStatusPatch(source) {
-  const markers = source.split(REMOTE_MOBILE_ACTIVE_STATUS_MARKER).length - 1;
-  const matches = [...source.matchAll(REMOTE_MOBILE_ACTIVE_STATUS_PATTERN)];
-  if (markers === 1 && matches.length === 0) return source;
-  if (markers !== 0 || matches.length !== 1) {
-    console.warn("WARN: Could not find unique active-status renderer - skipping remote mobile active-status patch");
+  try { return prepareActiveStatusSource(source); }
+  catch (error) {
+    console.warn(`WARN: Linux remote-mobile active status: ${error.message}`);
     return source;
   }
-  return source.replace(
-    REMOTE_MOBILE_ACTIVE_STATUS_PATTERN,
-    `function({latestTurnStatus:$1,resumeState:$2,streamRole:$3,threadRuntimeStatus:$4}){/*${REMOTE_MOBILE_ACTIVE_STATUS_MARKER}*/return $3?.role==="follower"?"follower":$4?.type==="active"||"inProgress"===$1?"active":null==$3?"needs_resume"===$2?"needs-resume":"read-only":"inactive"}`,
-  );
+}
+function applyLinuxRemoteMobileActiveStatusExtractedAppPatch(extractedDir, context = {}) {
+  return applyActiveStatus(extractedDir, context.activeStatusWriteOptions);
 }
 
 // Keep the native per-manager discovery/queue/replay lifecycle. Only the
@@ -610,13 +604,10 @@ module.exports = [
   },
   {
     id: "linux-remote-mobile-active-status",
-    phase: "webview-asset",
-    assetNeedles: ['"Read-only snapshot"', "streamRole:"],
+    phase: "extracted-app:pre-webview",
     order: 20_160,
     ciPolicy: "optional",
-    missingDescription: "app main bundle",
-    skipDescription: "Linux remote-mobile active status patch",
-    apply: applyLinuxRemoteMobileActiveStatusPatch,
+    apply: applyLinuxRemoteMobileActiveStatusExtractedAppPatch,
   },
 ];
 
@@ -641,6 +632,7 @@ module.exports.validateLinuxRemoteControlAutoConnectContract =
 module.exports.applyLinuxRemoteControlEnableForHostParamsPatch =
   applyLinuxRemoteControlEnableForHostParamsPatch;
 module.exports.applyLinuxRemoteMobileActiveStatusPatch = applyLinuxRemoteMobileActiveStatusPatch;
+module.exports.applyLinuxRemoteMobileActiveStatusExtractedAppPatch = applyLinuxRemoteMobileActiveStatusExtractedAppPatch;
 module.exports.applyLinuxRemoteControlClientRevocationRecoveryPatch =
   applyLinuxRemoteControlClientRevocationRecoveryPatch;
 module.exports.applyLinuxRemoteControlClientRevokeSetupResetPatch =

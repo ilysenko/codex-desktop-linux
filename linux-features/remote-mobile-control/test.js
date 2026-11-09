@@ -353,11 +353,9 @@ function currentHostStatusReadGraphRegistry() {
   return `export const __webpack_modules__={${rows.map(row => `${JSON.stringify(row.moduleId)}(${row.params.join(",")}){${row.moduleSource}}`).join(",")}};`;
 }
 
-function syntheticAppMainActiveStatusBundle() {
-  return [
-    'let o={active:"Subscribed: active",follower:"Subscribed: follower",inactive:"Subscribed: idle","needs-resume":"Needs resume","read-only":"Read-only snapshot"};',
-    'function ei(e){return o[function({latestTurnStatus:e,resumeState:t,streamRole:n,threadRuntimeStatus:a}){return null==n?"needs_resume"===t?"needs-resume":"read-only":"follower"===n.role?"follower":a?.type==="active"||"inProgress"===e?"active":"inactive"}(e)]}',
-  ].join("");
+function currentActiveStatusRegistry() {
+  const row = require("./fixtures/current-active-status-module.json");
+  return `export const __rspack_esm_ids=[1];export const __webpack_modules__={${row.moduleId}(${row.params}){${row.moduleSource}}};`;
 }
 
 // The test carrier combines unchanged native fragments with a synthetic root
@@ -963,7 +961,7 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
     hostToggleCopy: currentHostToggleRegistry(["WbV5"], 1),
     hostToggleProviders: currentHostToggleRegistry(["Dgwo", "ihPm"]),
     hostToggleCaller: currentHostToggleRegistry(["UIre"]),
-    activeStatus: syntheticAppMainActiveStatusBundle(),
+    activeStatus: currentActiveStatusRegistry(),
     ...overrides.assets,
   };
   for (const [key, name] of Object.entries(RSPACK_REMOTE_MOBILE_ASSETS)) {
@@ -998,7 +996,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-enable-for-host-params", "extracted-app:pre-webview"],
       ["linux-remote-control-enablement-bridge", "extracted-app:pre-webview"],
       ["linux-remote-control-auto-connect-contract", "extracted-app:post-webview"],
-      ["linux-remote-mobile-active-status", "webview-asset"],
+      ["linux-remote-mobile-active-status", "extracted-app:pre-webview"],
     ];
     assert.deepEqual(
       descriptors.map((descriptor) => [descriptor.id, descriptor.phase]),
@@ -1011,7 +1009,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "linux-remote-control-load-gate": syntheticRemoteConnectionVisibilityBundle(),
       "linux-remote-control-client-revoke-setup-reset": syntheticCurrentRevokeSetupResetBundle(),
       "linux-remote-mobile-reasoning-summary-none": currentReasoningSummaryRegistry(),
-      "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
     };
     for (const descriptor of descriptors.filter((candidate) => candidate.phase === "webview-asset")) {
       const id = descriptor.id.replace("feature:remote-mobile-control:", "");
@@ -1772,46 +1769,14 @@ test("remote mobile feature patch report records feature metadata", () => {
   });
 });
 
-test("Linux remote mobile active-status patch treats active thread status as active without stream role", () => {
-  const source = syntheticAppMainActiveStatusBundle();
-  const patched = applyLinuxRemoteMobileActiveStatusPatch(source);
-
+test("active-status public entry delegates only the complete native current-conversation carrier", () => {
+  const source = currentActiveStatusRegistry(), patched = applyLinuxRemoteMobileActiveStatusPatch(source);
   assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteMobileActiveStatus/);
   assert.equal(applyLinuxRemoteMobileActiveStatusPatch(patched), patched);
-
-  const context = { module: { exports: {} } };
-  vm.runInNewContext(`${patched};module.exports=ei;`, context);
-  const labels = { "Subscribed: active": "active", "Subscribed: follower": "follower", "Needs resume": "needs-resume", "Read-only snapshot": "read-only", "Subscribed: idle": "inactive" };
-  const status = (args) => labels[context.module.exports(args)];
-
-  assert.equal(
-    status({
-      latestTurnStatus: "completed",
-      resumeState: "needs_resume",
-      streamRole: null,
-      threadRuntimeStatus: { type: "active" },
-    }),
-    "active",
-  );
-  assert.equal(
-    status({
-      latestTurnStatus: "completed",
-      resumeState: "needs_resume",
-      streamRole: null,
-      threadRuntimeStatus: { type: "notLoaded" },
-    }),
-    "needs-resume",
-  );
-  assert.equal(
-    status({
-      latestTurnStatus: "completed",
-      resumeState: "resumed",
-      streamRole: { role: "follower" },
-      threadRuntimeStatus: { type: "active" },
-    }),
-    "follower",
-  );
+  const bare = 'function unrelated(){return "read-only"}';
+  const result = captureWarnings(() => applyLinuxRemoteMobileActiveStatusPatch(bare));
+  assert.equal(result.result, bare);
+  assert.equal(result.warnings.length, 1);
 });
 
 test("Linux remote-control enablement bridge public entry delegates the qualified native carrier", () => {

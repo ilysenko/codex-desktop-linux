@@ -88,6 +88,15 @@ What it changes:
   read behavior, and notification delivery stays active.
 - Recovers stale remote terminal status when `waitingOnUserInput` remains active
   after the matching input request has already cleared.
+- Lets the native current-conversation activity indicator use an active runtime
+  or in-progress turn before a stream role has been assigned, while follower
+  priority and inactive/resume/read-only fallbacks remain intact. Its four
+  existing local-model selector reads retain the same conversation key. Native
+  flag gates, badge placement, labels, styles and row actions are preserved.
+  This changes the supplied status classification without adding a host filter,
+  status RPC, state mutation or unconditional indicator visibility. The complete
+  published row/indicator and all physical copies qualify before an atomic edit;
+  orphan markers or incomplete owners cannot count as already applied.
 - Qualifies the published manager's notification and request paths, its discovery
   lifecycle and native notification queue before extending unknown literal-local
   thread discovery to item-started/completed events. The local gate uses the
