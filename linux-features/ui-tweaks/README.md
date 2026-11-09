@@ -315,11 +315,17 @@ settings. Enabled efforts such as Max therefore appear without maintaining a
 separate hard-coded effort list. This tweak is disabled by default and must be
 enabled explicitly.
 
-The current official package redesigned the composer picker: its webview no
-longer contains the `composer-model-picker-menu-view-v1`/`-v2` simple and
-advanced view state or the Power slider's `includeUltraInSlider` effort list
-that this tweak rewrites. When enabled it therefore warns and leaves the
-upstream picker unchanged until it is ported to the new picker.
+The advanced-default descriptor follows the current native Work and ChatGPT
+picker components through their Rspack publications and imports. It changes
+their initial view, close-time reset and ordinary open actions together, so
+closing and reopening the picker keeps the detailed default. Explicit manual
+view toggles and a programmatic `showModelList: false` request retain their
+native behavior. The native view state replaces the retired persisted
+`composer-model-picker-menu-view-v1`/`-v2` keys.
+
+The inline-list and dynamic Power-effort descriptors still target the older
+picker shape and warn when enabled against the redesigned package. Their
+current-package ports are tracked separately from the advanced default.
 
 Config keys:
 

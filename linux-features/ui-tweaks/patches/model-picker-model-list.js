@@ -1,13 +1,7 @@
 "use strict";
 
-const MODEL_PICKER_STATE_ASSET_PATTERN = /^app-initial-[^.]+\.js$/;
-const MODEL_PICKER_INLINE_ASSET_PATTERN = MODEL_PICKER_STATE_ASSET_PATTERN;
-const MODEL_PICKER_EFFORT_ASSET_PATTERN = MODEL_PICKER_STATE_ASSET_PATTERN;
-const SIMPLE_MENU_VIEW_PATTERN =
-  /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`composer-model-picker-menu-view-v1`,`simple`\)/;
-const ADVANCED_MENU_VIEW_PATTERN =
-  /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`composer-model-picker-menu-view-v2`,`advanced`\)/;
-const CHAT_MODEL_PICKER_MARKER = "`chatgpt-model-picker`";
+const MODEL_PICKER_INLINE_ASSET_PATTERN = /^app-initial-[^.]+\.js$/;
+const MODEL_PICKER_EFFORT_ASSET_PATTERN = MODEL_PICKER_INLINE_ASSET_PATTERN;
 const INLINE_MODEL_LIST_RUNTIME_MARKER = "codex-linux-inline-model-list";
 const DYNAMIC_POWER_EFFORTS_RUNTIME_MARKER =
   "codex-linux-dynamic-supported-reasoning-efforts";
@@ -34,102 +28,19 @@ function escapedPattern(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function chatMenuViewContract(source) {
-  const markerIndex = source.indexOf(CHAT_MODEL_PICKER_MARKER);
-  if (markerIndex < 0 || source.indexOf(CHAT_MODEL_PICKER_MARKER, markerIndex + 1) >= 0) {
-    return null;
-  }
-
-  const functionStart = source.lastIndexOf("function ", markerIndex);
-  const functionEnd = source.indexOf("function ", markerIndex + CHAT_MODEL_PICKER_MARKER.length);
-  if (functionStart < 0 || functionEnd < 0) {
-    return null;
-  }
-
-  const section = source.slice(functionStart, functionEnd);
-  const pattern = new RegExp(
-    "(\\[" +
-      JS_IDENT +
-      "," +
-      JS_IDENT +
-      "\\]=\\(0,(" +
-      JS_IDENT +
-      ")\\.useState\\)\\(``\\),\\[" +
-      JS_IDENT +
-      "," +
-      JS_IDENT +
-      "\\]=\\(0,\\2\\.useState\\)\\()`(simple|advanced)`(\\))",
-    "g",
-  );
-  const matches = [...section.matchAll(pattern)];
-  if (matches.length !== 1) {
-    return null;
-  }
-
-  const match = matches[0];
-  return {
-    end: functionStart + match.index + match[0].length,
-    replacement: `${match[1]}\`advanced\`${match[4]}`,
-    start: functionStart + match.index,
-    view: match[3],
-  };
-}
-
-function advancedViewContract(source) {
-  const simplePersistedCount = (source.match(new RegExp(SIMPLE_MENU_VIEW_PATTERN.source, "g")) ?? [])
-    .length;
-  const advancedPersistedCount = (
-    source.match(new RegExp(ADVANCED_MENU_VIEW_PATTERN.source, "g")) ?? []
-  ).length;
-  const chat = chatMenuViewContract(source);
-  if (simplePersistedCount + advancedPersistedCount !== 1 || chat == null) {
-    return "drifted";
-  }
-  if (simplePersistedCount === 1 && chat.view === "simple") {
-    return "current";
-  }
-  if (advancedPersistedCount === 1 && chat.view === "advanced") {
-    return "applied";
-  }
-  return "mixed";
-}
-
 function applyDefaultAdvancedViewPatch(source, context = {}) {
+  if (!enabled(context)) return source;
   try {
-    if (typeof source !== "string") {
-      warn("Asset source is not a string");
-      return source;
-    }
-    if (!enabled(context)) {
-      return source;
-    }
-    const contract = advancedViewContract(source);
-    if (contract === "applied") {
-      return source;
-    }
-    if (contract !== "current") {
-      if (context.warnOnMissingMarkers === true) {
-        warn("Could not find the persisted model picker view marker and Chat state atomically");
-      }
-      return source;
-    }
-
-    const persistedPatched = source.replace(
-      SIMPLE_MENU_VIEW_PATTERN,
-      '$1=$2(`composer-model-picker-menu-view-v2`,`advanced`)',
-    );
-    const chat = chatMenuViewContract(persistedPatched);
-    if (chat == null || chat.view !== "simple") {
-      if (context.warnOnMissingMarkers === true) {
-        warn("Could not find the persisted model picker view marker and Chat state atomically");
-      }
-      return source;
-    }
-    return persistedPatched.slice(0, chat.start) + chat.replacement + persistedPatched.slice(chat.end);
+    return require("./model-picker-default-view.js").prepareDefaultViewSource(source);
   } catch (error) {
-    warn(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+    warn(`Could not qualify the current native model picker: ${error.message}`);
     return source;
   }
+}
+
+function applyDefaultAdvancedViewToApp(extractedDir, context = {}) {
+  if (!enabled(context)) return { matched: 0, changed: 0 };
+  return require("./model-picker-default-view.js").applyDefaultView(extractedDir, context.modelPickerWriteOptions);
 }
 
 function inlineModelListContract(source) {
@@ -342,15 +253,11 @@ function applyModelPickerModelListPatch(source, context = {}) {
 const descriptors = [
   {
     id: "model-picker-default-advanced-view",
-    phase: "webview-asset",
+    phase: "extracted-app:pre-webview",
     order: 20_794,
     ciPolicy: "optional",
     enabled,
-    pattern: MODEL_PICKER_STATE_ASSET_PATTERN,
-    missingDescription: "composer model picker state bundle",
-    skipDescription: "ui-tweaks model picker default advanced view patch",
-    apply: (source, context = {}) =>
-      applyDefaultAdvancedViewPatch(source, { ...context, warnOnMissingMarkers: true }),
+    apply: applyDefaultAdvancedViewToApp,
   },
   {
     id: "model-picker-inline-model-list",
@@ -382,14 +289,12 @@ const descriptors = [
 ];
 
 module.exports = {
-  ADVANCED_MENU_VIEW_PATTERN,
   DYNAMIC_POWER_EFFORTS_RUNTIME_MARKER,
   INLINE_MODEL_LIST_RUNTIME_MARKER,
   MODEL_PICKER_EFFORT_ASSET_PATTERN,
   MODEL_PICKER_INLINE_ASSET_PATTERN,
-  MODEL_PICKER_STATE_ASSET_PATTERN,
-  SIMPLE_MENU_VIEW_PATTERN,
   applyDefaultAdvancedViewPatch,
+  applyDefaultAdvancedViewToApp,
   applyDynamicSupportedReasoningEffortsPatch,
   applyInlineModelListPatch,
   applyModelPickerModelListPatch,

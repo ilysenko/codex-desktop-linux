@@ -16,19 +16,17 @@ require("./custom-font-input.test.js");
 require("./selected-text-more-details.test.js");
 require("./selected-text-annotation-submit.test.js");
 require("./reasoning-effort-labels.test.js");
+require("./model-picker-default-view.test.js");
 
 const {
   discoverLinuxFeatureManifests,
   loadLinuxFeaturePatchDescriptors,
 } = require("../../scripts/lib/linux-features.js");
 const {
-  ADVANCED_MENU_VIEW_PATTERN,
   DYNAMIC_POWER_EFFORTS_RUNTIME_MARKER,
   INLINE_MODEL_LIST_RUNTIME_MARKER,
   MODEL_PICKER_EFFORT_ASSET_PATTERN,
   MODEL_PICKER_INLINE_ASSET_PATTERN,
-  MODEL_PICKER_STATE_ASSET_PATTERN,
-  SIMPLE_MENU_VIEW_PATTERN,
   applyDefaultAdvancedViewPatch,
   applyDynamicSupportedReasoningEffortsPatch,
   applyInlineModelListPatch,
@@ -74,16 +72,11 @@ function projectBundleFixture() {
   ].join("");
 }
 
-function modelPickerStateBundleFixture() {
-  return [
-    "function picker(){",
-    "vz=wu(`composer-model-picker-menu-view-v1`,`simple`);",
-    "}",
-    "function j_s(e){",
-    "let d=`chatgpt-model-picker`,[h,g]=(0,F_s.useState)(``),[_,v]=(0,F_s.useState)(`simple`);",
-    "return _}",
-    "function next(){}",
-  ].join("");
+function currentModelPickerViewsFixture() {
+  const views = require("./fixtures/current-model-picker-default-view.json");
+  const modules = [views.work, views.chat].map(view =>
+    `${view.moduleId}(${view.params.join(",")}){${view.moduleSource}}`);
+  return `export const __rspack_esm_ids=[1];export const __webpack_modules__={${modules.join(",")}};`;
 }
 
 function modelPickerMenuBundleFixture() {
@@ -326,7 +319,7 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
           "extracted-app:post-webview",
           "optional",
         ],
-        ["feature:ui-tweaks:model-picker-default-advanced-view", "webview-asset", "optional"],
+        ["feature:ui-tweaks:model-picker-default-advanced-view", "extracted-app:pre-webview", "optional"],
         ["feature:ui-tweaks:model-picker-inline-model-list", "webview-asset", "optional"],
         [
           "feature:ui-tweaks:model-picker-dynamic-supported-reasoning-efforts",
@@ -599,25 +592,16 @@ test("UI font size drift and duplicate contracts fail closed", () => {
   }
 });
 
-test("model picker descriptors target the current state and menu bundles", () => {
-  const stateAsset = "app-initial-BTphDPeq.js";
-  const effortAsset = stateAsset;
-
-  assert.match(stateAsset, MODEL_PICKER_STATE_ASSET_PATTERN);
-  assert.match(stateAsset, MODEL_PICKER_INLINE_ASSET_PATTERN);
-  assert.match(effortAsset, MODEL_PICKER_EFFORT_ASSET_PATTERN);
-
-  // Current-package-only targeting must not retain previous chunks as fallbacks.
-  assert.doesNotMatch(
-    "app-initial~app-main~page-CMpPiY3-.js",
-    MODEL_PICKER_STATE_ASSET_PATTERN,
-  );
+test("model picker default view uses a complete owner cohort independently of asset names", () => {
+  const descriptor = require("./patches/model-picker-model-list.js").descriptors
+    .find(value => value.id === "model-picker-default-advanced-view");
+  assert.equal(descriptor.phase, "extracted-app:pre-webview");
+  assert.equal(descriptor.pattern, undefined);
+  assert.equal(typeof descriptor.enabled, "function");
 });
 
-test("model picker opens advanced view and renders model choices inline", () => {
-  const stateSource = modelPickerStateBundleFixture();
+test("inline model list preserves native option selection", () => {
   const menuSource = modelPickerMenuBundleFixture();
-  const patchedState = applyDefaultAdvancedViewPatch(stateSource);
   const patchedMenu = applyInlineModelListPatch(menuSource);
   const H1 = {
     Fragment: Symbol("Fragment"),
@@ -651,10 +635,6 @@ test("model picker opens advanced view and renders model choices inline", () => 
     hideAdvancedSubmenus: false,
   });
 
-  assert.match(patchedState, ADVANCED_MENU_VIEW_PATTERN);
-  assert.doesNotMatch(patchedState, SIMPLE_MENU_VIEW_PATTERN);
-  assert.match(patchedState, /useState\)\(`advanced`\)/);
-  assert.doesNotMatch(patchedState, /useState\)\(`simple`\)/);
   assert.match(patchedMenu, new RegExp(INLINE_MODEL_LIST_RUNTIME_MARKER));
   assert.equal(
     (patchedMenu.match(new RegExp(INLINE_MODEL_LIST_RUNTIME_MARKER, "g")) ?? []).length,
@@ -696,7 +676,6 @@ test("model picker opens advanced view and renders model choices inline", () => 
     }),
     null,
   );
-  assert.equal(applyDefaultAdvancedViewPatch(patchedState), patchedState);
   assert.equal(applyInlineModelListPatch(patchedMenu), patchedMenu);
 });
 
@@ -758,7 +737,7 @@ test("GPT-5.6 Power slider effort patch fails soft when upstream markers drift",
 });
 
 test("model picker tweak is disabled by default and can be explicitly enabled", () => {
-  const stateSource = modelPickerStateBundleFixture();
+  const stateSource = currentModelPickerViewsFixture();
   const menuSource = modelPickerMenuBundleFixture();
   const featureJson = JSON.parse(fs.readFileSync(path.join(__dirname, "feature.json"), "utf8"));
   const defaultContext = {
@@ -788,10 +767,9 @@ test("model picker tweak is disabled by default and can be explicitly enabled", 
     applyDynamicSupportedReasoningEffortsPatch(modelPickerPowerBundleFixture(), defaultContext),
     modelPickerPowerBundleFixture(),
   );
-  assert.match(
-    applyDefaultAdvancedViewPatch(stateSource, enabledContext),
-    ADVANCED_MENU_VIEW_PATTERN,
-  );
+  const advanced = applyDefaultAdvancedViewPatch(stateSource, enabledContext);
+  assert.notEqual(advanced, stateSource);
+  assert.equal(applyDefaultAdvancedViewPatch(advanced, enabledContext), advanced);
   assert.match(
     applyInlineModelListPatch(menuSource, enabledContext),
     new RegExp(INLINE_MODEL_LIST_RUNTIME_MARKER),
@@ -810,14 +788,10 @@ test("model picker drift warns and leaves the asset unchanged", () => {
 
   assert.equal(value, source);
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /^WARN: Could not find the persisted model picker view marker/);
+  assert.match(warnings[0], /^WARN: Could not qualify the current native model picker/);
 });
 
 test("model picker mixed, duplicate, and incomplete contracts fail closed", () => {
-  const mixedState = modelPickerStateBundleFixture().replace(
-    "`composer-model-picker-menu-view-v1`,`simple`",
-    "`composer-model-picker-menu-view-v2`,`advanced`",
-  );
   const duplicateMenu = modelPickerMenuBundleFixture() + modelPickerMenuBundleFixture();
   const incompleteMenu = modelPickerMenuBundleFixture().replace(
     "n.options.map(Tgs)",
@@ -825,7 +799,6 @@ test("model picker mixed, duplicate, and incomplete contracts fail closed", () =
   );
 
   for (const [source, apply] of [
-    [mixedState, applyDefaultAdvancedViewPatch],
     [duplicateMenu, applyInlineModelListPatch],
     [incompleteMenu, applyInlineModelListPatch],
   ]) {
