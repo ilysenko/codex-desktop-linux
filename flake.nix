@@ -590,6 +590,8 @@
                 --patchelf "${pkgs.patchelf}/bin/patchelf" \
                 --chatgpt-relocator "$source_dir/nix/relocate-elf-interpreter.cjs"
               patchShebangs --build "$app"
+              node "$source_dir/nix/asar-unpacked-integrity.cjs" sync --root "$app"
+              node "$source_dir/nix/asar-unpacked-integrity.cjs" check --root "$app"
 
               install -Dm0644 "$app/.codex-linux/codex-desktop.png" \
                 "$out/share/icons/hicolor/256x256/apps/codex-desktop.png"
@@ -842,6 +844,8 @@
             )
             mv "$candidate/start.sh" "$candidate/.start.sh-nix"
             install -m0755 ${installedLauncher} "$candidate/start.sh"
+            node ${sourceRoot}/nix/asar-unpacked-integrity.cjs sync --root "$candidate"
+            node ${sourceRoot}/nix/asar-unpacked-integrity.cjs check --root "$candidate"
             node ${sourceRoot}/nix/elf-runtime.cjs audit \
               --root "$candidate" \
               --arch ${officialPackage.architecture} \

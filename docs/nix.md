@@ -27,6 +27,13 @@ Builds apply the required core compatibility patch to `resources/app.asar`;
 the official ELF and native-module payload stays byte-for-byte intact. Optional
 ASAR features remain disabled unless explicitly selected.
 
+After ELF and script adaptations, both entrypoints synchronize the declared
+unpacked-file size and integrity metadata in `resources/app.asar`. Packed data,
+relative offsets, entry order and flags stay fixed. This step requires an
+enabled ASAR feature or required core patch. The patch report records the
+archive hash transition and affected paths, and its output hash identifies the
+final archive. A repeated check validates that recorded final archive.
+
 ```bash
 nix run github:ilysenko/codex-desktop-linux
 nix build .#codex-desktop
