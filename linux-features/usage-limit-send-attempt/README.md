@@ -19,6 +19,13 @@ rebuild the app/package:
 }
 ```
 
+The patch checks every physical copy of the current signed composer before
+writing. It follows the published adapter through its returned composer to the
+usage-limit disabled reason, and accepts a repeated build only when that same
+complete chain contains the applied gate. Current factory hashes provide an
+additional ABI check. Drifted, mixed, disconnected, or orphaned patch states
+leave the complete composer cohort untouched.
+
 Run `node --test linux-features/usage-limit-send-attempt/test.js` to verify
 the patch contract. An `install.sh --inspect` build verifies the current signed
 official package.
