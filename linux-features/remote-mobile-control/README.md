@@ -88,6 +88,17 @@ What it changes:
   read behavior, and notification delivery stays active.
 - Recovers stale remote terminal status when `waitingOnUserInput` remains active
   after the matching input request has already cleared.
+- Qualifies the published manager's notification and request paths, its discovery
+  lifecycle and native notification queue before extending unknown literal-local
+  thread discovery to item-started/completed events. The local gate uses the
+  original constructor host input and native host getter; canonical queue replay
+  retains the bound native history readers and merge provider. It keeps queue
+  ordering, timestamps, capability attribution, duplicate/delta handling, one
+  scheduled retry, suppression, retry cancellation and stale-generation fences.
+  Cloud and other host discovery gates retain their native behavior. All copies
+  of the selected module qualify before an atomic write; partial, dead, captured
+  or ambiguous owners are rejected. Tests execute the bounded native lifecycle
+  and queue with mocks; they do not start the app or a remote service.
 - Defaults local Linux Remote durable turns to `summary = "none"` when the
   current turn and effective latest-thread settings have no summary value and
   the available model configuration has no non-null `model_reasoning_summary`.

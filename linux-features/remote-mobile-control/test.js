@@ -337,14 +337,6 @@ function syntheticCurrentAppServerManagerSignalsBundle() {
   ].join("");
 }
 
-function syntheticCurrentConversationHydrationBundle() {
-  return [
-    "function qz(e){return e.threadId??null}function Y(e){return e}function mz(){return[]}function Jnn(e){return e}function QB(){return{}}function Ztn(){}",
-    "class NotificationBuffer{buffers=new Map;begin(e){this.buffers.has(e)||this.buffers.set(e,[])}buffer(e,t){let r=this.buffers.get(qz(e.notification.params));return r!=null&&(r.push({delivery:e,shouldIgnore:t}),!0)}bufferRequest(e){let r=this.buffers.get(qz(e.params));return r!=null&&(r.push({request:e}),!0)}release(e,t,n,r){let a=this.buffers.get(e);this.buffers.delete(e);for(let e of a??[])e.request?r(e.request):n(e.delivery,e.shouldIgnore)}discard(e){this.buffers.delete(e)}}",
-    "class HydrationLifecycle{manager;context;schedule;buffer=new NotificationBuffer;pending=new Map;constructor(e,t,n){this.manager=e,this.context=t,this.schedule=n}bufferNotification(e,t){let{notification:n}=e,r=qz(n.params);if(r==null)return!1;let i=Y(r),a=this.pending.get(i);return null!=a?(a.ignored.add(t),this.buffer.buffer(e,t)):!(!this.manager.isCloudHost||\"turn/started\"!==n.method&&\"turn/completed\"!==n.method||this.context.threadStore.conversations.has(i)||this.context.threadStore.isConversationSuppressed(i))&&(this.beginDiscovery(i,t),this.buffer.buffer(e,t))}bufferRequest(e,t,n){if(e.method===`item/tool/requestSetupCodexContextPicker`||e.method===`item/tool/call`&&Jnn(e.params)?.status!==`pending`||e.method===`mcpServer/elicitation/request`&&QB(e.params,t.isOpenAIFormElicitationsEnabled?.()??!0,n.parseUrl)==null)return!1;let r=qz(e.params);if(r==null)return!1;let i=Y(r),a=this.pending.get(i);return a==null?!this.context.threadStore.conversations.has(i)&&!this.context.threadStore.isConversationSuppressed(i)&&this.beginDiscovery(i,void 0):a.ignored.add(void 0),this.buffer.bufferRequest(e)}discard(e){this.pending.get(e)?.cancelRetry?.(),this.pending.delete(e),this.buffer.discard(e)}clear(){for(let e of this.pending.keys())this.discard(e)}beginDiscovery(e,t){let n={ignored:new Set([t]),cancelRetry:null};this.pending.set(e,n),this.buffer.begin(e),this.hydrate(e,n,!1)}hydrate(e,t,n){let r=()=>this.pending.get(e)===t&&!this.context.threadStore.isConversationSuppressed(e)&&Array.from(t.ignored).some(e=>!e?.());if(this.pending.get(e)===t){if(!r()){this.discard(e);return}this.context.threadStore.hydrateActiveThread(e,r).then(i=>{if(this.pending.get(e)===t){if(!r())this.discard(e);else if(i){this.pending.delete(e);let t=this.manager.getConversationOrThrow(e);this.buffer.release(e,mz(t,this.context.turnMergePolicy),({notification:e,automationCapability:t,receivedAtMs:n},r)=>this.manager.onNotification(e.method,e.params,t,r,n),e=>this.manager.onRequest(e),t=>Ztn(this.manager,{method:`serverRequest/resolved`,params:{threadId:e,requestId:t.id}},t))}else n?this.discard(e):t.cancelRetry=this.schedule(()=>this.hydrate(e,t,!0),1e3)}}).catch(n=>{this.pending.get(e)===t&&this.discard(e),this.manager.logger.debug(\"Failed to discover thread from event\",{safe:{},sensitive:{conversationId:e,error:n}})})}}}",
-  ].join("");
-}
-
 // Three modules of the signed chunk: the terminal status reducer with its
 // list-state caller, the sidebar caller, and the pending-request resolver.
 function syntheticRemoteTerminalStatusBundle() {
@@ -958,7 +950,7 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
   const assets = {
     loadGate: syntheticRemoteConnectionVisibilityBundle(),
     terminalStatus: syntheticRemoteTerminalStatusBundle(),
-    managerSignals: syntheticCurrentConversationHydrationBundle(),
+    managerSignals: "const legacyHydrationExample=true;",
     reasoningSummary: currentReasoningSummaryRegistry(),
     statusReadGraph: currentHostStatusReadGraphRegistry(),
     visibility: syntheticCurrentUsePluginVisibilityBundle(),
@@ -999,7 +991,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       ["linux-remote-control-client-revoke-setup-reset", "extracted-app:pre-webview"],
       ["linux-remote-connections-refresh", "extracted-app:pre-webview"],
       ["linux-remote-mobile-reasoning-summary-none", "extracted-app:pre-webview"],
-      ["linux-remote-mobile-conversation-hydration", "webview-asset"],
+      ["linux-remote-mobile-conversation-hydration", "extracted-app:pre-webview"],
       ["linux-remote-terminal-status-recovery", "extracted-app:pre-webview"],
       ["linux-remote-control-status-read-guard", "extracted-app:pre-webview"],
       ["linux-remote-control-status-wait", "extracted-app:pre-webview"],
@@ -1019,7 +1011,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "linux-remote-control-load-gate": syntheticRemoteConnectionVisibilityBundle(),
       "linux-remote-control-client-revoke-setup-reset": syntheticCurrentRevokeSetupResetBundle(),
       "linux-remote-mobile-reasoning-summary-none": currentReasoningSummaryRegistry(),
-      "linux-remote-mobile-conversation-hydration": syntheticCurrentConversationHydrationBundle(),
       "linux-remote-mobile-active-status": syntheticAppMainActiveStatusBundle(),
     };
     for (const descriptor of descriptors.filter((candidate) => candidate.phase === "webview-asset")) {
@@ -1041,9 +1032,9 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       assert.equal(byId(id).assetMatch, undefined, id);
     }
     const hydration = byId("linux-remote-mobile-conversation-hydration");
-    const hydrationOwner = syntheticCurrentConversationHydrationBundle();
-    assert.equal(hydration.assetMatch(applyLinuxRemoteMobileConversationHydrationPatch(hydrationOwner)), true);
-    assert.equal(hydration.assetMatch(hydrationOwner + hydrationOwner), false);
+    assert.equal(hydration.phase, "extracted-app:pre-webview");
+    assert.equal(hydration.assetMatch, undefined);
+    assert.equal(hydration.assetNeedles, undefined);
     const loadGate = byId("linux-remote-control-load-gate");
     assert.equal(loadGate.assetMatch, undefined);
     assert.equal(loadGate.phase, "extracted-app:pre-webview");
@@ -1054,212 +1045,6 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(revoke.phase, "extracted-app:pre-webview");
     assert.equal(revoke.assetMatch, undefined);
   });
-});
-
-test("Linux remote-mobile hydration buffers local turn and item notifications in order", async () => {
-  const source = syntheticCurrentConversationHydrationBundle();
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(source);
-  assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteMobileConversationHydration/u);
-  assert.equal(applyLinuxRemoteMobileConversationHydrationPatch(patched), patched);
-
-  const context = { module: { exports: null } };
-  vm.runInNewContext(`${patched};module.exports=HydrationLifecycle;`, context);
-  const HydrationLifecycle = context.module.exports;
-  const conversations = new Map();
-  const hydrateCalls = new Map();
-  const pendingHydrations = new Map();
-  const replayed = [];
-  const replayedMetadata = [];
-  const threadStore = {
-    conversations,
-    hydrateActiveThread(threadId) {
-      hydrateCalls.set(threadId, (hydrateCalls.get(threadId) ?? 0) + 1);
-      return new Promise((resolve) => pendingHydrations.set(threadId, () => {
-        conversations.set(threadId, { items: [] });
-        resolve(true);
-      }));
-    },
-    isConversationSuppressed: () => false,
-  };
-  const manager = {
-    isCloudHost: false,
-    getHostId: () => "local",
-    logger: { debug() {} },
-    getConversationOrThrow: (threadId) => conversations.get(threadId),
-    onNotification(method, params, automationCapability, shouldIgnore, receivedAtMs) {
-      replayed.push(method);
-      replayedMetadata.push({ automationCapability, shouldIgnore, receivedAtMs });
-      if (method !== "item/started" && method !== "item/completed") return;
-      const conversation = conversations.get(params.threadId);
-      const existing = conversation.items.findIndex((item) => item.id === params.item.id);
-      const item = { ...params.item, completed: method === "item/completed" };
-      if (existing === -1) conversation.items.push(item);
-      else conversation.items[existing] = item;
-    },
-  };
-  const lifecycle = new HydrationLifecycle(manager, { threadStore }, (callback) => {
-    const timer = setTimeout(callback, 0);
-    return () => clearTimeout(timer);
-  });
-  const threadId = "thread-local-ordered";
-  const notifications = [
-    { method: "turn/started", params: { threadId, turn: { id: "turn-1" } } },
-    { method: "item/started", params: { threadId, turnId: "turn-1", item: { id: "item-1" } } },
-    { method: "item/completed", params: { threadId, turnId: "turn-1", item: { id: "item-1" } } },
-    { method: "turn/completed", params: { threadId, turn: { id: "turn-1" } } },
-  ];
-
-  for (const [index, notification] of notifications.entries()) {
-    assert.equal(lifecycle.bufferNotification({
-      notification, automationCapability: "allowed", receivedAtMs: index + 100,
-    }, undefined), true);
-  }
-  assert.equal(hydrateCalls.get(threadId), 1);
-  assert.deepEqual(replayed, []);
-
-  pendingHydrations.get(threadId)();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(replayed, notifications.map(({ method }) => method));
-  assert.deepEqual(replayedMetadata, notifications.map((_notification, index) => ({
-    automationCapability: "allowed", shouldIgnore: undefined, receivedAtMs: index + 100,
-  })));
-  assert.deepEqual(conversations.get(threadId).items, [{ id: "item-1", completed: true }]);
-
-  const completedOnlyThreadId = "thread-local-completed-only";
-  assert.equal(lifecycle.bufferNotification({
-    notification: {
-      method: "item/completed",
-      params: {
-        threadId: completedOnlyThreadId,
-        turnId: "turn-2",
-        item: { id: "item-without-start" },
-      },
-    },
-  }, undefined), true);
-  assert.equal(hydrateCalls.get(completedOnlyThreadId), 1);
-  pendingHydrations.get(completedOnlyThreadId)();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(conversations.get(completedOnlyThreadId).items, [
-    { id: "item-without-start", completed: true },
-  ]);
-});
-
-test("Linux remote-mobile hydration leaves durable discovery notification scope unchanged", () => {
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(
-    syntheticCurrentConversationHydrationBundle(),
-  );
-  const context = { module: { exports: null } };
-  vm.runInNewContext(`${patched};module.exports=HydrationLifecycle;`, context);
-  const HydrationLifecycle = context.module.exports;
-  const hydration = new HydrationLifecycle({
-    isCloudHost: true,
-    getHostId: () => "durable",
-    logger: { debug() {} },
-  }, {
-    threadStore: {
-      conversations: new Map(),
-      hydrateActiveThread: () => new Promise(() => {}),
-      isConversationSuppressed: () => false,
-    },
-  }, () => () => {});
-
-  assert.equal(hydration.bufferNotification({
-    notification: { method: "item/completed", params: { threadId: "thread-durable" } },
-  }, undefined), false);
-  assert.equal(hydration.bufferNotification({
-    notification: { method: "turn/started", params: { threadId: "thread-durable" } },
-  }, undefined), true);
-});
-
-test("Linux remote-mobile hydration rejects missing, duplicate, and partial lifecycle drift", () => {
-  const source = syntheticCurrentConversationHydrationBundle();
-  const drifted = [
-    source.replace("this.context.threadStore.hydrateActiveThread(", "this.context.threadStore.loadThread("),
-    source + source,
-    source.replace(
-      ":!(!this.manager.isCloudHost",
-      ":!(/*codexLinuxRemoteMobileConversationHydration*/!this.manager.isCloudHost",
-    ),
-  ];
-
-  for (const candidate of drifted) {
-    const { result, warnings } = captureWarnings(() =>
-      applyLinuxRemoteMobileConversationHydrationPatch(candidate)
-    );
-    assert.equal(result, candidate);
-    assert.match(warnings.join("\n"), /unique complete conversation-hydration lifecycle/u);
-  }
-});
-
-test("hydration preserves request replay and discards notifications when their owner disappears", async () => {
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(syntheticCurrentConversationHydrationBundle());
-  const context = { module: { exports: null } };
-  vm.runInNewContext(`${patched};module.exports=HydrationLifecycle;`, context);
-  const conversations = new Map();
-  const replayed = [];
-  let resolveHydration;
-  const lifecycle = new context.module.exports({
-    isCloudHost: false,
-    getHostId: () => "local",
-    getConversationOrThrow: (id) => conversations.get(id),
-    logger: { debug() {} },
-    onRequest: (request) => replayed.push(request.method),
-    onNotification: (method) => replayed.push(method),
-  }, { threadStore: {
-    conversations,
-    isConversationSuppressed: () => false,
-    hydrateActiveThread: () => new Promise((resolve) => { resolveHydration = resolve; }),
-  } }, () => () => {});
-  const delivery = { notification: { method: "turn/started", params: { threadId: "thread" } } };
-  assert.equal(lifecycle.bufferNotification(delivery), true);
-  assert.equal(lifecycle.bufferRequest({ method: "item/tool/call", params: { threadId: "thread", status: "pending" } }, {}, {}), true);
-  conversations.set("thread", {});
-  resolveHydration(true);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(replayed, ["turn/started", "item/tool/call"]);
-
-  conversations.clear();
-  replayed.length = 0;
-  let ignored = false;
-  assert.equal(lifecycle.bufferNotification(delivery, () => ignored), true);
-  ignored = true;
-  resolveHydration(true);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(replayed, []);
-  assert.equal(lifecycle.pending.size, 0);
-  assert.equal(lifecycle.buffer.buffers.size, 0);
-
-  assert.equal(lifecycle.bufferNotification(delivery), true);
-  lifecycle.clear();
-  resolveHydration(true);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(replayed, []);
-  assert.equal(lifecycle.buffer.buffers.size, 0);
-});
-
-test("hydration cannot discover Remote SSH, outbound, suppressed, or already loaded conversations", () => {
-  const patched = applyLinuxRemoteMobileConversationHydrationPatch(syntheticCurrentConversationHydrationBundle());
-  const context = { module: { exports: null } };
-  vm.runInNewContext(`${patched};module.exports=HydrationLifecycle;`, context);
-  for (const [hostId, loaded, suppressed, method] of [
-    ["remote-ssh:dev", false, false, "turn/started"],
-    ["remote-control:env", false, false, "item/completed"],
-    ["local", true, false, "turn/started"],
-    ["local", false, true, "turn/started"],
-    ["local", false, false, "thread/name/updated"],
-  ]) {
-    const lifecycle = new context.module.exports({
-      isCloudHost: hostId === "durable",
-      getHostId: () => hostId,
-    }, { threadStore: {
-      conversations: loaded ? new Map([["thread", {}]]) : new Map(),
-      isConversationSuppressed: () => suppressed,
-      hydrateActiveThread() { assert.fail("must not hydrate this host/conversation"); },
-    } }, () => () => {});
-    assert.equal(lifecycle.bufferNotification({ notification: { method, params: { threadId: "thread" } } }), false);
-    assert.equal(lifecycle.pending.size, 0);
-  }
 });
 
 test("Linux remote-control feature patch updates the device-key provider", () => {
@@ -2804,7 +2589,8 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.match(readAsset("hostToggleProviders"), /codexLinuxRemoteControlShouldReadStatus/);
         assert.match(readAsset("hostToggleProviders"), /codexLinuxRemoteControlStatusWaitMs/);
         assert.match(readAsset("reasoningSummary"), /codexLinuxRemoteMobileReasoningSummaryNone/);
-        assert.match(signals, /codexLinuxRemoteMobileConversationHydration/);
+        assert.doesNotMatch(signals, /codexLinuxRemoteMobileConversationHydration/);
+        assert.match(signals, /legacyHydrationExample/);
         assert.match(readAsset("bridge"), /codexLinuxRemoteControlEnablementBridge/);
         for (const key of ["hostToggle", "hostToggleCopy"]) {
           assert.match(readAsset(key), /codexLinuxRemoteControlEnableForHostParams/);
@@ -2825,7 +2611,6 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           "linux-remote-control-visibility",
           "linux-remote-control-client-revoke-setup-reset",
           "linux-remote-mobile-reasoning-summary-none",
-          "linux-remote-mobile-conversation-hydration",
           "linux-remote-terminal-status-recovery",
           "linux-remote-control-status-read-guard",
           "linux-remote-control-status-wait",
@@ -2835,11 +2620,12 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         ]) {
           assert.equal(statuses[id], "applied", id);
         }
-        // This legacy toy lacks complete native copy/outbound/refresh cohorts.
+        // This legacy toy lacks complete native copy/outbound/refresh/hydration cohorts.
         // Dedicated native tests positively qualify each selected production path.
         assert.equal(statuses["linux-remote-control-copy"], "skipped-optional");
         assert.equal(statuses["linux-remote-control-settings-ux"], "skipped-optional");
         assert.equal(statuses["linux-remote-connections-refresh"], "skipped-optional");
+        assert.equal(statuses["linux-remote-mobile-conversation-hydration"], "skipped-optional");
         assert.equal(statuses["linux-remote-control-auto-connect-contract"], "already-applied");
 
         const secondReport = createPatchReport();
