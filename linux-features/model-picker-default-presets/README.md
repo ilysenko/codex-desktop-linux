@@ -193,13 +193,20 @@ exact supported model/effort intersection, native fallback arrays, and native
 uniqBy import/interop use. Its effort predicate and label formatter dependencies
 are qualified across every physical copy. Only a runtime config marked by this
 feature lowers the preset-loop minimum from three surviving pairs to one.
-Unmarked configs, the native `removeXHigh` filter, stable deduplication, list
-order, and both fallback thresholds retain their upstream behavior. Unsupported
+With this feature alone, unmarked configs, the native `removeXHigh` filter,
+stable deduplication, list order, and both fallback thresholds retain their
+upstream behavior. Unsupported
 pairs are never synthesized. The resolver prepares every physical copy before
 one transaction, requires exact inverse/replay, and rejects hidden damage,
 mixed states, or orphan contributions before writes. The captured helpers must
 be actual synchronous module-level declarations, and the native static loader
 interop/publication calls must not be replaced by extra critical-method uses.
+
+Enabling `ui-tweaks` with
+`tweaks.modelPicker.showModelsByDefault.enabled` set to `true` adds its dynamic
+Work effort policy at that caller. The two features keep marked local presets
+in their configured order and intersect choices with supported, enabled
+efforts. [UI Tweaks](../ui-tweaks/README.md#modelpickershowmodelsbydefault)
 
 The composer keeps its two native config sources. Without a cloud context,
 the caller selects the local source only for host ChatGPT auth and outside its
@@ -250,9 +257,41 @@ vendor. Tests execute selected small native helpers and controlled new-thread
 fragments; a test deduplication stub does not verify the bundled vendor body or
 GUI behavior.
 
-The official-bundle CI audit includes populated presets so all seven
-descriptors are checked, including the upstream Default-selection and
-reset-effect audits.
+## Official bundle audit
+
+The tracked manifest default `presets: []` selects the catalog descriptor's
+read-only `auditOnly` path. The catalog, native query owners and their
+dependencies qualify with unchanged source bytes, while the other six
+descriptors report `skipped-disabled`. Explicitly setting
+`settings.model-picker-default-presets.presets` to an empty array remains a
+configuration error. [Manifest](./feature.json) · [Configuration validation](./patch.js)
+
+The named `configured-presets` audit scenario supplies two legal model/effort
+pairs, including exactly one default. It exercises all seven registered
+descriptors in their production phase and checks repeat execution.
+[Scenario](./feature.json) · [Registry](./patch.js)
+
+1. `model-picker-default-presets-upstream-default-selection` audits the native
+   Default, ordinary-version and common-pair routing and their dependencies.
+   [Source](./upstream-default-selection.js)
+2. `model-picker-default-presets-upstream-reset-effect` audits the mounted
+   picker reset resolver, callbacks and effect dependencies.
+   [Source](./picker-reset.js)
+3. `model-picker-default-presets-catalog` projects the configured catalog and
+   native query observers, including the explicit-miss lookup fallback.
+   [Source](./catalog-integration.js)
+4. `model-picker-default-presets-slider-minimum` supports the configured
+   one-pair fixed selection and two-pair slider through the native picker.
+   [Source](./picker-reset.js)
+5. `model-picker-default-presets-local-composer-resolver` recognizes the
+   configured marker and native supported-pair intersection in the local
+   compact resolver. [Source](./local-resolver.js)
+6. `model-picker-default-presets-existing-chat-optimistic-selection` retains
+   the latest configured choice while its native conversation write and
+   metadata acknowledgement settle. [Source](./existing-chat-selection.js)
+7. `model-picker-default-presets-local-composer-config` connects the selected
+   native config source to the per-conversation Default callback and its
+   current selector. [Source](./composer-config.js)
 
 ## Test
 
