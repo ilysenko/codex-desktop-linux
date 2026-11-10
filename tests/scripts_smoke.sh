@@ -197,7 +197,7 @@ cat > "$asar_stub_dir/npx" <<'STUB'
 #!/bin/sh
 while [ $# -gt 0 ]; do
     case "$1" in
-        --yes|--package=@electron/asar) shift ;;
+        --yes|--package=@electron/asar@4.3.1) shift ;;
         --) shift; break ;;
         *) break ;;
     esac

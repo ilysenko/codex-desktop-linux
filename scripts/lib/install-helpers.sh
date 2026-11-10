@@ -21,7 +21,7 @@ Run the helper to install them automatically:
 Or install manually:
   sudo apt install nodejs npm curl dpkg-dev gnupg                                    # Debian/Ubuntu
   sudo dnf install nodejs npm curl dpkg-dev gnupg2                                   # Fedora
-  sudo pacman -S nodejs curl dpkg gnupg                                              # Arch
+  sudo pacman -S nodejs npm curl dpkg gnupg                                              # Arch
   sudo zypper install nodejs npm curl dpkg gpg2                                      # openSUSE
 EOF
 }
@@ -167,6 +167,9 @@ check_deps() {
         error "Missing dependencies: ${missing[*]}
 $(dependency_help)"
     fi
+
+    node -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>22||(major===22&&minor>=12)?0:1)' ||
+        error "Node.js 22.12.0 or newer is required; found $(node --version)"
 
     # ASAR patching needs npx unless a packaged ASAR executable was supplied.
     # Warn before downloading upstream; patch_asar() validates the tool again.

@@ -100,7 +100,7 @@ UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 ### پیش از نصب
 
 - فقط آخرین بسته stable و امضاشده رسمی OpenAI برای لینوکس روی `amd64` و `arm64` پشتیبانی می‌شود.
-- ابزارهای build به Node.js 20 یا جدیدتر، npm، Python 3، curl، `gpgv`، `dpkg-deb`، tar، make و toolchain مربوط به C/C++ نیاز دارند. Rust برای updater و helperهای native مربوط به featureهای فعال استفاده می‌شود. `make bootstrap-native` این موارد را نصب می‌کند یا برایشان راهنما می‌دهد.
+- ابزارهای build به Node.js 22.12.0 یا جدیدتر، npm، Python 3، curl، `gpgv`، `dpkg-deb`، tar، make و toolchain مربوط به C/C++ نیاز دارند. Rust برای updater و helperهای native مربوط به featureهای فعال استفاده می‌شود. `make bootstrap-native` این موارد را نصب می‌کند یا برایشان راهنما می‌دهد.
 - بسته رسمی `chatgpt` و بسته سفارشی `codex-desktop` می‌توانند هم‌زمان نصب باشند. به‌صورت پیش‌فرض هر دو از profile بالادستی `Codex` استفاده می‌کنند و بهتر است هم‌زمان اجرا نشوند. feature اختیاری `community-profile-isolation` برای Community state جداگانه Codex و Electron فراهم می‌کند و CLI bundled خود را pin می‌کند تا کاربرانی که runtime ایزوله می‌خواهند از مرز shared-profile عبور کنند.
 - AppImage هیچ‌وقت به‌طور خودکار `--no-sandbox` اضافه نمی‌کند. اگر توزیع شما unprivileged user namespaces را غیرفعال کرده، از بسته native استفاده کنید یا راهنمای sandbox در [Troubleshooting](docs/troubleshooting.md) را ببینید.
 

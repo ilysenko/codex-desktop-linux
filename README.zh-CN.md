@@ -136,7 +136,7 @@ UPSTREAM_DEB=/path/to/chatgpt_<version>_<arch>.deb make build-app
 ### 安装前须知
 
 - 仅支持 OpenAI 最新的已签名 stable Linux 软件包和 `amd64` / `arm64`。
-- 构建需要 Node.js 20+、npm、Python 3、curl、`gpgv`、`dpkg-deb`、tar、
+- 构建需要 Node.js 22.12.0+、npm、Python 3、curl、`gpgv`、`dpkg-deb`、tar、
   make 和 C/C++ 工具链。更新器及启用的原生扩展 helper 还需要 Rust。
   `make bootstrap-native` 会安装或提示这些依赖。
 - 官方 `chatgpt` 与自定义 `codex-desktop` 可以同时安装。默认情况下两者会

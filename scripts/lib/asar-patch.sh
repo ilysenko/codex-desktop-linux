@@ -77,7 +77,7 @@ NODE
 
 # Resolve the ASAR CLI to a real executable path and invoke it directly.
 #
-# `npx --yes @electron/asar` re-parses its arguments through a shell on POSIX,
+# `npx --yes @electron/asar@4.3.1` re-parses its arguments through a shell on POSIX,
 # and that shell performs brace expansion: the `{*.node,*.so,*.dylib}` unpack
 # glob and multi-directory `--unpack-dir "{a,b}"` patterns reach asar as
 # separate words, so asar silently honors only the first alternative. Calling
@@ -97,7 +97,7 @@ resolve_asar_command() {
         "visible to this shell, then retry."
 
     local asar_cli
-    asar_cli="$(npx --yes --package=@electron/asar -- sh -c 'command -v asar' 2>/dev/null | tail -n 1)"
+    asar_cli="$(npx --yes --package=@electron/asar@4.3.1 -- sh -c 'command -v asar' 2>/dev/null | tail -n 1)"
     [ -n "$asar_cli" ] && [ -x "$asar_cli" ] || error \
         "Could not resolve the @electron/asar CLI through npx." \
         "Set CODEX_ASAR_BIN to an existing asar executable, then retry." \

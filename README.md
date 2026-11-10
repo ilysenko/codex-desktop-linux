@@ -152,7 +152,7 @@ Old `.dmg`, `DMG=`, and `CODEX_DMG_*` inputs are intentionally unsupported.
 
 - Only the latest signed stable OpenAI Linux package is supported, on `amd64`
   and `arm64`.
-- Build tools require Node.js 20 or newer, npm, Python 3, curl, `gpgv`,
+- Build tools require Node.js 22.12.0 or newer, npm, Python 3, curl, `gpgv`,
   `dpkg-deb`, tar, make, and a C/C++ toolchain. Rust is used for the updater and
   enabled native feature helpers. `make bootstrap-native` installs or guides
   you through these requirements.

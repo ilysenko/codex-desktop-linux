@@ -12,6 +12,32 @@ const { buildInfo } = require("./build-info.js");
 const repo = path.resolve(__dirname, "../..");
 const skip = "--skip-oai-official-sig-verification";
 
+for (const [version, accepted] of [["20.19.0", false], ["22.11.0", false], ["22.12.0", true], ["24.0.0", true]]) {
+  test(`production dependency preflight requires the supported Node baseline at ${version}`, t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-node-baseline-"));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const bin = path.join(root, "bin");
+    const work = path.join(root, "work");
+    fs.mkdirSync(bin);
+    fs.mkdirSync(work);
+    const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+    const versionContext = 'Object.defineProperty(process.versions,"node",{value:process.env.P56_NODE_VERSION});eval(process.argv[1])';
+    fs.writeFileSync(path.join(bin, "node"), [
+      "#!/bin/bash",
+      'if [ "$1" = --version ]; then printf "v%s\\n" "$P56_NODE_VERSION"; exit 0; fi',
+      `if [ "$1" = -e ]; then exec ${quote(process.execPath)} -e ${quote(versionContext)} "$2"; fi`,
+      `exec ${quote(process.execPath)} "$@"`, "",
+    ].join("\n"), { mode: 0o755 });
+    const result = childProcess.spawnSync("bash", ["-c", 'set -Eeuo pipefail; . "$1"; check_deps',
+      "node-baseline", path.join(repo, "scripts/lib/install-helpers.sh")], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, WORK_DIR: work, P56_NODE_VERSION: version },
+    });
+    assert.equal(result.status, accepted ? 0 : 1, result.stdout + result.stderr);
+    if (!accepted) assert.match(result.stderr, /Node\.js 22\.12\.0 or newer is required/);
+  });
+}
+
 function fixture(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-install-verification-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

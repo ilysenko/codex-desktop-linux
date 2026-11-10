@@ -50,8 +50,8 @@ install_nodesource_apt() {
     local staging_dir
 
     case "$nodejs_major" in
-        20|22|24) ;;
-        *) fail "NODEJS_MAJOR must be one of: 20, 22, 24" ;;
+        22|24) ;;
+        *) fail "NODEJS_MAJOR must be one of: 22, 24" ;;
     esac
 
     staging_dir="$(mktemp -d)"
@@ -66,7 +66,7 @@ install_nodesource_apt() {
         "$keyring" "$nodejs_major" | run_privileged tee "$source_list" >/dev/null
 
     if command -v node >/dev/null 2>&1 && \
-        [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -lt 20 ]; then
+        ! node -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>22||(major===22&&minor>=12)?0:1)'; then
         run_privileged env DEBIAN_FRONTEND=noninteractive apt-get remove -y \
             nodejs npm libnode-dev
     fi
@@ -192,11 +192,9 @@ for command in bash curl dpkg-deb gpgv node npm python3 sha256sum tar; do
     command -v "$command" >/dev/null 2>&1 || fail "required command is unavailable after bootstrap: $command"
 done
 
-node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
-[ "$node_major" -ge 20 ] || fail "Node.js 20 or newer is required; found $(node --version)"
+node -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>22||(major===22&&minor>=12)?0:1)' ||
+    fail "Node.js 22.12.0 or newer is required; found $(node --version)"
 if [ "$manager" = emerge ]; then
-    node -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>22||(major===22&&minor>=12)?0:1)' ||
-        fail "Gentoo ASAR tooling requires Node.js 22.12.0 or newer; found $(node --version)"
     install_emerge_feature_dependencies
 fi
 

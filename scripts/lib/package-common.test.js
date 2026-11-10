@@ -159,7 +159,7 @@ test("RPM updater selects the distro-specific GnuPG package", () => {
   const rpm = fs.readFileSync(path.join(repoRoot, "packaging/linux/codex-desktop.spec"), "utf8");
   assert.match(
     rpm,
-    /%if __PACKAGE_WITH_UPDATER__\nRequires:\s+polkit, curl, dpkg, nodejs, xdg-utils\n%if 0%\{\?suse_version\}\nRequires:\s+gpg2\n%else\nRequires:\s+gnupg2\n%endif\n%else\nRequires:\s+xdg-utils\n%endif/,
+    /%if __PACKAGE_WITH_UPDATER__\nRequires:\s+polkit, curl, dpkg, npm, xdg-utils\n%if 0%\{\?suse_version\}\nRequires:\s+nodejs >= 22\.12\.0, gpg2\n%else\nRequires:\s+nodejs >= 1:22\.12\.0, gnupg2\n%endif\n%else\nRequires:\s+xdg-utils\n%endif/,
   );
 });
 

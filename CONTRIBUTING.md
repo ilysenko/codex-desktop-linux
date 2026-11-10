@@ -69,7 +69,7 @@ For the normal installed application use `make install-native`; use
 wizard. `make bootstrap-native` installs dependencies before performing the
 same native build/package/install flow.
 
-The build requires Node.js 20+, npm, Python 3, curl, `gpgv`, `dpkg-deb`,
+The build requires Node.js 22.12.0+, npm, Python 3, curl, `gpgv`, `dpkg-deb`,
 SHA-256 utilities, tar, make, and a C/C++ toolchain. Rust is required for the
 updater and retained native feature helpers.
 

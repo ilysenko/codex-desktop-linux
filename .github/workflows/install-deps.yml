@@ -54,7 +54,7 @@ jobs:
       - name: Verify Node.js toolchain
         run: |
           node -p "process.versions.node"
-          node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'
+          node -e 'const [major,minor]=process.versions.node.split(".").map(Number);process.exit(major>22||(major===22&&minor>=12)?0:1)'
           npm -v
           npx -v
           dpkg-query -W -f='${Provides}\n' nodejs | grep -E '(^|[,[:space:]])npm([,[:space:](]|$)'
@@ -66,7 +66,7 @@ jobs:
           printf '%s\n' "$output"
           test "$status" -ne 0
           printf '%s\n' "$output" | grep -q "macOS DMG inputs are no longer supported"
-          ! printf '%s\n' "$output" | grep -q "Node.js 20+ required"
+          ! printf '%s\n' "$output" | grep -Eq "Node\.js.*required"
 
   pacman-rust-bootstrap:
     name: pacman ${{ matrix.rust-state }}

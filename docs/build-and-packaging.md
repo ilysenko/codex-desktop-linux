@@ -2,9 +2,12 @@
 
 ## Prerequisites
 
-Baseline builds require Bash, curl, `gpgv`, `dpkg-deb`, Node.js 20+, npm,
+Baseline builds require Bash, curl, `gpgv`, `dpkg-deb`, Node.js 22.12.0+, npm,
 Python 3, SHA-256 utilities, tar, make, and a C/C++ toolchain. Rust is needed
-for updater/native helper release builds. Install common dependencies with:
+for updater/native helper release builds. The default resolver selects
+`@electron/asar@4.3.1`, whose Node requirement is 22.12.0 or newer.
+`CODEX_ASAR_BIN` selects an existing ASAR executable, including Nix's fixed tool.
+Install common dependencies with the following command.
 
 ```bash
 bash scripts/install-deps.sh
@@ -19,7 +22,7 @@ remote installer directly to a shell.
 
 If you install dependencies manually, use `scripts/install-deps.sh` as the
 authoritative package list. At minimum, the source verifier needs Bash, curl,
-GnuPG, `dpkg-deb`, Node.js 20+, Python 3, SHA-256 tools, tar, and `xz`; native
+GnuPG, `dpkg-deb`, Node.js 22.12.0+, Python 3, SHA-256 tools, tar, and `xz`; native
 packaging additionally needs the target format's package builder.
 
 ## Build the application tree

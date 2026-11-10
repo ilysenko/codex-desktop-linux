@@ -12,11 +12,11 @@ ExclusiveArch:  __ARCH__
 %endif
 
 %if __PACKAGE_WITH_UPDATER__
-Requires:       polkit, curl, dpkg, nodejs, xdg-utils
+Requires:       polkit, curl, dpkg, npm, xdg-utils
 %if 0%{?suse_version}
-Requires:       gpg2
+Requires:       nodejs >= 22.12.0, gpg2
 %else
-Requires:       gnupg2
+Requires:       nodejs >= 1:22.12.0, gnupg2
 %endif
 %else
 Requires:       xdg-utils

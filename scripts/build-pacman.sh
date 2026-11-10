@@ -160,7 +160,8 @@ main() {
 			-e "/'curl'/d" \
 			-e "/'dpkg'/d" \
 			-e "/'gnupg'/d" \
-			-e "/'nodejs'/d" \
+			-e "/'nodejs>=22.12.0'/d" \
+			-e "/'npm'/d" \
 			"$build_root/PKGBUILD"
 	fi
 	local feature_dependency_lines=""
