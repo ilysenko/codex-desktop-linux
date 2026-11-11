@@ -5,7 +5,8 @@ const DESCRIPTOR_ID = "pet-overlay-main";
 const AVATAR_OVERLAY_APPEARANCE = 'appearance:"avatarOverlay"';
 const WAYLAND_WINDOW = "process.platform===`linux`&&require(`electron`).app.commandLine.getSwitchValue(`ozone-platform`)===`wayland`";
 const UPSTREAM_NATIVE_DRAW_CONSTRAINT = 'constrainNativeDrawWindowToDisplay:"win32"===process.platform';
-const NATIVE_DRAW_CONSTRAINT = `${UPSTREAM_NATIVE_DRAW_CONSTRAINT}||${WAYLAND_WINDOW}&&!this.codexPetOverlayIsNativeKWin()`;
+const PET_LAYOUT_RECEIVER = "codexPetOverlayLayoutController";
+const NATIVE_DRAW_CONSTRAINT = `${UPSTREAM_NATIVE_DRAW_CONSTRAINT}||${WAYLAND_WINDOW}&&!${PET_LAYOUT_RECEIVER}.codexPetOverlayIsNativeKWin()`;
 const KWIN_COORDINATE_CONSUMERS = [
   "updateCssPetControlsProximityTracking",
   "sendComputerUseCursorLocationToRenderer", "isOverlayWindowPointerDragActive",
@@ -940,14 +941,17 @@ function patchNativeDrawBounds(source) {
   const directReturn = method.text.startsWith(`${method.match[0]}return `);
   if (!display || !anchor || !draw || (!result && !directReturn)) return source;
   const options = call.options.replace(constraint[0], NATIVE_DRAW_CONSTRAINT)
-    .replace(draw[0], `nativeDrawWindowBounds:this.codexPetOverlayIsNativeKWin()?this.codexPetOverlayKWinDrawBounds(${display},${anchor}):${draw[1]},displayBounds:`);
+    .replace(draw[0], `nativeDrawWindowBounds:${PET_LAYOUT_RECEIVER}.codexPetOverlayIsNativeKWin()?${PET_LAYOUT_RECEIVER}.codexPetOverlayKWinDrawBounds(${display},${anchor}):${draw[1]},displayBounds:`);
   let text = method.text.slice(0, call.start) +
-    `(codexPetOverlayLayout=>codexPetOverlayLayout(this.codexPetOverlayKWinLayoutOptions(${options},codexPetOverlayLayout)))(${call.fn})` +
+    `(codexPetOverlayLayout=>codexPetOverlayLayout(${PET_LAYOUT_RECEIVER}.codexPetOverlayKWinLayoutOptions(${options},codexPetOverlayLayout)))(${call.fn})` +
     method.text.slice(call.end).replace(new RegExp(`return ${result}\\}$`), `return this.codexPetOverlayKWinLayout(${display},${result})}`);
   if (!result) {
     const prefix = `${method.match[0]}return `;
     text = `${prefix}this.codexPetOverlayKWinLayout(${display},${text.slice(prefix.length, -1)})}`;
   }
+  // The options run inside an unbound pure function; capture its controller
+  // before evaluating them instead of relying on this inside that function.
+  text = `${method.match[0]}const ${PET_LAYOUT_RECEIVER}=this;${text.slice(method.match[0].length)}`;
   return replaceMethodText(source, method, text);
 }
 
@@ -1186,7 +1190,7 @@ function hasCompletePetOverlayPatch(source, localMascotDragExpected) {
     source.includes("codexPetOverlaySettings(){"),
     findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes(NATIVE_DRAW_CONSTRAINT),
     findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayKWinLayout("),
-    findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayKWinLayoutOptions("),
+    findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes(PET_LAYOUT_RECEIVER + ".codexPetOverlayKWinLayoutOptions("),
     findAvatarOverlayMethod(source, /(?<![\w$.])setWindowBounds\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayIsNativeKWin()"),
     findAvatarOverlayMethod(source, /(?<![\w$.])focusQuickChat\([^{}]*\)\{/)?.text.includes("codexPetOverlayHiddenFocus:"),
     findAvatarOverlayMethod(source, /(?<![\w$.])setKeyboardInteraction\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayActivateKWin("),

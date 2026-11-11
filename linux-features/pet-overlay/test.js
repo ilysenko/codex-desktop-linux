@@ -141,6 +141,25 @@ test("gesture identity reaches the controller and RPC completion retains its ori
   assert.deepEqual(service.codexPetOverlayCompleteDrag(id, false, sample), [7, id, false, sample]);
 });
 
+// Since upstream Linux 26.1103, getLayoutForDisplay delegates to an unbound
+// pure function. Any injected use of `this` inside that function is undefined.
+function nestedAvatarOverlayBundleFixture() {
+  const source = currentAvatarOverlayBundleFixture();
+  const start = source.indexOf("getLayoutForDisplay(e,t=this.anchor){");
+  const end = source.indexOf("getLayout(e){", start);
+  assert.ok(start >= 0 && end > start);
+  const nested = [
+    "getLayoutForDisplay(e,t=this.anchor){return function({display:e,displays:l,anchor:t,layoutMode:i,mascotSize:m,previousPlacement:p,traySize:y}){",
+    "let n=function({anchor:e,constrainNativeDrawWindowToDisplay:t=!1,...r}){return UB({anchor:e,constrainNativeDrawWindowToDisplay:t,...r})}(",
+    '{anchor:t,constrainNativeDrawWindowToDisplay:"win32"===process.platform,',
+    'nativeDrawWindowBounds:"darwin"===process.platform&&l.length>1?e.bounds:void 0,',
+    "displayBounds:i===`native`?e.workArea:e.bounds,mode:i,mascotSize:m,previousPlacement:p,traySize:y});return n}",
+    "({display:e,displays:a.screen.getAllDisplays(),anchor:t,layoutMode:this.layoutMode,mascotSize:this.mascotSize,",
+    "previousPlacement:this.placement,traySize:this.traySize??(this.layoutMode===`native`?k2:O2)})}",
+  ].join("");
+  return source.slice(0, start) + nested + source.slice(end);
+}
+
 function legacyAvatarOverlayBundleFixture() {
   return [
     "let n=require(`electron`);",
@@ -405,6 +424,31 @@ test("GPU compositing launcher default preserves an explicit user override", () 
     const explicit = run(value);
     assert.equal(explicit.status, 0, explicit.stderr);
     assert.equal(explicit.stdout, "", value);
+  }
+});
+
+test("unbound upstream pure layout captures the overlay manager receiver", () => {
+  const patched = applyPatchTwice(nestedAvatarOverlayBundleFixture());
+  new vm.Script(patched);
+  assert.match(patched, /const codexPetOverlayLayoutController=this/);
+  assert.equal((patched.match(/const codexPetOverlayLayoutController=this/g) ?? []).length, 1);
+  const display = {
+    id: 1,
+    workArea: { x: 0, y: 0, width: 1440, height: 900 },
+    bounds: { x: 0, y: 0, width: 1440, height: 900 },
+  };
+  for (const [desktop, ozonePlatform] of [
+    ["Hyprland", "wayland"],
+    ["KDE", "wayland"],
+    ["KDE", "x11"],
+  ]) {
+    const { controller } = controllerFromPatchedSource(patched, {
+      ozonePlatform,
+      process: { env: { XDG_CURRENT_DESKTOP: desktop } },
+      UB: options => options.constrainNativeDrawWindowToDisplay,
+    });
+    assert.equal(typeof controller.getLayoutForDisplay(display), "boolean",
+      `unbound pure layout must retain the manager on ${desktop} ${ozonePlatform}`);
   }
 });
 
