@@ -26,12 +26,12 @@ const {
   dockIconEnabled,
 } = require("./patches/dock-icon.js");
 
-// Official 26.1027.30824 rspack/SWC main-process shape (one main-app module):
+// Current official rspack/SWC main-process shape (one main-app module):
 // double-quoted strings, literal-first comparisons and inlined one-shot helpers.
 const currentAppInfoSource = [
   'function d_(e){return"icon-chatgpt"}',
   'function f_(e){return{dark:"icon-codex-dark-color.png",light:"icon-codex-light.png",spaceDark:"icon-space-dark.png",spaceLight:"icon-space-light.png"}}',
-  "async function Gme(e){return{appIconMedium:null,dockIconPreviews:function(e){if(\"darwin\"!==process.platform)return null;let t=f_(e),n=g_(`${d_(e)}.png`),r=g_(t.dark),i=g_(t.light),a=g_(t.spaceDark),o=g_(t.spaceLight);return null==n||null==r||null==i||null==a||null==o?null:{appDefault:n,codexDark:r,codexLight:i,spaceDark:a,spaceLight:o}}(e),preloadAttribution:null}}",
+  "async function Gme({includeDockIconPreviews:z=!0}={}){let q=\"prod\";return{appIconMedium:null,dockIconPreviews:z?function(e){if(\"darwin\"!==process.platform)return null;let t=f_(e),n=g_(`${d_(e)}.png`),r=g_(t.dark),i=g_(t.light),a=g_(t.spaceDark),o=g_(t.spaceLight);return null==n||null==r||null==i||null==a||null==o?null:{appDefault:n,codexDark:r,codexLight:i,spaceDark:a,spaceLight:o}}(q):null,preloadAttribution:null}}",
   'function g_(e){if(null==e)return null;let t=d.app.isPackaged?(0,g.join)(process.resourcesPath,e):null;return __(null!=t&&(0,y.existsSync)(t)?t:(0,g.join)(d.app.getAppPath(),"src","icons",e))}',
 ].join("");
 
@@ -107,12 +107,13 @@ function captureWarns(fn) {
 
 function evaluateLinuxPreviews(patchedSource, payloadDir) {
   const preview = patchedSource.match(
-    /dockIconPreviews:(?<expression>function\((?<arg>[A-Za-z_$][\w$]*)\)\{if\("darwin"!==process\.platform&&"linux"!==process\.platform\)return null;let (?<theme>[A-Za-z_$][\w$]*)=(?<themeHelper>[A-Za-z_$][\w$]*)\(\k<arg>\),(?<defaultIcon>[A-Za-z_$][\w$]*)=(?<resource>[A-Za-z_$][\w$]*)\(`\$\{(?<iconName>[A-Za-z_$][\w$]*)\(\k<arg>\)\}\.png`\),(?<codexDark>[A-Za-z_$][\w$]*)=\k<resource>\(\k<theme>\.dark\),(?<codexLight>[A-Za-z_$][\w$]*)=\k<resource>\(\k<theme>\.light\),(?<spaceDark>[A-Za-z_$][\w$]*)="linux"===process\.platform\?\k<codexDark>:\k<resource>\(\k<theme>\.spaceDark\),(?<spaceLight>[A-Za-z_$][\w$]*)="linux"===process\.platform\?\k<codexLight>:\k<resource>\(\k<theme>\.spaceLight\);return [^}]+\}\}\(\k<arg>\))/,
+    /dockIconPreviews:(?<include>[A-Za-z_$][\w$]*)\?(?<expression>function\((?<arg>[A-Za-z_$][\w$]*)\)\{if\("darwin"!==process\.platform&&"linux"!==process\.platform\)return null;let (?<theme>[A-Za-z_$][\w$]*)=(?<themeHelper>[A-Za-z_$][\w$]*)\(\k<arg>\),(?<defaultIcon>[A-Za-z_$][\w$]*)=(?<resource>[A-Za-z_$][\w$]*)\(`\$\{(?<iconName>[A-Za-z_$][\w$]*)\(\k<arg>\)\}\.png`\),(?<codexDark>[A-Za-z_$][\w$]*)=\k<resource>\(\k<theme>\.dark\),(?<codexLight>[A-Za-z_$][\w$]*)=\k<resource>\(\k<theme>\.light\),(?<spaceDark>[A-Za-z_$][\w$]*)="linux"===process\.platform\?\k<codexDark>:\k<resource>\(\k<theme>\.spaceDark\),(?<spaceLight>[A-Za-z_$][\w$]*)="linux"===process\.platform\?\k<codexLight>:\k<resource>\(\k<theme>\.spaceLight\);return [^}]+\}\}\((?<preference>[A-Za-z_$][\w$]*)\)):null/,
   );
   assert.ok(preview, "expected one complete patched preview function");
   const sandbox = {
     process: { platform: "linux" },
     [preview.groups.arg]: "prod",
+    [preview.groups.preference]: "prod",
     [preview.groups.themeHelper]: () => ({
       dark: "icon-codex-dark-color.png",
       light: "icon-codex-light.png",
@@ -313,7 +314,7 @@ test("main patch captures every minified alias and preserves their contract rela
   assert.match(patched, /alias16=alias\d+=>\(alias\d+=>\{if\(!alias28\.app\.isPackaged&&"linux"!==process\.platform\)/);
   assert.match(patched, /globalThis\.codexLinuxDockIconImage:alias(?:\d+)\.defaultIcon/);
   assert.match(patched, /null!=alias6\?\.tray&&!alias6\.tray\.isDestroyed\(\)/);
-  assert.match(patched, /dockIconPreviews:function\(alias(?:\d+)\)\{if\("darwin"!==process\.platform&&"linux"!==process\.platform\)/);
+  assert.match(patched, /dockIconPreviews:alias(?:\d+)\?function\(alias(?:\d+)\)\{if\("darwin"!==process\.platform&&"linux"!==process\.platform\)/);
   assert.equal(applyDockIconMainPatch(patched), patched);
 });
 
@@ -340,7 +341,7 @@ test("main patch rejects inconsistent cross-contract aliases byte-identically", 
 test("main patch rejects drift at every official-package insertion point byte-identically", () => {
   const patched = applyDockIconMainPatch(currentMainSource);
   const currentPoints = [
-    'dockIconPreviews:function(e){if("darwin"!==process.platform)return null',
+    'dockIconPreviews:z?function(e){if("darwin"!==process.platform)return null',
     'function g_(e){if(null==e)return null;let t=d.app.isPackaged?(0,g.join)(process.resourcesPath,e):null',
     "A=e=>(e=>{if(!d.app.isPackaged)return null;let t=(0,g.join)(process.resourcesPath,e);return(0,y.existsSync)(t)?t:null})",
     'ee=(e,t)=>{switch(e){case"app-default":return null;case"codex-system":return t?F.dark:F.light;case"space-system":return t?F.spaceDark:F.spaceLight}}',
@@ -355,7 +356,7 @@ test("main patch rejects drift at every official-package insertion point byte-id
     "return(U9=a,await a.waitForReady()&&U9===a)",
   ];
   const patchedPoints = [
-    'dockIconPreviews:function(e){if("darwin"!==process.platform&&"linux"!==process.platform)return null',
+    'dockIconPreviews:z?function(e){if("darwin"!==process.platform&&"linux"!==process.platform)return null',
     "function codexLinuxDockIconResourcePath",
     'A=e=>(e=>{if(!d.app.isPackaged&&"linux"!==process.platform)return null',
     'ee=(e,t)=>{switch(e){case"app-default":return null;case"codex-system":return t?F.dark:F.light;case"space-system":return "linux"===process.platform?t?F.dark:F.light:t?F.spaceDark:F.spaceLight}}',

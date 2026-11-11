@@ -32,6 +32,7 @@ const {
 } = require("./patches/model-picker-model-list.js");
 const {
   DEFAULT_PROJECT_NAME_STYLE,
+  PROJECT_NAME_LABEL_MARKERS,
   PROJECT_ROW_ATTRIBUTE,
   SIDEBAR_PROJECT_NAME_MARKERS,
   PROJECT_NAME_SELECTOR,
@@ -492,7 +493,10 @@ test("sidebar project descriptor needles select one signed official chunk", {
   const root = process.env.CODEX_SIGNED_EXTRACTED_APP;
   const descriptor = patches.find((patch) => patch.id === "sidebar-project-name-style");
   const candidates = findWebviewAssetsContaining(root, descriptor.assetNeedles);
+  const labels = findWebviewAssetsContaining(root, PROJECT_NAME_LABEL_MARKERS);
   assert.equal(candidates.length, 1);
+  assert.equal(labels.length, 1);
+  assert.notEqual(labels[0], candidates[0]);
   const source = fs.readFileSync(path.join(root, "webview", "assets", candidates[0]), "utf8");
   assert.equal(descriptor.assetMatch(source), true);
   const patched = descriptor.apply(source, {});

@@ -312,8 +312,8 @@ Config keys:
 
 Styles project names in the left sidebar project list. A small stylesheet
 installer is appended to the rspack webview chunk that holds the sidebar
-app-action attribute registry and the shared marquee label; the chunk is
-located by those semantic markers, not by its name.
+app-action attribute registry. The registry chunk and the separate shared
+marquee implementation are located by semantic markers, not by their names.
 
 Tracked default in `feature.json`:
 

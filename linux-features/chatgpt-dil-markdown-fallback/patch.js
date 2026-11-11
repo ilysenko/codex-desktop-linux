@@ -70,23 +70,36 @@ function replyContract(source) {
   const fallbacks = [...source.matchAll(new RegExp(
     `errorFallback:(${IDENT})\\?null:\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}(?:\\.${IDENT})?),\\{([^{}]{0,200})\\}\\),diagnostics:`, "g",
   ))];
-  const owners = [...source.matchAll(new RegExp(
-    `function ${IDENT}\\(\\{(?:${IDENT}:${IDENT},)*assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},`, "g",
-  ))];
-  if (fallbacks.length !== 1 || owners.length !== 1) return null;
+  if (fallbacks.length !== 1) return null;
   const [fallback] = fallbacks;
-  const [owner] = owners;
-  const module = moduleAt(modules, owner.index);
+  const module = moduleAt(modules, fallback.index);
   const requireName = module?.params[2];
-  if (requireName == null || moduleAt(modules, fallback.index) !== module) return null;
-  // The failure branch must belong to the reply renderer itself.
-  const ownerBodyStart = source.indexOf("{", owner.index + owner[0].length);
-  const ownerEnd = findMatchingBrace(source, ownerBodyStart);
-  if (ownerEnd < 0 || fallback.index < ownerBodyStart || fallback.index > ownerEnd) return null;
-  const ownerSource = source.slice(owner.index, ownerEnd);
-  if (!RESPONSE_NEEDLES.every((needle) => ownerSource.includes(needle))) return null;
+  if (requireName == null) return null;
+  // React Compiler now receives one props object and destructures the reply
+  // contract inside the component. Select the unique enclosing function by
+  // that semantic destructure, never by its minified name.
+  const owners = [];
+  const declarations = source.slice(module.bodyStart, fallback.index).matchAll(new RegExp(
+    `function ${IDENT}\\((?<props>${IDENT})\\)\\{`, "g",
+  ));
+  for (const declaration of declarations) {
+    const start = module.bodyStart + declaration.index;
+    const bodyStart = start + declaration[0].length - 1;
+    const end = findMatchingBrace(source, bodyStart);
+    if (end < fallback.index || end >= module.end) continue;
+    const ownerSource = source.slice(start, end + 1);
+    const props = escapeRegExp(declaration.groups.props);
+    const destructure = ownerSource.match(new RegExp(
+      `\\{experiment:${IDENT},assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},` +
+        `onAutoSafeUrls:${IDENT},dilComponents:${IDENT},loadPublicComponents:${IDENT},surface:${IDENT}\\}=${props}`,
+    ));
+    if (destructure != null && RESPONSE_NEEDLES.every((needle) => ownerSource.includes(needle))) {
+      owners.push({ reference: destructure[1] });
+    }
+  }
+  if (owners.length !== 1) return null;
   const [, preparing, jsx, failure, failureProps] = fallback;
-  return { module, requireName, fallback, preparing, jsx, failure, failureProps, reference: owner[1] };
+  return { module, requireName, fallback, preparing, jsx, failure, failureProps, reference: owners[0].reference };
 }
 
 // The current reply chunk also requires the native Markdown module from a

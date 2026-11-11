@@ -14,11 +14,11 @@ const {
   patchDilMarkdownFallback,
 } = require("./patch.js");
 
-// Reduced rspack chunk shaped like the signed stable Linux 26.1029 webview:
+// Reduced rspack chunk shaped like the current signed stable Linux webview:
 // the interactive reply module and a sibling renderer that requires the
 // native Markdown module (`N=n("UePh")` … `N.ChatGptMarkdown`).
 const REPLY = 'URlo(e,t,n){let a;n.d(t,{DilResponse:()=>nS});var r=n("ABep"),tG=n("Fail"),aJ=n("Prog");' +
-  "function nS({assistantMessageId:e,reference:t,source:n,dilComponents:a}){" +
+  "function nS(e){let {experiment:x,assistantMessageId:y,reference:t,source:n,onAutoSafeUrls:u,dilComponents:a,loadPublicComponents:l,surface:s}=e;" +
   "let aN=n.preparing,st=n.source_message_status,q=n.error;return(0,r.jsx)(n.runtime,{" +
   "dil:aJ.prepareDil(t.model_dil_v2.code)," +
   "errorFallback:aN?null:(0,r.jsx)(tG.X,{stage:q?.stage,errorClass:q?.errorClass}),diagnostics:!1})}}";
@@ -95,6 +95,7 @@ test("patch targets only the failure branch at module scope and is idempotent", 
   ));
   for (const source of [
     REPLY_CHUNK.replace("errorFallback:", "fallback:"),
+    REPLY_CHUNK.replace("onAutoSafeUrls:u", "onAutoSafeUrlsDrift:u"),
     chunk(1, SIBLING, REPLY, REPLY.replace("URlo", "URlp")),
     REPLY_CHUNK.replace("export const __webpack_modules__=", "export const modules="),
   ]) {

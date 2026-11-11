@@ -419,7 +419,7 @@ const UI_MODULE = 'Ab12(e,t,n){n.d(t,{Profile:()=>Profile});var UI=n("jsx"),Menu
   'fmt.formatMessage({id:"codex.profileDropdown.copyUserIdForEmail",defaultMessage:"Copy user ID for {email}"},{email:"a"});' +
   'label=(0,UI.jsx)(Text.A,{id:"codex.profileDropdown.settingsPage",defaultMessage:"Settings",description:"Menu item to open Codex settings page"});' +
   'settings=(0,UI.jsx)(Menu.tJ,{leftIconAsset:asset.T,keyboardShortcut:shortcut,onClick:settingsClick,children:label});' +
-  'group=(0,UI.jsxs)(UI.Fragment,{children:[divider,identity,settings]});' +
+  'group=(0,UI.jsxs)(UI.Fragment,{children:[divider,identity,null,settings]});' +
   'if(null!=footer){let Menu=petEnabled?()=>{close(),Bus.O1.dispatchMessage("avatar-overlay-open",{})}:void 0;' +
   'return(0,UI.jsx)(Layout,{accountIcon:icon,accountSwitcher:switcher,additionalItems:items,onCloseMenu:close,onTogglePet:Menu})}' +
   'return(0,UI.jsxs)("div",{children:[group,workspace,analytics,more]})}}';
@@ -473,7 +473,7 @@ test("semantic contracts preserve renamed symbols, reject partial drift, and rou
   const patched = applyUi(UI_CHUNK);
   assert.equal(patched.match(/method:"community\/accountSwitcher"/g).length, 1);
   assert.match(patched, /additionalItems:codexLinuxAccountSwitcherItems\(items,close,fmt\),/);
-  assert.match(patched, /children:\[divider,identity,settings,codexLinuxAccountSwitcherRow\(close,fmt\)\]/);
+  assert.match(patched, /children:\[divider,identity,null,settings,codexLinuxAccountSwitcherRow\(close,fmt\)\]/);
 });
 
 test("rendering either profile layout cannot invoke a shadowing pet callback", () => {

@@ -7,15 +7,16 @@ const STYLE_ID = "codex-linux-ui-tweaks-sidebar-project-name-style";
 const RUNTIME_MARKER = "codexLinuxUiTweaksSidebarProjectNameStyleRuntime";
 const UNSAFE_PROJECT_NAME_STYLE_PATTERN = /[{}@<>]|\r|\n|\/\*|\*\/|\burl\s*\(/i;
 
-// The rspack build keeps the app-action attribute registry, its selectors,
-// its row-attribute builder and the shared marquee label in one chunk.
+// The rspack build keeps the app-action attribute registry, its selectors and
+// its row-attribute builder in one chunk. The shared marquee implementation is
+// a separate asset; the signed-package regression verifies that contract too.
 const SIDEBAR_PROJECT_NAME_MARKERS = [
   `sidebarProjectRow:"${PROJECT_ROW_ATTRIBUTE}"`,
   "sidebarProjectRow:`[${",
   "sidebarProjectRow:({collapsed:",
   "sidebarProjectLabel:",
-  '"data-marquee-text":!0',
 ];
+const PROJECT_NAME_LABEL_MARKERS = ['"data-marquee-text":!0'];
 
 function warn(message) {
   console.warn(`WARN: ${message} - skipping ui-tweaks sidebar project name patch`);
@@ -132,6 +133,7 @@ const descriptors = [
 module.exports = {
   DEFAULT_PROJECT_NAME_STYLE,
   PROJECT_ROW_ATTRIBUTE,
+  PROJECT_NAME_LABEL_MARKERS,
   SIDEBAR_PROJECT_NAME_MARKERS,
   PROJECT_NAME_SELECTOR,
   RUNTIME_MARKER,
