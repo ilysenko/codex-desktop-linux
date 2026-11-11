@@ -89,7 +89,7 @@ function applyUi(source) {
       `\\{leftIconAsset:${IDENT}(?:\\.${IDENT})?,keyboardShortcut:${IDENT},onClick:${IDENT},children:\\1\\}\\)`, "g"));
   const intl = unique(source, new RegExp(`(${IDENT})\\.formatMessage\\(\\{id:"codex\\.profileDropdown\\.copyUserIdForEmail"`, "g"));
   const regular = settings == null ? null : unique(source, new RegExp(
-    `children:\\[(${IDENT}),(${IDENT}),${settings[2].replace(/\$/g, "\\$")}\\]`, "g"));
+    `children:\\[(${IDENT}),(${IDENT}),null,${settings[2].replace(/\$/g, "\\$")}\\]`, "g"));
   if (!dispatch || !jsx || !regular || !settings || !intl) {
     console.warn("WARN: Account switcher profile-menu contract drifted - skipping patch");
     return source;
@@ -123,7 +123,7 @@ function applyUi(source) {
     { index: factory.bodyStart + (source.startsWith('"use strict";', factory.bodyStart) ? 13 : 0), old: "", replacement: helpers },
     { index: jsx.index, old: jsx[0], replacement: jsx[0].replace(`additionalItems:${additional},`,
       `additionalItems:codexLinuxAccountSwitcherItems(${additional},${close},${intl[1]}),`) },
-    { index: regular.index, old: regular[0], replacement: `children:[${regular[1]},${regular[2]},${settings[2]},${row}]` },
+    { index: regular.index, old: regular[0], replacement: `children:[${regular[1]},${regular[2]},null,${settings[2]},${row}]` },
   ].sort((a, b) => b.index - a.index);
   for (const edit of edits) source = source.slice(0, edit.index) + edit.replacement + source.slice(edit.index + edit.old.length);
   return source;

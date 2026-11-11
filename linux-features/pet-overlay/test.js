@@ -1389,7 +1389,7 @@ test("native KWin canvas uses logical dimensions of the smallest connected displ
 for (const origin of [{ x: -400, y: -200 }, { x: 400, y: 200 }])
   test(`KWin hover and cursor consumers share compositor geometry: ${JSON.stringify(origin)}`, () => {
     let cursor, tick;
-    const messages = [], input = [];
+    const messages = [];
     const { controller, context } = controllerFromPatchedSource(applyPatchTwice(currentAvatarOverlayBundleFixture()), {
       ozonePlatform: "wayland", process: { env: { XDG_CURRENT_DESKTOP: "KDE" } },
       screen: { getCursorScreenPoint: () => cursor },
@@ -1399,7 +1399,7 @@ for (const origin of [{ x: -400, y: -200 }, { x: 400, y: 200 }])
     const bounds = { ...origin, width: 1920, height: 1200 };
     const window = { isDestroyed: () => false, isVisible: () => true,
       getContentBounds: () => ({ ...bounds, x: 0, y: 0 }),
-      webContents: { id: 1, sendInputEvent: event => input.push(event) } };
+      webContents: { id: 1 } };
     controller.window = window;
     controller.rendererReady = true;
     controller.codexPetOverlayKWinPosition = { window, bounds };
@@ -1424,9 +1424,6 @@ for (const origin of [{ x: -400, y: -200 }, { x: 400, y: 200 }])
     assert.equal(controller.isOverlayWindowPointerDragActive(), true);
     controller.codexPetOverlayKWinDragState = null;
     localCursor(956, 710);
-    assert.equal(controller.sendCursorPointToAvatarOverlay(window, cursor, false), true);
-    assert.deepEqual(JSON.parse(JSON.stringify(input.at(-1))),
-      { type: "mouseMove", x: 956, y: 710, movementX: 0, movementY: 0 });
     controller.computerUseCursorPoint = cursor;
     controller.sendComputerUseCursorLocationToRenderer(window);
     assert.deepEqual(JSON.parse(JSON.stringify(messages.at(-1).point)), { x: 956, y: 710 });
@@ -1436,7 +1433,6 @@ for (const origin of [{ x: -400, y: -200 }, { x: 400, y: 200 }])
     assert.equal(controller.isOverlayWindowPointerDragActive(), true);
     localCursor(-20, -20);
     assert.equal(controller.isOverlayWindowPointerDragActive(), false);
-    assert.equal(controller.sendCursorPointToAvatarOverlay(window, cursor, false), false);
     controller.isRemoteHostedPIPEnabled = () => true;
     controller.remoteHostedPIPContentHostMotionTarget = { x: origin.x + 900, y: origin.y + 600, width: 112, height: 87 };
     controller.publishRemoteHostedPIPContentHost();
@@ -1484,7 +1480,7 @@ test("a recovered KWin bridge keeps the grab point after a local fallback move",
   } finally { controller.unregisterNativeWindowDragTarget("hidden"); }
 });
 
-for (const name of ["updateCssPetControlsProximityTracking", "sendCursorPointToAvatarOverlay",
+for (const name of ["updateCssPetControlsProximityTracking",
   "sendComputerUseCursorLocationToRenderer", "isOverlayWindowPointerDragActive",
   "publishRemoteHostedPIPContentHost", "snapQuickChatToPosition"])
   test(`coordinate consumer hooks fail closed when ${name} drifts`, () => {

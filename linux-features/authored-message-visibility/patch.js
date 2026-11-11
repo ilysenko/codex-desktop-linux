@@ -10,9 +10,9 @@ const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/m
 const identifier = String.raw`[A-Za-z_$][\w$]*`;
 const call = String.raw`(?:\(0,${identifier}\.${identifier}\)|${identifier})`;
 const classifierHead = new RegExp(
-  String.raw`function(?: ${identifier})?\(\{unit:(?<unit>${identifier}),hasFollowingFinalAnswer:(?<following>${identifier}),` +
+  String.raw`function(?: ${identifier})?\((?<unit>${identifier}),(?<following>${identifier}),\{` +
     String.raw`keepMcpAppEntriesPersistent:(?<keep>${identifier}),mcpServerStatuses:(?<statuses>${identifier}),` +
-    String.raw`plainAsyncMessageIds:(?<plain>${identifier}),renderMcpApps:(?<render>${identifier})\}\)\{` +
+    String.raw`plainAsyncMessageIds:(?<plain>${identifier})\}\)\{` +
     String.raw`if\("standalone"!==\k<unit>\.kind\)return!1;let (?<item>${identifier})=\k<unit>\.item\.item;return`,
   "g",
 );
@@ -23,13 +23,13 @@ function classifierShape(source, match) {
   const end = findMatchingBrace(source, open);
   if (end < 0) return null;
   const body = source.slice(match.index, end + 1);
-  const { item, following, keep, plain, render, statuses } = match.groups;
+  const { item, following, keep, plain, statuses } = match.groups;
   const i = escapeRegExp(item);
   // Upstream-owned exceptions that must survive unchanged in both states.
   const tools = [
     `"user-input-response"===${item}.type?!${item}.completed:`,
     `"dynamic-tool-call"===${item}.type&&`,
-    `${keep}&&${render}&&"mcp-tool-call"===${item}.type&&`,
+    `${keep}&&"mcp-tool-call"===${item}.type&&`,
     `mcpServerStatuses:${statuses}}))`,
   ];
   const assistant = new RegExp(

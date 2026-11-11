@@ -70,40 +70,44 @@ function replyContract(source) {
   const fallbacks = [...source.matchAll(new RegExp(
     `errorFallback:(${IDENT})\\?null:\\(0,(${IDENT})\\.jsx\\)\\((${IDENT}(?:\\.${IDENT})?),\\{([^{}]{0,200})\\}\\),diagnostics:`, "g",
   ))];
-  const owners = [...source.matchAll(new RegExp(
-    `function ${IDENT}\\(\\{(?:${IDENT}:${IDENT},)*assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},`, "g",
-  ))];
-  if (fallbacks.length !== 1 || owners.length !== 1) return null;
+  if (fallbacks.length !== 1) return null;
   const [fallback] = fallbacks;
-  const [owner] = owners;
-  const module = moduleAt(modules, owner.index);
+  const module = moduleAt(modules, fallback.index);
   const requireName = module?.params[2];
-  if (requireName == null || moduleAt(modules, fallback.index) !== module) return null;
-  // The failure branch must belong to the reply renderer itself.
-  const ownerBodyStart = source.indexOf("{", owner.index + owner[0].length);
-  const ownerEnd = findMatchingBrace(source, ownerBodyStart);
-  if (ownerEnd < 0 || fallback.index < ownerBodyStart || fallback.index > ownerEnd) return null;
-  const ownerSource = source.slice(owner.index, ownerEnd);
-  if (!RESPONSE_NEEDLES.every((needle) => ownerSource.includes(needle))) return null;
+  if (requireName == null) return null;
+  // React Compiler now receives one props object and destructures the reply
+  // contract inside the component. Select the unique enclosing function by
+  // that semantic destructure, never by its minified name.
+  const owners = [];
+  const declarations = source.slice(module.bodyStart, fallback.index).matchAll(new RegExp(
+    `function ${IDENT}\\((?<props>${IDENT})\\)\\{`, "g",
+  ));
+  for (const declaration of declarations) {
+    const start = module.bodyStart + declaration.index;
+    const bodyStart = start + declaration[0].length - 1;
+    const end = findMatchingBrace(source, bodyStart);
+    if (end < fallback.index || end >= module.end) continue;
+    const ownerSource = source.slice(start, end + 1);
+    const props = escapeRegExp(declaration.groups.props);
+    const destructure = ownerSource.match(new RegExp(
+      `\\{experiment:${IDENT},assistantMessageId:${IDENT},reference:(${IDENT}),source:${IDENT},` +
+        `onAutoSafeUrls:${IDENT},dilComponents:${IDENT},loadPublicComponents:${IDENT},surface:${IDENT}\\}=${props}`,
+    ));
+    if (destructure != null && RESPONSE_NEEDLES.every((needle) => ownerSource.includes(needle))) {
+      owners.push({ reference: destructure[1] });
+    }
+  }
+  if (owners.length !== 1) return null;
   const [, preparing, jsx, failure, failureProps] = fallback;
-  return { module, requireName, fallback, preparing, jsx, failure, failureProps, reference: owner[1] };
+  return { module, requireName, fallback, preparing, jsx, failure, failureProps, reference: owners[0].reference };
 }
 
-// The current reply chunk also requires the native Markdown module from a
-// sibling renderer (`N=require("id")` … `N.ChatGptMarkdown`), which proves that
-// the module is loaded with this chunk.
-function chunkRequiresMarkdownModule(source, markdownModule, markdownChunk) {
-  const modules = chunkModules(source) ?? [];
-  return modules.some((module) => {
-    const requireName = module.params[2];
-    if (requireName == null) return false;
-    const body = source.slice(module.start, module.end);
-    const binding = body.match(new RegExp(
-      `(?<![\\w$.])(${IDENT})=${escapeRegExp(requireName)}\\("${escapeRegExp(markdownModule)}"\\)`,
-    ));
-    return binding != null && body.includes(`${binding[1]}.ChatGptMarkdown`);
-  }) || (Number.isSafeInteger(markdownChunk) &&
-    new RegExp(`${IDENT}\\.e\\(${markdownChunk}\\)`).test(source));
+// The current reply chunk reaches the native Markdown factory through the
+// uniquely discovered async exporter chunk. A synchronous in-chunk require is
+// an obsolete upstream layout and must not satisfy this contract.
+function chunkLoadsMarkdownAsync(source, markdownChunk) {
+  return Number.isSafeInteger(markdownChunk) &&
+    new RegExp(`(?<![\\w$.])${IDENT}\\.e\\(${markdownChunk}\\)`).test(source);
 }
 
 function applyDilMarkdownFallback(source, markdownModule, markdownChunk) {
@@ -111,15 +115,17 @@ function applyDilMarkdownFallback(source, markdownModule, markdownChunk) {
   const markerCount = source.split(MARKER).length - 1;
   if (markerCount > 0) {
     const patchedFallbacks = source.split("jsx)(codexLinuxDilMarkdownFallback,{reference:").length - 1;
-    if (markerCount === 1 && patchedFallbacks === 1 && source.includes(`("${markdownModule}").ChatGptMarkdown`)) {
+    if (markerCount === 1 && patchedFallbacks === 1 &&
+        source.includes(`("${markdownModule}").ChatGptMarkdown`) &&
+        chunkLoadsMarkdownAsync(source, markdownChunk)) {
       return source;
     }
     throw new Error("Incomplete ChatGPT DIL Markdown fallback patch");
   }
   const contract = replyContract(source);
   if (contract == null) throw new Error("ChatGPT interactive reply fallback contract changed");
-  if (!chunkRequiresMarkdownModule(source, markdownModule, markdownChunk)) {
-    throw new Error("Native ChatGPT Markdown module is not loaded with the interactive reply chunk");
+  if (!chunkLoadsMarkdownAsync(source, markdownChunk)) {
+    throw new Error("Native ChatGPT Markdown async chunk is not loaded with the interactive reply chunk");
   }
   const { module, requireName, fallback, preparing, jsx, failure, failureProps, reference } = contract;
   const replacement = `errorFallback:${preparing}?null:(0,${jsx}.jsx)(codexLinuxDilMarkdownFallback,` +
@@ -172,14 +178,13 @@ function patchDilMarkdownFallback(extractedDir) {
   })).filter(({ source }) => source.includes(MARKER) || replyContract(source) != null);
   const markdown = findMarkdownModule(extractedDir);
   const markdownChunks = markdown.length === 1 ? findMarkdownChunk(extractedDir, markdown[0]) : [];
-  if (responses.length === 0 || markdown.length !== 1) {
-    throw new Error(`Expected interactive reply modules and one native Markdown module; found ${responses.length} and ${markdown.length}`);
+  if (responses.length === 0 || markdown.length !== 1 || markdownChunks.length !== 1) {
+    throw new Error(
+      `Expected interactive reply modules, one native Markdown module, and one Markdown async chunk; ` +
+      `found ${responses.length}, ${markdown.length}, and ${markdownChunks.length}`,
+    );
   }
-  // Older reply chunks synchronously require the Markdown factory, while the
-  // current bundle reaches it through one uniquely identified async chunk.
-  // Duplicate exporter chunks are harmless for the synchronous contract but
-  // must not be guessed for the async one.
-  const markdownChunk = markdownChunks.length === 1 ? markdownChunks[0] : undefined;
+  const markdownChunk = markdownChunks[0];
   // Validate every copy of the reply module before writing any of them.
   const outputs = responses.map(({ file, source }) => ({ file, source, output: applyDilMarkdownFallback(source, markdown[0], markdownChunk) }));
   const changed = outputs.filter(({ source, output }) => output !== source);

@@ -7,7 +7,7 @@ const WAYLAND_WINDOW = "process.platform===`linux`&&require(`electron`).app.comm
 const UPSTREAM_NATIVE_DRAW_CONSTRAINT = 'constrainNativeDrawWindowToDisplay:"win32"===process.platform';
 const NATIVE_DRAW_CONSTRAINT = `${UPSTREAM_NATIVE_DRAW_CONSTRAINT}||${WAYLAND_WINDOW}&&!this.codexPetOverlayIsNativeKWin()`;
 const KWIN_COORDINATE_CONSUMERS = [
-  "updateCssPetControlsProximityTracking", "sendCursorPointToAvatarOverlay",
+  "updateCssPetControlsProximityTracking",
   "sendComputerUseCursorLocationToRenderer", "isOverlayWindowPointerDragActive",
   "publishRemoteHostedPIPContentHost", "snapQuickChatToPosition",
 ];
