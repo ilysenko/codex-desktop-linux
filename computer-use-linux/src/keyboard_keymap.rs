@@ -316,24 +316,89 @@ impl Drop for Keymap {
     }
 }
 
+/// The preflight refused the text because a configured layout group cannot
+/// type one of its characters. No key was sent. Callers can tell this refusal
+/// from a keymap that could not be read with `downcast_ref`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MissingLayoutKeysym {
+    pub(crate) ch: char,
+    /// One-based layout group number.
+    pub(crate) group: usize,
+    pub(crate) reason: MissingKeysymReason,
+}
+
+/// Why a layout group cannot type a character.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MissingKeysymReason {
+    /// No key in the group produces it.
+    Absent,
+    /// A key produces it only at a shift level Mutter cannot synthesize.
+    UnreachableLevel,
+}
+
+impl MissingLayoutKeysym {
+    /// "keyboard layout group 2 lacks U+0068", or the unreachable-level
+    /// wording.
+    pub(crate) fn summary(&self) -> String {
+        match self.reason {
+            MissingKeysymReason::Absent => format!(
+                "keyboard layout group {} lacks U+{:04X}",
+                self.group, self.ch as u32
+            ),
+            MissingKeysymReason::UnreachableLevel => format!(
+                "keyboard layout group {} has U+{:04X} only at a shift level the portal cannot type",
+                self.group, self.ch as u32
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for MissingLayoutKeysym {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GNOME portal cannot verify U+{:04X} in keyboard layout group {}: the {}. A background client cannot verify the active group, so every group must support the complete text. No text was sent; use set_value on an editable field.", self.ch as u32, self.group, match self.reason {
+            MissingKeysymReason::Absent => "group has no key for it",
+            MissingKeysymReason::UnreachableLevel => "group has it only at a shift level the portal cannot type",
+        })
+    }
+}
+
+impl std::error::Error for MissingLayoutKeysym {}
+
 fn validate_groups(text: &str, keysyms: &[i32], groups: &[HashMap<u32, u32>]) -> Result<()> {
     if groups.is_empty() || text.chars().count() != keysyms.len() {
         bail!("cannot verify the complete text against the keyboard keymap");
     }
     for (ch, &keysym) in text.chars().zip(keysyms) {
         for (index, group) in groups.iter().enumerate() {
-            let supported = match group.get(&(keysym as u32)) {
-                Some(0) => true,
-                Some(1) => group.get(&xkeysym::key::Shift_L) == Some(&0),
-                Some(2) => group.get(&xkeysym::key::ISO_Level3_Shift) == Some(&0),
-                _ => false,
+            let reason = match group.get(&(keysym as u32)) {
+                None => Some(MissingKeysymReason::Absent),
+                Some(0) => None,
+                Some(1) if group.get(&xkeysym::key::Shift_L) == Some(&0) => None,
+                Some(2) if group.get(&xkeysym::key::ISO_Level3_Shift) == Some(&0) => None,
+                Some(_) => Some(MissingKeysymReason::UnreachableLevel),
             };
-            if !supported {
-                bail!("GNOME portal cannot verify U+{:04X} in keyboard layout group {}. A background client cannot verify the active group, so every group must support the complete text. No text was sent; use set_value on an editable field.", ch as u32, index + 1);
+            if let Some(reason) = reason {
+                return Err(MissingLayoutKeysym {
+                    ch,
+                    group: index + 1,
+                    reason,
+                }
+                .into());
             }
         }
     }
     Ok(())
+}
+
+/// The preflight against a keymap fixture instead of the live Wayland one.
+#[cfg(test)]
+pub(crate) fn validate_text_with_keymap(keymap: &[u8], text: &str) -> Result<()> {
+    let mut bytes = keymap.to_vec();
+    bytes.push(0);
+    let map = Keymap::parse(bytes)?;
+    let groups = map.first_levels(Instant::now() + READ_TIMEOUT)?;
+    let keysyms = crate::remote_desktop::keysyms_for_text(text)?;
+    validate_groups(text, &keysyms, &groups)
 }
 
 #[cfg(test)]
@@ -386,9 +451,33 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("U+005E"));
         assert!(error.to_string().contains("group 2"));
+        assert_eq!(
+            error.downcast_ref::<MissingLayoutKeysym>(),
+            Some(&MissingLayoutKeysym {
+                ch: '^',
+                group: 2,
+                reason: MissingKeysymReason::Absent,
+            })
+        );
+        assert!(error.to_string().contains("has no key for it"), "{error}");
         let unsupported_level = HashMap::from([(xkeysym::key::a, 3)]);
-        assert!(validate_groups("a", &[xkeysym::key::a as i32], &[unsupported_level]).is_err());
         let missing_modifier = HashMap::from([(xkeysym::key::a, 1)]);
-        assert!(validate_groups("a", &[xkeysym::key::a as i32], &[missing_modifier]).is_err());
+        for group in [unsupported_level, missing_modifier] {
+            let error = validate_groups("a", &[xkeysym::key::a as i32], &[group]).unwrap_err();
+            let missing = *error.downcast_ref::<MissingLayoutKeysym>().unwrap();
+            assert_eq!(missing.reason, MissingKeysymReason::UnreachableLevel);
+            assert!(
+                error.to_string().contains("only at a shift level"),
+                "{error}"
+            );
+            assert!(missing.summary().contains("only at a shift level"));
+            assert!(!missing.summary().contains("lacks"));
+        }
+        // Only a missing keysym is a layout refusal. A keymap the preflight
+        // cannot check must not look like one.
+        assert!(validate_groups("a", &[xkeysym::key::a as i32], &[])
+            .unwrap_err()
+            .downcast_ref::<MissingLayoutKeysym>()
+            .is_none());
     }
 }

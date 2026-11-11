@@ -4,7 +4,7 @@ use crate::atspi_tree::{
     perform_action as invoke_accessibility_action, perform_named_action, probe_focused_element,
     set_element_value, snapshot_accessibility_tree, AccessibilityAction, AccessibilityNode,
     AccessibleAppSummary, Bounds, EditableTextSetOutcome, FocusProbe, FocusedElementSummary,
-    ValueSetInvocation,
+    FocusedTextInsert, ValueSetInvocation,
 };
 use crate::diagnostics::{
     doctor_report, setup_accessibility_report, DoctorReport, ReadinessReport, SetupReport,
@@ -321,6 +321,9 @@ pub struct ComputerUseLinux {
     accessibility_check: AccessibilityCheck,
     /// Set for HTTP: clients share the cached tree, so element calls must name it.
     require_snapshot_ids: bool,
+    /// Set for HTTP: a remote client gets no file writes on the host, so
+    /// screenshot_file_path is refused.
+    http_transport: bool,
 }
 
 /// The monitor layout of the cached capture. `generation` counts captures,
@@ -689,7 +692,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "get_app_state",
         output_schema = rmcp::handler::server::tool::schema_for_output::<GetAppStateOutput>(),
-        description = "Get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A window-targeted screenshot needs that window visible and already focused (outside Hyprland background mode); otherwise screenshot_error is set and the tree still returns, so use the screenshot tool to raise and capture it. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. The result's snapshot_id names the tree: element_index and selector actions that pass it are refused once a later tree replaced it. Screenshot results always include coordinate_width, coordinate_height, scale, and format, plus quality for jpeg; callers can request jpeg/quality for compression before resizing.",
+        description = "Get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A window-targeted screenshot needs that window visible and already focused (outside Hyprland background mode); otherwise screenshot_error is set and the tree still returns, so use the screenshot tool to raise and capture it. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. The result's snapshot_id names the tree: element_index and selector actions that pass it are refused once a later tree replaced it. Screenshot results always include coordinate_width, coordinate_height, scale, and format, plus quality for jpeg; callers can request jpeg/quality for compression before resizing. Pass screenshot_file_path (an absolute path to a new file, stdio only; an existing path is refused) to save the screenshot there instead of returning image content; screenshot.file_path then names it.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -750,7 +753,21 @@ impl ComputerUseLinux {
             .await;
         let mut screenshot_captured = None;
         let mut capture_note = None;
-        let (screenshot, screenshot_error) = if include_screenshot {
+        // A path that cannot be written is reported without a capture.
+        let file_refusal = params
+            .screenshot_file_path
+            .as_deref()
+            .filter(|_| include_screenshot)
+            .and_then(|path| {
+                crate::screenshot_file::validate_screenshot_file_path(
+                    path,
+                    params.format.unwrap_or(ScreenshotOutputFormat::Png),
+                    self.http_transport,
+                )
+                .err()
+            })
+            .map(|error| format!("{error:#}"));
+        let (screenshot, screenshot_error) = if include_screenshot && file_refusal.is_none() {
             let result: Result<ScreenshotCapture> = async {
                 let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
                 if let Some(window) = window_context.as_ref() {
@@ -798,6 +815,23 @@ impl ComputerUseLinux {
         } else {
             (None, None)
         };
+        // A failed file write is reported like a failed capture, but it says
+        // nothing about the desktop's screenshot readiness.
+        let screenshot_capture_failed = screenshot_error.is_some();
+        let mut screenshot_file = None;
+        let (screenshot, screenshot_error) =
+            match (screenshot, params.screenshot_file_path.as_deref()) {
+                (Some(capture), Some(path)) => {
+                    match self.save_screenshot_file(&capture, path).await {
+                        Ok(saved) => {
+                            screenshot_file = Some(saved);
+                            (Some(capture), None)
+                        }
+                        Err(error) => (None, Some(format!("{error:#}"))),
+                    }
+                }
+                (screenshot, _) => (screenshot, screenshot_error.or(file_refusal)),
+            };
         let mut tree_scoped = false;
         let mut tree_root_pid = None;
         let mut accessibility_tree_truncated = false;
@@ -882,7 +916,7 @@ impl ComputerUseLinux {
                 )
             };
         let observed = AppStateObservation {
-            screenshot_failed: screenshot_error.is_some(),
+            screenshot_failed: screenshot_capture_failed,
             window: match (&window_context, &window_error) {
                 (_, Some(_)) => WindowLookup::Failed,
                 (Some(_), None) => WindowLookup::Resolved,
@@ -976,6 +1010,9 @@ impl ComputerUseLinux {
             message.push(' ');
             message.push_str(&note);
         }
+        if let Some(path) = &screenshot_file {
+            message.push_str(&format!(" The screenshot was saved to {path}."));
+        }
         if let Some(warning) = unscoped_accessibility_tree_warning(
             tree_scoped,
             accessibility_error.is_none(),
@@ -1020,7 +1057,10 @@ impl ComputerUseLinux {
             window_error,
             window_permissions_hint,
             backend: "linux-atspi".to_string(),
-            screenshot: screenshot.as_ref().map(ScreenshotSummary::from),
+            screenshot: screenshot.as_ref().map(|capture| ScreenshotSummary {
+                file_path: screenshot_file.clone(),
+                ..ScreenshotSummary::from(capture)
+            }),
             screenshot_error,
             snapshot_id,
             accessibility_tree: TreeNodes::new(Vec::new(), detail),
@@ -1047,12 +1087,13 @@ impl ComputerUseLinux {
             output.message.push(' ');
             output.message.push_str(&note);
         }
-        app_state_result(output, screenshot)
+        // A saved image is not returned inline.
+        app_state_result(output, screenshot.filter(|_| screenshot_file.is_none()))
     }
 
     #[tool(
         name = "screenshot",
-        description = "Capture the screen and return it as a viewable, size-bounded image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped before any resize; outside Hyprland background mode, a target without known bounds is refused, so pass full_screen=true there. Returns the image plus a JSON caption with returned and coordinate dimensions, scale, format, quality, source, cropped_to_window, and window_title. The crop origin is not reported; use relative=true on click or scroll for window-relative input. Callers can request jpeg/quality for compression before resizing.",
+        description = "Capture the screen and return it as a viewable, size-bounded image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped before any resize; outside Hyprland background mode, a target without known bounds is refused, so pass full_screen=true there. Returns the image plus a JSON caption with returned and coordinate dimensions, scale, format, quality, source, cropped_to_window, and window_title. The crop origin is not reported; use relative=true on click or scroll for window-relative input. Callers can request jpeg/quality for compression before resizing. Pass screenshot_file_path (an absolute path to a new file, stdio only; an existing path is refused) to save the image there instead: the result is then only the caption, with file_path.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1117,13 +1158,42 @@ impl ComputerUseLinux {
         if let Some(note) = note {
             caption["hidden_workspace_note"] = serde_json::json!(note);
         }
-        Some(Ok(CallToolResult::success(vec![
+        Some(
+            self.screenshot_tool_result(capture, caption, params.screenshot_file_path.as_deref())
+                .await,
+        )
+    }
+
+    /// The screenshot tool's result: the image and its JSON caption, or with
+    /// screenshot_file_path only the caption, naming the saved file.
+    async fn screenshot_tool_result(
+        &self,
+        capture: ScreenshotCapture,
+        mut caption: serde_json::Value,
+        file_path: Option<&str>,
+    ) -> Result<CallToolResult> {
+        if let Some(path) = file_path {
+            caption["file_path"] =
+                serde_json::json!(self.save_screenshot_file(&capture, path).await?);
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                caption.to_string(),
+            )]));
+        }
+        Ok(CallToolResult::success(vec![
             ContentBlock::image(data_url_payload(&capture.data_url), capture.mime_type),
             ContentBlock::text(caption.to_string()),
-        ])))
+        ]))
     }
 
     async fn capture_screenshot(&self, params: ScreenshotParams) -> Result<CallToolResult> {
+        // Refuse a bad path before anything is raised or captured.
+        if let Some(path) = params.screenshot_file_path.as_deref() {
+            crate::screenshot_file::validate_screenshot_file_path(
+                path,
+                params.format.unwrap_or(ScreenshotOutputFormat::Png),
+                self.http_transport,
+            )?;
+        }
         let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
         let target = params.window_target();
         if let (Some(target), false) = (target.as_ref(), params.full_screen.unwrap_or(false)) {
@@ -1216,10 +1286,8 @@ impl ComputerUseLinux {
             caption["window_off_screen"] = serde_json::json!(true);
             caption["off_screen_note"] = serde_json::json!(note);
         }
-        Ok(CallToolResult::success(vec![
-            ContentBlock::image(data_url_payload(&capture.data_url), capture.mime_type),
-            ContentBlock::text(caption.to_string()),
-        ]))
+        self.screenshot_tool_result(capture, caption, params.screenshot_file_path.as_deref())
+            .await
     }
 
     /// Lazily create the uinput absolute pointer, sizing its ABS range to the
@@ -3154,7 +3222,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "type_text",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector. Success confirms dispatch, not field-content verification; re-observe the target before retrying. X11 xdotool can silently substitute symbols under non-US or changing XKB layouts; inspect the text before pressing Enter or submitting it. The wtype backend rejects NUL and text over 131071 UTF-8 bytes before focus or indicators. On Hyprland, confirmed password fields are rejected, and ambiguous fields and terminals use private stdin for at most 100 Unicode characters per call. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector. Keyboard success confirms dispatch, not field-content verification; re-observe the target before retrying. On GNOME, when a configured keyboard layout group cannot type a character of the text, the text goes into the focused editable field of the verified target window through AT-SPI EditableText instead: inserted at the caret, replacing a selection, and reported as ok only when the field reads it back with the rest unchanged. Password fields, text with a newline, tab or other control character, and focus outside an editable field of that active window keep the refusal. X11 xdotool can silently substitute symbols under non-US or changing XKB layouts; inspect the text before pressing Enter or submitting it. The wtype backend rejects NUL and text over 131071 UTF-8 bytes before focus or indicators. On Hyprland, confirmed password fields are rejected, and ambiguous fields and terminals use private stdin for at most 100 Unicode characters per call. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -3169,7 +3237,7 @@ impl ComputerUseLinux {
         let capture = params.capture.clone();
         let target = params.window_target();
         let Json(mut output) = self.dispatch_type_text(params).await;
-        if output.ok {
+        if output.ok && !output.message.starts_with(TYPE_TEXT_ATSPI_ROUTE) {
             output.message.push_str(
                 " Field contents were not verified; re-observe the target before retrying.",
             );
@@ -3183,6 +3251,73 @@ impl ComputerUseLinux {
             PostActionScope::default(),
         )
         .await
+    }
+
+    /// GNOME's portal route refused the text because a layout group lacks a
+    /// character. Insert it into the target's focused field through AT-SPI
+    /// EditableText instead, and succeed only when the field reads it back.
+    /// Every other case keeps the portal refusal.
+    async fn type_text_through_atspi(
+        &self,
+        text: &str,
+        portal_target: &WindowTarget,
+        missing: crate::keyboard_keymap::MissingLayoutKeysym,
+        refusal: String,
+        received: Option<serde_json::Value>,
+        input_guard: InputOperationGuard,
+    ) -> ActionOutput {
+        if let Some(key) = key_press_character(text) {
+            return action_result(
+                "type_text",
+                Err(type_text_control_character_refusal(&refusal, key)),
+                received,
+            );
+        }
+        let focus = match self.focus_target_for_input(portal_target).await {
+            Ok(focus) => focus,
+            Err(message) => {
+                return action_result(
+                    "type_text",
+                    Err(format!("{refusal} No AT-SPI text fallback: {message}")),
+                    received,
+                )
+            }
+        };
+        // The window the compositor verified as focused: the field must be in it.
+        let window = focus.as_ref().map(|focus| {
+            focus
+                .focused_window
+                .as_ref()
+                .unwrap_or(&focus.requested_window)
+        });
+        let title = window.and_then(|window| window.title.clone());
+        let Some(pid) = window.and_then(|window| window.pid) else {
+            return action_result_with_focus(
+                "type_text",
+                Err(format!(
+                    "{refusal} No AT-SPI text fallback: the target window has no process id to find its focused field."
+                )),
+                received,
+                focus,
+            );
+        };
+        // A selection replace is DeleteText then InsertText. Finish both even
+        // if this call is cancelled, and hold the input lock until they end.
+        let owned_text = text.to_string();
+        let (_guard, insert) = run_cancellation_safe_guarded(input_guard, async move {
+            crate::atspi_tree::insert_text_at_focus(pid, title.as_deref(), &owned_text).await
+        })
+        .await;
+        let insert = insert.unwrap_or_else(|error| {
+            Ok(FocusedTextInsert::EditFailed {
+                reason: error,
+                may_have_changed: true,
+            })
+        });
+        match type_text_atspi_result(&refusal, missing, text, insert) {
+            Ok(message) => successful_action_with_focus("type_text", &message, received, focus),
+            Err(message) => action_result_with_focus("type_text", Err(message), received, focus),
+        }
     }
 
     async fn dispatch_type_text(&self, params: TypeTextParams) -> Json<ActionOutput> {
@@ -3356,6 +3491,7 @@ impl ComputerUseLinux {
         }
         if self.should_prefer_portal_text_backend() {
             let mut focus = focus;
+            let mut layout_refusal = None;
             let result = async {
                 let portal_target = self
                     .portal_keyboard_target(&window_target, focus.as_ref())
@@ -3364,9 +3500,15 @@ impl ComputerUseLinux {
                 let keysyms = keysyms_for_text(&params.text)
                     .map_err(|error| format!("Literal text was not sent: {error:#}"))?;
                 if self.is_gnome_wayland_session() {
-                    crate::keyboard_keymap::validate_gnome_text(&params.text, &keysyms)
-                        .await
-                        .map_err(|error| format!("Literal text was not sent: {error:#}"))?;
+                    if let Err(error) =
+                        crate::keyboard_keymap::validate_gnome_text(&params.text, &keysyms).await
+                    {
+                        let message = format!("Literal text was not sent: {error:#}");
+                        if let Some(missing) = atspi_fallback_trigger(&error) {
+                            layout_refusal = Some((portal_target, missing, message.clone()));
+                        }
+                        return Err(message);
+                    }
                 }
                 let session = self
                     .ensure_portal_keyboard_session()
@@ -3384,6 +3526,19 @@ impl ComputerUseLinux {
                     })
             }
             .await;
+            if let Some((portal_target, missing, refusal)) = layout_refusal {
+                return Json(
+                    self.type_text_through_atspi(
+                        &params.text,
+                        &portal_target,
+                        missing,
+                        refusal,
+                        received,
+                        input_guard,
+                    )
+                    .await,
+                );
+            }
             return Json(match result {
                 Ok(()) => {
                     let notes = self.input_landing_notes(focus.as_ref(), true).await;
@@ -3556,8 +3711,8 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.51",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
+    version = "0.7.52",
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text goes into the target's focused editable field through AT-SPI EditableText and must read back, and otherwise can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes, optional screenshot_file_path (an absolute path to a new file, stdio only, refused over HTTP) to save the screenshot there instead of returning image content, and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result through a keyboard backend confirms dispatch only and leaves field contents unverified; only the GNOME AT-SPI fallback reads the field back. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {
     async fn call_tool(
@@ -3567,8 +3722,25 @@ impl ServerHandler for ComputerUseLinux {
     ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
         // Each HTTP client names itself per request; a shared field would show the last to initialize.
         let agent = crate::indicator::request_agent_name(&context.meta, context.client_info());
+        let router = self.mcp_tool_router();
+        // A bad screenshot_file_path is refused before any capture or input,
+        // so a mutating tool never acts and then drops its observation.
+        let accepts_file = router.get(&request.name).is_some_and(|tool| {
+            tool.input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|properties| properties.contains_key("screenshot_file_path"))
+        });
+        if let Some(refusal) = screenshot_file_refusal(
+            &request.name,
+            request.arguments.as_ref(),
+            accepts_file,
+            self.http_transport,
+        ) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(refusal)]).into());
+        }
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        crate::indicator::with_request_agent(agent, self.mcp_tool_router().call(call)).await
+        crate::indicator::with_request_agent(agent, router.call(call)).await
     }
 }
 
@@ -3866,6 +4038,7 @@ pub(crate) async fn serve_mcp(listen: Option<crate::http_listen::ListenConfig>) 
     tree_spiller.sweep();
     if let Some(config) = listen {
         server.require_snapshot_ids = true;
+        server.http_transport = true;
         let signal = crate::http_listen::serve_http(server, config).await?;
         tree_spiller.remove_current();
         std::process::exit(128 + signal);
@@ -3981,11 +4154,84 @@ struct PostActionCaptureParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1, max = 95))]
     quality: Option<u8>,
+    /// Save the post-action screenshot to this absolute path instead of
+    /// returning it as image content; needs screenshot_after. The parent
+    /// directory must exist, and the extension must match format (.png, or
+    /// .jpg/.jpeg for jpeg). The file must not exist: file output creates a
+    /// new file and never replaces one. Refused over HTTP (mcp --listen). A
+    /// failed write is reported in screenshot_error, and the action's ok stays
+    /// true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    screenshot_file_path: Option<String>,
     /// Include a fresh compacted AT-SPI accessibility tree snapshot after the action (default false). Also refreshes cached element_index values.
     /// It reads at most 1000 nodes and depth 32; when accessibility_tree_truncated
     /// is true, call get_app_state with a higher max_nodes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     include_tree: Option<bool>,
+}
+
+/// The fields of a tool call that decide whether its screenshot_file_path
+/// can be used.
+#[derive(Deserialize)]
+struct ScreenshotFileRequest {
+    #[serde(default)]
+    screenshot_file_path: Option<String>,
+    #[serde(default)]
+    format: Option<ScreenshotOutputFormat>,
+    #[serde(default)]
+    include_screenshot: Option<bool>,
+    #[serde(default)]
+    screenshot_after: Option<ScreenshotAfter>,
+}
+
+/// The refusal for a call whose screenshot_file_path cannot be used: over
+/// HTTP, without a capture to save, or with a path that fails
+/// `validate_screenshot_file_path`. `accepts_file` says whether the tool takes
+/// the parameter at all. Malformed arguments are left to the tool's own
+/// parameter errors.
+fn screenshot_file_refusal(
+    tool: &str,
+    arguments: Option<&rmcp::model::JsonObject>,
+    accepts_file: bool,
+    remote: bool,
+) -> Option<String> {
+    let arguments = arguments?;
+    if !accepts_file
+        || arguments
+            .get("screenshot_file_path")
+            .is_none_or(serde_json::Value::is_null)
+    {
+        return None;
+    }
+    let request: ScreenshotFileRequest =
+        serde_json::from_value(serde_json::Value::Object(arguments.clone())).ok()?;
+    let path = request.screenshot_file_path?;
+    if remote {
+        return Some(format!(
+            "{tool} was not run: {}",
+            crate::screenshot_file::REMOTE_REFUSAL
+        ));
+    }
+    let missing_capture = match tool {
+        "screenshot" => None,
+        "get_app_state" => (!request.include_screenshot.unwrap_or(true))
+            .then_some("screenshot_file_path needs include_screenshot=true"),
+        _ => request
+            .screenshot_after
+            .and_then(ScreenshotAfter::resolve)
+            .is_none()
+            .then_some("screenshot_file_path needs screenshot_after"),
+    };
+    if let Some(reason) = missing_capture {
+        return Some(format!("{tool} was not run: {reason}"));
+    }
+    crate::screenshot_file::validate_screenshot_file_path(
+        &path,
+        request.format.unwrap_or(ScreenshotOutputFormat::Png),
+        remote,
+    )
+    .err()
+    .map(|error| format!("{tool} was not run: {error:#}"))
 }
 
 impl PostActionCaptureParams {
@@ -4007,7 +4253,7 @@ impl PostActionCaptureParams {
 
 #[derive(Debug, Clone, Default, Serialize, JsonSchema)]
 struct PostActionObservation {
-    /// Post-action screenshot metadata when `screenshot_after` was requested; the image itself is the first `image` content block.
+    /// Post-action screenshot metadata when `screenshot_after` was requested; the image itself is the first `image` content block, or the file at `file_path` when `screenshot_file_path` was given.
     #[serde(skip_serializing_if = "Option::is_none")]
     screenshot: Option<ScreenshotSummary>,
     /// Post-action screenshot capture error when a requested `screenshot_after` capture failed.
@@ -4283,6 +4529,14 @@ struct GetAppStateParams {
     #[serde(default)]
     #[schemars(range(min = 1, max = 95))]
     quality: Option<u8>,
+    /// Save the screenshot to this absolute path instead of returning it as
+    /// image content; screenshot.file_path then names it. The parent directory
+    /// must exist, and the extension must match format (.png, or .jpg/.jpeg for
+    /// jpeg). The file must not exist: file output creates a new file and
+    /// never replaces one. Refused over HTTP (mcp --listen). A failed write is
+    /// reported in screenshot_error.
+    #[serde(default)]
+    screenshot_file_path: Option<String>,
     /// Include the full diagnostics report (large) and return tree nodes in the
     /// full encoding, with null and empty fields and action descriptions and
     /// keybindings. Default false: only the compact readiness block, and
@@ -4377,6 +4631,13 @@ struct ScreenshotParams {
     #[serde(default)]
     #[schemars(range(min = 1, max = 95))]
     quality: Option<u8>,
+    /// Save the image to this absolute path instead of returning it as image
+    /// content; the caption's file_path then names it. The parent directory
+    /// must exist, and the extension must match format (.png, or .jpg/.jpeg for
+    /// jpeg). The file must not exist: file output creates a new file and
+    /// never replaces one. Refused over HTTP (mcp --listen).
+    #[serde(default)]
+    screenshot_file_path: Option<String>,
 }
 
 impl ScreenshotParams {
@@ -4416,7 +4677,7 @@ impl ScreenshotParams {
 
 /// Screenshot metadata for `get_app_state` and post-action captures. The image
 /// bytes travel as a separate `image` content block (issue #145), not inside
-/// this JSON.
+/// this JSON, or are saved to `file_path` (issue #446).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct ScreenshotSummary {
     mime_type: String,
@@ -4443,6 +4704,10 @@ struct ScreenshotSummary {
     /// Title of the window when cropped to a window.
     #[serde(skip_serializing_if = "Option::is_none")]
     window_title: Option<String>,
+    /// The file the image was saved to when screenshot_file_path was given;
+    /// no image content block is returned then. bytes is its size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
 }
 
 impl From<&ScreenshotCapture> for ScreenshotSummary {
@@ -4463,6 +4728,7 @@ impl From<&ScreenshotCapture> for ScreenshotSummary {
             quality: capture.quality,
             cropped_to_window: None,
             window_title: None,
+            file_path: None,
         }
     }
 }
@@ -5258,6 +5524,101 @@ struct SetValueToolOutput {
     observation: PostActionObservation,
 }
 
+/// Start of every type_text success message from the AT-SPI route. Those
+/// results were read back, so type_text does not add its unverified note.
+const TYPE_TEXT_ATSPI_ROUTE: &str = "Typed through AT-SPI EditableText";
+/// Start of an AT-SPI route failure after an edit was attempted.
+const TYPE_TEXT_ATSPI_UNVERIFIED: &str = "AT-SPI EditableText insert was not verified";
+
+/// The portal preflight refusal that may take the AT-SPI route: the keymap
+/// was read and a layout group cannot type a character. A keymap that could
+/// not be read or checked keeps its error.
+fn atspi_fallback_trigger(
+    error: &anyhow::Error,
+) -> Option<crate::keyboard_keymap::MissingLayoutKeysym> {
+    error
+        .downcast_ref::<crate::keyboard_keymap::MissingLayoutKeysym>()
+        .copied()
+}
+
+/// The first character that portal typing sends as a key press (Enter, Tab,
+/// BackSpace, Escape, Delete and the like), not as text.
+fn key_press_character(text: &str) -> Option<char> {
+    text.chars().find(|ch| ch.is_control())
+}
+
+fn type_text_control_character_refusal(refusal: &str, key: char) -> String {
+    format!(
+        "{refusal} The AT-SPI text fallback was not used: the text contains U+{:04X}, which typing sends as a key press such as Enter or Tab, and inserting it is not the same. Type the text without it, then send the key with press_key.",
+        key as u32
+    )
+}
+
+/// The type_text result for one AT-SPI insert outcome. `Ok` is a verified
+/// success message.
+fn type_text_atspi_result(
+    refusal: &str,
+    missing: crate::keyboard_keymap::MissingLayoutKeysym,
+    text: &str,
+    insert: Result<FocusedTextInsert>,
+) -> std::result::Result<String, String> {
+    const MAY_HAVE_CHANGED: &str = "The field may have changed; re-observe it before retrying.";
+    let because = format!("because GNOME {}", missing.summary());
+    let route = format!("{TYPE_TEXT_ATSPI_ROUTE} {because}");
+    let unverified = format!("{TYPE_TEXT_ATSPI_UNVERIFIED}: the text was sent {because}");
+    match insert {
+        Ok(FocusedTextInsert::Verified {
+            role,
+            replaced_selection,
+            caret_after_text,
+        }) => {
+            let mut message = format!(
+                "{route}. The focused {role} reads back the text at the insertion point, with the rest of the field unchanged."
+            );
+            if replaced_selection {
+                message.push_str(" The text replaced the selection.");
+            }
+            if !caret_after_text {
+                message.push_str(" The caret could not be moved after the text.");
+            }
+            Ok(message)
+        }
+        Ok(FocusedTextInsert::NotEditable(reason)) => {
+            Err(format!("{refusal} No AT-SPI text fallback: {reason}."))
+        }
+        Ok(FocusedTextInsert::PasswordField) => Err(format!(
+            "{refusal} The focused field is a password field, so the AT-SPI text fallback was not used. set_value can fill it."
+        )),
+        Ok(FocusedTextInsert::Mismatch {
+            expected_count,
+            read_count,
+            read_text,
+            read_truncated,
+        }) => Err(format!(
+            "{unverified}, but the field does not read it back: expected {text:?} at the insertion point, the rest unchanged, and {expected_count} characters in all; read {read_text:?}{} at the insertion point and {read_count} characters. {MAY_HAVE_CHANGED}",
+            if read_truncated { " (first part)" } else { "" }
+        )),
+        Ok(FocusedTextInsert::ReadbackFailed) => Err(format!(
+            "{unverified}, but reading the field back failed. {MAY_HAVE_CHANGED}"
+        )),
+        Ok(FocusedTextInsert::ReadbackTimedOut) => Err(format!(
+            "{unverified}, but reading the field back timed out. {MAY_HAVE_CHANGED}"
+        )),
+        Ok(FocusedTextInsert::EditFailed {
+            reason,
+            may_have_changed,
+        }) => Err(format!(
+            "{TYPE_TEXT_ATSPI_UNVERIFIED}: {reason}. {}",
+            if may_have_changed {
+                MAY_HAVE_CHANGED
+            } else {
+                "No text was changed."
+            }
+        )),
+        Err(error) => Err(format!("{refusal} No AT-SPI text fallback: {error:#}.")),
+    }
+}
+
 fn editable_text_action_result(
     outcome: EditableTextSetOutcome,
     received: Option<serde_json::Value>,
@@ -5717,6 +6078,32 @@ impl ComputerUseLinux {
         Ok(window)
     }
 
+    /// Saves a prepared screenshot to `path` for screenshot_file_path and
+    /// returns the path. The caller then returns no image content for it.
+    async fn save_screenshot_file(
+        &self,
+        capture: &ScreenshotCapture,
+        path: &str,
+    ) -> Result<String> {
+        let target = crate::screenshot_file::validate_screenshot_file_path(
+            path,
+            capture.format,
+            self.http_transport,
+        )?;
+        let bytes = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(data_url_payload(&capture.data_url))
+                .context("failed to decode the screenshot for screenshot_file_path")?
+        };
+        tokio::task::spawn_blocking(move || {
+            crate::screenshot_file::write_screenshot_file(&target, &bytes)
+        })
+        .await
+        .context("screenshot file writer stopped")??;
+        Ok(path.to_string())
+    }
+
     async fn capture_post_action_observation(
         &self,
         capture: &PostActionCaptureParams,
@@ -5766,10 +6153,32 @@ impl ComputerUseLinux {
         let mut screenshot_capture = None;
         let mut notes = Vec::new();
         let mut resolved_window: Option<WindowInfo> = None;
+        // A failed file output is reported like a failed capture, but it says
+        // nothing about the desktop, so it leaves the diagnostics cached.
+        let mut screenshot_capture_failed = false;
 
         if let Some(scope) = screenshot_scope {
             let options = capture.screenshot_options();
-            let result: Result<(ScreenshotCapture, bool, Option<String>, Option<String>)> = async {
+            let mut file_output_failed = false;
+            #[allow(clippy::type_complexity)]
+            let result: Result<(
+                ScreenshotCapture,
+                bool,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            )> = async {
+                // A path that cannot be written is reported without a capture.
+                if let Some(path) = capture.screenshot_file_path.as_deref() {
+                    if let Err(error) = crate::screenshot_file::validate_screenshot_file_path(
+                        path,
+                        options.format.unwrap_or(ScreenshotOutputFormat::Png),
+                        self.http_transport,
+                    ) {
+                        file_output_failed = true;
+                        return Err(error);
+                    }
+                }
                 let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
                 let crop_window = match scope {
                     ScreenshotAfterScope::Screen => None,
@@ -5839,22 +6248,37 @@ impl ComputerUseLinux {
                 })
                 .await
                 .context("post-action screenshot resize failed")?;
-                Ok((prepared, cropped, window_label, off_screen_note))
+                let file_path = match capture.screenshot_file_path.as_deref() {
+                    Some(path) => match self.save_screenshot_file(&prepared, path).await {
+                        Ok(saved) => Some(saved),
+                        Err(error) => {
+                            file_output_failed = true;
+                            return Err(error);
+                        }
+                    },
+                    None => None,
+                };
+                Ok((prepared, cropped, window_label, off_screen_note, file_path))
             }
             .await;
 
             match result {
-                Ok((prepared, cropped, window_title, off_screen_note)) => {
+                Ok((prepared, cropped, window_title, off_screen_note, file_path)) => {
                     let mut summary = ScreenshotSummary::from(&prepared);
                     summary.cropped_to_window = Some(cropped);
                     summary.window_title = window_title;
+                    // A saved image is not returned inline.
+                    if file_path.is_none() {
+                        screenshot_capture = Some(prepared);
+                    }
+                    summary.file_path = file_path;
                     observation.screenshot = Some(summary);
-                    screenshot_capture = Some(prepared);
                     if let Some(note) = off_screen_note {
                         notes.push(note);
                     }
                 }
                 Err(error) => {
+                    screenshot_capture_failed = !file_output_failed;
                     let error = format!("{error:#}");
                     notes.push(format!("Post-action screenshot failed: {error}"));
                     observation.screenshot_error = Some(error);
@@ -6048,7 +6472,7 @@ impl ComputerUseLinux {
             }
         }
 
-        if observation.screenshot_error.is_some()
+        if screenshot_capture_failed
             || observation.accessibility_error.is_some()
             || observation.accessibility_tree_raw_count == Some(0)
         {
@@ -21660,6 +22084,7 @@ mod post_action_capture_tests {
                 "max_width",
                 "max_height",
                 "max_bytes",
+                "screenshot_file_path",
             ] {
                 assert!(
                     properties.contains_key(prop),
@@ -22375,6 +22800,613 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
         assert!(structured.get("accessibility_tree").is_none());
         assert!(structured.get("accessibility_error").is_none());
         assert!(std::fs::read_to_string(&log_path).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod screenshot_file_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn solid_png(width: u32, height: u32) -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(width, height, image::Rgba([32, 128, 192, 255]));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    fn refusal(tool: &str, arguments: serde_json::Value, remote: bool) -> Option<String> {
+        let serde_json::Value::Object(arguments) = arguments else {
+            panic!("arguments must be an object");
+        };
+        screenshot_file_refusal(tool, Some(&arguments), true, remote)
+    }
+
+    #[test]
+    fn file_output_parameters_are_in_every_screenshot_schema() {
+        let server = ComputerUseLinux::default();
+        let router = server.mcp_tool_router();
+        for name in [
+            "screenshot",
+            "get_app_state",
+            "click",
+            "type_text",
+            "press_key",
+            "scroll",
+            "drag",
+            "perform_action",
+            "set_value",
+            "activate_window",
+            "move_window",
+            "resize_window",
+        ] {
+            let tool = router
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} is registered"));
+            assert!(
+                tool.input_schema["properties"]
+                    .as_object()
+                    .unwrap()
+                    .contains_key("screenshot_file_path"),
+                "{name} lacks screenshot_file_path"
+            );
+        }
+    }
+
+    #[test]
+    fn preflight_refuses_unusable_screenshot_file_paths_before_the_tool_runs() {
+        let dir = std::env::temp_dir().join(format!(
+            "cul-shot-preflight-{}-{:016x}",
+            std::process::id(),
+            getrandom::u64().unwrap()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(dir.clone());
+        let png = dir.join("shot.png");
+        let png = png.to_str().unwrap();
+
+        // Usable paths pass, and a call without the parameter is untouched.
+        assert_eq!(refusal("screenshot", serde_json::json!({}), true), None);
+        assert_eq!(
+            refusal(
+                "screenshot",
+                serde_json::json!({"screenshot_file_path": null}),
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            refusal(
+                "screenshot",
+                serde_json::json!({"screenshot_file_path": png}),
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            refusal(
+                "get_app_state",
+                serde_json::json!({"screenshot_file_path": png}),
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            refusal(
+                "click",
+                serde_json::json!({"x": 1, "y": 1, "screenshot_after": "window", "screenshot_file_path": png}),
+                false
+            ),
+            None
+        );
+        // A tool without the parameter ignores it like any unknown argument.
+        let serde_json::Value::Object(arguments) =
+            serde_json::json!({"screenshot_file_path": "relative.png"})
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            screenshot_file_refusal("list_windows", Some(&arguments), false, true),
+            None
+        );
+
+        // Over HTTP every use is refused, even a valid path.
+        for (tool, arguments) in [
+            (
+                "screenshot",
+                serde_json::json!({"screenshot_file_path": png}),
+            ),
+            (
+                "get_app_state",
+                serde_json::json!({"screenshot_file_path": png}),
+            ),
+            (
+                "click",
+                serde_json::json!({"x": 1, "y": 1, "screenshot_after": true, "screenshot_file_path": png}),
+            ),
+        ] {
+            let message = refusal(tool, arguments, true).expect("refused over HTTP");
+            assert!(
+                message.starts_with(&format!("{tool} was not run: "))
+                    && message.contains("refused over HTTP (mcp --listen)"),
+                "{message}"
+            );
+        }
+
+        // Without a capture there is nothing to save.
+        assert!(refusal(
+            "get_app_state",
+            serde_json::json!({"include_screenshot": false, "screenshot_file_path": png}),
+            false
+        )
+        .unwrap()
+        .contains("needs include_screenshot=true"));
+        for screenshot_after in [serde_json::Value::Null, serde_json::json!(false)] {
+            assert!(refusal(
+                "click",
+                serde_json::json!({"x": 1, "y": 1, "screenshot_after": screenshot_after, "screenshot_file_path": png}),
+                false
+            )
+            .unwrap()
+            .contains("needs screenshot_after"));
+        }
+
+        // Bad paths, with the format the call selects.
+        let missing = dir.join("missing").join("shot.png");
+        for (arguments, expected) in [
+            (
+                serde_json::json!({"screenshot_file_path": "shot.png"}),
+                "must be an absolute path",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": missing}),
+                "does not exist",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": dir}),
+                "does not match format png",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": png, "format": "jpeg"}),
+                "does not match format jpeg",
+            ),
+        ] {
+            let message = refusal("screenshot", arguments.clone(), false)
+                .unwrap_or_else(|| panic!("{arguments} must be refused"));
+            assert!(message.contains(expected), "{arguments}: {message}");
+        }
+        // File output only creates: an existing entry is refused before the
+        // tool runs, on read-only and mutating tools alike.
+        let as_dir = dir.join("dir.png");
+        std::fs::create_dir(&as_dir).unwrap();
+        let existing = dir.join("existing.png");
+        std::fs::write(&existing, b"keep").unwrap();
+        for (tool, arguments) in [
+            (
+                "screenshot",
+                serde_json::json!({"screenshot_file_path": as_dir}),
+            ),
+            (
+                "get_app_state",
+                serde_json::json!({"screenshot_file_path": existing}),
+            ),
+            (
+                "click",
+                serde_json::json!({"x": 1, "y": 1, "screenshot_after": true, "screenshot_file_path": existing}),
+            ),
+        ] {
+            let message = refusal(tool, arguments, false).expect("an existing entry is refused");
+            assert!(message.contains("already exists"), "{message}");
+        }
+        assert_eq!(std::fs::read(&existing).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn screenshot_file_output_writes_files_and_returns_no_image_content() {
+        let dir = std::env::temp_dir().join(format!(
+            "cul-shot-file-{}-{:016x}",
+            std::process::id(),
+            getrandom::u64().unwrap()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let locked = self.0.join("locked");
+                let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700));
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(dir.clone());
+
+        let sample_png = dir.join("sample.png");
+        std::fs::write(&sample_png, solid_png(64, 48)).unwrap();
+        let xdotool = dir.join("xdotool");
+        std::fs::write(
+            &xdotool,
+            "#!/bin/sh\nprintf 'xdotool\\n' >> \"$CUL_SHOT_FILE_LOG\"\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&xdotool, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let gnome_screenshot = dir.join("gnome-screenshot");
+        std::fs::write(
+            &gnome_screenshot,
+            r#"#!/bin/sh
+printf 'gnome-screenshot\n' >> "$CUL_SHOT_FILE_LOG"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-f" ] && [ "$#" -ge 2 ]; then
+    /bin/cp "$CUL_SHOT_FILE_PNG" "$2"
+    exit 0
+  fi
+  shift
+done
+exit 1
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&gnome_screenshot, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        let out = dir.join("out");
+        std::fs::create_dir(&out).unwrap();
+
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "server::screenshot_file_tests::screenshot_file_output_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("PATH", &dir)
+            .env("HOME", &dir)
+            .env("XDG_RUNTIME_DIR", &dir)
+            .env("DISPLAY", ":9876")
+            .env("WAYLAND_DISPLAY", "")
+            .env("XDG_SESSION_TYPE", "x11")
+            .env("CU_DISABLE_ABS_POINTER", "1")
+            .env("CODEX_COMPUTER_USE_SCREENSHOT_BACKEND", "gnome-screenshot")
+            .env("CUL_SHOT_FILE_CHILD", "1")
+            .env("CUL_SHOT_FILE_LOG", dir.join("events.log"))
+            .env("CUL_SHOT_FILE_PNG", &sample_png)
+            .env("CUL_SHOT_FILE_OUT", &out)
+            .env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}/no-bus", dir.display()),
+            );
+        for key in [
+            "DESKTOP_SESSION",
+            "HYPRLAND_INSTANCE_SIGNATURE",
+            "XAUTHORITY",
+            "XDG_SESSION_DESKTOP",
+            "XDG_CURRENT_DESKTOP",
+        ] {
+            command.env(key, "screenshot-file-test");
+        }
+        let output = crate::command_runner::output_blocking_with_timeout(
+            &mut command,
+            "screenshot file child",
+            Duration::from_secs(20),
+        )
+        .unwrap();
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("running 1 test"),
+            "screenshot file child must execute its assertions"
+        );
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn caption(result: &CallToolResult) -> serde_json::Value {
+        assert_eq!(result.content.len(), 1, "only the caption: {result:?}");
+        assert!(result.content[0].as_image().is_none());
+        serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+    }
+
+    fn assert_no_image(result: &CallToolResult) {
+        assert!(
+            result
+                .content
+                .iter()
+                .all(|block| block.as_image().is_none()),
+            "no image content: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "isolated environment subprocess; invoked by screenshot_file_output_writes_files_and_returns_no_image_content"]
+    async fn screenshot_file_output_child() {
+        use image::GenericImageView as _;
+        assert_eq!(std::env::var("CUL_SHOT_FILE_CHILD").as_deref(), Ok("1"));
+        let log = std::path::PathBuf::from(std::env::var("CUL_SHOT_FILE_LOG").unwrap());
+        let out = std::path::PathBuf::from(std::env::var("CUL_SHOT_FILE_OUT").unwrap());
+        let events = || std::fs::read_to_string(&log).unwrap_or_default();
+        let clear = || std::fs::write(&log, "").unwrap();
+        let (server, probes) = super::tests::server_with_labelled_diagnostics(|| false, || false);
+        let unprivileged = unsafe { libc::geteuid() } != 0;
+        let locked = out.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        // 1. The screenshot tool saves a png and returns only the caption.
+        let path = out.join("shot.png");
+        let result = server
+            .screenshot(Parameters(
+                serde_json::from_value(serde_json::json!({"screenshot_file_path": path})).unwrap(),
+            ))
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let caption_value = caption(&result);
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(caption_value["file_path"], serde_json::json!(path));
+        assert_eq!(caption_value["bytes"], serde_json::json!(written.len()));
+        assert_eq!(caption_value["format"], serde_json::json!("png"));
+        assert_eq!(caption_value["width"], serde_json::json!(64));
+        assert_eq!(caption_value["height"], serde_json::json!(48));
+        assert_eq!(caption_value["coordinate_width"], serde_json::json!(64));
+        assert_eq!(caption_value["coordinate_height"], serde_json::json!(48));
+        assert_eq!(caption_value["scale"], serde_json::json!(1.0));
+        assert_eq!(
+            image::load_from_memory(&written).unwrap().dimensions(),
+            (64, 48)
+        );
+        assert_eq!(events(), "gnome-screenshot\n");
+        let written_png = written;
+
+        // A jpeg, scaled down.
+        let jpeg = out.join("shot.jpg");
+        let result = server
+            .screenshot(Parameters(
+                serde_json::from_value(serde_json::json!({
+                    "screenshot_file_path": jpeg,
+                    "format": "jpeg",
+                    "scale": 0.5
+                }))
+                .unwrap(),
+            ))
+            .await;
+        let caption_value = caption(&result);
+        let written = std::fs::read(&jpeg).unwrap();
+        assert!(written.starts_with(&[0xff, 0xd8]), "a jpeg file");
+        assert_eq!(caption_value["format"], serde_json::json!("jpeg"));
+        assert_eq!(caption_value["width"], serde_json::json!(32));
+        assert_eq!(caption_value["coordinate_width"], serde_json::json!(64));
+        assert_eq!(caption_value["scale"], serde_json::json!(0.5));
+        assert_eq!(caption_value["bytes"], serde_json::json!(written.len()));
+
+        // 2. Bad paths are refused before any capture.
+        clear();
+        let as_dir = out.join("dir.png");
+        std::fs::create_dir(&as_dir).unwrap();
+        for (arguments, expected) in [
+            (
+                serde_json::json!({"screenshot_file_path": "shot.png"}),
+                "must be an absolute path",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": out.join("missing").join("shot.png")}),
+                "does not exist",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": as_dir}),
+                "already exists",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": out.join("shot.jpeg")}),
+                "does not match format png",
+            ),
+            // File output never replaces a file, so an earlier capture stays.
+            (
+                serde_json::json!({"screenshot_file_path": path}),
+                "already exists",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": format!("{}/", out.join("slash.png").display())}),
+                "must end with the file name",
+            ),
+        ] {
+            let result = server
+                .screenshot(Parameters(
+                    serde_json::from_value(arguments.clone()).unwrap(),
+                ))
+                .await;
+            assert_eq!(result.is_error, Some(true), "{arguments}");
+            assert_no_image(&result);
+            let text = &result.content[0].as_text().unwrap().text;
+            assert!(text.contains(expected), "{arguments}: {text}");
+        }
+        assert_eq!(events(), "", "a refused path captures nothing");
+        assert!(!out.join("missing").exists());
+        assert_eq!(std::fs::read(&path).unwrap(), written_png);
+
+        // 3. Over HTTP the screenshot tool refuses file output.
+        let http = ComputerUseLinux {
+            http_transport: true,
+            ..Default::default()
+        };
+        let remote = out.join("remote.png");
+        let result = http
+            .screenshot(Parameters(
+                serde_json::from_value(serde_json::json!({"screenshot_file_path": remote}))
+                    .unwrap(),
+            ))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert!(result.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("refused over HTTP"));
+        assert!(!remote.exists());
+        assert_eq!(events(), "");
+
+        // A failed write is the call's error, with no inline fallback.
+        if unprivileged {
+            let result = server
+                .screenshot(Parameters(
+                    serde_json::from_value(
+                        serde_json::json!({"screenshot_file_path": locked.join("shot.png")}),
+                    )
+                    .unwrap(),
+                ))
+                .await;
+            assert_eq!(result.is_error, Some(true));
+            assert_no_image(&result);
+            assert!(result.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("failed to write screenshot file"));
+        }
+
+        // 4. get_app_state saves its screenshot and names the file.
+        let state = out.join("state.png");
+        let params: GetAppStateParams =
+            serde_json::from_value(serde_json::json!({"screenshot_file_path": state})).unwrap();
+        let result = server.app_state(params).await.unwrap();
+        assert_no_image(&result);
+        let structured = result.structured_content.unwrap();
+        let written = std::fs::read(&state).unwrap();
+        assert_eq!(
+            structured["screenshot"]["file_path"],
+            serde_json::json!(state)
+        );
+        assert_eq!(
+            structured["screenshot"]["bytes"],
+            serde_json::json!(written.len())
+        );
+        assert_eq!(
+            structured["screenshot"]["coordinate_width"],
+            serde_json::json!(64)
+        );
+        assert_eq!(structured["screenshot"]["scale"], serde_json::json!(1.0));
+        assert!(structured
+            .get("screenshot_error")
+            .is_none_or(serde_json::Value::is_null));
+        assert!(structured["message"]
+            .as_str()
+            .unwrap()
+            .contains("The screenshot was saved to"));
+
+        // A failed write is reported in screenshot_error, without the image.
+        if unprivileged {
+            let params: GetAppStateParams = serde_json::from_value(
+                serde_json::json!({"screenshot_file_path": locked.join("state.png")}),
+            )
+            .unwrap();
+            let result = server.app_state(params).await.unwrap();
+            assert_no_image(&result);
+            let structured = result.structured_content.unwrap();
+            assert!(structured["screenshot"].is_null());
+            assert!(structured["screenshot_error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to write screenshot file"));
+        }
+
+        // 5. A post-action screenshot is saved after the action.
+        clear();
+        let after = out.join("after.png");
+        let click: ClickParams = serde_json::from_value(serde_json::json!({
+            "x": 10,
+            "y": 10,
+            "screenshot_after": true,
+            "screenshot_file_path": after
+        }))
+        .unwrap();
+        let result = server.click(Parameters(click)).await.unwrap();
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_no_image(&result);
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["ok"], serde_json::json!(true));
+        assert_eq!(
+            structured["screenshot"]["file_path"],
+            serde_json::json!(after)
+        );
+        let after_bytes = std::fs::read(&after).unwrap();
+        assert_eq!(
+            structured["screenshot"]["bytes"],
+            serde_json::json!(after_bytes.len())
+        );
+        assert_eq!(
+            structured["screenshot"]["coordinate_height"],
+            serde_json::json!(48)
+        );
+        assert_eq!(events(), "xdotool\ngnome-screenshot\n");
+
+        // A failed post-action write keeps the action's ok and reports
+        // screenshot_error like any failed post-action capture. It says
+        // nothing about the desktop, so the cached diagnostics stay.
+        server.diagnostics.report(false).await;
+        let probes_before = probes.load(std::sync::atomic::Ordering::SeqCst);
+        if unprivileged {
+            let click: ClickParams = serde_json::from_value(serde_json::json!({
+                "x": 10,
+                "y": 10,
+                "screenshot_after": "screen",
+                "screenshot_file_path": locked.join("after.png")
+            }))
+            .unwrap();
+            let result = server.click(Parameters(click)).await.unwrap();
+            assert_ne!(result.is_error, Some(true));
+            assert_no_image(&result);
+            let structured = result.structured_content.unwrap();
+            assert_eq!(structured["ok"], serde_json::json!(true));
+            assert!(structured.get("screenshot").is_none());
+            assert!(structured["screenshot_error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to write screenshot file"));
+            assert!(structured["message"]
+                .as_str()
+                .unwrap()
+                .contains("Post-action screenshot failed:"));
+        }
+
+        // A bad post-action path is reported without a capture, and an
+        // existing file is never replaced.
+        for (bad, expected) in [
+            (serde_json::json!("after.png"), "must be an absolute path"),
+            (serde_json::json!(after), "already exists"),
+        ] {
+            clear();
+            let click: ClickParams = serde_json::from_value(serde_json::json!({
+                "x": 10,
+                "y": 10,
+                "screenshot_after": true,
+                "screenshot_file_path": bad
+            }))
+            .unwrap();
+            let result = server.click(Parameters(click)).await.unwrap();
+            let structured = result.structured_content.unwrap();
+            assert_eq!(structured["ok"], serde_json::json!(true));
+            assert!(structured["screenshot_error"]
+                .as_str()
+                .unwrap()
+                .contains(expected));
+            assert_eq!(events(), "xdotool\n");
+        }
+        assert_eq!(std::fs::read(&after).unwrap(), after_bytes);
+        server.diagnostics.report(false).await;
+        assert_eq!(
+            probes.load(std::sync::atomic::Ordering::SeqCst),
+            probes_before,
+            "a file output failure keeps the cached diagnostics"
+        );
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 }
 
@@ -23332,5 +24364,177 @@ mod snapshot_handle_tests {
             .check_element_snapshot("click", Some(&id), true)
             .unwrap_err();
         assert!(refused.contains("no tree is cached now"), "{refused}");
+    }
+}
+
+#[cfg(test)]
+mod type_text_atspi_fallback_tests {
+    use super::*;
+    use crate::atspi_tree::insert_fixture::{start_field_fixture, FieldFixture, FIXTURE_WINDOW};
+    use crate::keyboard_keymap::{MissingKeysymReason, MissingLayoutKeysym};
+
+    const REFUSAL: &str =
+        "Literal text was not sent: GNOME portal cannot verify U+002F in keyboard layout group 2.";
+    const MISSING: MissingLayoutKeysym = MissingLayoutKeysym {
+        ch: '/',
+        group: 2,
+        reason: MissingKeysymReason::Absent,
+    };
+
+    fn result(insert: Result<FocusedTextInsert>) -> std::result::Result<String, String> {
+        type_text_atspi_result(REFUSAL, MISSING, "/home/x", insert)
+    }
+
+    #[test]
+    fn a_verified_insert_names_the_route_and_skips_the_unverified_note() {
+        let message = result(Ok(FocusedTextInsert::Verified {
+            role: "text".to_string(),
+            replaced_selection: true,
+            caret_after_text: true,
+        }))
+        .unwrap();
+        // type_text adds "Field contents were not verified" unless this holds.
+        assert!(message.starts_with(TYPE_TEXT_ATSPI_ROUTE), "{message}");
+        assert!(message.contains("group 2 lacks U+002F"), "{message}");
+        assert!(message.contains("reads back the text"), "{message}");
+        assert!(message.contains("replaced the selection"), "{message}");
+        assert!(!message.contains("caret"), "{message}");
+    }
+
+    #[test]
+    fn no_editable_focus_and_password_fields_keep_the_refusal() {
+        let error = result(Ok(FocusedTextInsert::NotEditable(
+            "no element in the target app has keyboard focus".to_string(),
+        )))
+        .unwrap_err();
+        assert!(error.starts_with(REFUSAL), "{error}");
+        assert!(error.contains("no element in the target app has keyboard focus"));
+
+        let error = result(Ok(FocusedTextInsert::PasswordField)).unwrap_err();
+        assert!(error.starts_with(REFUSAL), "{error}");
+        assert!(error.contains("password field"), "{error}");
+        assert!(error.contains("set_value can fill it"), "{error}");
+
+        let error = result(Err(anyhow::anyhow!("failed to connect to AT-SPI bus"))).unwrap_err();
+        assert!(error.starts_with(REFUSAL), "{error}");
+    }
+
+    #[test]
+    fn a_readback_mismatch_fails_and_quotes_the_field() {
+        let error = result(Ok(FocusedTextInsert::Mismatch {
+            expected_count: 7,
+            read_count: 6,
+            read_text: "/home/".to_string(),
+            read_truncated: false,
+        }))
+        .unwrap_err();
+        // A failure must not carry the success marker.
+        assert!(error.starts_with(TYPE_TEXT_ATSPI_UNVERIFIED), "{error}");
+        assert!(!error.starts_with(TYPE_TEXT_ATSPI_ROUTE), "{error}");
+        assert!(error.contains("does not read it back"), "{error}");
+        assert!(error.contains("\"/home/x\""), "{error}");
+        assert!(error.contains("read \"/home/\""), "{error}");
+        assert!(error.contains("may have changed"), "{error}");
+
+        let error = result(Ok(FocusedTextInsert::EditFailed {
+            reason: "the app refused InsertText".to_string(),
+            may_have_changed: false,
+        }))
+        .unwrap_err();
+        assert!(error.starts_with(TYPE_TEXT_ATSPI_UNVERIFIED), "{error}");
+        assert!(error.contains("No text was changed"), "{error}");
+        for outcome in [
+            FocusedTextInsert::ReadbackFailed,
+            FocusedTextInsert::ReadbackTimedOut,
+        ] {
+            let error = result(Ok(outcome)).unwrap_err();
+            assert!(error.starts_with(TYPE_TEXT_ATSPI_UNVERIFIED), "{error}");
+        }
+
+        // An unreachable shift level is not worded as a missing character.
+        let unreachable = MissingLayoutKeysym {
+            reason: MissingKeysymReason::UnreachableLevel,
+            ..MISSING
+        };
+        let error = type_text_atspi_result(
+            REFUSAL,
+            unreachable,
+            "/home/x",
+            Ok(FocusedTextInsert::ReadbackFailed),
+        )
+        .unwrap_err();
+        assert!(error.contains("only at a shift level"), "{error}");
+        assert!(!error.contains("lacks"), "{error}");
+    }
+
+    #[test]
+    fn only_a_missing_keysym_takes_the_atspi_route() {
+        let missing = anyhow::Error::new(MISSING).context("keyboard keymap preflight failed");
+        assert_eq!(atspi_fallback_trigger(&missing), Some(MISSING));
+        for error in [
+            anyhow::anyhow!("WAYLAND_DISPLAY is missing; cannot verify the keyboard keymap"),
+            anyhow::anyhow!("keyboard keymap read timed out; no text was sent"),
+            anyhow::anyhow!("cannot verify the complete text against the keyboard keymap"),
+        ] {
+            assert_eq!(atspi_fallback_trigger(&error), None, "{error}");
+        }
+    }
+
+    /// The issue's case: with us + il groups the portal preflight refuses
+    /// `/home/x`, and the text goes into the focused entry and reads back.
+    #[tokio::test]
+    async fn a_two_group_keymap_refusal_types_through_atspi() {
+        let keymap = include_bytes!("../tests/fixtures/keyboard-us-il.xkb");
+        assert!(crate::keyboard_keymap::validate_text_with_keymap(keymap, "/").is_ok());
+        let error =
+            crate::keyboard_keymap::validate_text_with_keymap(keymap, "/home/x").unwrap_err();
+        let refusal = format!("Literal text was not sent: {error:#}");
+        let missing = atspi_fallback_trigger(&error).expect("a layout refusal");
+        assert_eq!(
+            missing,
+            MissingLayoutKeysym {
+                ch: 'h',
+                group: 2,
+                reason: MissingKeysymReason::Absent,
+            }
+        );
+
+        let running = start_field_fixture(FieldFixture {
+            role: atspi::Role::Entry,
+            role_name: "entry",
+            ..Default::default()
+        })
+        .await;
+        let insert = crate::atspi_tree::insert_text_at_focus_on(
+            &running.conn,
+            std::process::id(),
+            Some(FIXTURE_WINDOW),
+            "/home/x",
+        )
+        .await;
+        let message = type_text_atspi_result(&refusal, missing, "/home/x", insert).unwrap();
+        assert!(message.starts_with(TYPE_TEXT_ATSPI_ROUTE), "{message}");
+        assert!(message.contains("group 2 lacks U+0068"), "{message}");
+        assert_eq!(running.take_state(0).contents, "/home/x");
+    }
+
+    #[test]
+    fn control_characters_are_not_inserted() {
+        assert_eq!(key_press_character("/home/x y.txt"), None);
+        assert_eq!(key_press_character("שלום"), None);
+        for (text, code) in [
+            ("a\nb", "U+000A"),
+            ("a\tb", "U+0009"),
+            ("a\rb", "U+000D"),
+            ("a\u{8}", "U+0008"),
+            ("\u{1b}", "U+001B"),
+            ("\u{7f}", "U+007F"),
+        ] {
+            let key = key_press_character(text).unwrap();
+            let error = type_text_control_character_refusal(REFUSAL, key);
+            assert!(error.starts_with(REFUSAL), "{error}");
+            assert!(error.contains(code), "{error}");
+            assert!(error.contains("press_key"), "{error}");
+        }
     }
 }

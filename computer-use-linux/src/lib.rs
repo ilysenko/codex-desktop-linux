@@ -18,6 +18,7 @@ pub mod gnome_extension;
 pub mod identity;
 pub mod remote_desktop;
 pub mod screenshot;
+mod screenshot_file;
 pub mod server;
 pub mod terminal;
 #[cfg(test)]

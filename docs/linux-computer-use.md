@@ -45,7 +45,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.51. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.52. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -74,6 +74,30 @@ the image block for pixels. Mutating tools (`click`, `type_text`, `press_key`,
 `move_window`, and `resize_window`) also accept optional `screenshot_after`
 (`true`, `"screen"`, or `"window"`) and `include_tree=true` to return
 post-action observation in the same result.
+
+Since the v0.7.52 sync, `screenshot`, `get_app_state` and every
+`screenshot_after` capture also take `screenshot_file_path`, an absolute path
+where the image is saved instead of returned as image content. The result
+keeps the screenshot metadata and adds `file_path`: in the caption for
+`screenshot`, and as `screenshot.file_path` for the other tools. The parent directory must
+exist, and the extension must match `format` (`.png`, or `.jpg`/`.jpeg`).
+File output only creates a new file: an existing entry is refused, and the
+image moves into place from a temp file in the same directory. A bad path is
+refused before any capture or input. A failed write is the `screenshot`
+error, `screenshot_error` on `get_app_state`, and `screenshot_error` with `ok`
+kept on a mutating tool; the image is never returned inline instead. Over
+HTTP (`mcp --listen`) the parameter is refused. The in-app adapter does not
+pass it.
+
+Since the v0.7.52 sync, GNOME `type_text` no longer refuses text only because
+one keyboard layout group lacks a key for a character, such as Latin text with
+`us` and `il` groups. The portal route still refuses it. The text then goes
+into the focused editable field of the verified target window through AT-SPI
+EditableText, and that window must be active. The call reports `ok: true` only
+when the field reads back the inserted text and the rest of its text
+unchanged; the message then starts with "Typed through AT-SPI EditableText".
+Password fields, focus outside an editable field, and text with a newline, tab
+or other control character keep the refusal.
 
 `doctor` reports an XDG portal interface only when the portal exports its
 methods: Screenshot needs `Screenshot`, ScreenCast needs `CreateSession`,

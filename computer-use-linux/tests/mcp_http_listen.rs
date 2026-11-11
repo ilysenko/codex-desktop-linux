@@ -471,3 +471,45 @@ fn http_index_click_without_snapshot_id_is_refused() {
     let _ = child.kill();
     assert_eq!(hermetic.recorded(), "");
 }
+
+#[test]
+fn http_screenshot_file_path_is_refused_before_any_capture_or_input() {
+    let hermetic = Hermetic::new();
+    let mut child = spawn(&hermetic, Some(TOKEN));
+    let port = bound_port(&mut child);
+    let session = initialize(port, "cul");
+    let target = hermetic.dir.join("shot.png");
+    let target = target.to_str().unwrap();
+    let calls = [
+        (
+            "screenshot",
+            format!(r#"{{"screenshot_file_path":"{target}"}}"#),
+        ),
+        (
+            "get_app_state",
+            format!(r#"{{"screenshot_file_path":"{target}"}}"#),
+        ),
+        (
+            "click",
+            format!(r#"{{"x":1,"y":1,"screenshot_after":true,"screenshot_file_path":"{target}"}}"#),
+        ),
+    ];
+    for (id, (tool, arguments)) in calls.iter().enumerate() {
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":{},"method":"tools/call","params":{{"name":"{tool}","arguments":{arguments}}}}}"#,
+            id + 2
+        );
+        let (status, text, _) = post(port, Some(TOKEN), &body, Some(&session));
+        assert_eq!(status, 200, "{text}");
+        assert!(
+            text.contains(&format!(
+                "{tool} was not run: screenshot_file_path is refused over HTTP (mcp --listen)"
+            )),
+            "{text}"
+        );
+        assert!(text.contains(r#""isError":true"#), "{text}");
+    }
+    let _ = child.kill();
+    assert!(!std::path::Path::new(target).exists());
+    assert_eq!(hermetic.recorded(), "");
+}

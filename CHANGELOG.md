@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.52.
+  `screenshot`, `get_app_state` and the `screenshot_after` capture of every
+  mutating tool take `screenshot_file_path`, an absolute path where the image
+  is saved instead of returned as MCP image content. File output creates a
+  new file and never replaces one. A bad path is refused before any capture or
+  input. Over HTTP (`mcp --listen`) the parameter is refused. The in-app
+  adapter does not pass it, so the app still gets its images inline.
 - Synchronize the embedded Computer Use backend to standalone v0.7.51.
   `codex-computer-use-linux mcp --listen ADDR:PORT` serves MCP over
   streamable HTTP at `/mcp`. It needs a bearer token from
@@ -280,6 +287,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The v0.7.52 sync lets GNOME `type_text` insert through AT-SPI
+  EditableText when one keyboard layout group cannot type a character, such
+  as Latin text with `us` and `il` groups. The text goes into the focused
+  editable field of the verified, active target window, and the call reports
+  success only when the field reads it back. The portal route, password
+  fields, and text with a newline, tab or other control character keep the
+  refusal.
+- The v0.7.52 sync makes `get_app_state` report text selections. The AT-SPI
+  proxy called `GetNselections`, which toolkits do not implement; it now calls
+  `GetNSelections`.
 - The v0.7.51 sync moves `rustix` from 1.1.4 to 1.1.6, which fixes
   RUSTSEC-2026-0486.
 - The v0.7.51 sync makes a pid target read every AT-SPI root its process

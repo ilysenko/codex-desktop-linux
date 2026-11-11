@@ -1,0 +1,65 @@
+xkb_keymap {
+    xkb_keycodes "fixture" {
+        minimum = 8;
+        maximum = 255;
+        <AD01> = 24;
+        <AD03> = 26;
+        <AD09> = 32;
+        <AC06> = 43;
+        <LFSH> = 50;
+        <AB02> = 53;
+        <AB07> = 58;
+        <AB10> = 61;
+        <DUMY> = 255;
+    };
+    xkb_types "fixture" {
+        type "ONE_LEVEL" {
+            modifiers = None;
+            map[None] = Level1;
+        };
+        type "TWO_LEVEL" {
+            modifiers = Shift;
+            map[None] = Level1;
+            map[Shift] = Level2;
+        };
+    };
+    xkb_compatibility "fixture" {
+        interpret Shift_L {
+            action = SetMods(modifiers=Shift);
+        };
+    };
+    xkb_symbols "fixture" {
+        name[Group1] = "US fixture";
+        name[Group2] = "Hebrew fixture";
+        key <AD01> {
+            type[Group1] = "TWO_LEVEL", symbols[Group1] = [ q, Q ],
+            type[Group2] = "ONE_LEVEL", symbols[Group2] = [ slash ]
+        };
+        key <AD03> {
+            type[Group1] = "TWO_LEVEL", symbols[Group1] = [ e, E ],
+            type[Group2] = "ONE_LEVEL", symbols[Group2] = [ hebrew_qoph ]
+        };
+        key <AD09> {
+            type[Group1] = "TWO_LEVEL", symbols[Group1] = [ o, O ],
+            type[Group2] = "ONE_LEVEL", symbols[Group2] = [ hebrew_finalmem ]
+        };
+        key <AC06> {
+            type[Group1] = "TWO_LEVEL", symbols[Group1] = [ h, H ],
+            type[Group2] = "ONE_LEVEL", symbols[Group2] = [ hebrew_yod ]
+        };
+        key <AB02> {
+            type[Group1] = "TWO_LEVEL", symbols[Group1] = [ x, X ],
+            type[Group2] = "ONE_LEVEL", symbols[Group2] = [ hebrew_samech ]
+        };
+        key <AB07> {
+            type[Group1] = "TWO_LEVEL", symbols[Group1] = [ m, M ],
+            type[Group2] = "ONE_LEVEL", symbols[Group2] = [ hebrew_zade ]
+        };
+        key <AB10> {
+            type[Group1] = "TWO_LEVEL", symbols[Group1] = [ slash, question ],
+            type[Group2] = "ONE_LEVEL", symbols[Group2] = [ period ]
+        };
+        key <LFSH> { [ Shift_L ] };
+        key <DUMY> { [ NoSymbol ] };
+    };
+};
