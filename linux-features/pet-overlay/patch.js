@@ -57,6 +57,14 @@ function booleanSetting(value, fallback) {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function decimalSetting(value, fallback, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? Math.round(Math.max(min, Math.min(max, number)) * 100) / 100
+    : fallback;
+}
+
+
 function mergedPetOverlaySettings(context = {}) {
   const defaults = context.feature?.manifest?.petOverlay ?? {};
   const settingsRoot = context.feature?.settings ?? {};
@@ -76,6 +84,7 @@ function mergedPetOverlaySettings(context = {}) {
     kwin: booleanSetting(overrides.kwin, booleanSetting(defaults.kwin, true)),
     lockPosition: booleanSetting(overrides.lockPosition, booleanSetting(defaults.lockPosition, false)),
     margin: integerSetting(overrides.margin ?? defaults.margin, 24, 0, 512),
+    miniScale: decimalSetting(overrides.miniScale ?? defaults.miniScale, 0.7, 0.5, 1.2),
     mode,
     niri: booleanSetting(overrides.niri, booleanSetting(defaults.niri, true)),
     skipTaskbar: booleanSetting(overrides.skipTaskbar, booleanSetting(defaults.skipTaskbar, true)),
@@ -200,6 +209,9 @@ function codexPetOverlayKWinGeometry(window) {
 
 function codexPetOverlayMoveLocalMascotDrag(callerId, event) {
   if (!this.codexPetOverlayDragFromCurrentRenderer(callerId)) return false;
+  if (this.codexPetOverlayHyprlandWindowDragState?.window === this.window) {
+    return this.codexPetOverlayHyprlandMoveWindowDrag();
+  }
   const drag = this.codexPetOverlayMascotDragState, current = this.layout, window = this.window;
   const mascot = this.codexPetOverlayMascotRect(current), bounds = this.codexPetOverlayWindowBounds(window);
   if (!drag || !current || !mascot || !bounds) return false;
@@ -307,6 +319,395 @@ function codexPetOverlayKWinLayoutOptions(options, layout) {
     }
   }
   return best?.options ?? sized;
+}
+
+// Keep the renderer's mascot within the smaller draw surface. Shift the
+// window's *logical* origin rather than the pet anchor, so a later layout
+// recalculation does not repeatedly move the mascot away from its saved point.
+function codexPetOverlayHyprlandClipLayout(layout) {
+  if (!this.codexPetOverlayIsNativeHyprland() || this.layoutMode !== "native" ||
+      !layout?.windowBounds || !layout?.mascot) return layout;
+  const bounds = layout.windowBounds, mascot = layout.mascot;
+  const values = [bounds.x, bounds.y, bounds.width, bounds.height,
+    mascot.left, mascot.top, mascot.width, mascot.height];
+  if (!values.every(Number.isFinite) || bounds.width <= 0 || bounds.height <= 0 ||
+      mascot.width <= 0 || mascot.height <= 0) return layout;
+  // The compact idle controls sit ~200px below the mascot origin and occupy
+  // 40px. With app-origin zoom on a fractional Wayland output, Chromium can
+  // paint past the actual compositor buffer height even when CSS reports a
+  // 420px viewport. Reserve another 70px below Mini, keeping both the pet and
+  // its real pointer regions inside the composited surface.
+  const rightReserve = this.isQuickChatPresentation || this.traySize ? 24 : 56;
+  const bottomReserve = this.isQuickChatPresentation || this.traySize ? 24 : 126;
+  const left = Math.max(0, Math.min(Math.max(0, bounds.width - mascot.width - rightReserve), Math.round(mascot.left)));
+  const top = Math.max(0, Math.min(Math.max(0, bounds.height - mascot.height - bottomReserve), Math.round(mascot.top)));
+  const dx = mascot.left - left, dy = mascot.top - top;
+  if (dx === 0 && dy === 0) return layout;
+  const updatedBounds = { ...bounds, x: bounds.x + dx, y: bounds.y + dy };
+  const tray = layout.tray == null ? layout.tray : {
+    ...layout.tray,
+    left: Math.max(0, Math.min(Math.max(0, bounds.width - layout.tray.width), layout.tray.left - dx)),
+    top: Math.max(0, Math.min(Math.max(0, bounds.height - layout.tray.height), layout.tray.top - dy)),
+  };
+  return { ...layout, windowBounds: updatedBounds, mascot: { ...mascot, left, top }, tray,
+    visibleBounds: { left: 0, top: 0, width: bounds.width, height: bounds.height } };
+}
+
+// Hyprland ignores an Electron window's requested global position on native
+// Wayland. Keep Mini's draw buffer compact, then position the matched surface
+// through the compositor after it appears.
+function codexPetOverlayHyprlandDrawBounds(display, anchor) {
+  if (!this.codexPetOverlayIsNativeHyprland() || this.layoutMode !== "native") return null;
+  const area = this.codexPetOverlayDisplayRect(display);
+  if (!area || !anchor) return null;
+  // Keep the idle footprint close to the 181x196 pet plus controls and
+  // breathing room. Expand only while its editor or tray needs more space.
+  const expanded = this.isQuickChatPresentation || Number(this.traySize?.height) > 0;
+  const width = Math.round(Math.min(area.width, expanded ? 520 : 380));
+  const height = Math.round(Math.min(area.height, expanded ? 520 : 420));
+  if (width <= 0 || height <= 0) return null;
+  const mascotWidth = Number(this.mascotSize?.width) || Number(anchor.width) || 112;
+  const mascotHeight = Number(this.mascotSize?.height) || Number(anchor.height) || 121;
+  const localX = Math.max(0, width - mascotWidth - 24);
+  const localY = Math.max(0, height - mascotHeight - 24);
+  const clamp = (point, min, max) => Math.round(Math.max(min, Math.min(max, point)));
+  return {
+    x: clamp(anchor.x - localX, area.x, area.x + area.width - width),
+    y: clamp(anchor.y - localY, area.y, area.y + area.height - height),
+    width, height,
+  };
+}
+
+// Electron's setZoomFactor is shared by pages on the same app:// origin.
+// Use Chromium's per-WebContents device-metrics emulation instead: it keeps
+// Mini's raster in sync with the Wayland output scale without shrinking the
+// main app. The debugger session belongs only to this pet window.
+function codexPetOverlayHyprlandMatchScale(window, scale) {
+  const contents = window?.webContents, inspector = contents?.debugger;
+  if (!this.codexPetOverlayIsNativeHyprland() || this.window !== window ||
+      window.isDestroyed?.() || contents?.isDestroyed?.() ||
+      !Number.isFinite(scale) || scale <= 0 ||
+      !inspector || typeof inspector.attach !== "function" ||
+      typeof inspector.sendCommand !== "function") return;
+  // Width/height 0 leave the actual Electron viewport under window control.
+  // This handles idle -> expanded editor/tray transitions without relying
+  // on a monitor change to resend a stale viewport.
+  let state = this.codexPetOverlayHyprlandMetrics;
+  if (state?.window !== window) {
+    // Do not steal an inspector already owned by DevTools or another client.
+    if (inspector.isAttached?.()) return;
+    try { inspector.attach("1.3"); } catch { return; }
+    state = { window, inspector, pending: null, desired: null, applied: null, failed: null };
+    this.codexPetOverlayHyprlandMetrics = state;
+    const cleanup = () => {
+      if (this.codexPetOverlayHyprlandMetrics !== state) return;
+      this.codexPetOverlayHyprlandMetrics = null;
+      try { inspector.isAttached?.() && inspector.detach(); } catch {}
+    };
+    window.once?.("closed", cleanup);
+    inspector.once?.("detach", () => {
+      if (this.codexPetOverlayHyprlandMetrics === state) this.codexPetOverlayHyprlandMetrics = null;
+    });
+  }
+  state.desired = String(scale);
+  const pump = () => {
+    if (this.codexPetOverlayHyprlandMetrics !== state ||
+        state.pending != null || state.applied === state.desired ||
+        state.failed === state.desired) return;
+    const key = state.desired;
+    state.pending = key;
+    // Never overlap two DevTools commands for the same webContents.
+    // A display change while one command is pending retains only the
+    // latest desired output scale.
+    void Promise.resolve().then(() => inspector.sendCommand(
+      "Emulation.setDeviceMetricsOverride", {
+        width: 0, height: 0, deviceScaleFactor: Number(key), mobile: false,
+      },
+    )).then(() => {
+      if (this.codexPetOverlayHyprlandMetrics === state) {
+        state.applied = key;
+        state.failed = null;
+      }
+    }).catch(error => {
+      if (this.codexPetOverlayHyprlandMetrics === state) state.failed = key;
+      try { this.logger()?.warning?.("Could not match Mini output scale", { safe: {}, sensitive: { error } }); } catch {}
+    }).finally(() => {
+      if (this.codexPetOverlayHyprlandMetrics !== state) return;
+      state.pending = null;
+      if (state.desired !== key) pump();
+    });
+  };
+  pump();
+}
+
+// A floating Wayland window can cross outputs while Hyprland still reports
+// its original monitor ID. Select the output containing the actual window
+// center in compositor-logical coordinates, with the reported ID as fallback.
+function codexPetOverlayHyprlandOutputForWindow(monitors, client) {
+  if (!Array.isArray(monitors) || !client) return null;
+  const output = monitors.filter(m => [m?.x, m?.y, m?.width, m?.height, m?.scale]
+    .every(Number.isFinite) && m.scale > 0 && m.width > 0 && m.height > 0);
+  const x = Number(client.at?.[0]) + Number(client.size?.[0]) / 2;
+  const y = Number(client.at?.[1]) + Number(client.size?.[1]) / 2;
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    const hits = output.filter(m => x >= m.x && x < m.x + m.width / m.scale &&
+      y >= m.y && y < m.y + m.height / m.scale);
+    if (hits.length === 1) return hits[0];
+  }
+  return output.find(m => m.id === client.monitor) ?? null;
+}
+
+// Ensure the whole hover canvas stays reachable after releasing a
+// cross-monitor drag, including when the compositor warped the cursor.
+function codexPetOverlayHyprlandReleasedBounds(output, client) {
+  const scale = Number(output?.scale), size = client?.size;
+  const [wx, wy] = client?.at ?? [];
+  const ww = Number(size?.[0]), wh = Number(size?.[1]);
+  if (![scale, output?.x, output?.y, output?.width, output?.height,
+    wx, wy, ww, wh].every(Number.isFinite) ||
+    scale <= 0 || ww <= 0 || wh <= 0) return null;
+  const xMin = Math.round(output.x + 8);
+  const yMin = Math.round(output.y + 30);
+  const xMax = Math.max(xMin, Math.floor(output.x + output.width / scale - ww - 8));
+  const yMax = Math.max(yMin, Math.floor(output.y + output.height / scale - wh - 16));
+  return {
+    x: Math.round(Math.max(xMin, Math.min(xMax, wx))),
+    y: Math.round(Math.max(yMin, Math.min(yMax, wy))),
+  };
+}
+
+function codexPetOverlayHyprlandPlace(window, client) {
+  if (!this.codexPetOverlayIsNativeHyprland() || this.window !== window ||
+      window.isDestroyed?.() || !Number.isSafeInteger(client?.monitor)) return;
+  const current = { monitor: client.monitor,
+    x: Number(client.at?.[0]), y: Number(client.at?.[1]),
+    width: Number(client.size?.[0]), height: Number(client.size?.[1]) };
+  if (Object.values(current).some(v => !Number.isFinite(v))) return;
+  const previous = this.codexPetOverlayHyprlandObservedClient;
+  const moved = previous?.monitor !== current.monitor || previous?.x !== current.x ||
+    previous?.y !== current.y || previous?.width !== current.width ||
+    previous?.height !== current.height;
+  const initial = this.codexPetOverlayHyprlandPlacedWindow !== window;
+  if (!initial && !moved &&
+      this.codexPetOverlayHyprlandClampOnNextHint !== window) return;
+  if (this.codexPetOverlayHyprlandOutputLookupPending) {
+    // Do not mark this client as already observed: a delayed monitor lookup
+    // might otherwise consume the previous position and discard the newest.
+    this.codexPetOverlayHyprlandOutputQueuedClient = { window, client };
+    return;
+  }
+  this.codexPetOverlayHyprlandObservedClient = current;
+  this.codexPetOverlayHyprlandOutputLookupPending = true;
+  this.codexPetOverlayHyprctl(["monitors", "-j"], (error, output) => {
+    const finishLookup = () => {
+      this.codexPetOverlayHyprlandOutputLookupPending = false;
+      const queued = this.codexPetOverlayHyprlandOutputQueuedClient;
+      this.codexPetOverlayHyprlandOutputQueuedClient = null;
+      if (queued?.window === this.window && !queued.window.isDestroyed?.()) {
+        this.codexPetOverlayHyprlandPlace(queued.window, queued.client);
+      }
+    };
+    try {
+    if (error || this.window !== window || window.isDestroyed?.()) return;
+    let monitors;
+    try { monitors = JSON.parse(String(output)); } catch { return; }
+    const monitor = this.codexPetOverlayHyprlandOutputForWindow(monitors, client);
+    const scale = Number(monitor?.scale);
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    const changed = this.codexPetOverlayHyprlandScaleMonitor !== monitor.id ||
+      this.codexPetOverlayHyprlandScaleValue !== scale;
+    this.codexPetOverlayHyprlandScaleMonitor = monitor.id;
+    this.codexPetOverlayHyprlandScaleValue = scale;
+    if (changed || initial) this.codexPetOverlayHyprlandMatchScale(window, scale);
+    if (this.codexPetOverlayHyprlandPlacedWindow === window) {
+      if (this.codexPetOverlayHyprlandClampOnNextHint !== window ||
+          this.codexPetOverlayHyprlandWindowDragState) return;
+      this.codexPetOverlayHyprlandClampOnNextHint = null;
+      const clipped = this.codexPetOverlayHyprlandReleasedBounds(monitor, client);
+      if (!clipped || clipped.x === current.x && clipped.y === current.y) return;
+      const address = client.address;
+      if (typeof address !== "string" || !/^0x[0-9a-f]{1,16}$/i.test(address)) return;
+      const dx = clipped.x - current.x, dy = clipped.y - current.y;
+      const lua = `local matches=0;for _,w in pairs(hl.get_windows()) do ` +
+        `if w.address=="${address}" and w.pid==${process.pid} and ` +
+        `w.title=="Codex Pet Overlay" and w.floating then matches=matches+1 end end;` +
+        `if matches==1 then hl.dispatch(hl.dsp.window.move({` +
+        `window="address:${address}",x=${clipped.x},y=${clipped.y}})) end`;
+      this.codexPetOverlayHyprctl(["eval", lua], (moveError, moveOutput) => {
+        if (this.window !== window || window.isDestroyed?.() ||
+            moveError || typeof moveOutput === "string" && /^error:/m.test(moveOutput) ||
+            this.codexPetOverlayHyprlandWindowDragState) return;
+        if (!this.layout?.windowBounds || !this.anchor) return;
+        this.anchor = { ...this.anchor,
+          x: this.anchor.x + dx, y: this.anchor.y + dy };
+        this.layout = { ...this.layout, anchor: { ...this.anchor },
+          windowBounds: { ...this.layout.windowBounds, x: clipped.x, y: clipped.y } };
+        this.codexPetOverlayDesiredWindowBounds = { ...this.layout.windowBounds };
+        this.codexPetOverlayHyprlandObservedClient = { ...current,
+          x: clipped.x, y: clipped.y };
+        try {
+          const display = require("electron").screen.getDisplayNearestPoint({
+            x: this.anchor.x + Number(this.anchor.width || 0) / 2,
+            y: this.anchor.y + Number(this.anchor.height || 0) / 2,
+          });
+          if (display) this.persistWindowBounds?.(window, display);
+        } catch {}
+      });
+      return;
+    }
+    this.codexPetOverlayHyprlandPlacedWindow = window;
+    const x = Number(monitor.x), y = Number(monitor.y);
+    const width = Number(monitor.width), height = Number(monitor.height);
+    const windowWidth = current.width, windowHeight = current.height;
+    const settings = this.codexPetOverlaySettings(), margin = settings.margin;
+    const pinLeft = settings.lockPosition && settings.gravity.endsWith("-left");
+    const pinTop = settings.lockPosition && settings.gravity.startsWith("top-");
+    const targetX = Math.round(x + (pinLeft ? margin : Math.max(0, width / scale - windowWidth - margin)));
+    const targetY = Math.round(y + (pinTop ? margin : Math.max(0, height / scale - windowHeight - margin)));
+    const selector = `address:${client.address}`;
+    this.codexPetOverlayHyprlandSurface = {
+      window, address: client.address, x: targetX, y: targetY,
+    };
+    this.codexPetOverlayHyprlandDispatch(
+      `hl.dsp.window.move({ window = "${selector}", x = ${targetX}, y = ${targetY} })`,
+      ["movewindowpixel", `exact ${targetX} ${targetY},${selector}`],
+    );
+    } finally {
+      finishLookup();
+    }
+  });
+}
+
+function codexPetOverlayHyprlandStartWindowDrag(window, event) {
+  if (!this.codexPetOverlayIsNativeHyprland() || !window ||
+      this.window !== window || window.isDestroyed?.() ||
+      this.codexPetOverlayShouldLockPosition()) return false;
+  const surface = this.codexPetOverlayHyprlandSurface;
+  const address = surface?.window === window && surface.address;
+  const x = Number(event?.pointerWindowX), y = Number(event?.pointerWindowY);
+  if (typeof address !== "string" || !/^0x[0-9a-f]{1,16}$/i.test(address) ||
+      ![x, y].every(Number.isFinite) ||
+      x < 0 || y < 0 || x > 4000 || y > 4000) return false;
+  const state = {
+    window, address, grabX: null, grabY: null,
+    ready: false, inFlight: false, queued: false, released: false, failed: false,
+  };
+  this.codexPetOverlayHyprlandWindowDragState = state;
+  // Renderer pointerWindowX/Y values are *not* compositor-logical coordinates
+  // under Electron fractional scaling. Capture the true offset only once,
+  // at pointer-down, using a scoped, read-only Hyprland Lua query.
+  const script = `local n=0;local gx,gy=nil,nil;for _,w in pairs(hl.get_windows()) do ` +
+    `if w.address=="${address}" and w.pid==${process.pid} and ` +
+    `w.title=="Codex Pet Overlay" and w.floating and w.at and w.size then ` +
+    `local p=hl.get_cursor_pos();if p and p.x and p.y then ` +
+    `gx=p.x-w.at.x;gy=p.y-w.at.y; ` +
+    `if gx>=0 and gy>=0 and gx<=w.size.x and gy<=w.size.y then n=n+1 end end end end; ` +
+    `if n==1 then print("PETGRAB:"..math.floor(gx+0.5)..","..math.floor(gy+0.5)) end`;
+  this.codexPetOverlayHyprctl(["repl", script], (error, result) => {
+    if (this.codexPetOverlayHyprlandWindowDragState !== state ||
+        this.window !== window || window.isDestroyed?.()) return;
+    const match = !error && String(result ?? "").trim().match(/^PETGRAB:(\d+),(\d+)$/);
+    if (!match) {
+      state.failed = true;
+      state.queued = false;
+      if (state.released) this.codexPetOverlayHyprlandFinishWindowDrag(state);
+      return;
+    }
+    state.grabX = Number(match[1]);
+    state.grabY = Number(match[2]);
+    state.ready = true;
+    if (state.queued || state.released) this.codexPetOverlayHyprlandMoveWindowDrag();
+  });
+  return true;
+}
+
+function codexPetOverlayHyprlandMoveWindowDrag() {
+  const state = this.codexPetOverlayHyprlandWindowDragState;
+  if (!state || state.failed || this.window !== state.window ||
+      state.window.isDestroyed?.()) return false;
+  state.queued = true;
+  if (!state.ready) return true;
+  const pump = () => {
+    if (this.codexPetOverlayHyprlandWindowDragState !== state ||
+        this.window !== state.window || state.window.isDestroyed?.() ||
+        state.inFlight || !state.queued) return;
+    state.queued = false;
+    state.inFlight = true;
+    const { address, grabX, grabY } = state;
+    // Validate title, PID, floating status and exact address at *every* move.
+    // Cursor and window coordinates are taken from the same compositor.
+    const lua = `local matches=0; for _,w in pairs(hl.get_windows()) do ` +
+      `if w.address=="${address}" and w.pid==${process.pid} and ` +
+      `w.title=="Codex Pet Overlay" and w.floating then matches=matches+1 end end; ` +
+      `local p=hl.get_cursor_pos(); if matches==1 and p and ` +
+      `type(p.x)=="number" and type(p.y)=="number" then ` +
+      `local x=math.floor(p.x-${grabX}+0.5);local y=math.floor(p.y-${grabY}+0.5); ` +
+      `if math.abs(x)<100000 and math.abs(y)<100000 then ` +
+      `hl.dispatch(hl.dsp.window.move({window="address:${address}",x=x,y=y})) end end`;
+    this.codexPetOverlayHyprctl(["eval", lua], (error, result) => {
+      if (this.codexPetOverlayHyprlandWindowDragState !== state) return;
+      state.inFlight = false;
+      if (error || typeof result === "string" && /^error:/m.test(result)) {
+        state.failed = true;
+        state.queued = false;
+      }
+      if (state.queued && !state.failed) pump();
+      else if (state.released) this.codexPetOverlayHyprlandFinishWindowDrag(state);
+    });
+  };
+  if (!state.inFlight) pump();
+  return true;
+}
+
+function codexPetOverlayHyprlandFinishWindowDrag(state) {
+  if (state !== this.codexPetOverlayHyprlandWindowDragState ||
+      state.inFlight || state.queued) return;
+  this.codexPetOverlayHyprlandWindowDragState = null;
+  const window = state.window;
+  if (this.window !== window || window.isDestroyed?.()) return;
+  this.codexPetOverlayFindHyprlandClient(window, client => {
+    if (this.window !== window || window.isDestroyed?.() ||
+        client.address !== state.address || !Array.isArray(client.at)) return;
+    const x = Number(client.at[0]), y = Number(client.at[1]);
+    const mascot = this.codexPetOverlayMascotRect(this.layout);
+    if (![x, y].every(Number.isFinite) || !mascot) return;
+    const anchor = { ...this.anchor,
+      x: Math.round(x + mascot.left), y: Math.round(y + mascot.top) };
+    this.anchor = anchor;
+    this.layout = { ...this.layout, anchor,
+      windowBounds: { ...this.layout.windowBounds, x, y } };
+    this.codexPetOverlayDesiredWindowBounds = { ...this.layout.windowBounds };
+    this.codexPetOverlayMascotLocalPosition = {
+      left: mascot.left, top: mascot.top };
+    this.codexPetOverlayManualPosition = true;
+    this.isFreelyPositioned = true;
+    this.snapPosition = null;
+    try {
+      const display = require("electron").screen.getDisplayNearestPoint({
+        x: anchor.x + mascot.width / 2, y: anchor.y + mascot.height / 2,
+      });
+      if (display) {
+        this.displayId = display.id;
+        this.displayBounds = display.bounds;
+        this.persistWindowBounds?.(window, display);
+      }
+    } catch {}
+    this.codexPetOverlayHyprlandClampOnNextHint = window;
+    try { this.codexPetOverlayScheduleHyprlandHints(window); } catch {}
+  });
+}
+
+function codexPetOverlayHyprlandEndWindowDrag() {
+  const state = this.codexPetOverlayHyprlandWindowDragState;
+  if (!state || this.window !== state.window) return false;
+  state.released = true;
+  if (state.failed) {
+    state.queued = false;
+    if (!state.inFlight) this.codexPetOverlayHyprlandFinishWindowDrag(state);
+  } else {
+    this.codexPetOverlayHyprlandMoveWindowDrag();
+  }
+  return true;
 }
 
 function codexPetOverlayKWinScriptId(value) {
@@ -570,12 +971,18 @@ function buildPetOverlayMethods(settings) {
     ...[codexPetOverlayKWinCall, codexPetOverlayKWinReadWindow, codexPetOverlayKWinFindWindow,
       codexPetOverlayKWinGeometry, codexPetOverlayMoveLocalMascotDrag, codexPetOverlayKWinDrawBounds,
       codexPetOverlayKWinLayout, codexPetOverlayKWinLayoutOptions,
+      codexPetOverlayHyprlandClipLayout, codexPetOverlayHyprlandDrawBounds,
+      codexPetOverlayHyprlandMatchScale, codexPetOverlayHyprlandOutputForWindow,
+      codexPetOverlayHyprlandReleasedBounds, codexPetOverlayHyprlandPlace,
+      codexPetOverlayHyprlandStartWindowDrag, codexPetOverlayHyprlandMoveWindowDrag,
+      codexPetOverlayHyprlandFinishWindowDrag, codexPetOverlayHyprlandEndWindowDrag,
       codexPetOverlayKWinScriptId, codexPetOverlayKWinLegacyRun, codexPetOverlayKWinExecResult,
       codexPetOverlayStartLegacyKWinDrag, codexPetOverlayPumpKWinDrag, codexPetOverlayBeginKWinDrag,
       codexPetOverlayKWinFinish, codexPetOverlayKWinRefresh, codexPetOverlayKWinKeyboard, codexPetOverlayPresentKWinWindow, codexPetOverlayApplyKWinHints]
       .map(method => method.toString().replace(/^(async )?function /, "$1")),
     `codexPetOverlayIsNativeKWin(){return ${WAYLAND_WINDOW}&&this.codexPetOverlayShouldUseKWin()}`,
-    `codexPetOverlaySettings(){let e={margin:${settings.margin},gravity:\`${settings.gravity}\`,allWorkspaces:${boolLiteral(settings.allWorkspaces)},alwaysOnTop:${boolLiteral(settings.alwaysOnTop)},skipTaskbar:${boolLiteral(settings.skipTaskbar)},lockPosition:${boolLiteral(settings.lockPosition)},mode:\`${settings.mode}\`,hyprland:${boolLiteral(settings.hyprland)},kwin:${boolLiteral(settings.kwin)},niri:${boolLiteral(settings.niri)}};try{let t=process.env.CODEX_PET_OVERLAY_MARGIN??process.env.CODEX_PET_LINUX_MARGIN,n=Number(t);Number.isFinite(n)&&(e.margin=Math.max(0,Math.min(512,Math.round(n))));let r=process.env.CODEX_PET_OVERLAY_GRAVITY??process.env.CODEX_PET_LINUX_GRAVITY;[\`bottom-right\`,\`bottom-left\`,\`top-right\`,\`top-left\`].includes(r)&&(e.gravity=r);let i=process.env.CODEX_PET_OVERLAY_MODE??process.env.CODEX_PET_LINUX_MODE;(i===\`interactive\`||i===\`passive\`)&&(e.mode=i);let a=process.env.CODEX_PET_OVERLAY_LOCK_POSITION??process.env.CODEX_PET_LINUX_LOCK_POSITION;a===\`1\`&&(e.lockPosition=!0),a===\`0\`&&(e.lockPosition=!1);let o=process.env.CODEX_PET_OVERLAY_HYPRLAND??process.env.CODEX_PET_LINUX_HYPRLAND;o===\`1\`&&(e.hyprland=!0),o===\`0\`&&(e.hyprland=!1);let s=process.env.CODEX_PET_OVERLAY_KWIN;s===\`1\`&&(e.kwin=!0),s===\`0\`&&(e.kwin=!1);let c=process.env.CODEX_PET_OVERLAY_NIRI;c===\`1\`&&(e.niri=!0),c===\`0\`&&(e.niri=!1)}catch{}return e}`,
+    `codexPetOverlayIsNativeHyprland(){return ${WAYLAND_WINDOW}&&this.codexPetOverlayShouldUseHyprland()&&process.env.CODEX_PET_HYPRLAND_LUA_SUPPORTED===\`1\`}`,
+    `codexPetOverlaySettings(){let e={margin:${settings.margin},gravity:\`${settings.gravity}\`,allWorkspaces:${boolLiteral(settings.allWorkspaces)},alwaysOnTop:${boolLiteral(settings.alwaysOnTop)},skipTaskbar:${boolLiteral(settings.skipTaskbar)},lockPosition:${boolLiteral(settings.lockPosition)},mode:\`${settings.mode}\`,miniScale:${settings.miniScale},hyprland:${boolLiteral(settings.hyprland)},kwin:${boolLiteral(settings.kwin)},niri:${boolLiteral(settings.niri)}};try{let t=process.env.CODEX_PET_OVERLAY_MARGIN??process.env.CODEX_PET_LINUX_MARGIN,n=Number(t);Number.isFinite(n)&&(e.margin=Math.max(0,Math.min(512,Math.round(n))));let r=process.env.CODEX_PET_OVERLAY_GRAVITY??process.env.CODEX_PET_LINUX_GRAVITY;[\`bottom-right\`,\`bottom-left\`,\`top-right\`,\`top-left\`].includes(r)&&(e.gravity=r);let i=process.env.CODEX_PET_OVERLAY_MODE??process.env.CODEX_PET_LINUX_MODE;(i===\`interactive\`||i===\`passive\`)&&(e.mode=i);let a=process.env.CODEX_PET_OVERLAY_LOCK_POSITION??process.env.CODEX_PET_LINUX_LOCK_POSITION;a===\`1\`&&(e.lockPosition=!0),a===\`0\`&&(e.lockPosition=!1);let o=process.env.CODEX_PET_OVERLAY_HYPRLAND??process.env.CODEX_PET_LINUX_HYPRLAND;o===\`1\`&&(e.hyprland=!0),o===\`0\`&&(e.hyprland=!1);let s=process.env.CODEX_PET_OVERLAY_KWIN;s===\`1\`&&(e.kwin=!0),s===\`0\`&&(e.kwin=!1);let c=process.env.CODEX_PET_OVERLAY_NIRI;c===\`1\`&&(e.niri=!0),c===\`0\`&&(e.niri=!1);let v=Number(process.env.CODEX_PET_OVERLAY_MINI_SCALE);process.env.CODEX_PET_OVERLAY_MINI_SCALE!=null&&Number.isFinite(v)&&(e.miniScale=Math.round(Math.max(.5,Math.min(1.2,v))*100)/100)}catch{}return e}`,
     "codexPetOverlayRect(e){if(e==null)return null;let t=Number(e.x),n=Number(e.y),r=Number(e.width),i=Number(e.height);return[t,n,r,i].every(Number.isFinite)&&r>0&&i>0?{x:t,y:n,width:r,height:i}:null}",
     "codexPetOverlayDisplayRect(e){return this.codexPetOverlayRect(e?.workArea??e?.bounds??e)}",
     "codexPetOverlayWindowBounds(e){try{return this.codexPetOverlayKWinGeometry(e)??this.codexPetOverlayRect(e?.getBounds?.()??e?.getContentBounds?.())}catch{return null}}",
@@ -587,14 +994,15 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayTrayAboveLeft(e){if(process.platform!==`linux`||e==null||e.windowBounds==null||e.mascot==null||e.tray==null)return e;let t=Number(e.windowBounds.width),n=Number(e.windowBounds.height),r=Number(e.mascot.width),i=Number(e.mascot.height),a=Number(e.tray.width),o=Number(e.tray.height);if(![t,n,r,i,a,o].every(Number.isFinite)||t<=0||n<=0||r<=0||i<=0||a<=0||o<=0)return e;let s=4,c=Math.max(0,Math.min(Math.round(t),Math.round(a))),l=Math.max(0,Math.min(Math.max(0,Math.round(n-i-s)),Math.round(o))),u=this.codexPetOverlayMascotLocalPosition,d=Number(u?.left),p=Number(u?.top),h=[d,p].every(Number.isFinite),m=Math.max(0,Math.min(Math.round(t-r),Math.round(h?d:t-r))),f=Math.max(0,Math.min(Math.round(n-i),Math.round(h?p:n-i))),g=Math.max(0,Math.round(n-i-s-l)),v=Math.max(0,Math.min(Math.round(n-i),Math.round(l+s)));if(g<v&&f>g&&f<v){f=Math.abs(f-g)<=Math.abs(v-f)?g:v,h&&(this.codexPetOverlayMascotLocalPosition={left:m,top:f})}let w=Math.max(0,Math.min(Math.round(t-c),Math.round(m+r-c))),x=f>=l+s?f-l-s:f+i+s;x=Math.max(0,Math.min(Math.round(n-l),Math.round(x)));let y=e.anchor??{x:Number(e.windowBounds.x)+(Number(e.mascot.left)||0),y:Number(e.windowBounds.y)+(Number(e.mascot.top)||0),width:r,height:i},b=h?{...e.windowBounds}:{...e.windowBounds,x:Math.round(Number(y.x)-m),y:Math.round(Number(y.y)-f)},k={...y,x:Math.round(Number(b.x)+m),y:Math.round(Number(b.y)+f),width:y.width??r,height:y.height??i};return{...e,anchor:k,mascot:{...e.mascot,left:m,top:f,width:r,height:i},tray:{...e.tray,left:w,top:x,width:c,height:l},placement:`top-end`,windowBounds:b}}",
     "codexPetOverlayDragFromCurrentRenderer(e){let t=this.window;return!(t==null||t.isDestroyed?.()||t.webContents?.id!==e)}",
     "codexPetOverlayStartLocalMascotDrag(e,t){if(!this.codexPetOverlayDragFromCurrentRenderer(e)||process.platform!==`linux`||this.codexPetOverlayShouldLockPosition())return!1;let n=this.layout,r=this.codexPetOverlayMascotRect(n),i=Number(t?.pointerWindowX),a=Number(t?.pointerWindowY);if(r==null||![i,a].every(Number.isFinite)||i<r.left||a<r.top||i>r.left+r.width||a>r.top+r.height)return!1;" +
+      `if(this.codexPetOverlayIsNativeHyprland()&&this.codexPetOverlayHyprlandStartWindowDrag(this.window,t))return!0;` +
       `if(${WAYLAND_WINDOW}&&this.codexPetOverlayBeginKWinDrag(this.window,t))return!1;` +
       "return this.codexPetOverlayMascotDragState={offsetX:i-r.left,offsetY:a-r.top,rendererGestureId:t?.codexPetOverlayGestureId},!0}",
-    "codexPetOverlayEndLocalMascotDrag(e){return!this.codexPetOverlayDragFromCurrentRenderer(e)||this.codexPetOverlayMascotDragState==null?!1:(this.codexPetOverlayMascotDragState=null,!0)}",
+    "codexPetOverlayEndLocalMascotDrag(e){if(this.codexPetOverlayDragFromCurrentRenderer(e)&&this.codexPetOverlayHyprlandEndWindowDrag())return!0;return!this.codexPetOverlayDragFromCurrentRenderer(e)||this.codexPetOverlayMascotDragState==null?!1:(this.codexPetOverlayMascotDragState=null,!0)}",
     "codexPetOverlayRememberLayout(e,t){let n=this.codexPetOverlayRect(t);this.codexPetOverlayDesiredDisplayBounds=n==null?null:{x:Math.round(n.x),y:Math.round(n.y),width:Math.round(n.width),height:Math.round(n.height)};let r=this.codexPetOverlayRect(e?.windowBounds);if(r!=null){let i={x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)},a=this.codexPetOverlayDesiredWindowBounds,o=a==null||a.x!==i.x||a.y!==i.y||a.width!==i.width||a.height!==i.height;this.codexPetOverlayDesiredWindowBounds=i;if(this.codexPetOverlayIsNativeKWin()){let e=this.codexPetOverlayKWinGeometry(this.window);this.codexPetOverlayKWinPendingBounds=e!=null&&[`x`,`y`,`width`,`height`].every(t=>e[t]===i[t])?null:i;}if(o&&this.window!=null){let e=this.codexPetOverlaySettings();try{e.lockPosition===!0&&this.codexPetOverlayScheduleHyprlandHints(this.window)}catch{}try{this.dragState!=null?this.codexPetOverlayQueueKWinDrag(this.window):this.codexPetOverlayScheduleKWinHints(this.window)}catch{}try{this.dragState!=null?this.codexPetOverlayQueueNiriDrag(this.window):this.codexPetOverlayScheduleNiriHints(this.window)}catch{}}}return e}",
-    "codexPetOverlayLayoutForDisplay(e,t,n){if(process.platform!==`linux`||t==null||t.windowBounds==null)return this.codexPetOverlayRememberLayout(this.codexPetOverlayTrayAboveLeft(t));let r=this.codexPetOverlayDisplayRect(e);if(this.codexPetOverlayIsNativeKWin()){if(this.codexPetOverlaySettings().lockPosition&&r){let n=this.codexPetOverlayGravityBounds(r,t,this.codexPetOverlaySettings());if(n)t=this.getLayoutForDisplay(e,this.codexPetOverlayLayoutAtWindowPosition(n,t).anchor);}return this.codexPetOverlayRememberLayout(t,r);}let i=this.codexPetOverlaySettings(),a=t;if(i.lockPosition===!0&&r!=null){let e=this.codexPetOverlayGravityBounds(r,a,i);e!=null&&(a=this.codexPetOverlayLayoutAtWindowPosition(e,a))}else if(this.dragState==null&&!this.codexPetOverlayIsNativeKWin()){let e=this.codexPetOverlayWindowBounds(n),o=!1;try{o=n?.isVisible?.()===!0}catch{}e!=null&&r!=null&&this.codexPetOverlayBoundsNearDisplay(e,r)&&(o||this.codexPetOverlayInitialPositionDone===!0||this.codexPetOverlayManualPosition===!0)?(this.codexPetOverlayInitialPositionDone=!0,this.codexPetOverlayMoved(e,a.windowBounds)&&(this.codexPetOverlayManualPosition=!0),a=this.codexPetOverlayLayoutAtWindowPosition(e,a)):this.codexPetOverlayInitialPositionDone=!0}return this.codexPetOverlayRememberLayout(this.codexPetOverlayTrayAboveLeft(a),r)}",
+    "codexPetOverlayLayoutForDisplay(e,t,n){if(process.platform!==`linux`||t==null||t.windowBounds==null)return this.codexPetOverlayRememberLayout(this.codexPetOverlayTrayAboveLeft(t));let r=this.codexPetOverlayDisplayRect(e);if(this.codexPetOverlayIsNativeKWin()){if(this.codexPetOverlaySettings().lockPosition&&r){let n=this.codexPetOverlayGravityBounds(r,t,this.codexPetOverlaySettings());if(n)t=this.getLayoutForDisplay(e,this.codexPetOverlayLayoutAtWindowPosition(n,t).anchor);}return this.codexPetOverlayRememberLayout(t,r);}let i=this.codexPetOverlaySettings(),a=t;if(i.lockPosition===!0&&r!=null){let e=this.codexPetOverlayGravityBounds(r,a,i);e!=null&&(a=this.codexPetOverlayLayoutAtWindowPosition(e,a))}else if(this.dragState==null&&!this.codexPetOverlayIsNativeKWin()&&!this.codexPetOverlayIsNativeHyprland()){let e=this.codexPetOverlayWindowBounds(n),o=!1;try{o=n?.isVisible?.()===!0}catch{}e!=null&&r!=null&&this.codexPetOverlayBoundsNearDisplay(e,r)&&(o||this.codexPetOverlayInitialPositionDone===!0||this.codexPetOverlayManualPosition===!0)?(this.codexPetOverlayInitialPositionDone=!0,this.codexPetOverlayMoved(e,a.windowBounds)&&(this.codexPetOverlayManualPosition=!0),a=this.codexPetOverlayLayoutAtWindowPosition(e,a)):this.codexPetOverlayInitialPositionDone=!0}return this.codexPetOverlayRememberLayout(this.codexPetOverlayHyprlandClipLayout(this.codexPetOverlayTrayAboveLeft(a)),r)}",
     "codexPetOverlayShouldUseWholeWindowInput(){return process.platform===`linux`&&this.codexPetOverlaySettings().lockPosition!==!0}",
     // The KWin cursor bridge owns Wayland gestures; Chromium drag regions bypass its bounds and completion handling.
-    "codexPetOverlayInstallTransparentRenderer(e){try{this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput();if(e.__codexPetOverlayTransparentRendererInstalled)return;e.__codexPetOverlayTransparentRendererInstalled=!0;let t=e.webContents,n=()=>{try{let n=`html,body,#root,main,[data-avatar-overlay-content-frame=\"true\"]{background:transparent!important;background-color:transparent!important;}[data-codex-window-type=\"electron\"].electron-opaque,[data-codex-window-type=\"electron\"].electron-opaque body{background:transparent!important;background-color:transparent!important;background-image:none!important;}`;this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput(),this.codexLinuxWholeWindowInput&&(n+=this.codexPetOverlayIsNativeKWin()?`html,body,#root,#root *{-webkit-app-region:no-drag!important;app-region:no-drag!important;}`:`html,body,#root,main,[data-avatar-overlay-content-frame=\"true\"]{-webkit-app-region:drag!important;app-region:drag!important;user-select:none!important;-webkit-user-select:none!important;}[data-avatar-overlay-hit-region=\"mascot\"],[data-avatar-mascot=\"true\"],.no-drag,[data-avatar-overlay-hit-region=\"notification-tray\"],[data-avatar-overlay-hit-region=\"notification-scroll-control\"]{-webkit-app-region:no-drag!important;app-region:no-drag!important;}`),t==null||t.isDestroyed?.()||t.insertCSS?.(n,{cssOrigin:`author`}),t==null||t.isDestroyed?.()||t.executeJavaScript?.(`try{document.documentElement.style.background=\"transparent\";document.body&&(document.body.style.background=\"transparent\")}catch{}`,!0)}catch{}};t?.on?.(`did-finish-load`,n),n()}catch{}}",
+    "codexPetOverlayInstallTransparentRenderer(e){try{this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput();if(e.__codexPetOverlayTransparentRendererInstalled)return;e.__codexPetOverlayTransparentRendererInstalled=!0;let t=e.webContents,n=()=>{try{let n=`html,body,#root,main,[data-avatar-overlay-content-frame=\"true\"]{background:transparent!important;background-color:transparent!important;}[data-codex-window-type=\"electron\"].electron-opaque,[data-codex-window-type=\"electron\"].electron-opaque body{background:transparent!important;background-color:transparent!important;background-image:none!important;}`;this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput(),this.codexLinuxWholeWindowInput&&(n+=this.codexPetOverlayIsNativeKWin()||this.codexPetOverlayIsNativeHyprland()?`html,body,#root,#root *{-webkit-app-region:no-drag!important;app-region:no-drag!important;}`:`html,body,#root,main,[data-avatar-overlay-content-frame=\"true\"]{-webkit-app-region:drag!important;app-region:drag!important;user-select:none!important;-webkit-user-select:none!important;}[data-avatar-overlay-hit-region=\"mascot\"],[data-avatar-mascot=\"true\"],.no-drag,[data-avatar-overlay-hit-region=\"notification-tray\"],[data-avatar-overlay-hit-region=\"notification-scroll-control\"]{-webkit-app-region:no-drag!important;app-region:no-drag!important;}`),this.codexPetOverlayIsNativeHyprland()&&(n+=`[data-codex-pet-id]{scale:${this.codexPetOverlaySettings().miniScale}!important;transform-origin:center bottom!important;}`),t==null||t.isDestroyed?.()||t.insertCSS?.(n,{cssOrigin:`author`}),t==null||t.isDestroyed?.()||t.executeJavaScript?.(`try{document.documentElement.style.background=\"transparent\";document.body&&(document.body.style.background=\"transparent\")}catch{}`,!0)}catch{}};t?.on?.(`did-finish-load`,n),n()}catch{}}",
     "codexPetOverlayRestoreFocusableAfterInactiveShow(e){if(this.codexPetOverlayIsNativeKWin())return;try{let t=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.window!==e||this.codexPetOverlaySettings().mode===`passive`||e.setFocusable?.(!0)}catch{}},0);try{t.unref?.()}catch{}}catch{}}",
     "codexPetOverlaySyncWindow(e,t=!1){if(process.platform!==`linux`||e==null||e.isDestroyed?.())return;this.codexLinuxWholeWindowInput=this.codexPetOverlayShouldUseWholeWindowInput();let n=this.codexPetOverlaySettings(),r=n.mode!==`passive`,i=t&&r&&this.codexPetOverlayIsNativeKWin()&&e.isVisible?.()===!0;try{e.setTitle?.(`Codex Pet Overlay`)}catch{}try{!i&&e.setFocusable?.(r&&!t)}catch{}try{!i&&t&&r&&this.codexPetOverlayRestoreFocusableAfterInactiveShow(e)}catch{}try{e.setSkipTaskbar?.(!!n.skipTaskbar)}catch{}try{e.setAlwaysOnTop?.(!!n.alwaysOnTop)}catch{}try{e.setBackgroundColor?.(`#00000000`)}catch{}try{this.codexPetOverlayInstallTransparentRenderer(e)}catch{}try{e.setOpacity?.(1)}catch{}try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces,{visibleOnFullScreen:!!n.allWorkspaces})}catch{try{e.setVisibleOnAllWorkspaces?.(!!n.allWorkspaces)}catch{}}try{n.alwaysOnTop&&e.moveTop?.()}catch{}try{this.codexPetOverlayScheduleHyprlandHints(e)}catch{}try{this.codexPetOverlayScheduleKWinHints(e)}catch{}try{this.codexPetOverlayScheduleNiriHints(e)}catch{}}",
     "codexPetOverlayHyprlandSession(){if(process.platform!==`linux`)return!1;let e=[process.env.HYPRLAND_INSTANCE_SIGNATURE,process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return e.includes(`hyprland`)}",
@@ -602,11 +1010,11 @@ function buildPetOverlayMethods(settings) {
     "codexPetOverlayHyprctl(e,t){if(this.codexPetOverlayHyprctlUnavailable)return;try{let n=typeof require==`function`?require(`node:child_process`):null;if(typeof n?.execFile!=`function`){this.codexPetOverlayHyprctlUnavailable=!0;return}n.execFile(`hyprctl`,e,{timeout:1200},(e,...n)=>{e?.code===`ENOENT`&&(this.codexPetOverlayHyprctlUnavailable=!0),typeof t==`function`&&t(e,...n)})}catch(e){e?.code===`ENOENT`&&(this.codexPetOverlayHyprctlUnavailable=!0);try{typeof t==`function`&&t(e)}catch{}}}",
     "codexPetOverlayLuaString(e){return String(e).replace(/\\\\/g,`\\\\\\\\`).replaceAll(`\"`,`\\\\\"`)}",
     "codexPetOverlayShouldFallbackHyprctl(e){return e!=null&&e.killed!==!0&&e.signal==null&&e.code!==`ETIMEDOUT`&&e.code!==`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`}",
-    "codexPetOverlayHyprlandDispatch(e,t){this.codexPetOverlayHyprctl([`dispatch`,e],e=>{this.codexPetOverlayShouldFallbackHyprctl(e)&&Array.isArray(t)&&this.codexPetOverlayHyprctl([`dispatch`,...t])})}",
+    "codexPetOverlayHyprlandDispatch(e,t){let n=process.env.CODEX_PET_HYPRLAND_LUA_SUPPORTED===`1`;this.codexPetOverlayHyprctl(n?[`eval`,`hl.dispatch(${e})`]:[`dispatch`,e],(e,r)=>{(this.codexPetOverlayShouldFallbackHyprctl(e)||n&&typeof r===`string`&&/^error:/m.test(r))&&Array.isArray(t)&&this.codexPetOverlayHyprctl([`dispatch`,...t])})}",
     "codexPetOverlayHyprlandSetProp(e,t,n){let r=this.codexPetOverlayLuaString(e),i=this.codexPetOverlayLuaString(t),a=this.codexPetOverlayLuaString(n);this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.set_prop({ prop = \"${i}\", value = \"${a}\", window = \"${r}\" })`,[`setprop`,e,t,String(n)])}",
     "codexPetOverlaySelectHyprlandClient(e,t){if(!Array.isArray(e))return null;let n=this.codexPetOverlayRect(t),r=[];for(let i of e){if(i==null||typeof i.address!=`string`||!/^0x[0-9a-f]{1,16}$/i.test(i.address)||String(i.title??``)!==`Codex Pet Overlay`||i.floating!==!0||!(i.fullscreen===0||i.fullscreen===!1)||Number(i.pid)!==Number(process.pid))continue;let t=i.size,a=i.at;if(!Array.isArray(t)||!Array.isArray(a))continue;let o=Number(t[0]),s=Number(t[1]),c=Number(a[0]),l=Number(a[1]);if(![o,s,c,l].every(Number.isFinite)||o<=0||s<=0)continue;r.push({client:i,sizeScore:n==null?0:Math.abs(o-n.width)+Math.abs(s-n.height),positionScore:n==null?0:Math.abs(c-n.x)+Math.abs(l-n.y),area:o*s})}if(n!=null){let e=r.filter(e=>e.sizeScore<=16);if(e.length===1)return e[0].client;let t=e.filter(e=>e.positionScore<=80);return t.length===1?t[0].client:null}let i=r.filter(e=>e.area<=300000);return i.length===1?i[0].client:null}",
     "codexPetOverlayFindHyprlandClient(e,t){if(!this.codexPetOverlayShouldUseHyprland())return;let n=this.codexPetOverlayWindowBounds(e);this.codexPetOverlayHyprctl([`clients`,`-j`],(e,r)=>{if(e)return;let i;try{i=JSON.parse(String(r??``))}catch{return}let a=this.codexPetOverlaySelectHyprlandClient(i,n);a!=null&&typeof t==`function`&&t(a)})}",
-    "codexPetOverlayApplyHyprlandHints(e){let t=this.codexPetOverlaySettings();if(process.platform!==`linux`||e==null||e.isDestroyed?.()||!this.codexPetOverlayShouldUseHyprland())return;this.codexPetOverlayFindHyprlandClient(e,n=>{if(e.isDestroyed?.()||this.window!==e)return;let r=`address:${n.address}`,i=this.codexPetOverlayDesiredWindowBounds,a=Number(i?.x),o=Number(i?.y),s=Math.round(a),c=Math.round(o);t.lockPosition&&[a,o].every(Number.isFinite)&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.move({ window = \"${r}\", x = ${s}, y = ${c} })`,[`movewindowpixel`,`exact ${s} ${c},${r}`]);t.allWorkspaces&&n.pinned!==!0&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.pin({ action = \"on\", window = \"${r}\" })`,[`pin`,r]);this.codexPetOverlayHyprlandSetProp(r,`decorate`,`0`);this.codexPetOverlayHyprlandSetProp(r,`no_shadow`,`1`);this.codexPetOverlayHyprlandSetProp(r,`no_blur`,`1`);this.codexPetOverlayHyprlandSetProp(r,`no_anim`,`1`);this.codexPetOverlayHyprlandSetProp(r,`border_size`,`0`);this.codexPetOverlayHyprlandSetProp(r,`rounding`,`0`);this.codexPetOverlayHyprlandSetProp(r,`opacity`,`1.0 override 1.0 override 1.0 override`);this.codexPetOverlayHyprlandSetProp(r,`opaque`,`0`);this.codexPetOverlayHyprlandSetProp(r,`force_rgbx`,`0`);t.alwaysOnTop&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.alter_zorder({ mode = \"top\", window = \"${r}\" })`,[`alterzorder`,`top,${r}`])})}",
+    "codexPetOverlayApplyHyprlandHints(e){let t=this.codexPetOverlaySettings();if(process.platform!==`linux`||e==null||e.isDestroyed?.()||!this.codexPetOverlayShouldUseHyprland())return;this.codexPetOverlayFindHyprlandClient(e,n=>{if(e.isDestroyed?.()||this.window!==e)return;this.codexPetOverlayHyprlandPlace(e,n);let r=`address:${n.address}`,i=this.codexPetOverlayDesiredWindowBounds,a=Number(i?.x),o=Number(i?.y),s=Math.round(a),c=Math.round(o);t.lockPosition&&[a,o].every(Number.isFinite)&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.move({ window = \"${r}\", x = ${s}, y = ${c} })`,[`movewindowpixel`,`exact ${s} ${c},${r}`]);t.allWorkspaces&&n.pinned!==!0&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.pin({ action = \"on\", window = \"${r}\" })`,[`pin`,r]);this.codexPetOverlayHyprlandSetProp(r,`decorate`,`0`);this.codexPetOverlayHyprlandSetProp(r,`no_shadow`,`1`);this.codexPetOverlayHyprlandSetProp(r,`no_blur`,`1`);this.codexPetOverlayHyprlandSetProp(r,`no_anim`,`1`);this.codexPetOverlayHyprlandSetProp(r,`border_size`,`0`);this.codexPetOverlayHyprlandSetProp(r,`rounding`,`0`);this.codexPetOverlayHyprlandSetProp(r,`opacity`,`1.0 override 1.0 override 1.0 override`);this.codexPetOverlayHyprlandSetProp(r,`opaque`,`0`);this.codexPetOverlayHyprlandSetProp(r,`force_rgbx`,`0`);t.alwaysOnTop&&this.codexPetOverlayHyprlandDispatch(`hl.dsp.window.alter_zorder({ mode = \"top\", window = \"${r}\" })`,[`alterzorder`,`top,${r}`])})}",
     "codexPetOverlayScheduleHyprlandHints(e){if(!this.codexPetOverlayShouldUseHyprland())return;try{this.codexPetOverlayHyprlandTimers?.forEach(clearTimeout)}catch{}this.codexPetOverlayHyprlandTimers=[0,80,300,1000,2500,5000,10000].map(t=>{let n=setTimeout(()=>{try{e==null||e.isDestroyed?.()||this.codexPetOverlayApplyHyprlandHints(e)}catch{}},t);try{n.unref?.()}catch{}return n})}",
     "codexPetOverlayKWinSession(){if(process.platform!==`linux`)return!1;let e=String(process.env.KDE_FULL_SESSION??``).toLowerCase();if(process.env.KDE_SESSION_VERSION||e===`1`||e===`true`)return!0;let t=[process.env.XDG_CURRENT_DESKTOP,process.env.DESKTOP_SESSION].filter(Boolean).join(`:`).toLowerCase();return t.includes(`kde`)||t.includes(`plasma`)}",
     "codexPetOverlayShouldUseKWin(){return process.platform===`linux`&&this.codexPetOverlaySettings().kwin===!0&&this.codexPetOverlayKWinSession()}",
@@ -677,7 +1085,7 @@ function patchCreateWindowFrame(source) {
   }
   const replacement = method.text.replace(
     `${AVATAR_OVERLAY_APPEARANCE},`,
-    `${AVATAR_OVERLAY_APPEARANCE},frame:process.platform===\`linux\`?!1:!0,`,
+    `${AVATAR_OVERLAY_APPEARANCE},frame:process.platform===\`linux\`?!1:!0,transparent:process.platform===\`linux\`,hasShadow:process.platform!==\`linux\`,`,
   );
   if (replacement === method.text) {
     console.warn("WARN: Could not identify avatar overlay appearance option - skipping pet overlay frame patch");
@@ -920,6 +1328,15 @@ function inlineLayoutCall(text) {
   };
 }
 
+function patchHyprlandMovedWindow(source) {
+  const method = findAvatarOverlayMethod(source,
+    /(?<![\w$.])rememberMovedWindow\([^{}]*\)\{/);
+  if (!method || method.text.includes("if(this.codexPetOverlayIsNativeHyprland())return;")) return source;
+  return replaceMethodText(source, method,
+    method.match[0] + "if(this.codexPetOverlayIsNativeHyprland())return;" +
+    method.text.slice(method.match[0].length));
+}
+
 function patchNativeDrawBounds(source) {
   const method = findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/);
   if (method?.text.includes(NATIVE_DRAW_CONSTRAINT)) {
@@ -941,7 +1358,7 @@ function patchNativeDrawBounds(source) {
   const directReturn = method.text.startsWith(`${method.match[0]}return `);
   if (!display || !anchor || !draw || (!result && !directReturn)) return source;
   const options = call.options.replace(constraint[0], NATIVE_DRAW_CONSTRAINT)
-    .replace(draw[0], `nativeDrawWindowBounds:${PET_LAYOUT_RECEIVER}.codexPetOverlayIsNativeKWin()?${PET_LAYOUT_RECEIVER}.codexPetOverlayKWinDrawBounds(${display},${anchor}):${draw[1]},displayBounds:`);
+    .replace(draw[0], `nativeDrawWindowBounds:${PET_LAYOUT_RECEIVER}.codexPetOverlayIsNativeKWin()?${PET_LAYOUT_RECEIVER}.codexPetOverlayKWinDrawBounds(${display},${anchor}):${PET_LAYOUT_RECEIVER}.codexPetOverlayIsNativeHyprland()?${PET_LAYOUT_RECEIVER}.codexPetOverlayHyprlandDrawBounds(${display},${anchor}):${draw[1]},displayBounds:`);
   let text = method.text.slice(0, call.start) +
     `(codexPetOverlayLayout=>codexPetOverlayLayout(${PET_LAYOUT_RECEIVER}.codexPetOverlayKWinLayoutOptions(${options},codexPetOverlayLayout)))(${call.fn})` +
     method.text.slice(call.end).replace(new RegExp(`return ${result}\\}$`), `return this.codexPetOverlayKWinLayout(${display},${result})}`);
@@ -949,8 +1366,8 @@ function patchNativeDrawBounds(source) {
     const prefix = `${method.match[0]}return `;
     text = `${prefix}this.codexPetOverlayKWinLayout(${display},${text.slice(prefix.length, -1)})}`;
   }
-  // The options run inside an unbound pure function; capture its controller
-  // before evaluating them instead of relying on this inside that function.
+  // Upstream 26.1103 evaluates layout options in an unbound pure function.
+  // Capture the manager before that function runs; injected `this` would be undefined.
   text = `${method.match[0]}const ${PET_LAYOUT_RECEIVER}=this;${text.slice(method.match[0].length)}`;
   return replaceMethodText(source, method, text);
 }
@@ -961,7 +1378,7 @@ function patchKWinWindowSize(source) {
   const window = method && firstMethodArgument(method.match[0], "setWindowBounds", 0);
   const bounds = method && firstMethodArgument(method.match[0], "setWindowBounds", 1);
   if (!window || !bounds) return source;
-  const body = `if(this.codexPetOverlayIsNativeKWin()){if(${window}.isDestroyed())return;let s=${window}.getContentBounds();if(s.width!==${bounds}.width||s.height!==${bounds}.height)${window}.setContentSize(${bounds}.width,${bounds}.height);return;}`;
+  const body = `if(this.codexPetOverlayIsNativeKWin()||this.codexPetOverlayIsNativeHyprland()){if(${window}.isDestroyed())return;let s=${window}.getContentBounds();if(s.width!==${bounds}.width||s.height!==${bounds}.height)${window}.setContentSize(${bounds}.width,${bounds}.height);return;}`;
   return replaceMethodText(source, method, method.match[0] + body + method.text.slice(method.match[0].length));
 }
 
@@ -1190,7 +1607,7 @@ function hasCompletePetOverlayPatch(source, localMascotDragExpected) {
     source.includes("codexPetOverlaySettings(){"),
     findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes(NATIVE_DRAW_CONSTRAINT),
     findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayKWinLayout("),
-    findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes(PET_LAYOUT_RECEIVER + ".codexPetOverlayKWinLayoutOptions("),
+    findAvatarOverlayMethod(source, /(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/)?.text.includes(`${PET_LAYOUT_RECEIVER}.codexPetOverlayKWinLayoutOptions(`),
     findAvatarOverlayMethod(source, /(?<![\w$.])setWindowBounds\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayIsNativeKWin()"),
     findAvatarOverlayMethod(source, /(?<![\w$.])focusQuickChat\([^{}]*\)\{/)?.text.includes("codexPetOverlayHiddenFocus:"),
     findAvatarOverlayMethod(source, /(?<![\w$.])setKeyboardInteraction\([^{}]*\)\{/)?.text.includes("this.codexPetOverlayActivateKWin("),
@@ -1261,6 +1678,7 @@ function applyPetOverlayPatch(source, context) {
   patched = patchLockedDrag(patched);
   patched = patchCompositorDragLifecycle(patched);
   patched = patchKWinGeometry(patched);
+  patched = patchHyprlandMovedWindow(patched);
   patched = patchKWinCoordinateConsumers(patched);
   patched = patchKWinProximityPublication(patched);
   patched = patchKWinDragCleanup(patched);

@@ -21,6 +21,7 @@
   "petOverlay": {
     "gravity": "bottom-right",
     "margin": 24,
+    "miniScale": 0.7,
     "allWorkspaces": true,
     "alwaysOnTop": true,
     "skipTaskbar": true,
