@@ -28,6 +28,7 @@ Feature settings can be overridden in the gitignored `features.json` file:
       "petOverlay": {
         "gravity": "bottom-right",
         "margin": 24,
+        "miniScale": 0.7,
         "allWorkspaces": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
@@ -56,10 +57,12 @@ helper can also be supplied with `CODEX_PET_KWIN_SOURCE=/path/to/codex-pet-kwin`
 
 `lockPosition: false` preserves manual pet moves when the existing window
 position is visible. In this default unlocked mode the overlay is frameless
-and the mascot has its own renderer gesture. On native Plasma Wayland,
-dragging the mascot moves the whole overlay through KWin; other sessions
-reposition the mascot within the view. The application publishes input
-regions for the mascot and tray controls. Set
+and the mascot has its own renderer gesture. On native Plasma Wayland, dragging the mascot moves the whole overlay
+through KWin. A Hyprland session using the Lua config provider also moves
+the whole overlay through the compositor, including between displays with
+different scale factors. Other sessions retain the existing local dragging
+or compositor-specific behavior. The application publishes input regions
+for the mascot and tray controls. Set
 `lockPosition` to `true` only when you want the mascot pinned to the configured
 screen corner on every layout pass.
 
@@ -75,6 +78,7 @@ handshake.
 | --- | --- | --- | --- |
 | `gravity` | `bottom-right`, `bottom-left`, `top-right`, `top-left` | `bottom-right` | Screen corner used when `lockPosition` is enabled. |
 | `margin` | `0` to `512` | `24` | Pixel gap from the selected screen edges. |
+| `miniScale` | `0.50` to `1.20` | `0.70` | Visual scale for Mini on a Lua-backed Hyprland Wayland session; does not shrink the hit region or toolbar. |
 | `allWorkspaces` | `true` or `false` | `true` | Calls Electron `setVisibleOnAllWorkspaces` where supported. |
 | `alwaysOnTop` | `true` or `false` | `true` | Calls Electron `setAlwaysOnTop`. |
 | `skipTaskbar` | `true` or `false` | `true` | Keeps the pet out of task switchers where supported. |
@@ -88,6 +92,7 @@ Runtime overrides are also supported after restart:
 
 ```bash
 CODEX_PET_OVERLAY_MARGIN=16
+CODEX_PET_OVERLAY_MINI_SCALE=0.85
 CODEX_PET_OVERLAY_GRAVITY=bottom-left
 CODEX_PET_OVERLAY_MODE=passive
 CODEX_PET_OVERLAY_LOCK_POSITION=1
@@ -105,6 +110,38 @@ The legacy `CODEX_PET_LINUX_*` names from the prototype are still accepted for
 local compatibility.
 
 ## Hyprland Notes
+
+### Compatibility
+
+The advanced Hyprland placement and native drag use the compositor's
+**Lua API**, including `hyprctl eval`, `hyprctl repl` and `hl.get_windows()`.
+This requires Hyprland **0.55 or newer with its Lua configuration provider
+active**, not merely Hyprland being installed. The launcher probes
+`hyprctl status -j` at startup, and enables the integration only when
+`configProvider` is `lua`. On a missing or older Lua provider, the
+**existing Hyprland integration stays enabled**: its legacy `hyprctl dispatch`
+path still handles workspace pinning, window decoration/shadow/blur hints,
+z-order, and locked-position movement through legacy dispatch fallbacks.
+Only the **new native-Wayland layout, compositor drag, and per-Mini scale**
+require the Lua capability probe. When `hyprctl` itself is missing, commands
+fail closed and Electron's basic window behavior remains available. Directly
+bypassing the project launcher does not assume that the Lua API exists.
+
+This optional integration is tested in a live Hyprland 0.56.2 Lua session
+with 200% and 125% displays, plus synthetic regression tests for negative
+monitor origins, different positions and scales, single-monitor layouts,
+missing API capability, locked gravity and stale window handles.
+**Those tests do not constitute validation on every compositor version,
+graphics driver, or monitor arrangement.** The signed upstream application
+can also change its minified Mini layout, in which case the feature's patch
+must fail closed and be updated rather than guessing new method offsets.
+
+The idle transparent canvas is at most 380×420 logical pixels. The drawing
+surface can expand to 520×520 when Mini's editor or controls require it, and
+both sizes are limited by the current logical display area. The visual sprite
+scale defaults to 70% for Lua-backed Hyprland only; customize `miniScale`
+without changing the click/drag geometry, voice/write toolbar, or other
+compositors' pet artwork.
 
 When `hyprland` is enabled, the feature reads `hyprctl clients -j`, selects
 only an unambiguous floating window with the exact `Codex Pet Overlay` title,

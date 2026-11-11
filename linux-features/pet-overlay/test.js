@@ -177,11 +177,13 @@ function controllerFromPatchedSource(patched, overrides = {}) {
     globalThis: {},
     Date: overrides.Date ?? Date,
     process: {
-      env: {},
       pid: 4242,
       platform: "linux",
       resourcesPath: "/fixture/resources",
       ...overrides.process,
+      // Never force a compositor capability in the shared fixture:
+      // legacy Hyprland must remain testable without a Lua provider.
+      env: { ...(overrides.process?.env ?? {}) },
     },
     clearTimeout: overrides.clearTimeout ?? clearTimeout,
     setInterval: overrides.setInterval ?? setInterval,
@@ -427,6 +429,78 @@ test("GPU compositing launcher default preserves an explicit user override", () 
   }
 });
 
+test("Hyprland launcher probes Lua provider and falls back safely for legacy setups", () => {
+  const hook = path.join(__dirname, "launcher-hook.sh");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pet-hypr-provider-"));
+  const binary = path.join(root, "hyprctl");
+  try {
+    fs.writeFileSync(binary, `#!/bin/sh
+[ "$1" = "status" ] && [ "$2" = "-j" ] || exit 9
+case "$FAKE_HYPR_STATUS" in
+  lua) printf '%s\n' '{"configProvider":"lua","backend":"drm"}' ;;
+  hyprlang) printf '%s\n' '{"configProvider":"hyprlang"}' ;;
+  error) exit 1 ;;
+esac
+`);
+    fs.chmodSync(binary, 0o755);
+    const launch = (value, override) => spawnSync("bash", [hook], {
+      encoding: "utf8",
+      env: {
+        PATH: root + path.delimiter + (process.env.PATH ?? "/usr/bin:/bin"),
+        XDG_CURRENT_DESKTOP: "Hyprland",
+        HYPRLAND_INSTANCE_SIGNATURE: "fixture-session",
+        FAKE_HYPR_STATUS: value,
+        ...(override == null ? {} : { CODEX_PET_HYPRLAND_LUA_SUPPORTED: override }),
+      },
+    });
+    for (const [input, expected] of [
+      ["lua", "1"], ["hyprlang", "0"], ["error", "0"],
+    ]) {
+      const r = launch(input);
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, /env CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0/);
+      assert.ok(r.stdout.includes(`env CODEX_PET_HYPRLAND_LUA_SUPPORTED=${expected}`));
+    }
+    const override = launch("hyprlang", "1");
+    assert.equal(override.status, 0, override.stderr);
+    assert.equal(override.stdout.includes("CODEX_PET_HYPRLAND_LUA_SUPPORTED"), false,
+      "explicit launcher capability override must not be replaced");
+
+    const notHyprland = spawnSync("bash", [hook], {
+      encoding: "utf8",
+      env: { PATH: root + path.delimiter + (process.env.PATH ?? "/usr/bin:/bin"),
+        XDG_CURRENT_DESKTOP: "KDE", FAKE_HYPR_STATUS: "lua" },
+    });
+    assert.equal(notHyprland.status, 0, notHyprland.stderr);
+    assert.doesNotMatch(notHyprland.stdout, /HYPRLAND_LUA_SUPPORTED/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Hyprland Lua probe gates only native paths while legacy hints remain enabled", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const { context, controller } = controllerFromPatchedSource(patched, {
+    ozonePlatform: "wayland",
+    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland",
+      CODEX_PET_HYPRLAND_LUA_SUPPORTED: "0" } },
+  });
+  assert.equal(controller.codexPetOverlayShouldUseHyprland(), true,
+    "the existing legacy hint path is unaffected by a missing Lua provider");
+  assert.equal(controller.codexPetOverlayIsNativeHyprland(), false);
+  context.process.env.CODEX_PET_HYPRLAND_LUA_SUPPORTED = "1";
+  assert.equal(controller.codexPetOverlayShouldUseHyprland(), true);
+  assert.equal(controller.codexPetOverlayIsNativeHyprland(), true);
+  delete context.process.env.CODEX_PET_HYPRLAND_LUA_SUPPORTED;
+  assert.equal(controller.codexPetOverlayShouldUseHyprland(), true);
+  assert.equal(controller.codexPetOverlayIsNativeHyprland(), false,
+    "bypassing the launcher never assumes Lua support");
+  context.process.env.CODEX_PET_HYPRLAND_LUA_SUPPORTED = "1";
+  context.process.env.XDG_CURRENT_DESKTOP = "KDE";
+  assert.equal(controller.codexPetOverlayShouldUseHyprland(), false,
+    "a KDE session is not Hyprland despite a stale capability flag");
+});
+
 test("unbound upstream pure layout captures the overlay manager receiver", () => {
   const patched = applyPatchTwice(nestedAvatarOverlayBundleFixture());
   new vm.Script(patched);
@@ -463,6 +537,44 @@ test("patches current avatar overlay layout, transparency, and window sync", () 
   assert.match(patched, /setSkipTaskbar/);
   assert.match(patched, /t===`avatarOverlay`\?\{backgroundColor:`#00000000`,backgroundMaterial:null\}/);
   assert.equal((patched.match(/codexPetOverlayLayoutForDisplay/g) ?? []).length, 2);
+});
+
+test("Hyprland native Mini canvas stays compact at fractional display scales", () => {
+  const patched = applyPatchTwice(nestedAvatarOverlayBundleFixture());
+  const { controller } = controllerFromPatchedSource(patched, {
+    ozonePlatform: "wayland",
+    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+    UB: options => options,
+  });
+  controller.layoutMode = "native";
+  controller.mascotSize = { width: 181, height: 196 };
+  const display = {
+    id: 2,
+    bounds: { x: 1440, y: 0, width: 1536, height: 864 },
+    workArea: { x: 1440, y: 0, width: 1536, height: 864 },
+  };
+  const layout = controller.getLayoutForDisplay(display, { x: 2819, y: 650, width: 181, height: 196 });
+  assert.equal(layout.constrainNativeDrawWindowToDisplay, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(layout.nativeDrawWindowBounds)), {
+    x: 2596, y: 444, width: 380, height: 420,
+  });
+
+  controller.isQuickChatPresentation = true;
+  const editor = controller.getLayoutForDisplay(display, { x: 2819, y: 650, width: 181, height: 196 });
+  assert.equal(editor.nativeDrawWindowBounds.width, 520);
+  assert.equal(editor.nativeDrawWindowBounds.height, 520);
+  controller.isQuickChatPresentation = false;
+  controller.traySize = { width: 276, height: 131 };
+  const withTray = controller.getLayoutForDisplay(display, { x: 2819, y: 650, width: 181, height: 196 });
+  assert.equal(withTray.nativeDrawWindowBounds.width, 520);
+  assert.equal(withTray.nativeDrawWindowBounds.height, 520);
+
+  const small = controller.getLayoutForDisplay({
+    id: 3, bounds: { x: -600, y: 0, width: 360, height: 400 },
+    workArea: { x: -600, y: 0, width: 360, height: 400 },
+  }, { x: -320, y: 200, width: 181, height: 196 });
+  assert.equal(small.nativeDrawWindowBounds.width, 360);
+  assert.equal(small.nativeDrawWindowBounds.height, 400);
 });
 
 for (const [platform, ozonePlatform, expected] of [
@@ -2006,6 +2118,8 @@ test("syncs overlay window hints without requiring Hyprland", () => {
 test("unlocked pet overlays are frameless only on Linux and opt into whole-window input", async () => {
   const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
   assert.match(patched, /frame:process\.platform===`linux`\?!1:!0/);
+  assert.match(patched, /transparent:process\.platform===`linux`/);
+  assert.match(patched, /hasShadow:process\.platform!==`linux`/);
   assert.match(patched, /codexPetOverlayShouldUseWholeWindowInput\(\)\{return process\.platform===`linux`&&this\.codexPetOverlaySettings\(\)\.lockPosition!==!0\}/);
   assert.match(patched, /codexLinuxWholeWindowInput=this\.codexPetOverlayShouldUseWholeWindowInput\(\)/);
 
@@ -2023,6 +2137,8 @@ test("unlocked pet overlays are frameless only on Linux and opt into whole-windo
   };
   await controller.createWindow();
   assert.equal(created[0].frame, false);
+  assert.equal(created[0].transparent, true);
+  assert.equal(created[0].hasShadow, false);
   controller.codexPetOverlaySyncWindow(controller.window);
   assert.equal(controller.codexLinuxWholeWindowInput, true);
 
@@ -2036,6 +2152,8 @@ test("unlocked pet overlays are frameless only on Linux and opt into whole-windo
   };
   await nonLinuxController.createWindow();
   assert.equal(nonLinuxCreated[0].frame, true);
+  assert.equal(nonLinuxCreated[0].transparent, false);
+  assert.equal(nonLinuxCreated[0].hasShadow, true);
   assert.equal(nonLinuxController.codexLinuxWholeWindowInput, undefined);
 });
 
@@ -2061,15 +2179,18 @@ test("unlocked drag CSS protects native mascot markup without an overlay hit reg
   );
 });
 
-for (const [desktop, ozonePlatform, nativeKWin, kwin = true] of [
-  ["KDE", "wayland", true], ["KDE", "x11", false], ["niri", "wayland", false], ["Hyprland", "wayland", false],
+for (const [desktop, ozonePlatform, nativeKWin, kwin = true, hyprlandLua = false] of [
+  ["KDE", "wayland", true], ["KDE", "x11", false], ["niri", "wayland", false],
+  ["Hyprland", "wayland", false, true, true],
+  ["Hyprland", "wayland", false, true, false],
   ["KDE", "wayland", false, false],
-]) test(`overlay drag regions select one gesture owner: ${desktop} ${ozonePlatform} kwin=${kwin}`, () => {
+]) test(`overlay drag regions select one gesture owner: ${desktop} ${ozonePlatform} kwin=${kwin} lua=${hyprlandLua}`, () => {
   const inserted = [], handlers = {};
   const { controller } = controllerFromPatchedSource(applyPetOverlayPatch(currentAvatarOverlayBundleFixture(), {
     feature: { settings: { petOverlay: { kwin } } },
   }), {
-    ozonePlatform, process: { env: { XDG_CURRENT_DESKTOP: desktop } },
+    ozonePlatform, process: { env: { XDG_CURRENT_DESKTOP: desktop,
+      CODEX_PET_HYPRLAND_LUA_SUPPORTED: hyprlandLua ? "1" : "0" } },
   });
   controller.codexPetOverlayInstallTransparentRenderer({ webContents: {
     insertCSS: css => inserted.push(css), isDestroyed: () => false,
@@ -2078,7 +2199,17 @@ for (const [desktop, ozonePlatform, nativeKWin, kwin = true] of [
   handlers["did-finish-load"]();
   assert.equal(inserted.length, 2);
   for (const css of inserted) {
-    if (nativeKWin) {
+    if (desktop === "Hyprland" && ozonePlatform === "wayland" && hyprlandLua) {
+      assert.match(css, /\[data-codex-pet-id\]\{scale:0\.7!important;transform-origin:center bottom!important;/);
+      // 0.70 / 0.82 = 85.4% of the previous Hyprland Mini size.
+      // Scale only the visual sprite: hover targets, tray and drag geometry
+      // retain their existing compositor-tested dimensions.
+      assert.doesNotMatch(css, /\[data-avatar-overlay-hit-region="notification-composer"\][^{]*\{[^}]*scale:/);
+      assert.doesNotMatch(css, /\[data-avatar-overlay-content-frame="true"\][^{]*\{[^}]*scale:/);
+    } else {
+      assert.doesNotMatch(css, /\[data-codex-pet-id\]\{scale:/);
+    }
+    if (nativeKWin || desktop === "Hyprland" && ozonePlatform === "wayland" && hyprlandLua) {
       assert.match(css, /html,body,#root,#root \*\{-webkit-app-region:no-drag!important;app-region:no-drag!important;\}/);
       assert.doesNotMatch(css, /app-region:drag/,
         "Chromium drag regions must not start a second native KWin move that bypasses the renderer gesture");
@@ -2119,7 +2250,7 @@ test("passive mode makes the overlay non-focusable", () => {
   // mode keeps it that way instead of restoring focusability after show.
   assert.match(
     patched,
-    /appearance:"avatarOverlay",frame:process\.platform===`linux`\?!1:!0,supportsWindowTiling:!1,focusable:!1/,
+    /appearance:"avatarOverlay",frame:process\.platform===`linux`\?!1:!0,transparent:process\.platform===`linux`,hasShadow:process\.platform!==`linux`,supportsWindowTiling:!1,focusable:!1/,
   );
   assert.match(patched, /codexPetOverlaySettings\(\)\{let e=\{[^}]*mode:`passive`/);
 });
@@ -2442,6 +2573,756 @@ test("targets only the unambiguous Hyprland pet window address", () => {
   assert.ok(calls.every((args) => !args.join(" ").includes("0x100")));
 });
 
+test("compact Hyprland layout brings the entire mascot inside the viewport without anchor drift", () => {
+  const { controller } = controllerFromPatchedSource(applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+    ozonePlatform: "wayland", process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+  });
+  controller.layoutMode = "native";
+  const source = {
+    anchor: { x: 620, y: 800, width: 181, height: 196 },
+    windowBounds: { x: 285, y: 451, width: 440, height: 460 },
+    mascot: { left: 335, top: 349, width: 181, height: 196 },
+    tray: null,
+    viewport: { width: 440, height: 460 },
+    visibleBounds: { left: 0, top: 0, width: 440, height: 460 },
+  };
+  const next = controller.codexPetOverlayHyprlandClipLayout(source);
+  assert.deepEqual(JSON.parse(JSON.stringify(next.mascot)), {
+    left: 203, top: 138, width: 181, height: 196,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(next.windowBounds)), {
+    x: 417, y: 662, width: 440, height: 460,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(next.anchor)), JSON.parse(JSON.stringify(source.anchor)));
+  assert.equal(next.windowBounds.x + next.mascot.left, source.anchor.x);
+  assert.equal(next.windowBounds.y + next.mascot.top, source.anchor.y);
+  assert.equal(controller.codexPetOverlayHyprlandClipLayout(next), next, "second pass must not drift");
+
+  controller.layoutMode = "legacy";
+  assert.equal(controller.codexPetOverlayHyprlandClipLayout(source), source);
+});
+
+test("Hyprland device metrics are scoped to Mini and do not change origin-shared zoom", async () => {
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+    });
+  let attached = false, width = 380, height = 420;
+  const calls = [];
+  const debuggerApi = new EventEmitter();
+  debuggerApi.isAttached = () => attached;
+  debuggerApi.attach = version => { assert.equal(version, "1.3"); attached = true; calls.push("attach"); };
+  debuggerApi.detach = () => { attached = false; calls.push("detach"); };
+  debuggerApi.sendCommand = async (name, options) => {
+    calls.push([name, JSON.parse(JSON.stringify(options))]);
+  };
+  const webContents = {
+    debugger: debuggerApi,
+    isDestroyed: () => false,
+    setZoomFactor: () => assert.fail("shared origin zoom must never change"),
+    getZoomFactor: () => assert.fail("shared origin zoom must not be used"),
+  };
+  const window = new EventEmitter();
+  window.webContents = webContents;
+  window.isDestroyed = () => false;
+  window.getContentBounds = () => ({ x: 0, y: 0, width, height });
+  controller.window = window;
+
+  controller.codexPetOverlayHyprlandMatchScale(window, 1.25);
+  await settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    "attach",
+    ["Emulation.setDeviceMetricsOverride",
+      { width: 0, height: 0, deviceScaleFactor: 1.25, mobile: false }],
+  ]);
+  controller.codexPetOverlayHyprlandMatchScale(window, 1.25);
+  await settle();
+  assert.equal(calls.length, 2, "unchanged output must not be reconfigured");
+
+  width = 520; height = 520;
+  controller.codexPetOverlayHyprlandMatchScale(window, 1.25);
+  await settle();
+  assert.equal(calls.length, 2,
+    "expanded editor/tray on the same display uses Electron's dynamic viewport");
+  controller.codexPetOverlayHyprlandMatchScale(window, 2);
+  await settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[2])), [
+    "Emulation.setDeviceMetricsOverride",
+    { width: 0, height: 0, deviceScaleFactor: 2, mobile: false },
+  ]);
+  // Width/height zero must be used for *both* idle and expanded layouts,
+  // so moving between output scales cannot pin an outdated 380x420 viewport.
+  for (const [name, args] of calls.filter(Array.isArray)) {
+    if (name === "Emulation.setDeviceMetricsOverride") {
+      assert.equal(args.width, 0);
+      assert.equal(args.height, 0);
+    }
+  }
+
+  window.emit("closed");
+  assert.equal(attached, false);
+  assert.equal(controller.codexPetOverlayHyprlandMetrics, null);
+  assert.equal(calls.at(-1), "detach");
+});
+
+test("Mini scale commands are serialized and the newest output wins", async () => {
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland",
+        CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+    });
+  const requests = [];
+  let attached = false;
+  const inspector = new EventEmitter();
+  inspector.isAttached = () => attached;
+  inspector.attach = () => { attached = true; };
+  inspector.detach = () => { attached = false; };
+  inspector.sendCommand = (name, args) => new Promise((resolve, reject) => {
+    requests.push({ name, args, resolve, reject });
+  });
+  const window = new EventEmitter();
+  window.isDestroyed = () => false;
+  window.webContents = { debugger: inspector, isDestroyed: () => false };
+  controller.window = window;
+
+  controller.codexPetOverlayHyprlandMatchScale(window, 1.25);
+  await settle();
+  assert.equal(requests.length, 1);
+  controller.codexPetOverlayHyprlandMatchScale(window, 2);
+  controller.codexPetOverlayHyprlandMatchScale(window, 1.5);
+  await settle();
+  assert.equal(requests.length, 1, "later output changes must not overlap in-flight CDP");
+  requests[0].resolve();
+  await settle();
+  assert.equal(requests.length, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[1].args)), {
+    width: 0, height: 0, deviceScaleFactor: 1.5, mobile: false,
+  });
+  requests[1].resolve();
+  await settle();
+  assert.equal(controller.codexPetOverlayHyprlandMetrics.applied, "1.5");
+  assert.equal(controller.codexPetOverlayHyprlandMetrics.pending, null);
+  window.emit("closed");
+  assert.equal(attached, false);
+});
+
+test("a failed Mini scale command is not retried until the requested output changes", async () => {
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland",
+        CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+    });
+  let calls = 0, attached = false;
+  const inspector = new EventEmitter();
+  inspector.isAttached = () => attached;
+  inspector.attach = () => { attached = true; };
+  inspector.detach = () => { attached = false; };
+  inspector.sendCommand = () => {
+    calls += 1;
+    return calls === 1 ? Promise.reject(new Error("CDP detached")) : Promise.resolve();
+  };
+  const window = new EventEmitter();
+  window.isDestroyed = () => false;
+  window.webContents = { debugger: inspector, isDestroyed: () => false };
+  controller.window = window;
+  controller.codexPetOverlayHyprlandMatchScale(window, 1.25);
+  await settle();
+  assert.equal(calls, 1);
+  assert.equal(controller.codexPetOverlayHyprlandMetrics.failed, "1.25");
+  controller.codexPetOverlayHyprlandMatchScale(window, 1.25);
+  await settle();
+  assert.equal(calls, 1);
+  controller.codexPetOverlayHyprlandMatchScale(window, 2);
+  await settle();
+  assert.equal(calls, 2);
+  assert.equal(controller.codexPetOverlayHyprlandMetrics.applied, "2");
+  window.emit("closed");
+});
+
+test("Hyprland leaves an existing DevTools debugger session untouched", () => {
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+    });
+  const inspector = {
+    isAttached: () => true,
+    attach: () => assert.fail("must not steal existing inspector"),
+    sendCommand: () => assert.fail("must not send to external inspector"),
+  };
+  const window = { webContents: { debugger: inspector },
+    isDestroyed: () => false,
+    getContentBounds: () => ({ width: 340, height: 360 }),
+  };
+  controller.window = window;
+  controller.codexPetOverlayHyprlandMatchScale(window, 1.25);
+  assert.equal(controller.codexPetOverlayHyprlandMetrics, undefined);
+});
+
+test("Hyprland idle mascot leaves room for hover controls inside a compact 380x420 canvas", () => {
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+    });
+  controller.layoutMode = "native";
+  const source = {
+    anchor: { x: 679, y: 800, width: 181, height: 196 },
+    windowBounds: { x: 400, y: 500, width: 380, height: 420 },
+    mascot: { left: 279, top: 300, width: 181, height: 196 },
+    tray: null,
+  };
+  const next = controller.codexPetOverlayHyprlandClipLayout(source);
+  assert.deepEqual(JSON.parse(JSON.stringify(next.mascot)), {
+    left: 143, top: 98, width: 181, height: 196,
+  });
+  assert.equal(next.windowBounds.x + next.mascot.left, source.anchor.x);
+  assert.equal(next.windowBounds.y + next.mascot.top, source.anchor.y);
+  // Observed 26.1103 renderer: the 308x40 hover bar starts 75px to the
+  // left and 200px below the mascot's local origin.
+  const hoverBar = {
+    left: next.mascot.left - 75,
+    top: next.mascot.top + 200,
+    width: 308,
+    height: 40,
+  };
+  assert.ok(hoverBar.left >= 0);
+  assert.ok(hoverBar.top >= 0);
+  assert.ok(hoverBar.left + hoverBar.width <= next.windowBounds.width);
+  assert.ok(hoverBar.top + hoverBar.height <= next.windowBounds.height);
+  // Real Hyprland capture: 200% output raster versus Electron DPR 237.5%
+  // leaves only about 354 CSS pixels in the 420px-high surface. The controls
+  // must fit that physical limit, not merely the DOM's reported viewport.
+  const effectiveVisibleHeight = next.windowBounds.height * (2 / 2.375);
+  assert.ok(hoverBar.top + hoverBar.height <= effectiveVisibleHeight,
+    "hover toolbar must fit the actual compositor buffer at 200%/237.5%");
+  assert.equal(hoverBar.top, 298);
+  assert.equal(hoverBar.top + hoverBar.height, 338);
+  assert.equal(controller.codexPetOverlayHyprlandClipLayout(next), next,
+    "recalculation should preserve the adjusted layout");
+});
+
+test("native Hyprland places a compact pet once on its matching fractional-scale monitor", () => {
+  const calls = [];
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  const { controller } = controllerFromPatchedSource(patched, {
+    ozonePlatform: "wayland",
+    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+    childProcess: {
+      execFile(command, args, options, callback) {
+        assert.equal(command, "hyprctl");
+        assert.equal(options.timeout, 1200);
+        calls.push(args);
+        if (args[0] === "clients") {
+          callback(null, JSON.stringify([{
+            address: "0xabc", at: [1500, 0], floating: true,
+            fullscreen: 0, pid: 4242, monitor: 1,
+            size: [440, 460], title: "Codex Pet Overlay",
+          }]));
+        } else if (args[0] === "monitors") {
+          callback(null, JSON.stringify([
+            { id: 0, x: 0, y: 0, width: 2880, height: 1800, scale: 2 },
+            { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale: 1.25 },
+          ]));
+        } else callback?.(null, "ok");
+      },
+    },
+  });
+  const window = { getBounds: () => ({ x: 0, y: 0, width: 440, height: 460 }), isDestroyed: () => false };
+  controller.window = window;
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.equal(calls.filter(args => args[0] === "monitors").length, 1);
+  assert.ok(calls.some(args => JSON.stringify(args) === JSON.stringify([
+    "eval", 'hl.dispatch(hl.dsp.window.move({ window = "address:0xabc", x = 2512, y = 380 }))',
+  ])));
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.equal(calls.filter(args => args[0] === "monitors").length, 1);
+  assert.equal(calls.filter(args => args[0] === "eval" && args[1].includes("window.move")).length, 1);
+});
+
+test("native Hyprland starts a verified compositor drag without local canvas clipping", () => {
+  const pending = [];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: { execFile(_bin, args, _opts, cb) { pending.push({ args, cb }); } },
+    });
+  const window = {
+    isDestroyed: () => false,
+    isVisible: () => true,
+    webContents: { id: 7 },
+  };
+  controller.window = window;
+  controller.layout = {
+    anchor: { x: 2680, y: 450, width: 181, height: 196 },
+    mascot: { left: 143, top: 168, width: 181, height: 196 },
+    windowBounds: { x: 2537, y: 282, width: 380, height: 420 },
+    placement: "bottom-end",
+  };
+  controller.codexPetOverlayHyprlandSurface = { window, address: "0xabc" };
+  controller.startDrag(7, { pointerWindowX: 230, pointerWindowY: 240,
+    pointerScreenX: 2680, pointerScreenY: 500 });
+  assert.equal(controller.codexPetOverlayHyprlandWindowDragState?.address, "0xabc");
+  assert.equal(controller.codexPetOverlayHyprlandWindowDragState?.ready, false);
+  assert.equal(controller.dragState == null, true, "upstream layout must not clamp the sprite");
+  assert.equal(controller.codexPetOverlayMascotDragState, undefined);
+  assert.equal(pending.length, 1, "one compositor calibration on mousedown");
+  assert.equal(pending[0].args[0], "repl");
+  assert.match(pending[0].args[1], /hl\.get_cursor_pos\(\)/);
+  assert.match(pending[0].args[1], /w\.at\.x/);
+  assert.match(pending[0].args[1], /w\.pid==4242/);
+  assert.match(pending[0].args[1], /w\.title=="Codex Pet Overlay"/);
+
+  controller.codexPetOverlayHyprlandWindowDragState = null;
+  controller.codexPetOverlayHyprlandSurface = { window, address: "invalid-address" };
+  assert.equal(controller.codexPetOverlayHyprlandStartWindowDrag(window, {
+    pointerWindowX: 220, pointerWindowY: 230,
+  }), false);
+  assert.equal(controller.codexPetOverlayHyprlandWindowDragState, null);
+});
+
+test("Hyprland drag calibrates compositor grab offset and coalesces targeted moves", () => {
+  const calls = [], pending = [];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(binary, args, options, callback) {
+          assert.equal(binary, "hyprctl");
+          assert.equal(options.timeout, 1200);
+          calls.push(args);
+          pending.push(callback);
+        },
+      },
+    });
+  const window = { isDestroyed: () => false };
+  controller.window = window;
+  controller.layout = {
+    anchor: { x: 900, y: 600, width: 181, height: 196 },
+    mascot: { left: 143, top: 168, width: 181, height: 196 },
+    windowBounds: { x: 757, y: 432, width: 380, height: 420 },
+  };
+  controller.codexPetOverlayHyprlandSurface = { window, address: "0xabc" };
+  assert.equal(controller.codexPetOverlayHyprlandStartWindowDrag(window,
+    { pointerWindowX: 198, pointerWindowY: 202 }), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "repl");
+  assert.match(calls[0][1], /w\.pid==4242/);
+  assert.match(calls[0][1], /w\.address=="0xabc"/);
+  assert.match(calls[0][1], /PETGRAB:/);
+
+  controller.codexPetOverlayHyprlandMoveWindowDrag();
+  controller.codexPetOverlayHyprlandMoveWindowDrag();
+  assert.equal(calls.length, 1, "no compositor movement until calibrated");
+  pending.shift()(null, "PETGRAB:230,240\n");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1][0], "eval");
+  assert.match(calls[1][1], /w\.title=="Codex Pet Overlay"/);
+  assert.match(calls[1][1], /matches==1/);
+  assert.match(calls[1][1], /hl\.get_cursor_pos\(\)/);
+  assert.match(calls[1][1], /p\.x-230/);
+  assert.match(calls[1][1], /p\.y-240/);
+  assert.doesNotMatch(calls[1][1], /p\.x-198|p\.y-202/,
+    "renderer coordinates differ at fractional scale and must not be used");
+
+  controller.codexPetOverlayHyprlandMoveWindowDrag();
+  controller.codexPetOverlayHyprlandMoveWindowDrag();
+  assert.equal(calls.length, 2, "only one movement in flight");
+  pending.shift()(null, "ok");
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2][1], calls[1][1], "subsequent movement gets the current compositor cursor");
+  const finished = [];
+  controller.codexPetOverlayFindHyprlandClient = (_, callback) => callback({
+    address: "0xabc", at: [1720, 480], monitor: 1,
+  });
+  controller.codexPetOverlayScheduleHyprlandHints = () => finished.push("hints");
+  controller.persistWindowBounds = (_w, display) => finished.push(["persist", display.id]);
+  assert.equal(controller.codexPetOverlayHyprlandEndWindowDrag(), true);
+  pending.shift()(null, "ok");
+  assert.equal(calls.length, 4, "mouse-up flushes final cursor position");
+  pending.shift()(null, "ok");
+  assert.equal(controller.codexPetOverlayHyprlandWindowDragState, null);
+  assert.equal(controller.anchor.x, 1720 + 143);
+  assert.equal(controller.anchor.y, 480 + 168);
+  assert.deepEqual(JSON.parse(JSON.stringify(finished)), [["persist", 1], "hints"]);
+  assert.equal(controller.codexPetOverlayHyprlandEndWindowDrag(), false);
+});
+
+test("Hyprland compositor drag fails closed on mismatched identity, calibration and stale windows", () => {
+  const pending = [], calls = [];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(_binary, args, _opts, callback) { calls.push(args); pending.push(callback); },
+      },
+    });
+  const window = { isDestroyed: () => false }, other = { isDestroyed: () => false };
+  controller.window = window;
+  controller.codexPetOverlayHyprlandSurface = { window, address: "0xabc" };
+  assert.equal(controller.codexPetOverlayHyprlandStartWindowDrag(window, {
+    pointerWindowX: 230, pointerWindowY: 240,
+  }), true);
+  controller.codexPetOverlayHyprlandMoveWindowDrag();
+  pending.shift()(null, "not a verified PETGRAB");
+  assert.equal(controller.codexPetOverlayHyprlandWindowDragState.failed, true);
+  assert.equal(calls.length, 1, "no move after failed calibration");
+  assert.equal(controller.codexPetOverlayHyprlandEndWindowDrag(), true);
+
+  controller.codexPetOverlayHyprlandSurface = { window, address: "0xabc" };
+  assert.equal(controller.codexPetOverlayHyprlandStartWindowDrag(window, {
+    pointerWindowX: 230, pointerWindowY: 240,
+  }), true);
+  pending.shift()(null, "PETGRAB:230,240");
+  controller.codexPetOverlayHyprlandMoveWindowDrag();
+  assert.equal(calls.length, 3);
+  pending.shift()(null, "error: rejected");
+  controller.codexPetOverlayHyprlandMoveWindowDrag();
+  assert.equal(calls.length, 3, "failed gesture never retries");
+  controller.window = other;
+  assert.equal(controller.codexPetOverlayHyprlandMoveWindowDrag(), false);
+  assert.equal(calls.length, 3, "stale window never moves");
+  assert.equal(controller.codexPetOverlayHyprlandStartWindowDrag(other, {
+    pointerWindowX: 100, pointerWindowY: 100,
+  }), false, "surface must match current window");
+});
+
+test("native Hyprland ignores Electron's unreliable global move callbacks", () => {
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
+  assert.match(patched, /rememberMovedWindow\([^)]*\)\{if\(this\.codexPetOverlayIsNativeHyprland\(\)\)return;/);
+});
+
+test("a recreated Mini window receives scale calibration even on the same monitor", () => {
+  const scales = [], calls = [];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland",
+        CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(_cmd, args, _options, callback) {
+          calls.push(args);
+          if (args[0] === "monitors") callback(null, JSON.stringify([
+            { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale: 1.25 },
+          ]));
+          else callback(null, "ok");
+        },
+      },
+    });
+  const client = { address: "0xabc", at: [1800, 110], size: [380, 420], monitor: 1 };
+  const first = { isDestroyed: () => false };
+  const second = { isDestroyed: () => false };
+  controller.codexPetOverlayHyprlandMatchScale = (window, scale) => scales.push([window, scale]);
+  controller.window = first;
+  controller.codexPetOverlayHyprlandPlace(first, client);
+  assert.deepEqual(scales, [[first, 1.25]]);
+  controller.window = second;
+  controller.codexPetOverlayHyprlandPlace(second, client);
+  assert.deepEqual(scales, [[first, 1.25], [second, 1.25]],
+    "same output must still initialize newly created webContents");
+});
+
+test("queued Hyprland monitor observations follow the latest client after an async lookup", () => {
+  const callbacks = [], calls = [], scales = [];
+  const monitors = [
+    { id: 0, x: 0, y: 0, width: 2880, height: 1800, scale: 2 },
+    { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale: 1.25 },
+  ];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland",
+        CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(_cmd, args, _options, callback) {
+          calls.push(args);
+          if (args[0] === "monitors") callbacks.push(callback);
+          else callback(null, "ok");
+        },
+      },
+    });
+  const window = { isDestroyed: () => false };
+  controller.window = window;
+  controller.codexPetOverlayHyprlandMatchScale = (_window, scale) => scales.push(scale);
+  controller.codexPetOverlayHyprlandPlace(window,
+    { address: "0xabc", at: [110, 110], size: [380, 420], monitor: 0 });
+  assert.equal(callbacks.length, 1);
+  controller.codexPetOverlayHyprlandPlace(window,
+    { address: "0xabc", at: [1750, 110], size: [380, 420], monitor: 0 });
+  controller.codexPetOverlayHyprlandPlace(window,
+    { address: "0xabc", at: [1950, 110], size: [380, 420], monitor: 0 });
+  assert.equal(callbacks.length, 1, "only one monitor lookup runs at a time");
+  callbacks.shift()(null, JSON.stringify(monitors));
+  assert.equal(callbacks.length, 1, "latest queued client must be processed after the first lookup");
+  callbacks.shift()(null, JSON.stringify(monitors));
+  assert.deepEqual(scales, [2, 1.25]);
+  assert.equal(controller.codexPetOverlayHyprlandObservedClient.x, 1950);
+  assert.equal(controller.codexPetOverlayHyprlandScaleMonitor, 1);
+  assert.equal(calls.filter(c => c[0] === "monitors").length, 2,
+    "intermediate observations are coalesced");
+});
+
+test("Hyprland rechecks Mini scale when the compositor moves it to another monitor", () => {
+  const calls = [], scaled = [];
+  let currentMonitor = 0;
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(_cmd, args, options, callback) {
+          calls.push(args);
+          assert.equal(options.timeout, 1200);
+          if (args[0] === "clients") {
+            callback(null, JSON.stringify([{
+              address: "0xabc", at: currentMonitor === 0 ? [150, 100] : [1550, 100], floating: true,
+              fullscreen: 0, pid: 4242, monitor: currentMonitor,
+              size: [340, 360], title: "Codex Pet Overlay",
+            }]));
+          } else if (args[0] === "monitors") {
+            callback(null, JSON.stringify([
+              { id: 0, x: 0, y: 0, width: 2880, height: 1800, scale: 2 },
+              { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale: 1.25 },
+            ]));
+          } else callback(null, "ok");
+        },
+      },
+    });
+  const window = { getBounds: () => ({ x: 0, y: 0, width: 340, height: 360 }),
+    isDestroyed: () => false };
+  controller.window = window;
+  controller.codexPetOverlayHyprlandMatchScale = (_window, scale) => scaled.push(scale);
+
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.deepEqual(scaled, [2]);
+  const initialMoves = calls.filter(x => x[0] === "eval" && x[1].includes("window.move")).length;
+  assert.equal(initialMoves, 1);
+  currentMonitor = 1;
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.deepEqual(scaled, [2, 1.25]);
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.deepEqual(scaled, [2, 1.25], "unchanged monitor must be cached");
+  assert.equal(calls.filter(x => x[0] === "eval" && x[1].includes("window.move")).length,
+    initialMoves, "monitor scale refresh must not move the window");
+});
+
+test("Hyprland recalibrates Mini when the same monitor changes scale", () => {
+  let scale = 1.25;
+  const measured = [];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland",
+        CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(_cmd, args, _opts, callback) {
+          if (args[0] === "monitors") callback(null, JSON.stringify([
+            { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale },
+          ]));
+          else callback(null, "ok");
+        },
+      },
+    });
+  const window = { isDestroyed: () => false };
+  controller.window = window;
+  controller.codexPetOverlayHyprlandMatchScale = (_window, current) => measured.push(current);
+  const client = {
+    monitor: 1, at: [1700, 100], size: [380, 420], address: "0xabc",
+  };
+  controller.codexPetOverlayHyprlandPlace(window, client);
+  assert.deepEqual(measured, [1.25]);
+  scale = 1.5;
+  controller.codexPetOverlayHyprlandPlace(window, {
+    ...client, at: [1710, 100],
+  });
+  assert.deepEqual(measured, [1.25, 1.5],
+    "monitor id alone cannot identify an output scale change");
+  controller.codexPetOverlayHyprlandPlace(window, {
+    ...client, at: [1720, 100],
+  });
+  assert.deepEqual(measured, [1.25, 1.5], "unchanged output is not recalibrated");
+});
+
+test("Hyprland selects a fractional-scale output by Mini position even when client monitor ID is stale", () => {
+  let x = 100;
+  const scales = [], calls = [];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(_binary, args, _options, cb) {
+          calls.push(args);
+          if (args[0] === "clients") {
+            cb(null, JSON.stringify([{
+              address: "0xabc", at: [x, 100], floating: true, fullscreen: 0,
+              pid: 4242, monitor: 0, size: [380, 420],
+              title: "Codex Pet Overlay",
+            }]));
+          } else if (args[0] === "monitors") {
+            cb(null, JSON.stringify([
+              { id: 0, x: 0, y: 0, width: 2880, height: 1800, scale: 2 },
+              { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale: 1.25 },
+            ]));
+          } else cb(null, "ok");
+        },
+      },
+    });
+  const window = { isDestroyed: () => false, getBounds: () => ({ x: 0, y: 0, width: 380, height: 420 }) };
+  controller.window = window;
+  controller.codexPetOverlayHyprlandMatchScale = (_w, scale) => scales.push(scale);
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.deepEqual(scales, [2]);
+  const movesBefore = calls.filter(c => c[0] === "eval" && c[1].includes("window.move")).length;
+
+  // The window crosses to DP-1, but Hyprland still reports monitor: 0.
+  x = 1720;
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.deepEqual(scales, [2, 1.25]);
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.equal(scales.length, 2, "unchanged geometry is cached");
+  assert.equal(calls.filter(c => c[0] === "eval" && c[1].includes("window.move")).length, movesBefore,
+    "scale calibration must never reposition a manually dragged window");
+
+  x = 100;
+  controller.codexPetOverlayApplyHyprlandHints(window);
+  assert.deepEqual(scales, [2, 1.25, 2], "returning to laptop restores 200 percent scale");
+});
+
+test("Hyprland release keeps Mini inside fractional-scale output work areas", () => {
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland" } },
+    });
+  const external = { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale: 1.25 };
+  const laptop = { id: 0, x: 0, y: 0, width: 2880, height: 1800, scale: 2 };
+  assert.deepEqual(JSON.parse(JSON.stringify(controller.codexPetOverlayHyprlandReleasedBounds(
+    external, { at: [2000, -90], size: [380, 420] },
+  ))), { x: 2000, y: 30 });
+  assert.deepEqual(JSON.parse(JSON.stringify(controller.codexPetOverlayHyprlandReleasedBounds(
+    laptop, { at: [980, 650], size: [380, 420] },
+  ))), { x: 980, y: 464 });
+  assert.deepEqual(JSON.parse(JSON.stringify(controller.codexPetOverlayHyprlandReleasedBounds(
+    external, { at: [4000, 800], size: [380, 420] },
+  ))), { x: 2588, y: 428 });
+  assert.equal(controller.codexPetOverlayHyprlandReleasedBounds(
+    { ...external, scale: 0 }, { at: [2000, -90], size: [380, 420] },
+  ), null);
+});
+
+test("Hyprland clamps a released offscreen pet once, never during an active drag", () => {
+  const calls = [];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(_binary, args, options, callback) {
+          calls.push(args);
+          assert.equal(options.timeout, 1200);
+          if (args[0] === "monitors") callback(null, JSON.stringify([
+            { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale: 1.25 },
+          ]));
+          else callback(null, "ok");
+        },
+      },
+    });
+  const window = { isDestroyed: () => false };
+  const at = [2000, -90];
+  const client = { address: "0xabc", monitor: 1, at, size: [380, 420] };
+  controller.window = window;
+  controller.layout = { anchor: { x: 2143, y: 78, width: 181, height: 196 },
+    mascot: { left: 143, top: 168, width: 181, height: 196 },
+    windowBounds: { x: 2000, y: -90, width: 380, height: 420 } };
+  controller.anchor = { ...controller.layout.anchor };
+  controller.codexPetOverlayHyprlandPlacedWindow = window;
+  controller.codexPetOverlayHyprlandScaleMonitor = 1;
+  controller.codexPetOverlayHyprlandClampOnNextHint = window;
+  controller.persistWindowBounds = () => {};
+  controller.codexPetOverlayHyprlandPlace(window, client);
+  assert.ok(calls.some(c => c[0] === "eval" && c[1].includes("x=2000,y=30")));
+  assert.equal(controller.layout.windowBounds.y, 30);
+  assert.equal(controller.anchor.y, 198);
+  assert.equal(controller.codexPetOverlayHyprlandClampOnNextHint, null);
+  const count = calls.length;
+  controller.codexPetOverlayHyprlandPlace(window,
+    { ...client, at: [2000, 30] });
+  assert.equal(calls.filter(c => c[0] === "eval").length, 1,
+    "a normal follow-up must not reposition the window");
+
+  controller.codexPetOverlayHyprlandClampOnNextHint = window;
+  controller.codexPetOverlayHyprlandWindowDragState = { window };
+  controller.codexPetOverlayHyprlandPlace(window,
+    { ...client, at: [2000, -50] });
+  assert.equal(calls.filter(c => c[0] === "eval").length, 1,
+    "active drags never trigger release clamping");
+  assert.ok(calls.length >= count);
+});
+
+test("native Hyprland locked placement honors all four configured gravity corners", () => {
+  const expected = {
+    "top-left": [1472, 32],
+    "top-right": [2564, 32],
+    "bottom-left": [1472, 412],
+    "bottom-right": [2564, 412],
+  };
+  for (const [gravity, [x, y]] of Object.entries(expected)) {
+    const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture(), {
+      feature: { manifest: { petOverlay: { lockPosition: true, gravity, margin: 32 } } },
+    });
+    const { controller } = controllerFromPatchedSource(patched, {
+      ozonePlatform: "wayland",
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+    });
+    const window = { isDestroyed: () => false };
+    controller.window = window;
+    const dispatched = [];
+    controller.codexPetOverlayHyprctl = (_args, callback) => callback(null, JSON.stringify([
+      { id: 1, x: 1440, y: 0, width: 1920, height: 1080, scale: 1.25 },
+    ]));
+    controller.codexPetOverlayHyprlandDispatch = command => dispatched.push(command);
+    controller.codexPetOverlayHyprlandPlace(window, {
+      address: "0xabc", at: [2050, 100], size: [380, 420], monitor: 1,
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify({
+      x: controller.codexPetOverlayHyprlandSurface?.x,
+      y: controller.codexPetOverlayHyprlandSurface?.y,
+    })), { x, y }, gravity);
+    assert.equal(dispatched.length, 1, gravity);
+    assert.match(dispatched[0], new RegExp("x = " + x + ", y = " + y));
+  }
+});
+
+test("Hyprland Lua dispatcher falls back if eval reports an error without a failing exit code", () => {
+  const calls = [];
+  const { controller } = controllerFromPatchedSource(
+    applyPetOverlayPatch(currentAvatarOverlayBundleFixture()), {
+      process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+      childProcess: {
+        execFile(_command, args, _options, callback) {
+          calls.push(args);
+          callback(null, args[0] === "eval" ? "error: unsupported syntax" : "ok");
+        },
+      },
+    },
+  );
+  controller.codexPetOverlayHyprlandDispatch(
+    'hl.dsp.window.pin({ action = "on", window = "address:0xbee" })',
+    ["pin", "address:0xbee"],
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ["eval", 'hl.dispatch(hl.dsp.window.pin({ action = "on", window = "address:0xbee" }))'],
+    ["dispatch", "pin", "address:0xbee"],
+  ]);
+});
+
 test("Hyprland matching rejects foreign processes and malformed addresses", () => {
   const calls = runHyprlandHintScenario({
     clientsJson: JSON.stringify([
@@ -2512,7 +3393,7 @@ test("locked Hyprland overlays move to the final desired bounds", () => {
     feature: { manifest: { petOverlay: { lockPosition: true } }, settings: {} },
   });
   const { controller } = controllerFromPatchedSource(patched, {
-    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland" } },
+    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
     childProcess: {
       execFile(_command, args, _options, callback) {
         calls.push(args);
@@ -2542,8 +3423,8 @@ test("locked Hyprland overlays move to the final desired bounds", () => {
   controller.codexPetOverlayApplyHyprlandHints(window);
 
   assert.ok(calls.some((args) =>
-    args[0] === "dispatch" &&
-    args[1].includes("hl.dsp.window.move") &&
+    args[0] === "eval" &&
+    args[1].includes("hl.dispatch(hl.dsp.window.move") &&
     args[1].includes("x = -179") &&
     args[1].includes("y = -134") &&
     args[1].includes("address:0xbee")
@@ -2556,7 +3437,8 @@ test("legacy Hyprland fallbacks keep dispatcher arguments grouped", () => {
     feature: { manifest: { petOverlay: { lockPosition: true } }, settings: {} },
   });
   const { controller } = controllerFromPatchedSource(patched, {
-    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland" } },
+    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland",
+      CODEX_PET_HYPRLAND_LUA_SUPPORTED: "0" } },
     childProcess: {
       execFile(_command, args, _options, callback) {
         calls.push(args);
@@ -2588,6 +3470,8 @@ test("legacy Hyprland fallbacks keep dispatcher arguments grouped", () => {
   controller.window = window;
   controller.codexPetOverlayDesiredWindowBounds = { x: -179, y: -134, width: 356, height: 320 };
 
+  assert.equal(controller.codexPetOverlayShouldUseHyprland(), true);
+  assert.equal(controller.codexPetOverlayIsNativeHyprland(), false);
   controller.codexPetOverlayApplyHyprlandHints(window);
 
   assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify([
@@ -2600,6 +3484,12 @@ test("legacy Hyprland fallbacks keep dispatcher arguments grouped", () => {
     "alterzorder",
     "top,address:0xbee",
   ])));
+  assert.ok(calls.some(args => args[0] === "dispatch" && args[1]?.includes("window.pin")),
+    "existing pinning still dispatches on a legacy non-Lua Hyprland session");
+  assert.ok(calls.some(args => args[0] === "dispatch" && args[1]?.includes("no_shadow")),
+    "legacy window decoration/shadow hints remain active");
+  assert.ok(calls.every(args => args[0] !== "eval" && args[0] !== "monitors"),
+    "new native Lua placement and eval must not run on the legacy path");
 });
 
 test("Hyprland Lua strings escape backslashes and quotes", () => {
@@ -2699,7 +3589,7 @@ test("timed-out modern Hyprland dispatch does not run its legacy fallback", () =
   const calls = [];
   const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture());
   const { controller } = controllerFromPatchedSource(patched, {
-    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland" } },
+    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
     childProcess: {
       execFile(_command, args, _options, callback) {
         calls.push(args);
@@ -2719,8 +3609,8 @@ test("timed-out modern Hyprland dispatch does not run its legacy fallback", () =
   assert.equal(
     JSON.stringify(calls),
     JSON.stringify([[
-      "dispatch",
-      'hl.dsp.window.pin({ action = "on", window = "address:0xbee" })',
+      "eval",
+      'hl.dispatch(hl.dsp.window.pin({ action = "on", window = "address:0xbee" }))',
     ]]),
   );
 });
@@ -3407,11 +4297,50 @@ test("settings validation falls back to safe defaults", () => {
       kwin: true,
       lockPosition: true,
       margin: 512,
+      miniScale: 0.7,
       mode: "interactive",
       niri: true,
       skipTaskbar: true,
     },
   );
+});
+
+test("Hyprland Mini visual scale is configurable and never scales control hit regions", () => {
+  assert.equal(mergedPetOverlaySettings({}).miniScale, 0.7);
+  for (const [requested, expected] of [
+    [0.85, 0.85], [0.51, 0.51], [0.1, 0.5], [2, 1.2],
+    ["invalid", 0.7],
+  ]) {
+    const config = mergedPetOverlaySettings({
+      feature: { settings: { petOverlay: { miniScale: requested } } },
+    });
+    assert.equal(config.miniScale, expected);
+  }
+
+  const patched = applyPetOverlayPatch(currentAvatarOverlayBundleFixture(), {
+    feature: { settings: { petOverlay: { miniScale: 0.94 } } },
+  });
+  const { context, controller } = controllerFromPatchedSource(patched, {
+    ozonePlatform: "wayland",
+    process: { env: { XDG_CURRENT_DESKTOP: "Hyprland", CODEX_PET_HYPRLAND_LUA_SUPPORTED: "1" } },
+  });
+  const inserted = [];
+  const win = { webContents: {
+    insertCSS: css => inserted.push(css),
+    isDestroyed: () => false,
+    on() {},
+  } };
+  controller.codexPetOverlayInstallTransparentRenderer(win);
+  assert.match(inserted[0], /scale:0\.94!important/);
+  assert.doesNotMatch(inserted[0], /notification-composer[^}]*scale:/);
+  assert.doesNotMatch(inserted[0], /avatar-overlay-content-frame[^}]*scale:/);
+
+  context.process.env.CODEX_PET_OVERLAY_MINI_SCALE = "0.83";
+  assert.equal(controller.codexPetOverlaySettings().miniScale, 0.83);
+  context.process.env.CODEX_PET_OVERLAY_MINI_SCALE = "4";
+  assert.equal(controller.codexPetOverlaySettings().miniScale, 1.2);
+  context.process.env.CODEX_PET_OVERLAY_MINI_SCALE = "nonsense";
+  assert.equal(controller.codexPetOverlaySettings().miniScale, 0.94);
 });
 
 test("KWin Plasma bridge remains available with its runtime override and drag lifecycle", () => {
