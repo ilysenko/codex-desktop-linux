@@ -41,14 +41,14 @@ const currentRuntimeSource = [
   'A=e=>(e=>{if(!d.app.isPackaged)return null;let t=(0,g.join)(process.resourcesPath,e);return(0,y.existsSync)(t)?t:null})(e)??k(e),',
   'j=()=>{switch(i){case o.i.Dev:case o.i.Nightly:case o.i.InternalAlpha:case o.i.PublicBeta:case o.i.Prod:return f.get(n.Xl.DOCK_ICON_PREFERENCE)??"app-default";case o.i.Agent:return"app-default"}},',
   'N=()=>v?m_(i,{localIconsDirectory:(0,g.join)(h,"electron",".generated","windows-app-icons")}):null,P="linux"===process.platform?p_(i,D):N();',
-  "let F=f_(i),I=b?process.env.CODEX_ELECTRON_DEV_DOCK_ICONS_PATH:void 0,",
+  "let F=f_(i),I=b?process.env.CODEX_ELECTRON_DEV_DOCK_ICONS_PATH:void 0,O=null,",
   'ee=(e,t)=>{switch(e){case"app-default":return null;case"codex-system":return t?F.dark:F.light;case"space-system":return t?F.spaceDark:F.spaceLight}},',
-  'L=e=>{if(I){let t="app-default";if("app-default"!==e){let n="space-system"===e?"space":"codex",r=d.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?"dark":"light";t=`${n}-${r}`}let n=d.nativeImage.createFromPath((0,g.join)(I,`${t}.png`));if(!n.isEmpty())return void d.app.dock?.setIcon(n)}',
+  'L=e=>{if("app-default"!==e&&null==O)return;if(I){let t="app-default";if("app-default"!==e){let n="space-system"===e?"space":"codex",r=d.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?"dark":"light";t=`${n}-${r}`}let n=d.nativeImage.createFromPath((0,g.join)(I,`${t}.png`));if(!n.isEmpty())return void d.app.dock?.setIcon(n)}',
   'if("app-default"===e&&i!==o.i.Dev){let e=d.app.dock;null!=e&&Reflect.apply(e.setIcon.bind(e),e,[null]);return}',
   'let t=ee(e,d.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI),n=(null==t?null:A(t))??(()=>{switch(i){case o.i.Dev:return k("icon-dev-outline.png");case o.i.Agent:return A("icon-agent.png");case o.i.Nightly:case o.i.InternalAlpha:case o.i.PublicBeta:case o.i.Prod:return A(`${d_(i)}.png`)}})(),r=null==n?d.nativeImage.createEmpty():d.nativeImage.createFromPath(n);',
   'if(!r.isEmpty()){if("codex-system"===e||"space-system"===e){let{width:e,height:t}=r.getSize(),n=Math.round(e/128);r=r.crop({x:n,y:n,width:e-2*n,height:t-2*n})}d.app.dock?.setIcon(r)}},',
   'R=()=>{if(!_)return;let e=j();L(e),(function({preference:e,resourceName:t}){if("darwin"!==process.platform||!d.app.isPackaged)return Promise.resolve(!1);return aF(e,t)})({preference:e,resourceName:ee(e,!1)}).then(e=>{e&&L(j())})};',
-  'if(_){R();let e=()=>{let e=j();"app-default"!==e&&L(e)};d.nativeTheme.on("updated",e),T.add(()=>{d.nativeTheme.off("updated",e)})}',
+  'if(_){let e,t=!1;T.add(()=>{t=!0,e?.()});let n=()=>{console.warn("Failed to observe macOS Dock icon appearance"),V()};n()}',
   "let z=null,V=new H8e({onWindowRegistered:e=>{z?.registerWindow(e),w?.(e)}});return{updateDockIcon:R,windowManager:V}}",
 ].join("");
 
@@ -56,6 +56,12 @@ const currentTraySource =
   'let U9=null,K9=!1;async function q9(e){let t=e.buildFlavor,n=await r8e(t,e.repoRoot),i=new d.Tray(n.defaultIcon,"win32"===process.platform&&d.app.isPackaged?function(e){switch(e){case o.i.Prod:return"tray-guid"}}(t):void 0);if(!K9)return i.destroy(),null;let a=new z0e(i,e.onOpenMainWindow);return(U9=a,await a.waitForReady()&&U9===a)?a:(U9===a&&(U9=null,a.destroy()),null)}';
 
 const currentMainSource = currentAppInfoSource + currentRuntimeSource + currentTraySource;
+const retiredMainSource = currentMainSource
+  .replace('L=e=>{if("app-default"!==e&&null==O)return;if(I){', 'L=e=>{if(I){')
+  .replace(
+    'if(_){let e,t=!1;T.add(()=>{t=!0,e?.()});let n=()=>{console.warn("Failed to observe macOS Dock icon appearance"),V()};n()}',
+    'if(_){R();let e=()=>{let e=j();"app-default"!==e&&L(e)};d.nativeTheme.on("updated",e),T.add(()=>{d.nativeTheme.off("updated",e)})}',
+  );
 // Official 26.1029 rspack/SWC webview chunk carrying the Dock icon row gate
 // module (rspack duplicates it into every async chunk that needs it).
 const currentSettingsSource =
@@ -66,7 +72,7 @@ const currentSettingsSource =
 function renameMinifiedAliases(source) {
   const aliases = [
     "d_", "f_", "Gme", "g_", "t5e", "H8e", "U9", "K9", "q9", "r8e", "Y6e", "z0e",
-    "aF", "Xl", "D", "O", "A", "M", "N", "P", "F", "I", "L", "R", "T", "V",
+    "aF", "Xl", "D", "O", "A", "M", "N", "P", "F", "I", "L", "R", "T", "unusedV",
     "__", "ee", "d", "g", "y", "e", "t", "n", "r", "i", "f", "h", "_", "v", "b",
     "w", "k", "j", "o", "m_", "p_", "z", "a",
   ];
@@ -338,6 +344,12 @@ test("main patch rejects inconsistent cross-contract aliases byte-identically", 
   assert.match(result.warnings.join("\n"), /complete current Dock icon main-process contract/);
 });
 
+test("main patch rejects the retired main-process layout byte-identically", () => {
+  const result = captureWarns(() => applyDockIconMainPatch(retiredMainSource));
+  assert.equal(result.value, retiredMainSource);
+  assert.match(result.warnings.join("\n"), /complete current Dock icon main-process contract/);
+});
+
 test("main patch rejects drift at every official-package insertion point byte-identically", () => {
   const patched = applyDockIconMainPatch(currentMainSource);
   const currentPoints = [
@@ -345,12 +357,12 @@ test("main patch rejects drift at every official-package insertion point byte-id
     'function g_(e){if(null==e)return null;let t=d.app.isPackaged?(0,g.join)(process.resourcesPath,e):null',
     "A=e=>(e=>{if(!d.app.isPackaged)return null;let t=(0,g.join)(process.resourcesPath,e);return(0,y.existsSync)(t)?t:null})",
     'ee=(e,t)=>{switch(e){case"app-default":return null;case"codex-system":return t?F.dark:F.light;case"space-system":return t?F.spaceDark:F.spaceLight}}',
-    "L=e=>{if(I){",
+    'L=e=>{if("app-default"!==e&&null==O)return;if(I){',
     'if("app-default"===e&&i!==o.i.Dev){',
     "d.app.dock?.setIcon(r)}}",
     "R=()=>{if(!_)return;",
     "}).then(e=>{e&&L(j())})}",
-    "if(_){R();let e=()=>",
+    "Failed to observe macOS Dock icon appearance",
     "onWindowRegistered:e=>{z?.registerWindow(e),w?.(e)}",
     "i=new d.Tray(n.defaultIcon",
     "return(U9=a,await a.waitForReady()&&U9===a)",
@@ -360,12 +372,12 @@ test("main patch rejects drift at every official-package insertion point byte-id
     "function codexLinuxDockIconResourcePath",
     'A=e=>(e=>{if(!d.app.isPackaged&&"linux"!==process.platform)return null',
     'ee=(e,t)=>{switch(e){case"app-default":return null;case"codex-system":return t?F.dark:F.light;case"space-system":return "linux"===process.platform?t?F.dark:F.light:t?F.spaceDark:F.spaceLight}}',
-    "L=function codexLinuxApplyDockIcon",
+    'L=function codexLinuxApplyDockIcon(e){if("app-default"!==e&&null==O&&"linux"!==process.platform)return;if(I&&"linux"!==process.platform){',
     'if("app-default"===e&&"linux"!==process.platform&&i!==o.i.Dev){',
     "U9.tray.setImage(r)",
     'R=()=>{if(!_&&"linux"!==process.platform)return;',
     "}).then(e=>{e&&L(j())})}",
-    'if(_||"linux"===process.platform){R();let e=()=>',
+    'if("linux"===process.platform){R();let codexLinuxDockIconThemeListener=()=>',
     'onWindowRegistered:e=>{z?.registerWindow(e),w?.(e),"linux"===process.platform&&setImmediate(R)}',
     'i=new d.Tray("linux"===process.platform&&globalThis.codexLinuxDockIconImage',
     "return(U9=a,await a.waitForReady()&&U9===a)",
