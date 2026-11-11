@@ -1260,9 +1260,9 @@ test("official rspack webview chunks satisfy every descriptor contract", {
       }
     }
   }
-  // Catalog, slider, local resolver, local composer, and six inlined
+  // Catalog, slider, local resolver, local composer, and five inlined
   // model-settings copies (one per composer surface) are patched.
-  assert.equal(patched.size, 10);
+  assert.equal(patched.size, 9);
   // The reset-effect audit still holds on the slider-patched picker.
   const resetDescriptor = descriptors.find(({ id }) => id.endsWith("upstream-reset-effect"));
   assert.equal(
