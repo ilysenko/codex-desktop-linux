@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.51.
+  `codex-computer-use-linux mcp --listen ADDR:PORT` serves MCP over
+  streamable HTTP at `/mcp`. It needs a bearer token from
+  `CODEX_COMPUTER_USE_MCP_TOKEN_FILE` or `CODEX_COMPUTER_USE_MCP_TOKEN` (the
+  standalone `COMPUTER_USE_LINUX_MCP_TOKEN_FILE` and
+  `COMPUTER_USE_LINUX_MCP_TOKEN` names are aliases). It refuses requests with
+  an `Origin` header or a `Host` outside `--allowed-host`, and refuses to start
+  with `CODEX_COMPUTER_USE_ENABLE_SHELL=1`. Over HTTP, element calls by index
+  or selector, and `get_tree_page`, must pass `snapshot_id`. Without `--listen` the server is
+  unchanged and opens no socket. The app and its host bridge still start the
+  backend over stdio.
 - Synchronize the embedded Computer Use backend to standalone v0.7.48.
   `get_app_state`, `include_tree` observations and `get_tree_page` return a
   `snapshot_id`. `click`, `scroll`, `perform_action`, `set_value` and
@@ -269,6 +280,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The v0.7.51 sync moves `rustix` from 1.1.4 to 1.1.6, which fixes
+  RUSTSEC-2026-0486.
+- The v0.7.51 sync makes a pid target read every AT-SPI root its process
+  owns. A Qt Quick app can register an empty GTK root next to its populated
+  Qt root, and `get_app_state(pid=...)` used to read only the first. A pid
+  that owns no root returns an empty scoped tree with a note, not the whole
+  desktop.
+- The `include_tree` observation of `perform_action` and `set_value` reads
+  the acted-on element's app, not the focused app.
+- A window whose pid owns no AT-SPI root, such as a Flatpak app behind
+  `xdg-dbus-proxy`, gets its tree by the window title. The title is used only
+  for a window the compositor lists, and element calls check each node's
+  owner.
 - Synchronize the embedded Computer Use backend to standalone v0.7.49: its
   `rmcp` goes from 3.5.1 to 3.9.0, which clears RUSTSEC-2026-0457, -0461 and
   -0462 for the backend. Tool output schemas now list nullable fields as

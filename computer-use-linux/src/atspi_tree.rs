@@ -349,6 +349,7 @@ pub async fn snapshot_tree(
         app_name_or_bundle_identifier,
         target_pid,
         None,
+        None,
         max_nodes,
         max_depth,
     )
@@ -360,10 +361,13 @@ pub async fn snapshot_tree(
 /// `window_title`, an app root that exposes several windows (Chromium puts
 /// every browser window under one application) is read only through the
 /// window whose name matches it; its other children stay.
+/// `pid_fallback_name` finds the roots by name when `target_pid` owns none;
+/// pass it only for a pid read from a window the compositor listed.
 pub(crate) async fn snapshot_accessibility_tree(
     app_name_or_bundle_identifier: Option<&str>,
     target_pid: Option<u32>,
     window_title: Option<&str>,
+    pid_fallback_name: Option<&str>,
     max_nodes: usize,
     max_depth: u32,
 ) -> Result<AccessibilitySnapshot> {
@@ -380,6 +384,7 @@ pub(crate) async fn snapshot_accessibility_tree(
             window_title
                 .map(str::trim)
                 .filter(|title| !title.is_empty()),
+            pid_fallback_name,
             max_nodes,
             max_depth,
             stop_reading,
@@ -393,6 +398,7 @@ async fn snapshot_tree_inner(
     app_name_or_bundle_identifier: Option<&str>,
     target_pid: Option<u32>,
     window_title: Option<&str>,
+    pid_fallback_name: Option<&str>,
     max_nodes: usize,
     max_depth: u32,
     stop_reading: Instant,
@@ -409,6 +415,7 @@ async fn snapshot_tree_inner(
         roots,
         app_name_or_bundle_identifier,
         target_pid,
+        pid_fallback_name,
         &mut remaining_filter_reads,
     )
     .await;
@@ -682,9 +689,16 @@ async fn focused_element_probe(
     let roots =
         registry_children(&conn, MAX_DISCOVERY_ROOTS, &mut remaining_registry_reads).await?;
     let mut remaining_filter_reads = MAX_DISCOVERY_CHILD_READS;
-    let selected_roots =
-        select_roots(&conn, roots, None, target_pid, &mut remaining_filter_reads).await;
-    if require_scoped && !selected_roots.scoped {
+    let selected_roots = select_roots(
+        &conn,
+        roots,
+        None,
+        target_pid,
+        None,
+        &mut remaining_filter_reads,
+    )
+    .await;
+    if require_scoped && selected_roots.pid != target_pid {
         return Ok(FocusProbe::NoAccessibleApp);
     }
     let mut traversal = BoundedTraversal::new(FOCUS_PROBE_MAX_NODES);
@@ -1143,7 +1157,7 @@ struct SelectedRoots {
 }
 
 /// Normalized app-name filter, or `None` when the caller passed nothing usable.
-/// A `None` needle with no pid match means the snapshot covers the whole desktop.
+/// A `None` needle without a PID target means the snapshot covers the whole desktop.
 fn app_name_needle(app_name_or_bundle_identifier: Option<&str>) -> Option<String> {
     app_name_or_bundle_identifier
         .map(str::trim)
@@ -1156,6 +1170,7 @@ async fn select_roots(
     roots: Vec<ObjectRefOwned>,
     app_name_or_bundle_identifier: Option<&str>,
     target_pid: Option<u32>,
+    pid_fallback_name: Option<&str>,
     remaining_child_reads: &mut usize,
 ) -> SelectedRoots {
     let needle = app_name_needle(app_name_or_bundle_identifier);
@@ -1197,6 +1212,35 @@ async fn select_roots(
                 scoped: true,
                 pid: Some(target_pid),
                 app_filter_matched: needle.is_none(),
+            };
+        }
+
+        if needle.is_none() {
+            // A listed window's pid can own no root: a Flatpak app registers
+            // through xdg-dbus-proxy. Its name then finds the root, and the
+            // tree records no pid, so element calls check each node's owner.
+            if let Some(fallback) = app_name_needle(pid_fallback_name) {
+                let mut selected = Vec::new();
+                for object_ref in non_pid_matches {
+                    if root_matches(conn, &object_ref, &fallback, remaining_child_reads).await {
+                        selected.push(object_ref);
+                    }
+                }
+                if !selected.is_empty() {
+                    return SelectedRoots {
+                        roots: selected,
+                        scoped: true,
+                        pid: None,
+                        app_filter_matched: true,
+                    };
+                }
+            }
+            // A PID-only target that disappeared must not widen to the desktop.
+            return SelectedRoots {
+                roots: Vec::new(),
+                scoped: true,
+                pid: None,
+                app_filter_matched: false,
             };
         }
 
@@ -1341,6 +1385,22 @@ pub(crate) async fn object_ref_owner_pid(object_ref_id: &str) -> Result<Option<u
     let conn = connect().await?;
     let dbus = DBusProxy::new(conn.connection()).await.ok();
     Ok(object_ref_pid(dbus.as_ref(), &object_ref).await)
+}
+
+/// PID of the application root, which may differ from an embedded element's process.
+pub(crate) async fn object_ref_application_pid(object_ref_id: &str) -> Result<Option<u32>> {
+    let object_ref = object_ref_from_id(object_ref_id)?;
+    let conn = connect().await?;
+    let application = timeout(ACTION_QUERY_TIMEOUT, async {
+        let proxy = open_accessible(&conn, &object_ref).await.ok()?;
+        proxy.get_application().await.ok()
+    })
+    .await
+    .ok()
+    .flatten()
+    .filter(|application| !application.is_null());
+    let dbus = DBusProxy::new(conn.connection()).await.ok();
+    Ok(object_ref_pid(dbus.as_ref(), application.as_ref().unwrap_or(&object_ref)).await)
 }
 
 async fn object_ref_pid(dbus: Option<&DBusProxy<'_>>, object_ref: &ObjectRefOwned) -> Option<u32> {
@@ -2419,6 +2479,119 @@ mod tests {
         assert_eq!(actions[1].name, "Set Focus");
         assert_eq!(actions[1].description, "Odağı ayarlar");
         assert_eq!(select_named_action_index(&actions, "press").unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn pid_roots_keep_all_toolkits_and_a_missing_pid_stays_empty() {
+        let bus = PrivateBus::start("cul-atspi-roots");
+        let root_path = "/org/a11y/atspi/accessible/root";
+        let mut peers = Vec::new();
+        for child_count in [0, 1] {
+            let children = (0..child_count)
+                .map(|_| (String::new(), "/child".try_into().unwrap()))
+                .collect();
+            peers.push(
+                zbus::connection::Builder::address(bus.address())
+                    .unwrap()
+                    .serve_at(
+                        root_path,
+                        FakeAccessible {
+                            name: "qt-app".into(),
+                            children,
+                            has_action: false,
+                        },
+                    )
+                    .unwrap()
+                    .build()
+                    .await
+                    .unwrap(),
+            );
+        }
+        let conn = AccessibilityConnection::from_address(bus.address().parse().unwrap())
+            .await
+            .unwrap();
+        let roots = peers
+            .iter()
+            .map(|peer| {
+                object_ref_from_id(&format!("{}{root_path}", peer.unique_name().unwrap())).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let pid = std::process::id();
+        let mut budget = MAX_DISCOVERY_CHILD_READS;
+        let selected = select_roots(&conn, roots.clone(), None, Some(pid), None, &mut budget).await;
+        assert_eq!(selected.roots, roots);
+        assert_eq!(selected.pid, Some(pid));
+        assert!(selected.scoped);
+        assert!(selected.app_filter_matched);
+
+        let explicit = object_ref_id(&roots[1]);
+        let selected = select_roots(
+            &conn,
+            roots.clone(),
+            Some(&explicit),
+            Some(pid),
+            None,
+            &mut budget,
+        )
+        .await;
+        assert_eq!(selected.roots, vec![roots[1].clone()]);
+        assert_eq!(selected.pid, Some(pid));
+        assert!(selected.app_filter_matched);
+
+        let selected = select_roots(
+            &conn,
+            roots.clone(),
+            None,
+            Some(u32::MAX),
+            None,
+            &mut budget,
+        )
+        .await;
+        assert!(selected.roots.is_empty());
+        assert_eq!(selected.pid, None);
+        assert!(selected.scoped);
+        assert!(!selected.app_filter_matched);
+
+        // A listed window whose pid owns no root (a Flatpak app behind
+        // xdg-dbus-proxy) finds the root by name. No pid is recorded.
+        let selected = select_roots(
+            &conn,
+            roots.clone(),
+            None,
+            Some(u32::MAX),
+            Some("qt-app"),
+            &mut budget,
+        )
+        .await;
+        assert_eq!(selected.roots, roots);
+        assert_eq!(selected.pid, None);
+        assert!(selected.scoped);
+        assert!(selected.app_filter_matched);
+
+        // The name is a fallback only: the pid's own roots win.
+        let selected = select_roots(
+            &conn,
+            roots.clone(),
+            None,
+            Some(pid),
+            Some("no such window"),
+            &mut budget,
+        )
+        .await;
+        assert_eq!(selected.roots, roots);
+        assert_eq!(selected.pid, Some(pid));
+
+        let selected = select_roots(
+            &conn,
+            roots,
+            None,
+            Some(u32::MAX),
+            Some("no such window"),
+            &mut budget,
+        )
+        .await;
+        assert!(selected.roots.is_empty());
+        assert!(!selected.app_filter_matched);
     }
 
     #[tokio::test]

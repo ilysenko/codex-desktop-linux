@@ -32,7 +32,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rmcp::{Peer, RoleServer};
+use rmcp::{
+    model::{Implementation, RequestMetaObject},
+    Peer, RoleServer,
+};
 use serde::{Deserialize, Serialize};
 
 /// Overlay binary name, resolved next to the server binary or on `PATH`.
@@ -317,6 +320,38 @@ impl Default for Indicator {
     }
 }
 
+tokio::task_local! {
+    /// The calling client's display name, scoped to one HTTP request.
+    static REQUEST_AGENT: String;
+}
+
+/// Runs `future` with its events naming `agent`, when given.
+pub(crate) async fn with_request_agent<F: std::future::Future>(
+    agent: Option<String>,
+    future: F,
+) -> F::Output {
+    match agent {
+        Some(agent) => REQUEST_AGENT.scope(agent, future).await,
+        None => future.await,
+    }
+}
+
+/// The display name for one request. A request that negotiates its own
+/// protocol version is named only by its `_meta`: rmcp gives it a placeholder
+/// peer (`rmcp`) instead of a session's `initialize`.
+pub(crate) fn request_agent_name(
+    meta: &RequestMetaObject,
+    session: Option<Implementation>,
+) -> Option<String> {
+    let info = if meta.protocol_version().is_some() {
+        meta.client_info()
+    } else {
+        session
+    };
+    info.filter(|info| !info.name.trim().is_empty())
+        .map(|info| agent_display_name(&info.name, info.title.as_deref()))
+}
+
 impl Indicator {
     /// Remembers the MCP client so events carry its name.
     pub(crate) fn attach(&self, peer: Peer<RoleServer>) {
@@ -326,6 +361,9 @@ impl Indicator {
     fn agent(&self) -> String {
         if let Some(name) = &self.agent_override {
             return name.clone();
+        }
+        if let Ok(name) = REQUEST_AGENT.try_with(String::clone) {
+            return name;
         }
         self.peer
             .get()
@@ -721,6 +759,55 @@ mod tests {
         );
         assert_eq!(agent_display_name("my-agent", None), "my-agent");
         assert_eq!(agent_display_name(" ", None), "Agent");
+    }
+
+    #[tokio::test]
+    async fn request_agent_names_each_event_and_unscoped_events_fall_back() {
+        let indicator = Indicator {
+            agent_override: None,
+            ..Indicator::default()
+        };
+        let named = |agent: &'static str| {
+            with_request_agent(Some(agent.to_string()), async {
+                tokio::task::yield_now().await;
+                indicator.event("click").agent
+            })
+        };
+        let (alpha, beta) = tokio::join!(named("Alpha"), named("Beta"));
+        assert_eq!((alpha.as_str(), beta.as_str()), ("Alpha", "Beta"));
+        assert_eq!(indicator.event("click").agent, "Agent");
+        assert_eq!(
+            with_request_agent(None, async { indicator.event("click").agent }).await,
+            "Agent"
+        );
+    }
+
+    #[test]
+    fn stateless_requests_are_named_only_by_their_meta() {
+        use rmcp::model::ProtocolVersion;
+        let placeholder = Some(Implementation::default());
+        assert_eq!(placeholder.as_ref().unwrap().name, "rmcp");
+        let mut stateless = RequestMetaObject::default();
+        stateless.set_protocol_version(ProtocolVersion::V_2026_07_28);
+        // Stateless without clientInfo: the placeholder peer must not name it.
+        assert_eq!(request_agent_name(&stateless, placeholder.clone()), None);
+        // Stateless with clientInfo: its own name.
+        stateless.set_client_info(Implementation::new("claude-code", "1"));
+        assert_eq!(
+            request_agent_name(&stateless, placeholder).as_deref(),
+            Some("Claude")
+        );
+        // Legacy session: the session's initialize name (via client_info()).
+        let legacy = RequestMetaObject::default();
+        assert_eq!(
+            request_agent_name(&legacy, Some(Implementation::new("codex-mcp-client", "1")))
+                .as_deref(),
+            Some("Codex")
+        );
+        assert_eq!(
+            request_agent_name(&legacy, Some(Implementation::new(" ", "1"))),
+            None
+        );
     }
 
     #[test]

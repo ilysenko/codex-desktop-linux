@@ -45,7 +45,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.49. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.51. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -433,6 +433,22 @@ the requested command. Ambient credentials and agent sockets are removed from
 the environment; additional variables must be supplied explicitly. Execution
 defaults to 30 seconds (maximum 120), and returned output is bounded. An audit
 digest is written to backend stderr without logging command text.
+
+Since the v0.7.51 sync, `codex-computer-use-linux mcp --listen ADDR:PORT`
+serves the direct MCP server over streamable HTTP at `/mcp`. The app and its
+host bridge do not use it; they start the backend over stdio. The listener
+needs a bearer token from the file named by
+`CODEX_COMPUTER_USE_MCP_TOKEN_FILE` or from `CODEX_COMPUTER_USE_MCP_TOKEN`.
+The standalone `COMPUTER_USE_LINUX_MCP_TOKEN_FILE` and
+`COMPUTER_USE_LINUX_MCP_TOKEN` names are aliases, used when the Codex name is
+unset. Set one source only. The server removes all four variables after it
+reads the token, so its children do not inherit it. It is plain HTTP: bind
+loopback or a private address, and name every hostname clients use with
+`--allowed-host NAME` for a non-loopback bind. A request with an `Origin`
+header is refused. The listener refuses to start while `run_shell` is
+enabled, since every HTTP client would get it. Over HTTP, an element call by
+`element_index` or selector, and `get_tree_page`, must pass `snapshot_id`,
+because several clients can replace the cached tree. Without `--listen` the server opens no socket.
 
 ## Enable The In-App UI
 

@@ -5,6 +5,7 @@ mod cli;
 mod command_runner;
 mod diagnostics_cache;
 mod ei_input;
+mod http_listen;
 mod hyprland_input;
 pub mod indicator;
 mod keyboard_keymap;
