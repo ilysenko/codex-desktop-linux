@@ -22,8 +22,8 @@ function nativeGate(record) {
 }
 
 const blockerBindings = [
-  { callerDisabled: "tg", providerBlocked: "nV", modelUnavailable: "rf", environmentBusy: "nF", draftsLoading: "nj", draftsCondition: "nR", policyViolation: "nZ", collaborationLoading: "ro", collaborationCondition: "n7", tierLoading: "rd", reserveLimit: "nz" },
-  { callerDisabled: "tg", providerBlocked: "nO", modelUnavailable: "ov", environmentBusy: "nL", draftsLoading: "nS", draftsCondition: "nM", policyViolation: "nX", collaborationLoading: "oi", collaborationCondition: "n8", tierLoading: "od", reserveLimit: "nG" },
+  { callerDisabled: "tg", readOnlySsh: "nO", providerBlocked: "nL", modelUnavailable: "of", environmentBusy: "nK", draftsLoading: "nM", draftsCondition: "nS", policyViolation: "nH", collaborationLoading: "os", collaborationCondition: "n9", tierLoading: "oc", reserveLimit: "n$" },
+  { callerDisabled: "tg", readOnlySsh: "nV", providerBlocked: "nG", modelUnavailable: "aC", environmentBusy: "nB", draftsLoading: "nS", draftsCondition: "nk", policyViolation: "n$", collaborationLoading: "ao", collaborationCondition: "n7", tierLoading: "ac", reserveLimit: "nz" },
 ];
 
 function disabledReasons(record, source, values = {}) {
@@ -52,6 +52,7 @@ function disabledReasons(record, source, values = {}) {
     [names.atom]: { [names.atomKey]: atom }, [names.host]: values.host ?? "local",
     [cache.groups.cache]: [],
     [bindings.callerDisabled]: values.callerDisabled === true,
+    [bindings.readOnlySsh]: values.readOnlySsh === true,
     [bindings.providerBlocked]: values.providerBlocked === true,
     [bindings.modelUnavailable]: values.modelUnavailable === true,
     [bindings.environmentBusy]: values.environmentBusy === true,

@@ -64,11 +64,11 @@ for (const [index, owner] of fixture.owners.entries()) {
     assert.equal(expected.replace(`${original.groups.flag}=!1/*${MARKER}*/`, original[0]), owner.moduleSource);
   });
 
-  test(`current composer ${index} preserves other nine blockers and the cloud path`, () => {
+  test(`current composer ${index} preserves other ten blockers and the cloud path`, () => {
     const applied = changedBody(owner);
     assert.equal(disabledReasons(owner, owner.moduleSource, { usageBlocked: true }).submitDisabledReasons, "usage-limit");
     assert.equal(disabledReasons(owner, applied, { usageBlocked: true }).submitDisabledReasons, "");
-    const cases = [["callerDisabled", "caller-disabled"], ["providerBlocked", "provider-blocked"], ["modelUnavailable", "model-selection-unavailable"],
+    const cases = [["callerDisabled", "caller-disabled"], ["readOnlySsh", "read-only-ssh-chat"], ["providerBlocked", "provider-blocked"], ["modelUnavailable", "model-selection-unavailable"],
       ["environmentBusy", "environment-busy"], ["draftsLoading", "draft-tabs-restoring"], ["policyViolation", "policy-violation"],
       ["collaborationLoading", "collaboration-mode-loading"], ["tierLoading", "service-tier-loading"], ["reserveLimit", "reserve-limit"]];
     for (const [flag, reason] of cases) {
@@ -87,14 +87,17 @@ for (const [index, owner] of fixture.owners.entries()) {
     const applied = changedBody(owner), flag = nativeGate(owner).groups.flag;
     const reason = new RegExp(`([A-Za-z_$][\\w$]*)=${flag}&&"usage-limit"`).exec(owner.moduleSource)[1];
     const joined = /submitDisabledReasons:([A-Za-z_$][\w$]*)/.exec(owner.moduleSource)[1];
-    const rootChildren = index === 0 ? "children:[eT,eI,e4]" : "children:[eC,eI,e4]";
+    const controller = inspect(owner).chain.controller;
+    const { escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
+    const rootChildren = new RegExp(`children:\\[[A-Za-z_$][\\w$]*,[A-Za-z_$][\\w$]*,${escapeRegExp(controller)}\\]`, "u").exec(owner.moduleSource)?.[0];
+    assert.ok(rootChildren);
     const badSources = [
       owner.moduleSource + `/*${MARKER}*/`,
       owner.moduleSource.replace(nativeGate(owner)[0], `${flag}=!1`),
       applied.replace(`${reason}=${flag}&&"usage-limit"`, `${reason}=foreign&&"usage-limit"`),
       applied.replace(".filter(Boolean)", ".filter(()=>false)"),
       applied.replace(`submitDisabledReasons:${joined}`, "submitDisabledReasons:foreignReasons") + `;function unused(){return{submitDisabledReasons:${joined}}}`,
-      applied.replace(rootChildren, rootChildren.replace(",e4", "")),
+      applied.replace(rootChildren, rootChildren.replace(`,${controller}`, "")),
       `/*${owner.moduleSource}*/`,
       `const quoted=${JSON.stringify(owner.moduleSource)};`,
       owner.moduleSource.replace("CodexComposerAdapter:", "UnusedComposerAdapter:"),
