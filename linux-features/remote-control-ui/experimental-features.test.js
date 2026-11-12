@@ -47,15 +47,15 @@ test("both native full-function filters preserve beta and every non-target exclu
 
 test("native toggle callback/search mapper retain list identities, ordering and the separate request-input exclusion", () => {
   const original = snapshots(), changed = snapshots(patched());
-  const caller = scope.rootFunction(original.toggles[0], "ek").source;
-  const mapper = scope.rootFunction(original.search[0], "te").source;
+  const caller = scope.rootFunction(original.toggles[0], "eC").source;
+  const mapper = scope.rootFunction(original.search[0], "e7").source;
   const terms = new Function(`return (${mapper});`)();
   const features = Object.freeze(["remote_control", "unrelated", "memories", "workspace_dependencies", "default_mode_request_user_input", "chronicle"]
     .map(name => Object.freeze({ name, stage: "beta", displayName: name.toUpperCase(), description: name + " details", enabled: false })));
   const before = JSON.stringify(features);
   for (const [index, copy] of changed.filter.entries()) {
     const oldFilter = predicate(original.filter[index], original), newFilter = predicate(copy, changed);
-    const toggle = fn => new Function("ef", "ed", `return (${caller});`)({ R: fn }, { il: "default_mode_request_user_input" });
+    const toggle = fn => new Function("em", "ec", `return (${caller});`)({ R: fn }, { il: "default_mode_request_user_input" });
     const rawItems = features.filter(toggle(oldFilter)), currentItems = features.filter(toggle(newFilter));
     assert.deepEqual(currentItems.filter(item => item.name !== "remote_control"), rawItems);
     assert.ok(currentItems.includes(features[0]));assert.ok(!currentItems.includes(features[4]));
@@ -69,10 +69,10 @@ test("native toggle callback/search mapper retain list identities, ordering and 
 
 test("the native row callback forwards only the user's feature choice through the existing mutation", () => {
   const copy = snapshots().toggles[0], body = copy.moduleSource;
-  const start = body.indexOf('n=e=>({key:e.name,label:e.displayName??e.name');assert.ok(start >= 0);
+  const start = body.indexOf('e=e=>({key:e.name,label:e.displayName??e.name');assert.ok(start >= 0);
   const open = body.indexOf("{", start), close = findMatchingBrace(body, open);
   const expression = body.slice(start + 2, close + 2), calls = [];
-  const mapper = new Function("T", "_", `return (${expression});`)({ mutate: (...args) => calls.push(args) }, () => {});
+  const mapper = new Function("N", "M", `return (${expression});`)({ mutate: (...args) => calls.push(args) }, () => {});
   const item = Object.freeze({ name: "remote_control", displayName: "Remote", description: "Current native metadata", enabled: false });
   const model = mapper(item);assert.equal(model.enabled, false);model.onChange(true);
   assert.deepEqual(calls[0][0], { featureName: "remote_control", enabled: true });
@@ -98,20 +98,20 @@ test("full canonical functions repeat and inverse exactly while constants stay s
 test("wrong filter exports/imports, shadowing, opaque bodies and literal/ASI tampering refuse", () => {
   for (const mutate of [text => text.replace('R:function', 'wrong:function'), text => text.replace('"TjCl"', '"wrongMemory"'),
     text => text.replace('return"beta"', 'return\n"beta"'), text => text.replace('"beta"===e.stage', '"be ta"===e.stage'),
-    text => text.replace('var s=', 'var hidden="remote_control";var s='), text => text.replace('"plugins"', '"unrelated"'),
+    text => text.replace('var a=', 'var hidden="remote_control";var a='), text => text.replace('"plugins"', '"unrelated"'),
     text => text.replace('R:function(e)', 'R:function(s)')]) rejects(s => { s[assetFor("filter")] = mutate(s[assetFor("filter")]); });
 });
 
 test("wrong caller import/host/publication/capture and mutable namespace authority refuse", () => {
   for (const change of [
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('ef=n("v6J2")', 'ef=n("other")'); },
-    s => { s[assetFor("search")] = s[assetFor("search")].replace('eU.u9,e.selectedHostId', 'eU.u9,"local"'); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('T=(0,Y.jv)(t)', 'T=(0,Y.jv)(w)'); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('ConfigurationPanel:()=>eH', 'WrongPanel:()=>eH'); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){', 'function ek(e){let ef={R:()=>true};'); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ev(e){', 'function ev(e){Y={u9:()=>[]};'); },
-    s => { s[assetFor("search")] = s[assetFor("search")].replace('eW=s("v6J2"),', 'eW=s("v6J2");eW={R:()=>true};var '); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){', 'function ek(e){eval("ef={R:()=>true}");'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('em=n("v6J2")', 'em=n("other")'); },
+    s => { s[assetFor("search")] = s[assetFor("search")].replace('eV.u9,e.selectedHostId', 'eV.u9,"local"'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('N=(0,X.jv)(n)', 'N=(0,X.jv)(v)'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('ConfigurationPanel:()=>eJ', 'WrongPanel:()=>eJ'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){', 'function eC(e){let em={R:()=>true};'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){', 'function ek(e){X={u9:()=>[]};'); },
+    s => { s[assetFor("search")] = s[assetFor("search")].replace('eU=s("v6J2"),', 'eU=s("v6J2");eU={R:()=>true};var '); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){', 'function eC(e){eval("em={R:()=>true}");'); },
   ]) rejects(change);
 });
 
@@ -135,8 +135,8 @@ test("missing identities, mixed canonical copies and unmarked former flat output
 
 test("current native consumers tolerate their real unrelated local shadows but reject new block captures", () => {
   assert.equal(prepare(snapshots()).physicalFilterCopies, 2);
-  rejects(s => { s[assetFor("search")] = s[assetFor("search")].replace('w.filter(eW.R).flatMap(te)', 'w.filter((eW={R:()=>true}).R).flatMap(te)'); });
-  rejects(s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){return', 'function ek(e){{let ef={R:()=>true};return').replace('e.name!==ed.il}', 'e.name!==ed.il}}'); });
+  rejects(s => { s[assetFor("search")] = s[assetFor("search")].replace('w.filter(eU.R).flatMap(e7)', 'w.filter((eU={R:()=>true}).R).flatMap(e7)'); });
+  rejects(s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function eC(e){return', 'function eC(e){{let em={R:()=>true};return').replace('e.name!==ec.il}', 'e.name!==ec.il}}'); });
 });
 
 test("minified filter aliases and module identities can rename without changing the consumer ABI", () => {
@@ -181,19 +181,19 @@ test("root function-head guard preserves the exact native UP79 preparation outpu
   const hash = value => require("node:crypto").createHash("sha256").update(value).digest("hex");
   const plan = prepare(snapshots());
   const rows = plan.edits.map(row => ({ assetName: row.assetName, source: hash(row.source), patchedSource: hash(row.patchedSource) }));
-  // Captured with the accepted scope before this authority-only follow-up.
-  assert.equal(hash(JSON.stringify(rows)), "f9bc6091ce262631b4f2c2a69757c8f00740a01533fae56f009e63ed4a03b572");
+  // Captured from the complete current 1106 physical fixture cohort.
+  assert.equal(hash(JSON.stringify(rows)), "1ba31aa33e2093f0dba28d5a5c00870a2ec5b9b18caf0f1b59a45b503a77604c");
   assert.equal(plan.edits.filter(row => row.source !== row.patchedSource).length, 2);
 });
 
 test("root function-head guard rejects coherent generators replacing UP79 published consumers or imports", () => {
   for (const [role, suffix] of [
-    ["toggles", "function* eH(){return null}"],
-    ["search", "function* tL(){return null}"],
-    ["toggles", "async/*head*/function /*star*/ * /*name*/ eH({x}={}){return null}"],
-    ["search", "function\n*\n tL({x}={}){return null}"],
-    ["toggles", "function* ef(){return null}"],
-    ["search", "function /*head*/ * /*name*/ eW({x}={}){return null}"],
+    ["toggles", "function* eJ(){return null}"],
+    ["search", "function* tz(){return null}"],
+    ["toggles", "async/*head*/function /*star*/ * /*name*/ eJ({x}={}){return null}"],
+    ["search", "function\n*\n tz({x}={}){return null}"],
+    ["toggles", "function* em(){return null}"],
+    ["search", "function /*head*/ * /*name*/ eU({x}={}){return null}"],
   ]) {
     const input = fixtureSources(), old = snapshots(input)[role][0];
     input[old.assetName] = old.source.slice(0, old.end) + suffix + old.source.slice(old.end);

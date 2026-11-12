@@ -138,7 +138,8 @@ test("remote-control UI feature patches every rspack chunk copy and records patc
         for (let index = 0; index < 6; index++) {
           assert.equal(read(`async/visibility-${index}.js`).split("codexLinuxRemoteControlUiVisibilityEnabled").length - 1, 1);
         }
-        for (const name of ["async/248246.162ed816d7.js", "async/405910.89912dbb76.js"]) {
+        for (const row of require("./fixtures/current-experimental-features.json").roles.filter) {
+          const name = row.sourceAsset.replace("webview/assets/", "");
           assert.equal(read(name).split("codexLinuxRemoteExperimentalFilter").length - 1, 1);
         }
         assert.equal(read("async/1.decoy.js"), chunks["async/1.decoy.js"]);

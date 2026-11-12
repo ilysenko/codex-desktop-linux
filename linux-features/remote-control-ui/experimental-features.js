@@ -55,7 +55,7 @@ function toggleProof(copy, ids, listAtoms) {
   const callback = callbackProof(copy);
   scope.requireImport(copy, callback.filterAlias, callback.start, ids.filter);
   scope.requireImport(copy, callback.settingsAlias, callback.start, ids.settings);
-  const expression = new RegExp(`(${ID})=\\(void 0===(${ID})\\?\\[\\]:\\2\\)\\.filter\\(${escape(callback.name)}\\)`, "gu");
+  const expression = new RegExp(`(${ID})=(${ID})\\.filter\\(${escape(callback.name)}\\)`, "gu");
   const use = one(ownMatches(copy, expression), "native toggle list input");
   scope.unshadowed(copy, callback.name, use.index);
   const owner = scope.enclosingFunction(copy, use.index);
@@ -64,10 +64,11 @@ function toggleProof(copy, ids, listAtoms) {
   const body = owner.source, parameter = owner.params;
   const host = one([...body.matchAll(new RegExp(`\\{hostId:(${ID})\\}=${escape(parameter)}`, "gu"))], "toggle selected-host input")[1];
   const query = one([...body.matchAll(new RegExp(`\\{data:(${ID}),isLoading:(${ID})\\}=\\(0,(${ID})\\._U\\)\\((${ID})\\.u9,(${ID})\\)`, "gu"))], "toggle selected-host query");
-  if (query[1] !== use[2] || query[5] !== host) fail("toggle query/list host mismatch");
+  const fallback = one([...body.matchAll(new RegExp(`\\((${ID})=void 0===${escape(query[1])}\\?\\[\\]:${escape(query[1])},`, "gu"))], "toggle list fallback");
+  if (query[5] !== host || !body.includes(`let ${use[2]}=${fallback[1]};`)) fail("toggle query/list host mismatch");
   scope.requireImport(copy, query[3], owner.start + query.index, listAtoms);
   scope.requireImport(copy, query[4], owner.start + query.index, ids.list);
-  const mutation = one([...body.matchAll(new RegExp(`let (${ID})=\\(0,(${ID})\\.jv\\)\\((${ID})\\),`, "gu"))], "toggle selected-host mutation");
+  const mutation = one([...body.matchAll(new RegExp(`let (${ID})=\\(0,(${ID})\\.jv\\)\\((${ID})\\)[,;]`, "gu"))], "toggle selected-host mutation");
   scope.requireImport(copy, mutation[2], owner.start + mutation.index, ids.list);
   if (mutation[2] !== query[4] || !body.includes(`${mutation[3]}={hostId:${host}}`)) fail("toggle mutation host mismatch");
   const choice = new RegExp(`${escape(mutation[1])}\\.mutate\\(\\{featureName:(${ID})\\.name,enabled:(${ID})\\}`, "gu");
