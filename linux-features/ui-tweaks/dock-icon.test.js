@@ -433,7 +433,11 @@ test("the normal main descriptor qualifies the complete signed inventory and pre
   runtime.dark(false);
   assert.equal(runtime.images.at(-1), "icon-codex-light.png");
   assert.equal(mainReport(root).status, "already-applied");
-  fs.writeFileSync(path.join(build, "early-bootstrap-999-abcd.js"), 'exports.ids=[999],exports.modules={14630(a,b,c){return false}};');
+  const { mainProcessFactories } = require("../../scripts/patches/lib/main-process-factories.js");
+  const factories = mainProcessFactories(output).filter(factory => factory.body.includes("function codexLinuxApplyDockIcon("));
+  assert.equal(factories.length, 1);
+  fs.writeFileSync(path.join(build, "early-bootstrap-999-abcd.js"),
+    `exports.ids=[999],exports.modules={${JSON.stringify(factories[0].identity)}(a,b,c){return false}};`);
   let writes = 0;
   assert.equal(mainReport(root, { writeFileSync() { writes++; throw Error("unexpected write"); } }).status, "skipped-optional");
   assert.equal(writes, 0);
