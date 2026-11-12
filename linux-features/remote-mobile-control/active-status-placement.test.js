@@ -35,14 +35,14 @@ test("missing, dead, captured, wrong-key, wrong-provider and partial state fail 
     source.replace("E:()=>e_", "E:()=>eR"), source.replace("E:()=>e_", 'E:()=>e_,"E":()=>eR'),
     source.replace("function ea(e){", "if(false){function ea(e){").replace("function eU(e){", "}function eU(e){"),
     source.replace("(m.nX,h)", "(m.nX,foreignConversation)"),
-    source.replace("conversationId:eG})}:null", "conversationId:foreignConversation})}:null"),
+    source.replace("conversationId:r})}:null", "conversationId:foreignConversation})}:null"),
     source.replace('m=a("tl5a")', 'm=a("foreign")'),
     source.replace('o=a("QosV")', 'o=a("foreign")'),
     source.replace("function ea(e){", "function ea(e){let m;"),
     source.replace("function e_(e){", "eU=()=>null;function e_(e){"),
     source.replace('id:"active-status"', 'id:"unused-status"'),
-    source.replace("extraIconBadges:as", "extraIconBadges:foreignBadges"),
-    source.replace(",eq}", ",eq,null}"),
+    source.replace("extraIconBadges:au", "extraIconBadges:foreignBadges"),
+    source.replace(",th}", ",eq,null}"),
     patched.replace("/*codexLinuxRemoteMobileActiveStatus*/", ""),
     patched.replace('"active":null==', '"inactive":null=='),
     source + "/*codexLinuxRemoteMobileActiveStatus*/",
@@ -94,11 +94,12 @@ test("selected presentation and selector member authority rejects later writers 
   }
 });
 test("native visibility atom, store scope and flag-provider identities remain closed", () => {
+  const nativeGateCell = data.gateCell.replace("let J=", "let $=");
   const mutations = [
-    fixture.moduleSource.replace(data.gateCell, data.gateCell.replace("!1", "!0")),
+    fixture.moduleSource.replace(nativeGateCell, nativeGateCell.replace("!1", "!0")),
     fixture.moduleSource.replace('ew=a("hZax")', 'ew=a("wrong-provider")'),
     fixture.moduleSource.replace('F=a("OWtl")', 'F=a("wrong-provider")'),
-    fixture.moduleSource + 'J=foreignGate;',
+    fixture.moduleSource + '$=foreignGate;',
     fixture.moduleSource.replace('var Y=a("slpy");', 'return;var Y=a("slpy");'),
   ];
   for (const body of mutations) { assert.notEqual(body, fixture.moduleSource); assert.throws(() => prepareActiveStatusSource(carrier(body))); }
