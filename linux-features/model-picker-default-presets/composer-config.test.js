@@ -27,15 +27,19 @@ test('actual caller prepares, inverses and replays exactly; empty audit and inva
 });
 
 test('the native Default callback belongs to the rendered Fragment child',()=>{
- const original=fixture.moduleSource;
- for(const value of ['onSelectDefault:lk,','modelOptionsDisabled:tt,','reasoningEffortDisabled:ti,','lz=(0,o.jsx)(o.Fragment,{children:']){
-  assert.equal(original.split(value).length,2,value);
- }
- const ghost='(0,o.jsx)(D.i,{model:nX,modelOptions:n5,reasoningEffort:oS,selectionMode:oP,onSelectDefault:lk,modelOptionsDisabled:tt,reasoningEffortDisabled:ti})';
- const mutant=original.replace('onSelectDefault:lk,','onSelectDefault:void 0,')
-  .replace('modelOptionsDisabled:tt,','"modelOptionsDisabled":tt,')
-  .replace('reasoningEffortDisabled:ti,','"reasoningEffortDisabled":ti,')
-  .replace('lz=(0,o.jsx)(o.Fragment,{children:',`lz=(0,o.jsx)(o.Fragment,{ghost:${ghost},children:`);
+ const original=fixture.moduleSource,p=current().proof,disabled=p.fragments.guards.disabled;
+ const menuOptions=/modelOptions:([\w$]+),defaultOptionIndex:([\w$]+)/u.exec(original);assert.ok(menuOptions);
+ const callback=`onSelectDefault:${p.callback},`,modelDisabled=`modelOptionsDisabled:${disabled.modelDisabled},`,effortDisabled=`reasoningEffortDisabled:${disabled.effortDisabled},`;
+ const callbackAt=original.indexOf(callback),fragment=[...original.matchAll(/([\w$]+)=\(0,([\w$]+)\.jsx\)\(\2\.Fragment,\{children:/gu)]
+  .find(hit=>hit.index<callbackAt&&findMatchingBrace(original,hit.index+hit[0].lastIndexOf('{'))>callbackAt);
+ assert.ok(fragment);
+ for(const value of[callback,modelDisabled,effortDisabled,fragment[0]])assert.equal(original.split(value).length,2,value);
+ const menu=p.fragments.guards.menu;
+ const ghost=`(0,${fragment[2]}.jsx)(${menu.localName}.${menu.exportName},{model:${p.current.model},modelOptions:${menuOptions[1]},defaultOptionIndex:${menuOptions[2]},reasoningEffort:${p.current.effort},selectionMode:${p.current.mode},onSelectDefault:${p.callback},modelOptionsDisabled:${disabled.modelDisabled},reasoningEffortDisabled:${disabled.effortDisabled}})`;
+ const mutant=original.replace(callback,'onSelectDefault:void 0,')
+  .replace(modelDisabled,`"modelOptionsDisabled":${disabled.modelDisabled},`)
+  .replace(effortDisabled,`"reasoningEffortDisabled":${disabled.effortDisabled},`)
+  .replace(fragment[0],fragment[0].replace('children:',`ghost:${ghost},children:`));
  new vm.Script(`function nativeCaller(${fixture.params.join(',')}){${mutant}}`);
  const {rspackModuleFactories}=require('../../scripts/patches/lib/rspack-module-assets.js');
  const [snapshot]=rspackModuleFactories(chunk([changed(fixture,mutant)]),'quoted-key-ghost.js');
@@ -119,9 +123,9 @@ test('actual local disabled expressions retain loading, locked, Copilot and erro
 
 test('actual home conversion bridge refuses pending/unsupported pairs and preserves native selection metadata',async()=>{
  const p=current().proof,b=p.fragments.guards.bridge,selector=p.selector,events=[],nativeMapper=publication(refs.SGof,'D'),fn=refs.SGof.moduleSource.slice(nativeMapper.fn.start,nativeMapper.fn.end),names=/i\.QW/u.test(fn)?'i':'i',mapper=vm.runInNewContext('('+fn+')',{i:{QW:{zero:'none',standard:'medium',extended:'high'}},n:{Ux:{safeParse:value=>({success:['zero','standard','extended'].includes(value),data:value})}}});
- const vars={[b.mapper.localName]:{[b.mapper.exportName]:mapper},[b.rawModels]:{models:[{model:'model-new'}]},[b.models]:[{model:'model-new',supportedReasoningEfforts:[{reasoningEffort:'high'}]}],[p.fragments.guards.disabled.loading]:false,[selector.before]:()=>true,[selector.name]:(...args)=>{events.push(args);return Promise.resolve(true)},[selector.store]:{get:()=>({warning:()=>{}})},B:{Id:'toast'},o:{jsx:()=>({})},h:{A:{}}};
+ const vars={[b.mapper.localName]:{[b.mapper.exportName]:mapper},[b.rawModels]:{models:[{model:'model-new'}]},[b.models]:[{model:'model-new',supportedReasoningEfforts:[{reasoningEffort:'high'}]}],[p.fragments.guards.disabled.loading]:false,[b.nativeTpp]:false,[selector.before]:()=>true,[selector.name]:(...args)=>{events.push(args);return Promise.resolve(true)},[selector.store]:{get:()=>({warning:()=>{}})},[new RegExp('get\\(([\\w$]+)\\.Id\\)').exec(b.sourceWarning)[1]]:{Id:'toast'},[new RegExp('\\(0,([\\w$]+)\\.jsx\\)').exec(b.sourceWarning)[1]]:{jsx:()=>({})},[new RegExp('\\.jsx\\)\\(([\\w$]+)\\.A,').exec(b.sourceWarning)[1]]:{A:{}}};
  const execute=values=>vm.runInNewContext('('+b.functionSource+')',{...vars,...values});assert.equal(await execute({})({slug:'model-new',thinkingEffort:'extended'}),true);assert.equal(events[0][1],'high');assert.deepEqual(plain(events[0][2]),{persistAsDefault:false});
- const count=events.length;assert.equal(await execute({[p.fragments.guards.disabled.loading]:true})({slug:'model-new',thinkingEffort:'extended'}),false);assert.equal(await execute({})({slug:'missing',thinkingEffort:'extended'}),false);assert.equal(await execute({})({slug:'model-new',thinkingEffort:'ultra'}),false);assert.equal(events.length,count);
+ const count=events.length;assert.equal(await execute({[b.nativeTpp]:true,[p.fragments.guards.disabled.loading]:true})({slug:'unavailable-tpp-model',thinkingEffort:'ultra'}),true);assert.equal(events.length,count);assert.equal(await execute({[p.fragments.guards.disabled.loading]:true})({slug:'model-new',thinkingEffort:'extended'}),false);assert.equal(await execute({})({slug:'missing',thinkingEffort:'extended'}),false);assert.equal(await execute({})({slug:'model-new',thinkingEffort:'ultra'}),false);assert.equal(events.length,count);
 });
 
 test('same actual51 gate and59 contribution compose in both orders; marker data stays opaque',()=>{
@@ -130,7 +134,7 @@ test('same actual51 gate and59 contribution compose in both orders; marker data 
 });
 
 test('actual use-site namespace and normalizer captures reject paired formal changes',()=>{
- const p=current().proof,changes=[fixture.moduleSource.replace(p.fragments.normalizer,p.fragments.normalizer.replace(/\be\b/gu,'G')),fixture.moduleSource.replace(p.fragments.setter,p.fragments.setter.replace(/\be\b/gu,p.normalizer)),fixture.moduleSource.replace(p.fragments.defaultCallback,p.fragments.defaultCallback.replace(/\be\b/gu,p.qv.namespace))];
+ const p=current().proof,changes=[fixture.moduleSource.replace(p.fragments.normalizer,p.fragments.normalizer.replace(/\be\b/gu,p.selector.sentinelNamespace)),fixture.moduleSource.replace(p.fragments.setter,p.fragments.setter.replace(/\be\b/gu,p.normalizer)),fixture.moduleSource.replace(p.fragments.defaultCallback,p.fragments.defaultCallback.replace(/\be\b/gu,p.qv.namespace))];
  for(const source of changes){assert.doesNotThrow(()=>new vm.Script(`function native(${fixture.params}){${source}}`));assert.throws(()=>C.prepareComposerFactory(source,changed(fixture,source),presets,map));}
  const poisoned=fixture.moduleSource.replace(`${p.state.select}(${p.normalizer}(`,`${p.state.setDefault}(${p.normalizer}(`);assert.throws(()=>C.prepareComposerFactory(poisoned,changed(fixture,poisoned),presets,map));
 });
