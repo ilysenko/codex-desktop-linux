@@ -28,7 +28,7 @@ const {
 
 // Current returned window-services and connected request-host fixture.
 const { currentDockMainSource } = require("./fixtures/current-dock-main.js");
-const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { findMatchingBrace, escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 const { normalizePatchDescriptors, applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
 const currentMainSource = currentDockMainSource();
@@ -64,14 +64,14 @@ function captureWarns(fn) {
   }
 }
 
-function evaluateLinuxPreviews(patchedSource, payloadDir) {
+function evaluateLinuxPreviews(patchedSource, payloadDir, includePreviews = true) {
   const preview = patchedSource.match(
     /dockIconPreviews:(?<include>[A-Za-z_$][\w$]*)\?(?<expression>function\((?<arg>[A-Za-z_$][\w$]*)\)\{if\("darwin"!==process\.platform&&"linux"!==process\.platform\)return null;let (?<theme>[A-Za-z_$][\w$]*)=(?<themeHelper>[A-Za-z_$][\w$]*)\(\k<arg>\),(?<defaultIcon>[A-Za-z_$][\w$]*)=(?<resource>[A-Za-z_$][\w$]*)\(`\$\{(?<iconName>[A-Za-z_$][\w$]*)\(\k<arg>\)\}\.png`\),(?<codexDark>[A-Za-z_$][\w$]*)=\k<resource>\(\k<theme>\.dark\),(?<codexLight>[A-Za-z_$][\w$]*)=\k<resource>\(\k<theme>\.light\),(?<spaceDark>[A-Za-z_$][\w$]*)="linux"===process\.platform\?\k<codexDark>:\k<resource>\(\k<theme>\.spaceDark\),(?<spaceLight>[A-Za-z_$][\w$]*)="linux"===process\.platform\?\k<codexLight>:\k<resource>\(\k<theme>\.spaceLight\);return [^}]+\}\}\((?<preference>[A-Za-z_$][\w$]*)\)):null/,
   );
   assert.ok(preview, "expected one complete patched preview function");
   const sandbox = {
     process: { platform: "linux" },
-    [preview.groups.arg]: "prod",
+    [preview.groups.include]: includePreviews,
     [preview.groups.preference]: "prod",
     [preview.groups.themeHelper]: () => ({
       dark: "icon-codex-dark-color.png",
@@ -81,13 +81,20 @@ function evaluateLinuxPreviews(patchedSource, payloadDir) {
     }),
     [preview.groups.iconName]: () => "icon-chatgpt",
     [preview.groups.resource]: (name) => {
+      assert.equal(includePreviews, true, "disabled previews must not read icon resources");
       const resource = path.join(payloadDir, name);
       return fs.existsSync(resource) ? fs.readFileSync(resource, "utf8") : null;
     },
   };
-  vm.runInNewContext(`result=${preview.groups.expression}`, sandbox);
+  vm.runInNewContext(`result=${preview.groups.include}?${preview.groups.expression}:null`, sandbox);
   return sandbox.result;
 }
+
+test("native preview opt-out skips the Linux icon resource lookup", () => {
+  const patched = applyDockIconMainPatch(currentMainSource);
+  assert.notEqual(patched, currentMainSource);
+  assert.equal(evaluateLinuxPreviews(patched, "/unused", false), null);
+});
 
 function evaluateLinuxRuntimeResourceNames(patchedSource) {
   const resourceName = patchedSource.match(
@@ -227,25 +234,36 @@ function linuxIconRuntime(source) {
   const applyHead = /function codexLinuxApplyDockIcon\(([\w$]+)\)\{/.exec(source);
   assert.ok(applyHead);
   const apply = source.slice(applyHead.index, findMatchingBrace(source, applyHead.index + applyHead[0].length - 1) + 1);
-  const updateHead = /V=\(\)=>\{if\(!p&&"linux"!==process\.platform\)return;/.exec(source);
-  assert.ok(updateHead);
+  const id = "[A-Za-z_$][\\w$]*", arg = escapeRegExp(applyHead[1]);
+  const prefix = new RegExp(`if\\("app-default"!==${arg}&&null==(?<theme>${id})\\)return;if\\((?<dev>${id})&&`, "u").exec(apply)?.groups;
+  const electron = new RegExp(`(?<electron>${id})\\.nativeTheme\\.shouldUseDarkColorsForSystemIntegratedUI`, "u").exec(apply)?.groups.electron;
+  const build = new RegExp(`&&"linux"!==process\\.platform&&(?<build>${id})!==(?<namespace>${id})\\.(?<flavors>${id})\\.Dev`, "u").exec(apply)?.groups;
+  const resources = new RegExp(`let ${id}=(?<select>${id})\\(${arg},!0===${escapeRegExp(prefix.theme)}\\),${id}=\\(null==${id}\\?null:(?<asset>${id})\\(`, "u").exec(apply)?.groups;
+  const local = /return ([\w$]+)\("icon-dev-outline\.png"\)/u.exec(apply)?.[1];
+  const icon = new RegExp(`return ${escapeRegExp(resources.asset)}\\(\`\\$\\{(?<name>${id})\\(${escapeRegExp(build.build)}\\)\\}\\.png\`\\)`, "u").exec(apply)?.groups.name;
+  const paths = /createFromPath\(\(0,([\w$]+)\.join\)/u.exec(apply)?.[1];
+  const tray = /null!=([\w$]+)\?\.tray/u.exec(apply)?.[1];
+  const applyName = new RegExp(`(${id})=function codexLinuxApplyDockIcon\\(`, "u").exec(source)?.[1];
+  const updateHead = new RegExp(`(?<update>${id})=\\(\\)=>\\{if\\(!(?<mac>${id})&&"linux"!==process\\.platform\\)return;let ${id}=(?<preference>${id})\\(\\);${escapeRegExp(applyName)}\\(`, "u").exec(source);
+  assert.ok(prefix && electron && build && resources && local && icon && paths && tray && applyName && updateHead);
   const update = source.slice(updateHead.index, findMatchingBrace(source, updateHead.index + updateHead[0].indexOf("=>{") + 2) + 1);
-  const themeHead = 'if("linux"===process.platform){T=er.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI;';
-  const themeAt = source.indexOf(themeHead);
-  assert.ok(themeAt >= 0);
-  const theme = source.slice(themeAt, findMatchingBrace(source, themeAt + themeHead.indexOf("{")) + 1);
+  const themeHead = new RegExp(`if\\("linux"===process\\.platform\\)\\{${escapeRegExp(prefix.theme)}=${escapeRegExp(electron)}\\.nativeTheme\\.shouldUseDarkColorsForSystemIntegratedUI;`, "u").exec(source);
+  assert.ok(themeHead);
+  const theme = source.slice(themeHead.index, findMatchingBrace(source, themeHead.index + themeHead[0].indexOf("{")) + 1);
+  const disposable = /([\w$]+)\.add\(/u.exec(theme)?.[1];
+  assert.ok(disposable);
   const images = [], listeners = new Set(), disposers = [];
   let preference = "codex-system", dockCalls = 0;
   const image = name => ({ isEmpty: () => false, name, toPNG: () => Buffer.from(name) });
   const context = {
     process: { platform: "linux", resourcesPath: "/inert/resources" },
-    T: null, x: undefined, p: false, i: "prod", eI0: null,
-    e_: { x: { Dev: "dev", Agent: "agent", Nightly: "nightly", InternalAlpha: "internal", PublicBeta: "beta", Prod: "prod" } },
-    W: evaluateLinuxRuntimeResourceNames(source), R: () => preference,
-    A: name => name, I: name => name, Ea: () => "icon-chatgpt", $: path,
+    [prefix.theme]: null, [prefix.dev]: undefined, [updateHead.groups.mac]: false, [build.build]: "prod", [tray]: null,
+    [build.namespace]: { [build.flavors]: { Dev: "dev", Agent: "agent", Nightly: "nightly", InternalAlpha: "internal", PublicBeta: "beta", Prod: "prod" } },
+    [resources.select]: evaluateLinuxRuntimeResourceNames(source), [updateHead.groups.preference]: () => preference,
+    [resources.asset]: name => name, [local]: name => name, [icon]: () => "icon-chatgpt", [paths]: path,
     codexLinuxDockIconResourcePath: name => `/inert/resources/dock-icon/${name}`,
     require: name => { assert.equal(name, "node:fs"); return { existsSync: () => false }; },
-    er: {
+    [electron]: {
       app: { isPackaged: true, dock: { setIcon() { dockCalls++; } } },
       nativeTheme: { shouldUseDarkColorsForSystemIntegratedUI: true,
         on(event, listener) { assert.equal(event, "updated"); listeners.add(listener); },
@@ -253,14 +271,14 @@ function linuxIconRuntime(source) {
       nativeImage: { createEmpty: () => image("empty"), createFromPath: name => { images.push(name); return image(name); } },
       BrowserWindow: { getAllWindows: () => [] },
     },
-    v: { add: callback => disposers.push(callback) },
+    [disposable]: { add: callback => disposers.push(callback) },
   };
   const sandbox = vm.createContext(context);
-  vm.runInContext(`${apply};B=codexLinuxApplyDockIcon;${update};${theme}`, sandbox);
+  vm.runInContext(`${apply};${applyName}=codexLinuxApplyDockIcon;${update};${theme}`, sandbox);
   return { images, listeners, disposers, context, dockCalls: () => dockCalls,
     preference(value) { preference = value; },
-    dark(value) { context.er.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI = value; for (const listener of listeners) listener(); },
-    apply(value) { sandbox.B(value); } };
+    dark(value) { context[electron].nativeTheme.shouldUseDarkColorsForSystemIntegratedUI = value; for (const listener of listeners) listener(); },
+    apply(value) { sandbox[applyName](value); } };
 }
 
 test("current window-services patch preserves the complete macOS observer and native readiness guard", () => {
@@ -458,6 +476,7 @@ test("main and settings repairs apply to unique semantic anchors in the signed b
     const payload = path.join(install, "resources", "dock-icon");
     const previews = evaluateLinuxPreviews(mainPatched, payload);
     assert.notEqual(previews, null);
+    assert.equal(evaluateLinuxPreviews(mainPatched, payload, false), null);
     assert.equal(previews.appDefault, "official-icon");
     assert.equal(previews.codexDark, previews.spaceDark);
     assert.equal(previews.codexLight, previews.spaceLight);
