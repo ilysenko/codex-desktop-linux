@@ -226,6 +226,12 @@ test("F1 native action callback, ownership, availability, keymap and window gate
     ["!this.isDisposed&&this.isHotkeyWindowGateEnabled", "!this.isDisposed&&true"],
     ["!this.getState().supported||null==this.configuredHotkey", "null==this.configuredHotkey"],
     ['commandId:"openAvatarOverlay"', 'commandId:"otherAction"'],
+    ["n=null,i=null,q=null,s=", "n=null,i=null,q=foreign,s="],
+    ["setQuickChatHandler:e=>{q=e}", "setQuickChatHandler:e=>{other=e}"],
+    ["null==q||\"locked\"!==ea.powerMonitor.getSystemIdleState(1)", "null==other||\"locked\"!==ea.powerMonitor.getSystemIdleState(1)"],
+    ["null==q||\"locked\"!==ea.powerMonitor.getSystemIdleState(1)", "null==q||\"locked\"===ea.powerMonitor.getSystemIdleState(1)"],
+    ["(q??e)().catch", "(q??other)().catch"],
+    ["(q??e)().catch", "(other??e)().catch"],
     ["!tt().realtimeVoice&&!s", "!s"],
     ["this.isAppQuitting||this.appShellShortcutStates", "false||this.appShellShortcutStates"],
     ['"meetings.takeNotes",this.appShellCommandKeymapState', '"meetings.other",this.appShellCommandKeymapState'],
@@ -399,6 +405,14 @@ test("F1 inert Pet and voice retain availability, sync, locked-screen and native
   const firstPet = registrations.at(-1);
   assert.equal(firstPet.callbacks.linuxCommandId, "openAvatarOverlay");
   firstPet.callbacks.onPressed();
+  pet.setQuickChatHandler(async () => { events.push("quick-chat"); });
+  locked = true; firstPet.callbacks.onPressed();
+  locked = false; firstPet.callbacks.onPressed();
+  pet.setQuickChatHandler(null);
+  locked = true; firstPet.callbacks.onPressed(); locked = false;
+  pet.setQuickChatHandler(async () => { throw new Error("native handler failure"); });
+  firstPet.callbacks.onPressed();
+  await Promise.resolve();
   available = false; firstPet.callbacks.onPressed(); assert.equal(firstPet.unregistered, true);
   available = true; pet.syncCommandKeybinding("Ctrl+Alt+N");
   assert.equal(registrations.at(-1).accelerator, "Ctrl+Alt+N");
@@ -413,7 +427,7 @@ test("F1 inert Pet and voice retain availability, sync, locked-screen and native
   voice.syncCommandKeybinding("Ctrl+Alt+R"); assert.equal(activeVoice.unregistered, true);
   voice.dispose(); pet.dispose();
   await Promise.resolve();
-  assert.deepEqual(events, ["pet", "voice"]);
+  assert.deepEqual(events, ["pet", "quick-chat", "pet", "warning", "voice"]);
 });
 
 function inventory(t, source = mainBundleFixture()) {
