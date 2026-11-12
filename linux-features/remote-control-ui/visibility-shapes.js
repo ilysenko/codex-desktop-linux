@@ -1,5 +1,5 @@
 "use strict";
-// Bounded current native grammar: identifiers and static import IDs are resolved separately.
+// Bounded current native grammar; import identities are linked separately.
 module.exports = {
   "booleanCaller": {
     "params": [
@@ -7,7 +7,7 @@ module.exports = {
       "t",
       "n"
     ],
-    "moduleSource": "var r=n(\"zTeN\");n(\"ChYf\");var i=n(\"j9xU\"),a=n(\"PIwo\"),s=n(\"OWtl\"),o=n(\"Sd8U\"),l=n(\"o4oB\"),u=n(\"ndjw\"),d=n(\"qixt\"),c=n(\"OMIV\");function p(){return!0}let h=(0,r.un)(s.u,({get:e})=>p()?\"/settings/connections/ssh\":null),f=(0,r.un)(s.u,({get:e})=>e(i.s8)||e(u.Ro)&&e(i.m$)),m=(0,r.un)(o.PR,({get:e})=>e(i.F6)&&(e(c.JW,\"1678134557\")||!e(i.s8)||e(l.S)?.type!==\"remote\")),_=(0,r.un)(o.PR,({get:e})=>e(a.bc)&&(e(c.JW,\"1678134557\")||e(l.S)?.type!==\"local\"||e(c.JW,\"3296668107\"))),g=(0,r.un)(s.u,({get:e})=>!e(f)||e(d.e2)||!e(c.JW,\"1678134557\")&&!e(c.JW,\"1753900615\")),v=(0,r.un)(s.u,({get:e})=>!1),y=(0,r.un)(s.u,({get:e})=>!1);n.d(t,{},{CC:p,FZ:v,G8:m,Kc:g,Sn:f,XO:_,k5:y,m4:h})"
+    "moduleSource": "var r=n(\"zTeN\");n(\"ChYf\");var i=n(\"j9xU\"),a=n(\"PIwo\"),s=n(\"OWtl\"),o=n(\"Sd8U\"),l=n(\"o4oB\"),u=n(\"ndjw\"),d=n(\"qixt\"),c=n(\"OMIV\");function p(){return!0}let h=(0,r.un)(s.u,({get:e})=>p()?\"/settings/connections/ssh\":null),f=(0,r.un)(s.u,({get:e})=>e(i.s8)||e(u.Ro)&&e(i.m$)),m=(0,r.un)(o.PR,({get:e})=>e(i.F6)&&(e(c.JW,\"1678134557\")||!e(i.s8)||e(l.S)?.type!==\"remote\")),g=(0,r.un)(o.PR,({get:e})=>e(a.bc)&&(e(c.JW,\"1678134557\")||e(l.S)?.type!==\"local\"||e(c.JW,\"3296668107\"))),_=(0,r.un)(s.u,({get:e})=>!e(f)||e(d.e2)||!e(c.JW,\"1678134557\")),v=(0,r.un)(s.u,({get:e})=>!1);n.d(t,{},{CC:p,G8:m,Kc:_,Sn:f,XO:g,k5:v,m4:h})"
   },
   "boolean": {
     "params": [
@@ -15,7 +15,7 @@ module.exports = {
       "t",
       "n"
     ],
-    "moduleSource": "var r=n(\"zTeN\"),i=n(\"tl5a\"),a=n(\"B81s\"),s=n(\"OWtl\"),o=n(\"hZax\"),l=n(\"OMIV\"),u=n(\"kx7U\");let d=(0,r.un)(s.u,({get:e})=>{let t=e(i.Dc),{data:n}=e(a.I2,t),r=e(l.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let s=n?.config.features;return null==s||\"object\"!=typeof s||Array.isArray(s)?r:Object.getOwnPropertyDescriptor(s,\"remote_connections\")?.value===!0||r});function c(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,r.Ul)(d)},bc:d,mC:function(){return(0,o.Zj)(\"1042620455\")},mw:function(){let e=(0,r.Ul)(u.u8)??[];return{remoteConnections:e,enabledRemoteHostIdSet:new Set(e.flatMap(c))}}})"
+    "moduleSource": "var r=n(\"QosV\"),i=n(\"zTeN\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"OWtl\"),l=n(\"hZax\"),u=n(\"OMIV\"),d=n(\"kx7U\");let c=(0,i.un)(o.u,({get:e})=>{let t=e(a.Dc),{data:n}=e(s.I2,t),r=e(u.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let i=n?.config.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?r:Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0||r});function p(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,i.Ul)(c)},bc:c,mC:function(){return(0,l.Zj)(\"1042620455\")},mw:function(){let e,t,n=(0,r.c)(5),a=(0,i.Ul)(d.u8)??[];return n[0]!==a?(e=new Set(a.flatMap(p)),n[0]=a,n[1]=e):e=n[1],n[2]!==a||n[3]!==e?(t={remoteConnections:a,enabledRemoteHostIdSet:e},n[2]=a,n[3]=e,n[4]=t):t=n[4],t}})"
   },
   "state": {
     "params": [
@@ -23,15 +23,15 @@ module.exports = {
       "t",
       "n"
     ],
-    "moduleSource": "var r=n(\"zTeN\"),i=n(\"rljs\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"kx7U\"),l=n(\"OWtl\"),u=n(\"ndjw\"),d=n(\"RFDv\"),c=n(\"r6TF\"),p=n(\"OMIV\");let h=(0,r.un)(l.u,()=>!0),f=(0,r.un)(l.u,({get:e})=>e(h)&&\"local\"===e(u.fm,e(a.Dc)).kind),m=(0,r.un)(l.u,({get:e})=>{let t=e(a.Dc),n=e(s.I2,t);if(e(p.JW,\"4114442250\"))return\"enabled\";if(n.isLoading)return\"loading\";let r=n.data?.config;if(r?.[\"features.remote_connections\"]===!0)return\"enabled\";let i=r?.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?\"disabled\":Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0?\"enabled\":\"disabled\"}),_=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).some(t=>\"connected\"===e(a.y2,t.hostId))),g=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).length>0),v=(0,r.un)(l.u,({get:e})=>{let t=e(m);if(\"loading\"===t)return!0;if(\"disabled\"===t)return!1;if(e(o.kj))return!0;let n=e(a.Dj);return e(c.Kj).some(({hostId:t})=>{if(!n.includes(t)||!e(i.EX,t))return!0;let r=e(a.y2,t);return\"connecting\"===r||\"restarting\"===r})}),y=(0,r.i1)(l.u,({localProjectActionsEnabled:e},{get:t})=>{let n=t(_),r=t(d.$G);return\"project\"===r&&!e&&n?\"connection\":r});n.d(t,{},{$e:y,Lk:h,T$:f,cC:v,e:m,gK:g,xm:_})"
+    "moduleSource": "var r=n(\"zTeN\"),i=n(\"rljs\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"kx7U\"),l=n(\"OWtl\"),u=n(\"ndjw\"),d=n(\"RFDv\"),c=n(\"r6TF\"),p=n(\"OMIV\");let h=(0,r.un)(l.u,()=>!0),f=(0,r.un)(l.u,({get:e})=>e(h)&&\"local\"===e(u.fm,e(a.Dc)).kind),m=(0,r.un)(l.u,({get:e})=>{let t=e(a.Dc),n=e(s.I2,t);if(e(p.JW,\"4114442250\"))return\"enabled\";if(n.isLoading)return\"loading\";let r=n.data?.config;if(r?.[\"features.remote_connections\"]===!0)return\"enabled\";let i=r?.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?\"disabled\":Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0?\"enabled\":\"disabled\"}),g=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).some(t=>\"connected\"===e(a.y2,t.hostId))),_=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).length>0),v=(0,r.un)(l.u,({get:e})=>{let t=e(m);if(\"loading\"===t)return!0;if(\"disabled\"===t)return!1;if(e(o.kj))return!0;let n=e(a.Dj);return e(c.Kj).some(({hostId:t})=>{if(!n.includes(t)||!e(i.EX,t))return!0;let r=e(a.y2,t);return\"connecting\"===r||\"restarting\"===r})}),y=(0,r.i1)(l.u,({localProjectActionsEnabled:e},{get:t})=>{let n=t(g),r=t(d.$G);return\"project\"===r&&!e&&n?\"connection\":r});n.d(t,{},{$e:y,Lk:h,T$:f,cC:v,e:m,gK:_,xm:g})"
   },
   "stateCaller": {
     "params": [
       "e",
       "t",
-      "n"
+      "r"
     ],
-    "moduleSource": "var a=n(\"zTeN\"),r=n(\"eFn4\"),i=n(\"OWtl\"),s=n(\"DZgh\"),o=n(\"cpC0\"),l=n(\"RFDv\"),c=n(\"y5af\"),d=n(\"v8tC\"),u=n(\"Rrp3\"),h=n(\"Og9d\");let p=(0,a.i1)(i.u,(e,{get:t})=>g(t,e));function g(e,{mode:t,sidebarMode:n}){return(e(o.xm)||\"connection\"===t)&&(\"codex\"===n||(0,l.sV)(e(r.rQ)))}n.d(t,{},{Db:function(e,{tasks:t,conversationByKey:n,visibleKeys:a,allKeys:r},i){if(\"manual\"!==e.get(s.by).chatSortMode)return;let o=e=>e.flatMap(e=>{let t=n.get(e);return t?.source===\"codex\"?[t.threadKey]:[]});(0,h.ZG)(e,(0,u.q5)({allKeys:r,nextVisibleKeys:i.filter(e=>n.has(e)),preserveUnloadedStoredKeys:!0,storedOrder:e.get(h.t6)})),(0,d.Gd)(e,{tasks:t,visibleThreadIds:(0,c.jF)(o(a),t),nextVisibleThreadIds:(0,c.jF)(o(i),t)})},FQ:g,R$:p})"
+    "moduleSource": "var n=r(\"zTeN\"),a=r(\"eFn4\"),o=r(\"OWtl\"),i=r(\"DZgh\"),s=r(\"cpC0\"),l=r(\"RFDv\"),d=r(\"y5af\"),u=r(\"v8tC\"),c=r(\"Rrp3\"),h=r(\"Og9d\");let p=(0,n.i1)(o.u,(e,{get:t})=>f(t,e));function f(e,{mode:t,sidebarMode:r}){return(e(s.xm)||\"connection\"===t)&&(\"codex\"===r||(0,l.sV)(e(a.rQ)))}r.d(t,{},{Db:function(e,{tasks:t,conversationByKey:r,visibleKeys:n,allKeys:a},o){if(\"manual\"!==e.get(i.by).chatSortMode)return;let s=e=>e.flatMap(e=>{let t=r.get(e);return t?.source===\"codex\"?[t.threadKey]:[]});(0,h.ZG)(e,(0,c.q5)({allKeys:a,nextVisibleKeys:o.filter(e=>r.has(e)),preserveUnloadedStoredKeys:!0,storedOrder:e.get(h.t6)})),(0,u.Gd)(e,{tasks:t,visibleThreadIds:(0,d.jF)(s(n),t),nextVisibleThreadIds:(0,d.jF)(s(o),t)})},FQ:f,R$:p})"
   },
   "navigationCaller": {
     "params": [

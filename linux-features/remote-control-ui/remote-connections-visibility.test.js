@@ -101,7 +101,7 @@ test("semantic local and module identity renames retain the two native caller li
 test("missing, ambiguous and damaged physical cohorts fail without a partial plan", () => {
   assertRefuses(s => { delete s["async/state-0.js"]; });
   assertRefuses(s => { s["async/stateCaller-1.js"] = s["async/stateCaller-1.js"].replace('"connection"===', '"wrong"==='); });
-  assertRefuses(s => { s["async/boolean-1.js"] = s["async/boolean-0.js"].replace('bc:d', 'wrong:d'); });
+  assertRefuses(s => { s["async/boolean-1.js"] = s["async/boolean-0.js"].replace('bc:c', 'wrong:c'); });
   const cohort = snapshots();
   cohort.boolean.push({ ...cohort.boolean[0], moduleId: "ambiguous", assetName: "extra.js" });
   assert.throws(() => prepareRemoteConnectionsVisibility(cohort), /ambiguous/);
@@ -109,10 +109,11 @@ test("missing, ambiguous and damaged physical cohorts fail without a partial pla
 
 test("shadowing, reassignment, opaque code and wrong exports reject the complete current grammar", () => {
   for (const change of [
-    s => { s["async/boolean-0.js"] = s["async/boolean-0.js"].replace('let d=', 'r={un:()=>true};let d='); },
+    s => { s["async/boolean-0.js"] = s["async/boolean-0.js"].replace('let c=', 'i={un:()=>true};let c='); },
     s => { s["async/state-0.js"] = s["async/state-0.js"].replace('if(e(p.JW', 'let p={JW:true};if(e(p.JW'); },
-    s => { s["async/boolean-0.js"] = s["async/boolean-0.js"].replace('let d=', 'let opaque="4114442250";let d='); },
-    s => { s["async/boolean-0.js"] = s["async/boolean-0.js"].replace('bc:d', 'bc:()=>d'); },
+    s => { s["async/boolean-0.js"] = s["async/boolean-0.js"].replace('let c=', 'let opaque="4114442250";let c='); },
+    s => { s["async/boolean-0.js"] = s["async/boolean-0.js"].replace('bc:c', 'bc:()=>c'); },
+    s => { s["async/boolean-0.js"] = s["async/boolean-0.js"].replace('"QosV"', '"differentMemo"'); },
     s => { s["async/state-0.js"] = s["async/state-0.js"].replace('e:m,gK', 'e:g,gK'); },
     s => { s["async/booleanCaller-0.js"] = s["async/booleanCaller-0.js"].replace('"PIwo"', '"unrelated"'); },
     s => { s["async/state-0.js"] = s["async/state-0.js"].replace('"OMIV"', '"otherGate"'); },

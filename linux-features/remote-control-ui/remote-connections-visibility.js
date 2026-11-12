@@ -118,13 +118,14 @@ function prepareRemoteConnectionsVisibility(cohort) {
   }
   if (qualified.boolean.some(row => row.loadGatePeer !== qualified.boolean[0].loadGatePeer)) fail("partially applied load-gate peer");
   const boolean = qualified.boolean[0].imports, state = qualified.state[0].imports;
-  for (const [left, right] of [[0, 0], [1, 2], [2, 3], [3, 5], [5, 9], [6, 4]]) {
+  for (const [left, right] of [[1, 0], [2, 2], [3, 3], [4, 5], [6, 9], [7, 4]]) {
     if (boolean[left].moduleId !== state[right].moduleId) fail("gate roots disagree on shared provider");
   }
+  if (qualified.navigationCaller[0].imports[1].moduleId !== boolean[0].moduleId) fail("memo provider disagrees across owner and navigation");
   if (qualified.booleanCaller[0].imports[2].moduleId !== cohort.boolean[0].moduleId ||
       qualified.stateCaller[0].imports[4].moduleId !== cohort.state[0].moduleId ||
       qualified.navigationCaller[0].imports[3].moduleId !== cohort.boolean[0].moduleId) fail("orphan caller import");
-  for (const [role, pairs] of [["booleanCaller", [[0, 0], [3, 3], [8, 5]]], ["stateCaller", [[0, 0], [2, 3]]]]) {
+  for (const [role, pairs] of [["booleanCaller", [[0, 1], [3, 4], [8, 6]]], ["stateCaller", [[0, 1], [2, 4]]]]) {
     for (const [caller, owner] of pairs) if (qualified[role][0].imports[caller].moduleId !== boolean[owner].moduleId) fail("caller uses different native provider");
   }
   const states = [...qualified.boolean, ...qualified.state].map(row => row.applied);
@@ -144,7 +145,7 @@ function prepareRemoteConnectionsVisibility(cohort) {
     return { assetName, source, patchedSource };
   });
   return { edits, alreadyApplied: states[0], moduleIds: Object.fromEntries(roles.map(role => [role, cohort[role][0].moduleId])),
-    providerModules: [boolean[0].moduleId, boolean[1].moduleId, boolean[2].moduleId, boolean[3].moduleId, boolean[5].moduleId],
+    providerModules: [boolean[1].moduleId, boolean[2].moduleId, boolean[3].moduleId, boolean[4].moduleId, boolean[6].moduleId],
     dependencyAssets: [...new Set(roles.flatMap(role => cohort[role].map(copy => copy.assetName)))].sort() };
 }
 
