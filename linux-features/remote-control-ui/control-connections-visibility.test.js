@@ -105,18 +105,18 @@ test("actual UP77 and UP78 adapters work in both orders and repeat byte-identica
 test("missing/ambiguous identities and damaged physical peers cannot prepare a partial cohort", () => {
   rejects(s => { delete s["async/catalog.js"]; });
   rejects(s => { s["async/visibility-4.js"] = s["async/visibility-4.js"].replace('accessRequired!==!0', 'accessRequired===!1'); });
-  rejects(s => { s["async/visibility-5.js"] = s["async/visibility-5.js"].replace('Zi:n,', 'wrong:n,'); });
+  rejects(s => { s["async/visibility-5.js"] = s["async/visibility-5.js"].replace(/Zi:[A-Za-z_$][\w$]*,/u, 'wrong:null,'); });
   const c = snapshots();c.visibility.push({ ...c.visibility[0], assetName: "other.js", moduleId: "anotherIdentity" });
   assert.throws(() => prepare(c), /ambiguous/);
 });
 
 test("wrong publications, imports, scope, reassignment and opaque decoys are refused", () => {
   for (const change of [
-    s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('s.mC', 's.Ik'); },
-    s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('a.h9', 'a.Zr'); },
+    s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('o.mC', 'o.Ik'); },
+    s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('r.h9', 'r.Zr'); },
     s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('"xS4d"', '"otherCatalog"'); },
-    s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('var o=', 'var opaque="remoteControlConnectionsState:";var o='); },
-    s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('function l(', 's={mC:()=>true};function l('); },
+    s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('var i=', 'var opaque="remoteControlConnectionsState:";var i='); },
+    s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('function s(', 'o={mC:()=>true};function s('); },
     s => { s["async/catalog.js"] = s["async/catalog.js"].replace('e(d)?.remoteControlState', 'e(d)?.remoteControl'); },
     s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('return"wsl"', 'return\n"wsl"'); },
     s => { s["async/visibility-0.js"] = s["async/visibility-0.js"].replace('uodG(e,t,n)', 'uodG(navigator,t,n)'); },

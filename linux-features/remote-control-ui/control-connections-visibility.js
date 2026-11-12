@@ -147,9 +147,10 @@ function prepareRemoteControlConnectionsVisibility(cohort, contribution = "ui", 
   if (proofs.gate.some(proof => proof.entry !== proofs.gate[0].entry)) fail("partial entry dependency");
   if (proofs.gate.some(proof => proof.loadGatePeer !== proofs.gate[0].loadGatePeer)) fail("partial load-gate dependency");
   const visibility = first.imports, catalog = proofs.catalog[0].imports, gate = proofs.gate[0].imports;
-  if (visibility[2].moduleId !== cohort.catalog[0].moduleId || visibility[3].moduleId !== cohort.gate[0].moduleId ||
-      visibility[1].moduleId !== catalog[1].moduleId || visibility[1].moduleId !== gate[0].moduleId ||
-      catalog[2].moduleId !== gate[3].moduleId) fail("unbound catalog/gate hook scope");
+  if (visibility[0].moduleId !== gate[0].moduleId ||
+      visibility[2].moduleId !== cohort.catalog[0].moduleId || visibility[3].moduleId !== cohort.gate[0].moduleId ||
+      visibility[1].moduleId !== catalog[1].moduleId || visibility[1].moduleId !== gate[1].moduleId ||
+      catalog[2].moduleId !== gate[4].moduleId) fail("unbound catalog/gate hook scope");
   const ui = contribution === "ui" ? enabled : first.ui;
   const mobile = contribution === "mobile" ? enabled : first.mobile;
   const grouped = new Map();
