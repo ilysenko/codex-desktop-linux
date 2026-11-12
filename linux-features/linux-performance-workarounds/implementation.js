@@ -137,7 +137,7 @@ function layoutAnimationFlags(source) {
     if (matches.length !== candidates.length) return [];
     for (const match of matches) {
       const { tab, index, selected, element, expression } = match.groups;
-      const entry = escapeRegExp(tab), position = escapeRegExp(index), active = escapeRegExp(selected);
+      const entry = escapeRegExp(tab), position = escapeRegExp(index);
       const open = match.index + match[0].indexOf(".render({") + ".render(".length;
       const close = findMatchingBrace(body, open);
       if (close < open) return [];
@@ -145,7 +145,7 @@ function layoutAnimationFlags(source) {
       const separator = new RegExp(`"data-app-shell-tab-separator":${entry}\\.id,"data-app-shell-tab-separator-index":${position}(?=,|\\})`, "u");
       const buttons = new RegExp(`tabButtonProps:\\{"aria-controls":\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${entry}\\.key\\),` +
         `"aria-keyshortcuts":${entry}\\.isClosable\\?"Delete":void 0,id:\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${entry}\\.key\\),` +
-        `tabIndex:${entry}\\.disabled\\|\\|${active}!==${entry}\\.id\\?-1:0\\}`, "u");
+        `tabIndex:${JS_IDENT}===${entry}\\?0:-1\\}`, "u");
       const returned = new RegExp(`^\\);return null==${escapeRegExp(element)}\\?null:\\(0,${JS_IDENT}\\.cloneElement\\)\\(${escapeRegExp(element)},\\{key:${entry}\\.key\\}\\)\\}\\)`, "u");
       if (!separator.test(props) || !buttons.test(props) || !returned.test(body.slice(close + 1)) ||
           !new RegExp(`onActionsWidthChange:${JS_IDENT}=>\\{`, "u").test(props) ||

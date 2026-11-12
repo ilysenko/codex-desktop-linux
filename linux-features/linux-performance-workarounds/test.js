@@ -22,13 +22,13 @@ const {
 
 // Shapes below follow the latest signed rspack webview.
 function currentAppShellTabLayoutFixture() {
-  return 'function tabs(entries){let selected,presented,renaming,layout,motion,position,width,transition,widths;' +
+  return 'function tabs(entries){let selected,presented,renaming,focused,layout,motion,position,width,transition,widths;' +
     'let rendered=entries.map((entry,index)=>{let active=selected===entry.id,next=entries[index+1],separator=index<entries.length-1&&!active&&selected!==next?.id,view=entry.render({' +
     'disabled:entry.disabled,isActive:active,isClosable:entry.isClosable,isPresented:presented===entry.id,isRenaming:renaming===entry.id,' +
     'animateLayout:layout,animateExit:motion&&!position,animatePosition:motion&&position,animateWidth:width,layoutTransition:transition,targetWidth:widths[index],' +
     'onActionsWidthChange:value=>{measure(value)},onRenamingChange:value=>{rename(value)},' +
     'trailingDecoration:(0,ui.jsx)("div",{"data-app-shell-tab-separator":entry.id,"data-app-shell-tab-separator-index":index,separator}),' +
-    'tabButtonProps:{"aria-controls":(0,controller.aria)(entry.key),"aria-keyshortcuts":entry.isClosable?"Delete":void 0,id:(0,controller.dom)(entry.key),tabIndex:entry.disabled||selected!==entry.id?-1:0}});' +
+    'tabButtonProps:{"aria-controls":(0,controller.aria)(entry.key),"aria-keyshortcuts":entry.isClosable?"Delete":void 0,id:(0,controller.dom)(entry.key),tabIndex:focused===entry?0:-1}});' +
     'return null==view?null:(0,react.cloneElement)(view,{key:entry.key})});' +
     'return (0,ui.jsx)("div",{"data-app-shell-tab-strip-controller":controller,children:rendered})}';
 }

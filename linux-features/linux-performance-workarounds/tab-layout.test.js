@@ -14,14 +14,14 @@ const { createPatchReport, captureWarnings } = require("../../scripts/lib/patch-
 const descriptor = require("./patch.js").filter(row => row.id === "app-shell-tab-layout");
 const ID = "[A-Za-z_$][\\w$]*";
 
-const fixture = 'function strip(entries){let selected,presented,renaming,layout,motion,position,width,transition,widths;' +
+const fixture = 'function strip(entries){let selected,presented,renaming,focused,layout,motion,position,width,transition,widths;' +
   'let rendered=entries.map((entry,index)=>{let active=selected===entry.id,next=entries[index+1],separator=index<entries.length-1&&!active&&selected!==next?.id,view=entry.render({' +
   'disabled:entry.disabled,isActive:active,isClosable:entry.isClosable,isPresented:presented===entry.id,isRenaming:renaming===entry.id,' +
   'animateLayout:layout,animateExit:motion&&!position,animatePosition:motion&&position,animateWidth:width,layoutTransition:transition,targetWidth:widths[index],' +
   'onActionsWidthChange:value=>{setWidths(previous=>{if((previous[entry.key]??0)===value)return previous;let next={...previous};return 0===value?delete next[entry.key]:next[entry.key]=value,next})},' +
   'onRenamingChange:value=>{value&&clearPending(null),setRenaming(previous=>value?{id:entry.id,key:entry.key}:previous?.id===entry.id&&previous.key===entry.key?null:previous)},' +
   'trailingDecoration:(0,ui.jsx)("div",{"aria-hidden":!0,"data-app-shell-tab-separator":entry.id,"data-app-shell-tab-separator-index":index,className:(0,classes.A)("separator",separator?"show":"hide") }),' +
-  'tabButtonProps:{"aria-controls":(0,controller.aria)(entry.key),"aria-keyshortcuts":entry.isClosable?"Delete":void 0,id:(0,controller.dom)(entry.key),tabIndex:entry.disabled||selected!==entry.id?-1:0}});' +
+  'tabButtonProps:{"aria-controls":(0,controller.aria)(entry.key),"aria-keyshortcuts":entry.isClosable?"Delete":void 0,id:(0,controller.dom)(entry.key),tabIndex:focused===entry?0:-1}});' +
   'return null==view?null:(0,react.cloneElement)(view,{key:entry.key})});' +
   'return (0,ui.jsx)("div",{"data-app-shell-tab-strip-controller":controller,children:rendered})}';
 
@@ -50,10 +50,11 @@ function mapFragment(source) {
   const [clone] = read(new RegExp(`\\(0,(${ID})\\.cloneElement\\)`, "u"));
   const [controller, aria] = read(new RegExp(`"aria-controls":\\(0,(${ID})\\.(${ID})\\)`, "u"));
   const [dom] = read(new RegExp(`id:\\(0,${escapeRegExp(controller)}\\.(${ID})\\)`, "u"));
+  const [focused] = read(new RegExp(`tabIndex:(${ID})===${entry}\\?0:-1`, "u"));
   const [setWidths] = read(new RegExp(`onActionsWidthChange:${ID}=>\\{(${ID})\\(`, "u"));
   const [, clearPending, setRenaming] = read(new RegExp(`onRenamingChange:(${ID})=>\\{\\1&&(${ID})\\(null\\),(${ID})\\(`, "u"));
   return { text, list: head.groups.list, selected, presented, renaming, layout, motion, position, width, transition, widths,
-    jsx, classes, clone, controller, aria, dom, setWidths, clearPending, setRenaming };
+    jsx, classes, clone, controller, aria, dom, focused, setWidths, clearPending, setRenaming };
 }
 
 function executeMap(text, bindings, flags, entries, transition) {
@@ -61,6 +62,7 @@ function executeMap(text, bindings, flags, entries, transition) {
   const events = [], renders = [], context = {};
   Object.assign(context, {
     [bindings.list]: entries, [bindings.selected]: "first", [bindings.presented]: "second", [bindings.renaming]: "first",
+    [bindings.focused]: entries[0],
     [bindings.layout]: flags.layout, [bindings.motion]: flags.motion, [bindings.position]: flags.position, [bindings.width]: flags.width,
     [bindings.transition]: transition, [bindings.widths]: [120, 100],
     [bindings.jsx]: { jsx: (type, props) => ({ type, props }) },
@@ -126,7 +128,7 @@ test("incoherent tab, motion, separator and keyboard bindings refuse unchanged",
     fixture.replace("targetWidth:widths[index]", "targetWidth:widths[other]"),
     fixture.replace('"data-app-shell-tab-separator-index":index', '"data-app-shell-tab-separator-index":other'),
     fixture.replace('"aria-keyshortcuts":entry.isClosable?"Delete"', '"aria-keyshortcuts":entry.isClosable?"Enter"'),
-    fixture.replace("tabIndex:entry.disabled||selected", "tabIndex:entry.disabled||presented"),
+    fixture.replace("tabIndex:focused===entry", "tabIndex:focused===next"),
     fixture.replace("onRenamingChange:", "otherCallback:"),
     fixture.replace("data-app-shell-tab-strip-controller", "other-controller"),
     fixture + fixture.replace("function strip", "function anotherStrip"),
