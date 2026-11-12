@@ -1,9 +1,9 @@
 {
-  "version": "26.1103.32239",
+  "version": "26.1106.51428",
   "source": {
-    "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/182735.d3d917f28d.js",
-    "sha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
-    "bytes": 8273821,
+    "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1106.51428-inputs/amd64/asar-extracted/webview/assets/async/739301.001f92e5ca.js",
+    "sha256": "f594d5d76f08250a705b52cb88a7b8b57346a617d4ca9bec31e2b801d7eacb10",
+    "bytes": 8667569,
     "mode": "644"
   },
   "owner": {
@@ -13,7 +13,7 @@
       "t",
       "n"
     ],
-    "moduleSource": "var r=n(\"zTeN\"),i=n(\"tl5a\"),a=n(\"B81s\"),s=n(\"OWtl\"),o=n(\"hZax\"),l=n(\"OMIV\"),u=n(\"kx7U\");let d=(0,r.un)(s.u,({get:e})=>{let t=e(i.Dc),{data:n}=e(a.I2,t),r=e(l.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let s=n?.config.features;return null==s||\"object\"!=typeof s||Array.isArray(s)?r:Object.getOwnPropertyDescriptor(s,\"remote_connections\")?.value===!0||r});function c(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,r.Ul)(d)},bc:d,mC:function(){return(0,o.Zj)(\"1042620455\")},mw:function(){let e=(0,r.Ul)(u.u8)??[];return{remoteConnections:e,enabledRemoteHostIdSet:new Set(e.flatMap(c))}}})"
+    "moduleSource": "var r=n(\"QosV\"),i=n(\"zTeN\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"OWtl\"),l=n(\"hZax\"),u=n(\"OMIV\"),d=n(\"kx7U\");let c=(0,i.un)(o.u,({get:e})=>{let t=e(a.Dc),{data:n}=e(s.I2,t),r=e(u.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let i=n?.config.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?r:Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0||r});function p(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,i.Ul)(c)},bc:c,mC:function(){return(0,l.Zj)(\"1042620455\")},mw:function(){let e,t,n=(0,r.c)(5),a=(0,i.Ul)(d.u8)??[];return n[0]!==a?(e=new Set(a.flatMap(p)),n[0]=a,n[1]=e):e=n[1],n[2]!==a||n[3]!==e?(t={remoteConnections:a,enabledRemoteHostIdSet:e},n[2]=a,n[3]=e,n[4]=t):t=n[4],t}})"
   },
   "callee": {
     "moduleId": "hZax",

@@ -59,7 +59,7 @@ test("native hook runs once before platform access and non-Linux returns retain 
 
 test("fresh result bindings, semantic local names, and native horizontal trivia replay exactly", () => {
   for (const kind of ["collision", "renamed", "trivia"]) {
-    const native = change(h.sources(), text => kind === "collision" ? text.replaceAll("function c(e){return e.autoConnect", "function codexLinuxRemoteControlNativeLoadGateResult(e){return e.autoConnect").replaceAll("e.flatMap(c)", "e.flatMap(codexLinuxRemoteControlNativeLoadGateResult)") : kind === "trivia" ? text.replace('return(0,o.Zj)("1042620455")', ' return \t(0, o.Zj) ("1042620455")\t') : (() => {
+    const native = change(h.sources(), text => kind === "collision" ? text.replaceAll("function p(e){return e.autoConnect", "function codexLinuxRemoteControlNativeLoadGateResult(e){return e.autoConnect").replaceAll("a.flatMap(p)", "a.flatMap(codexLinuxRemoteControlNativeLoadGateResult)") : kind === "trivia" ? text.replace('return(0,l.Zj)("1042620455")', ' return \t(0, l.Zj) ("1042620455")\t') : (() => {
       const code = createJavaScriptLexicalIndex(text), tokens = [...text.matchAll(/\b(?:e|t|n|r|i|a|s|o|l|u|d|c|p|h|f)\b/gu)].filter(row => code.isCode(row.index) && text[row.index - 1] !== "." && !/^\s*:/u.test(text.slice(row.index + row[0].length)));
       for (const row of tokens.reverse()) text = text.slice(0, row.index) + "local_" + row[0] + text.slice(row.index + row[0].length);
       return text;
@@ -77,16 +77,15 @@ test("complete current owner/callee publications and shared providers are requir
     text => text.replace('mC:function()', 'wrong:function()'),
     text => text.replace('"1042620455"', '"1042620456"'),
     text => text.replace('"4114442250"', '"4114442251"'),
-    text => text.replace('return(0,o.Zj)', 'return(0,o.Ks)'),
-    text => text.replace('var r=n("zTeN")', 'var r=n("wrongAtoms")'),
+    text => text.replace('return(0,l.Zj)', 'return(0,o.Ks)'),
+    text => text.replace('i=n("zTeN")', 'i=n("wrongAtoms")'),
     text => text.replace('var r=n("QosV")', 'var r=n("wrongMemo")'),
     text => text.replace('n=(0,r.c)(2)', 'n=(0,r.c)(3)'),
     text => text.replace('scope:o.JW.scope', 'scope:o.JW.wrong'),
-    text => text.replace('mC:function(){return', 'mC:function(){o={Zj(){return true}};return'),
+    text => text.replace('mC:function(){return', 'mC:function(){l={Zj(){return true}};return'),
     text => text.replace('PIwo(e,t,n)', 'PIwo(navigator,t,n)'),
   ];
-  // Import IDs may rename, but independently changed shared atom identities fail.
-  mutations.splice(6, 1);
+  // Import IDs may rename together; independently changed shared atom/memo identities fail.
   for (const mutate of mutations) {
     const native = h.sources(), broken = change(native, mutate);
     assert.notDeepEqual(broken, native);
@@ -102,11 +101,11 @@ test("canonical marker bodies and native inverse, rather than marker presence, a
   for (const mutate of [
     text => text.replace("includes(`Linux`)", "includes(`Windows`)"),
     text => text.replace("?true:", "?false:"),
-    text => text.replace(";return typeof navigator", ";(0,o.Zj)(\"1042620455\");return typeof navigator"),
+    text => text.replace(";return typeof navigator", ";(0,l.Zj)(\"1042620455\");return typeof navigator"),
     text => text.replace("codexLinuxRemoteControlNativeLoadGateResult=", "other="),
     text => text.replace(`/*${MARKER}*/`, `/*${MARKER}*//*${MARKER}*/`),
     text => text.replace(`/*${MARKER}*/`, ""),
-    text => text.replace("new Set(e.flatMap(c))", "new Set([])"),
+    text => text.replace("new Set(a.flatMap(p))", "new Set([])"),
   ]) assert.throws(() => prepare(h.snapshots(change(patched, mutate))), /Remote load gate|Remote load gate peer/);
   assert.throws(() => prepare(h.snapshots(change(h.sources(), text => text.replace('mC:function(){return', `mC:function(){/*${MARKER}*/return`)))), /Remote load gate peer/);
 });
@@ -200,5 +199,5 @@ test("UI-only and mobile-only production builder trees work with the other featu
   const owner = inspectRemoteLoadGateOwner(h.snapshots(enable(h.sources())).owner[0]);
   assert.equal(owner.inline.active, true);
   assert.equal(owner.entry, false);
-  assert.equal(owner.imports[4].moduleId, "hZax");
+  assert.equal(owner.imports[5].moduleId, "hZax");
 }));

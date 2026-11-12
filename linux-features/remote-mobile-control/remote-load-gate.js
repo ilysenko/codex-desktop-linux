@@ -100,7 +100,14 @@ function prepareRemoteLoadGate(input){
  for(const role of["owner","callee"]){const copies=cohort[role];if(!copies.length||new Set(copies.map(row=>row.moduleId)).size!==1||new Set(copies.map(row=>row.assetName)).size!==copies.length)fail("missing or ambiguous "+role+" cohort");proofs[role]=copies.map(copy=>role==="owner"?ownerProof(copy):calleeProof(copy));const ids=proofs[role][0].imports.map(row=>row.moduleId);if(proofs[role].some(proof=>JSON.stringify(proof.imports.map(row=>row.moduleId))!==JSON.stringify(ids)))fail("inconsistent physical "+role+" imports");}
  const first=proofs.owner[0],nativeHook=proofs.callee[0].imports;
  if(proofs.owner.some(proof=>proof.inline.active!==first.inline.active||proof.entry!==first.entry))fail("mixed physical contribution state");
- for(const owner of proofs.owner){if(owner.inline.binding.moduleId!==cohort.callee[0].moduleId||owner.imports[0].moduleId!==nativeHook[2].moduleId||owner.imports[5].moduleId!==nativeHook[4].moduleId)fail("owner does not bind the actual native hook/atom/gate providers");}
+ for (const owner of proofs.owner) {
+  if (owner.inline.binding.moduleId !== cohort.callee[0].moduleId ||
+      owner.imports[0].moduleId !== nativeHook[0].moduleId ||
+      owner.imports[1].moduleId !== nativeHook[2].moduleId ||
+      owner.imports[6].moduleId !== nativeHook[4].moduleId) {
+   fail("owner does not bind the actual native hook/atom/gate providers");
+  }
+ }
  const grouped=new Map();
  for(const[role,copies]of Object.entries(cohort))for(const[index,copy]of copies.entries()){
   const group=grouped.get(copy.assetName)??{assetName:copy.assetName,source:copy.source,changes:[],inverse:[]};if(group.source!==copy.source)fail("inconsistent source snapshots");
