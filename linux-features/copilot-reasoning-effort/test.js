@@ -357,14 +357,13 @@ test("enabled feature descriptors patch rspack async chunks", () => {
   withTempFeatureConfig(["copilot-reasoning-effort"], () => {
     withTempDir((extractedDir) => {
       writeAsset(extractedDir, "24191.a.js", currentFilteredCopilotReasoningEffortModelListFixture());
-      writeAsset(extractedDir, "258607.b.js", currentModelAndReasoningPersistenceFixture());
       const dropdownAssets=path.join(extractedDir,"webview","assets","async");
       for(const [name,record,id]of [["104066.c.js",currentDropdown.composer,"dropdownOwner"],["selector.js",currentDropdown.selector,"sU9s"]]) {
         fs.writeFileSync(path.join(dropdownAssets,name),`export const __webpack_modules__={${id}(${record.params.join(",")}){${record.source}}};`);
       }
       // The selector imports this native hook by module identity.
       const settingsAsset=path.join(dropdownAssets,"258607.b.js");
-      fs.writeFileSync(settingsAsset,fs.readFileSync(settingsAsset,"utf8").replace("{settings(","{o8WW("));
+      fs.writeFileSync(settingsAsset,`export const __webpack_modules__={o8WW(${currentDropdown.settings.params.join(",")}){${currentDropdown.settings.source}}};`);
       fs.writeFileSync(path.join(dropdownAssets,"589850.d.js"),`export const __webpack_modules__={reasoningOwner(${currentSlash.synthetic.params.join(",")}){${currentSlash.synthetic.source}}};`);
 
       const { warnings } = withCapturedWarns(() => {
@@ -374,7 +373,7 @@ test("enabled feature descriptors patch rspack async chunks", () => {
       });
       assert.deepEqual(warnings, []);
       assert.match(readAsset(extractedDir, "24191.a.js"), /codexLinuxCopilotReasoningEffortModelList\*\/\[\.\.\.raw\]\.filter/);
-      assert.match(readAsset(extractedDir, "104066.c.js"), /ob=\/\*codexLinuxCopilotEffortDropdown\*\//);
+      assert.match(readAsset(extractedDir, "104066.c.js"), /tR=\/\*codexLinuxCopilotEffortDropdown\*\//);
       assert.match(readAsset(extractedDir, "589850.d.js"), /F=M&&_&&!0\/\*codexLinuxCopilotReasoningSlash\*\//);
       assert.match(readAsset(extractedDir, "258607.b.js"), /codexLinuxCopilotEffortPreferences/);
     });

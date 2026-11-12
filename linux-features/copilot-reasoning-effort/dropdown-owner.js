@@ -118,7 +118,7 @@ function inspectComposer(module,patched){
  if(!new RegExp(`^${ID}$`,"u").test(fn.params))reject("Unsupported dropdown component parameters");
  const props=sole(body,rx(`\\{serviceTierDefaults:${ID},conversationId:(?<conversation>${ID}),hasThreadResumeFailed:${ID},hideLabel:${ID},home:${ID},isCodexHome:${ID},permissionsCwdOverride:(?<cwd>${ID}),permissionsHostId:(?<permissionsHost>${ID})\\}=${q(fn.params)}`),"component conversation inputs");
  const g=props.groups;
- const memo=sole(body,rx(`(?<cache>${ID})=\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\(375\\)`),"compiler memo").groups;
+ const memo=sole(body,rx(`(?<cache>${ID})=\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\(387\\)`),"compiler memo").groups;
  const context=sole(body,rx(`(?<context>${ID})=\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\(${q(g.conversation)}\\)`),"conversation context").groups;
  const host=sole(body,rx(`(?<host>${ID})=${q(context.context)}\\.hostId(?=[,;])`),"active host").groups.host;
  const identity=sole(body,rx(`(?<identity>${ID})=\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\(${q(host)}\\)`),"host identity").groups;
@@ -128,16 +128,33 @@ function inspectComposer(module,patched){
  const agent=sole(body,rx(`(?<agent>${ID})=\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\((?<options>${ID})\\),(?<activeModel>${ID})=\\k<agent>\\?\\.selectedModelId\\?\\?${q(settings.settings)}\\.model`),"agent/current model context").groups;
  memoProjection(body,memo.cache,[["conversationId",g.conversation],["executionHostId",host],["modelSelection",settings.selection]],agent.options,[g.conversation,settings.selection,host]);
  const chosen=sole(body,rx(`(?<model>${ID})=${ID}\\?${ID}\\?\\.model\\?\\?${ID}:${q(agent.activeModel)}(?=[,;])`),"effective selected model").groups.model;
- const optionName=sole(body,rx(`modelOptions:(?<options>${ID}),rosalindToggle:void 0,modelOptionsDisabled:`),"menu options role",false).groups.options;
- const options=sole(body,rx(`(?<options>${q(optionName)})=\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\((?<models>${ID}),`),"native model options").groups;
+ const expression=`(?<options>${ID})\\?\\.find\\((?<parameter>${ID})=>\\{let\\{model:(?<found>${ID})\\}=\\k<parameter>;return \\k<found>\\.model===${q(chosen)}\\}\\)\\?\\.disabledReason!=null`;
+ const gatePrefix=patched?`/\\*${MARKER}\\*/`:`${q(identity.identity)}\\?\\.authMethod==="copilot"\\|\\|`;
+ const gate=sole(body,rx(`(?<combined>${ID})=${gatePrefix}(?<expression>${expression})`),"Copilot/model disabled gate");
+ distinct([gate.groups.parameter,gate.groups.found],[chosen]);
+ const menuOptions=sole(body,rx(`modelOptions:(?<options>${ID}),defaultOptionIndex:(?<index>${ID}),modelOptionsDisabled:`),"menu options role",false).groups;
+ const options=sole(body,rx(`(?<options>${q(gate.groups.options)})=\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\((?<models>${ID}),`),"native model options").groups;
+ // The native menu promotes its auto option to the first row and publishes
+ // the corresponding default index. The disabled gate still reads the
+ // original options array, so prove that complete projection into the menu.
+ const defaultOption=sole(body,rx(`${q(memo.cache)}\\[(?<input>\\d+)\\]!==${q(options.options)}\\?`+
+  `\\((?<found>${ID})=${q(options.options)}\\?\\.find\\((?<predicate>${ID})\\),${q(memo.cache)}\\[\\k<input>\\]=${q(options.options)},`+
+  `${q(memo.cache)}\\[(?<out>\\d+)\\]=\\k<found>\\):\\k<found>=${q(memo.cache)}\\[\\k<out>\\];let (?<value>${ID})=\\k<found>;`),"native default option lookup").groups;
+ if(defaultOption.input===defaultOption.out)reject("Default option memo slots alias");
+ const factory=frame(module.moduleSource);
+ const defaultPredicate=sole(factory,rx(`function ${q(defaultOption.predicate)}\\((?<parameter>${ID})\\)\\{let\\{model:(?<model>${ID})\\}=\\k<parameter>;return"auto"===\\k<model>\\.model\\}`),"native default option predicate");
+ if(!parsable(body.text,fn.params,`let ${defaultOption.predicate};`))reject("Default option predicate is shadowed at its use");
+ distinct([defaultPredicate.groups.parameter,defaultPredicate.groups.model],[defaultOption.predicate]);
+ const reordered=sole(body,rx(`${q(memo.cache)}\\[(?<first>\\d+)\\]!==${q(defaultOption.value)}\\|\\|${q(memo.cache)}\\[(?<second>\\d+)\\]!==${q(options.options)}\\?`+
+  `\\((?<value>${ID})=null!=${q(defaultOption.value)}&&null!=${q(options.options)}\\?\\[${q(defaultOption.value)},\\.\\.\\.${q(options.options)}\\.filter\\((?<parameter>${ID})=>\\k<parameter>!==${q(defaultOption.value)}\\)\\]:${q(options.options)},`+
+  `${q(memo.cache)}\\[\\k<first>\\]=${q(defaultOption.value)},${q(memo.cache)}\\[\\k<second>\\]=${q(options.options)},${q(memo.cache)}\\[(?<out>\\d+)\\]=\\k<value>\\):\\k<value>=${q(memo.cache)}\\[\\k<out>\\];let ${q(menuOptions.options)}=\\k<value>;`),"native menu options projection").groups;
+ if(new Set([reordered.first,reordered.second,reordered.out]).size!==3)reject("Menu option memo slots alias");
+ distinct([reordered.parameter],[defaultOption.value,options.options]);
+ sole(body,rx(`${q(menuOptions.index)}=\\+\\(null!=${q(defaultOption.value)}\\)`),"native default option index");
  const effortName=sole(body,rx(`reasoningEffort:(?<effort>${ID}),reasoningEffortDisabled:`),"menu effort role",false).groups.effort;
  const effective=sole(body,rx(`(?<effort>${q(effortName)})=${q(agent.agent)}\\?\\.lockedReasoningEffort\\?\\?\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\(${q(settings.settings)}\\.reasoningEffort,(?<efforts>${ID})\\)`),"effective effort").groups;
  const available=sole(body,rx(`(?<efforts>${q(effective.efforts)})=\\(0,(?<namespace>${q(effective.namespace)})\\.(?<key>${ID})\\)\\(${q(options.models)},${q(chosen)}\\)`),"model supported efforts").groups;
  const effort=effective.effort;
- const expression=`${q(options.options)}\\?\\.find\\((?<parameter>${ID})=>\\{let\\{model:(?<found>${ID})\\}=\\k<parameter>;return \\k<found>\\.model===${q(chosen)}\\}\\)\\?\\.disabledReason!=null`;
- const gatePrefix=patched?`/\\*${MARKER}\\*/`:`${q(identity.identity)}\\?\\.authMethod==="copilot"\\|\\|`;
- const gate=sole(body,rx(`(?<combined>${ID})=${gatePrefix}(?<expression>${expression})`),"Copilot/model disabled gate");
- distinct([gate.groups.parameter,gate.groups.found],[chosen]);
  const disabled=sole(body,rx(`(?<disabled>${ID})=(?<loading>${ID})\\|\\|${q(gate.groups.combined)}\\|\\|${q(agent.agent)}\\?\\.lockedReasoningEffort!=null`),"dropdown loading/locked gate").groups;
  const loadingAlias=sole(body,rx(`let ${q(disabled.loading)}=(?<value>${ID}),`),"settings loading alias").groups.value;
  const loading=sole(body,rx(`${q(memo.cache)}\\[(?<a>\\d+)\\]!==${q(agent.agent)}\\?\\.isLoading\\|\\|${q(memo.cache)}\\[(?<b>\\d+)\\]!==(?<status>${ID})\\|\\|${q(memo.cache)}\\[(?<c>\\d+)\\]!==${q(settings.settings)}\\|\\|${q(memo.cache)}\\[(?<d>\\d+)\\]!==(?<threadStatus>${ID})\\?`+
@@ -147,7 +164,7 @@ function inspectComposer(module,patched){
  const catalog=sole(body,rx(`\\{data:(?<catalog>${ID}),status:${q(loading.status)},isEnabled:${ID},isFetching:${ID},refetch:${ID}\\}=\\(0,${q(loading.namespace)}\\.(?<key>${ID})\\)\\(${ID}\\)`),"catalog loading source").groups;
  const rootReturn=sole(body,/\breturn\b/gu,"returned menu");
  if(matches(body,/\bthrow\b/gu).length)reject("Dropdown component exits before its menu");
- const menu=sole(body,rx(`(?<result>${ID})=\\(0,(?<jsx>${ID})\\.(?<jsxKey>${ID})\\)\\(\\k<jsx>\\.Fragment,\\{children:\\(0,\\k<jsx>\\.\\k<jsxKey>\\)\\((?<menu>${ID})\\.(?<menuKey>${ID}),\\{align:"end",disabled:(?<globalDisabled>${ID}),daybreak:${ID},contentRef:${ID},triggerRef:${ID},menuFooter:${ID},menuView:${ID},open:${ID},onOpenChange:${ID},onCloseAutoFocus:${ID},lockedModelSlug:${ID},model:${q(chosen)},fallbackModelLabel:${ID},modelPickerTriggerConfig:${ID},isTeamCatalog:${ID},models:(?<models>${ID}),modelOptions:${q(options.options)},rosalindToggle:void 0,modelOptionsDisabled:(?<modelDisabled>${ID}),reasoningEffort:${q(effort)},reasoningEffortDisabled:${q(disabled.disabled)},reasoningEffortTooltip:${ID},selectedServiceTier:${ID},selectionMode:${ID},serviceTierOptions:${ID},serviceTierOptionsLoading:${ID},showReasoningEffortControls:!0,shouldReduceMotion:${ID},onSelectComplete:${ID},onBeforeSelectModel:${ID},onCommitPower:${ID},onSelectModel:(?<onSelect>${ID}),onSelectDefault:${ID},onSelectModelOption:${ID},powerSelections:${ID},onSelectServiceTier:${ID},onToggleMenuView:${ID},triggerButton:${ID}\\}\\)\\}\\)`),"actual menu props",false).groups;
+ const menu=sole(body,rx(`(?<result>${ID})=\\(0,(?<jsx>${ID})\\.(?<jsxKey>${ID})\\)\\(\\k<jsx>\\.Fragment,\\{children:\\(0,\\k<jsx>\\.\\k<jsxKey>\\)\\((?<menu>${ID})\\.(?<menuKey>${ID}),\\{align:"end",disabled:(?<globalDisabled>${ID}),headerShortcut:${ID},daybreak:${ID},contentRef:${ID},triggerRef:${ID},menuFooter:${ID},menuView:${ID},open:${ID},onOpenChange:${ID},onCloseAutoFocus:${ID},lockedModelSlug:${ID},model:${q(chosen)},fallbackModelLabel:${ID},modelPickerTriggerConfig:${ID},isTeamCatalog:${ID},models:(?<models>${ID}),modelOptions:${q(menuOptions.options)},defaultOptionIndex:${q(menuOptions.index)},modelOptionsDisabled:(?<modelDisabled>${ID}),reasoningEffort:${q(effort)},reasoningEffortDisabled:${q(disabled.disabled)},reasoningEffortTooltip:${ID},selectedServiceTier:${ID},selectionMode:${ID},serviceTierOptions:${ID},serviceTierOptionsLoading:${ID},showReasoningEffortControls:!0,shouldReduceMotion:${ID},onSelectComplete:${ID},onBeforeSelectModel:${ID},onCommitPower:${ID},onSelectModel:(?<onSelect>${ID}),onSelectDefault:${ID},onSelectModelOption:${ID},powerSelections:${ID},onSelectServiceTier:${ID},onToggleMenuView:${ID},triggerButton:${ID}\\}\\)\\}\\)`),"actual menu props",false).groups;
  const menuMatch=matches(body,rx(`${q(menu.result)}=\\(0,${q(menu.jsx)}\\.${q(menu.jsxKey)}\\)\\(${q(menu.jsx)}\\.Fragment`));
  if(menuMatch.length!==1||menuMatch[0].index<rootReturn.index||!new RegExp(`:${q(menu.result)}=${q(memo.cache)}\\[\\d+\\],${q(menu.result)}$`,"u").test(body.text))reject("Dropdown menu does not reach component result");
  sole(body,rx(`${q(menu.modelDisabled)}=${q(disabled.loading)}\\|\\|"error"===${q(loading.status)}\\|\\|${q(agent.agent)}\\?\\.isModelLocked===!0`),"native model loading/locked gate");
@@ -155,7 +172,7 @@ function inspectComposer(module,patched){
  const callback=sole(body,rx(`${q(menu.onSelect)}=\\((?<model>${ID}),(?<effort>${ID})\\)=>\\{(?<selector>${ID})\\(\\k<model>,\\k<effort>\\)\\}`),"actual menu callback").groups;
  const callbackMemo=sole(body,rx(`${q(memo.cache)}\\[(?<input>\\d+)\\]!==${q(callback.selector)}\\?\\(${q(menu.onSelect)}=\\(${q(callback.model)},${q(callback.effort)}\\)=>\\{${q(callback.selector)}\\(${q(callback.model)},${q(callback.effort)}\\)\\},${q(memo.cache)}\\[\\k<input>\\]=${q(callback.selector)},${q(memo.cache)}\\[(?<output>\\d+)\\]=${q(menu.onSelect)}\\):${q(menu.onSelect)}=${q(memo.cache)}\\[\\k<output>\\]`),"native menu callback memo").groups;
  if(callbackMemo.input===callbackMemo.output)reject("Dropdown callback memo slots alias");
- const selectMatch=sole(body,rx(`${q(callback.selector)}=function\\((?<model>${ID}),(?<effort>${ID}),(?<options>${ID})\\)\\{if\\("auto"===\\k<model>&&!0!==(?<store>${ID})\\.get\\((?<permission>${ID})\\.(?<permissionKey>${ID}),${q(g.conversation)}\\)\\)return Promise\\.resolve\\(!1\\);`+
+ const selectMatch=sole(body,rx(`function ${q(callback.selector)}\\((?<model>${ID}),(?<effort>${ID}),(?<options>${ID})\\)\\{if\\("auto"===\\k<model>&&!0!==(?<store>${ID})\\.get\\((?<permission>${ID})\\.(?<permissionKey>${ID}),${q(g.conversation)}\\)\\)return Promise\\.resolve\\(!1\\);`+
   `let (?<commit>${ID})=\\(\\)=>\\{\\k<model>!==${q(chosen)}\\?\\(0,(?<events>${ID})\\.(?<eventKey>${ID})\\)\\(\\k<store>,(?<eventTypes>${ID})\\.CodexComposerModelChanged,\\{model:\\k<model>\\}\\):null!=\\k<effort>&&\\k<effort>!==${q(effort)}&&\\(0,\\k<events>\\.\\k<eventKey>\\)\\(\\k<store>,\\k<eventTypes>\\.CodexComposerReasoningEffortChanged,\\{reasoningEffort:\\k<effort>\\}\\)\\};`+
   `return ${q(agent.agent)}\\?\\.isAeon\\?${q(agent.agent)}\\.selectModelAndReasoningEffort\\((?<transform>${ID})\\(\\k<model>\\),\\k<effort>,\\k<commit>\\):${q(settings.select)}\\(\\k<transform>\\(\\k<model>\\),\\k<effort>,\\k<commit>,\\k<options>\\)\\}`),"native selection route");
  const select=selectMatch.groups;
@@ -166,16 +183,19 @@ function inspectComposer(module,patched){
  distinct([transform.model],[chosen,transform.flag,transform.namespace]);
  const store=sole(body,rx(`${q(select.store)}=\\(0,(?<namespace>${ID})\\.(?<key>${ID})\\)\\((?<scope>${ID})\\.${ID}\\)`),"native component store").groups;
  const imports=dependencies(module,body,[memo.namespace,context.namespace,identity.namespace,settings.namespace,agent.namespace,options.namespace,available.namespace,loading.namespace,menu.jsx,menu.menu,select.permission,select.events,select.eventTypes,transform.namespace,store.namespace,store.scope],fn.params);
- const locals=[g.conversation,g.cwd,g.permissionsHost,memo.cache,context.context,host,identity.identity,settings.options,settings.selection,settings.settings,settings.select,settings.defaults,settings.current,agent.options,agent.agent,agent.activeModel,chosen,options.options,options.models,available.efforts,effort,gate.groups.combined,disabled.disabled,disabled.loading,callback.selector,menu.onSelect,select.store,menu.models,menu.modelDisabled,transform.flag];
+ const locals=[g.conversation,g.cwd,g.permissionsHost,memo.cache,context.context,host,identity.identity,settings.options,settings.selection,settings.settings,settings.select,settings.defaults,settings.current,agent.options,agent.agent,agent.activeModel,chosen,options.options,options.models,defaultOption.found,defaultOption.value,reordered.value,menuOptions.options,menuOptions.index,available.efforts,effort,gate.groups.combined,disabled.disabled,disabled.loading,callback.selector,menu.onSelect,select.store,menu.models,menu.modelDisabled,transform.flag];
  distinct(locals,Object.keys(imports));
  const allowed=[props,sole(body,rx(`\\{modelSettings:${q(settings.settings)},selectComposerModelAndReasoningEffort:${q(settings.select)},setDefaultModelAndReasoningEffort:${q(settings.defaults)},setModelAndReasoningEffort:${q(settings.current)}\\}=${q(settings.selection)}`),"selection result")].map(m=>({start:m.index,end:m.index+m[0].length}));
- for(const [name,n]of [[memo.cache,1],[context.context,1],[host,1],[identity.identity,1],[settings.options,2],[settings.selection,1],[settings.settings,0],[settings.select,0],[agent.options,2],[agent.agent,1],[agent.activeModel,1],[chosen,1],[options.options,1],[available.efforts,1],[effort,1],[gate.groups.combined,1],[disabled.disabled,1],[disabled.loading,1],[callback.selector,1],[menu.onSelect,2],[select.store,1],[menu.models,1],[menu.modelDisabled,1],[transform.flag,1]])stable(body,name,n,allowed);
+ for(const [name,n]of [[memo.cache,1],[context.context,1],[host,1],[identity.identity,1],[settings.options,2],[settings.selection,1],[settings.settings,0],[settings.select,0],[agent.options,2],[agent.agent,1],[agent.activeModel,1],[chosen,1],[options.options,1],[available.efforts,1],[effort,1],[gate.groups.combined,1],[disabled.disabled,1],[disabled.loading,1],[menu.onSelect,2],[select.store,1],[menu.models,1],[menu.modelDisabled,1],[transform.flag,1]])stable(body,name,n,allowed);
+ for(const [name,n]of [[defaultOption.found,2],[defaultOption.value,1],[reordered.value,2],[menuOptions.options,1],[menuOptions.index,1]])stable(body,name,n,allowed);
+ stable(factory,defaultOption.predicate,0,[],[defaultPredicate.index+"function ".length]);
+ stable(body,callback.selector,0,allowed,[selectMatch.index+"function ".length]);
  stable(body,select.transform,0,allowed,[transformMatch.index+"function ".length]);
  const start=body.offset+gate.index,end=start+gate[0].length;
  const native=`${gate.groups.combined}=${identity.identity}?.authMethod==="copilot"||${gate.groups.expression}`;
  const replacement=`${gate.groups.combined}=/*${MARKER}*/${gate.groups.expression}`;
  if(count(module.moduleSource)!==(patched?1:0))reject("Orphan dropdown marker");
- return {publication:selected.publication,gate:{start,end,native,replacement},selectorImport:imports[settings.namespace],selectorExport:settings.key,bindings:{host,conversation:g.conversation,selectedModel:chosen,reasoningEffort:effort,disabled:disabled.disabled,settings:settings.settings,select:settings.select,loading:disabled.loading,modelOptions:options.options},nativeRoute:{menuHandler:menu.onSelect,callback:callback.selector,callbackRange:{start:body.offset+selectMatch.index+callback.selector.length+1,end:body.offset+selectMatch.index+selectMatch[0].length},bindings:{...select,chosen,effort,agent:agent.agent,settingsSelect:settings.select,conversation:g.conversation}},imports};
+ return {publication:selected.publication,gate:{start,end,native,replacement},selectorImport:imports[settings.namespace],selectorExport:settings.key,bindings:{host,conversation:g.conversation,selectedModel:chosen,reasoningEffort:effort,disabled:disabled.disabled,settings:settings.settings,select:settings.select,loading:disabled.loading,modelOptions:options.options},nativeRoute:{menuHandler:menu.onSelect,callback:callback.selector,callbackRange:{start:body.offset+selectMatch.index,end:body.offset+selectMatch.index+selectMatch[0].length},bindings:{...select,chosen,effort,agent:agent.agent,settingsSelect:settings.select,conversation:g.conversation}},imports};
 }
 function inspectDropdownState(source,snapshot){
  if(typeof source!=="string"||(!source.includes(MARKER)&&!NEEDLES.every(needle=>source.includes(needle))))return {kind:"missing"};

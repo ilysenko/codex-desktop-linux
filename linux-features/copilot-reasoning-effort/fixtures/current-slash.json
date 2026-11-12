@@ -3,10 +3,15 @@
     "version": "26.1103.32239",
     "arch": "amd64",
     "signedFactory": {
-      "asset": "webview/assets/async/309406.490dc6734e.js",
-      "moduleId": "Ceox",
-      "bytes": 506911,
-      "sha256": "def972210a88f2eaa88f85ac499cb48dd0b5400e73dbaba96965725cfdf25e3d"
+      "version": "26.1106.51428",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "asset": "webview/assets/async/776931.7ae13b8e20.js",
+      "moduleId": "ArUO",
+      "bytes": 522412,
+      "sha256": "a805f95427ef7b02fcc348175e4739675c4b7a2bd1d7ce9a11f8ded80f9abab5"
     },
     "actualFunctions": [
       {
@@ -37,7 +42,7 @@
         "sha256": "674b7a3b11ecad162831463cd7a9b3aec1842e6aee1815baa0c3f5b696b63b49"
       }
     ],
-    "fixturePolicy": "Synthetic reduced h3/dJ chain plus current2293B dp semantic function. Never evaluate the full official factory. Actual complete factory authority is validated from retained signed inputs/optional signed test and production normal run."
+    "fixturePolicy": "Synthetic reduced h3/dJ chain with the captured2293B dp semantic function from the provenance version. Current complete factory authority is validated through signedFactory metadata and the production normal entry point."
   },
   "synthetic": {
     "params": [

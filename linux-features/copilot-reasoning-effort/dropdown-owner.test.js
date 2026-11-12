@@ -6,14 +6,14 @@ const {createJavaScriptLexicalIndex}=require("../../scripts/patches/lib/minified
 const {inspectModelSettingsOwner}=require("../../scripts/patches/lib/model-composer-owners.js");
 const {applyExtractedAppPatchDescriptors,normalizePatchDescriptors}=require("../../scripts/patches/engine.js");
 const {createPatchReport,captureWarnings,enabledFeatureFailuresFromReport}=require("../../scripts/lib/patch-report.js");
-const fixture=require("./fixtures/current-dropdown.json"),current=require("../../scripts/patches/lib/fixtures/current-model-composer.json");
+const fixture=require("./fixtures/current-dropdown.json");
 const composer=fixture.composer,selector=fixture.selector;
 const snap=(source=composer.source,params=composer.params)=>({moduleSource:source,start:0,params});
 const selectorSnap=(source=selector.source,params=selector.params)=>snap(source,params);
 const sha=text=>crypto.createHash("sha256").update(text).digest("hex");
 const chunk=(text,id="dropdownOwner",params=composer.params)=>`export const __webpack_modules__={${id}(${params.join(",")}){${text}}};`;
 const selectorChunk=(text=selector.source,id="sU9s")=>chunk(text,id,selector.params);
-const settingsChunk=(text=current.settings.moduleSource,id="o8WW")=>chunk(text,id,current.settings.params);
+const settingsChunk=(text=fixture.settings.source,id="o8WW")=>chunk(text,id,fixture.settings.params);
 const settingsState=(source,module)=>{const owner=inspectModelSettingsOwner({...module,moduleSource:source});return owner.ok?{kind:"current",owner}:{kind:"missing"};};
 function app(files,run){
  const cache=path.join(process.env.XDG_CACHE_HOME||path.join(os.homedir(),".cache"),"codex-desktop-dev");fs.mkdirSync(cache,{recursive:true});const root=fs.mkdtempSync(path.join(cache,"copilot-dropdown-")),dir=path.join(root,"webview","assets");fs.mkdirSync(dir,{recursive:true});
@@ -45,7 +45,7 @@ test.after(()=>{if(isolatedProofs.length)console.log("UP51 isolated binding witn
 test("current signed composer and selection bridge qualify source-only with exact dropdown inverse",()=>{
  assert.equal(sha(composer.source),composer.bodySha256);assert.equal(sha(selector.source),selector.bodySha256);
  const state=dropdownModuleState(composer.source,snap());assert.equal(state.kind,"current",state.reason);assert.equal(state.owner.publication.exportName,"M");assert.equal(state.owner.selectorImport.moduleId,"sU9s");assert.equal(state.owner.selectorExport,"o");
- const bridge=selectorModuleState(selector.source,selectorSnap());assert.equal(bridge.ok,true,bridge.reason);assert.equal(bridge.owner.settingsImport.moduleId,"o8WW");assert.equal(bridge.owner.settingsExport,"a");
+ const bridge=selectorModuleState(selector.source,selectorSnap());assert.equal(bridge.ok,true,bridge.reason);assert.equal(bridge.owner.settingsImport.moduleId,"o8WW");assert.equal(bridge.owner.settingsExport,"aU");
  const patched=apply(composer.source,snap()),after=dropdownModuleState(patched,snap(patched));assert.equal(after.kind,"patched",after.reason);assert.equal(after.native,composer.source);assert.equal(apply(patched,snap(patched)),patched);assert.doesNotThrow(()=>new Script(patched));
  assert.equal(patched.replace(state.owner.gate.replacement,state.owner.gate.native),composer.source);
  assert.equal(Buffer.byteLength(patched)-Buffer.byteLength(composer.source),7);
@@ -54,7 +54,7 @@ test("feature contribution removes only the Copilot guard while native loading, 
  const state=dropdownModuleState(composer.source,snap());
  // A reduced synthetic control executes the exact feature contribution; no
  // retained factory is evaluated and no native backend or UI is launched.
- const body='let nc=host,n5=options,nX=model,og=loading,nj={lockedReasoningEffort:locked};let '+state.owner.gate.native+';let ti=og||ob||nj?.lockedReasoningEffort!=null;return ti';
+ const body='let nC=host,td=options,n9=model,tT=loading,nG={lockedReasoningEffort:locked};let '+state.owner.gate.native+';let oI=tT||tR||nG?.lockedReasoningEffort!=null;return oI';
  const before=Function("host","options","model","loading","locked",body),after=Function("host","options","model","loading","locked",body.replace(state.owner.gate.native,state.owner.gate.replacement));
  for(const authMethod of ["copilot","chatgpt","apikey","amazonBedrock",null])for(const loading of [true,false])for(const disabledReason of [null,"policy blocked"])for(const locked of [null,"medium"]){
   const host={authMethod},options=[{model:{model:"chosen"},disabledReason}],value=after(host,options,"chosen",loading,locked);
@@ -82,53 +82,59 @@ test("native menu selection callback forwards the chosen model and effort throug
  env[b.store]={get:()=>true};env[b.agent]={isAeon:true,selectModelAndReasoningEffort:(model,effort,onChange)=>{calls.push({model,effort,aeon:true});onChange();return true;}};assert.equal(create()("model-B","low"),true);assert.deepEqual(calls,[{model:"model-B",effort:"low",aeon:true}]);
 });
 test("composer qualification follows renamed bindings and public export names",()=>{
- const map={e:"argument",l:"localValue",n:"loader",nc:"activeIdentity",nt:"activeHost",nX:"selectedModel",nP:"nativeSelect",ob:"combinedDisabled",ti:"effortDisabled"},lex=createJavaScriptLexicalIndex(composer.source);
+ const map={e:"argument",l:"localValue",n:"loader",nC:"activeIdentity",ng:"activeHost",n9:"selectedModel",nB:"nativeSelect",tR:"combinedDisabled",oI:"effortDisabled"},lex=createJavaScriptLexicalIndex(composer.source);
  const names=Object.keys(map).sort((a,b)=>b.length-a.length).join("|");
  const renamed=composer.source.replace(new RegExp(`\\b(?:${names})\\b`,"gu"),(name,at)=>lex.isCode(at)?map[name]:name).replace('M:function(', 'renamed:function(');
  const params=composer.params.map(name=>map[name]??name),state=dropdownModuleState(renamed,snap(renamed,params));assert.equal(state.kind,"current",state.reason);const once=apply(renamed,snap(renamed,params));assert.equal(apply(once,snap(once,params)),once);
 });
 test("composer rejects wrong authority, binding drift, shadow scopes, role writes and disconnected UI paths",()=>{
  const patched=apply(composer.source,snap()),state=dropdownModuleState(composer.source,snap()),{callbackRange}=state.owner.nativeRoute;
- const callback=composer.source.slice(callbackRange.start,callbackRange.end),shadowedCallback=callback.replace(/\be\b/gu,"nP");
+ const callback=composer.source.slice(callbackRange.start,callbackRange.end),shadowedCallback=callback.replace(/\be\b/gu,"nB");
  for(const source of [
   composer.source+composer.source,`/*${composer.source}*/`,`const example=${JSON.stringify(composer.source)};`,
   composer.source.replace('n.d(l,','n.d(other,'),composer.source.replace('S=n("EOo5")','S=foreign'),composer.source+';S=foreign;',
   composer.source.replace('M:function(e){','M:function(e){let S;'),
-  composer.source.replace('nc=(0,S.tn)(nt)','nc=(0,S.tn)(otherHost)'),
-  composer.source.replace('cwdOverride:lX,hostId:lH}','cwdOverride:otherCwd,hostId:lH}'),
-  composer.source.replace('return l.model===nX','return l.model===wrongModel'),
-  composer.source.replace('n5?.find(e=>{let{model:l}=e;return l.model===nX})','n5?.find(nX=>{let{model:l}=nX;return l.model===nX})'),
-  composer.source.replace('ti=og||ob||','ti=og||foreign||'),composer.source.replace('ti=og||ob||nj?.lockedReasoningEffort!=null','ti=ob'),
-  composer.source.replace('e3=nj?.isLoading===!0||','e3=otherLoading||'),composer.source.replace('reasoningEffortDisabled:ti','reasoningEffortDisabled:other'),
-  composer.source.replace('onSelectModel:lI','onSelectModel:other'),composer.source.replace('lI=(e,l)=>{oY(e,l)}','lI=(e,l)=>{other(e,l)}'),
-  composer.source.replace('nP(o0(e),l,o,n)','nR(o0(e),l,o,n)'),
+  composer.source.replace('nC=(0,S.tn)(ng)','nC=(0,S.tn)(otherHost)'),
+  composer.source.replace('cwdOverride:l8,hostId:l5}','cwdOverride:otherCwd,hostId:l5}'),
+  composer.source.replace('return l.model===n9','return l.model===wrongModel'),
+  composer.source.replace('td?.find(e=>{let{model:l}=e;return l.model===n9})','td?.find(n9=>{let{model:l}=n9;return l.model===n9})'),
+  composer.source.replace('oI=tT||tR||','oI=tT||foreign||'),composer.source.replace('oI=tT||tR||nG?.lockedReasoningEffort!=null','oI=tR'),
+  composer.source.replace('e6=nG?.isLoading===!0||','e6=otherLoading||'),composer.source.replace('reasoningEffortDisabled:oI','reasoningEffortDisabled:other'),
+  composer.source.replace('onSelectModel:lL','onSelectModel:other'),composer.source.replace('lL=(e,l)=>{oi(e,l)}','lL=(e,l)=>{other(e,l)}'),
+  composer.source.replace('function eL(e){let{model:l}=e;return"auto"===l.model}','function eL(e){let{model:l}=e;return"other"===l.model}'),
+  composer.source.replace('M:function(e){','M:function(e){let eL;'),
+  composer.source.replace('lI=td?.find(eL)','lI=other?.find(eL)'),
+  composer.source.replace('[ox,...td.filter(e=>e!==ox)]','[ox,...other.filter(e=>e!==ox)]'),
+  composer.source.replace('oS=+(null!=ox)','oS=+(null!=other)'),
+  composer.source.replace('modelOptions:oM','modelOptions:td'),
+  composer.source.replace('nB(os(e),l,t,n)','nz(os(e),l,t,n)'),
   composer.source.slice(0,callbackRange.start)+shadowedCallback+composer.source.slice(callbackRange.end),
-  composer.source.replace('function o0(e){return nN&&e===nX?G.qz:e}','function o0(nX){return nN&&nX===nX?G.qz:nX}'),
-  composer.source.replace('let tn=nz?.isTeamCatalog,','[nP]=[foreign];let tn=nz?.isTeamCatalog,'),
-  composer.source.replace('let tn=nz?.isTeamCatalog,','({identity:nc}=other);let tn=nz?.isTeamCatalog,'),
+  composer.source.replace('function os(e){return nJ&&e===n9?Z.qz:e}','function os(n9){return nJ&&n9===n9?Z.qz:n9}'),
+  composer.source.replace('let ow=n1?.isTeamCatalog,','[nB]=[foreign];let ow=n1?.isTeamCatalog,'),
+  composer.source.replace('let ow=n1?.isTeamCatalog,','({identity:nC}=other);let ow=n1?.isTeamCatalog,'),
   composer.source.replace('M:function(e){','M:function(e){throw Error("unreachable");'),
-  composer.source+`/*${MARKER}*/`,patched+`/*${MARKER}*/`,patched.replace(`/*${MARKER}*/`,''),patched.replace('ob=/*'+MARKER+'*/n5','ob=/*'+MARKER+'*/foreign'),
+  composer.source+`/*${MARKER}*/`,patched+`/*${MARKER}*/`,patched.replace(`/*${MARKER}*/`,''),patched.replace('tR=/*'+MARKER+'*/td','tR=/*'+MARKER+'*/foreign'),
  ]){const result=dropdownModuleState(source,snap(source));assert.equal(result.kind,"missing",source.slice(-120));assert.throws(()=>apply(source,snap(source)),/dropdown factory/);}
 });
 test("selector qualification rejects wrong publications, settings imports, policy shadows and writer rebinding",()=>{
  const original=selectorModuleState(selector.source,selectorSnap());assert.equal(original.ok,true,original.reason);
- for(const source of [selector.source+selector.source,`/*${selector.source}*/`,selector.source.replace('n.d(t,','n.d(other,'),selector.source.replace('(0,i.a)(j)','(0,i.a)(other)'),selector.source.replace('i=n("o8WW")','i=foreign'),selector.source.replace('return k(e,t,o)','return k(e,"medium",o)'),selector.source.replace('selectComposerModelAndReasoningEffort:R','selectComposerModelAndReasoningEffort:k'),selector.source.replace('let R=f;return','[k]=[foreign];let R=f;return'),selector.source.replace('let R=f;return','M=foreign;let R=f;return'),selector.source+';g=foreign;'])assert.equal(selectorModuleState(source,selectorSnap(source)).ok,false,source.slice(-120));
+ for(const source of [selector.source+selector.source,`/*${selector.source}*/`,selector.source.replace('n.d(l,','n.d(other,'),selector.source.replace('(0,a.aU)(x)','(0,a.aU)(other)'),selector.source.replace('a=n("o8WW")','a=foreign'),selector.source.replace('return k(e,l,t)','return k(e,"medium",t)'),selector.source.replace('selectComposerModelAndReasoningEffort:_','selectComposerModelAndReasoningEffort:k'),selector.source.replace('let _=h;return','[k]=[foreign];let _=h;return'),selector.source.replace('let _=h;return','j=foreign;let _=h;return'),selector.source+';p=foreign;'])assert.equal(selectorModuleState(source,selectorSnap(source)).ok,false,source.slice(-120));
 });
 test("owned dropdown, auth import and selector writes reject escaped or block-scoped spellings",()=>{
- const insert=(source,fragment)=>source.replace("let tn=nz?.isTeamCatalog,",fragment+"let tn=nz?.isTeamCatalog,");
+ const insert=(source,fragment)=>source.replace("let ow=n1?.isTeamCatalog,",fragment+"let ow=n1?.isTeamCatalog,");
  const patched=apply(composer.source,snap());
  for(const fragment of [
-  String.raw`if(true){\u006f\u0062=false}`,
-  String.raw`if(true){\u{6f}\u{62}=false}`,
-  String.raw`if(true){[\u006f\u0062]=[false]}`,
-  String.raw`if(true){({value:\u006f\u0062}=payload)}`,
-  String.raw`if(true){var \u006f\u0062=false}`,
-  String.raw`if(true){\u006f\u0062++}`,
-  String.raw`if(true){++\u006f\u0062}`,
-  String.raw`if(true){[...\u006f\u0062]=payload}`,
-  String.raw`if(true){({...\u006f\u0062}=payload)}`,
-  String.raw`for(\u006f\u0062 of payload){}`,
-  String.raw`for(\u006f\u0062 in payload){}`,
+  String.raw`if(true){\u0074\u0052=false}`,
+  String.raw`if(true){\u{74}\u{52}=false}`,
+  String.raw`if(true){[\u0074\u0052]=[false]}`,
+  String.raw`if(true){({value:\u0074\u0052}=payload)}`,
+  String.raw`if(true){var \u0074\u0052=false}`,
+  String.raw`if(true){\u0074\u0052++}`,
+  String.raw`if(true){++\u0074\u0052}`,
+  String.raw`if(true){[...\u0074\u0052]=payload}`,
+  String.raw`if(true){({...\u0074\u0052}=payload)}`,
+  String.raw`for(\u0074\u0052 of payload){}`,
+  String.raw`for(\u0074\u0052 in payload){}`,
  ])for(const original of [composer.source,patched]){
   const source=insert(original,fragment);isolatedProof(source,composer.params,"composer","missing");
  }
@@ -136,22 +142,22 @@ test("owned dropdown, auth import and selector writes reject escaped or block-sc
   const source=composer.source+fragment;isolatedProof(source,composer.params,"composer","missing");
  }
  for(const fragment of [String.raw`if(true){\u006b=foreign}`,String.raw`if(true){[\u006b]=payload}`,String.raw`if(true){({value:\u006b}=payload)}`,String.raw`if(true){var \u006b=foreign}`]){
-  const source=selector.source.replace("let R=f;return",fragment+"let R=f;return");isolatedProof(source,selector.params,"selector",false);
+  const source=selector.source.replace("let _=h;return",fragment+"let _=h;return");isolatedProof(source,selector.params,"selector",false);
  }
 });
 test("binding projection retains real escaped local shadows, opaque text and member keys",()=>{
- const fragment=String.raw`if(true){let \u006f\u0062=false;\u006f\u0062=true}function unused(\u006f\u0062){\u006f\u0062=false}if(true){let [localOb]=payload;holder.\u006f\u0062=false;({\u006f\u0062:holder.value}=payload)}const opaque="\u006f\u0062=false";/* \u006f\u0062=false */`;
- const source=composer.source.replace("let tn=nz?.isTeamCatalog,",fragment+"let tn=nz?.isTeamCatalog,");isolatedProof(source,composer.params,"composer","current",true);
+ const fragment=String.raw`if(true){let \u0074\u0052=false;\u0074\u0052=true}function unused(\u0074\u0052){\u0074\u0052=false}if(true){let [localOb]=payload;holder.\u0074\u0052=false;({\u0074\u0052:holder.value}=payload)}const opaque="\u0074\u0052=false";/* \u0074\u0052=false */`;
+ const source=composer.source.replace("let ow=n1?.isTeamCatalog,",fragment+"let ow=n1?.isTeamCatalog,");isolatedProof(source,composer.params,"composer","current",true);
  const importShadow=composer.source+String.raw`;if(true){let \u0053=foreign;\u0053=other}function unused(){var \u0053=foreign;\u0053=other}holder.\u0053=foreign;({\u0053:holder.value}=payload)`;
  isolatedProof(importShadow,composer.params,"composer","current");
- const bridge=selector.source.replace("let R=f;return",String.raw`if(true){let \u006b=foreign;\u006b=other}function unused(\u006b){\u006b=foreign}holder.\u006b=other;({\u006b:holder.value}=payload);`+"let R=f;return");isolatedProof(bridge,selector.params,"selector",true);
+ const bridge=selector.source.replace("let _=h;return",String.raw`if(true){let \u006b=foreign;\u006b=other}function unused(\u006b){\u006b=foreign}holder.\u006b=other;({\u006b:holder.value}=payload);`+"let _=h;return");isolatedProof(bridge,selector.params,"selector",true);
 });
 test("receiver reads and member writes remain readonly, while dense memo reads cannot hide an encoded binding write",()=>{
  const member=composer.source+String.raw`;S.note=1;S["note"]=2;const read=S.note;`;
  isolatedProof(member,composer.params,"composer","current");
- const reads="lW[0];".repeat(1000),marker="let tn=nz?.isTeamCatalog,";
+ const reads="lH[0];".repeat(1000),marker="let ow=n1?.isTeamCatalog,";
  const safe=composer.source.replace(marker,reads+marker);isolatedProof(safe,composer.params,"composer","current");
- const unsafe=composer.source.replace(marker,reads+String.raw`if(true){\u006f\u0062=false}`+marker);isolatedProof(unsafe,composer.params,"composer","missing");
+ const unsafe=composer.source.replace(marker,reads+String.raw`if(true){\u0074\u0052=false}`+marker);isolatedProof(unsafe,composer.params,"composer","missing");
 });
 test("deep inspection rejects oversized factory bodies before lexical parsing",()=>{
  const largeComposer=composer.source+"/*"+"x".repeat(256*1024)+"*/";
@@ -169,12 +175,12 @@ test("production dropdown transaction patches every physical copy and preserves 
 });
 test("ambiguous, hidden, damaged, mixed, opaque and orphan dropdown cohorts refuse every write",()=>{
  const pristine=chunk(composer.source),patched=chunk(apply(composer.source,snap()));
- for(const files of [{},{"ui.js":pristine,"other.js":chunk(composer.source,"differentOwner")},{"ui.js":pristine,"nested/ui.js":patched},{"ui.js":pristine,"nested/ui.js":chunk('const lostEveryNeedle=true;')},{"ui.js":pristine,"nested/ui.js":chunk(composer.source.replace('ti=og||ob||','ti=og||foreign||'))},{"ui.js":pristine,"orphan.js":`export const marker="${MARKER}";`},{"ui.js":pristine+`/*${MARKER}*/`},{"ui.js":'/*'+pristine+'*/'},{"ui.js":'const example=`'+pristine+'`;'}])app(dependencyFiles(files),(root,dir,read)=>{let writes=0;assert.throws(()=>patch(root,settingsState,{writeFileSync(){writes++;}}));assert.equal(writes,0);assert.equal(enabledFeatureFailuresFromReport(report(root)).length,1);for(const [name,text]of Object.entries(files))assert.equal(read(name),text);});
+ for(const files of [{},{"ui.js":pristine,"other.js":chunk(composer.source,"differentOwner")},{"ui.js":pristine,"nested/ui.js":patched},{"ui.js":pristine,"nested/ui.js":chunk('const lostEveryNeedle=true;')},{"ui.js":pristine,"nested/ui.js":chunk(composer.source.replace('oI=tT||tR||','oI=tT||foreign||'))},{"ui.js":pristine,"orphan.js":`export const marker="${MARKER}";`},{"ui.js":pristine+`/*${MARKER}*/`},{"ui.js":'/*'+pristine+'*/'},{"ui.js":'const example=`'+pristine+'`;'}])app(dependencyFiles(files),(root,dir,read)=>{let writes=0;assert.throws(()=>patch(root,settingsState,{writeFileSync(){writes++;}}));assert.equal(writes,0);assert.equal(enabledFeatureFailuresFromReport(report(root)).length,1);for(const [name,text]of Object.entries(files))assert.equal(read(name),text);});
 });
 test("wrong, hidden or missing selector/settings dependencies prevent UI writes",()=>{
  for(const files of [
-  {"ui.js":chunk(composer.source.replace('ek=n("sU9s")','ek=n("foreign")')),"selector.js":selectorChunk(),"settings.js":settingsChunk()},
-  {"ui.js":chunk(composer.source),"selector.js":selectorChunk(selector.source.replace('i=n("o8WW")','i=n("foreign")')),"settings.js":settingsChunk()},
+  {"ui.js":chunk(composer.source.replace('eT=n("sU9s")','eT=n("foreign")')),"selector.js":selectorChunk(),"settings.js":settingsChunk()},
+  {"ui.js":chunk(composer.source),"selector.js":selectorChunk(selector.source.replace('a=n("o8WW")','a=n("foreign")')),"settings.js":settingsChunk()},
   {"ui.js":chunk(composer.source),"selector.js":selectorChunk(selector.source.replace('o:function','other:function')),"settings.js":settingsChunk()},
   {"ui.js":chunk(composer.source),"selector.js":selectorChunk(),"hidden/selector.js":selectorChunk('const hidden=true;'),"settings.js":settingsChunk()},
   {"ui.js":chunk(composer.source),"selector.js":selectorChunk(),"settings.js":settingsChunk(),"hidden/settings.js":settingsChunk('const hidden=true;')},
