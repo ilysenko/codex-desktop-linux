@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.53. The
+  crate and the `server.rs` literal are 0.7.53, the standalone version. The
+  standalone release replaces `libxkbcommon` in the GNOME `type_text` keymap
+  preflight with the pure-Rust `kbvm` crate so its static musl builds can run
+  the check. The embedded copy keeps the `libxkbcommon` preflight: `kbvm`
+  needs Rust 1.95, the pinned nixpkgs builds with Rust 1.93, and the packaged
+  app always has the library. The musl release builds and their CI job have no
+  counterpart here.
 - Synchronize the embedded Computer Use backend to standalone v0.7.52.
   `screenshot`, `get_app_state` and the `screenshot_after` capture of every
   mutating tool take `screenshot_file_path`, an absolute path where the image
