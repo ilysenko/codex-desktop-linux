@@ -246,8 +246,26 @@ test("all actual native query modes prepare/inverse/replay and empty config is b
     const a=prepareQueryFactory(input.moduleSource,snapshot,high,linked,auth),b=prepareQueryFactory(a.patchedSource,{...snapshot,moduleSource:a.patchedSource},high,linked,auth);
     assert.equal(a.state,"pristine");assert.equal(b.state,"applied");assert.equal(b.nativeSource,input.moduleSource);assert.equal(b.patchedSource,a.patchedSource);
     assert.equal(JSON.stringify(snapshot),before);
-    if(id==="lTvi")assert.equal(named(a.patchedSource,"c"),named(input.moduleSource,"c"));
+    if(id==="lTvi")assert.equal(named(a.patchedSource,owner.builder.name),named(input.moduleSource,owner.builder.name));
     const empty=prepareQueryFactory(input.moduleSource,snapshot,[],{},auth);assert.equal(empty.patchedSource,input.moduleSource);assert.equal(empty.nativeSource,input.moduleSource);assert.equal(empty.proof.auditOnly,true);assert.equal(empty.patchedSource.includes(constants.QUERY_HELPER),false);
+  }
+});
+
+test("current scoped chat queries retain native telemetry identity, header and feature-gate bindings",()=>{
+  const input=policyFixture.owners.lTvi;
+  for(const [from,to]of [
+    ['({scope:e})=>f(e,"chat")','({scope:e})=>f(other,"chat")'],
+    ['function f(e,t)','function f(t,e)'],
+    ['r=e.get("x-request-id")','other=e.get("x-request-id")'],
+    ['===n.userId','===n.accountId'],
+    ['===n.accountId','===n.userId'],
+    ['modelsResponseReceived(n,r)','modelsResponseReceived(other,r)'],
+    ['modelsResponseReceived(n,r)','modelsResponseReceived(n,other)'],
+    ['onResponseHeaders:void 0===n','onResponseHeaders:void 0!==n'],
+    ['return l},queryKey:','return a},queryKey:'],
+  ]){
+    const changed=input.moduleSource.replace(from,to);assert.notEqual(changed,input.moduleSource,from);
+    assert.throws(()=>prepareQueryFactory(changed,{...input,moduleSource:changed},high,linked,auth));
   }
 });
 
@@ -272,7 +290,7 @@ test("query input captures and partial/new scope/dependency mismatches refuse",(
   for(const changed of [a.patchedSource.replace(constants.QUERY_MARKER,"wrong-stamp"),a.patchedSource.replace('},e)','},other)'),a.patchedSource+`/*${constants.QUERY_HELPER}*/`])assert.throws(()=>prepareQueryFactory(changed,{...input,moduleSource:changed},high,linked,auth));
   const other={...linked,visibility:{...linked.visibility,scope:{moduleId:"wrong",exportName:"u"}}};assert.throws(()=>prepareQueryFactory(source,input,high,other,auth));
   const q=policyFixture.owners.lTvi,b=prepareQueryFactory(q.moduleSource,q,high,linked,auth);
-  const partial=b.patchedSource.replace('codexLinuxPresetQueryOptions(c("merged"),codexLinuxPresetGet)','c("merged")');assert.throws(()=>prepareQueryFactory(partial,{...q,moduleSource:partial},high,linked,auth));
+  const partial=b.patchedSource.replace('codexLinuxPresetQueryOptions(f(e,"merged"),codexLinuxPresetGet)','f(e,"merged")');assert.throws(()=>prepareQueryFactory(partial,{...q,moduleSource:partial},high,linked,auth));
 });
 
 function actualWorld(){
@@ -300,7 +318,7 @@ function rawResponse(policy){return{models:[
 function patchedReader(prepared,nativeOwner,mode,globals){
   const source=prepared.patchedSource;
   if(mode!=="tpp"){
-    const hit=new RegExp(`\\(\\{get:codexLinuxPresetGet\\}\\)=>${constants.QUERY_HELPER}\\((?<builder>[A-Za-z_$][\\w$]*)\\("${mode}"\\),codexLinuxPresetGet\\)`,"u").exec(source);assert.ok(hit,mode);
+    const hit=new RegExp(`\\(\\{scope:(?<scope>[A-Za-z_$][\\w$]*),get:codexLinuxPresetGet\\}\\)=>${constants.QUERY_HELPER}\\((?<builder>[A-Za-z_$][\\w$]*)\\(\\k<scope>,"${mode}"\\),codexLinuxPresetGet\\)`,"u").exec(source);assert.ok(hit,mode);
     return vm.runInNewContext(`(${hit[0]})`,{...globals,[hit.groups.builder]:globals.nativeBuilder});
   }
   const head=/\(0,[A-Za-z_$][\w$]*\.RD\)\([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*,/.exec(source);assert.ok(head);
@@ -318,16 +336,23 @@ test("actual lTvi three readers and native /models producer reach Default and ne
   const state={plan:"plus",account:"a",preferred:null,user:"u",visible:new Set(["medium","high"])};
   for(const mode of ["chat","gizmo","merged"]){
     const runtime=wrapRuntime(prepared,null,state);Object.assign(runtime.schemaNamespace,world.schema,{[linked.catalog.projectionExport]:(base,policy)=>projectCatalog(base,high,policy)});
-    const nativeBuilder=vm.runInNewContext(`(${named(input.moduleSource,"c")})`,{s:runtime.schemaNamespace,a:{D:{FIVE_MINUTES:300000}},o:{Request:{safeGet:(route,options)=>{requests.push({route,options});return Promise.resolve(rawResponse());}}}});
+    const telemetry=[],flag={},requestScope={get:token=>token===flag?true:runtime.get(token)};
+    const nativeBuilder=vm.runInNewContext(`(${named(input.moduleSource,"f")})`,{
+      u:runtime.schemaNamespace,l:{D:{FIVE_MINUTES:300000}},
+      i:{chatGptAuthenticatedUserId$:runtime.atoms.user,chatGptAuthenticatedAccountId$:runtime.atoms.account},o:{JW:flag},
+      s:{b6:{modelsRequestContext:(userId,accountId)=>({userId,accountId}),modelsResponseReceived:(context,id)=>telemetry.push({context,id})}},
+      d:{Request:{safeGet:(route,options)=>{requests.push({route,options});options.onResponseHeaders?.({get:header=>{assert.equal(header,"x-request-id");return `request-${mode}`;}});return Promise.resolve(rawResponse());}}},
+    });
     const globals={...runtime.globals,nativeBuilder,[constants.QUERY_HELPER]:runtime.wrap};
-    const read=patchedReader(prepared,input,mode,globals),options=read({get:runtime.get});
+    const read=patchedReader(prepared,input,mode,globals),options=read({scope:requestScope,get:runtime.get});
     assert.deepEqual(Array.from(options.queryKey),mode==="chat"?["chatgpt-models"]:["chatgpt-models",mode]);
     const base=await options.queryFn();assert.equal(base[constants.VARIANTS],undefined);const projected=options.select(base);
+    assert.equal(telemetry.length,1);assert.deepEqual({...telemetry[0].context},{userId:"u",accountId:"a"});assert.equal(telemetry[0].id,`request-${mode}`);
     assert.equal(projected.defaultThinkingEffortByModelSlug["model-new"],"extended");
     const option=world.build(projected,{includeSyntheticDefault:true}).defaultOption,power=world.resolvePower(projected,option,{slug:"model-new",thinkingEffort:"extended"},{fallbackModelLabel:"Model"});
     assert.equal(power.defaultPowerSelection.model,"model-new");assert.equal(power.powerSettings[power.defaultPowerSelection.powerSettingIndex].thinkingEffort,"extended");
     const next=consumerChoice(projected,undefined);assert.equal(next.slug,"model-new");assert.equal(next.thinkingEffort,"extended");
-    state.visible=new Set(["medium"]);const count=requests.length,changed=read({get:runtime.get});assert.equal(changed.select(base),base);assert.equal(requests.length,count);state.visible=new Set(["medium","high"]);
+    state.visible=new Set(["medium"]);const count=requests.length,changed=read({scope:requestScope,get:runtime.get});assert.equal(changed.select(base),base);assert.equal(requests.length,count);state.visible=new Set(["medium","high"]);
   }
   assert.equal(requests.length,3);assert.equal(requests[0].options.parameters.query.is_gizmo,false);assert.equal(requests[1].options.parameters.query.is_gizmo,true);assert.equal(requests[2].options.parameters.query.merged,true);
 });

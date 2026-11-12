@@ -287,8 +287,8 @@ function queryReaders(source) {
     const start=head.index+head[0].length,tail=source.slice(start);
     const block=/^\(\{get:(?<get>[A-Za-z_$][\w$]*)\}\)=>\{/u.exec(tail);
     if(block){const open=start+block[0].length-1,end=lexical.matchingBrace(open);if(end<open||source[end+1]!==")")throw new Error("Incomplete native query reader");readers.push({...head.groups,mode:"tpp",callbackStart:start,callbackEnd:end+1,get:block.groups.get,bodyStart:open+1,body:source.slice(open+1,end)});continue;}
-    const empty=new RegExp(`^\\(\\)=>(?<builder>${ID})\\("(?<mode>chat|gizmo|merged)"\\)`,"u").exec(tail);
-    if(empty&&source[start+empty[0].length]===")"){readers.push({...head.groups,...empty.groups,callbackStart:start,callbackEnd:start+empty[0].length});continue;}
+    const scoped=new RegExp(`^\\(\\{scope:(?<scopeLocal>${ID})\\}\\)=>(?<builder>${ID})\\(\\k<scopeLocal>,"(?<mode>chat|gizmo|merged)"\\)`,"u").exec(tail);
+    if(scoped&&source[start+scoped[0].length]===")"){readers.push({...head.groups,...scoped.groups,callbackStart:start,callbackEnd:start+scoped[0].length});continue;}
     throw new Error("Unsupported native query options reader");
   }
   return readers;
@@ -385,13 +385,29 @@ function inspectQueryOwner(source,snapshot,authority) {
   }else{
     if(new Set(readers.map(reader=>reader.builder)).size!==1)throw new Error("Mismatched chat query builders");
     builder=namedFunction(source,first.builder,authority);
-    const mode=new RegExp(`^${ID}$`,"u").test(builder.params)?escapeRegExp(builder.params):null;
-    const pattern=mode==null?null:new RegExp(`^return\\{queryFn:\\(\\)=>(?<request>${ID})\\.Request\\.safeGet\\("/models",\\{parameters:\\{query:\\{iim:!1,include_icons:!1,is_gizmo:"gizmo"===${mode},merged:"merged"===${mode}\\|\\|void 0\\}\\}\\}\\)\\.then\\((?<catalog>${ID})\\.(?<normalizer>${ID})\\),queryKey:"chat"===${mode}\\?\\["chatgpt-models"\\]:\\["chatgpt-models",${mode}\\],refetchOnWindowFocus:!0,staleTime:(?<timer>${ID})\\.D\\.FIVE_MINUTES\\}$`,"u");
-    const body=pattern?.exec(builder.body)?.groups;
-    if(body==null)throw new Error("Unsupported chat/gizmo/merged native options");
-    authority.requireStableBinding(builder.body,builder.params);
-    queryImport(source,snapshot,body.request,authority);queryImport(source,snapshot,body.timer,authority);
+    const params=builder.params.split(",");
+    if(params.length!==2||new Set(params).size!==2||!params.every(name=>new RegExp(`^${ID}$`,"u").test(name)))throw new Error("Unsupported chat query scope/mode parameters");
+    const [scopeName,modeName]=params,queryScope=escapeRegExp(scopeName),mode=escapeRegExp(modeName);
+    const options=rootReturnedObject(builder.body),network=queryPropertyBody(options.fields,"queryFn","async\\(\\)=>\\{");
+    const shape=new RegExp(
+      `^let (?<context>${ID})=function\\((?<localScope>${ID})\\)\\{try\\{if\\(!\\k<localScope>\\.get\\((?<flags>${ID})\\.(?<flagExport>${ID}),(?<gate>"[0-9]+")\\)\\)return;`+
+      `let (?<user>${ID})=\\k<localScope>\\.get\\((?<identity>${ID})\\.(?<userExport>${ID})\\),(?<account>${ID})=\\k<localScope>\\.get\\(\\k<identity>\\.(?<accountExport>${ID})\\);`+
+      `return null==\\k<user>\\|\\|null==\\k<account>\\?void 0:(?<telemetry>${ID})\\.(?<telemetryExport>${ID})\\.modelsRequestContext\\(\\k<user>,\\k<account>\\)\\}catch\\{return\\}\\}\\(${queryScope}\\),`+
+      `(?<requestId>${ID})=null,(?<raw>${ID})=await (?<request>${ID})\\.Request\\.safeGet\\("/models",\\{onResponseHeaders:void 0===\\k<context>\\?void 0:(?<headers>${ID})=>\\{\\k<requestId>=\\k<headers>\\.get\\("x-request-id"\\)\\},`+
+      `parameters:\\{query:\\{iim:!1,include_icons:!1,is_gizmo:"gizmo"===${mode},merged:"merged"===${mode}\\|\\|void 0\\}\\}\\}\\),(?<normalized>${ID})=\\(0,(?<catalog>${ID})\\.(?<normalizer>${ID})\\)\\(\\k<raw>\\);`+
+      `try\\{void 0!==\\k<context>&&null!=\\k<requestId>&&${queryScope}\\.get\\(\\k<identity>\\.\\k<userExport>\\)===\\k<context>\\.userId&&${queryScope}\\.get\\(\\k<identity>\\.\\k<accountExport>\\)===\\k<context>\\.accountId&&`+
+      `${queryScope}\\.get\\(\\k<flags>\\.\\k<flagExport>,\\k<gate>\\)&&\\k<telemetry>\\.\\k<telemetryExport>\\.modelsResponseReceived\\(\\k<context>,\\k<requestId>\\)\\}catch\\{\\}return \\k<normalized>$`,"u");
+    const body=shape.exec(network.body)?.groups;
+    const tail=new RegExp(`^,queryKey:"chat"===${mode}\\?\\["chatgpt-models"\\]:\\["chatgpt-models",${mode}\\],refetchOnWindowFocus:!0,staleTime:(?<timer>${ID})\\.D\\.FIVE_MINUTES$`,"u").exec(options.fields.slice(network.end+1))?.groups;
+    if(body==null||tail==null)throw new Error("Unsupported chat/gizmo/merged native options");
+    for(const name of params)authority.requireStableBinding(builder.body,name);
+    const imports=[body.request,body.catalog,body.identity,body.flags,body.telemetry];
+    if(new Set([scopeName,modeName,...imports]).size!==imports.length+2)throw new Error("Aliased chat query captured roles");
+    for(const name of imports)queryImport(source,snapshot,name,authority);
+    queryImport(source,snapshot,tail.timer,authority);
+    capturedQueryBindings(network.body,[scopeName,modeName,...imports],[],authority);
     catalog=queryImport(source,snapshot,body.catalog,authority);normalizerExport=body.normalizer;
+
   }
   return {role:"query",kind:tpp?"tpp":"chatgpt",moduleId:snapshot.moduleId,frameworkModuleId:framework.moduleId,scope:{moduleId:scope.moduleId,exportName:first.scopeExport},catalogImport:{...catalog,normalizerExport},identity,nativePlan,cacheImport,cacheProof,readers,builder};
 }
@@ -429,7 +445,7 @@ function queryPatched(native,snapshot,presets,bindings,authority) {
   const suffix=querySuffix(owner,snapshot,presets,bindings);
   const edits=owner.readers.map(reader=>{
     if(reader.mode==="tpp")return{start:reader.options.open,end:reader.options.close+1,text:` ${QUERY_HELPER}(${native.slice(reader.options.open,reader.options.close+1)},${reader.get})`};
-    return{start:reader.callbackStart,end:reader.callbackEnd,text:`({get:codexLinuxPresetGet})=>${QUERY_HELPER}(${reader.builder}(${JSON.stringify(reader.mode)}),codexLinuxPresetGet)`};
+    return{start:reader.callbackStart,end:reader.callbackEnd,text:`({scope:${reader.scopeLocal},get:codexLinuxPresetGet})=>${QUERY_HELPER}(${reader.builder}(${reader.scopeLocal},${JSON.stringify(reader.mode)}),codexLinuxPresetGet)`};
   });
   let patched=native;for(const edit of edits.sort((a,b)=>b.start-a.start))patched=patched.slice(0,edit.start)+edit.text+patched.slice(edit.end);
   patched+=suffix.code;factorySyntax(patched,snapshot);
@@ -442,8 +458,8 @@ function inverseQuery(source) {
   const heads=rootMatches(candidate,new RegExp(`(?<signal>${ID})=\\(0,(?<framework>${ID})\\.RD\\)\\((?<scope>${ID})\\.(?<scopeExport>${ID}),`,"gu"));
   const lexical=createJavaScriptLexicalIndex(candidate),edits=[];
   for(const head of heads){const a=head.index+head[0].length,tail=candidate.slice(a);
-    const chat=new RegExp(`^\\(\\{get:codexLinuxPresetGet\\}\\)=>${QUERY_HELPER}\\((?<builder>${ID})\\("(?<mode>chat|gizmo|merged)"\\),codexLinuxPresetGet\\)`,"u").exec(tail);
-    if(chat){edits.push({start:a,end:a+chat[0].length,text:`()=>${chat.groups.builder}(${JSON.stringify(chat.groups.mode)})`});continue;}
+    const chat=new RegExp(`^\\(\\{scope:(?<scopeLocal>${ID}),get:codexLinuxPresetGet\\}\\)=>${QUERY_HELPER}\\((?<builder>${ID})\\(\\k<scopeLocal>,"(?<mode>chat|gizmo|merged)"\\),codexLinuxPresetGet\\)`,"u").exec(tail);
+    if(chat){edits.push({start:a,end:a+chat[0].length,text:`({scope:${chat.groups.scopeLocal}})=>${chat.groups.builder}(${chat.groups.scopeLocal},${JSON.stringify(chat.groups.mode)})`});continue;}
     const block=/^\(\{get:(?<get>[A-Za-z_$][\w$]*)\}\)=>\{/u.exec(tail);if(block==null)throw new Error("Partial query policy reader");
     const open=a+block[0].length-1,end=lexical.matchingBrace(open),body=candidate.slice(open+1,end);
     const returned=one(rootMatches(body,/\breturn\b/gu),"projected query return");
