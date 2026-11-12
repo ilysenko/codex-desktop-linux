@@ -66,13 +66,13 @@ test("qualified native action mapper keeps retired installers null and forwards 
 
 test("published owners, generators, live providers, detector capture and canonical contributions fail closed", () => {
   for (const [before, after] of [
-    ["RemoteConnectionsSettings:()=>t8", "RemoteConnectionsSettings:()=>eO"],
-    ['G=n("hZax")', 'G=n("wrong")'], ['O=n("wwME")', 'O=n("wrong")'], ['tK=n("uodG")', 'tK=n("wrong")'],
-    ["nZ=!tD", "nZ=tD"], ["nZ=!tD", "nZ=!!tD"], ["nF=(0,tK.wi)()", "nF=true"],
-    ["function t8(){", "function t8(){const navigator={userAgent:'Linux'};"],
-    ["function t8(){", `function t8(){const orphan="${MARKER}";`],
+    ["RemoteConnectionsSettings:()=>t6", "RemoteConnectionsSettings:()=>eO"],
+    ['G=n("hZax")', 'G=n("wrong")'], ['k=n("wwME")', 'k=n("wrong")'], ['t$=n("uodG")', 't$=n("wrong")'],
+    ["nZ=!tD", "nZ=tD"], ["nZ=!tD", "nZ=!!tD"], ["nF=(0,t$.wi)()", "nF=true"],
+    ["function t6(){", "function t6(){const navigator={userAgent:'Linux'};"],
+    ["function t6(){", `function t6(){const orphan="${MARKER}";`],
   ]) rejected(input => change(input, ownerFile, before, after));
-  rejected(input => change(input, ownerFile, "var o=", "function* t8(){return null}var o="));
+  rejected(input => change(input, ownerFile, "var o=", "function* t6(){return null}var o="));
   rejected(input => change(input, ownerFile, "var o=", "function /*head*/ * G({x}={}){return null}var o="));
   const patched = h.transition(h.sources(), prepare(h.snapshots()));
   const damaged = { ...patched };change(damaged, ownerFile, "||!tD)", "||tD)");assert.throws(() => prepare(h.snapshots(damaged)));
@@ -81,12 +81,12 @@ test("published owners, generators, live providers, detector capture and canonic
 test("every selected policy/caller link and every physical provider/HZ copy is mandatory", () => {
   for (const [before, after] of [
     ["nQ=nZ&&(nF||!1)", "nQ=nZ||nF"], ["showControlOtherDevices:nZ", "showControlOtherDevices:!0"],
-    ["!nF||!nZ||!tP||!es||eo", "!nF||!nZ||!tP||!es||!eo"],
-    ["eo=tW?.authRequired===!0", "eo=tW?.authRequired!==!0"], ["tP=(0,G.Zj)(I.Qg)", "tP=true"],
-    ["(0,h.useEffectEvent)(e1)", "(0,h.useEffectEvent)(eO)"], ["queueMicrotask(()=>{e.signal.aborted||oP(e)})", "queueMicrotask(()=>{oP(e)})"],
-    ["let oP=(0,h.useEffectEvent)(e1)", "e1=()=>null;let oP=(0,h.useEffectEvent)(e1)"],
-    ["tw[176]!==n0", "oP=()=>null;tw[176]!==n0"],
-    ["tU=(0,u.Ul)(D.dZ)", "tU=(0,u.Ul)(D.BJ)"], ["let nX=em;", "let nX=em;void nZ;"],
+    ["!nF||!nZ||!tT||!es||eo", "!nF||!nZ||!tT||!es||!eo"],
+    ["eo=tW?.authRequired===!0", "eo=tW?.authRequired!==!0"], ["tT=(0,G.Zj)(I.Qg)", "tT=true"],
+    ["(0,h.useEffectEvent)(e1)", "(0,h.useEffectEvent)(eO)"], ["queueMicrotask(()=>{e.signal.aborted||oT(e)})", "queueMicrotask(()=>{oT(e)})"],
+    ["let oT=(0,h.useEffectEvent)(e1)", "e1=()=>null;let oT=(0,h.useEffectEvent)(e1)"],
+    ["tw[176]!==n0", "oT=()=>null;tw[176]!==n0"],
+    ["tG=(0,u.Ul)(D.dZ)", "tG=(0,u.Ul)(D.BJ)"], ["let nX=em;", "let nX=em;void nZ;"],
     ["let nX=em;", "let nX=em;nZ=false;"],
   ]) rejected(input => change(input, ownerFile, before, after));
   for (const [file, before, after] of [
@@ -158,6 +158,6 @@ test("native HZ validation accepts accepted83 Zi/wi contributions without qualif
 test("native root let initializers retain declaration ownership and original hook order", () => {
   const input = h.sources(), plan = prepare(h.snapshots(input)), output = h.transition(input,plan), repeat = prepare(h.snapshots(output));
   assert.equal(plan.alreadyApplied,false);assert.equal(repeat.alreadyApplied,true);assert.deepEqual(h.transition(output,repeat,"nativeSource"),input);
-  rejected(data => change(data,ownerFile,"let tT=e,tH=","if(false)var tT=e,tH="));
-  rejected(data => change(data,ownerFile,'{platform:tk}=(0,O.V)(),tD=(0,G.Zj)("782640499")','tD=(0,G.Zj)("782640499"),{platform:tk}=(0,O.V)()'));
+  rejected(data => change(data,ownerFile,"let tP=e,tH=","if(false)var tP=e,tH="));
+  rejected(data => change(data,ownerFile,'{platform:tO}=(0,k.V)(),tD=(0,G.Zj)("782640499")','tD=(0,G.Zj)("782640499"),{platform:tO}=(0,k.V)()'));
 });
