@@ -269,6 +269,21 @@ test("current scoped chat queries retain native telemetry identity, header and f
   }
 });
 
+test("scoped query readers reject a captured builder and retain coherent local aliases",()=>{
+  const input=policyFixture.owners.lTvi,original='({scope:e})=>f(e,"chat")';
+  assert.equal(input.moduleSource.split(original).length,2);
+  const captured=input.moduleSource.replace(original,'({scope:f})=>f(f,"chat")');
+  const renamed=input.moduleSource.replace(original,'({scope:queryScope})=>f(queryScope,"chat")');
+  for(const presets of[[],high]){
+    assert.throws(()=>prepareQueryFactory(captured,{...input,moduleSource:captured},presets,linked,auth),/scope shadows its options builder/);
+    const first=prepareQueryFactory(renamed,{...input,moduleSource:renamed},presets,linked,auth);
+    assert.equal(first.state,"pristine");
+    const repeated=prepareQueryFactory(first.patchedSource,{...input,moduleSource:first.patchedSource},presets,linked,auth);
+    assert.equal(repeated.nativeSource,renamed);
+    assert.equal(repeated.patchedSource,first.patchedSource);
+  }
+});
+
 test("same native cached base reprojects on plan/visibility without changing query/cache fields",()=>{
   const input=policyFixture.owners.sMGP,p=prepareQueryFactory(input.moduleSource,input,high,linked,auth),base=catalog();
   const state={plan:"plus",account:"account",preferred:null,user:"user",visible:new Set(["medium","high"])};

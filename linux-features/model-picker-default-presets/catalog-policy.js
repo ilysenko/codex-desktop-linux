@@ -288,7 +288,10 @@ function queryReaders(source) {
     const block=/^\(\{get:(?<get>[A-Za-z_$][\w$]*)\}\)=>\{/u.exec(tail);
     if(block){const open=start+block[0].length-1,end=lexical.matchingBrace(open);if(end<open||source[end+1]!==")")throw new Error("Incomplete native query reader");readers.push({...head.groups,mode:"tpp",callbackStart:start,callbackEnd:end+1,get:block.groups.get,bodyStart:open+1,body:source.slice(open+1,end)});continue;}
     const scoped=new RegExp(`^\\(\\{scope:(?<scopeLocal>${ID})\\}\\)=>(?<builder>${ID})\\(\\k<scopeLocal>,"(?<mode>chat|gizmo|merged)"\\)`,"u").exec(tail);
-    if(scoped&&source[start+scoped[0].length]===")"){readers.push({...head.groups,...scoped.groups,callbackStart:start,callbackEnd:start+scoped[0].length});continue;}
+    if(scoped&&source[start+scoped[0].length]===")"){
+      if(scoped.groups.scopeLocal===scoped.groups.builder)throw new Error("Native query scope shadows its options builder");
+      readers.push({...head.groups,...scoped.groups,callbackStart:start,callbackEnd:start+scoped[0].length});continue;
+    }
     throw new Error("Unsupported native query options reader");
   }
   return readers;
