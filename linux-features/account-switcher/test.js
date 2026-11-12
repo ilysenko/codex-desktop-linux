@@ -431,6 +431,8 @@ test("profile complete-state validation rejects wrong bridge methods, helper sco
     patched.replace('close();Bus.O1', 'wrongClose();Bus.O1'),
     patched.replace('additionalItems:codexLinuxAccountSwitcherItems(items,close,fmt)', 'additionalItems:codexLinuxAccountSwitcherItems(items,wrongClose,fmt)'),
     patched.replace('codexLinuxAccountSwitcherRow(close,fmt)]', 'codexLinuxAccountSwitcherRow(close,wrongIntl)]'),
+    patched.replace('children:[divider,identity,null,settings,', 'children:[divider,identity,settings,'),
+    patched.replace('children:[divider,identity,null,settings,', 'children:[divider,identity,foreign,settings,'),
     patched.replace('var UI=n("jsx")', 'var UI=wrongLoader("jsx")'),
     rest.replace('var UI=', `function inaccessible(){${helpers}}var UI=`),
     rest + helpers,

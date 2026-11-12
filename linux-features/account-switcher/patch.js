@@ -298,14 +298,14 @@ function pristineUiFromApplied(source) {
     `additionalItems:codexLinuxAccountSwitcherItems\\((?<items>${IDENT}),(?<close>${IDENT}),(?<intl>${IDENT})\\),` +
       `[\\s\\S]{0,500}?onCloseMenu:\\k<close>,`, "g"));
   const regular = unique(withoutHelpers, new RegExp(
-    `children:\\[(?<first>${IDENT}),(?<second>${IDENT}),(?<settings>${IDENT}),` +
+    `children:\\[(?<first>${IDENT}),(?<second>${IDENT}),null,(?<settings>${IDENT}),` +
       `codexLinuxAccountSwitcherRow\\((?<close>${IDENT}),(?<intl>${IDENT})\\)\\]`, "g"));
   if (items == null || regular == null || items.groups.close !== regular.groups.close || items.groups.intl !== regular.groups.intl) return null;
   const edits = [
     { start: items.index, end: items.index + items[0].length,
       text: items[0].replace(`additionalItems:codexLinuxAccountSwitcherItems(${items.groups.items},${items.groups.close},${items.groups.intl}),`, `additionalItems:${items.groups.items},`) },
     { start: regular.index, end: regular.index + regular[0].length,
-      text: `children:[${regular.groups.first},${regular.groups.second},${regular.groups.settings}]` },
+      text: `children:[${regular.groups.first},${regular.groups.second},null,${regular.groups.settings}]` },
   ].sort((a, b) => b.start - a.start);
   let pristine = withoutHelpers;
   for (const edit of edits) pristine = pristine.slice(0, edit.start) + edit.text + pristine.slice(edit.end);
