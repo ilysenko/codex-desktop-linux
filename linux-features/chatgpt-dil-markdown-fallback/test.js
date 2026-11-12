@@ -33,12 +33,13 @@ const chunk = (id, ...modules) => `export const __rspack_esm_ids=[${id}];` +
   `export const __webpack_modules__={${modules.join(",")}};`;
 const REPLY_CHUNK = chunk(62056, OTHER, REPLY);
 const LOADER_CHUNK = chunk(7, LOADER);
-const WRAPPER = 'function nR(e){let tree,result,memo=(0,Z.memo)(3),{experiment:experiment,reference:reference,dilComponents:components,surface:surface}=e,context=(0,P.context)();' +
-  'if(memo[0]!==reference){result=Symbol.for("react.early_return_sentinel");bound:{let parsed=ny.safeParse(reference),valid=!0;tree=(0,r.jsxs)(P.Q.Provider,{value:{},children:[(0,r.jsx)(Container,{children:' +
+const WRAPPER = 'function nR(e){let {experiment:experiment,reference:reference,dilComponents:components,surface:surface}=e,context=(0,P.context)(),parsed=Z.dr.safeParse(reference),' +
+  'safe=function(context,source){let urls=source?.source_safe_urls,approve=approveUrls,result={approve:approve,urls:urls};return result}(context,parsed.data),gate=!1;' +
+  'return(0,r.jsxs)(P.Q.Provider,{value:{safeUrls:safe.urls,},children:[(0,r.jsx)(Container,{children:' +
   '(0,r.jsx)(nN,{experiment:experiment,assistantMessageId:context.messageId,dilComponents:components??S.Hy,loadPublicComponents:void 0===components,' +
-  'reference:reference,source:parsed.data,surface:surface})})]})}memo[0]=reference,memo[1]=tree,memo[2]=result}else tree=memo[1],result=memo[2];return result!==Symbol.for("react.early_return_sentinel")?result:tree}';
+  'reference:reference,source:parsed.data,onAutoSafeUrls:safe.approve,surface:surface})})]})}';
 const WRAPPED_REPLY = REPLY.replace('()=>nS', '()=>nR').replace('function nS(',
-  'var S=n("Catalog"),P=n("Provider"),Z=n("Schema");let ny=Z.object({});' + WRAPPER + 'function nN(')
+  'var S=n("Catalog"),P=n("Provider"),Z=n("Schema");' + WRAPPER + 'function nN(')
   .replace('let aN=', 'let nR=opaque;nR=other;function local(r){r=other;return r}let aN=');
 const WRAPPED_CHUNK = chunk(62056, OTHER, WRAPPED_REPLY);
 
@@ -262,11 +263,12 @@ test("published native wrapper reaches the renderer with local context shadows a
     source => source.replace('function nN(', 'function UnusedRenderer('),
     source => source.replace('function nR(', 'function side(value=(nR=other)){let nR;}function nR('),
     source => source.replace('function nR(', 'const side={[(nR=other)](){return null}};function nR('),
-    source => source.replace('return result!==', 'tree=null;return result!=='),
-    source => source.replace('return result!==', 'result=null;return result!=='),
-    source => source.replace('memo[1]=tree', 'memo[1]=null'),
-    source => source.replace('else tree=memo[1]', 'else tree=memo[0]'),
-    source => source.replace('value:{}', 'value:{sideEffect:(result=null)}'),
+    source => source.replace('return(0,r.jsxs)(P.Q.Provider', 'return(0,r.jsxs)(Other.Provider'),
+    source => source.replace('parsed=Z.dr.safeParse(reference)', 'parsed=Z.dr.safeParse(otherReference)'),
+    source => source.replace('source:parsed.data,onAutoSafeUrls:safe.approve', 'source:parsed.data,onAutoSafeUrls:other.approve'),
+    source => source.replace('safeUrls:safe.urls,', 'safeUrls:other.urls,'),
+    source => source.replace('}(context,parsed.data),', '}(other,parsed.data),'),
+    source => source.replace('return result}(context', 'return other}(context'),
   ]) assertUnpublishedOrUnsafe(t, WRAPPED_CHUNK, change);
   assertUnpublishedOrUnsafe(t, REPLY_CHUNK, source => source.replace('()=>nS', '()=>Other')
     .replace('function nS(', 'function Other(){return null}function nS('));
@@ -436,11 +438,11 @@ test("missing and damaged dependency replicas or chunk registrations refuse ever
 
 test("reply publication, current experiment props and native JSX imports remain authoritative", t => {
   for (const reply of [
-    REPLY_CHUNK.replace("experiment:z,", ""),
+    REPLY_CHUNK.replace("experiment:x,", ""),
     REPLY_CHUNK.replace('r=n("ABep")', 'r=other("ABep")'),
     REPLY_CHUNK.replace('tG=n("Fail")', 'tG=other("Fail")'),
     REPLY_CHUNK.replace("let aN=", "let r=other;let aN="),
-    REPLY_CHUNK.replace("experiment:z,", "experiment:r,"),
+    REPLY_CHUNK.replace("experiment:x,", "experiment:r,"),
     REPLY_CHUNK.replace("let a;", "let a;n=other;"),
     REPLY_CHUNK.replace("n.d(t,", "n.d(other,"),
   ]) {
@@ -602,7 +604,7 @@ test("actual signed failure seam executes with its factory require, native JSX a
   const owner = [...rspackModuleFactories(patched, "actual")].find(module => module.moduleSource.startsWith(MARKER_FOR_TEST));
   assert.ok(owner);
   const requireName = owner.params[2];
-  const reference = owner.moduleSource.match(/function [\w$]+\(\{experiment:[\w$]+,assistantMessageId:[\w$]+,reference:([\w$]+),source:([\w$]+),/);
+  const reference = owner.moduleSource.match(/\{experiment:[\w$]+,assistantMessageId:[\w$]+,reference:([\w$]+),source:([\w$]+),/);
   const seam = owner.moduleSource.match(/errorFallback:([\w$]+)\?null:\(0,([\w$]+)\.jsx\)\(codexLinuxDilMarkdownFallback,\{reference:([\w$]+),jsx:[\w$]+,failure:\(0,[\w$]+\.jsx\)\(([\w$]+)\.([\w$]+),\{stage:([\w$]+)\?\.stage,errorClass:[\w$]+\?\.errorClass\}\)\}\),diagnostics:/);
   assert.ok(reference && seam);
   assert.equal(reference[1], seam[3]);

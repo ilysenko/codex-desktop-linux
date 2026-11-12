@@ -119,37 +119,6 @@ function stableFunctionBinding(module, declaration, functions) {
   return true;
 }
 
-function nativeMemoReturnContract(body, returned, tree, objectEnd) {
-  const treeName = escapeRegExp(returned.tree), resultName = escapeRegExp(returned.result);
-  const header = new RegExp(`^let ${treeName},${resultName},(?<cache>${IDENT})=\\(0,(?<memoImport>${IDENT})\\.${IDENT}\\)\\((?<size>\\d+)\\),`, "u").exec(body)?.groups;
-  if (header == null || body[objectEnd + 1] !== ")") return null;
-  const cache = escapeRegExp(header.cache);
-  const stores = `${cache}\\[\\d+\\]=${IDENT}(?:,${cache}\\[\\d+\\]=${IDENT})*`;
-  const tail = new RegExp(`^\\}(?<stores>${stores})\\}else ${treeName}=${cache}\\[(?<treeSlot>\\d+)\\],` +
-    `${resultName}=${cache}\\[(?<resultSlot>\\d+)\\];return ${resultName}!==Symbol\\.for\\("react\\.early_return_sentinel"\\)\\?${resultName}:${treeName}$`, "u")
-    .exec(body.slice(objectEnd + 2))?.groups;
-  const size = Number(header.size);
-  if (tail == null || !Number.isSafeInteger(size) || size <= 0 || tail.treeSlot === tail.resultSlot) return null;
-  const entries = tail.stores.split(",").map(store => new RegExp(`^${cache}\\[(\\d+)\\]=(${IDENT})$`, "u").exec(store));
-  const slots = new Map(entries.map(entry => [entry[1], entry[2]]));
-  if (slots.size !== entries.length || entries.some(entry => Number(entry[1]) >= size) ||
-      slots.get(tail.treeSlot) !== returned.tree || slots.get(tail.resultSlot) !== returned.result ||
-      entries.filter(entry => entry[2] === returned.tree).length !== 1 ||
-      entries.filter(entry => entry[2] === returned.result).length !== 1) return null;
-
-  const expression = body.slice(tree.index + tree[0].indexOf("=") + 1, objectEnd + 2);
-  const lexical = createJavaScriptLexicalIndex(expression);
-  const parses = value => { try { new Script(`function memoValueProbe(${returned.tree},${returned.result}){return (${value})}`); return true; } catch { return false; } };
-  for (const token of expression.matchAll(IDENTIFIER_TOKENS)) {
-    const name = decodedIdentifier(token[0]);
-    if (![returned.tree, returned.result].includes(name) || !lexical.isCode(token.index) ||
-        [".", "#"].includes(expression[token.index - 1]) || /^\s*:/u.test(expression.slice(token.index + token[0].length))) continue;
-    const replace = value => expression.slice(0, token.index) + value + expression.slice(token.index + token[0].length);
-    if (!parses(replace("(0)")) && !parses(replace(`${name}:(0)`))) return null;
-  }
-  return { memoImport: header.memoImport };
-}
-
 function publishedRendererContract(module, publication, ownerName, ownerStart, jsx) {
   if (!new RegExp(`^${IDENT}$`, "u").test(publication.expression ?? "")) return false;
   const functions = rootFunctions(module);
@@ -161,33 +130,43 @@ function publishedRendererContract(module, publication, ownerName, ownerStart, j
 
   const wrapper = published[0], body = module.moduleSource.slice(wrapper.open + 1, wrapper.end);
   if (!new RegExp(`^${IDENT}$`, "u").test(wrapper.params)) return false;
-  const props = new RegExp(`\\{experiment:(?<experiment>${IDENT}),reference:(?<reference>${IDENT}),dilComponents:(?<components>${IDENT}),surface:(?<surface>${IDENT})\\}=${escapeRegExp(wrapper.params)}(?=[,;])`, "u").exec(body)?.groups;
-  const returned = new RegExp(`return (?<result>${IDENT})!==Symbol\\.for\\("react\\.early_return_sentinel"\\)\\?\\k<result>:(?<tree>${IDENT})$`, "u").exec(body)?.groups;
-  if (props == null || returned == null) return false;
-  const call = new RegExp(`\\(0,${escapeRegExp(jsx)}\\.jsx\\)\\(${escapeRegExp(ownerName)},\\{experiment:${escapeRegExp(props.experiment)},assistantMessageId:(?<context>${IDENT})\\.messageId,` +
-    `dilComponents:${escapeRegExp(props.components)}\\?\\?(?<catalog>${IDENT})\\.${IDENT},loadPublicComponents:void 0===${escapeRegExp(props.components)},` +
-    `reference:${escapeRegExp(props.reference)},source:(?<parsed>${IDENT})\\.data,surface:${escapeRegExp(props.surface)}\\}\\)`, "gu");
-  const calls = [...body.matchAll(call)].filter(match => createJavaScriptLexicalIndex(body).isCode(match.index));
+  const lexical = createJavaScriptLexicalIndex(body);
+  const rootMatches = pattern => [...body.matchAll(pattern)].filter(match => lexical.isRoot(match.index));
+  const props = rootMatches(new RegExp(`\\{experiment:(?<experiment>${IDENT}),reference:(?<reference>${IDENT}),dilComponents:(?<components>${IDENT}),surface:(?<surface>${IDENT})\\}=${escapeRegExp(wrapper.params)}(?=[,;])`, "gu"));
+  if (props.length !== 1) return false;
+  const fields = props[0].groups;
+  const call = new RegExp(`\\(0,${escapeRegExp(jsx)}\\.jsx\\)\\(${escapeRegExp(ownerName)},\\{experiment:${escapeRegExp(fields.experiment)},assistantMessageId:(?<context>${IDENT})\\.messageId,` +
+    `dilComponents:${escapeRegExp(fields.components)}\\?\\?(?<catalog>${IDENT})\\.${IDENT},loadPublicComponents:void 0===${escapeRegExp(fields.components)},` +
+    `reference:${escapeRegExp(fields.reference)},source:(?<parsed>${IDENT})\\.data,onAutoSafeUrls:(?<safeUrls>${IDENT})\\.approve,surface:${escapeRegExp(fields.surface)}\\}\\)`, "gu");
+  const calls = [...body.matchAll(call)].filter(match => lexical.isCode(match.index));
   if (calls.length !== 1) return false;
-  const [mounted] = calls, { context, catalog, parsed } = mounted.groups;
-  const parse = new RegExp(`let ${escapeRegExp(parsed)}=(?<schema>${IDENT})\\.safeParse\\(${escapeRegExp(props.reference)}\\),`, "u").exec(body)?.groups;
-  const provider = new RegExp(`${escapeRegExp(context)}=\\(0,(?<provider>${IDENT})\\.${IDENT}\\)\\(\\)`, "u").exec(body)?.groups;
-  if (parse == null || provider == null) return false;
-  const tree = new RegExp(`${escapeRegExp(returned.tree)}=\\(0,${escapeRegExp(jsx)}\\.jsxs\\)\\(${escapeRegExp(provider.provider)}\\.${IDENT}\\.Provider,\\{`, "u").exec(body);
-  if (tree == null) return false;
-  const open = tree.index + tree[0].length - 1, end = findMatchingBrace(body, open);
+  const [mounted] = calls, { context, catalog, parsed, safeUrls } = mounted.groups;
+  const parses = rootMatches(new RegExp(`(?<![\\w$.])${escapeRegExp(parsed)}=(?<schema>${IDENT})\\.${IDENT}\\.safeParse\\(${escapeRegExp(fields.reference)}\\),`, "gu"));
+  const providers = rootMatches(new RegExp(`(?<![\\w$.])${escapeRegExp(context)}=\\(0,(?<provider>${IDENT})\\.${IDENT}\\)\\(\\)`, "gu"));
+  if (parses.length !== 1 || providers.length !== 1) return false;
+  const trees = rootMatches(new RegExp(`return\\(0,${escapeRegExp(jsx)}\\.jsxs\\)\\(${escapeRegExp(providers[0].groups.provider)}\\.${IDENT}\\.Provider,\\{`, "gu"));
+  if (trees.length !== 1) return false;
+  const tree = trees[0], open = tree.index + tree[0].length - 1, end = findMatchingBrace(body, open);
   const child = new RegExp(`children:\\[\\(0,${escapeRegExp(jsx)}\\.jsx\\)\\(${IDENT},\\{children:$`, "u");
-  if (mounted.index <= open || mounted.index + mounted[0].length >= end ||
-      !child.test(body.slice(open, mounted.index))) return false;
-  const memo = nativeMemoReturnContract(body, returned, tree, end);
-  if (memo == null) return false;
-  const schema = new RegExp(`(?:^|;)let ${escapeRegExp(parse.schema)}=${IDENT}\\.object\\(\\{`, "gu");
-  const factoryLexical = createJavaScriptLexicalIndex(module.moduleSource);
-  const schemas = [...module.moduleSource.matchAll(schema)].filter(match => factoryLexical.isRoot(match.index));
-  if (schemas.length !== 1) return false;
-  const imports = [...new Set([jsx, catalog, provider.provider, memo.memoImport])];
+  if (body.slice(end + 1) !== ")" || mounted.index <= open || mounted.index + mounted[0].length >= end ||
+      !child.test(body.slice(open, mounted.index)) ||
+      !new RegExp(`safeUrls:${escapeRegExp(safeUrls)}\\.urls,`, "u").test(body.slice(open, mounted.index))) return false;
+
+  const safeProducers = rootMatches(new RegExp(`(?<![\\w$.])${escapeRegExp(safeUrls)}=function\\((${IDENT}),(${IDENT})\\)\\{`, "gu"));
+  if (safeProducers.length !== 1) return false;
+  const safe = safeProducers[0], safeOpen = safe.index + safe[0].length - 1, safeEnd = findMatchingBrace(body, safeOpen);
+  if (!body.startsWith(`(${context},${parsed}.data),`, safeEnd + 1)) return false;
+  const safeBody = body.slice(safeOpen + 1, safeEnd), safeLexical = createJavaScriptLexicalIndex(safeBody);
+  const safeValues = [...safeBody.matchAll(new RegExp(`(?<result>${IDENT})=\\{approve:${IDENT},urls:${IDENT}\\}`, "gu"))]
+    .filter(match => safeLexical.isRoot(match.index));
+  const safeReturns = [...safeBody.matchAll(/\breturn\b/gu)].filter(match => safeLexical.isRoot(match.index));
+  if (safeValues.length !== 1 || safeReturns.length !== 1 ||
+      !new RegExp(`(?:return |,)${escapeRegExp(safeValues[0].groups.result)}$`, "u").test(safeBody) ||
+      !safeBody.includes(`${safe[2]}?.source_safe_urls`)) return false;
+
+  const imports = [...new Set([jsx, catalog, providers[0].groups.provider, parses[0].groups.schema])];
   if (!imports.every(name => importBindingProbe(module, name)?.valid === true)) return false;
-  try { new Script(wrapper.source.slice(0, -1) + `;let ${ownerName};let ${parse.schema};` + imports.map(name => `let ${name};`).join("") + "}"); }
+  try { new Script(wrapper.source.slice(0, -1) + `;let ${ownerName};` + imports.map(name => `let ${name};`).join("") + "}"); }
   catch { return false; }
   return true;
 }
