@@ -254,8 +254,10 @@ to the native suggestion component; card-to-composer actions remain upstream.
 Work Home uses a separate native suggestion component. Its page, lazy route,
 mode-preparation callback, runtime gates, query and editor actions must resolve
 through the current native imports before any page copy is changed. The query
-uses the current host, mode and Home-feed capability; project and Work execution
-location are destination metadata, rather than query keys. Selection prepares
+keys include the current account, host, mode, Home-feed capability and
+`supportsSavedLessonChat` value. The request forwards the host, mode and
+`supportsSavedLessonChat` value to the native service. Project and Work execution
+location remain destination metadata. Selection prepares
 the destination mode and the native content action then fills and focuses the
 composer. A card without the native auto-send flag fills and focuses without sending. The upstream
 account, draft, document and hint checks remain in place across preparation.
