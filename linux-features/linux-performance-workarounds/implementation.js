@@ -136,7 +136,7 @@ function layoutAnimationFlags(source) {
     const matches = [...body.matchAll(renderPattern)].filter(inCode);
     if (matches.length !== candidates.length) return [];
     for (const match of matches) {
-      const { tab, index, selected, element, expression } = match.groups;
+      const { tab, index, element, expression } = match.groups;
       const entry = escapeRegExp(tab), position = escapeRegExp(index);
       const open = match.index + match[0].indexOf(".render({") + ".render(".length;
       const close = findMatchingBrace(body, open);
