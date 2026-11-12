@@ -3,8 +3,9 @@ const assert=require("node:assert/strict"),fs=require("node:fs"),os=require("nod
 const {prepareAutoConnect:prepare,locateAutoConnect:locate,applyAutoConnect:apply}=require("./auto-connect-contract.js");
 const {patchWebviewAssets}=require("../../scripts/patches/lib/assets.js");
 const c=require("./auto-connect-contracts.js"),h=require("./fixtures/auto-connect-harness.js");
-const {createJavaScriptLexicalIndex}=require("../../scripts/patches/lib/minified-js.js");
+const {createJavaScriptLexicalIndex,escapeRegExp}=require("../../scripts/patches/lib/minified-js.js");
 const native=h.sources(),mainName=Object.keys(native).find(name=>name.startsWith(".vite/")),settingsName="webview/assets/async/settings.js",clean=value=>JSON.parse(JSON.stringify(value));
+const currentSettings=h.settingsParts(native);
 function mutate(from,to,name=settingsName,input=native){assert.ok(input[name].includes(from),from);return{...input,[name]:input[name].replace(from,to)}}
 function reject(input){assert.throws(()=>prepare(h.snapshots(input)),/Remote auto-connect|Remote copy scope|Remote connections owners|SyntaxError/)}
 function temporary(fn){const root=fs.mkdtempSync(path.join(os.tmpdir(),"remote-auto-connect-"));try{return fn(root)}finally{fs.rmSync(root,{recursive:true,force:true})}}
@@ -65,10 +66,10 @@ test("bounded actual row controls read stored checked choice and forward supplie
 test("missing or disconnected Settings never qualifies the main service as its own caller",()=>{
  const cohort=h.snapshots();for(const role of["main","settings","facade","bootstrap"])assert.throws(()=>prepare({...cohort,[role]:[]}),/missing/);
  reject(mutate('return o.setAutoConnect({hostId:t,autoConnect:n})','return o.setAutoConnect({hostId:n,autoConnect:t})'));
- reject(mutate('mutationFn:nh','mutationFn:foreign'));
+ reject(mutate('mutationFn:ng','mutationFn:foreign'));
  reject(mutate('onToggleConnection:oD','onToggleConnection:foreign'));
  reject(mutate('children:[tl,tc,td,tu,tm]','children:[tl,tc,td,null,null]'));
- reject(mutate('RemoteConnectionsSettings:()=>t8','RemoteConnectionsSettings:()=>foreign'));
+ reject(mutate('RemoteConnectionsSettings:()=>t6','RemoteConnectionsSettings:()=>foreign'));
 });
 test("wrong persisted key, getter fallback, write order, live service or host choice refuses",()=>{
  for(const[from,to]of[
@@ -77,7 +78,9 @@ test("wrong persisted key, getter fallback, write order, live service or host ch
   ['this.ensureRemoteConnectionConnected(e)','this.ensureRemoteConnectionConnected(t)'],['this.disconnectRemoteConnection(e)','this.disconnectRemoteConnection(t)'],
   ['return this.connections.setRemoteConnectionAutoConnect(e.hostId,e.autoConnect)','return this.connections.setRemoteConnectionAutoConnect(e.autoConnect,e.hostId)'],
   ['new edV(this.appState,','new foreign(this.appState,'],['remoteConnections:new edM(o=this.remoteConnectionsHandler','remoteConnections:new edM(o=this.unrelatedHandler'],
-  ['var ei=r(40614)','var ei=r(1)'],['en=r(12892)','en=r(1)'],
+  ['var ei=r(24240)','var ei=r(1)'],['en=r(33491)','en=r(1)'],
+  ['edC=r(23507)','edC=r(1)'],[',edC=r(23507)',''],
+  ['new edC.M(', 'new edC.Q('],['edC.Q.map(', 'edC.M.map('],
   ['this.remoteConnectionsHandler=new edV','if(false)this.remoteConnectionsHandler=new edV'],
   ['return new Er({','if(false)return new Er({'],
   ['return new Er({','return null;return new Er({'],
@@ -85,10 +88,15 @@ test("wrong persisted key, getter fallback, write order, live service or host ch
  const setter=c.mainPersistentSetter;reject(mutate(setter,setter.replace('this.appState.set(ei.Q2Y.REMOTE_CONNECTION_AUTO_CONNECT_BY_HOST_ID,{...r,[e]:t});','').replace('let n=await this.refreshRemoteConnectionsForHostId(e);','let n=await this.refreshRemoteConnectionsForHostId(e);this.appState.set(ei.Q2Y.REMOTE_CONNECTION_AUTO_CONNECT_BY_HOST_ID,{...r,[e]:t});'),mainName));
 });
 test("main classes/imports and generator/ordinary duplicate methods cannot replace native authorities",()=>{
- for(const statement of['edM=foreign;','edV=foreign;','ei=foreign;','en=foreign;','function ei(){}','function* en(){}','function /*head*/ * /*name*/ ei(){}'])reject(mutate('class RequestWrapper',statement+'class RequestWrapper',mainName));
+ for(const statement of['edM=foreign;','edV=foreign;','ei=foreign;','en=foreign;','edC=foreign;','function edC(){}','function ei(){}','function* en(){}','function /*head*/ * /*name*/ ei(){}'])reject(mutate('class RequestWrapper',statement+'class RequestWrapper',mainName));
  reject(mutate(c.mainPersistentSetter,c.mainPersistentSetter+'*setRemoteConnectionAutoConnect(e,t){}',mainName));
  reject(mutate('createAppHost(e){let o,c,g;','createAppHost(e){let o,c,g,edM;',mainName));
  reject(mutate('this.seen=[]}','this.remoteConnectionsHandler=foreign;this.seen=[]}',mainName));
+});
+test("native visualization service preserves its current connection provider argument",()=>{
+ const nativeOwner=c.mainVisualizationOwner;assert.ok(nativeOwner.includes(",void 0,n)"));
+ reject(mutate(nativeOwner,nativeOwner.replace(",void 0,n)",",void 0)"),mainName));
+ reject(mutate(nativeOwner,nativeOwner.replace(",void 0,n)",",void 0,foreign)"),mainName));
 });
 test("late facade getter/setter, bootstrap ordering and every physical peer are required",()=>{
  reject(mutate('appServices:()=>i','appServices:()=>n','webview/assets/async/facade-b.js'));
@@ -104,13 +112,13 @@ test("changed pending/error behavior, captured locals, disconnected list caches 
  for(const[from,to]of[
   ['of=oc.isPending','of=false'],['om.isPending||og.isPending','foreign.isPending||og.isPending'],
   ['om.mutateAsync({hostId:e,autoConnect:t','om.mutateAsync({hostId:t,autoConnect:e'],['.finally(s)},tw[148]','.finally(()=>{})},tw[148]'],
-  ['checked:P.autoConnect','checked:!P.autoConnect'],['e=>X(P.hostId,e)','e=>X(e,P.hostId)'],['ex=Z.autoConnect','ex=Z.autoConnect||true'],['w=e=>Y(Z.hostId,e)','w=e=>Y(e,Z.hostId)'],
-  ['onToggleConnection:P},e.hostId)','onToggleConnection:foreign},e.hostId)'],['let ok=eJ,oD=','let ok=foreign,oD='],
-  ['let om=(0,l.n)(eO);','let om=(0,l.n)(foreign);'],['return tw[326]','return null;return tw[326]'],
+  ['checked:T.autoConnect','checked:!T.autoConnect'],['e=>X(T.hostId,e)','e=>X(e,T.hostId)'],['ex=Z.autoConnect','ex=Z.autoConnect||true'],['w=e=>Y(Z.hostId,e)','w=e=>Y(e,Z.hostId)'],
+  ['onToggleConnection:T},e.hostId)','onToggleConnection:foreign},e.hostId)'],['let oO=eJ,oD=','let oO=foreign,oD='],
+  ['let om=(0,l.n)(ek);','let om=(0,l.n)(foreign);'],['return tw[326]','return null;return tw[326]'],
   ['tw[237]!==n9','if(false)tw[237]!==n9'],
  ])reject(mutate(from,to));
- for(const statement of['om=foreign;','ok=foreign;','oD=foreign;','tw=foreign;','eO=foreign;','eJ=foreign;','tM=foreign;','tI=foreign;','tN=foreign;'])reject(mutate('let oW=null!=nH;',statement+'let oW=null!=nH;'));
- for(const name of['nh','t8','tA','ti','tw','T'])for(const declaration of[`function ${name}(unused=()=>{}){return null}`,`function* ${name}(){return null}`])reject(mutate('function nw(e,t){',declaration+'function nw(e,t){'));
+ for(const statement of['om=foreign;','oO=foreign;','oD=foreign;','tw=foreign;','ek=foreign;','eJ=foreign;','tM=foreign;','tI=foreign;','t_=foreign;'])reject(mutate('let oW=null!=nH;',statement+'let oW=null!=nH;'));
+ for(const name of currentSettings.criticalNames)for(const declaration of[`function ${name}(unused=()=>{}){return null}`,`function* ${name}(){return null}`])reject(mutate(currentSettings.entryHead,declaration+currentSettings.entryHead));
  reject(mutate('eJ=async(e,t,n)=>{','eJ=async(e,t,om)=>{'));
 });
 test("all selected dependency bytes are preflighted, including symlinks; no-op needs no write permission",()=>temporary(root=>{
@@ -136,8 +144,8 @@ test("map spread binding rejects a declaration-only rename and accepts coherent 
 });
 test("ternary value identifiers retain the declaration binding while object property keys stay literal",()=>{
  reject(mutate('let eu=x;','let wrongTooltip=x;'));
- const row=c.rendererRemoteControlRow.replace('let eu=x;','let longerTooltip=x;').replace('P.online?eu:ed','P.online?longerTooltip:ed');
- assert.equal(prepare(h.snapshots(mutate(c.rendererRemoteControlRow,row))).alreadyApplied,true);
+ const row=currentSettings.remoteRow.replace('let eu=x;','let longerTooltip=x;').replace('T.online?eu:ed','T.online?longerTooltip:ed');
+ assert.equal(prepare(h.snapshots(mutate(currentSettings.remoteRow,row))).alreadyApplied,true);
 });
 
 test("owned handler and live host methods reject bare, quoted, computed, accessor and field overrides",()=>{
@@ -180,9 +188,10 @@ test("fixed-key native service spreads accept coherent longer local and producer
  assert.equal(prepare(h.snapshots(mutate('},remoteControlEnvironments:','},...{"unrelated":true},remoteControlEnvironments:',mainName))).alreadyApplied,true);
 });
 test("native returned fragment must be terminal and coherent longer result aliases still qualify",()=>{
- for(const suffix of[',null',',foreignResult',';return null'])reject(mutate(c.rendererFinalFragment+'}',c.rendererFinalFragment+suffix+'}'));
- const input={...native},copy=h.snapshots(input).settings[0],scope=require('./remote-copy-scope.js'),entry=scope.publishedRootFunction(copy,'RemoteConnectionsSettings'),body=entry.source,lex=createJavaScriptLexicalIndex(body),edits=[...body.matchAll(/(?<![\w$.])ty(?![\w$])/gu)].filter(row=>lex.isCode(row.index));let renamed=body;
- for(const row of edits.reverse())renamed=renamed.slice(0,row.index)+'longerReturnedFragment'+renamed.slice(row.index+2);
+ for(const suffix of[',null',',foreignResult',';return null'])reject(mutate(currentSettings.finalFragment+'}',currentSettings.finalFragment+suffix+'}'));
+ const input={...native},copy=h.snapshots(input).settings[0],scope=require('./remote-copy-scope.js'),entry=scope.publishedRootFunction(copy,'RemoteConnectionsSettings'),body=entry.source,lex=createJavaScriptLexicalIndex(body),edits=[...body.matchAll(new RegExp(`(?<![\\w$.])${escapeRegExp(currentSettings.result)}(?![\\w$])`,"gu"))].filter(row=>lex.isCode(row.index));let renamed=body;
+ assert.ok(edits.length>0,"the current returned result must be renamed");
+ for(const row of edits.reverse())renamed=renamed.slice(0,row.index)+'longerReturnedFragment'+renamed.slice(row.index+currentSettings.result.length);
  input[settingsName]=copy.source.slice(0,copy.start+entry.start)+renamed+copy.source.slice(copy.start+entry.end);assert.equal(prepare(h.snapshots(input)).alreadyApplied,true);
 });
 
@@ -245,13 +254,28 @@ function mainImportInternals(overrides = {}) {
   const load = name => Object.hasOwn(overrides, name) ? overrides[name] : localRequire(name);
   const body = fs.readFileSync(file, "utf8");
   const factory = new vm.Script("(function(require,module,exports){" + body +
-    "\nreturn {readMainNumericImport, mainImport, mainImportFrame};})", {filename: file}).runInThisContext();
+    "\nreturn {readMainNumericImport, mainImport, mainImportFrame, exact};})", {filename: file}).runInThisContext();
   return factory(load, module, module.exports);
 }
 
 function mainImportFixture(body, parameters = ["e", "t", "r"]) {
   return {identity: "finite-main", start: 37, body, parameters};
 }
+
+test("function assignments rename independently while native class field names remain literal", () => {
+  const local = mainImportInternals();
+  assert.doesNotThrow(() => local.exact(
+    "function other(){let S,y;S=null==y?null:y.value;return S}",
+    "function row(){let y,S;y=null==S?null:S.value;return y}"));
+  const nativeClass = "class Owner{connections;constructor(input){this.connections=input}}";
+  assert.doesNotThrow(() => local.exact(
+    "class Renamed{connections;constructor(value){this.connections=value}}", nativeClass));
+  assert.throws(() => local.exact(
+    "class Renamed{different;constructor(value){this.connections=value}}", nativeClass), /divergent bounded native policy/);
+  assert.throws(() => local.exact(
+    "function factory(){class Renamed{different;constructor(value){this.connections=value}}}",
+    "function factory(){class Owner{connections;constructor(input){this.connections=input}}}"), /divergent bounded native policy/);
+});
 
 test("v5 numeric main import tuples agree with the shared reader on small carriers", () => {
   const local = mainImportInternals();
@@ -362,7 +386,7 @@ test("v5 native cohort and coherent namespace aliases retain zero-edit qualifica
   let renamed = source;
   for (const row of replacements.reverse()) renamed = renamed.slice(0, row.index) + "LongerNativeState" + renamed.slice(row.index + 2);
   assert.equal(prepare(h.snapshots({...native, [mainName]: renamed})).alreadyApplied, true);
-  reject(mutate("var ei=r(40614)", "var renamedOnly=r(40614)", mainName));
+  reject(mutate("var ei=r(24240)", "var renamedOnly=r(24240)", mainName));
 });
 
 function hostConstructorEdit(input, transform) {

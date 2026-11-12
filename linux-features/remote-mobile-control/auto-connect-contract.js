@@ -16,11 +16,20 @@ function parses(text) { try { new Script(text);return true; } catch { return fal
 // property names and all opaque bytes remain literal. This is not an AST/CFG.
 function expression(text, seeds = {}, whole = false) {
   const lex = createJavaScriptLexicalIndex(text), fixed = new Set(FIXED), names = new Map(), roles = [], used = new Set();
+  const classBodies = [...text.matchAll(/\bclass(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)?\s*\{/gu)]
+    .filter(row => lex.isCode(row.index)).map(row => {
+      const start = row.index + row[0].length, closing = lex.matchingBrace(start - 1);
+      const end = closing < 0 ? text.length : closing;
+      return { start, end, lexical: createJavaScriptLexicalIndex(text.slice(start, end)) };
+    });
   let out = whole ? "^" : "", cursor = 0;
   for (const token of text.matchAll(/[A-Za-z_$][\w$]*/gu)) {
     const name = token[0], at = token.index;
     const before=text.slice(0,at),after=text.slice(at+name.length);
-    const field=/[;{]\s*$/u.test(before)&&/^[;=]/u.test(after);
+    // A statement assignment inside a function is an alpha-renamable binding.
+    // Literal field names belong to the root member list of a class template.
+    const field = /[;{]\s*$/u.test(before) && /^[;=]/u.test(after) &&
+      classBodies.some(body => body.start <= at && at < body.end && body.lexical.isRoot(at - body.start));
     const method=/^(?:\s*)\(/u.test(after)&&(/[;{}]\s*(?:(?:async|get|set)\s+)*$/u.test(before)||/,\s*(?:async|get|set)\s+$/u.test(before));
     const member=text[at-1]==="."&&text.slice(at-3,at)!=="...";
     const key=/[,{]\s*$/u.test(before)&&/^\s*:/u.test(after);
@@ -472,13 +481,15 @@ function inspectAutoConnectMain(source) {
   field(host,"appState");field(host,"remoteConnectionsHandler");
   const construction = one([...ctor.body.matchAll(/this\.remoteConnectionsHandler=new ([A-Za-z_$][\w$]*)\(this\.appState,/gu)].filter(row => lex.isCode(row.index) && lex.isRoot(row.index)), "live handler construction");
   const handler = rootClass(factory, construction[1]);method(handler,"constructor");field(handler,"appState");
-  const handlerPrefix = expression(contract.mainHandlerHeaderAndConstructor, { edV: handler.name }).regex.exec(handler.source);
+  const handlerPattern = expression(contract.mainHandlerHeaderAndConstructor, { edV: handler.name });
+  const handlerPrefix = handlerPattern.regex.exec(handler.source);
   if (!handlerPrefix || handlerPrefix.index !== 0) fail("native handler constructor/state binding");
+  mainImport(factory, bindings(handlerPattern, handlerPrefix).edC, "23507");
   const setter = exact(method(handler, "setRemoteConnectionAutoConnect", true).source, contract.mainPersistentSetter);
   const getters = method(handler, "getAutoConnectForRemoteConnection").source + method(handler, "getRemoteConnectionAutoConnectByHostId").source;
   const getRoles = exact(getters, contract.mainChoiceAndMapGetters, { ei: setter.ei });
   exact(method(handler, "clearRemoteConnectionAutoConnect").source, contract.mainClearChoice, { ei: getRoles.ei });
-  mainImport(factory, setter.ei, "40614");
+  mainImport(factory, setter.ei, "24240");
   // A native constructor expression and its same-host service return must be
   // actual live host methods, never nested examples or dead conditional blocks.
   const makePattern = expression(contract.mainLiveHandlerConstruction, { edV: handler.name });
@@ -509,7 +520,7 @@ function inspectAutoConnectMain(source) {
     services.push({ row, pub, roles: pubRoles, appHostClass:returned[1], visualization });
   }
   const publication = one(services, "unique live remoteConnections publication"), service = rootClass(factory, publication.row[1]);
-  const serviceRoles = exact(service.source, contract.mainServiceClass, { edM: service.name });mainImport(factory, serviceRoles.en, "12892");
+  const serviceRoles = exact(service.source, contract.mainServiceClass, { edM: service.name });mainImport(factory, serviceRoles.en, "33491");
   const appHost=rootClass(factory,publication.appHostClass);exact(appHost.source,contract.mainAppHostClass,{Er:appHost.name,en:serviceRoles.en});
   const constructorClose = ctor.at + ctor.source.length - 1 - host.start;
   if (host.source[constructorClose] !== "}" || !parses(host.source)) fail("invalid constructor provider context");
@@ -586,7 +597,7 @@ function inspectAutoConnectSettings(copy) {
   if (!(memo.at < cache.at && cache.at + cache.text.length <= action.at)) fail("native callback declaration order");
   // Imports referenced by the native policy must retain their identities, even
   // where the component legitimately shadows other same-spelled imports.
-  const ids = { s: "QosV", l: "xSOA", v: "zbf8", i: "iRMi", W: "WFY2", R: "SGsN", w: "q0Ps", y: "tl5a", S: "rljs", m: "DBCl", o: "ABep" };
+  const ids = { s: "QosV", l: "xSOA", v: "zbf8", i: "iRMi", W: "WFY2", R: "SGsN", w: "cfCu", y: "tl5a", S: "rljs", m: "DBCl", o: "ABep" };
   // Logger/toast IDs come from the native selected settings module; unlike
   // policy helpers their public import IDs are recorded in the fixture below.
   for (const [name, id] of Object.entries(ids)) {
@@ -664,8 +675,8 @@ function inspectAutoConnectBootstrap(copy) {
   const roles=exact(copy.moduleSource,contract.rendererBootstrapModule,{e:copy.params[0],t:copy.params[1],n:copy.params[2]});
   const entry=scope.publishedRootFunction(copy,"Y");if(entry.name!==roles.ee)fail("bootstrap published initializer");
   scope.requireImport(copy,roles.J,entry.start,"GaA7");
-  scope.requireImport(copy,roles.Z,entry.start,"ay3C");
-  scope.requireImport(copy,roles.a,entry.start,"xS4d");
+  scope.requireImport(copy,roles.Q,entry.start,"ay3C");
+  scope.requireImport(copy,roles.s,entry.start,"xS4d");
   return { facadeId:"GaA7", entry:entry.name };
 }
 function prepareAutoConnect(cohort) {
