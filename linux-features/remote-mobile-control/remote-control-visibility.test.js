@@ -95,10 +95,10 @@ test("actualAPI joint output inverses to exact actualUI-only/mobile-only bytes w
 test("missing/ambiguous/damaged physical peers, publications, scope and canonical tampering refuse", () => {
   const asset = index => fixture.roles.visibility[index].sourceAsset.replace("webview/assets/", "");
   rejects(s => { s[asset(4)] = s[asset(4)].replace('accessRequired!==!0', 'accessRequired===!1'); });
-  rejects(s => { s[asset(0)] = s[asset(0)].replace('Zi:l,', 'Other:l,'); });
+  rejects(s => { s[asset(0)] = s[asset(0)].replace('Zi:s,', 'Other:s,'); });
   rejects(s => { s[asset(0)] = s[asset(0)].replace('"xS4d"', '"otherCatalog"'); });
-  rejects(s => { s[asset(0)] = s[asset(0)].replace('s.mC', 's.Ik'); });
-  rejects(s => { s[asset(0)] = s[asset(0)].replace('function l(', 's={mC:()=>true};function l('); });
+  rejects(s => { s[asset(0)] = s[asset(0)].replace('o.mC', 'o.Ik'); });
+  rejects(s => { s[asset(0)] = s[asset(0)].replace('function s(', 'o={mC:()=>true};function s('); });
   rejects(s => { s[asset(0)] = s[asset(0)].replace('"control-this-mac"', '"control-this -mac"'); });
   rejects(s => { s[asset(0)] = s[asset(0)].replace('return"wsl"', 'return\n"wsl"'); });
   const canonical = applyEdits(sources(), prepare(snapshots()));

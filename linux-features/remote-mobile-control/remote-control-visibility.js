@@ -134,8 +134,9 @@ function prepareRemoteMobileVisibility(input, enabled = true) {
   const first = visibility[0];
   if (visibility.some(proof => proof.ui !== first.ui || proof.mobile !== first.mobile)) fail("partially applied visibility cohort");
   const view = first.imports, catalog = catalogs[0].imports, gate = owners[0].imports;
-  if (view[2].moduleId !== cohort.catalog[0].moduleId || view[3].moduleId !== cohort.gate[0].moduleId ||
-      view[1].moduleId !== catalog[1].moduleId || view[1].moduleId !== gate[0].moduleId || catalog[2].moduleId !== gate[3].moduleId) fail("unbound catalog/gate scope");
+  if (view[0].moduleId !== gate[0].moduleId ||
+      view[2].moduleId !== cohort.catalog[0].moduleId || view[3].moduleId !== cohort.gate[0].moduleId ||
+      view[1].moduleId !== catalog[1].moduleId || view[1].moduleId !== gate[1].moduleId || catalog[2].moduleId !== gate[4].moduleId) fail("unbound catalog/gate scope");
   const grouped = new Map();
   for (const role of roles) for (const copy of cohort[role]) {
     const group = grouped.get(copy.assetName);

@@ -1,5 +1,5 @@
 {
-  "version": "26.1103.32239",
+  "version": "26.1106.51428",
   "roles": {
     "visibility": [
       {
@@ -9,14 +9,8 @@
           "t",
           "n"
         ],
-        "moduleSource": "var o=n(\"QosV\"),i=n(\"zTeN\"),a=n(\"xS4d\"),s=n(\"PIwo\");function l({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:o,showRemoteSshConnections:i,showTabbedSshPage:a,isWslConnectionsLoading:s,showWslConnections:l}){return\"wsl\"===e&&s?\"wsl\":o?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||t?\"ssh\"!==e||a?\"wsl\"!==e||l?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&l?\"wsl\":i?\"ssh\":\"access-other-devices\"},Zi:l,wi:function(){let e,t=(0,o.c)(3),n=(0,i.Ul)(a.h9),r=(0,s.mC)();return t[0]!==n||t[1]!==r?(e=l({remoteControlConnectionsState:n,slingshotEnabled:r}),t[0]=n,t[1]=r,t[2]=e):e=t[2],e}})",
-        "sourceAsset": "webview/assets/async/18538.a9891f5e3f.js",
-        "sourceFilePin": {
-          "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/18538.a9891f5e3f.js",
-          "sha256": "f889941bfc7e61ba1983908ed09eaa986c21e38bfb45a95bd025668430d08f99",
-          "bytes": 121225,
-          "mode": "0644"
-        }
+        "moduleSource": "var i=n(\"QosV\"),a=n(\"zTeN\"),r=n(\"xS4d\"),o=n(\"PIwo\");function s({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:i,showRemoteSshConnections:a,showTabbedSshPage:r,isWslConnectionsLoading:o,showWslConnections:s}){return\"wsl\"===e&&o?\"wsl\":i?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||t?\"ssh\"!==e||r?\"wsl\"!==e||s?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&s?\"wsl\":a?\"ssh\":\"access-other-devices\"},Zi:s,wi:function(){let e,t=(0,i.c)(3),n=(0,a.Ul)(r.h9),l=(0,o.mC)();return t[0]!==n||t[1]!==l?(e=s({remoteControlConnectionsState:n,slingshotEnabled:l}),t[0]=n,t[1]=l,t[2]=e):e=t[2],e}})",
+        "sourceAsset": "webview/assets/async/160740.20fabf4348.js"
       },
       {
         "moduleId": "uodG",
@@ -26,45 +20,7 @@
           "t"
         ],
         "moduleSource": "var i=t(\"QosV\"),a=t(\"zTeN\"),o=t(\"xS4d\"),n=t(\"PIwo\");function r({remoteControlConnectionsState:e,slingshotEnabled:s}){return s&&(e?.available??!0)&&e?.accessRequired!==!0}t.d(s,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:s,showControlThisMacTab:t,showRemoteControlConnectionsSection:i,showRemoteSshConnections:a,showTabbedSshPage:o,isWslConnectionsLoading:n,showWslConnections:r}){return\"wsl\"===e&&n?\"wsl\":i?\"control-this-mac\"!==e||t?\"access-other-devices\"!==e||s?\"ssh\"!==e||o?\"wsl\"!==e||r?e:\"ssh\":s?\"access-other-devices\":\"control-this-mac\":t?\"control-this-mac\":\"ssh\":s?\"access-other-devices\":\"ssh\":\"wsl\"===e&&r?\"wsl\":a?\"ssh\":\"access-other-devices\"},Zi:r,wi:function(){let e,s=(0,i.c)(3),t=(0,a.Ul)(o.h9),l=(0,n.mC)();return s[0]!==t||s[1]!==l?(e=r({remoteControlConnectionsState:t,slingshotEnabled:l}),s[0]=t,s[1]=l,s[2]=e):e=s[2],e}})",
-        "sourceAsset": "webview/assets/async/224153.d14796e32c.js",
-        "sourceFilePin": {
-          "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/224153.d14796e32c.js",
-          "sha256": "6699cfb3ee82a6f4c82cc73dc137e74d12a7f078b3d673beec66f08dd2faa2e3",
-          "bytes": 113026,
-          "mode": "0644"
-        }
-      },
-      {
-        "moduleId": "uodG",
-        "params": [
-          "e",
-          "t",
-          "n"
-        ],
-        "moduleSource": "var a=n(\"QosV\"),o=n(\"zTeN\"),r=n(\"xS4d\"),i=n(\"PIwo\");function s({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:a,showRemoteSshConnections:o,showTabbedSshPage:r,isWslConnectionsLoading:i,showWslConnections:s}){return\"wsl\"===e&&i?\"wsl\":a?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||t?\"ssh\"!==e||r?\"wsl\"!==e||s?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&s?\"wsl\":o?\"ssh\":\"access-other-devices\"},Zi:s,wi:function(){let e,t=(0,a.c)(3),n=(0,o.Ul)(r.h9),l=(0,i.mC)();return t[0]!==n||t[1]!==l?(e=s({remoteControlConnectionsState:n,slingshotEnabled:l}),t[0]=n,t[1]=l,t[2]=e):e=t[2],e}})",
-        "sourceAsset": "webview/assets/async/324957.115c5118a6.js",
-        "sourceFilePin": {
-          "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/324957.115c5118a6.js",
-          "sha256": "b544ff4a6fb6833cfbe4e5b703f8ed45864067eb0f011e8f11106a082316f31d",
-          "bytes": 128182,
-          "mode": "0644"
-        }
-      },
-      {
-        "moduleId": "uodG",
-        "params": [
-          "e",
-          "t",
-          "a"
-        ],
-        "moduleSource": "var n=a(\"QosV\"),i=a(\"zTeN\"),s=a(\"xS4d\"),r=a(\"PIwo\");function o({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}a.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:a,showRemoteControlConnectionsSection:n,showRemoteSshConnections:i,showTabbedSshPage:s,isWslConnectionsLoading:r,showWslConnections:o}){return\"wsl\"===e&&r?\"wsl\":n?\"control-this-mac\"!==e||a?\"access-other-devices\"!==e||t?\"ssh\"!==e||s?\"wsl\"!==e||o?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":a?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&o?\"wsl\":i?\"ssh\":\"access-other-devices\"},Zi:o,wi:function(){let e,t=(0,n.c)(3),a=(0,i.Ul)(s.h9),l=(0,r.mC)();return t[0]!==a||t[1]!==l?(e=o({remoteControlConnectionsState:a,slingshotEnabled:l}),t[0]=a,t[1]=l,t[2]=e):e=t[2],e}})",
-        "sourceAsset": "webview/assets/async/338923.5e5c677ceb.js",
-        "sourceFilePin": {
-          "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/338923.5e5c677ceb.js",
-          "sha256": "9881e0c5933d2da09f4db5df420b898e3cc608bf2c7e2d787f283afbf7c78e7e",
-          "bytes": 298647,
-          "mode": "0644"
-        }
+        "sourceAsset": "webview/assets/async/28918.2950780448.js"
       },
       {
         "moduleId": "uodG",
@@ -74,13 +30,27 @@
           "l"
         ],
         "moduleSource": "var n=l(\"QosV\"),r=l(\"zTeN\"),s=l(\"xS4d\"),a=l(\"PIwo\");function i({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}l.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:l,showRemoteControlConnectionsSection:n,showRemoteSshConnections:r,showTabbedSshPage:s,isWslConnectionsLoading:a,showWslConnections:i}){return\"wsl\"===e&&a?\"wsl\":n?\"control-this-mac\"!==e||l?\"access-other-devices\"!==e||t?\"ssh\"!==e||s?\"wsl\"!==e||i?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":l?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&i?\"wsl\":r?\"ssh\":\"access-other-devices\"},Zi:i,wi:function(){let e,t=(0,n.c)(3),l=(0,r.Ul)(s.h9),o=(0,a.mC)();return t[0]!==l||t[1]!==o?(e=i({remoteControlConnectionsState:l,slingshotEnabled:o}),t[0]=l,t[1]=o,t[2]=e):e=t[2],e}})",
-        "sourceAsset": "webview/assets/async/389433.3b8e5babe5.js",
-        "sourceFilePin": {
-          "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/389433.3b8e5babe5.js",
-          "sha256": "86b324dd8df4727c061d6ab5b18e8b7387d667ac6b3e465d28320424e315d37e",
-          "bytes": 90706,
-          "mode": "0644"
-        }
+        "sourceAsset": "webview/assets/async/389433.ef60c5b97b.js"
+      },
+      {
+        "moduleId": "uodG",
+        "params": [
+          "e",
+          "t",
+          "a"
+        ],
+        "moduleSource": "var n=a(\"QosV\"),i=a(\"zTeN\"),s=a(\"xS4d\"),r=a(\"PIwo\");function o({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}a.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:a,showRemoteControlConnectionsSection:n,showRemoteSshConnections:i,showTabbedSshPage:s,isWslConnectionsLoading:r,showWslConnections:o}){return\"wsl\"===e&&r?\"wsl\":n?\"control-this-mac\"!==e||a?\"access-other-devices\"!==e||t?\"ssh\"!==e||s?\"wsl\"!==e||o?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":a?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&o?\"wsl\":i?\"ssh\":\"access-other-devices\"},Zi:o,wi:function(){let e,t=(0,n.c)(3),a=(0,i.Ul)(s.h9),l=(0,r.mC)();return t[0]!==a||t[1]!==l?(e=o({remoteControlConnectionsState:a,slingshotEnabled:l}),t[0]=a,t[1]=l,t[2]=e):e=t[2],e}})",
+        "sourceAsset": "webview/assets/async/464477.6e7962c333.js"
+      },
+      {
+        "moduleId": "uodG",
+        "params": [
+          "e",
+          "t",
+          "n"
+        ],
+        "moduleSource": "var o=n(\"QosV\"),i=n(\"zTeN\"),a=n(\"xS4d\"),l=n(\"PIwo\");function s({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:o,showRemoteSshConnections:i,showTabbedSshPage:a,isWslConnectionsLoading:l,showWslConnections:s}){return\"wsl\"===e&&l?\"wsl\":o?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||t?\"ssh\"!==e||a?\"wsl\"!==e||s?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&s?\"wsl\":i?\"ssh\":\"access-other-devices\"},Zi:s,wi:function(){let e,t=(0,o.c)(3),n=(0,i.Ul)(a.h9),r=(0,l.mC)();return t[0]!==n||t[1]!==r?(e=s({remoteControlConnectionsState:n,slingshotEnabled:r}),t[0]=n,t[1]=r,t[2]=e):e=t[2],e}})",
+        "sourceAsset": "webview/assets/async/62425.b732a2cb25.js"
       },
       {
         "moduleId": "uodG",
@@ -90,13 +60,7 @@
           "t"
         ],
         "moduleSource": "var c=t(\"QosV\"),l=t(\"zTeN\"),i=t(\"xS4d\"),o=t(\"PIwo\");function n({remoteControlConnectionsState:e,slingshotEnabled:r}){return r&&(e?.available??!0)&&e?.accessRequired!==!0}t.d(r,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:r,showControlThisMacTab:t,showRemoteControlConnectionsSection:c,showRemoteSshConnections:l,showTabbedSshPage:i,isWslConnectionsLoading:o,showWslConnections:n}){return\"wsl\"===e&&o?\"wsl\":c?\"control-this-mac\"!==e||t?\"access-other-devices\"!==e||r?\"ssh\"!==e||i?\"wsl\"!==e||n?e:\"ssh\":r?\"access-other-devices\":\"control-this-mac\":t?\"control-this-mac\":\"ssh\":r?\"access-other-devices\":\"ssh\":\"wsl\"===e&&n?\"wsl\":l?\"ssh\":\"access-other-devices\"},Zi:n,wi:function(){let e,r=(0,c.c)(3),t=(0,l.Ul)(i.h9),a=(0,o.mC)();return r[0]!==t||r[1]!==a?(e=n({remoteControlConnectionsState:t,slingshotEnabled:a}),r[0]=t,r[1]=a,r[2]=e):e=r[2],e}})",
-        "sourceAsset": "webview/assets/async/996150.cedcc632ff.js",
-        "sourceFilePin": {
-          "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/996150.cedcc632ff.js",
-          "sha256": "49634ee5dfdcf05b09f1e9f3a598ab106e12f90d9242d92cc2944a251a07d6c2",
-          "bytes": 128924,
-          "mode": "0644"
-        }
+        "sourceAsset": "webview/assets/async/996150.23ce8ddb7a.js"
       }
     ],
     "catalog": [
@@ -107,14 +71,8 @@
           "t",
           "n"
         ],
-        "moduleSource": "let r,i;var a=n(\"SZCv\"),s=n.n(a),o=n(\"zTeN\"),l=n(\"OWtl\");let u=new Set,d=(0,o.SZ)(l.u,()=>void 0,({set:e})=>{let t=()=>e(r);return u.add(t),t(),()=>{u.delete(t)}}),c=(0,o.un)(l.u,({get:e})=>e(d)?.ssh,{isEqual:s()}),p=(0,o.un)(l.u,({get:e})=>e(d)?.wsl,{isEqual:s()}),h=(0,o.un)(l.u,({get:e})=>e(d)?.remoteControl,{isEqual:s()}),f=(0,o.un)(l.u,({get:e})=>e(d)?.remoteControlState,{isEqual:s()}),m=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlClientId),_=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlEnvironmentId),g=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlEnabled);function v(e){for(let t of(r=null==e?void 0:{remoteControlState:void 0,localRemoteControlClientId:void 0,localRemoteControlEnvironmentId:void 0,localRemoteControlInstallationId:void 0,localRemoteControlEnabled:void 0,ssh:void 0,wsl:void 0,remoteControl:void 0,...r,...e},u))t()}n.d(t,{},{BJ:_,EP:c,K:p,Zr:h,dZ:m,h9:f,mi:g,y5:async function(e){i?.[Symbol.dispose](),i=void 0,v(void 0),null!=e&&(i=await e.catalog.subscribe(v))}})",
-        "sourceAsset": "webview/assets/async/182735.d3d917f28d.js",
-        "sourceFilePin": {
-          "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/182735.d3d917f28d.js",
-          "sha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
-          "bytes": 8273821,
-          "mode": "0644"
-        }
+        "moduleSource": "let r,i;var a=n(\"SZCv\"),s=n.n(a),o=n(\"zTeN\"),l=n(\"OWtl\");let u=new Set,d=(0,o.SZ)(l.u,()=>void 0,({set:e})=>{let t=()=>e(r);return u.add(t),t(),()=>{u.delete(t)}}),c=(0,o.un)(l.u,({get:e})=>e(d)?.ssh,{isEqual:s()}),p=(0,o.un)(l.u,({get:e})=>e(d)?.wsl,{isEqual:s()}),h=(0,o.un)(l.u,({get:e})=>e(d)?.remoteControl,{isEqual:s()}),f=(0,o.un)(l.u,({get:e})=>e(d)?.remoteControlState,{isEqual:s()}),m=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlClientId),g=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlEnvironmentId),_=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlEnabled);function v(e){for(let t of(r=null==e?void 0:{remoteControlState:void 0,localRemoteControlClientId:void 0,localRemoteControlEnvironmentId:void 0,localRemoteControlInstallationId:void 0,localRemoteControlEnabled:void 0,ssh:void 0,wsl:void 0,remoteControl:void 0,...r,...e},u))t()}n.d(t,{},{BJ:g,EP:c,K:p,Zr:h,dZ:m,h9:f,mi:_,y5:async function(e){i?.[Symbol.dispose](),i=void 0,v(void 0),null!=e&&(i=await e.catalog.subscribe(v))}})",
+        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
       }
     ],
     "gate": [
@@ -125,8 +83,8 @@
           "t",
           "n"
         ],
-        "moduleSource": "var r=n(\"zTeN\"),i=n(\"tl5a\"),a=n(\"B81s\"),s=n(\"OWtl\"),o=n(\"hZax\"),l=n(\"OMIV\"),u=n(\"kx7U\");let d=(0,r.un)(s.u,({get:e})=>{let t=e(i.Dc),{data:n}=e(a.I2,t),r=e(l.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let s=n?.config.features;return null==s||\"object\"!=typeof s||Array.isArray(s)?r:Object.getOwnPropertyDescriptor(s,\"remote_connections\")?.value===!0||r});function c(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,r.Ul)(d)},bc:d,mC:function(){return(0,o.Zj)(\"1042620455\")},mw:function(){let e=(0,r.Ul)(u.u8)??[];return{remoteConnections:e,enabledRemoteHostIdSet:new Set(e.flatMap(c))}}})",
-        "sourceAsset": "webview/assets/async/182735.d3d917f28d.js"
+        "moduleSource": "var r=n(\"QosV\"),i=n(\"zTeN\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"OWtl\"),l=n(\"hZax\"),u=n(\"OMIV\"),d=n(\"kx7U\");let c=(0,i.un)(o.u,({get:e})=>{let t=e(a.Dc),{data:n}=e(s.I2,t),r=e(u.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let i=n?.config.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?r:Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0||r});function p(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,i.Ul)(c)},bc:c,mC:function(){return(0,l.Zj)(\"1042620455\")},mw:function(){let e,t,n=(0,r.c)(5),a=(0,i.Ul)(d.u8)??[];return n[0]!==a?(e=new Set(a.flatMap(p)),n[0]=a,n[1]=e):e=n[1],n[2]!==a||n[3]!==e?(t={remoteConnections:a,enabledRemoteHostIdSet:e},n[2]=a,n[3]=e,n[4]=t):t=n[4],t}})",
+        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
       }
     ],
     "gateHook": [
@@ -138,7 +96,7 @@
           "n"
         ],
         "moduleSource": "var r=n(\"QosV\"),i=n(\"JlWK\"),a=n(\"zTeN\"),s=n(\"zd8w\"),o=n(\"OMIV\");let l=(0,s.createContext)(!1);function u(){return f(),(0,i.useStatsigClient)()}function d(e,t,n){return e.getLayer(t,n)}function c(e){let t={};return Object.entries(e).forEach(([e,n])=>{(\"number\"==typeof n||\"string\"==typeof n||\"boolean\"==typeof n)&&(t[e]=String(n))}),t}function p(e,t){let n;return{...(n=e.getContext().user,{origin:`codex_${\"electron\".replace(\"-\",\"_\")}`,codex_window_type:\"electron\",...n?.appVersion?{app_version:n.appVersion}:{},...n?.locale?{browser_locale:n.locale}:{}}),...t}}function h(e,t,{value:n,metadata:r}={}){let i=c(p(e,r));e.logEvent(t,n,i)}function f(e){(0,s.useContext)(l)}n.d(t,{},{$R:p,AS:function(){return u().client},DR:function(e){return f(),(0,a._U)(o.dx,e)},Fj:function(e,t){let n,i=(0,r.c)(4),{getDynamicConfig:a}=u();return i[0]!==e||i[1]!==a||i[2]!==t?(n=a(e,t),i[0]=e,i[1]=a,i[2]=t,i[3]=n):n=i[3],n},Ks:function(e,t){return e.checkGate(t)},Ou:function(e,t){let n,i=(0,r.c)(8),{client:a,getLayer:s}=u();return i[4]!==a||i[5]!==e||i[6]!==t?(n=d(a,e,t),i[4]=a,i[5]=e,i[6]=t,i[7]=n):n=i[7],n},XM:d,XR:function(){return u().isLoading},Zj:function(e){let t,n=(0,r.c)(2);return f(\"string\"==typeof e),n[0]!==e?(t=\"boolean\"==typeof e?e:{cache:\"signal\",resolve:(t,n)=>o.JW.resolve(t,n,e).atom,scope:o.JW.scope},n[0]=e,n[1]=t):t=n[1],(0,a.Ul)(t)},cB:function(){return f(),(0,i.useStatsigUser)().user},cn:u,fd:function(){let e,t,n,i=(0,r.c)(7),{client:a}=u();i[0]!==a?(e=(e,t)=>{h(a,e,{metadata:t})},i[0]=a,i[1]=e):e=i[1];let s=e;i[2]!==a?(t=(e,t)=>h(a,e,t),i[2]=a,i[3]=t):t=i[3];let o=t;return i[4]!==s||i[5]!==o?(n={logEventWithStatsig:s,logValueEventWithStatsig:o},i[4]=s,i[5]=o,i[6]=n):n=i[6],n},hW:function(e,t,n){return e.getExperiment(t,n)},j3:l,ml:c})",
-        "sourceAsset": "webview/assets/async/182735.d3d917f28d.js"
+        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
       }
     ]
   },
