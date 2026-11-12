@@ -85,6 +85,14 @@ const mutations={
   "page child callback":s=>s.replace('children:(0,jsx.jsx)(Page,{...e})','children:null,unused:()=>(0,jsx.jsx)(Page,{...e})'),
   "query atom constructor":s=>s.replace('(0,store.vU)','(0,store.vP)'),
   "query read hook":s=>s.replace('(0,store._U)(queries.ki','(0,store.Ul)(queries.ki'),
+  "retired feed content prop":s=>s.replace('renderHomeFeed:null','mobileFeedContent:null'),
+  "retired editor hook":s=>s.replace('(0,composer.a$)()','(0,composer.a)()'),
+  "saved lesson request binding":s=>s.replace('supportsSavedLessonChat:saved','supportsSavedLessonChat:account'),
+  "saved lesson cache binding":s=>s.replace('host,mode,supports,saved]','host,mode,supports,account]'),
+  "saved lesson state reader":s=>s.replace('saved=get(state.saved)','saved=other(state.saved)'),
+  "missing preparation early guard":s=>s.replace('if(blocked)return null;',''),
+  "wrong preparation early guard":s=>s.replace('if(blocked)return null;','if(other)return null;'),
+  "reversed preparation early guard":s=>s.replace('if(blocked)return null;','if(!blocked)return null;'),
   "unused provider view":s=>s.replace('return(0,jsx.jsx)(Inner,','let unused=(0,jsx.jsx)(Inner,').replace('workRunLocation:run})}function Inner','workRunLocation:run});return null}function Inner'),
 };
 for(const[name,mutate]of Object.entries(mutations))test(`Work descriptor rejects ${name} before writing`,t=>{
@@ -119,11 +127,21 @@ test("signed Work JSX forwards mode callback and current host/project/run-locati
     const props=vm.runInNewContext(`(${object})`,context);assert.equal(props.generatedSuggestionsEnabled,true);assert.equal(props.hostId,`host-${label}`);assert.equal(props.projectId,`project-${label}`);assert.equal(props.mode,"work");assert.equal(props.onSelect,callback);assert.equal(calls.length,label==="alpha"?0:1);props.onSelect(label==="alpha"?"chat":"work");}
   assert.deepEqual(calls,[["alpha","chat"],["beta","work"]]);
 });
-test("signed Work query executes each native direct value export with host/mode flags only",signedOnly,async()=>{
+test("signed Work query keys and requests preserve native host, mode and saved-lesson state",signedOnly,async()=>{
   const {dependencies,roles}=signedFixture(),role=roles.providerRoles[0],queries=dependencies.filter(m=>m.moduleId===role.query.moduleId);assert.ok(queries.length>=1);
-  for(const module of queries){const requests=[],namespace=new Proxy(function(){},{get:(_target,key)=>key==="vU"?(_scope,fn)=>fn:key==="vP"?()=>new Set():key==="appServices"?{ambientSuggestions:{getChatGptComposerItems:input=>{requests.push(input);return Promise.resolve([])}}}:namespace,construct:()=>({}),apply:()=>({})});
-    const load=()=>namespace;load.d=(target,getters,values={})=>{for(const[key,get]of Object.entries(getters))Object.defineProperty(target,key,{get});Object.assign(target,values)};const target={};vm.runInNewContext(`(function(${module.params.join(",")}){${module.moduleSource}})`,{Set,URL})({},target,load);
-    for(const[host,mode,supports]of[["alpha","work",false],["beta","chat",true]]){const config=target[role.query.exportName]({hostId:host,mode,supportsHomeFeed:supports},{get:()=>"account"});assert.deepEqual(Array.from(config.queryKey),["chatgpt-task-suggestions","account",host,mode,supports]);await config.queryFn({signal:null});assert.deepEqual(Object.keys(requests.at(-1)).sort(),["entrypoint","hostId"]);assert.equal(requests.at(-1).hostId,host);assert.equal(requests.at(-1).entrypoint,mode);}}
+  for(const module of queries){
+    const requests=[],account=Symbol("account"),savedLesson=Symbol("saved-lesson");
+    const namespace=new Proxy(function(){},{get:(_target,key)=>key==="Pe"?account:key==="iT"?savedLesson:key==="vU"?(_scope,fn)=>fn:key==="vP"?()=>new Set():key==="appServices"?{ambientSuggestions:{getChatGptComposerItems:input=>{requests.push(input);return Promise.resolve([])}}}:namespace,construct:()=>({}),apply:()=>({})});
+    const load=()=>namespace;load.d=(target,getters,values={})=>{for(const[key,get]of Object.entries(getters))Object.defineProperty(target,key,{get});Object.assign(target,values)};
+    const target={};vm.runInNewContext(`(function(${module.params.join(",")}){${module.moduleSource}})`,{Set,URL})({},target,load);
+    for(const[host,mode,supports]of[["alpha","work",false],["beta","chat",true]])for(const saved of[false,true]){
+      const config=target[role.query.exportName]({hostId:host,mode,supportsHomeFeed:supports},{get:key=>key===savedLesson?saved:"account"});
+      assert.deepEqual(Array.from(config.queryKey),["chatgpt-task-suggestions","account",host,mode,supports,saved]);
+      await config.queryFn({signal:null});
+      assert.deepEqual(Object.keys(requests.at(-1)).sort(),["entrypoint","hostId","supportsSavedLessonChat"]);
+      assert.equal(requests.at(-1).hostId,host);assert.equal(requests.at(-1).entrypoint,mode);assert.equal(requests.at(-1).supportsSavedLessonChat,saved);
+    }
+  }
 });
 test("signed native preparation changes mode or awaits a valid chat destination",signedOnly,async()=>{
   const {roles}=signedFixture(),p=roles.callers.preparation,source=p.expression,calls=[];

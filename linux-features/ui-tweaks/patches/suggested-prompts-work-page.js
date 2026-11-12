@@ -80,9 +80,13 @@ function queryRole(module,key) {
   const valueWrites=bindingWrites(body,value);
   if(valueWrites.length!==1||valueWrites[0]!==definition.index)return false;
   const open=definition.index+definition[0].length-1,end=findMatchingBrace(body,open),query=body.slice(open+1,end);
-  const keyMatch=one(matches(query,new RegExp(`queryKey:\\["chatgpt-task-suggestions",(${ID}),${escapeRegExp(definition[4])},${escapeRegExp(definition[5])},${escapeRegExp(definition[6])}\\]`,"gu"),false));
-  const fetch=one(matches(query,new RegExp(`(${ID})\\.appServices\\.ambientSuggestions\\?\\.getChatGptComposerItems\\(\\{entrypoint:${escapeRegExp(definition[5])},hostId:${escapeRegExp(definition[4])}\\}\\)`,"gu"),false));
-  return Boolean(keyMatch&&fetch&&findRspackRequireBinding(module,fetch[1])&&!query.includes("projectId:"));
+  const keyMatch=one(matches(query,new RegExp(`queryKey:\\["chatgpt-task-suggestions",(?<account>${ID}),${escapeRegExp(definition[4])},${escapeRegExp(definition[5])},${escapeRegExp(definition[6])},(?<saved>${ID})\\]`,"gu"),false));
+  if(!keyMatch)return false;
+  const account=escapeRegExp(keyMatch.groups.account),saved=escapeRegExp(keyMatch.groups.saved),get=escapeRegExp(definition[7]);
+  const state=one(matches(query,new RegExp(`(?<![\\w$.])${account}=${get}\\((?<provider>${ID})\\.(?<account>${ID})\\),${saved}=${get}\\(\\k<provider>\\.(?<saved>${ID})\\)(?=[,;])`,"gu")));
+  const fetch=one(matches(query,new RegExp(`(${ID})\\.appServices\\.ambientSuggestions\\?\\.getChatGptComposerItems\\(\\{entrypoint:${escapeRegExp(definition[5])},hostId:${escapeRegExp(definition[4])},supportsSavedLessonChat:${saved}\\}\\)`,"gu"),false));
+  return Boolean(state&&fetch&&findRspackRequireBinding(module,state.groups.provider)&&findRspackRequireBinding(module,fetch[1])&&
+    keyMatch.groups.account!==keyMatch.groups.saved&&writes(query,keyMatch.groups.account).length===1&&writes(query,keyMatch.groups.saved).length===1&&!query.includes("projectId:"));
 }
 function objectFields(text) {
   try {new Script(`const fields={${text}};`);}catch{return null;}
@@ -145,7 +149,7 @@ function providerRole(module) {
   const props=componentProps(outer);if(!props)return null;
   const required=["generatedSuggestionsEnabled","generatedSuggestionsLoading","hostId","mode","onSelect","projectId","prepareDestination","unifiedModelPickerEnabled","workRunLocation","showGenericSuggestions"];
   if(!required.every(key=>props.has(key)))return null;
-  const innerCall=one(matches(outer.body,new RegExp(String.raw`\(0,(${ID})\.jsx\)\((${ID}),\{mobileFeedContent:`,"gu")));
+  const innerCall=one(matches(outer.body,new RegExp(String.raw`\(0,(${ID})\.jsx\)\((${ID}),\{renderHomeFeed:`,"gu")));
   const inner=innerCall&&one(defs.filter(fn=>fn.name===innerCall[2]));
   if(!inner||!returnedView(inner)||!importedIn(module,outer,innerCall[1])||bindingWrites(module.moduleSource,inner.name).length!==0)return null;
   const propsStart=innerCall.index+innerCall[0].indexOf("{"),propsEnd=findMatchingBrace(outer.body,propsStart),forwarded=objectFields(outer.body.slice(propsStart+1,propsEnd));
@@ -189,7 +193,7 @@ function providerRole(module) {
   const target=one(matches(actionBody,new RegExp(`let (${ID})=(${ID})\\?\\.type==="prompt"\\?\\2\\.entrypoint\\?\\?${escapeRegExp(fields[4])}:${escapeRegExp(fields[4])};`,"gu"),false));
   const auto=target&&one(matches(actionBody,new RegExp(`let (${ID})=${escapeRegExp(target[2])}\\?\\.type==="prompt"&&!0===${escapeRegExp(target[2])}\\.auto_send;`,"gu"),false));
   const preparation=target&&one(matches(actionBody,new RegExp(`(${ID})=${escapeRegExp(fields[5])}\\?\\.\\(${escapeRegExp(target[1])}\\);if\\(null!=\\1&&await \\1,`,"gu"),false));
-  const editor=one(matches(inner.body,new RegExp(`(?<![\\w$.])(${ID})=\\(0,(${ID})\\.a\\)\\(\\)`,"gu")).filter(m=>actionBody.includes(`${m[1]}.setPromptText(`)));
+  const editor=one(matches(inner.body,new RegExp(`(?<![\\w$.])(${ID})=\\(0,(${ID})\\.a\\$\\)\\(\\)`,"gu")).filter(m=>actionBody.includes(`${m[1]}.setPromptText(`)));
   if(!prompt||!auto||!preparation||!editor||!findRspackRequireBinding(module,editor[2]))return null;
   const setter=one(matches(actionBody,new RegExp(`\\(0,(${ID})\\.flushSync\\)\\(\\(\\)=>\\{${escapeRegExp(editor[1])}\\.setPromptText\\(${escapeRegExp(prompt[1])},\\{preserveLibraryFileMentions:${escapeRegExp(fields[2])}\\}\\)`,"gu"),false));
   if(!setter||!findRspackRequireBinding(module,setter[1])||!new RegExp(`\\}\\),${ID}\\(\\),${escapeRegExp(editor[1])}\\.focus\\(\\),${escapeRegExp(auto[1])}`,"u").test(actionBody))return null;
@@ -210,9 +214,16 @@ function shellRole(module,pageId) {
   const forwarded=one(matches(entry.body,new RegExp(`\\(0,${ID}\\.jsx\\)\\(${escapeRegExp(lazy[1])},\\{hideHeaderUpgrade:!1,onTaskSuggestionSelected:(${ID})\\.onChatGptTaskSuggestionSelected\\}\\)`,"gu"),false));
   return forwarded?{entry:entry.name,lazy:lazy[1]}:null;
 }
+function preparationEntryRole(module,entry) {
+  const exits=matches(entry.body,/\breturn\b/gu),guard=one(matches(entry.body,new RegExp(`if\\((?<value>${ID})\\)return null;`,"gu")));
+  if(!guard||exits.length!==2||exits[0].index!==guard.index+guard[0].indexOf("return")||matches(entry.body,/\bthrow\b/gu).length!==0)return false;
+  const read=one(matches(entry.body,new RegExp(`(?<![\\w$.])${escapeRegExp(guard.groups.value)}=\\(0,(?<hook>${ID})\\.Ul\\)\\((?<state>${ID})\\.${ID}\\)`,"gu")));
+  if(!read||read.index>=guard.index||writes(entry.body,guard.groups.value).length!==1)return false;
+  return[read.groups.hook,read.groups.state].every(name=>importedIn(module,entry,name));
+}
 function preparationRole(module,shellId) {
   const exported=exportGetter(module,"HomeComposerRoute"),defs=functions(module.moduleSource),entry=exported&&one(defs.filter(fn=>fn.name===exported.expression));
-  if(!entry||!liveFunction(entry)||!returnedView(entry))return null;
+  if(!entry||!preparationEntryRole(module,entry)||!returnedView(entry))return null;
   const candidates=[];
   for(const fn of defs) {
     if(!returnedView(fn))continue;
