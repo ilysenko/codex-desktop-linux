@@ -5,6 +5,7 @@ mod cli;
 mod command_runner;
 mod diagnostics_cache;
 mod ei_input;
+mod http_listen;
 mod hyprland_input;
 pub mod indicator;
 mod keyboard_keymap;
@@ -17,6 +18,7 @@ pub mod gnome_extension;
 pub mod identity;
 pub mod remote_desktop;
 pub mod screenshot;
+mod screenshot_file;
 pub mod server;
 pub mod terminal;
 #[cfg(test)]

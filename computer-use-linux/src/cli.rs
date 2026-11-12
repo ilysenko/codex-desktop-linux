@@ -1,3 +1,4 @@
+use crate::http_listen::{self, ListenConfig};
 use crate::{abs_pointer, atspi_tree, diagnostics, gnome_extension, screenshot, server, windows};
 use anyhow::{Context, Result};
 
@@ -23,11 +24,11 @@ struct Subcommand {
 const SUBCOMMANDS: &[Subcommand] = &[
     Subcommand {
         name: "mcp",
-        arguments: "",
+        arguments: "[--listen ADDR:PORT [--allowed-host NAME]...]",
         required: 0,
         allowed: 0,
-        summary: "Serve the MCP tools over stdio.",
-        details: "Reads MCP JSON-RPC requests on stdin and writes responses on stdout until stdin closes. MCP hosts start this command.",
+        summary: "Serve the MCP tools over stdio, or over HTTP with --listen.",
+        details: "Reads MCP JSON-RPC requests on stdin and writes responses on stdout until stdin closes. MCP hosts start this command. With --listen ADDR:PORT it serves streamable HTTP at /mcp instead, and requires a bearer token from the file named by CODEX_COMPUTER_USE_MCP_TOKEN_FILE or from CODEX_COMPUTER_USE_MCP_TOKEN (or their COMPUTER_USE_LINUX_ aliases). The port is plain HTTP: bind loopback or a private address; a non-loopback bind needs each hostname clients use as --allowed-host NAME. It refuses to start while CODEX_COMPUTER_USE_ENABLE_SHELL=1, or COMPUTER_USE_LINUX_ENABLE_SHELL=1 with the Codex variable unset.",
         hidden: false,
     },
     Subcommand {
@@ -153,8 +154,8 @@ fn parse_invocation(arguments: &[String]) -> Result<Invocation, UsageError> {
             subcommand: None,
         });
     };
-    let rest = &arguments[1..];
-    let options_end = rest
+    let mut rest = arguments[1..].to_vec();
+    let mut options_end = rest
         .iter()
         .position(|argument| argument == "--")
         .unwrap_or(rest.len());
@@ -168,6 +169,36 @@ fn parse_invocation(arguments: &[String]) -> Result<Invocation, UsageError> {
         message,
         subcommand: Some(subcommand),
     };
+    // `mcp --listen ADDR:PORT` and `--allowed-host NAME` are the only options that take a value.
+    let mut listen = None;
+    let mut allowed_hosts = Vec::new();
+    if subcommand.name == "mcp" {
+        if let Some(at) = rest[..options_end]
+            .iter()
+            .position(|argument| argument == "--listen")
+        {
+            if at + 1 >= options_end {
+                return Err(error("'--listen' needs ADDR:PORT".to_string()));
+            }
+            listen = Some(rest.remove(at + 1));
+            rest.remove(at);
+            options_end -= 2;
+        }
+        while let Some(at) = rest[..options_end]
+            .iter()
+            .position(|argument| argument == "--allowed-host")
+        {
+            if at + 1 >= options_end {
+                return Err(error("'--allowed-host' needs NAME".to_string()));
+            }
+            allowed_hosts.push(rest.remove(at + 1));
+            rest.remove(at);
+            options_end -= 2;
+        }
+        if listen.is_none() && !allowed_hosts.is_empty() {
+            return Err(error("'--allowed-host' needs --listen".to_string()));
+        }
+    }
     if let Some(option) = rest[..options_end]
         .iter()
         .find(|argument| argument.len() > 1 && argument.starts_with('-'))
@@ -177,7 +208,7 @@ fn parse_invocation(arguments: &[String]) -> Result<Invocation, UsageError> {
             subcommand.name
         )));
     }
-    let positionals: Vec<String> = rest[..options_end]
+    let mut positionals: Vec<String> = rest[..options_end]
         .iter()
         .chain(rest.iter().skip(options_end + 1))
         .cloned()
@@ -202,6 +233,9 @@ fn parse_invocation(arguments: &[String]) -> Result<Invocation, UsageError> {
             return Err(error(format!("'{value}' is not an integer coordinate")));
         }
     }
+    // After the count check, so a bare address without --listen stays an error.
+    positionals.extend(listen);
+    positionals.extend(allowed_hosts);
     Ok(Invocation::Run(subcommand, positionals))
 }
 
@@ -287,10 +321,16 @@ pub(crate) async fn run_from_env() -> Result<()> {
         }
         Invocation::Run(subcommand, positionals) => (subcommand, positionals),
     };
+    // Before any thread or child exists, so removing the token variables is sound.
+    let listen = if subcommand.name == "mcp" {
+        mcp_listen_config(&positionals)?
+    } else {
+        None
+    };
     diagnostics::hydrate_session_bus_env();
 
     match subcommand.name {
-        "mcp" => server::serve_mcp().await,
+        "mcp" => server::serve_mcp(listen).await,
         "guard-accessibility" => crate::accessibility_guard::run().await,
         "doctor" => {
             let report = diagnostics::doctor_report();
@@ -425,6 +465,23 @@ fn abs_test_report(
     })
 }
 
+/// `parse_invocation` leaves `mcp` positionals as `[ADDR, NAME...]` when `--listen` is given.
+fn mcp_listen_config(positionals: &[String]) -> Result<Option<ListenConfig>> {
+    let Some((value, allowed_hosts)) = positionals.split_first() else {
+        return Ok(None);
+    };
+    let addr = value
+        .parse()
+        .with_context(|| format!("invalid listen address {value}"))?;
+    let config = ListenConfig {
+        addr,
+        allowed_hosts: allowed_hosts.to_vec(),
+        token: http_listen::load_listen_token()?,
+    };
+    http_listen::validate_listen(&config, server::shell_execution_enabled())?;
+    Ok(Some(config))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{abs_pointer, abs_test_report, parse_invocation, Invocation};
@@ -469,6 +526,47 @@ mod tests {
         );
         assert_eq!(parse(&["state", "-h", "--", "x"]), "help state");
         assert_eq!(parse(&["state", "-"]), r#"run state ["-"]"#);
+    }
+
+    #[test]
+    fn mcp_listen_takes_one_address() {
+        assert_eq!(parse(&["mcp"]), "run mcp []");
+        assert_eq!(
+            parse(&["mcp", "--listen", "127.0.0.1:5200"]),
+            r#"run mcp ["127.0.0.1:5200"]"#
+        );
+        assert_eq!(
+            parse(&["mcp", "--listen"]),
+            "error: '--listen' needs ADDR:PORT"
+        );
+        assert_eq!(
+            parse(&["mcp", "127.0.0.1:5200"]),
+            "error: unexpected argument '127.0.0.1:5200' for 'mcp'"
+        );
+        assert_eq!(
+            parse(&["state", "--listen", "x"]),
+            "error: unknown option '--listen' for 'state'"
+        );
+        assert_eq!(
+            parse(&[
+                "mcp",
+                "--listen",
+                "0.0.0.0:5200",
+                "--allowed-host",
+                "a.svc",
+                "--allowed-host",
+                "b.svc"
+            ]),
+            r#"run mcp ["0.0.0.0:5200", "a.svc", "b.svc"]"#
+        );
+        assert_eq!(
+            parse(&["mcp", "--allowed-host", "a.svc"]),
+            "error: '--allowed-host' needs --listen"
+        );
+        assert_eq!(
+            parse(&["mcp", "--listen", "127.0.0.1:5200", "--allowed-host"]),
+            "error: '--allowed-host' needs NAME"
+        );
     }
 
     #[test]

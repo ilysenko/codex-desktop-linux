@@ -1,9 +1,10 @@
 use crate::atspi_tree::{
     accessibility_chrome_context, focused_element_summary_in_app, list_accessible_apps,
-    object_ref_owner_pid, perform_action as invoke_accessibility_action, perform_named_action,
-    probe_focused_element, set_element_value, snapshot_accessibility_tree, AccessibilityAction,
-    AccessibilityNode, AccessibleAppSummary, Bounds, EditableTextSetOutcome, FocusProbe,
-    FocusedElementSummary, ValueSetInvocation,
+    object_ref_application_pid, object_ref_owner_pid,
+    perform_action as invoke_accessibility_action, perform_named_action, probe_focused_element,
+    set_element_value, snapshot_accessibility_tree, AccessibilityAction, AccessibilityNode,
+    AccessibleAppSummary, Bounds, EditableTextSetOutcome, FocusProbe, FocusedElementSummary,
+    FocusedTextInsert, ValueSetInvocation,
 };
 use crate::diagnostics::{
     doctor_report, setup_accessibility_report, DoctorReport, ReadinessReport, SetupReport,
@@ -157,6 +158,52 @@ struct CachedTreeWindow {
     window: Option<(u64, String)>,
 }
 
+/// The cached pid and window scope a post-action tree may reuse, taken
+/// under the action's input lock so a later snapshot cannot change it.
+#[derive(Debug, Clone, Default)]
+struct PostActionScope {
+    pid: Option<u32>,
+    tree: Option<CachedTreeWindow>,
+    /// Bound to a dispatched element's owner before the action. The tree
+    /// keeps this scope on stdio too, and the owner may match zero or
+    /// several compositor windows without the desktop having changed.
+    bound: bool,
+}
+
+impl PostActionScope {
+    /// The scope of an element's verified owner: its window range only,
+    /// never the latest caller's snapshot.
+    fn bound_to(target: &ElementObservationTarget) -> Self {
+        Self {
+            pid: target.owner.pid,
+            tree: target.tree_window.clone(),
+            bound: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ElementObservationTarget {
+    owner: WindowTarget,
+    // The observed tree's range, not the popup or dialog's own window identity.
+    tree_window: Option<CachedTreeWindow>,
+}
+
+impl ElementObservationTarget {
+    fn inherit_tree_window(&mut self, previous: &Self) {
+        // Recovery clears the snapshot before retrying the same application.
+        if self.tree_window.is_none()
+            && self.owner.pid.is_some()
+            && self.owner.pid == previous.owner.pid
+        {
+            self.tree_window = previous
+                .tree_window
+                .clone()
+                .filter(|window| window.pid == self.owner.pid);
+        }
+    }
+}
+
 /// How a cached tree was returned: its node encoding, which get_tree_page
 /// pages in, and the AT-SPI window it was narrowed to.
 #[derive(Debug, Clone, Default)]
@@ -272,6 +319,11 @@ pub struct ComputerUseLinux {
     /// it.
     diagnostics: Arc<DiagnosticsCache<DoctorReport>>,
     accessibility_check: AccessibilityCheck,
+    /// Set for HTTP: clients share the cached tree, so element calls must name it.
+    require_snapshot_ids: bool,
+    /// Set for HTTP: a remote client gets no file writes on the host, so
+    /// screenshot_file_path is refused.
+    http_transport: bool,
 }
 
 /// The monitor layout of the cached capture. `generation` counts captures,
@@ -501,11 +553,16 @@ impl ComputerUseLinux {
             .map(|snapshot| (snapshot.id.clone(), snapshot.nodes.clone(), snapshot.detail))
             .unwrap_or_default();
         let offset = params.offset.unwrap_or(0);
-        if let Err(message) = check_snapshot_id(
-            params.snapshot_id.as_deref(),
-            &id,
-            &self.snapshot_ids.prefix,
-        ) {
+        let checked = self
+            .require_snapshot_id("get_tree_page", params.snapshot_id.as_deref())
+            .and_then(|()| {
+                check_snapshot_id(
+                    params.snapshot_id.as_deref(),
+                    &id,
+                    &self.snapshot_ids.prefix,
+                )
+            });
+        if let Err(message) = checked {
             return Json(GetTreePageOutput {
                 snapshot_id: None,
                 nodes: TreeNodes::new(Vec::new(), detail),
@@ -635,7 +692,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "get_app_state",
         output_schema = rmcp::handler::server::tool::schema_for_output::<GetAppStateOutput>(),
-        description = "Get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A window-targeted screenshot needs that window visible and already focused (outside Hyprland background mode); otherwise screenshot_error is set and the tree still returns, so use the screenshot tool to raise and capture it. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. The result's snapshot_id names the tree: element_index and selector actions that pass it are refused once a later tree replaced it. Screenshot results always include coordinate_width, coordinate_height, scale, and format, plus quality for jpeg; callers can request jpeg/quality for compression before resizing.",
+        description = "Get a size-bounded screenshot and accessibility state for a Linux app. Scope the accessibility tree with app_name_or_bundle_identifier or a window_id/pid/app_id/wm_class/title target; omitting a target returns the whole desktop tree and can flood context. Nodes are compact (empty fields left out, actions by name; verbose=true returns every field). Pass interactive_only=true for only actionable nodes, headings and status regions, with the same element_index values. A title or window_id target narrows an app with several windows under one AT-SPI root (Chromium) to that window, keeping the app's popups and dialogs. A window-targeted screenshot needs that window visible and already focused (outside Hyprland background mode); otherwise screenshot_error is set and the tree still returns, so use the screenshot tool to raise and capture it. A tree too large to return inline is written whole to the private file in accessibility_tree_spill. The result's snapshot_id names the tree: element_index and selector actions that pass it are refused once a later tree replaced it. Screenshot results always include coordinate_width, coordinate_height, scale, and format, plus quality for jpeg; callers can request jpeg/quality for compression before resizing. Pass screenshot_file_path (an absolute path to a new file, stdio only; an existing path is refused) to save the screenshot there instead of returning image content; screenshot.file_path then names it.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -696,7 +753,21 @@ impl ComputerUseLinux {
             .await;
         let mut screenshot_captured = None;
         let mut capture_note = None;
-        let (screenshot, screenshot_error) = if include_screenshot {
+        // A path that cannot be written is reported without a capture.
+        let file_refusal = params
+            .screenshot_file_path
+            .as_deref()
+            .filter(|_| include_screenshot)
+            .and_then(|path| {
+                crate::screenshot_file::validate_screenshot_file_path(
+                    path,
+                    params.format.unwrap_or(ScreenshotOutputFormat::Png),
+                    self.http_transport,
+                )
+                .err()
+            })
+            .map(|error| format!("{error:#}"));
+        let (screenshot, screenshot_error) = if include_screenshot && file_refusal.is_none() {
             let result: Result<ScreenshotCapture> = async {
                 let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
                 if let Some(window) = window_context.as_ref() {
@@ -744,10 +815,28 @@ impl ComputerUseLinux {
         } else {
             (None, None)
         };
+        // A failed file write is reported like a failed capture, but it says
+        // nothing about the desktop's screenshot readiness.
+        let screenshot_capture_failed = screenshot_error.is_some();
+        let mut screenshot_file = None;
+        let (screenshot, screenshot_error) =
+            match (screenshot, params.screenshot_file_path.as_deref()) {
+                (Some(capture), Some(path)) => {
+                    match self.save_screenshot_file(&capture, path).await {
+                        Ok(saved) => {
+                            screenshot_file = Some(saved);
+                            (Some(capture), None)
+                        }
+                        Err(error) => (None, Some(format!("{error:#}"))),
+                    }
+                }
+                (screenshot, _) => (screenshot, screenshot_error.or(file_refusal)),
+            };
         let mut tree_scoped = false;
         let mut tree_root_pid = None;
         let mut accessibility_tree_truncated = false;
         let mut shell_only_note = None;
+        let mut unmatched_pid_note = None;
         let mut window_scope = None;
         let mut interactive_note = None;
         let detail = NodeDetail::from_verbose(verbose);
@@ -755,19 +844,35 @@ impl ComputerUseLinux {
             if diagnostics.readiness.can_build_accessibility_tree {
                 let target_pid = accessibility_snapshot_target_pid(
                     app_filter.as_deref(),
-                    window_context.as_ref().and_then(|window| window.pid),
+                    window_context
+                        .as_ref()
+                        .and_then(|window| window.pid)
+                        .or(params.pid.filter(|_| params.window_id.is_none())),
                 );
                 let window_title = accessibility_window_title(&params, window_context.as_ref());
+                // A listed window is alive even when its pid owns no AT-SPI
+                // root (a Flatpak app behind xdg-dbus-proxy); its title finds it.
+                let window_pid = window_context.as_ref().and_then(|window| window.pid);
+                let pid_fallback_name = accessibility_filter_candidates(window_context.as_ref())
+                    .into_iter()
+                    .next()
+                    .filter(|_| window_pid.is_some() && window_pid == target_pid);
                 match snapshot_accessibility_tree(
                     app_filter.as_deref(),
                     target_pid,
                     window_title.as_deref(),
+                    pid_fallback_name.as_deref(),
                     max_nodes,
                     max_depth,
                 )
                 .await
                 {
                     Ok(snapshot) => {
+                        unmatched_pid_note = unmatched_accessibility_pid_note(
+                            target_pid,
+                            snapshot.root_pid,
+                            snapshot.app_filter_matched,
+                        );
                         tree_scoped = snapshot.scoped;
                         tree_root_pid = snapshot.root_pid;
                         accessibility_tree_truncated = snapshot.truncated;
@@ -811,7 +916,7 @@ impl ComputerUseLinux {
                 )
             };
         let observed = AppStateObservation {
-            screenshot_failed: screenshot_error.is_some(),
+            screenshot_failed: screenshot_capture_failed,
             window: match (&window_context, &window_error) {
                 (_, Some(_)) => WindowLookup::Failed,
                 (Some(_), None) => WindowLookup::Resolved,
@@ -838,11 +943,11 @@ impl ComputerUseLinux {
             diagnostics.readiness.record_screenshot_result(captured);
         }
         let snapshot_id = if accessibility_error.is_none() {
-            // Record a pid only when the tree's roots were matched by it. A pid
-            // with no AT-SPI root falls back to every app, or to an app-name
-            // match that can be another app entirely; recording the pid then
-            // would let that app's index pass the target check instead of
-            // taking the per-node owner lookup.
+            // Record a pid only when the tree's roots were matched by it. An
+            // explicit app-name filter can match another process when this pid
+            // has no AT-SPI root; recording the requested pid then would let
+            // that app's index pass the target check instead of taking the
+            // per-node owner lookup.
             let id = self
                 .commit_app_state_snapshot(
                     &accessibility_tree,
@@ -864,6 +969,15 @@ impl ComputerUseLinux {
         let compacted_count = accessibility_tree.len();
         let mut message = if let Some(error) = &accessibility_error {
             format!("MCP registration is working, but AT-SPI tree extraction failed: {error}")
+        } else if let Some(note) = &unmatched_pid_note {
+            let screenshot_status = if let Some(capture) = &screenshot {
+                format!("Captured a screenshot through {}.", capture.source)
+            } else if let Some(error) = &screenshot_error {
+                format!("Screenshot capture failed: {error}")
+            } else {
+                "Screenshot capture was not requested.".to_string()
+            };
+            format!("MCP registration is working. {note} {screenshot_status}")
         } else if let Some(capture) = &screenshot {
             format!(
                 "MCP registration, screenshot capture, and AT-SPI tree extraction are working. Captured {} accessibility nodes (compacted from {}) and a screenshot through {}.",
@@ -895,6 +1009,9 @@ impl ComputerUseLinux {
         if let Some(note) = capture_note {
             message.push(' ');
             message.push_str(&note);
+        }
+        if let Some(path) = &screenshot_file {
+            message.push_str(&format!(" The screenshot was saved to {path}."));
         }
         if let Some(warning) = unscoped_accessibility_tree_warning(
             tree_scoped,
@@ -940,7 +1057,10 @@ impl ComputerUseLinux {
             window_error,
             window_permissions_hint,
             backend: "linux-atspi".to_string(),
-            screenshot: screenshot.as_ref().map(ScreenshotSummary::from),
+            screenshot: screenshot.as_ref().map(|capture| ScreenshotSummary {
+                file_path: screenshot_file.clone(),
+                ..ScreenshotSummary::from(capture)
+            }),
             screenshot_error,
             snapshot_id,
             accessibility_tree: TreeNodes::new(Vec::new(), detail),
@@ -967,12 +1087,13 @@ impl ComputerUseLinux {
             output.message.push(' ');
             output.message.push_str(&note);
         }
-        app_state_result(output, screenshot)
+        // A saved image is not returned inline.
+        app_state_result(output, screenshot.filter(|_| screenshot_file.is_none()))
     }
 
     #[tool(
         name = "screenshot",
-        description = "Capture the screen and return it as a viewable, size-bounded image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped before any resize; outside Hyprland background mode, a target without known bounds is refused, so pass full_screen=true there. Returns the image plus a JSON caption with returned and coordinate dimensions, scale, format, quality, source, cropped_to_window, and window_title. The crop origin is not reported; use relative=true on click or scroll for window-relative input. Callers can request jpeg/quality for compression before resizing.",
+        description = "Capture the screen and return it as a viewable, size-bounded image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped before any resize; outside Hyprland background mode, a target without known bounds is refused, so pass full_screen=true there. Returns the image plus a JSON caption with returned and coordinate dimensions, scale, format, quality, source, cropped_to_window, and window_title. The crop origin is not reported; use relative=true on click or scroll for window-relative input. Callers can request jpeg/quality for compression before resizing. Pass screenshot_file_path (an absolute path to a new file, stdio only; an existing path is refused) to save the image there instead: the result is then only the caption, with file_path.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1037,13 +1158,42 @@ impl ComputerUseLinux {
         if let Some(note) = note {
             caption["hidden_workspace_note"] = serde_json::json!(note);
         }
-        Some(Ok(CallToolResult::success(vec![
+        Some(
+            self.screenshot_tool_result(capture, caption, params.screenshot_file_path.as_deref())
+                .await,
+        )
+    }
+
+    /// The screenshot tool's result: the image and its JSON caption, or with
+    /// screenshot_file_path only the caption, naming the saved file.
+    async fn screenshot_tool_result(
+        &self,
+        capture: ScreenshotCapture,
+        mut caption: serde_json::Value,
+        file_path: Option<&str>,
+    ) -> Result<CallToolResult> {
+        if let Some(path) = file_path {
+            caption["file_path"] =
+                serde_json::json!(self.save_screenshot_file(&capture, path).await?);
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                caption.to_string(),
+            )]));
+        }
+        Ok(CallToolResult::success(vec![
             ContentBlock::image(data_url_payload(&capture.data_url), capture.mime_type),
             ContentBlock::text(caption.to_string()),
-        ])))
+        ]))
     }
 
     async fn capture_screenshot(&self, params: ScreenshotParams) -> Result<CallToolResult> {
+        // Refuse a bad path before anything is raised or captured.
+        if let Some(path) = params.screenshot_file_path.as_deref() {
+            crate::screenshot_file::validate_screenshot_file_path(
+                path,
+                params.format.unwrap_or(ScreenshotOutputFormat::Png),
+                self.http_transport,
+            )?;
+        }
         let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
         let target = params.window_target();
         if let (Some(target), false) = (target.as_ref(), params.full_screen.unwrap_or(false)) {
@@ -1136,10 +1286,8 @@ impl ComputerUseLinux {
             caption["window_off_screen"] = serde_json::json!(true);
             caption["off_screen_note"] = serde_json::json!(note);
         }
-        Ok(CallToolResult::success(vec![
-            ContentBlock::image(data_url_payload(&capture.data_url), capture.mime_type),
-            ContentBlock::text(caption.to_string()),
-        ]))
+        self.screenshot_tool_result(capture, caption, params.screenshot_file_path.as_deref())
+            .await
     }
 
     /// Lazily create the uinput absolute pointer, sizing its ABS range to the
@@ -1336,28 +1484,45 @@ impl ComputerUseLinux {
     ) -> Result<CallToolResult, ErrorData> {
         let capture = params.capture.clone();
         let target = params.window_target();
-        let Json(output) = self.dispatch_click(params).await;
-        self.finish_action_output(output, &capture, target.as_ref(), TargetRaised::Yes)
+        let (Json(output), scope) = self.dispatch_click(params).await;
+        self.finish_action_output(output, &capture, target.as_ref(), TargetRaised::Yes, scope)
             .await
     }
 
-    async fn dispatch_click(&self, mut params: ClickParams) -> Json<ActionOutput> {
+    async fn dispatch_click(&self, params: ClickParams) -> (Json<ActionOutput>, PostActionScope) {
         let received = Some(serde_json::json!(params.clone()));
         let input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         // Before the window is raised: a refused call changes nothing.
-        if let Err(message) = self.check_element_snapshot(
+        match self.check_element_snapshot(
             "click",
             params.snapshot_id.as_deref(),
             click_resolves_cached_element(&params),
         ) {
-            return Json(ActionOutput {
-                ok: false,
-                implemented: true,
-                action: "click".to_string(),
-                message,
-                received,
-            });
+            Ok(scope) => (
+                self.dispatch_checked_click(params, received, input_guard)
+                    .await,
+                scope,
+            ),
+            Err(message) => (
+                Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "click".to_string(),
+                    message,
+                    received,
+                }),
+                PostActionScope::default(),
+            ),
         }
+    }
+
+    /// The rest of click, under the input lock the caller took.
+    async fn dispatch_checked_click(
+        &self,
+        mut params: ClickParams,
+        received: Option<serde_json::Value>,
+        input_guard: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Json<ActionOutput> {
         let mut portal_target_point = None;
         let mut input_focus = None;
         let mut owner_target = ElementOwnerTarget::pid(params.pid);
@@ -1860,12 +2025,23 @@ impl ComputerUseLinux {
     ) -> Result<CallToolResult, ErrorData> {
         let capture = params.capture.clone();
         let requested_action = requested_or_primary_action(params.action.as_deref());
-        let target = params.target.window_target();
-        let Json(output) = self
+        let screenshot_target = params.target.window_target();
+        let (Json(output), target) = self
             .perform_element_action(&params, Some(requested_action))
             .await;
-        self.finish_action_output(output, &capture, target.as_ref(), TargetRaised::No)
-            .await
+        let (observation, screenshot, notes) = if output.ok {
+            self.capture_element_observation(&capture, screenshot_target.as_ref(), target.as_ref())
+                .await
+        } else {
+            (PostActionObservation::default(), None, Vec::new())
+        };
+        self.action_tool_result(
+            ActionToolOutput {
+                action: with_notes(output, notes),
+                observation,
+            },
+            screenshot,
+        )
     }
 
     #[tool(
@@ -1884,23 +2060,38 @@ impl ComputerUseLinux {
         Parameters(params): Parameters<SetValueParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let capture = params.capture.clone();
-        let target = params.target.window_target();
-        let (output, verified) = self.dispatch_set_value(params).await;
-        self.finish_set_value_output(output, verified, &capture, target.as_ref())
-            .await
+        let screenshot_target = params.target.window_target();
+        let (output, verified, target) = self.dispatch_set_value(params).await;
+        self.finish_set_value_output(
+            output,
+            verified,
+            &capture,
+            screenshot_target.as_ref(),
+            target.as_ref(),
+        )
+        .await
     }
 
-    async fn dispatch_set_value(&self, params: SetValueParams) -> (ActionOutput, Option<bool>) {
+    async fn dispatch_set_value(
+        &self,
+        params: SetValueParams,
+    ) -> (
+        ActionOutput,
+        Option<bool>,
+        std::result::Result<ElementObservationTarget, String>,
+    ) {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let received = Some(serde_json::json!(params.clone()));
         // An element_identifier names the object itself, not a snapshot node.
-        if let Err(message) = self.check_element_snapshot(
+        match self.check_element_snapshot(
             "set_value",
             params.snapshot_id.as_deref(),
             trimmed_nonempty(params.element_identifier.as_deref()).is_none()
                 && (params.element_index.is_some() || !params.selector().is_empty()),
         ) {
-            return (
+            // The post-action tree follows the element's bound owner instead.
+            Ok(_) => self.dispatch_checked_set_value(params, received).await,
+            Err(message) => (
                 ActionOutput {
                     ok: false,
                     implemented: true,
@@ -1909,8 +2100,21 @@ impl ComputerUseLinux {
                     received,
                 },
                 None,
-            );
+                Ok(ElementObservationTarget::default()),
+            ),
         }
+    }
+
+    /// The rest of set_value; the caller holds the input lock.
+    async fn dispatch_checked_set_value(
+        &self,
+        params: SetValueParams,
+        received: Option<serde_json::Value>,
+    ) -> (
+        ActionOutput,
+        Option<bool>,
+        std::result::Result<ElementObservationTarget, String>,
+    ) {
         if let Err(message) = self
             .check_element_action_target(
                 &params.target,
@@ -1930,6 +2134,7 @@ impl ComputerUseLinux {
                     received,
                 },
                 None,
+                Ok(ElementObservationTarget::default()),
             );
         }
         let object_ref = match self.resolve_object_ref(
@@ -1949,12 +2154,23 @@ impl ComputerUseLinux {
                         received,
                     },
                     None,
+                    Ok(ElementObservationTarget::default()),
                 );
             }
         };
 
+        let target = if params.capture.include_tree.unwrap_or(false) {
+            self.element_observation_target(
+                &params.target,
+                &object_ref,
+                params.snapshot_id.as_deref(),
+            )
+            .await
+        } else {
+            Ok(ElementObservationTarget::default())
+        };
         self.indicator.text("set_value", &params.value, false).await;
-        match set_element_value(&object_ref, &params.value).await {
+        let (output, verified) = match set_element_value(&object_ref, &params.value).await {
             Ok(ValueSetInvocation::Numeric { value }) => (
                 ActionOutput {
                     ok: true,
@@ -1978,7 +2194,8 @@ impl ComputerUseLinux {
                 },
                 None,
             ),
-        }
+        };
+        (output, verified, target)
     }
 
     #[tool(
@@ -1998,39 +2215,52 @@ impl ComputerUseLinux {
     ) -> Result<CallToolResult, ErrorData> {
         let capture = params.capture.clone();
         let target = params.window_target();
-        let Json(output) = self.dispatch_scroll(params).await;
-        self.finish_action_output(output, &capture, target.as_ref(), TargetRaised::Yes)
+        let (Json(output), scope) = self.dispatch_scroll(params).await;
+        self.finish_action_output(output, &capture, target.as_ref(), TargetRaised::Yes, scope)
             .await
     }
 
-    async fn dispatch_scroll(&self, mut params: ScrollParams) -> Json<ActionOutput> {
+    async fn dispatch_scroll(&self, params: ScrollParams) -> (Json<ActionOutput>, PostActionScope) {
         let received = Some(serde_json::json!(params.clone()));
-        let units = match scroll_units(params.pages) {
-            Ok(units) => units,
-            Err(message) => {
-                return Json(ActionOutput {
+        let refused = |message| {
+            (
+                Json(ActionOutput {
                     ok: false,
                     implemented: true,
                     action: "scroll".to_string(),
                     message,
-                    received,
-                });
-            }
+                    received: received.clone(),
+                }),
+                PostActionScope::default(),
+            )
+        };
+        let units = match scroll_units(params.pages) {
+            Ok(units) => units,
+            Err(message) => return refused(message),
         };
         let input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
-        if let Err(message) = self.check_element_snapshot(
+        match self.check_element_snapshot(
             "scroll",
             params.snapshot_id.as_deref(),
             scroll_resolves_cached_element(&params),
         ) {
-            return Json(ActionOutput {
-                ok: false,
-                implemented: true,
-                action: "scroll".to_string(),
-                message,
-                received,
-            });
+            Ok(scope) => (
+                self.dispatch_checked_scroll(params, units, received.clone(), input_guard)
+                    .await,
+                scope,
+            ),
+            Err(message) => refused(message),
         }
+    }
+
+    /// The rest of scroll, under the input lock the caller took.
+    async fn dispatch_checked_scroll(
+        &self,
+        mut params: ScrollParams,
+        units: i32,
+        received: Option<serde_json::Value>,
+        input_guard: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Json<ActionOutput> {
         let mut portal_target_point = None;
         let mut owner_target = ElementOwnerTarget::pid(params.pid);
         // Raise/focus the target window first (parity with click) so wheel
@@ -2494,8 +2724,14 @@ impl ComputerUseLinux {
     ) -> Result<CallToolResult, ErrorData> {
         let capture = params.capture.clone();
         let Json(output) = self.dispatch_drag(params).await;
-        self.finish_action_output(output, &capture, None, TargetRaised::Yes)
-            .await
+        self.finish_action_output(
+            output,
+            &capture,
+            None,
+            TargetRaised::Yes,
+            PostActionScope::default(),
+        )
+        .await
     }
 
     async fn dispatch_drag(&self, params: DragParams) -> Json<ActionOutput> {
@@ -2738,8 +2974,14 @@ impl ComputerUseLinux {
         let target = params.window_target();
         let Json(output) = self.dispatch_press_key(params).await;
         let raised = keyboard_target_raised(&target);
-        self.finish_action_output(output, &capture, Some(&target), raised)
-            .await
+        self.finish_action_output(
+            output,
+            &capture,
+            Some(&target),
+            raised,
+            PostActionScope::default(),
+        )
+        .await
     }
 
     async fn dispatch_press_key(&self, params: PressKeyParams) -> Json<ActionOutput> {
@@ -2980,7 +3222,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "type_text",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector. Success confirms dispatch, not field-content verification; re-observe the target before retrying. X11 xdotool can silently substitute symbols under non-US or changing XKB layouts; inspect the text before pressing Enter or submitting it. The wtype backend rejects NUL and text over 131071 UTF-8 bytes before focus or indicators. On Hyprland, confirmed password fields are rejected, and ambiguous fields and terminals use private stdin for at most 100 Unicode characters per call. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector. Keyboard success confirms dispatch, not field-content verification; re-observe the target before retrying. On GNOME, when a configured keyboard layout group cannot type a character of the text, the text goes into the focused editable field of the verified target window through AT-SPI EditableText instead: inserted at the caret, replacing a selection, and reported as ok only when the field reads it back with the rest unchanged. Password fields, text with a newline, tab or other control character, and focus outside an editable field of that active window keep the refusal. X11 xdotool can silently substitute symbols under non-US or changing XKB layouts; inspect the text before pressing Enter or submitting it. The wtype backend rejects NUL and text over 131071 UTF-8 bytes before focus or indicators. On Hyprland, confirmed password fields are rejected, and ambiguous fields and terminals use private stdin for at most 100 Unicode characters per call. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -2995,14 +3237,87 @@ impl ComputerUseLinux {
         let capture = params.capture.clone();
         let target = params.window_target();
         let Json(mut output) = self.dispatch_type_text(params).await;
-        if output.ok {
+        if output.ok && !output.message.starts_with(TYPE_TEXT_ATSPI_ROUTE) {
             output.message.push_str(
                 " Field contents were not verified; re-observe the target before retrying.",
             );
         }
         let raised = keyboard_target_raised(&target);
-        self.finish_action_output(output, &capture, Some(&target), raised)
-            .await
+        self.finish_action_output(
+            output,
+            &capture,
+            Some(&target),
+            raised,
+            PostActionScope::default(),
+        )
+        .await
+    }
+
+    /// GNOME's portal route refused the text because a layout group lacks a
+    /// character. Insert it into the target's focused field through AT-SPI
+    /// EditableText instead, and succeed only when the field reads it back.
+    /// Every other case keeps the portal refusal.
+    async fn type_text_through_atspi(
+        &self,
+        text: &str,
+        portal_target: &WindowTarget,
+        missing: crate::keyboard_keymap::MissingLayoutKeysym,
+        refusal: String,
+        received: Option<serde_json::Value>,
+        input_guard: InputOperationGuard,
+    ) -> ActionOutput {
+        if let Some(key) = key_press_character(text) {
+            return action_result(
+                "type_text",
+                Err(type_text_control_character_refusal(&refusal, key)),
+                received,
+            );
+        }
+        let focus = match self.focus_target_for_input(portal_target).await {
+            Ok(focus) => focus,
+            Err(message) => {
+                return action_result(
+                    "type_text",
+                    Err(format!("{refusal} No AT-SPI text fallback: {message}")),
+                    received,
+                )
+            }
+        };
+        // The window the compositor verified as focused: the field must be in it.
+        let window = focus.as_ref().map(|focus| {
+            focus
+                .focused_window
+                .as_ref()
+                .unwrap_or(&focus.requested_window)
+        });
+        let title = window.and_then(|window| window.title.clone());
+        let Some(pid) = window.and_then(|window| window.pid) else {
+            return action_result_with_focus(
+                "type_text",
+                Err(format!(
+                    "{refusal} No AT-SPI text fallback: the target window has no process id to find its focused field."
+                )),
+                received,
+                focus,
+            );
+        };
+        // A selection replace is DeleteText then InsertText. Finish both even
+        // if this call is cancelled, and hold the input lock until they end.
+        let owned_text = text.to_string();
+        let (_guard, insert) = run_cancellation_safe_guarded(input_guard, async move {
+            crate::atspi_tree::insert_text_at_focus(pid, title.as_deref(), &owned_text).await
+        })
+        .await;
+        let insert = insert.unwrap_or_else(|error| {
+            Ok(FocusedTextInsert::EditFailed {
+                reason: error,
+                may_have_changed: true,
+            })
+        });
+        match type_text_atspi_result(&refusal, missing, text, insert) {
+            Ok(message) => successful_action_with_focus("type_text", &message, received, focus),
+            Err(message) => action_result_with_focus("type_text", Err(message), received, focus),
+        }
     }
 
     async fn dispatch_type_text(&self, params: TypeTextParams) -> Json<ActionOutput> {
@@ -3176,6 +3491,7 @@ impl ComputerUseLinux {
         }
         if self.should_prefer_portal_text_backend() {
             let mut focus = focus;
+            let mut layout_refusal = None;
             let result = async {
                 let portal_target = self
                     .portal_keyboard_target(&window_target, focus.as_ref())
@@ -3184,9 +3500,15 @@ impl ComputerUseLinux {
                 let keysyms = keysyms_for_text(&params.text)
                     .map_err(|error| format!("Literal text was not sent: {error:#}"))?;
                 if self.is_gnome_wayland_session() {
-                    crate::keyboard_keymap::validate_gnome_text(&params.text, &keysyms)
-                        .await
-                        .map_err(|error| format!("Literal text was not sent: {error:#}"))?;
+                    if let Err(error) =
+                        crate::keyboard_keymap::validate_gnome_text(&params.text, &keysyms).await
+                    {
+                        let message = format!("Literal text was not sent: {error:#}");
+                        if let Some(missing) = atspi_fallback_trigger(&error) {
+                            layout_refusal = Some((portal_target, missing, message.clone()));
+                        }
+                        return Err(message);
+                    }
                 }
                 let session = self
                     .ensure_portal_keyboard_session()
@@ -3204,6 +3526,19 @@ impl ComputerUseLinux {
                     })
             }
             .await;
+            if let Some((portal_target, missing, refusal)) = layout_refusal {
+                return Json(
+                    self.type_text_through_atspi(
+                        &params.text,
+                        &portal_target,
+                        missing,
+                        refusal,
+                        received,
+                        input_guard,
+                    )
+                    .await,
+                );
+            }
             return Json(match result {
                 Ok(()) => {
                     let notes = self.input_landing_notes(focus.as_ref(), true).await;
@@ -3376,12 +3711,40 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.49",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result confirms dispatch only; every text backend leaves field contents unverified. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
+    version = "0.7.52",
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text goes into the target's focused editable field through AT-SPI EditableText and must read back, and otherwise can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes, optional screenshot_file_path (an absolute path to a new file, stdio only, refused over HTTP) to save the screenshot there instead of returning image content, and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result through a keyboard backend confirms dispatch only and leaves field contents unverified; only the GNOME AT-SPI fallback reads the field back. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
-impl ServerHandler for ComputerUseLinux {}
+impl ServerHandler for ComputerUseLinux {
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
+        // Each HTTP client names itself per request; a shared field would show the last to initialize.
+        let agent = crate::indicator::request_agent_name(&context.meta, context.client_info());
+        let router = self.mcp_tool_router();
+        // A bad screenshot_file_path is refused before any capture or input,
+        // so a mutating tool never acts and then drops its observation.
+        let accepts_file = router.get(&request.name).is_some_and(|tool| {
+            tool.input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|properties| properties.contains_key("screenshot_file_path"))
+        });
+        if let Some(refusal) = screenshot_file_refusal(
+            &request.name,
+            request.arguments.as_ref(),
+            accepts_file,
+            self.http_transport,
+        ) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(refusal)]).into());
+        }
+        let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        crate::indicator::with_request_agent(agent, router.call(call)).await
+    }
+}
 
-fn shell_execution_enabled() -> bool {
+pub(crate) fn shell_execution_enabled() -> bool {
     let value = env::var(SHELL_ENABLE_ENV)
         .ok()
         .or_else(|| env::var(SHELL_ENABLE_ENV_STANDALONE).ok());
@@ -3669,11 +4032,18 @@ async fn execute_shell(params: RunShellParams) -> RunShellOutput {
     }
 }
 
-pub async fn serve_mcp() -> Result<()> {
-    let server = ComputerUseLinux::default();
-    let indicator = Arc::clone(&server.indicator);
+pub(crate) async fn serve_mcp(listen: Option<crate::http_listen::ListenConfig>) -> Result<()> {
+    let mut server = ComputerUseLinux::default();
     let tree_spiller = Arc::clone(&server.tree_spiller);
     tree_spiller.sweep();
+    if let Some(config) = listen {
+        server.require_snapshot_ids = true;
+        server.http_transport = true;
+        let signal = crate::http_listen::serve_http(server, config).await?;
+        tree_spiller.remove_current();
+        std::process::exit(128 + signal);
+    }
+    let indicator = Arc::clone(&server.indicator);
     let running = server.serve(rmcp::transport::stdio()).await?;
     // Legacy initialization supplies the client name through the peer.
     // Discovery-only hosts use the indicator's configured name or Agent fallback.
@@ -3784,11 +4154,84 @@ struct PostActionCaptureParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1, max = 95))]
     quality: Option<u8>,
+    /// Save the post-action screenshot to this absolute path instead of
+    /// returning it as image content; needs screenshot_after. The parent
+    /// directory must exist, and the extension must match format (.png, or
+    /// .jpg/.jpeg for jpeg). The file must not exist: file output creates a
+    /// new file and never replaces one. Refused over HTTP (mcp --listen). A
+    /// failed write is reported in screenshot_error, and the action's ok stays
+    /// true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    screenshot_file_path: Option<String>,
     /// Include a fresh compacted AT-SPI accessibility tree snapshot after the action (default false). Also refreshes cached element_index values.
     /// It reads at most 1000 nodes and depth 32; when accessibility_tree_truncated
     /// is true, call get_app_state with a higher max_nodes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     include_tree: Option<bool>,
+}
+
+/// The fields of a tool call that decide whether its screenshot_file_path
+/// can be used.
+#[derive(Deserialize)]
+struct ScreenshotFileRequest {
+    #[serde(default)]
+    screenshot_file_path: Option<String>,
+    #[serde(default)]
+    format: Option<ScreenshotOutputFormat>,
+    #[serde(default)]
+    include_screenshot: Option<bool>,
+    #[serde(default)]
+    screenshot_after: Option<ScreenshotAfter>,
+}
+
+/// The refusal for a call whose screenshot_file_path cannot be used: over
+/// HTTP, without a capture to save, or with a path that fails
+/// `validate_screenshot_file_path`. `accepts_file` says whether the tool takes
+/// the parameter at all. Malformed arguments are left to the tool's own
+/// parameter errors.
+fn screenshot_file_refusal(
+    tool: &str,
+    arguments: Option<&rmcp::model::JsonObject>,
+    accepts_file: bool,
+    remote: bool,
+) -> Option<String> {
+    let arguments = arguments?;
+    if !accepts_file
+        || arguments
+            .get("screenshot_file_path")
+            .is_none_or(serde_json::Value::is_null)
+    {
+        return None;
+    }
+    let request: ScreenshotFileRequest =
+        serde_json::from_value(serde_json::Value::Object(arguments.clone())).ok()?;
+    let path = request.screenshot_file_path?;
+    if remote {
+        return Some(format!(
+            "{tool} was not run: {}",
+            crate::screenshot_file::REMOTE_REFUSAL
+        ));
+    }
+    let missing_capture = match tool {
+        "screenshot" => None,
+        "get_app_state" => (!request.include_screenshot.unwrap_or(true))
+            .then_some("screenshot_file_path needs include_screenshot=true"),
+        _ => request
+            .screenshot_after
+            .and_then(ScreenshotAfter::resolve)
+            .is_none()
+            .then_some("screenshot_file_path needs screenshot_after"),
+    };
+    if let Some(reason) = missing_capture {
+        return Some(format!("{tool} was not run: {reason}"));
+    }
+    crate::screenshot_file::validate_screenshot_file_path(
+        &path,
+        request.format.unwrap_or(ScreenshotOutputFormat::Png),
+        remote,
+    )
+    .err()
+    .map(|error| format!("{tool} was not run: {error:#}"))
 }
 
 impl PostActionCaptureParams {
@@ -3810,7 +4253,7 @@ impl PostActionCaptureParams {
 
 #[derive(Debug, Clone, Default, Serialize, JsonSchema)]
 struct PostActionObservation {
-    /// Post-action screenshot metadata when `screenshot_after` was requested; the image itself is the first `image` content block.
+    /// Post-action screenshot metadata when `screenshot_after` was requested; the image itself is the first `image` content block, or the file at `file_path` when `screenshot_file_path` was given.
     #[serde(skip_serializing_if = "Option::is_none")]
     screenshot: Option<ScreenshotSummary>,
     /// Post-action screenshot capture error when a requested `screenshot_after` capture failed.
@@ -4086,6 +4529,14 @@ struct GetAppStateParams {
     #[serde(default)]
     #[schemars(range(min = 1, max = 95))]
     quality: Option<u8>,
+    /// Save the screenshot to this absolute path instead of returning it as
+    /// image content; screenshot.file_path then names it. The parent directory
+    /// must exist, and the extension must match format (.png, or .jpg/.jpeg for
+    /// jpeg). The file must not exist: file output creates a new file and
+    /// never replaces one. Refused over HTTP (mcp --listen). A failed write is
+    /// reported in screenshot_error.
+    #[serde(default)]
+    screenshot_file_path: Option<String>,
     /// Include the full diagnostics report (large) and return tree nodes in the
     /// full encoding, with null and empty fields and action descriptions and
     /// keybindings. Default false: only the compact readiness block, and
@@ -4180,6 +4631,13 @@ struct ScreenshotParams {
     #[serde(default)]
     #[schemars(range(min = 1, max = 95))]
     quality: Option<u8>,
+    /// Save the image to this absolute path instead of returning it as image
+    /// content; the caption's file_path then names it. The parent directory
+    /// must exist, and the extension must match format (.png, or .jpg/.jpeg for
+    /// jpeg). The file must not exist: file output creates a new file and
+    /// never replaces one. Refused over HTTP (mcp --listen).
+    #[serde(default)]
+    screenshot_file_path: Option<String>,
 }
 
 impl ScreenshotParams {
@@ -4219,7 +4677,7 @@ impl ScreenshotParams {
 
 /// Screenshot metadata for `get_app_state` and post-action captures. The image
 /// bytes travel as a separate `image` content block (issue #145), not inside
-/// this JSON.
+/// this JSON, or are saved to `file_path` (issue #446).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 struct ScreenshotSummary {
     mime_type: String,
@@ -4246,6 +4704,10 @@ struct ScreenshotSummary {
     /// Title of the window when cropped to a window.
     #[serde(skip_serializing_if = "Option::is_none")]
     window_title: Option<String>,
+    /// The file the image was saved to when screenshot_file_path was given;
+    /// no image content block is returned then. bytes is its size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
 }
 
 impl From<&ScreenshotCapture> for ScreenshotSummary {
@@ -4266,6 +4728,7 @@ impl From<&ScreenshotCapture> for ScreenshotSummary {
             quality: capture.quality,
             cropped_to_window: None,
             window_title: None,
+            file_path: None,
         }
     }
 }
@@ -5061,6 +5524,101 @@ struct SetValueToolOutput {
     observation: PostActionObservation,
 }
 
+/// Start of every type_text success message from the AT-SPI route. Those
+/// results were read back, so type_text does not add its unverified note.
+const TYPE_TEXT_ATSPI_ROUTE: &str = "Typed through AT-SPI EditableText";
+/// Start of an AT-SPI route failure after an edit was attempted.
+const TYPE_TEXT_ATSPI_UNVERIFIED: &str = "AT-SPI EditableText insert was not verified";
+
+/// The portal preflight refusal that may take the AT-SPI route: the keymap
+/// was read and a layout group cannot type a character. A keymap that could
+/// not be read or checked keeps its error.
+fn atspi_fallback_trigger(
+    error: &anyhow::Error,
+) -> Option<crate::keyboard_keymap::MissingLayoutKeysym> {
+    error
+        .downcast_ref::<crate::keyboard_keymap::MissingLayoutKeysym>()
+        .copied()
+}
+
+/// The first character that portal typing sends as a key press (Enter, Tab,
+/// BackSpace, Escape, Delete and the like), not as text.
+fn key_press_character(text: &str) -> Option<char> {
+    text.chars().find(|ch| ch.is_control())
+}
+
+fn type_text_control_character_refusal(refusal: &str, key: char) -> String {
+    format!(
+        "{refusal} The AT-SPI text fallback was not used: the text contains U+{:04X}, which typing sends as a key press such as Enter or Tab, and inserting it is not the same. Type the text without it, then send the key with press_key.",
+        key as u32
+    )
+}
+
+/// The type_text result for one AT-SPI insert outcome. `Ok` is a verified
+/// success message.
+fn type_text_atspi_result(
+    refusal: &str,
+    missing: crate::keyboard_keymap::MissingLayoutKeysym,
+    text: &str,
+    insert: Result<FocusedTextInsert>,
+) -> std::result::Result<String, String> {
+    const MAY_HAVE_CHANGED: &str = "The field may have changed; re-observe it before retrying.";
+    let because = format!("because GNOME {}", missing.summary());
+    let route = format!("{TYPE_TEXT_ATSPI_ROUTE} {because}");
+    let unverified = format!("{TYPE_TEXT_ATSPI_UNVERIFIED}: the text was sent {because}");
+    match insert {
+        Ok(FocusedTextInsert::Verified {
+            role,
+            replaced_selection,
+            caret_after_text,
+        }) => {
+            let mut message = format!(
+                "{route}. The focused {role} reads back the text at the insertion point, with the rest of the field unchanged."
+            );
+            if replaced_selection {
+                message.push_str(" The text replaced the selection.");
+            }
+            if !caret_after_text {
+                message.push_str(" The caret could not be moved after the text.");
+            }
+            Ok(message)
+        }
+        Ok(FocusedTextInsert::NotEditable(reason)) => {
+            Err(format!("{refusal} No AT-SPI text fallback: {reason}."))
+        }
+        Ok(FocusedTextInsert::PasswordField) => Err(format!(
+            "{refusal} The focused field is a password field, so the AT-SPI text fallback was not used. set_value can fill it."
+        )),
+        Ok(FocusedTextInsert::Mismatch {
+            expected_count,
+            read_count,
+            read_text,
+            read_truncated,
+        }) => Err(format!(
+            "{unverified}, but the field does not read it back: expected {text:?} at the insertion point, the rest unchanged, and {expected_count} characters in all; read {read_text:?}{} at the insertion point and {read_count} characters. {MAY_HAVE_CHANGED}",
+            if read_truncated { " (first part)" } else { "" }
+        )),
+        Ok(FocusedTextInsert::ReadbackFailed) => Err(format!(
+            "{unverified}, but reading the field back failed. {MAY_HAVE_CHANGED}"
+        )),
+        Ok(FocusedTextInsert::ReadbackTimedOut) => Err(format!(
+            "{unverified}, but reading the field back timed out. {MAY_HAVE_CHANGED}"
+        )),
+        Ok(FocusedTextInsert::EditFailed {
+            reason,
+            may_have_changed,
+        }) => Err(format!(
+            "{TYPE_TEXT_ATSPI_UNVERIFIED}: {reason}. {}",
+            if may_have_changed {
+                MAY_HAVE_CHANGED
+            } else {
+                "No text was changed."
+            }
+        )),
+        Err(error) => Err(format!("{refusal} No AT-SPI text fallback: {error:#}.")),
+    }
+}
+
 fn editable_text_action_result(
     outcome: EditableTextSetOutcome,
     received: Option<serde_json::Value>,
@@ -5520,12 +6078,65 @@ impl ComputerUseLinux {
         Ok(window)
     }
 
+    /// Saves a prepared screenshot to `path` for screenshot_file_path and
+    /// returns the path. The caller then returns no image content for it.
+    async fn save_screenshot_file(
+        &self,
+        capture: &ScreenshotCapture,
+        path: &str,
+    ) -> Result<String> {
+        let target = crate::screenshot_file::validate_screenshot_file_path(
+            path,
+            capture.format,
+            self.http_transport,
+        )?;
+        let bytes = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(data_url_payload(&capture.data_url))
+                .context("failed to decode the screenshot for screenshot_file_path")?
+        };
+        tokio::task::spawn_blocking(move || {
+            crate::screenshot_file::write_screenshot_file(&target, &bytes)
+        })
+        .await
+        .context("screenshot file writer stopped")??;
+        Ok(path.to_string())
+    }
+
     async fn capture_post_action_observation(
         &self,
         capture: &PostActionCaptureParams,
         target: Option<&WindowTarget>,
         fallback_window: Option<&WindowInfo>,
         raised: TargetRaised,
+        scope: PostActionScope,
+    ) -> (
+        PostActionObservation,
+        Option<ScreenshotCapture>,
+        Vec<String>,
+    ) {
+        self.capture_post_action_observation_with(
+            capture,
+            target,
+            fallback_window,
+            raised,
+            scope,
+            false,
+        )
+        .await
+    }
+
+    /// `settled` skips the post-action settle delay for a tree read right
+    /// after a screenshot of the same action, which already waited it.
+    async fn capture_post_action_observation_with(
+        &self,
+        capture: &PostActionCaptureParams,
+        target: Option<&WindowTarget>,
+        fallback_window: Option<&WindowInfo>,
+        raised: TargetRaised,
+        scope: PostActionScope,
+        settled: bool,
     ) -> (
         PostActionObservation,
         Option<ScreenshotCapture>,
@@ -5536,15 +6147,38 @@ impl ComputerUseLinux {
         if screenshot_scope.is_none() && !include_tree {
             return (PostActionObservation::default(), None, Vec::new());
         }
+        let bound = scope.bound;
 
         let mut observation = PostActionObservation::default();
         let mut screenshot_capture = None;
         let mut notes = Vec::new();
         let mut resolved_window: Option<WindowInfo> = None;
+        // A failed file output is reported like a failed capture, but it says
+        // nothing about the desktop, so it leaves the diagnostics cached.
+        let mut screenshot_capture_failed = false;
 
         if let Some(scope) = screenshot_scope {
             let options = capture.screenshot_options();
-            let result: Result<(ScreenshotCapture, bool, Option<String>, Option<String>)> = async {
+            let mut file_output_failed = false;
+            #[allow(clippy::type_complexity)]
+            let result: Result<(
+                ScreenshotCapture,
+                bool,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            )> = async {
+                // A path that cannot be written is reported without a capture.
+                if let Some(path) = capture.screenshot_file_path.as_deref() {
+                    if let Err(error) = crate::screenshot_file::validate_screenshot_file_path(
+                        path,
+                        options.format.unwrap_or(ScreenshotOutputFormat::Png),
+                        self.http_transport,
+                    ) {
+                        file_output_failed = true;
+                        return Err(error);
+                    }
+                }
                 let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
                 let crop_window = match scope {
                     ScreenshotAfterScope::Screen => None,
@@ -5614,28 +6248,43 @@ impl ComputerUseLinux {
                 })
                 .await
                 .context("post-action screenshot resize failed")?;
-                Ok((prepared, cropped, window_label, off_screen_note))
+                let file_path = match capture.screenshot_file_path.as_deref() {
+                    Some(path) => match self.save_screenshot_file(&prepared, path).await {
+                        Ok(saved) => Some(saved),
+                        Err(error) => {
+                            file_output_failed = true;
+                            return Err(error);
+                        }
+                    },
+                    None => None,
+                };
+                Ok((prepared, cropped, window_label, off_screen_note, file_path))
             }
             .await;
 
             match result {
-                Ok((prepared, cropped, window_title, off_screen_note)) => {
+                Ok((prepared, cropped, window_title, off_screen_note, file_path)) => {
                     let mut summary = ScreenshotSummary::from(&prepared);
                     summary.cropped_to_window = Some(cropped);
                     summary.window_title = window_title;
+                    // A saved image is not returned inline.
+                    if file_path.is_none() {
+                        screenshot_capture = Some(prepared);
+                    }
+                    summary.file_path = file_path;
                     observation.screenshot = Some(summary);
-                    screenshot_capture = Some(prepared);
                     if let Some(note) = off_screen_note {
                         notes.push(note);
                     }
                 }
                 Err(error) => {
+                    screenshot_capture_failed = !file_output_failed;
                     let error = format!("{error:#}");
                     notes.push(format!("Post-action screenshot failed: {error}"));
                     observation.screenshot_error = Some(error);
                 }
             }
-        } else if !cfg!(test) {
+        } else if !settled && !cfg!(test) {
             sleep(Duration::from_millis(120)).await;
         }
 
@@ -5649,7 +6298,12 @@ impl ComputerUseLinux {
                         .ok()
                         .and_then(|windows| {
                             resolve_window_target(&windows, target)
-                                .inspect_err(|_| self.diagnostics.invalidate())
+                                .inspect_err(|_| {
+                                    // A bound app can legitimately have zero or several windows.
+                                    if !bound {
+                                        self.diagnostics.invalidate();
+                                    }
+                                })
                                 .ok()
                                 .cloned()
                         })
@@ -5669,40 +6323,44 @@ impl ComputerUseLinux {
             // that app may not be the one holding it.
             let window_targeted = resolved_window.is_some()
                 && (target.is_some_and(WindowTarget::has_target) || fallback_window.is_some());
-            let target_pid = resolved_window
-                .as_ref()
-                .and_then(|window| window.pid)
-                .or_else(|| target.and_then(|target| target.pid))
-                .or_else(|| {
-                    if window_targeted {
-                        return None;
-                    }
-                    self.last_snapshot
-                        .lock()
-                        .ok()
-                        .and_then(|snapshot| snapshot.pid)
-                });
+            let PostActionScope {
+                pid: cached_pid,
+                tree: cached_tree,
+                ..
+            } = self.post_action_scope_for_capture(scope);
+            // A bound owner's pid is the element's verified bus owner. Its
+            // window's listed pid can differ: a Flatpak app's roots belong
+            // to xdg-dbus-proxy, not to the process the compositor lists.
+            let target_pid = if bound {
+                target
+                    .and_then(|target| target.pid)
+                    .or_else(|| resolved_window.as_ref().and_then(|window| window.pid))
+            } else {
+                resolved_window
+                    .as_ref()
+                    .and_then(|window| window.pid)
+                    .or_else(|| target.and_then(|target| target.pid))
+                    .or(cached_pid.filter(|_| !window_targeted))
+            };
+            // A pid scopes the tree to every root it owns. A window the
+            // compositor listed is alive, so when its pid owns no root (a
+            // Flatpak app registers through xdg-dbus-proxy) its title finds
+            // the root instead. A bound element owner gets no such fallback.
+            let window_pid = resolved_window.as_ref().and_then(|window| window.pid);
             let candidates = accessibility_filter_candidates(resolved_window.as_ref());
-            let mut app_filter = None;
-            if let Some(pid) = target_pid {
-                if let Ok(apps) = list_accessible_apps(200).await {
-                    app_filter = select_accessibility_object_ref(&apps, pid, &candidates);
-                }
-            }
-            if app_filter.is_none() {
-                app_filter = candidates.into_iter().next();
-            }
+            let fallback_name = candidates
+                .first()
+                .filter(|_| !bound && window_pid.is_some() && window_pid == target_pid)
+                .cloned();
+            let app_filter = if target_pid.is_none() {
+                candidates.into_iter().next()
+            } else {
+                None
+            };
             let accessibility_target_requested = target.is_some_and(WindowTarget::has_target)
                 || target_pid.is_some()
                 || app_filter.is_some();
             let (max_nodes, max_depth) = crate::atspi_tree::snapshot_limits(None, None);
-            let cached_tree = self.last_snapshot.lock().ok().and_then(|snapshot| {
-                Some(CachedTreeWindow {
-                    scope: snapshot.window_scope.clone()?,
-                    pid: snapshot.pid,
-                    window: snapshot.window_id.zip(snapshot.window_backend.clone()),
-                })
-            });
             let window_title = post_action_window_title(
                 target,
                 resolved_window.as_ref(),
@@ -5722,6 +6380,7 @@ impl ComputerUseLinux {
                 app_filter.as_deref(),
                 target_pid,
                 window_title.as_deref(),
+                fallback_name.as_deref(),
                 max_nodes,
                 max_depth,
             )
@@ -5774,6 +6433,13 @@ impl ComputerUseLinux {
                     ) {
                         notes.push(warning.to_string());
                     }
+                    if let Some(note) = unmatched_accessibility_pid_note(
+                        target_pid,
+                        snapshot.root_pid,
+                        snapshot.app_filter_matched,
+                    ) {
+                        notes.push(note);
+                    }
                     if let Some(note) = truncated_accessibility_tree_note(snapshot.truncated) {
                         notes.push(note.to_string());
                     }
@@ -5806,13 +6472,84 @@ impl ComputerUseLinux {
             }
         }
 
-        if observation.screenshot_error.is_some()
+        if screenshot_capture_failed
             || observation.accessibility_error.is_some()
             || observation.accessibility_tree_raw_count == Some(0)
         {
             self.diagnostics.invalidate();
         }
         (observation, screenshot_capture, notes)
+    }
+
+    async fn capture_element_observation(
+        &self,
+        capture: &PostActionCaptureParams,
+        screenshot_target: Option<&WindowTarget>,
+        tree_target: std::result::Result<&ElementObservationTarget, &String>,
+    ) -> (
+        PostActionObservation,
+        Option<ScreenshotCapture>,
+        Vec<String>,
+    ) {
+        // Screenshots keep the caller's target (or focused-window fallback).
+        // An element's verified owner scopes only the accessibility tree.
+        let screenshot_params = PostActionCaptureParams {
+            include_tree: Some(false),
+            ..capture.clone()
+        };
+        let (screenshot_observation, screenshot, mut notes) = self
+            .capture_post_action_observation(
+                &screenshot_params,
+                screenshot_target,
+                None,
+                TargetRaised::No,
+                PostActionScope::default(),
+            )
+            .await;
+        if !capture.include_tree.unwrap_or(false) {
+            return (screenshot_observation, screenshot, notes);
+        }
+
+        let (mut observation, _, tree_notes) = match tree_target {
+            Ok(target) => {
+                // The dispatched element's scope was bound before the action.
+                // A later snapshot must not narrow its process to another window.
+                let tree_params = PostActionCaptureParams {
+                    include_tree: Some(true),
+                    ..Default::default()
+                };
+                // A screenshot of this action already waited the settle delay.
+                self.capture_post_action_observation_with(
+                    &tree_params,
+                    Some(&target.owner),
+                    None,
+                    TargetRaised::No,
+                    PostActionScope::bound_to(target),
+                    capture.screenshot_scope().is_some(),
+                )
+                .await
+            }
+            Err(error) => {
+                // Like every failed post-action read: empty tree fields, and
+                // the replaced snapshot is not left for index calls.
+                self.commit_cleared_snapshot().await;
+                let message = format!("Post-action element observation failed: {error}");
+                let observation = PostActionObservation {
+                    accessibility_tree: Some(TreeNodes::default()),
+                    accessibility_tree_raw_count: Some(0),
+                    tree_scoped: Some(false),
+                    accessibility_tree_truncated: Some(false),
+                    accessibility_error: Some(message.clone()),
+                    ..Default::default()
+                };
+                self.diagnostics.invalidate();
+                (observation, None, vec![message])
+            }
+        };
+        observation.screenshot = screenshot_observation.screenshot;
+        observation.screenshot_error = screenshot_observation.screenshot_error;
+        notes.extend(tree_notes);
+        (observation, screenshot, notes)
     }
 
     /// `structured_tool_result` for an action. A failed action can mean the
@@ -5837,6 +6574,7 @@ impl ComputerUseLinux {
         capture: &PostActionCaptureParams,
         target: Option<&WindowTarget>,
         raised: TargetRaised,
+        scope: PostActionScope,
     ) -> Result<CallToolResult, ErrorData> {
         if !output.ok {
             return self.action_tool_result(
@@ -5848,7 +6586,7 @@ impl ComputerUseLinux {
             );
         }
         let (observation, screenshot, notes) = self
-            .capture_post_action_observation(capture, target, None, raised)
+            .capture_post_action_observation(capture, target, None, raised, scope)
             .await;
         output = with_notes(output, notes);
         self.action_tool_result(
@@ -5865,7 +6603,8 @@ impl ComputerUseLinux {
         mut output: ActionOutput,
         verified: Option<bool>,
         capture: &PostActionCaptureParams,
-        target: Option<&WindowTarget>,
+        screenshot_target: Option<&WindowTarget>,
+        target: std::result::Result<&ElementObservationTarget, &String>,
     ) -> Result<CallToolResult, ErrorData> {
         if !output.ok && verified != Some(false) {
             return self.action_tool_result(
@@ -5878,7 +6617,7 @@ impl ComputerUseLinux {
             );
         }
         let (observation, screenshot, notes) = self
-            .capture_post_action_observation(capture, target, None, TargetRaised::No)
+            .capture_element_observation(capture, screenshot_target, target)
             .await;
         output = with_notes(output, notes);
         self.action_tool_result(
@@ -5918,6 +6657,7 @@ impl ComputerUseLinux {
                 Some(target),
                 fallback_window,
                 TargetRaised::Yes,
+                PostActionScope::default(),
             )
             .await;
         let message = (!notes.is_empty()).then(|| notes.join(" "));
@@ -5953,6 +6693,7 @@ impl ComputerUseLinux {
                 Some(target),
                 fallback_window,
                 TargetRaised::Yes,
+                PostActionScope::default(),
             )
             .await;
         for note in notes {
@@ -6161,7 +6902,18 @@ impl ComputerUseLinux {
             return Some(explicit.to_string());
         }
 
-        let target_pid = window_context.and_then(|window| window.pid).or(params.pid);
+        if params.window_id.is_some() && window_context.is_none() {
+            return Some(UNMATCHABLE_ACCESSIBILITY_APP_FILTER.to_string());
+        }
+
+        if window_context
+            .and_then(|window| window.pid)
+            .or(params.pid.filter(|_| params.window_id.is_none()))
+            .is_some()
+        {
+            // Let the PID-scoped traversal discover every toolkit root.
+            return None;
+        }
         let candidates = accessibility_filter_candidates(window_context);
         let app_id = trimmed_nonempty(params.app_id.as_deref()).map(|requested| {
             window_context
@@ -6171,20 +6923,11 @@ impl ComputerUseLinux {
         let needs_app_id_evidence = app_id.is_some_and(|app_id| {
             !app_id.starts_with("window:") && !crate::windows::app_id_leaf(app_id).is_empty()
         });
-        let apps = if target_pid.is_some() || needs_app_id_evidence {
+        let apps = if needs_app_id_evidence {
             list_apps().await.ok()
         } else {
             None
         };
-
-        if let Some(target_pid) = target_pid {
-            if let Some(object_ref) = apps
-                .as_deref()
-                .and_then(|apps| select_accessibility_object_ref(apps, target_pid, &candidates))
-            {
-                return Some(object_ref);
-            }
-        }
 
         if let Some(app_id) = app_id {
             if !app_id.starts_with("window:") {
@@ -6192,7 +6935,9 @@ impl ComputerUseLinux {
             }
         }
 
-        if candidates.is_empty() && trimmed_nonempty(params.app_id.as_deref()).is_some() {
+        if candidates.is_empty()
+            && (params.window_id.is_some() || trimmed_nonempty(params.app_id.as_deref()).is_some())
+        {
             return Some(UNMATCHABLE_ACCESSIBILITY_APP_FILTER.to_string());
         }
         candidates.into_iter().next()
@@ -6969,10 +7714,66 @@ impl ComputerUseLinux {
         self.cache_snapshot(nodes, target_pid);
     }
 
-    /// Drop the cached tree, under the input lock like every store.
+    /// Drop the cached tree, under the input lock like every store. Over HTTP
+    /// the tree stays: other clients still hold its snapshot_id.
     async fn commit_cleared_snapshot(&self) {
+        if self.require_snapshot_ids {
+            return;
+        }
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         self.clear_snapshot();
+    }
+
+    /// The cached tree's pid and window scope, for a post-action tree with
+    /// no target of its own: always on stdio, and over HTTP only when the
+    /// action named that snapshot, since another client may have stored it.
+    fn post_action_scope(
+        &self,
+        cached: &CachedAccessibilitySnapshot,
+        named_snapshot: Option<&str>,
+    ) -> PostActionScope {
+        if !self.snapshot_readable_by_call(cached, named_snapshot) {
+            return PostActionScope::default();
+        }
+        let tree = cached.window_scope.clone().map(|scope| CachedTreeWindow {
+            scope,
+            pid: cached.pid,
+            window: cached.window_id.zip(cached.window_backend.clone()),
+        });
+        PostActionScope {
+            pid: cached.pid,
+            tree,
+            bound: false,
+        }
+    }
+
+    /// Whether a call may read the cached snapshot: always on stdio, and over
+    /// HTTP only when the call named it, since another client may have stored it.
+    fn snapshot_readable_by_call(
+        &self,
+        cached: &CachedAccessibilitySnapshot,
+        named_snapshot: Option<&str>,
+    ) -> bool {
+        !self.require_snapshot_ids
+            || trimmed_nonempty(named_snapshot).is_some_and(|named| named == cached.id)
+    }
+
+    /// On stdio the post-action tree reads the scope cached at capture time.
+    fn cached_post_action_context(&self) -> PostActionScope {
+        self.last_snapshot
+            .lock()
+            .map(|snapshot| self.post_action_scope(&snapshot, None))
+            .unwrap_or_default()
+    }
+
+    /// Over HTTP the scope was taken under the action's input lock; stdio
+    /// reads the cache. A scope bound to an element's owner holds on both.
+    fn post_action_scope_for_capture(&self, carried: PostActionScope) -> PostActionScope {
+        if self.require_snapshot_ids || carried.bound {
+            carried
+        } else {
+            self.cached_post_action_context()
+        }
     }
 
     /// Drop the cached tree and its spill file. The empty snapshot has no id,
@@ -6986,6 +7787,7 @@ impl ComputerUseLinux {
     }
 
     /// The snapshot_id of the cached tree, empty when none is cached.
+    #[cfg(test)]
     fn cached_snapshot_id(&self) -> String {
         self.last_snapshot
             .lock()
@@ -6993,24 +7795,48 @@ impl ComputerUseLinux {
             .unwrap_or_default()
     }
 
-    /// Refuse an element call whose `snapshot_id` names a replaced snapshot.
-    /// Callers hold the input lock, which every store takes, so the snapshot
-    /// checked here is the one the call then resolves its element in.
+    /// Refuse an element call whose `snapshot_id` names a replaced snapshot,
+    /// and return the scope its post-action tree may reuse. Callers hold the
+    /// input lock, which every store takes, so the snapshot checked here is
+    /// the one the call then resolves its element in; one lock section reads
+    /// the id and the scope.
     fn check_element_snapshot(
         &self,
         action: &str,
         snapshot_id: Option<&str>,
         names_cached_element: bool,
-    ) -> std::result::Result<(), String> {
+    ) -> std::result::Result<PostActionScope, String> {
+        let (cached_id, scope) = self
+            .last_snapshot
+            .lock()
+            .map(|snapshot| {
+                (
+                    snapshot.id.clone(),
+                    self.post_action_scope(&snapshot, snapshot_id),
+                )
+            })
+            .unwrap_or_default();
         if !names_cached_element {
-            return Ok(());
+            return Ok(scope);
         }
-        check_snapshot_id(
-            snapshot_id,
-            &self.cached_snapshot_id(),
-            &self.snapshot_ids.prefix,
-        )
-        .map_err(|message| format!("{action} was not sent: {message}"))
+        self.require_snapshot_id(action, snapshot_id)?;
+        check_snapshot_id(snapshot_id, &cached_id, &self.snapshot_ids.prefix)
+            .map_err(|message| format!("{action} was not sent: {message}"))?;
+        Ok(scope)
+    }
+
+    /// Over HTTP, refuse a cached-element call that names no snapshot.
+    fn require_snapshot_id(
+        &self,
+        action: &str,
+        snapshot_id: Option<&str>,
+    ) -> std::result::Result<(), String> {
+        if self.require_snapshot_ids && trimmed_nonempty(snapshot_id).is_none() {
+            return Err(format!(
+                "{action} was not sent: snapshot_id is required over HTTP for element_index and selector calls, because another client's get_app_state can replace the cached tree. Pass the snapshot_id from your get_app_state result."
+            ));
+        }
+        Ok(())
     }
 
     /// Commit a post-action tree with the window it was taken for and its
@@ -7619,6 +8445,8 @@ impl ComputerUseLinux {
             app_filter.as_deref(),
             accessibility_snapshot_target_pid(app_filter.as_deref(), target_pid),
             window_title.as_deref(),
+            // Recovery re-finds an element by its verified owner only.
+            None,
             max_nodes,
             max_depth,
         )
@@ -7634,25 +8462,193 @@ impl ComputerUseLinux {
         &self,
         params: &ActionParams,
         requested_action: Option<&str>,
-    ) -> Json<ActionOutput> {
-        self.perform_element_action_with(
-            params,
-            requested_action,
-            |object_ref, requested_action| async move {
-                invoke_accessibility_action(&object_ref, requested_action.as_deref()).await
-            },
-            |scope| async move { self.refresh_action_snapshot(&scope).await },
+    ) -> (
+        Json<ActionOutput>,
+        std::result::Result<ElementObservationTarget, String>,
+    ) {
+        let target = Mutex::new(None);
+        let capture_requested = params.capture.include_tree.unwrap_or(false);
+        // The post-action tree follows the element's bound owner, not the
+        // snapshot scope the call checked.
+        let (output, _) = self
+            .perform_element_action_with(
+                params,
+                requested_action,
+                |object_ref, requested_action| {
+                    let target = &target;
+                    async move {
+                        if capture_requested {
+                            let mut bound = self
+                                .element_observation_target(
+                                    &params.target,
+                                    &object_ref,
+                                    params.snapshot_id.as_deref(),
+                                )
+                                .await;
+                            let mut stored = target.lock().unwrap();
+                            if let (Ok(bound), Some(Ok(previous))) = (&mut bound, stored.as_ref()) {
+                                bound.inherit_tree_window(previous);
+                            }
+                            *stored = Some(bound);
+                        }
+                        invoke_accessibility_action(&object_ref, requested_action.as_deref()).await
+                    }
+                },
+                |scope| async move { self.refresh_action_snapshot(&scope).await },
+            )
+            .await;
+        (
+            output,
+            target
+                .into_inner()
+                .unwrap()
+                .unwrap_or_else(|| Ok(ElementObservationTarget::default())),
         )
-        .await
+    }
+
+    /// The dispatched element's verified owner and the window range its
+    /// tree keeps. Over HTTP the range comes only from a snapshot the call
+    /// named, as for every other post-action tree.
+    async fn element_observation_target(
+        &self,
+        requested: &ElementActionTarget,
+        object_ref: &str,
+        named_snapshot: Option<&str>,
+    ) -> std::result::Result<ElementObservationTarget, String> {
+        let selector_owner = if requested.window_id.is_none() && requested.pid.is_none() {
+            Some(
+                self.element_action_owner(requested.window_target().as_ref())
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let mut target = self
+            .element_observation_target_with(requested, object_ref, named_snapshot, || async {
+                object_ref_application_pid(object_ref).await
+            })
+            .await?;
+        if let Some(owner) = selector_owner.filter(|owner| owner.exact_window) {
+            check_identifier_owner(target.pid, owner.pid)?;
+            // The preceding target check verifies pidless windows through the
+            // observed snapshot. A raw, uncached identifier has no such proof.
+            let observed_pidless_window = owner.pid.is_none()
+                && self.last_snapshot.lock().ok().is_some_and(|snapshot| {
+                    self.snapshot_readable_by_call(&snapshot, named_snapshot)
+                        && snapshot
+                            .nodes
+                            .iter()
+                            .any(|node| node.object_ref == object_ref)
+                        && owner.window.as_ref().is_some_and(|(window_id, backend)| {
+                            snapshot.window_id == Some(*window_id)
+                                && snapshot.window_backend.as_ref() == Some(backend)
+                        })
+                });
+            // Adding the verified PID must not override a title/app/class
+            // selector that already identified one of this process's windows.
+            if owner.pid == target.pid || observed_pidless_window {
+                target.window_id = owner.window.map(|(window_id, _)| window_id);
+            }
+        }
+        let tree_window = self.last_snapshot.lock().ok().and_then(|snapshot| {
+            if snapshot.pid.is_none()
+                || snapshot.pid != target.pid
+                || !snapshot
+                    .nodes
+                    .iter()
+                    .any(|node| node.object_ref == object_ref)
+            {
+                return None;
+            }
+            self.post_action_scope(&snapshot, named_snapshot).tree
+        });
+        Ok(ElementObservationTarget {
+            owner: target,
+            tree_window,
+        })
+    }
+
+    async fn element_observation_target_with<F, Fut>(
+        &self,
+        requested: &ElementActionTarget,
+        object_ref: &str,
+        named_snapshot: Option<&str>,
+        owner_pid: F,
+    ) -> std::result::Result<WindowTarget, String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Option<u32>>>,
+    {
+        let cached_target = self.last_snapshot.lock().ok().and_then(|snapshot| {
+            if !self.snapshot_readable_by_call(&snapshot, named_snapshot) {
+                return None;
+            }
+            let node = snapshot
+                .nodes
+                .iter()
+                .find(|node| node.object_ref == object_ref)?;
+            let window_id = snapshot.window_scope.as_deref().and_then(|scope| {
+                // A narrowed tree also keeps dialogs and other toolkit roots.
+                // Only this node's nearest window ancestor proves its window.
+                let mut ancestor = node;
+                for _ in 0..snapshot.nodes.len() {
+                    if crate::atspi_tree::is_window_role(&ancestor.role) {
+                        return ancestor
+                            .name
+                            .as_deref()
+                            .filter(|name| *name == scope)
+                            .and(snapshot.window_id);
+                    }
+                    let parent_index = ancestor.parent_index?;
+                    ancestor = snapshot
+                        .nodes
+                        .iter()
+                        .find(|node| node.index == parent_index)?;
+                }
+                None
+            });
+            Some(WindowTarget {
+                pid: snapshot.pid,
+                window_id,
+                ..Default::default()
+            })
+            .filter(WindowTarget::has_target)
+        });
+        let observed_pid = cached_target.as_ref().and_then(|target| target.pid);
+        let mut target = requested
+            .window_target()
+            .or(cached_target)
+            .unwrap_or_default();
+        // window_id takes precedence over a caller's pid. Keep the dispatched
+        // object's observed owner for a window that the action may close.
+        if observed_pid.is_some() {
+            target.pid = observed_pid;
+        } else if requested.window_id.is_some() {
+            target.pid = None;
+        }
+        if target.pid.is_some() {
+            return Ok(target);
+        }
+        // Resolve the dispatched object, never the app that happens to be in
+        // front or an unrelated snapshot replaced by another MCP client. Even
+        // a pidless compositor window needs this owner if the window closes.
+        let pid = owner_pid()
+            .await
+            .map_err(|error| format!("could not read the element owner's PID: {error:#}"))?
+            .ok_or_else(|| {
+                "the dispatched element has no verified app or window owner".to_string()
+            })?;
+        target.pid = Some(pid);
+        Ok(target)
     }
 
     async fn perform_element_action_with<I, R, IFut, RFut>(
         &self,
         params: &ActionParams,
         requested_action: Option<&str>,
-        mut invoke: I,
+        invoke: I,
         refresh: R,
-    ) -> Json<ActionOutput>
+    ) -> (Json<ActionOutput>, PostActionScope)
     where
         I: FnMut(String, Option<String>) -> IFut,
         IFut: Future<Output = Result<crate::atspi_tree::ActionInvocation>>,
@@ -7662,14 +8658,45 @@ impl ComputerUseLinux {
         let _input_guard = Arc::clone(&self.input_operation_lock).lock_owned().await;
         let received = Some(serde_json::json!(params.clone()));
         // An element_identifier names the object itself, not a snapshot node.
-        if let Err(message) = self.check_element_snapshot(
+        match self.check_element_snapshot(
             "perform_action",
             params.snapshot_id.as_deref(),
             trimmed_nonempty(params.element_identifier.as_deref()).is_none()
                 && (params.element_index.is_some() || !params.selector().is_empty()),
         ) {
-            return action_error_output(message, &received);
+            Ok(scope) => (
+                self.perform_checked_element_action(
+                    params,
+                    requested_action,
+                    invoke,
+                    refresh,
+                    received,
+                )
+                .await,
+                scope,
+            ),
+            Err(message) => (
+                action_error_output(message, &received),
+                PostActionScope::default(),
+            ),
         }
+    }
+
+    /// The rest of perform_action; the caller holds the input lock.
+    async fn perform_checked_element_action<I, R, IFut, RFut>(
+        &self,
+        params: &ActionParams,
+        requested_action: Option<&str>,
+        mut invoke: I,
+        refresh: R,
+        received: Option<serde_json::Value>,
+    ) -> Json<ActionOutput>
+    where
+        I: FnMut(String, Option<String>) -> IFut,
+        IFut: Future<Output = Result<crate::atspi_tree::ActionInvocation>>,
+        R: FnOnce(AccessibilityRecoveryScope) -> RFut,
+        RFut: Future<Output = Result<RefreshedAccessibilitySnapshot>>,
+    {
         if let Err(message) = self
             .check_element_action_target(
                 &params.target,
@@ -7725,7 +8752,7 @@ impl ComputerUseLinux {
                 &received,
             );
         };
-        let original_pid = recovery_scope.params.pid.or(recovery_scope.target_pid);
+        let original_pid = action_recovery_target_pid(&recovery_scope, None);
         let observed_window_scope =
             recovery_scope.params.window_id.is_some() && original_window.is_some();
         if original_pid.is_none() && !observed_window_scope {
@@ -7830,6 +8857,7 @@ fn action_recovery_target_pid(
     scope
         .params
         .pid
+        .filter(|_| scope.params.window_id.is_none())
         .or(scope.target_pid)
         .or(resolved_window_pid)
 }
@@ -8353,6 +9381,20 @@ fn truncated_accessibility_tree_note(truncated: bool) -> Option<&'static str> {
     )
 }
 
+fn unmatched_accessibility_pid_note(
+    target_pid: Option<u32>,
+    root_pid: Option<u32>,
+    app_filter_matched: bool,
+) -> Option<String> {
+    if root_pid.is_some() || app_filter_matched {
+        return None;
+    }
+    let pid = target_pid?;
+    Some(format!(
+        "No AT-SPI application root matched pid {pid}; the tree is empty. The app may have closed, may not expose accessibility, or may connect through a proxy. Run list_apps, then call get_app_state with app_name_or_bundle_identifier set to its accessibility name or root reference."
+    ))
+}
+
 fn shell_only_accessibility_tree_note(
     nodes: &[AccessibilityNode],
     scoped: bool,
@@ -8743,36 +9785,6 @@ fn accessibility_snapshot_target_pid(
     } else {
         target_pid
     }
-}
-
-fn select_accessibility_object_ref(
-    apps: &[AccessibleAppSummary],
-    target_pid: u32,
-    candidates: &[String],
-) -> Option<String> {
-    let mut pid_matches = apps.iter().filter(|app| app.pid == Some(target_pid));
-    let first = pid_matches.next()?;
-    let second = pid_matches.next();
-
-    if second.is_none() {
-        return Some(first.object_ref.clone());
-    }
-
-    let lowered_candidates = candidates
-        .iter()
-        .map(|candidate| candidate.to_ascii_lowercase())
-        .collect::<Vec<_>>();
-
-    apps.iter()
-        .filter(|app| app.pid == Some(target_pid))
-        .find(|app| {
-            let name = app.name.as_deref().unwrap_or_default().to_ascii_lowercase();
-            lowered_candidates
-                .iter()
-                .any(|candidate| !candidate.is_empty() && name.contains(candidate))
-        })
-        .map(|app| app.object_ref.clone())
-        .or_else(|| Some(first.object_ref.clone()))
 }
 
 fn accessibility_filter_candidates(window_context: Option<&WindowInfo>) -> Vec<String> {
@@ -12049,7 +13061,7 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
             "portal-start-failure" => {
                 let scroll: ScrollParams =
                     serde_json::from_value(serde_json::json!({"direction":"down"})).unwrap();
-                let result = backend.dispatch_scroll(scroll).await.0;
+                let result = backend.dispatch_scroll(scroll).await.0 .0;
                 assert!(!result.ok, "{}", result.message);
                 let (ydotool_error, portal_error) = result
                     .message
@@ -12086,7 +13098,7 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                 // last click below takes it.
                 let retry = "The stale device was removed. A retry sizes a new device to a fresh screenshot; if that fails, it is not sent, since ydotool cannot position the pointer accurately on Wayland.";
                 *backend.abs_pointer.lock().unwrap() = pointer(3840, 1080);
-                let result = backend.dispatch_click(click.clone()).await.0;
+                let result = backend.dispatch_click(click.clone()).await.0 .0;
                 assert!(!result.ok, "{}", result.message);
                 assert!(
                     result.message.contains(replace_failed),
@@ -12097,7 +13109,7 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                 assert!(backend.abs_pointer.lock().unwrap().is_none());
 
                 *backend.abs_pointer.lock().unwrap() = pointer(3840, 1080);
-                let result = backend.dispatch_scroll(scroll).await.0;
+                let result = backend.dispatch_scroll(scroll).await.0 .0;
                 assert!(!result.ok, "{}", result.message);
                 assert!(
                     result.message.contains(replace_failed),
@@ -12151,7 +13163,7 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
 
                 // With no device to replace, a failed capture still leaves
                 // the other routes; here the Wayland refusal.
-                let result = backend.dispatch_click(click.clone()).await.0;
+                let result = backend.dispatch_click(click.clone()).await.0 .0;
                 assert!(!result.ok, "{}", result.message);
                 assert!(
                     result
@@ -12164,7 +13176,7 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                 // A device that matches the capture clamps an off-capture
                 // point and says where it landed.
                 *backend.abs_pointer.lock().unwrap() = pointer(1920, 1080);
-                let result = backend.dispatch_click(click).await.0;
+                let result = backend.dispatch_click(click).await.0 .0;
                 assert!(result.ok, "{}", result.message);
                 assert!(
                     result
@@ -12186,7 +13198,7 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                         serde_json::json!({"x":500,"y":400,"direction":direction}),
                     )
                     .unwrap();
-                    let result = backend.dispatch_scroll(scroll).await.0;
+                    let result = backend.dispatch_scroll(scroll).await.0 .0;
                     assert!(result.ok, "{direction}: {}", result.message);
                     assert_eq!(
                         result.message,
@@ -12259,32 +13271,32 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                     "element_index": 0, "snapshot_id": first, "window_id": 7
                 }))
                 .unwrap();
-                let result = backend.dispatch_click(click).await.0;
+                let result = backend.dispatch_click(click).await.0 .0;
                 refused("click", result.ok, &result.message);
                 let click: ClickParams = serde_json::from_value(serde_json::json!({
                     "role": "entry", "snapshot_id": first
                 }))
                 .unwrap();
-                let result = backend.dispatch_click(click).await.0;
+                let result = backend.dispatch_click(click).await.0 .0;
                 refused("click", result.ok, &result.message);
                 let scroll: ScrollParams = serde_json::from_value(serde_json::json!({
                     "element_index": 0, "snapshot_id": first, "direction": "down"
                 }))
                 .unwrap();
-                let result = backend.dispatch_scroll(scroll).await.0;
+                let result = backend.dispatch_scroll(scroll).await.0 .0;
                 refused("scroll", result.ok, &result.message);
                 let set_value: SetValueParams = serde_json::from_value(serde_json::json!({
                     "element_index": 0, "snapshot_id": first, "value": "typed"
                 }))
                 .unwrap();
-                let (result, verified) = backend.dispatch_set_value(set_value).await;
+                let (result, verified, _) = backend.dispatch_set_value(set_value).await;
                 refused("set_value", result.ok, &result.message);
                 assert_eq!(verified, None);
                 let action: ActionParams = serde_json::from_value(serde_json::json!({
                     "element_index": 0, "snapshot_id": first
                 }))
                 .unwrap();
-                let result = backend.perform_element_action(&action, None).await.0;
+                let result = backend.perform_element_action(&action, None).await.0 .0;
                 refused("perform_action", result.ok, &result.message);
                 // Scroll checks before raising its window too, and a lone x
                 // still takes the element's point.
@@ -12293,13 +13305,13 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                     "window_id": 7
                 }))
                 .unwrap();
-                let result = backend.dispatch_scroll(scroll).await.0;
+                let result = backend.dispatch_scroll(scroll).await.0 .0;
                 refused("scroll", result.ok, &result.message);
                 let scroll: ScrollParams = serde_json::from_value(serde_json::json!({
                     "element_index": 0, "snapshot_id": first, "direction": "down", "x": 500
                 }))
                 .unwrap();
-                let result = backend.dispatch_scroll(scroll).await.0;
+                let result = backend.dispatch_scroll(scroll).await.0 .0;
                 refused("scroll", result.ok, &result.message);
 
                 // The current id, and a full point that wins over the index,
@@ -12317,14 +13329,17 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                     serde_json::json!({"element_index": 0, "snapshot_id": first, "x": 140, "y": 110}),
                 ] {
                     let click: ClickParams = serde_json::from_value(click).unwrap();
-                    passed("click", &backend.dispatch_click(click).await.0.message);
+                    passed("click", &backend.dispatch_click(click).await.0 .0.message);
                 }
                 for scroll in [
                     serde_json::json!({"element_index": 0, "snapshot_id": current, "direction": "down"}),
                     serde_json::json!({"element_index": 0, "snapshot_id": first, "direction": "down", "x": 140, "y": 110}),
                 ] {
                     let scroll: ScrollParams = serde_json::from_value(scroll).unwrap();
-                    passed("scroll", &backend.dispatch_scroll(scroll).await.0.message);
+                    passed(
+                        "scroll",
+                        &backend.dispatch_scroll(scroll).await.0 .0.message,
+                    );
                 }
                 let set_value: SetValueParams = serde_json::from_value(serde_json::json!({
                     "element_index": 0, "snapshot_id": current, "value": "typed"
@@ -12350,11 +13365,11 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                     ));
                 }
                 let gap = "WARNING: coordinate 3000,1200 is on no monitor of the captured desktop (4480x1440); the input landed at a monitor edge or on no visible pixel.";
-                let result = backend.dispatch_click(click(3000, 1200)).await.0;
+                let result = backend.dispatch_click(click(3000, 1200)).await.0 .0;
                 assert!(result.ok, "{}", result.message);
                 assert!(result.message.ends_with(gap), "{}", result.message);
                 for (x, y) in [(3000, 500), (100, 1300)] {
-                    let result = backend.dispatch_click(click(x, y)).await.0;
+                    let result = backend.dispatch_click(click(x, y)).await.0 .0;
                     assert!(result.ok, "{}", result.message);
                     assert!(!result.message.contains("WARNING"), "{}", result.message);
                 }
@@ -12362,11 +13377,11 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
                     serde_json::json!({"x":3000,"y":1200,"direction":"down"}),
                 )
                 .unwrap();
-                let result = backend.dispatch_scroll(scroll).await.0;
+                let result = backend.dispatch_scroll(scroll).await.0 .0;
                 assert!(result.ok, "{}", result.message);
                 assert!(result.message.ends_with(gap), "{}", result.message);
 
-                let result = backend.dispatch_click(click(5000, 1300)).await.0;
+                let result = backend.dispatch_click(click(5000, 1300)).await.0 .0;
                 assert!(result.ok, "{}", result.message);
                 let off_capture = if uinput {
                     // The device clamps the point into the gap.
@@ -12379,14 +13394,14 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
 
                 if !uinput {
                     // A failed dispatch sent nothing, so it gets no warning.
-                    let result = backend.dispatch_click(click(5001, 1301)).await.0;
+                    let result = backend.dispatch_click(click(5001, 1301)).await.0 .0;
                     assert!(!result.ok, "{}", result.message);
                     assert!(!result.message.contains("WARNING"), "{}", result.message);
                 }
 
                 // A new capture reads the layout again.
                 backend.cache_desktop_size(4480, 1440);
-                let result = backend.dispatch_click(click(3000, 1200)).await.0;
+                let result = backend.dispatch_click(click(3000, 1200)).await.0 .0;
                 assert!(result.message.ends_with(gap), "{}", result.message);
 
                 // Where a retry goes after a failed device replacement.
@@ -12604,8 +13619,8 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
             ..Default::default()
         };
         let results = [
-            backend.dispatch_click(click).await.0,
-            backend.dispatch_scroll(scroll).await.0,
+            backend.dispatch_click(click).await.0 .0,
+            backend.dispatch_scroll(scroll).await.0 .0,
             backend.dispatch_drag(drag).await.0,
         ];
         for result in results {
@@ -12623,7 +13638,7 @@ case "$*" in *"-- 5001 1301"*) echo "xdotool: test failure" >&2; exit 1 ;; esac
         }
         let scroll: ScrollParams =
             serde_json::from_value(serde_json::json!({"direction":"down"})).unwrap();
-        let result = backend.dispatch_scroll(scroll).await.0;
+        let result = backend.dispatch_scroll(scroll).await.0 .0;
         assert_eq!(result.ok, mode != "wayland-portal", "{}", result.message);
     }
 
@@ -14219,38 +15234,62 @@ esac
         );
     }
 
-    #[test]
-    fn select_accessibility_object_ref_prefers_exact_pid_match() {
-        let apps = vec![
-            AccessibleAppSummary {
-                object_ref: ":1.31/org/a11y/atspi/accessible/root".to_string(),
-                name: Some("electron".to_string()),
-                pid: Some(2774076),
-                role: "application".to_string(),
-                child_count: 1,
-                bounds: None,
-            },
-            AccessibleAppSummary {
-                object_ref: ":1.64/org/a11y/atspi/accessible/root".to_string(),
-                name: Some("cu_atspi_gtk_test.py".to_string()),
-                pid: Some(2914326),
-                role: "application".to_string(),
-                child_count: 1,
-                bounds: None,
-            },
-        ];
+    #[tokio::test]
+    async fn pid_targets_leave_root_selection_to_traversal_and_keep_explicit_filters() {
+        let backend = ComputerUseLinux::default();
+        let window = window_info(
+            42,
+            Some("Qt app"),
+            Some("org.example.qt-app"),
+            Some("qt-app"),
+            Some(123),
+        );
+        for fields in [
+            serde_json::json!({ "pid": 123 }),
+            serde_json::json!({ "window_id": 42 }),
+            serde_json::json!({ "app_id": "org.example.qt-app" }),
+            serde_json::json!({
+                "window_id": 42,
+                "app_name_or_bundle_identifier": ":1.41/root",
+            }),
+        ] {
+            let params: GetAppStateParams = serde_json::from_value(fields).unwrap();
+            let expected = params.app_name_or_bundle_identifier.clone();
+            let filter = backend
+                .resolve_accessibility_app_filter_with(&params, Some(&window), true, || async {
+                    panic!("PID-scoped traversal discovers every application root")
+                })
+                .await;
+            assert_eq!(filter, expected);
+            assert_eq!(
+                accessibility_snapshot_target_pid(filter.as_deref(), Some(123)),
+                Some(123)
+            );
+        }
 
-        let object_ref = select_accessibility_object_ref(
-            &apps,
-            2914326,
-            &[
-                "CU ATSPI GTK Test".to_string(),
-                "cu_atspi_gtk_test.py".to_string(),
-            ],
-        )
-        .unwrap();
+        let params =
+            serde_json::from_value(serde_json::json!({ "window_id": 42, "pid": 456 })).unwrap();
+        let mut pidless = window;
+        pidless.pid = None;
+        let filter = backend
+            .resolve_accessibility_app_filter_with(&params, Some(&pidless), true, || async {
+                panic!("a pidless window keeps its own name filter")
+            })
+            .await;
+        assert_eq!(filter.as_deref(), Some("Qt app"));
 
-        assert_eq!(object_ref, ":1.64/org/a11y/atspi/accessible/root");
+        pidless.title = None;
+        pidless.app_id = None;
+        pidless.wm_class = None;
+        let filter = backend
+            .resolve_accessibility_app_filter_with(&params, Some(&pidless), true, || async {
+                panic!("an unidentified window cannot select another application")
+            })
+            .await;
+        assert_eq!(
+            filter.as_deref(),
+            Some(UNMATCHABLE_ACCESSIBILITY_APP_FILTER)
+        );
     }
 
     #[test]
@@ -15457,7 +16496,8 @@ esac
                     ..Default::default()
                 })
                 .await
-                .0;
+                .0
+                 .0;
             assert!(!output.ok);
             assert!(
                 output.message.contains("require a KWin Wayland"),
@@ -17696,6 +18736,819 @@ esac
 }
 
 #[cfg(test)]
+mod app_state_pid_scope_tests {
+    use super::*;
+    use crate::test_sockets::PrivateBus;
+    use std::os::unix::fs::PermissionsExt;
+    use zbus::zvariant::OwnedObjectPath;
+
+    const ROOT_PATH: &str = "/org/a11y/atspi/accessible/root";
+
+    struct FixtureAccessible {
+        name: String,
+        role: &'static str,
+        children: Vec<(String, OwnedObjectPath)>,
+        has_action: bool,
+        application: Option<(String, OwnedObjectPath)>,
+    }
+
+    #[zbus::interface(name = "org.a11y.atspi.Accessible")]
+    impl FixtureAccessible {
+        #[zbus(property)]
+        fn child_count(&self) -> i32 {
+            self.children.len() as i32
+        }
+
+        #[zbus(property)]
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn get_role_name(&self) -> &str {
+            self.role
+        }
+
+        fn get_application(&self) -> ((String, OwnedObjectPath),) {
+            (self
+                .application
+                .clone()
+                .unwrap_or_else(|| (String::new(), "/org/a11y/atspi/null".try_into().unwrap())),)
+        }
+
+        fn get_interfaces(&self) -> Vec<&str> {
+            let mut interfaces = vec!["org.a11y.atspi.Accessible"];
+            if self.has_action {
+                interfaces.push("org.a11y.atspi.Action");
+            }
+            interfaces
+        }
+
+        fn get_child_at_index(
+            &self,
+            index: i32,
+        ) -> zbus::fdo::Result<((String, OwnedObjectPath),)> {
+            self.children
+                .get(index as usize)
+                .cloned()
+                .map(|child| (child,))
+                .ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid child index".into()))
+        }
+    }
+
+    struct FixtureAction(Box<dyn Fn() + Send + Sync>);
+
+    #[zbus::interface(name = "org.a11y.atspi.Action")]
+    impl FixtureAction {
+        #[zbus(property, name = "NActions")]
+        fn nactions(&self) -> i32 {
+            1
+        }
+
+        fn get_name(&self, _index: i32) -> &str {
+            "press"
+        }
+
+        fn get_description(&self, _index: i32) -> &str {
+            ""
+        }
+
+        fn get_key_binding(&self, _index: i32) -> &str {
+            ""
+        }
+
+        fn do_action(&self, index: i32) -> bool {
+            if index != 0 {
+                return false;
+            }
+            (self.0)();
+            true
+        }
+    }
+
+    struct FixtureBus(String);
+
+    #[zbus::interface(name = "org.a11y.Bus")]
+    impl FixtureBus {
+        fn get_address(&self) -> &str {
+            &self.0
+        }
+    }
+
+    #[tokio::test]
+    async fn app_state_keeps_pid_scope_when_window_lookup_fails() {
+        let bus = PrivateBus::start("cul-app-state-pid");
+        let mut peers = Vec::new();
+        for child_count in [0, 1] {
+            let peer = zbus::connection::Builder::address(bus.address())
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            let name = peer.unique_name().unwrap().to_string();
+            peer.object_server()
+                .at(
+                    ROOT_PATH,
+                    FixtureAccessible {
+                        name: format!("Target root {child_count}"),
+                        role: "application",
+                        children: (0..child_count)
+                            .map(|_| (name.clone(), "/button".try_into().unwrap()))
+                            .collect(),
+                        has_action: false,
+                        application: None,
+                    },
+                )
+                .await
+                .unwrap();
+            peer.object_server()
+                .at(
+                    "/button",
+                    FixtureAccessible {
+                        name: "Target button".to_string(),
+                        role: "push button",
+                        children: Vec::new(),
+                        has_action: false,
+                        application: None,
+                    },
+                )
+                .await
+                .unwrap();
+            peers.push(peer);
+        }
+        let dir = bus.dir();
+        for (program, script) in [
+            ("systemctl", "#!/bin/sh\nexit 1\n"),
+            ("xprop", "#!/bin/sh\nexit 1\n"),
+            (
+                "busctl",
+                r#"#!/bin/sh
+case "$*" in
+  *"org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress") printf 's "%s"\n' "$DBUS_SESSION_BUS_ADDRESS" ;;
+  *"org.a11y.Bus /org/a11y/bus org.a11y.Status IsEnabled") printf 'b true\n' ;;
+  *) exit 1 ;;
+esac
+"#,
+            ),
+            (
+                "wmctrl",
+                r#"#!/bin/sh
+[ -f "$CUL_PID_FIXTURE_WINDOWS" ] || exit 1
+read -r mode fixture_pid < "$CUL_PID_FIXTURE_WINDOWS"
+case "$mode" in
+  action)
+    printf '0x00000001 0 %s 0 0 100 100 other.Other host Window 1\n0x00000003 0 %s 0 0 100 100 other.Other host Window 3\n' "$fixture_pid" "$fixture_pid"
+    exit 0
+    ;;
+  pidless) pid=0 ;;
+  proxied)
+    printf '0x00000009 0 999999 0 0 100 100 other.Other host Other app\n'
+    exit 0
+    ;;
+  *) pid="$CUL_PID_FIXTURE_PID" ;;
+esac
+printf '0x00000007 0 %s 0 0 100 100 first.First host Target 7\n0x00000008 0 %s 0 0 100 100 second.Second host Target 8\n' "$pid" "$pid"
+"#,
+            ),
+        ] {
+            let path = dir.join(program);
+            std::fs::write(&path, script).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "server::app_state_pid_scope_tests::app_state_pid_scope_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("PATH", dir)
+            .env("HOME", dir)
+            .env("XDG_RUNTIME_DIR", dir)
+            .env("DBUS_SESSION_BUS_ADDRESS", bus.address())
+            .env("DISPLAY", ":9876")
+            .env("WAYLAND_DISPLAY", "")
+            .env("XDG_SESSION_TYPE", "x11")
+            .env("CUL_PID_FIXTURE_PID", std::process::id().to_string())
+            .env("CUL_PID_FIXTURE_WINDOWS", dir.join("windows"))
+            .env(
+                "CUL_PID_FIXTURE_ROOTS",
+                peers
+                    .iter()
+                    .map(|peer| peer.unique_name().unwrap().as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        for key in [
+            "DESKTOP_SESSION",
+            "HYPRLAND_INSTANCE_SIGNATURE",
+            "NIRI_SOCKET",
+            "XAUTHORITY",
+            "YDOTOOL_SOCKET",
+            "XDG_SESSION_DESKTOP",
+            "XDG_CURRENT_DESKTOP",
+        ] {
+            command.env(key, "app-state-pid-fixture");
+        }
+        // Keep the parent's D-Bus peers serving while the isolated process
+        // runs app_state against roots owned by both processes.
+        let output = tokio::task::spawn_blocking(move || {
+            crate::command_runner::output_blocking_with_timeout(
+                &mut command,
+                "app_state PID scope child",
+                Duration::from_secs(30),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "isolated environment subprocess; invoked by app_state_keeps_pid_scope_when_window_lookup_fails"]
+    async fn app_state_pid_scope_child() {
+        let target_pid: u32 = env::var("CUL_PID_FIXTURE_PID").unwrap().parse().unwrap();
+        let address = env::var("DBUS_SESSION_BUS_ADDRESS").unwrap();
+        let other = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .serve_at(
+                ROOT_PATH,
+                FixtureAccessible {
+                    name: "Other app".to_string(),
+                    role: "application",
+                    children: Vec::new(),
+                    has_action: false,
+                    application: None,
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let roots = env::var("CUL_PID_FIXTURE_ROOTS").unwrap();
+        let children = roots
+            .split(',')
+            .chain(std::iter::once(other.unique_name().unwrap().as_str()))
+            .map(|name| (name.to_string(), ROOT_PATH.try_into().unwrap()))
+            .collect();
+        let _registry = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name("org.a11y.Bus")
+            .unwrap()
+            .name("org.a11y.atspi.Registry")
+            .unwrap()
+            .serve_at("/org/a11y/bus", FixtureBus(address.clone()))
+            .unwrap()
+            .serve_at(
+                ROOT_PATH,
+                FixtureAccessible {
+                    name: "Desktop".to_string(),
+                    role: "desktop frame",
+                    children,
+                    has_action: false,
+                    application: None,
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let (server, diagnostics_probes) =
+            super::tests::server_with_labelled_diagnostics(|| true, || false);
+        let server = Arc::new(server);
+        for windows_available in [false, true] {
+            if windows_available {
+                std::fs::write(env::var("CUL_PID_FIXTURE_WINDOWS").unwrap(), "").unwrap();
+            }
+            for pid in [target_pid, u32::MAX] {
+                let params = serde_json::json!({"pid": pid, "include_screenshot": false});
+                let parsed = serde_json::from_value(params.clone()).unwrap();
+                let (window, error, _, enumerated, _) =
+                    server.resolve_window_context(&parsed).await;
+                assert!(window.is_none());
+                assert!(error.is_some());
+                assert_eq!(enumerated, windows_available);
+
+                let state = super::tests::app_state_value(&server, params).await;
+                assert!(state["accessibility_error"].is_null(), "{state}");
+                assert_eq!(state["tree_scoped"], true, "{state}");
+                let nodes = state["accessibility_tree"].as_array().unwrap();
+                let message = state["message"].as_str().unwrap();
+                if pid == target_pid {
+                    let names = nodes
+                        .iter()
+                        .map(|node| node["name"].as_str().unwrap())
+                        .collect::<Vec<_>>();
+                    assert_eq!(names, ["Target root 0", "Target root 1", "Target button"]);
+                    assert_eq!(server.last_snapshot.lock().unwrap().pid, Some(target_pid));
+                    assert!(!message.contains("No AT-SPI application root matched"));
+                } else {
+                    assert!(nodes.is_empty(), "a missing PID widened the tree: {state}");
+                    assert_eq!(server.last_snapshot.lock().unwrap().pid, None);
+                    assert!(message.contains(&pid.to_string()), "{message}");
+                    assert!(message.contains("list_apps"), "{message}");
+                    assert!(
+                        message.contains("app_name_or_bundle_identifier"),
+                        "{message}"
+                    );
+                    assert!(
+                        !message.contains("tree extraction are working"),
+                        "{message}"
+                    );
+                }
+            }
+        }
+
+        let capture = PostActionCaptureParams {
+            include_tree: Some(true),
+            ..Default::default()
+        };
+        let missing_target = WindowTarget {
+            pid: Some(u32::MAX),
+            ..Default::default()
+        };
+        let (observation, _, notes) = server
+            .capture_post_action_observation(
+                &capture,
+                Some(&missing_target),
+                None,
+                TargetRaised::No,
+                PostActionScope::default(),
+            )
+            .await;
+        assert!(
+            observation.accessibility_error.is_none(),
+            "{observation:?}; {notes:?}"
+        );
+        assert_eq!(observation.accessibility_tree_raw_count, Some(0));
+        assert_eq!(observation.tree_scoped, Some(true));
+        assert!(notes.iter().any(|note| note.contains(&u32::MAX.to_string())
+            && note.contains("list_apps")
+            && note.contains("app_name_or_bundle_identifier")));
+
+        // A listed window whose pid owns no AT-SPI root, as for a Flatpak app
+        // behind xdg-dbus-proxy, finds its root by the window title. The tree
+        // records no pid, so element calls take the per-node owner check.
+        let windows_path = env::var("CUL_PID_FIXTURE_WINDOWS").unwrap();
+        std::fs::write(&windows_path, "proxied").unwrap();
+        let proxied = super::tests::app_state_value(
+            &server,
+            serde_json::json!({"window_id": 9, "include_screenshot": false}),
+        )
+        .await;
+        assert!(proxied["accessibility_error"].is_null(), "{proxied}");
+        let names = proxied["accessibility_tree"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| node["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Other app"], "{proxied}");
+        assert_eq!(server.last_snapshot.lock().unwrap().pid, None);
+        assert!(!proxied["message"]
+            .as_str()
+            .unwrap()
+            .contains("No AT-SPI application root matched"));
+
+        let proxied_window = WindowTarget {
+            window_id: Some(9),
+            ..Default::default()
+        };
+        let (observation, _, notes) = server
+            .capture_post_action_observation(
+                &capture,
+                Some(&proxied_window),
+                None,
+                TargetRaised::No,
+                PostActionScope::default(),
+            )
+            .await;
+        assert_eq!(
+            observation.accessibility_tree_raw_count,
+            Some(1),
+            "{observation:?}; {notes:?}"
+        );
+        assert_eq!(server.last_snapshot.lock().unwrap().pid, None);
+
+        // An element acted on in that window is bound to its bus owner, the
+        // proxy's pid here, not the pid the compositor lists for window 9.
+        let proxied_element = ElementObservationTarget {
+            owner: WindowTarget {
+                pid: Some(std::process::id()),
+                window_id: Some(9),
+                ..Default::default()
+            },
+            tree_window: None,
+        };
+        let (observation, _, notes) = server
+            .capture_post_action_observation(
+                &capture,
+                Some(&proxied_element.owner),
+                None,
+                TargetRaised::No,
+                PostActionScope::bound_to(&proxied_element),
+            )
+            .await;
+        assert_eq!(
+            observation.accessibility_tree_raw_count,
+            Some(1),
+            "{observation:?}; {notes:?}"
+        );
+
+        // An owner pid with no root keeps the strict pid scope: no title fallback.
+        let bound_owner = ElementObservationTarget {
+            owner: WindowTarget {
+                pid: Some(999_999),
+                window_id: Some(9),
+                ..Default::default()
+            },
+            tree_window: None,
+        };
+        let (observation, _, notes) = server
+            .capture_post_action_observation(
+                &capture,
+                Some(&bound_owner.owner),
+                None,
+                TargetRaised::No,
+                PostActionScope::bound_to(&bound_owner),
+            )
+            .await;
+        assert_eq!(
+            observation.accessibility_tree_raw_count,
+            Some(0),
+            "{observation:?}; {notes:?}"
+        );
+        assert!(notes.iter().any(|note| note.contains("999999")));
+        std::fs::write(&windows_path, "").unwrap();
+
+        let missing_window = super::tests::app_state_value(
+            &server,
+            serde_json::json!({
+                "window_id": 999,
+                "pid": std::process::id(),
+                "include_screenshot": false,
+            }),
+        )
+        .await;
+        assert!(
+            missing_window["window_error"].is_string(),
+            "{missing_window}"
+        );
+        assert!(missing_window["accessibility_tree"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+
+        assert_ne!(target_pid, std::process::id());
+        other
+            .object_server()
+            .at(
+                "/embedded_button",
+                FixtureAccessible {
+                    name: "Embedded WebKit button".to_string(),
+                    role: "push button",
+                    children: Vec::new(),
+                    has_action: true,
+                    application: Some((
+                        roots.split(',').nth(1).unwrap().to_string(),
+                        ROOT_PATH.try_into().unwrap(),
+                    )),
+                },
+            )
+            .await
+            .unwrap();
+        other
+            .object_server()
+            .at("/embedded_button", FixtureAction(Box::new(|| {})))
+            .await
+            .unwrap();
+        server.clear_snapshot();
+        let params: ActionParams = serde_json::from_value(serde_json::json!({
+            "element_identifier": format!("{}/embedded_button", other.unique_name().unwrap()),
+            "include_tree": true,
+        }))
+        .unwrap();
+        server.diagnostics.report(false).await;
+        let probes = diagnostics_probes.load(std::sync::atomic::Ordering::SeqCst);
+        let observed = server
+            .perform_action(Parameters(params))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(observed["ok"], true, "{observed}");
+        assert!(observed["accessibility_error"].is_null(), "{observed}");
+        let names = observed["accessibility_tree"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| node["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Target root 0", "Target root 1", "Target button"]);
+        assert_eq!(server.last_snapshot.lock().unwrap().pid, Some(target_pid));
+        server.diagnostics.report(false).await;
+        assert_eq!(
+            diagnostics_probes.load(std::sync::atomic::Ordering::SeqCst),
+            probes,
+            "an app-wide element observation needs no unique compositor window"
+        );
+
+        let target_button = format!("{}/button", roots.split(',').nth(1).unwrap());
+        for fields in [
+            serde_json::json!({"window_title": "Target 8"}),
+            serde_json::json!({"app_id": "second"}),
+            serde_json::json!({"wm_class": "Second"}),
+        ] {
+            let requested: ElementActionTarget = serde_json::from_value(fields).unwrap();
+            let bound = server
+                .element_observation_target(&requested, &target_button, None)
+                .await
+                .unwrap();
+            assert_eq!(bound.owner.pid, Some(target_pid));
+            assert_eq!(bound.owner.window_id, Some(8));
+            assert_eq!(
+                resolve_window_target(&list_windows().await.unwrap(), &bound.owner)
+                    .unwrap()
+                    .window_id,
+                8
+            );
+            assert!(server
+                .element_observation_target(
+                    &requested,
+                    &format!("{}{ROOT_PATH}", other.unique_name().unwrap()),
+                    None,
+                )
+                .await
+                .is_err());
+        }
+
+        let windows_path = env::var("CUL_PID_FIXTURE_WINDOWS").unwrap();
+        std::fs::write(&windows_path, "pidless").unwrap();
+        let observed = super::tests::app_state_value(
+            &server,
+            serde_json::json!({
+                "window_id": 8,
+                "pid": std::process::id(),
+                "app_name_or_bundle_identifier": format!("{}{ROOT_PATH}", roots.split(',').nth(1).unwrap()),
+                "include_screenshot": false,
+            }),
+        )
+        .await;
+        assert!(observed["accessibility_error"].is_null(), "{observed}");
+        assert_eq!(
+            server.snapshot_window(),
+            Some((8, registry::X11_BACKEND.to_string()))
+        );
+        assert!(server.last_snapshot.lock().unwrap().window_scope.is_none());
+        let requested: ElementActionTarget =
+            serde_json::from_value(serde_json::json!({"window_title": "Target 8"})).unwrap();
+        let index = observed["accessibility_tree"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["name"] == "Target button")
+            .unwrap()["index"]
+            .as_u64()
+            .unwrap() as u32;
+        server
+            .check_element_action_target(
+                &requested,
+                Some(index),
+                None,
+                &ElementSelector::default(),
+                ElementResolvePurpose::Action,
+            )
+            .await
+            .unwrap();
+        let bound = server
+            .element_observation_target(&requested, &target_button, None)
+            .await
+            .unwrap();
+        assert_eq!(bound.owner.pid, Some(target_pid));
+        assert_eq!(bound.owner.window_id, Some(8));
+
+        // A raw identifier may pass the pidless target check without an
+        // observed window; sharing the process is not proof of that window.
+        let uncached_ref = format!("{}{ROOT_PATH}", roots.split(',').next().unwrap());
+        server
+            .check_element_action_target(
+                &requested,
+                None,
+                Some(&uncached_ref),
+                &ElementSelector::default(),
+                ElementResolvePurpose::Action,
+            )
+            .await
+            .unwrap();
+        let bound = server
+            .element_observation_target(&requested, &uncached_ref, None)
+            .await
+            .unwrap();
+        assert_eq!(bound.owner.pid, Some(target_pid));
+        assert_eq!(bound.owner.window_id, None);
+        std::fs::write(&windows_path, "").unwrap();
+
+        // Replace the snapshot during real dispatch, before its observation.
+        let name = other.unique_name().unwrap().to_string();
+        for path in ["/window_1", "/window_3"] {
+            other
+                .object_server()
+                .at(
+                    path,
+                    FixtureAccessible {
+                        name: if path == "/window_1" {
+                            "Window 1"
+                        } else {
+                            "Window 3"
+                        }
+                        .to_string(),
+                        role: "frame",
+                        children: Vec::new(),
+                        has_action: path == "/window_1",
+                        application: None,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        other
+            .object_server()
+            .at(
+                "/popup",
+                FixtureAccessible {
+                    name: "Popup action".to_string(),
+                    role: "menu item",
+                    children: Vec::new(),
+                    has_action: true,
+                    application: None,
+                },
+            )
+            .await
+            .unwrap();
+        other
+            .object_server()
+            .interface::<_, FixtureAccessible>(ROOT_PATH)
+            .await
+            .unwrap()
+            .get_mut()
+            .await
+            .children = ["/window_1", "/window_3", "/popup"]
+            .into_iter()
+            .map(|path| (name.clone(), path.try_into().unwrap()))
+            .collect();
+        let replaced = super::tests::app_state_value(
+            &server,
+            serde_json::json!({
+                "pid": std::process::id(),
+                "title": "Window 3",
+                "include_screenshot": false,
+            }),
+        )
+        .await;
+        assert!(replaced["accessibility_error"].is_null(), "{replaced}");
+        assert_eq!(
+            server.last_snapshot.lock().unwrap().window_scope.as_deref(),
+            Some("Window 3")
+        );
+        assert!(!replaced["accessibility_tree"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["name"] == "Window 1"));
+        let narrowed_nodes = server.last_snapshot.lock().unwrap().nodes.clone();
+        let action_server = Arc::clone(&server);
+        let action_windows_path = windows_path.clone();
+        let replace_snapshot = move || {
+            action_server.store_snapshot(
+                &narrowed_nodes,
+                Some(std::process::id()),
+                None,
+                None,
+                TreeShape {
+                    detail: NodeDetail::Compact,
+                    window_scope: Some("Window 3".to_string()),
+                },
+            );
+            std::fs::write(&action_windows_path, "").unwrap();
+        };
+        for path in ["/window_1", "/popup"] {
+            other
+                .object_server()
+                .at(path, FixtureAction(Box::new(replace_snapshot.clone())))
+                .await
+                .unwrap();
+        }
+        // A title target must be bound before DoAction removes its window
+        // from enumeration; neither call may inherit the replacement's scope.
+        for window_targeted in [false, true] {
+            std::fs::write(&windows_path, format!("action {}", std::process::id())).unwrap();
+            let observed = super::tests::app_state_value(
+                &server,
+                serde_json::json!({
+                    "pid": std::process::id(),
+                    "include_screenshot": false,
+                }),
+            )
+            .await;
+            assert!(observed["accessibility_error"].is_null(), "{observed}");
+            let params: ActionParams = serde_json::from_value(serde_json::json!({
+                "element_identifier": format!("{name}/window_1"),
+                "window_title": window_targeted.then_some("Window 1"),
+                "include_tree": true,
+            }))
+            .unwrap();
+            let result = server.perform_action(Parameters(params)).await.unwrap();
+            let result = result.structured_content.unwrap();
+            assert_eq!(result["ok"], true, "{result}");
+            assert!(result["accessibility_error"].is_null(), "{result}");
+            assert_eq!(result["tree_scoped"], true, "{result}");
+            let names = result["accessibility_tree"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|node| node["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            let expected = if window_targeted {
+                vec!["Other app", "Window 1", "Popup action"]
+            } else {
+                vec!["Other app", "Window 1", "Window 3", "Popup action"]
+            };
+            assert_eq!(names, expected);
+            assert_eq!(std::fs::read_to_string(&windows_path).unwrap(), "");
+        }
+
+        // A sibling popup keeps the observed tree's scope without claiming
+        // that its own window is the observed main frame.
+        std::fs::write(&windows_path, format!("action {}", std::process::id())).unwrap();
+        let observed = super::tests::app_state_value(
+            &server,
+            serde_json::json!({"window_id": 1, "include_screenshot": false}),
+        )
+        .await;
+        assert!(observed["accessibility_error"].is_null(), "{observed}");
+        let popup = observed["accessibility_tree"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["name"] == "Popup action")
+            .unwrap();
+        let bound = server
+            .element_observation_target(
+                &ElementActionTarget::default(),
+                &format!("{name}/popup"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(bound.owner.window_id, None);
+        assert_eq!(
+            bound
+                .tree_window
+                .as_ref()
+                .map(|window| window.scope.as_str()),
+            Some("Window 1")
+        );
+        let params: ActionParams = serde_json::from_value(serde_json::json!({
+            "element_index": popup["index"],
+            "snapshot_id": observed["snapshot_id"],
+            "include_tree": true,
+        }))
+        .unwrap();
+        let result = server
+            .perform_action(Parameters(params))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(result["ok"], true, "{result}");
+        assert!(result["accessibility_error"].is_null(), "{result}");
+        let names = result["accessibility_tree"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| node["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Other app", "Window 1", "Popup action"]);
+        assert_eq!(
+            server.last_snapshot.lock().unwrap().window_scope.as_deref(),
+            Some("Window 1")
+        );
+        assert_eq!(
+            server.snapshot_window(),
+            Some((1, registry::X11_BACKEND.to_string()))
+        );
+    }
+}
+
+#[cfg(test)]
 mod accessibility_tree_note_tests {
     use super::{truncated_accessibility_tree_note, unscoped_accessibility_tree_warning};
 
@@ -17999,7 +19852,7 @@ mod action_recovery_tests {
             Some(1234),
             Some(recovery_scope(serde_json::json!({"pid": 1234}))),
         );
-        let Json(recovered) = backend
+        let (Json(recovered), _) = backend
             .perform_element_action_with(
                 &semantic_params(),
                 Some("click"),
@@ -18026,7 +19879,7 @@ mod action_recovery_tests {
         assert!(recovered.ok, "{}", recovered.message);
 
         let stale_dispatches = Arc::new(Mutex::new(Vec::new()));
-        let Json(indexed) = backend
+        let (Json(indexed), _) = backend
             .perform_element_action_with(
                 &ActionParams {
                     element_index: Some(0),
@@ -18068,7 +19921,7 @@ mod action_recovery_tests {
             );
             let refreshes = Arc::new(AtomicUsize::new(0));
             let dispatches = Arc::new(AtomicUsize::new(0));
-            let Json(output) = backend
+            let (Json(output), _) = backend
                 .perform_element_action_with(
                     &semantic_params(),
                     Some("click"),
@@ -18127,7 +19980,7 @@ mod action_recovery_tests {
                 )
                 .await;
             let dispatches = Arc::new(AtomicUsize::new(0));
-            let Json(output) = backend
+            let (Json(output), _) = backend
                 .perform_element_action_with(
                     &semantic_params(),
                     Some("click"),
@@ -18178,7 +20031,7 @@ mod action_recovery_tests {
             )
             .await;
         let refreshes = Arc::new(AtomicUsize::new(0));
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &semantic_params(),
                 Some("click"),
@@ -18232,7 +20085,7 @@ mod action_recovery_tests {
                 )
                 .await;
             let dispatches = Arc::new(AtomicUsize::new(0));
-            let Json(output) = backend
+            let (Json(output), _) = backend
                 .perform_element_action_with(
                     &semantic_params(),
                     Some("click"),
@@ -18306,7 +20159,7 @@ mod action_recovery_tests {
         let invoked_refs = Arc::new(Mutex::new(Vec::new()));
         let params = semantic_params();
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18415,7 +20268,7 @@ mod action_recovery_tests {
                 window_id,
                 ..old_window.clone()
             });
-            let Json(output) = backend
+            let (Json(output), _) = backend
                 .perform_element_action_with(
                     &semantic_params(),
                     Some("click"),
@@ -18468,7 +20321,7 @@ mod action_recovery_tests {
                 Some(&recovery_window(42, 1234)),
             );
             let queries = Arc::new(AtomicUsize::new(0));
-            let Json(output) = backend
+            let (Json(output), _) = backend
                 .perform_element_action_with(
                     &semantic_params(),
                     Some("click"),
@@ -18523,7 +20376,7 @@ mod action_recovery_tests {
         let dispatches = Arc::new(AtomicUsize::new(0));
         let params = semantic_params();
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18578,7 +20431,7 @@ mod action_recovery_tests {
         let invoked_refs = Arc::new(Mutex::new(Vec::new()));
         let params = semantic_params();
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18628,7 +20481,7 @@ mod action_recovery_tests {
         let invoked_refs = Arc::new(Mutex::new(Vec::new()));
         let params = semantic_params();
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18672,7 +20525,8 @@ mod action_recovery_tests {
         let backend = ComputerUseLinux::default();
         let mut scope = recovery_scope(serde_json::json!({
             "app_name_or_bundle_identifier": "Editor",
-            "window_id": 42
+            "window_id": 42,
+            "pid": 8765
         }));
         scope.target_pid = Some(1234);
         backend.cache_snapshot_with_window(
@@ -18684,7 +20538,7 @@ mod action_recovery_tests {
         let params = semantic_params();
         let first_refs = Arc::new(Mutex::new(Vec::new()));
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18725,7 +20579,7 @@ mod action_recovery_tests {
             assert!(snapshot.recovery_scope.is_none());
         }
 
-        let Json(without_observation) = backend
+        let (Json(without_observation), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("click"),
@@ -18750,7 +20604,7 @@ mod action_recovery_tests {
             .await;
 
         let second_refs = Arc::new(Mutex::new(Vec::new()));
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18801,7 +20655,7 @@ mod action_recovery_tests {
         let queries = Arc::new(AtomicUsize::new(0));
         let params = semantic_params();
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18856,7 +20710,7 @@ mod action_recovery_tests {
             let refreshes = Arc::new(AtomicUsize::new(0));
             let invoked_refs = Arc::new(Mutex::new(Vec::new()));
 
-            let Json(output) = backend
+            let (Json(output), _) = backend
                 .perform_element_action_with(
                     &params,
                     Some("0"),
@@ -18903,7 +20757,7 @@ mod action_recovery_tests {
         let refreshes = Arc::new(AtomicUsize::new(0));
         let params = semantic_params();
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18950,7 +20804,7 @@ mod action_recovery_tests {
         let refreshes = Arc::new(AtomicUsize::new(0));
         let params = semantic_params();
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -18997,7 +20851,7 @@ mod action_recovery_tests {
         let refreshes = Arc::new(AtomicUsize::new(0));
         let params = semantic_params();
 
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("0"),
@@ -19233,7 +21087,7 @@ mod node_target_scope_tests {
         params: ActionParams,
     ) -> (ActionOutput, Vec<String>) {
         let dispatched = Arc::new(Mutex::new(Vec::new()));
-        let Json(output) = backend
+        let (Json(output), _) = backend
             .perform_element_action_with(
                 &params,
                 Some("click"),
@@ -19322,9 +21176,347 @@ mod node_target_scope_tests {
     }
 
     #[tokio::test]
+    async fn element_observation_stays_with_the_dispatched_object_owner() {
+        let backend = ComputerUseLinux::default();
+        let object_ref = ":1.9/org/a11y/atspi/accessible/42";
+        let mut node = cached_node(2, object_ref);
+        node.parent_index = Some(1);
+        node.depth = 2;
+        let mut frame = cached_node(1, ":1.9/window_20");
+        frame.role = "frame".to_string();
+        frame.name = Some("Window 20".to_string());
+        frame.child_count = 1;
+        let mut window = pidless_window(20);
+        window.pid = Some(APP_B);
+        backend.store_snapshot(
+            &[frame, node],
+            Some(APP_B),
+            None,
+            Some(&window),
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope: Some("Window 20".to_string()),
+            },
+        );
+
+        let target = backend
+            .element_observation_target_with(
+                &ElementActionTarget::default(),
+                object_ref,
+                None,
+                || async { panic!("the observed element already has an owner") },
+            )
+            .await
+            .unwrap();
+        assert_eq!(target.pid, Some(APP_B));
+        assert_eq!(target.window_id, Some(20));
+
+        backend.cache_snapshot(&[cached_node(3, ":1.22/chrome")], Some(APP_A));
+        let target = backend
+            .element_observation_target_with(
+                &ElementActionTarget::default(),
+                object_ref,
+                None,
+                || async { Ok(Some(APP_B)) },
+            )
+            .await
+            .unwrap();
+        assert_eq!(target.pid, Some(APP_B));
+        assert_eq!(target.window_id, None);
+
+        let explicit = backend
+            .element_observation_target_with(&pid_target(APP_B), object_ref, None, || async {
+                panic!("the explicitly checked target must be preserved")
+            })
+            .await
+            .unwrap();
+        assert_eq!(explicit.pid, Some(APP_B));
+    }
+
+    #[tokio::test]
+    async fn element_observation_preserves_a_verified_pidless_window() {
+        let backend = ComputerUseLinux::default();
+        let object_ref = ":1.9/org/a11y/atspi/accessible/42";
+        let mut node = cached_node(2, object_ref);
+        node.parent_index = Some(1);
+        node.depth = 2;
+        let mut frame = cached_node(1, ":1.9/window_20");
+        frame.role = "frame".to_string();
+        frame.name = Some("Window 20".to_string());
+        frame.child_count = 1;
+        backend.store_snapshot(
+            &[frame, node],
+            None,
+            None,
+            Some(&pidless_window(20)),
+            TreeShape {
+                detail: NodeDetail::Compact,
+                window_scope: Some("Window 20".to_string()),
+            },
+        );
+        let target = backend
+            .element_observation_target_with(
+                &ElementActionTarget::default(),
+                object_ref,
+                None,
+                || async { Ok(Some(APP_B)) },
+            )
+            .await
+            .unwrap();
+        assert_eq!(target.pid, Some(APP_B));
+        assert_eq!(target.window_id, Some(20));
+
+        let explicit = ElementActionTarget {
+            window_id: Some(20),
+            ..Default::default()
+        };
+        let target = backend
+            .element_observation_target_with(&explicit, object_ref, None, || async {
+                Ok(Some(APP_B))
+            })
+            .await
+            .unwrap();
+        assert_eq!(target.pid, Some(APP_B));
+        assert_eq!(target.window_id, Some(20));
+    }
+
+    #[tokio::test]
+    async fn element_observation_does_not_keep_a_pid_overridden_by_window_id() {
+        let object_ref = ":1.9/org/a11y/atspi/accessible/42";
+        let mut window_a = pidless_window(10);
+        window_a.pid = Some(APP_A);
+        let mut window_b = pidless_window(20);
+        window_b.pid = Some(APP_B);
+        let requested = ElementActionTarget {
+            window_id: Some(window_a.window_id),
+            pid: Some(APP_B),
+            ..Default::default()
+        };
+        let requested_window = requested.window_target().unwrap();
+        assert_eq!(
+            resolve_window_target(&[window_a.clone(), window_b.clone()], &requested_window)
+                .unwrap()
+                .pid,
+            Some(APP_A)
+        );
+
+        for cached_pid in [None, Some(APP_A)] {
+            let backend = ComputerUseLinux::default();
+            backend.cache_snapshot(&[cached_node(2, object_ref)], cached_pid);
+            let target = backend
+                .element_observation_target_with(&requested, object_ref, None, || async {
+                    assert!(cached_pid.is_none(), "reuse the observed object owner");
+                    Ok(Some(APP_A))
+                })
+                .await
+                .unwrap();
+            assert_eq!(target.window_id, Some(window_a.window_id));
+            // Once the action closes A's window, the tree falls back to this
+            // pid because the window can no longer be resolved.
+            assert!(resolve_window_target(std::slice::from_ref(&window_b), &target).is_err());
+            assert_eq!(target.pid, Some(APP_A));
+        }
+    }
+
+    #[tokio::test]
+    async fn app_wide_element_observation_does_not_inherit_a_sibling_window() {
+        let backend = ComputerUseLinux::default();
+        let object_ref = ":1.9/org/a11y/atspi/accessible/window_20_button";
+        let mut window_10 = pidless_window(10);
+        window_10.pid = Some(APP_B);
+        let mut window_20 = pidless_window(20);
+        window_20.pid = Some(APP_B);
+        backend.cache_snapshot_with_window(
+            &[cached_node(2, object_ref)],
+            Some(APP_B),
+            None,
+            Some(&window_10),
+        );
+
+        let target = backend
+            .element_observation_target_with(
+                &ElementActionTarget::default(),
+                object_ref,
+                None,
+                || async { panic!("the app-wide snapshot establishes the process owner") },
+            )
+            .await
+            .unwrap();
+        assert_eq!(target.pid, Some(APP_B));
+        assert_eq!(target.window_id, None);
+        assert!(resolve_window_target(&[window_10, window_20], &target).is_err());
+        assert_eq!(
+            post_action_window_title(Some(&target), None, target.pid, None),
+            None
+        );
+    }
+
+    #[test]
+    fn recovery_keeps_the_tree_scope_without_reusing_the_old_element_window() {
+        let previous = ElementObservationTarget {
+            owner: WindowTarget {
+                pid: Some(APP_B),
+                window_id: Some(20),
+                ..Default::default()
+            },
+            tree_window: Some(CachedTreeWindow {
+                scope: "Window 20".to_string(),
+                pid: Some(APP_B),
+                window: Some((20, KWIN_BACKEND.to_string())),
+            }),
+        };
+        for pid in [APP_B, APP_A] {
+            let mut recovered = ElementObservationTarget {
+                owner: WindowTarget {
+                    pid: Some(pid),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            recovered.inherit_tree_window(&previous);
+            assert_eq!(recovered.owner.window_id, None);
+            assert_eq!(recovered.tree_window.is_some(), pid == APP_B);
+            if let Some(tree) = recovered.tree_window {
+                assert_eq!(tree.scope, "Window 20");
+                assert_eq!(tree.window, Some((20, KWIN_BACKEND.to_string())));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn element_observation_does_not_bind_retained_dialogs_to_the_narrowed_window() {
+        let main_ref = ":1.9/main_button";
+        let dialog_ref = ":1.10/dialog_button";
+        for separate_root in [false, true] {
+            let backend = ComputerUseLinux::default();
+            let mut root = cached_node(0, ":1.9/root");
+            root.role = "application".to_string();
+            root.depth = 0;
+            let mut frame = cached_node(1, ":1.9/window_10");
+            frame.role = "frame".to_string();
+            frame.name = Some("Window 10".to_string());
+            frame.parent_index = Some(0);
+            let mut main_button = cached_node(2, main_ref);
+            main_button.depth = 2;
+            main_button.parent_index = Some(1);
+            let mut dialog_root = cached_node(3, ":1.10/root");
+            dialog_root.role = "application".to_string();
+            dialog_root.depth = 0;
+            let mut dialog = cached_node(4, ":1.10/dialog");
+            dialog.role = "file chooser".to_string();
+            dialog.name = Some("File dialog".to_string());
+            dialog.parent_index = Some(if separate_root { 3 } else { 0 });
+            let mut dialog_button = cached_node(5, dialog_ref);
+            dialog_button.depth = 2;
+            dialog_button.parent_index = Some(4);
+            let mut nodes = vec![root, frame, main_button];
+            if separate_root {
+                nodes.push(dialog_root);
+            }
+            nodes.extend([dialog, dialog_button]);
+            let mut window = pidless_window(10);
+            window.pid = Some(APP_B);
+            backend.store_snapshot(
+                &nodes,
+                Some(APP_B),
+                None,
+                Some(&window),
+                TreeShape {
+                    detail: NodeDetail::Compact,
+                    window_scope: Some("Window 10".to_string()),
+                },
+            );
+
+            for (requested, object_ref, expected_window) in [
+                (ElementActionTarget::default(), main_ref, Some(10)),
+                (ElementActionTarget::default(), dialog_ref, None),
+                (pid_target(APP_B), dialog_ref, None),
+            ] {
+                let target = backend
+                    .element_observation_target(&requested, object_ref, None)
+                    .await
+                    .unwrap();
+                assert_eq!(target.owner.pid, Some(APP_B));
+                assert_eq!(target.owner.window_id, expected_window);
+                let tree_window = target.tree_window.unwrap();
+                assert_eq!(tree_window.scope, "Window 10");
+                assert_eq!(tree_window.pid, Some(APP_B));
+                assert_eq!(tree_window.window, Some((10, window.backend.clone())));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn element_observation_without_an_owner_reports_failure_without_foreground_fallback() {
+        let backend = backend_after_snapshots_of_a_then_b();
+        let error = backend
+            .element_observation_target_with(
+                &ElementActionTarget::default(),
+                ":1.99/uncached",
+                None,
+                || async { Ok(None) },
+            )
+            .await
+            .unwrap_err();
+        let capture: PostActionCaptureParams = serde_json::from_value(serde_json::json!({
+            "include_tree": true,
+        }))
+        .unwrap();
+        let (observation, screenshot, notes) = backend
+            .capture_element_observation(&capture, None, Err(&error))
+            .await;
+        // No foreground tree: the empty tree fields of any failed read, and
+        // the replaced snapshot is gone.
+        assert!(observation.accessibility_tree.unwrap().is_empty());
+        assert_eq!(observation.accessibility_tree_raw_count, Some(0));
+        assert_eq!(observation.tree_scoped, Some(false));
+        assert!(observation.accessibility_error.is_some());
+        assert!(observation.screenshot_error.is_none());
+        assert!(screenshot.is_none());
+        assert!(notes[0].contains("no verified app or window owner"));
+        assert!(backend.cached_snapshot_id().is_empty());
+    }
+
+    #[tokio::test]
+    async fn http_owner_binding_reads_only_a_named_snapshot() {
+        let http = ComputerUseLinux {
+            require_snapshot_ids: true,
+            ..Default::default()
+        };
+        let object_ref = ":1.9/org/a11y/atspi/accessible/42";
+        http.cache_snapshot(&[cached_node(2, object_ref)], Some(APP_B));
+        // Another client's snapshot holds the object: its owner comes from
+        // the bus, not from that client's tree.
+        for named in [None, Some("other")] {
+            let owner = http
+                .element_observation_target_with(
+                    &ElementActionTarget::default(),
+                    object_ref,
+                    named,
+                    || async { Ok(Some(APP_A)) },
+                )
+                .await
+                .unwrap();
+            assert_eq!(owner.pid, Some(APP_A));
+        }
+        // The call named the snapshot, so its observed owner holds.
+        let id = http.cached_snapshot_id();
+        let owner = http
+            .element_observation_target_with(
+                &ElementActionTarget::default(),
+                object_ref,
+                Some(&id),
+                || async { panic!("the named snapshot establishes the owner") },
+            )
+            .await
+            .unwrap();
+        assert_eq!(owner.pid, Some(APP_B));
+    }
+
+    #[tokio::test]
     async fn set_value_refuses_an_index_from_another_apps_snapshot() {
         let backend = backend_after_snapshots_of_a_then_b();
-        let (output, verified) = backend
+        let (output, verified, _) = backend
             .dispatch_set_value(SetValueParams {
                 element_index: Some(2),
                 value: "written for app A".to_string(),
@@ -19892,6 +22084,7 @@ mod post_action_capture_tests {
                 "max_width",
                 "max_height",
                 "max_bytes",
+                "screenshot_file_path",
             ] {
                 assert!(
                     properties.contains_key(prop),
@@ -19955,6 +22148,23 @@ exit 1
         .unwrap();
         std::fs::set_permissions(&gnome_screenshot, std::fs::Permissions::from_mode(0o700))
             .unwrap();
+
+        let hyprctl = dir.join("hyprctl");
+        std::fs::write(
+            &hyprctl,
+            r#"#!/bin/sh
+[ -n "$CUL_POST_ACTION_WINDOW_PID" ] || exit 1
+case "$1" in
+  clients)
+    printf '[{"address":"0x1","title":"Background","pid":%s,"at":[0,0],"size":[16,12],"monitor":0,"focusHistoryID":1},{"address":"0x2","title":"Foreground","pid":%s,"at":[8,8],"size":[32,24],"monitor":0,"focusHistoryID":0}]\n' "$CUL_POST_ACTION_WINDOW_PID" "$CUL_POST_ACTION_WINDOW_PID"
+    ;;
+  monitors) echo '[{"id":0,"x":0,"y":0,"scale":1}]' ;;
+  *) exit 1 ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&hyprctl, std::fs::Permissions::from_mode(0o700)).unwrap();
 
         // wmctrl answers only while CUL_WMCTRL_STATE names a file. It lists
         // window 7, applies a resize, and fails every listing after the one
@@ -20486,6 +22696,54 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
             .unwrap()
             .contains("WARNING: X11 keyboard layout"));
 
+        // Screenshots keep their focused-window fallback when the tree owner
+        // has several windows or cannot be established on a pidless desktop.
+        let owner_error = "no verified app or window owner".to_string();
+        let tree_owner = ElementObservationTarget {
+            owner: WindowTarget {
+                pid: Some(12345),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let window_capture: PostActionCaptureParams = serde_json::from_value(
+            serde_json::json!({"screenshot_after": "window", "include_tree": true}),
+        )
+        .unwrap();
+        for pid in [Some(12345), None] {
+            std::env::set_var(
+                "CUL_POST_ACTION_WINDOW_PID",
+                pid.map_or_else(|| "null".to_string(), |pid| pid.to_string()),
+            );
+            let tree_target = if pid.is_some() {
+                Ok(&tree_owner)
+            } else {
+                Err(&owner_error)
+            };
+            let (observation, screenshot, _) = server
+                .capture_element_observation(&window_capture, None, tree_target)
+                .await;
+            assert!(observation.screenshot_error.is_none());
+            assert!(observation.accessibility_error.is_some());
+            let summary = observation.screenshot.unwrap();
+            assert_eq!(summary.window_title.as_deref(), Some("Foreground"));
+            assert_eq!((summary.width, summary.height), (32, 24));
+            assert_eq!(summary.cropped_to_window, Some(true));
+            assert!(screenshot.is_some());
+
+            let background = WindowTarget {
+                window_id: Some(1),
+                ..Default::default()
+            };
+            let (observation, screenshot, _) = server
+                .capture_element_observation(&window_capture, Some(&background), tree_target)
+                .await;
+            assert!(observation.screenshot_error.is_some());
+            assert!(observation.screenshot.is_none());
+            assert!(screenshot.is_none());
+        }
+        std::env::remove_var("CUL_POST_ACTION_WINDOW_PID");
+
         std::fs::write(&log_path, "").unwrap();
         let set_value_capture: PostActionCaptureParams = serde_json::from_value(
             serde_json::json!({"screenshot_after": "screen", "include_tree": true}),
@@ -20493,8 +22751,18 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
         .unwrap();
         let (output, verified) =
             editable_text_action_result(EditableTextSetOutcome::MismatchAfterDeadline, None);
+        // A failed owner binding drops the replaced snapshot, as every
+        // failed post-action tree read does.
+        server.commit_snapshot(&[], Some(12345)).await;
+        assert!(!server.cached_snapshot_id().is_empty());
         let result = server
-            .finish_set_value_output(output, verified, &set_value_capture, None)
+            .finish_set_value_output(
+                output,
+                verified,
+                &set_value_capture,
+                None,
+                Err(&owner_error),
+            )
             .await
             .unwrap();
         assert_eq!(result.is_error, Some(true));
@@ -20503,7 +22771,11 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
         assert_eq!(structured["ok"], false);
         assert_eq!(structured["verified"], false);
         assert_eq!(structured["screenshot"]["width"], 64);
+        assert!(structured.get("screenshot_error").is_none());
         assert!(structured["accessibility_error"].is_string());
+        assert_eq!(structured["accessibility_tree_raw_count"], 0);
+        assert_eq!(structured["tree_scoped"], false);
+        assert!(server.cached_snapshot_id().is_empty());
         assert_eq!(
             std::fs::read_to_string(&log_path).unwrap(),
             "gnome-screenshot\n"
@@ -20512,7 +22784,13 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
         std::fs::write(&log_path, "").unwrap();
         let output = action_result("set_value", Err("pre-dispatch failure".to_string()), None);
         let result = server
-            .finish_set_value_output(output, None, &set_value_capture, None)
+            .finish_set_value_output(
+                output,
+                None,
+                &set_value_capture,
+                None,
+                Ok(&ElementObservationTarget::default()),
+            )
             .await
             .unwrap();
         assert_eq!(result.is_error, Some(true));
@@ -20522,6 +22800,613 @@ echo "0x00000007 0 0 0 0 $size fixture.Fixture host Fixture"
         assert!(structured.get("accessibility_tree").is_none());
         assert!(structured.get("accessibility_error").is_none());
         assert!(std::fs::read_to_string(&log_path).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod screenshot_file_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn solid_png(width: u32, height: u32) -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(width, height, image::Rgba([32, 128, 192, 255]));
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    fn refusal(tool: &str, arguments: serde_json::Value, remote: bool) -> Option<String> {
+        let serde_json::Value::Object(arguments) = arguments else {
+            panic!("arguments must be an object");
+        };
+        screenshot_file_refusal(tool, Some(&arguments), true, remote)
+    }
+
+    #[test]
+    fn file_output_parameters_are_in_every_screenshot_schema() {
+        let server = ComputerUseLinux::default();
+        let router = server.mcp_tool_router();
+        for name in [
+            "screenshot",
+            "get_app_state",
+            "click",
+            "type_text",
+            "press_key",
+            "scroll",
+            "drag",
+            "perform_action",
+            "set_value",
+            "activate_window",
+            "move_window",
+            "resize_window",
+        ] {
+            let tool = router
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} is registered"));
+            assert!(
+                tool.input_schema["properties"]
+                    .as_object()
+                    .unwrap()
+                    .contains_key("screenshot_file_path"),
+                "{name} lacks screenshot_file_path"
+            );
+        }
+    }
+
+    #[test]
+    fn preflight_refuses_unusable_screenshot_file_paths_before_the_tool_runs() {
+        let dir = std::env::temp_dir().join(format!(
+            "cul-shot-preflight-{}-{:016x}",
+            std::process::id(),
+            getrandom::u64().unwrap()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(dir.clone());
+        let png = dir.join("shot.png");
+        let png = png.to_str().unwrap();
+
+        // Usable paths pass, and a call without the parameter is untouched.
+        assert_eq!(refusal("screenshot", serde_json::json!({}), true), None);
+        assert_eq!(
+            refusal(
+                "screenshot",
+                serde_json::json!({"screenshot_file_path": null}),
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            refusal(
+                "screenshot",
+                serde_json::json!({"screenshot_file_path": png}),
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            refusal(
+                "get_app_state",
+                serde_json::json!({"screenshot_file_path": png}),
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            refusal(
+                "click",
+                serde_json::json!({"x": 1, "y": 1, "screenshot_after": "window", "screenshot_file_path": png}),
+                false
+            ),
+            None
+        );
+        // A tool without the parameter ignores it like any unknown argument.
+        let serde_json::Value::Object(arguments) =
+            serde_json::json!({"screenshot_file_path": "relative.png"})
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            screenshot_file_refusal("list_windows", Some(&arguments), false, true),
+            None
+        );
+
+        // Over HTTP every use is refused, even a valid path.
+        for (tool, arguments) in [
+            (
+                "screenshot",
+                serde_json::json!({"screenshot_file_path": png}),
+            ),
+            (
+                "get_app_state",
+                serde_json::json!({"screenshot_file_path": png}),
+            ),
+            (
+                "click",
+                serde_json::json!({"x": 1, "y": 1, "screenshot_after": true, "screenshot_file_path": png}),
+            ),
+        ] {
+            let message = refusal(tool, arguments, true).expect("refused over HTTP");
+            assert!(
+                message.starts_with(&format!("{tool} was not run: "))
+                    && message.contains("refused over HTTP (mcp --listen)"),
+                "{message}"
+            );
+        }
+
+        // Without a capture there is nothing to save.
+        assert!(refusal(
+            "get_app_state",
+            serde_json::json!({"include_screenshot": false, "screenshot_file_path": png}),
+            false
+        )
+        .unwrap()
+        .contains("needs include_screenshot=true"));
+        for screenshot_after in [serde_json::Value::Null, serde_json::json!(false)] {
+            assert!(refusal(
+                "click",
+                serde_json::json!({"x": 1, "y": 1, "screenshot_after": screenshot_after, "screenshot_file_path": png}),
+                false
+            )
+            .unwrap()
+            .contains("needs screenshot_after"));
+        }
+
+        // Bad paths, with the format the call selects.
+        let missing = dir.join("missing").join("shot.png");
+        for (arguments, expected) in [
+            (
+                serde_json::json!({"screenshot_file_path": "shot.png"}),
+                "must be an absolute path",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": missing}),
+                "does not exist",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": dir}),
+                "does not match format png",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": png, "format": "jpeg"}),
+                "does not match format jpeg",
+            ),
+        ] {
+            let message = refusal("screenshot", arguments.clone(), false)
+                .unwrap_or_else(|| panic!("{arguments} must be refused"));
+            assert!(message.contains(expected), "{arguments}: {message}");
+        }
+        // File output only creates: an existing entry is refused before the
+        // tool runs, on read-only and mutating tools alike.
+        let as_dir = dir.join("dir.png");
+        std::fs::create_dir(&as_dir).unwrap();
+        let existing = dir.join("existing.png");
+        std::fs::write(&existing, b"keep").unwrap();
+        for (tool, arguments) in [
+            (
+                "screenshot",
+                serde_json::json!({"screenshot_file_path": as_dir}),
+            ),
+            (
+                "get_app_state",
+                serde_json::json!({"screenshot_file_path": existing}),
+            ),
+            (
+                "click",
+                serde_json::json!({"x": 1, "y": 1, "screenshot_after": true, "screenshot_file_path": existing}),
+            ),
+        ] {
+            let message = refusal(tool, arguments, false).expect("an existing entry is refused");
+            assert!(message.contains("already exists"), "{message}");
+        }
+        assert_eq!(std::fs::read(&existing).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn screenshot_file_output_writes_files_and_returns_no_image_content() {
+        let dir = std::env::temp_dir().join(format!(
+            "cul-shot-file-{}-{:016x}",
+            std::process::id(),
+            getrandom::u64().unwrap()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let locked = self.0.join("locked");
+                let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700));
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(dir.clone());
+
+        let sample_png = dir.join("sample.png");
+        std::fs::write(&sample_png, solid_png(64, 48)).unwrap();
+        let xdotool = dir.join("xdotool");
+        std::fs::write(
+            &xdotool,
+            "#!/bin/sh\nprintf 'xdotool\\n' >> \"$CUL_SHOT_FILE_LOG\"\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&xdotool, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let gnome_screenshot = dir.join("gnome-screenshot");
+        std::fs::write(
+            &gnome_screenshot,
+            r#"#!/bin/sh
+printf 'gnome-screenshot\n' >> "$CUL_SHOT_FILE_LOG"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-f" ] && [ "$#" -ge 2 ]; then
+    /bin/cp "$CUL_SHOT_FILE_PNG" "$2"
+    exit 0
+  fi
+  shift
+done
+exit 1
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&gnome_screenshot, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        let out = dir.join("out");
+        std::fs::create_dir(&out).unwrap();
+
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "server::screenshot_file_tests::screenshot_file_output_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("PATH", &dir)
+            .env("HOME", &dir)
+            .env("XDG_RUNTIME_DIR", &dir)
+            .env("DISPLAY", ":9876")
+            .env("WAYLAND_DISPLAY", "")
+            .env("XDG_SESSION_TYPE", "x11")
+            .env("CU_DISABLE_ABS_POINTER", "1")
+            .env("CODEX_COMPUTER_USE_SCREENSHOT_BACKEND", "gnome-screenshot")
+            .env("CUL_SHOT_FILE_CHILD", "1")
+            .env("CUL_SHOT_FILE_LOG", dir.join("events.log"))
+            .env("CUL_SHOT_FILE_PNG", &sample_png)
+            .env("CUL_SHOT_FILE_OUT", &out)
+            .env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}/no-bus", dir.display()),
+            );
+        for key in [
+            "DESKTOP_SESSION",
+            "HYPRLAND_INSTANCE_SIGNATURE",
+            "XAUTHORITY",
+            "XDG_SESSION_DESKTOP",
+            "XDG_CURRENT_DESKTOP",
+        ] {
+            command.env(key, "screenshot-file-test");
+        }
+        let output = crate::command_runner::output_blocking_with_timeout(
+            &mut command,
+            "screenshot file child",
+            Duration::from_secs(20),
+        )
+        .unwrap();
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("running 1 test"),
+            "screenshot file child must execute its assertions"
+        );
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn caption(result: &CallToolResult) -> serde_json::Value {
+        assert_eq!(result.content.len(), 1, "only the caption: {result:?}");
+        assert!(result.content[0].as_image().is_none());
+        serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+    }
+
+    fn assert_no_image(result: &CallToolResult) {
+        assert!(
+            result
+                .content
+                .iter()
+                .all(|block| block.as_image().is_none()),
+            "no image content: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "isolated environment subprocess; invoked by screenshot_file_output_writes_files_and_returns_no_image_content"]
+    async fn screenshot_file_output_child() {
+        use image::GenericImageView as _;
+        assert_eq!(std::env::var("CUL_SHOT_FILE_CHILD").as_deref(), Ok("1"));
+        let log = std::path::PathBuf::from(std::env::var("CUL_SHOT_FILE_LOG").unwrap());
+        let out = std::path::PathBuf::from(std::env::var("CUL_SHOT_FILE_OUT").unwrap());
+        let events = || std::fs::read_to_string(&log).unwrap_or_default();
+        let clear = || std::fs::write(&log, "").unwrap();
+        let (server, probes) = super::tests::server_with_labelled_diagnostics(|| false, || false);
+        let unprivileged = unsafe { libc::geteuid() } != 0;
+        let locked = out.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        // 1. The screenshot tool saves a png and returns only the caption.
+        let path = out.join("shot.png");
+        let result = server
+            .screenshot(Parameters(
+                serde_json::from_value(serde_json::json!({"screenshot_file_path": path})).unwrap(),
+            ))
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let caption_value = caption(&result);
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(caption_value["file_path"], serde_json::json!(path));
+        assert_eq!(caption_value["bytes"], serde_json::json!(written.len()));
+        assert_eq!(caption_value["format"], serde_json::json!("png"));
+        assert_eq!(caption_value["width"], serde_json::json!(64));
+        assert_eq!(caption_value["height"], serde_json::json!(48));
+        assert_eq!(caption_value["coordinate_width"], serde_json::json!(64));
+        assert_eq!(caption_value["coordinate_height"], serde_json::json!(48));
+        assert_eq!(caption_value["scale"], serde_json::json!(1.0));
+        assert_eq!(
+            image::load_from_memory(&written).unwrap().dimensions(),
+            (64, 48)
+        );
+        assert_eq!(events(), "gnome-screenshot\n");
+        let written_png = written;
+
+        // A jpeg, scaled down.
+        let jpeg = out.join("shot.jpg");
+        let result = server
+            .screenshot(Parameters(
+                serde_json::from_value(serde_json::json!({
+                    "screenshot_file_path": jpeg,
+                    "format": "jpeg",
+                    "scale": 0.5
+                }))
+                .unwrap(),
+            ))
+            .await;
+        let caption_value = caption(&result);
+        let written = std::fs::read(&jpeg).unwrap();
+        assert!(written.starts_with(&[0xff, 0xd8]), "a jpeg file");
+        assert_eq!(caption_value["format"], serde_json::json!("jpeg"));
+        assert_eq!(caption_value["width"], serde_json::json!(32));
+        assert_eq!(caption_value["coordinate_width"], serde_json::json!(64));
+        assert_eq!(caption_value["scale"], serde_json::json!(0.5));
+        assert_eq!(caption_value["bytes"], serde_json::json!(written.len()));
+
+        // 2. Bad paths are refused before any capture.
+        clear();
+        let as_dir = out.join("dir.png");
+        std::fs::create_dir(&as_dir).unwrap();
+        for (arguments, expected) in [
+            (
+                serde_json::json!({"screenshot_file_path": "shot.png"}),
+                "must be an absolute path",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": out.join("missing").join("shot.png")}),
+                "does not exist",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": as_dir}),
+                "already exists",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": out.join("shot.jpeg")}),
+                "does not match format png",
+            ),
+            // File output never replaces a file, so an earlier capture stays.
+            (
+                serde_json::json!({"screenshot_file_path": path}),
+                "already exists",
+            ),
+            (
+                serde_json::json!({"screenshot_file_path": format!("{}/", out.join("slash.png").display())}),
+                "must end with the file name",
+            ),
+        ] {
+            let result = server
+                .screenshot(Parameters(
+                    serde_json::from_value(arguments.clone()).unwrap(),
+                ))
+                .await;
+            assert_eq!(result.is_error, Some(true), "{arguments}");
+            assert_no_image(&result);
+            let text = &result.content[0].as_text().unwrap().text;
+            assert!(text.contains(expected), "{arguments}: {text}");
+        }
+        assert_eq!(events(), "", "a refused path captures nothing");
+        assert!(!out.join("missing").exists());
+        assert_eq!(std::fs::read(&path).unwrap(), written_png);
+
+        // 3. Over HTTP the screenshot tool refuses file output.
+        let http = ComputerUseLinux {
+            http_transport: true,
+            ..Default::default()
+        };
+        let remote = out.join("remote.png");
+        let result = http
+            .screenshot(Parameters(
+                serde_json::from_value(serde_json::json!({"screenshot_file_path": remote}))
+                    .unwrap(),
+            ))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert!(result.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("refused over HTTP"));
+        assert!(!remote.exists());
+        assert_eq!(events(), "");
+
+        // A failed write is the call's error, with no inline fallback.
+        if unprivileged {
+            let result = server
+                .screenshot(Parameters(
+                    serde_json::from_value(
+                        serde_json::json!({"screenshot_file_path": locked.join("shot.png")}),
+                    )
+                    .unwrap(),
+                ))
+                .await;
+            assert_eq!(result.is_error, Some(true));
+            assert_no_image(&result);
+            assert!(result.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("failed to write screenshot file"));
+        }
+
+        // 4. get_app_state saves its screenshot and names the file.
+        let state = out.join("state.png");
+        let params: GetAppStateParams =
+            serde_json::from_value(serde_json::json!({"screenshot_file_path": state})).unwrap();
+        let result = server.app_state(params).await.unwrap();
+        assert_no_image(&result);
+        let structured = result.structured_content.unwrap();
+        let written = std::fs::read(&state).unwrap();
+        assert_eq!(
+            structured["screenshot"]["file_path"],
+            serde_json::json!(state)
+        );
+        assert_eq!(
+            structured["screenshot"]["bytes"],
+            serde_json::json!(written.len())
+        );
+        assert_eq!(
+            structured["screenshot"]["coordinate_width"],
+            serde_json::json!(64)
+        );
+        assert_eq!(structured["screenshot"]["scale"], serde_json::json!(1.0));
+        assert!(structured
+            .get("screenshot_error")
+            .is_none_or(serde_json::Value::is_null));
+        assert!(structured["message"]
+            .as_str()
+            .unwrap()
+            .contains("The screenshot was saved to"));
+
+        // A failed write is reported in screenshot_error, without the image.
+        if unprivileged {
+            let params: GetAppStateParams = serde_json::from_value(
+                serde_json::json!({"screenshot_file_path": locked.join("state.png")}),
+            )
+            .unwrap();
+            let result = server.app_state(params).await.unwrap();
+            assert_no_image(&result);
+            let structured = result.structured_content.unwrap();
+            assert!(structured["screenshot"].is_null());
+            assert!(structured["screenshot_error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to write screenshot file"));
+        }
+
+        // 5. A post-action screenshot is saved after the action.
+        clear();
+        let after = out.join("after.png");
+        let click: ClickParams = serde_json::from_value(serde_json::json!({
+            "x": 10,
+            "y": 10,
+            "screenshot_after": true,
+            "screenshot_file_path": after
+        }))
+        .unwrap();
+        let result = server.click(Parameters(click)).await.unwrap();
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_no_image(&result);
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["ok"], serde_json::json!(true));
+        assert_eq!(
+            structured["screenshot"]["file_path"],
+            serde_json::json!(after)
+        );
+        let after_bytes = std::fs::read(&after).unwrap();
+        assert_eq!(
+            structured["screenshot"]["bytes"],
+            serde_json::json!(after_bytes.len())
+        );
+        assert_eq!(
+            structured["screenshot"]["coordinate_height"],
+            serde_json::json!(48)
+        );
+        assert_eq!(events(), "xdotool\ngnome-screenshot\n");
+
+        // A failed post-action write keeps the action's ok and reports
+        // screenshot_error like any failed post-action capture. It says
+        // nothing about the desktop, so the cached diagnostics stay.
+        server.diagnostics.report(false).await;
+        let probes_before = probes.load(std::sync::atomic::Ordering::SeqCst);
+        if unprivileged {
+            let click: ClickParams = serde_json::from_value(serde_json::json!({
+                "x": 10,
+                "y": 10,
+                "screenshot_after": "screen",
+                "screenshot_file_path": locked.join("after.png")
+            }))
+            .unwrap();
+            let result = server.click(Parameters(click)).await.unwrap();
+            assert_ne!(result.is_error, Some(true));
+            assert_no_image(&result);
+            let structured = result.structured_content.unwrap();
+            assert_eq!(structured["ok"], serde_json::json!(true));
+            assert!(structured.get("screenshot").is_none());
+            assert!(structured["screenshot_error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to write screenshot file"));
+            assert!(structured["message"]
+                .as_str()
+                .unwrap()
+                .contains("Post-action screenshot failed:"));
+        }
+
+        // A bad post-action path is reported without a capture, and an
+        // existing file is never replaced.
+        for (bad, expected) in [
+            (serde_json::json!("after.png"), "must be an absolute path"),
+            (serde_json::json!(after), "already exists"),
+        ] {
+            clear();
+            let click: ClickParams = serde_json::from_value(serde_json::json!({
+                "x": 10,
+                "y": 10,
+                "screenshot_after": true,
+                "screenshot_file_path": bad
+            }))
+            .unwrap();
+            let result = server.click(Parameters(click)).await.unwrap();
+            let structured = result.structured_content.unwrap();
+            assert_eq!(structured["ok"], serde_json::json!(true));
+            assert!(structured["screenshot_error"]
+                .as_str()
+                .unwrap()
+                .contains(expected));
+            assert_eq!(events(), "xdotool\n");
+        }
+        assert_eq!(std::fs::read(&after).unwrap(), after_bytes);
+        server.diagnostics.report(false).await;
+        assert_eq!(
+            probes.load(std::sync::atomic::Ordering::SeqCst),
+            probes_before,
+            "a file output failure keeps the cached diagnostics"
+        );
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 }
 
@@ -21205,6 +24090,7 @@ mod snapshot_handle_tests {
                     )
                     .await
                     .0
+                     .0
             }
         };
         let by_index = |snapshot_id: Option<&str>| ActionParams {
@@ -21300,5 +24186,355 @@ mod snapshot_handle_tests {
             "{}",
             refused.message
         );
+    }
+
+    const HTTP_REQUIRED: &str = "click was not sent: snapshot_id is required over HTTP for element_index and selector calls, because another client's get_app_state can replace the cached tree. Pass the snapshot_id from your get_app_state result.";
+
+    /// The click checks of `http_clients_must_name_their_snapshot`, on any
+    /// server; returns each call's check result.
+    fn click_checks(backend: &ComputerUseLinux) -> (String, Vec<std::result::Result<(), String>>) {
+        let a = backend.clone();
+        let b = backend.clone();
+        let first = a.cache_snapshot(&[node(FIRST_REF)], None);
+        b.cache_snapshot(&[node(SECOND_REF)], None);
+        let check = |value: serde_json::Value| {
+            let params: ClickParams = serde_json::from_value(value).unwrap();
+            a.check_element_snapshot(
+                "click",
+                params.snapshot_id.as_deref(),
+                click_resolves_cached_element(&params),
+            )
+            .map(drop)
+        };
+        use serde_json::json;
+        let results = vec![
+            check(json!({"element_index": 0, "snapshot_id": first})),
+            check(json!({"element_index": 0})),
+            check(json!({"element_index": 0, "snapshot_id": "  "})),
+            check(json!({"element_identifier": IDENTIFIER_REF})),
+            check(json!({"x": 5, "y": 6})),
+        ];
+        (first, results)
+    }
+
+    #[test]
+    fn http_clients_must_name_their_snapshot() {
+        let backend = ComputerUseLinux {
+            require_snapshot_ids: true,
+            ..Default::default()
+        };
+        let (first, results) = click_checks(&backend);
+        assert!(results[0].as_ref().unwrap_err().starts_with(&format!(
+            "click was not sent: snapshot_id {first:?} is not the cached snapshot: a later get_app_state"
+        )));
+        assert_eq!(results[1], Err(HTTP_REQUIRED.to_string()));
+        assert_eq!(results[2], Err(HTTP_REQUIRED.to_string()));
+        assert_eq!(results[3], Ok(()));
+        assert_eq!(results[4], Ok(()));
+    }
+
+    #[test]
+    fn stdio_snapshot_id_stays_optional() {
+        let (_, results) = click_checks(&ComputerUseLinux::default());
+        assert!(results[0].is_err());
+        assert_eq!(results[1..], [Ok(()), Ok(()), Ok(()), Ok(())]);
+    }
+
+    #[tokio::test]
+    async fn http_tree_page_needs_a_snapshot_id() {
+        let backend = ComputerUseLinux {
+            require_snapshot_ids: true,
+            ..Default::default()
+        };
+        let id = backend.cache_snapshot(&[node(FIRST_REF)], None);
+        for missing in [None, Some("  ".to_string())] {
+            let page = backend
+                .get_tree_page(Parameters(GetTreePageParams {
+                    offset: None,
+                    snapshot_id: missing,
+                }))
+                .await
+                .0;
+            assert_eq!(page.node_count, 0);
+            assert!(page.nodes.is_empty());
+            assert_eq!(page.snapshot_id, None);
+            assert_eq!(
+                page.message,
+                HTTP_REQUIRED.replacen("click", "get_tree_page", 1)
+            );
+        }
+        let page = backend
+            .get_tree_page(Parameters(GetTreePageParams {
+                offset: None,
+                snapshot_id: Some(id.clone()),
+            }))
+            .await
+            .0;
+        assert_eq!(page.node_count, 1);
+        assert_eq!(page.snapshot_id, Some(id));
+    }
+
+    /// Client B's tree: its app is pid 42 and it was narrowed to "Window 20".
+    fn cache_client_b_tree(backend: &ComputerUseLinux) -> String {
+        let id = backend.cache_snapshot(&[node(FIRST_REF)], Some(42));
+        backend.last_snapshot.lock().unwrap().window_scope = Some("Window 20".to_string());
+        id
+    }
+
+    #[test]
+    fn http_post_action_tree_ignores_another_clients_scope() {
+        let http = ComputerUseLinux {
+            require_snapshot_ids: true,
+            ..Default::default()
+        };
+        let b_id = cache_client_b_tree(&http);
+        // Client A's action names no snapshot, or not B's: nothing comes from
+        // B's tree. Coordinate calls resolve no cached element, so they pass.
+        for named in [None, Some("  "), Some("other")] {
+            let scope = http.check_element_snapshot("click", named, false).unwrap();
+            assert_eq!(scope.pid, None);
+            assert!(scope.tree.is_none(), "{:?}", scope.tree);
+        }
+        // Client B named its own snapshot, so its scope carries over.
+        let scope = http
+            .check_element_snapshot("click", Some(&format!(" {b_id} ")), false)
+            .unwrap();
+        assert_eq!(scope.pid, Some(42));
+        assert_eq!(scope.tree.unwrap().scope, "Window 20");
+
+        // Stdio reads the cached scope at capture time, as before.
+        let stdio = ComputerUseLinux::default();
+        cache_client_b_tree(&stdio);
+        let scope = stdio.cached_post_action_context();
+        assert_eq!(scope.pid, Some(42));
+        let window = scope.tree.unwrap();
+        assert_eq!(window.scope, "Window 20");
+        assert_eq!(window.pid, Some(42));
+    }
+
+    #[test]
+    fn post_action_scope_for_capture_keeps_the_carried_scope_over_http() {
+        // Client B stores a newer tree for another app and window.
+        let cache_newer_tree = |backend: &ComputerUseLinux| {
+            backend.cache_snapshot(&[node(SECOND_REF)], Some(7));
+            backend.last_snapshot.lock().unwrap().window_scope = Some("Window 30".to_string());
+        };
+        let http = ComputerUseLinux {
+            require_snapshot_ids: true,
+            ..Default::default()
+        };
+        let a_id = cache_client_b_tree(&http);
+        // Client A's action takes its scope under the input lock.
+        let carried = http
+            .check_element_snapshot("click", Some(&a_id), true)
+            .unwrap();
+        cache_newer_tree(&http);
+        let scope = http.post_action_scope_for_capture(carried);
+        assert_eq!(scope.pid, Some(42));
+        assert_eq!(scope.tree.unwrap().scope, "Window 20");
+
+        // Stdio reads the cache at capture time, as on main.
+        let stdio = ComputerUseLinux::default();
+        let a_id = cache_client_b_tree(&stdio);
+        let carried = stdio
+            .check_element_snapshot("click", Some(&a_id), true)
+            .unwrap();
+        cache_newer_tree(&stdio);
+        let scope = stdio.post_action_scope_for_capture(carried);
+        assert_eq!(scope.pid, Some(7));
+        assert_eq!(scope.tree.unwrap().scope, "Window 30");
+    }
+
+    #[tokio::test]
+    async fn http_failed_read_keeps_the_cached_tree() {
+        let http = ComputerUseLinux {
+            require_snapshot_ids: true,
+            ..Default::default()
+        };
+        let id = http.cache_snapshot(&[node(FIRST_REF)], None);
+        http.commit_cleared_snapshot().await;
+        assert!(http
+            .check_element_snapshot("click", Some(&id), true)
+            .is_ok());
+
+        let stdio = ComputerUseLinux::default();
+        let id = stdio.cache_snapshot(&[node(FIRST_REF)], None);
+        stdio.commit_cleared_snapshot().await;
+        let refused = stdio
+            .check_element_snapshot("click", Some(&id), true)
+            .unwrap_err();
+        assert!(refused.contains("no tree is cached now"), "{refused}");
+    }
+}
+
+#[cfg(test)]
+mod type_text_atspi_fallback_tests {
+    use super::*;
+    use crate::atspi_tree::insert_fixture::{start_field_fixture, FieldFixture, FIXTURE_WINDOW};
+    use crate::keyboard_keymap::{MissingKeysymReason, MissingLayoutKeysym};
+
+    const REFUSAL: &str =
+        "Literal text was not sent: GNOME portal cannot verify U+002F in keyboard layout group 2.";
+    const MISSING: MissingLayoutKeysym = MissingLayoutKeysym {
+        ch: '/',
+        group: 2,
+        reason: MissingKeysymReason::Absent,
+    };
+
+    fn result(insert: Result<FocusedTextInsert>) -> std::result::Result<String, String> {
+        type_text_atspi_result(REFUSAL, MISSING, "/home/x", insert)
+    }
+
+    #[test]
+    fn a_verified_insert_names_the_route_and_skips_the_unverified_note() {
+        let message = result(Ok(FocusedTextInsert::Verified {
+            role: "text".to_string(),
+            replaced_selection: true,
+            caret_after_text: true,
+        }))
+        .unwrap();
+        // type_text adds "Field contents were not verified" unless this holds.
+        assert!(message.starts_with(TYPE_TEXT_ATSPI_ROUTE), "{message}");
+        assert!(message.contains("group 2 lacks U+002F"), "{message}");
+        assert!(message.contains("reads back the text"), "{message}");
+        assert!(message.contains("replaced the selection"), "{message}");
+        assert!(!message.contains("caret"), "{message}");
+    }
+
+    #[test]
+    fn no_editable_focus_and_password_fields_keep_the_refusal() {
+        let error = result(Ok(FocusedTextInsert::NotEditable(
+            "no element in the target app has keyboard focus".to_string(),
+        )))
+        .unwrap_err();
+        assert!(error.starts_with(REFUSAL), "{error}");
+        assert!(error.contains("no element in the target app has keyboard focus"));
+
+        let error = result(Ok(FocusedTextInsert::PasswordField)).unwrap_err();
+        assert!(error.starts_with(REFUSAL), "{error}");
+        assert!(error.contains("password field"), "{error}");
+        assert!(error.contains("set_value can fill it"), "{error}");
+
+        let error = result(Err(anyhow::anyhow!("failed to connect to AT-SPI bus"))).unwrap_err();
+        assert!(error.starts_with(REFUSAL), "{error}");
+    }
+
+    #[test]
+    fn a_readback_mismatch_fails_and_quotes_the_field() {
+        let error = result(Ok(FocusedTextInsert::Mismatch {
+            expected_count: 7,
+            read_count: 6,
+            read_text: "/home/".to_string(),
+            read_truncated: false,
+        }))
+        .unwrap_err();
+        // A failure must not carry the success marker.
+        assert!(error.starts_with(TYPE_TEXT_ATSPI_UNVERIFIED), "{error}");
+        assert!(!error.starts_with(TYPE_TEXT_ATSPI_ROUTE), "{error}");
+        assert!(error.contains("does not read it back"), "{error}");
+        assert!(error.contains("\"/home/x\""), "{error}");
+        assert!(error.contains("read \"/home/\""), "{error}");
+        assert!(error.contains("may have changed"), "{error}");
+
+        let error = result(Ok(FocusedTextInsert::EditFailed {
+            reason: "the app refused InsertText".to_string(),
+            may_have_changed: false,
+        }))
+        .unwrap_err();
+        assert!(error.starts_with(TYPE_TEXT_ATSPI_UNVERIFIED), "{error}");
+        assert!(error.contains("No text was changed"), "{error}");
+        for outcome in [
+            FocusedTextInsert::ReadbackFailed,
+            FocusedTextInsert::ReadbackTimedOut,
+        ] {
+            let error = result(Ok(outcome)).unwrap_err();
+            assert!(error.starts_with(TYPE_TEXT_ATSPI_UNVERIFIED), "{error}");
+        }
+
+        // An unreachable shift level is not worded as a missing character.
+        let unreachable = MissingLayoutKeysym {
+            reason: MissingKeysymReason::UnreachableLevel,
+            ..MISSING
+        };
+        let error = type_text_atspi_result(
+            REFUSAL,
+            unreachable,
+            "/home/x",
+            Ok(FocusedTextInsert::ReadbackFailed),
+        )
+        .unwrap_err();
+        assert!(error.contains("only at a shift level"), "{error}");
+        assert!(!error.contains("lacks"), "{error}");
+    }
+
+    #[test]
+    fn only_a_missing_keysym_takes_the_atspi_route() {
+        let missing = anyhow::Error::new(MISSING).context("keyboard keymap preflight failed");
+        assert_eq!(atspi_fallback_trigger(&missing), Some(MISSING));
+        for error in [
+            anyhow::anyhow!("WAYLAND_DISPLAY is missing; cannot verify the keyboard keymap"),
+            anyhow::anyhow!("keyboard keymap read timed out; no text was sent"),
+            anyhow::anyhow!("cannot verify the complete text against the keyboard keymap"),
+        ] {
+            assert_eq!(atspi_fallback_trigger(&error), None, "{error}");
+        }
+    }
+
+    /// The issue's case: with us + il groups the portal preflight refuses
+    /// `/home/x`, and the text goes into the focused entry and reads back.
+    #[tokio::test]
+    async fn a_two_group_keymap_refusal_types_through_atspi() {
+        let keymap = include_bytes!("../tests/fixtures/keyboard-us-il.xkb");
+        assert!(crate::keyboard_keymap::validate_text_with_keymap(keymap, "/").is_ok());
+        let error =
+            crate::keyboard_keymap::validate_text_with_keymap(keymap, "/home/x").unwrap_err();
+        let refusal = format!("Literal text was not sent: {error:#}");
+        let missing = atspi_fallback_trigger(&error).expect("a layout refusal");
+        assert_eq!(
+            missing,
+            MissingLayoutKeysym {
+                ch: 'h',
+                group: 2,
+                reason: MissingKeysymReason::Absent,
+            }
+        );
+
+        let running = start_field_fixture(FieldFixture {
+            role: atspi::Role::Entry,
+            role_name: "entry",
+            ..Default::default()
+        })
+        .await;
+        let insert = crate::atspi_tree::insert_text_at_focus_on(
+            &running.conn,
+            std::process::id(),
+            Some(FIXTURE_WINDOW),
+            "/home/x",
+        )
+        .await;
+        let message = type_text_atspi_result(&refusal, missing, "/home/x", insert).unwrap();
+        assert!(message.starts_with(TYPE_TEXT_ATSPI_ROUTE), "{message}");
+        assert!(message.contains("group 2 lacks U+0068"), "{message}");
+        assert_eq!(running.take_state(0).contents, "/home/x");
+    }
+
+    #[test]
+    fn control_characters_are_not_inserted() {
+        assert_eq!(key_press_character("/home/x y.txt"), None);
+        assert_eq!(key_press_character("שלום"), None);
+        for (text, code) in [
+            ("a\nb", "U+000A"),
+            ("a\tb", "U+0009"),
+            ("a\rb", "U+000D"),
+            ("a\u{8}", "U+0008"),
+            ("\u{1b}", "U+001B"),
+            ("\u{7f}", "U+007F"),
+        ] {
+            let key = key_press_character(text).unwrap();
+            let error = type_text_control_character_refusal(REFUSAL, key);
+            assert!(error.starts_with(REFUSAL), "{error}");
+            assert!(error.contains(code), "{error}");
+            assert!(error.contains("press_key"), "{error}");
+        }
     }
 }

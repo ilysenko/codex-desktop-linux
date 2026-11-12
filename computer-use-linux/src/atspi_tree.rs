@@ -349,6 +349,7 @@ pub async fn snapshot_tree(
         app_name_or_bundle_identifier,
         target_pid,
         None,
+        None,
         max_nodes,
         max_depth,
     )
@@ -360,10 +361,13 @@ pub async fn snapshot_tree(
 /// `window_title`, an app root that exposes several windows (Chromium puts
 /// every browser window under one application) is read only through the
 /// window whose name matches it; its other children stay.
+/// `pid_fallback_name` finds the roots by name when `target_pid` owns none;
+/// pass it only for a pid read from a window the compositor listed.
 pub(crate) async fn snapshot_accessibility_tree(
     app_name_or_bundle_identifier: Option<&str>,
     target_pid: Option<u32>,
     window_title: Option<&str>,
+    pid_fallback_name: Option<&str>,
     max_nodes: usize,
     max_depth: u32,
 ) -> Result<AccessibilitySnapshot> {
@@ -380,6 +384,7 @@ pub(crate) async fn snapshot_accessibility_tree(
             window_title
                 .map(str::trim)
                 .filter(|title| !title.is_empty()),
+            pid_fallback_name,
             max_nodes,
             max_depth,
             stop_reading,
@@ -393,6 +398,7 @@ async fn snapshot_tree_inner(
     app_name_or_bundle_identifier: Option<&str>,
     target_pid: Option<u32>,
     window_title: Option<&str>,
+    pid_fallback_name: Option<&str>,
     max_nodes: usize,
     max_depth: u32,
     stop_reading: Instant,
@@ -409,6 +415,7 @@ async fn snapshot_tree_inner(
         roots,
         app_name_or_bundle_identifier,
         target_pid,
+        pid_fallback_name,
         &mut remaining_filter_reads,
     )
     .await;
@@ -678,15 +685,42 @@ async fn focused_element_probe(
     require_scoped: bool,
 ) -> Result<FocusProbe> {
     let conn = connect().await?;
+    Ok(focused_element_search(&conn, target_pid, require_scoped)
+        .await?
+        .0)
+}
+
+/// The bounded focus search. A `Found` result for a non-container element
+/// also returns that element's reference.
+async fn focused_element_search(
+    conn: &AccessibilityConnection,
+    target_pid: Option<u32>,
+    require_scoped: bool,
+) -> Result<(FocusProbe, Option<ObjectRefOwned>)> {
     let mut remaining_registry_reads = MAX_DISCOVERY_ROOTS;
-    let roots =
-        registry_children(&conn, MAX_DISCOVERY_ROOTS, &mut remaining_registry_reads).await?;
+    let roots = registry_children(conn, MAX_DISCOVERY_ROOTS, &mut remaining_registry_reads).await?;
     let mut remaining_filter_reads = MAX_DISCOVERY_CHILD_READS;
-    let selected_roots =
-        select_roots(&conn, roots, None, target_pid, &mut remaining_filter_reads).await;
-    if require_scoped && !selected_roots.scoped {
-        return Ok(FocusProbe::NoAccessibleApp);
+    let selected_roots = select_roots(
+        conn,
+        roots,
+        None,
+        target_pid,
+        None,
+        &mut remaining_filter_reads,
+    )
+    .await;
+    if require_scoped && selected_roots.pid != target_pid {
+        return Ok((FocusProbe::NoAccessibleApp, None));
     }
+    focused_element_search_from(conn, selected_roots.roots, require_scoped).await
+}
+
+/// The focus search below `roots`.
+async fn focused_element_search_from(
+    conn: &AccessibilityConnection,
+    roots: Vec<ObjectRefOwned>,
+    require_scoped: bool,
+) -> Result<(FocusProbe, Option<ObjectRefOwned>)> {
     let mut traversal = BoundedTraversal::new(FOCUS_PROBE_MAX_NODES);
     let mut remaining_traversal_reads = FOCUS_PROBE_MAX_NODES;
     let mut incomplete = false;
@@ -696,14 +730,13 @@ async fn focused_element_probe(
     let mut depth_base = 0_u32;
 
     traversal.enqueue(
-        selected_roots
-            .roots
+        roots
             .into_iter()
             .map(|object_ref| (object_ref, 0_u32, false)),
     );
 
     while let Some((object_ref, depth, in_menu)) = traversal.pop() {
-        let Ok(proxy) = open_accessible(&conn, &object_ref).await else {
+        let Ok(proxy) = open_accessible(conn, &object_ref).await else {
             incomplete = true;
             continue;
         };
@@ -747,7 +780,7 @@ async fn focused_element_probe(
                     incomplete = false;
                 }
             } else {
-                return Ok(FocusProbe::Found(summary));
+                return Ok((FocusProbe::Found(summary), Some(object_ref.clone())));
             }
         }
         let remaining = traversal.remaining_capacity();
@@ -778,10 +811,13 @@ async fn focused_element_probe(
             incomplete = proxy.child_count().await.map_or(true, |count| count > 0);
         }
     }
-    Ok(finish_focus_probe(
-        incomplete || traversal.truncated(),
-        require_scoped && shell_only && observed_nodes > 0,
-        focused_container,
+    Ok((
+        finish_focus_probe(
+            incomplete || traversal.truncated(),
+            require_scoped && shell_only && observed_nodes > 0,
+            focused_container,
+        ),
+        None,
     ))
 }
 
@@ -979,18 +1015,21 @@ async fn text_readback_matches(
         return Err(EditableTextReadbackError::Failed);
     }
     if character_count as usize == requested.chars().count() {
-        return unicode_scalar_text_readback_matches(text, requested, deadline).await;
+        return unicode_scalar_text_readback_matches(text, 0, requested, deadline).await;
     }
 
     let requested_utf16 = requested.encode_utf16().collect::<Vec<_>>();
     if character_count as usize != requested_utf16.len() {
         return Ok(false);
     }
-    utf16_text_readback_matches(text, &requested_utf16, deadline).await
+    utf16_text_readback_matches(text, 0, &requested_utf16, deadline).await
 }
 
+/// Whether the text from offset `base` on starts with `requested`, with
+/// offsets counted in Unicode scalars.
 async fn unicode_scalar_text_readback_matches(
     text: &TextProxy<'_>,
+    base: usize,
     requested: &str,
     deadline: Instant,
 ) -> std::result::Result<bool, EditableTextReadbackError> {
@@ -1000,7 +1039,11 @@ async fn unicode_scalar_text_readback_matches(
         let end = offset
             .saturating_add(EDITABLE_TEXT_READ_CHUNK_UNITS)
             .min(requested_chars.len());
-        let chunk = readback_within(deadline, text.get_text(offset as i32, end as i32)).await?;
+        let chunk = readback_within(
+            deadline,
+            text.get_text((base + offset) as i32, (base + end) as i32),
+        )
+        .await?;
         if !chunk
             .chars()
             .eq(requested_chars[offset..end].iter().copied())
@@ -1013,8 +1056,10 @@ async fn unicode_scalar_text_readback_matches(
     Ok(true)
 }
 
+/// The same check with offsets counted in UTF-16 code units.
 async fn utf16_text_readback_matches(
     text: &TextProxy<'_>,
+    base: usize,
     requested: &[u16],
     deadline: Instant,
 ) -> std::result::Result<bool, EditableTextReadbackError> {
@@ -1026,7 +1071,11 @@ async fn utf16_text_readback_matches(
         if end < requested.len() && (0xD800..=0xDBFF).contains(&requested[end - 1]) {
             end -= 1;
         }
-        let chunk = readback_within(deadline, text.get_text(offset as i32, end as i32)).await?;
+        let chunk = readback_within(
+            deadline,
+            text.get_text((base + offset) as i32, (base + end) as i32),
+        )
+        .await?;
         if !chunk
             .encode_utf16()
             .eq(requested[offset..end].iter().copied())
@@ -1088,6 +1137,616 @@ async fn verify_editable_text_contents(
     }
 }
 
+/// Characters of a mismatched readback that a failure report quotes.
+const MAX_REPORTED_READBACK_CHARS: usize = 256;
+
+/// Outcome of [`insert_text_at_focus`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FocusedTextInsert {
+    /// The field reads the text at the insertion point and has the expected
+    /// length.
+    Verified {
+        role: String,
+        replaced_selection: bool,
+        /// The caret is after the inserted text, where typing leaves it.
+        caret_after_text: bool,
+    },
+    /// No text was changed. The focus is not a field this route can fill; the
+    /// string says why.
+    NotEditable(String),
+    /// No text was changed. The focused element is a password field.
+    PasswordField,
+    /// The app took the edit, but the field does not read back the text at
+    /// the insertion point.
+    Mismatch {
+        expected_count: i32,
+        read_count: i32,
+        /// The text read from the insertion point.
+        read_text: String,
+        read_truncated: bool,
+    },
+    ReadbackFailed,
+    ReadbackTimedOut,
+    /// The app refused or failed an edit call.
+    EditFailed {
+        reason: String,
+        may_have_changed: bool,
+    },
+}
+
+/// Insert `text` at the caret of the focused element in the target window,
+/// through AT-SPI EditableText, and read it back. The window is the app
+/// root's window named `window_title` (any title works when the app has one
+/// window), and it must be active. A selection is replaced, as typing would.
+/// An empty or fully selected field gets its contents set, the same call
+/// set_value makes. `Err` means nothing was changed.
+pub(crate) async fn insert_text_at_focus(
+    target_pid: u32,
+    window_title: Option<&str>,
+    text: &str,
+) -> Result<FocusedTextInsert> {
+    let conn = connect().await?;
+    insert_text_at_focus_on(&conn, target_pid, window_title, text).await
+}
+
+pub(crate) async fn insert_text_at_focus_on(
+    conn: &AccessibilityConnection,
+    target_pid: u32,
+    window_title: Option<&str>,
+    text: &str,
+) -> Result<FocusedTextInsert> {
+    let window = timeout(
+        ACTION_QUERY_TIMEOUT,
+        target_window_root(conn, target_pid, window_title),
+    )
+    .await
+    .context("finding the target window in AT-SPI exceeded its 5-second deadline")??;
+    let window = match window {
+        Ok(window) => window,
+        Err(reason) => return Ok(FocusedTextInsert::NotEditable(reason)),
+    };
+    let (probe, object_ref) = timeout(
+        ACTION_QUERY_TIMEOUT,
+        focused_element_search_from(conn, vec![window], true),
+    )
+    .await
+    .context("the AT-SPI focus search exceeded its 5-second deadline")??;
+    let (summary, object_ref) = match (probe, object_ref) {
+        (FocusProbe::Found(summary), Some(object_ref)) => (summary, object_ref),
+        (FocusProbe::Found(summary), None) => {
+            return Ok(FocusedTextInsert::NotEditable(format!(
+                "keyboard focus is on a {} container, not on a text field",
+                summary.role
+            )))
+        }
+        (FocusProbe::NoneFocused | FocusProbe::ShellOnly, _) => {
+            return Ok(FocusedTextInsert::NotEditable(
+                "no element in the target window has keyboard focus".to_string(),
+            ))
+        }
+        (FocusProbe::Incomplete, _) => {
+            return Ok(FocusedTextInsert::NotEditable(
+                "the focused element was not found within the AT-SPI search limits".to_string(),
+            ))
+        }
+        (FocusProbe::NoAccessibleApp, _) => {
+            return Ok(FocusedTextInsert::NotEditable(
+                "the target app exposes no AT-SPI tree".to_string(),
+            ))
+        }
+    };
+    let proxy = open_accessible(conn, &object_ref)
+        .await
+        .context("failed to open the focused AT-SPI element")?;
+    let proxies = proxy
+        .proxies()
+        .await
+        .context("failed to read the focused element's interfaces")?;
+    insert_text_with_proxies(&proxy, &proxies, &summary, text).await
+}
+
+/// The AT-SPI window of the app owning `target_pid` that matches the verified
+/// compositor window, or why none can be proven to. One app root can hold
+/// several windows (Chromium holds them all), and its AT-SPI focus can lag
+/// behind the compositor's, so a focused field elsewhere in the app is not
+/// the target. The window must be active.
+async fn target_window_root(
+    conn: &AccessibilityConnection,
+    target_pid: u32,
+    window_title: Option<&str>,
+) -> Result<std::result::Result<ObjectRefOwned, String>> {
+    let mut remaining_registry_reads = MAX_DISCOVERY_ROOTS;
+    let roots = registry_children(conn, MAX_DISCOVERY_ROOTS, &mut remaining_registry_reads).await?;
+    let mut remaining_filter_reads = MAX_DISCOVERY_CHILD_READS;
+    let selected = select_roots(
+        conn,
+        roots,
+        None,
+        Some(target_pid),
+        None,
+        &mut remaining_filter_reads,
+    )
+    .await;
+    if selected.pid != Some(target_pid) {
+        return Ok(Err("the target app exposes no AT-SPI tree".to_string()));
+    }
+    let mut windows = Vec::new();
+    let mut labels = Vec::new();
+    let mut remaining_child_reads = MAX_DISCOVERY_CHILD_READS;
+    for root in &selected.roots {
+        let Ok(root) = open_accessible(conn, root).await else {
+            continue;
+        };
+        let Ok(batch) =
+            children_up_to(&root, MAX_DISCOVERY_ROOTS, &mut remaining_child_reads).await
+        else {
+            continue;
+        };
+        for child in batch.items {
+            let Ok(proxy) = open_accessible(conn, &child).await else {
+                continue;
+            };
+            let role = role_name(&proxy).await;
+            if !is_window_role(&role) {
+                continue;
+            }
+            let name = optional_string(proxy.name().await.ok());
+            let active = proxy
+                .get_state()
+                .await
+                .is_ok_and(|state| state.contains(atspi::State::Active));
+            labels.push((role, name));
+            windows.push((child, active));
+        }
+    }
+    let chosen = match windows.len() {
+        0 => return Ok(Err("the target app exposes no AT-SPI window".to_string())),
+        1 => 0,
+        count => {
+            let Some(chosen) = window_title.and_then(|title| matching_window(&labels, title))
+            else {
+                return Ok(Err(format!(
+                    "the target window could not be matched to one of the app's {count} AT-SPI windows"
+                )));
+            };
+            chosen
+        }
+    };
+    let (window, active) = windows.swap_remove(chosen);
+    if !active {
+        return Ok(Err(format!(
+            "the target window's AT-SPI {} is not active, so its focus may be stale",
+            labels[chosen].0
+        )));
+    }
+    Ok(Ok(window))
+}
+
+async fn read_before_edit<T, E: std::fmt::Display>(
+    deadline: Instant,
+    read: impl Future<Output = std::result::Result<T, E>>,
+    what: &str,
+) -> Result<T> {
+    match timeout_at(deadline, read).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(anyhow!("failed to read the field's {what}: {error}")),
+        Err(_) => Err(anyhow!("reading the field's {what} timed out")),
+    }
+}
+
+/// InsertText's length argument for `requested`. GTK and the other ATK
+/// bridges count it in bytes, as the AT-SPI documentation does. Qt's bridge
+/// resizes the text to that many UTF-16 code units, padding a longer text.
+/// ASCII text has one length in every unit; other text needs the app's
+/// toolkit, and the error explains a toolkit that cannot be read.
+async fn insert_text_length(
+    proxy: &AccessibleProxy<'_>,
+    requested: &str,
+    deadline: Instant,
+) -> std::result::Result<i32, String> {
+    let too_long = |_| "the text is too long for AT-SPI InsertText".to_string();
+    if requested.is_ascii() {
+        return i32::try_from(requested.len()).map_err(too_long);
+    }
+    let Some(toolkit) = toolkit_name(proxy, deadline).await else {
+        return Err("the app's toolkit could not be read, and InsertText counts the length of non-ASCII text differently per toolkit".to_string());
+    };
+    if toolkit.trim().to_ascii_lowercase().starts_with("qt") {
+        i32::try_from(requested.encode_utf16().count()).map_err(too_long)
+    } else {
+        i32::try_from(requested.len()).map_err(too_long)
+    }
+}
+
+/// `ToolkitName` of the element's application: its `GetApplication` root, or
+/// else the root on the element's own connection.
+async fn toolkit_name(proxy: &AccessibleProxy<'_>, deadline: Instant) -> Option<String> {
+    let connection = proxy.inner().connection();
+    let application = timeout_at(deadline, proxy.get_application())
+        .await
+        .ok()
+        .and_then(|reply| reply.ok())
+        .filter(|application| !application.is_null());
+    let (name, path) = match &application {
+        Some(application) => (
+            application.name_as_str()?.to_string(),
+            application.path_as_str().to_string(),
+        ),
+        None => (
+            proxy.inner().destination().to_string(),
+            "/org/a11y/atspi/accessible/root".to_string(),
+        ),
+    };
+    let app = atspi::proxy::application::ApplicationProxy::builder(connection)
+        .destination(name)
+        .ok()?
+        .path(path)
+        .ok()?
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+        .ok()?;
+    timeout_at(deadline, app.toolkit_name()).await.ok()?.ok()
+}
+
+async fn insert_text_with_proxies(
+    proxy: &AccessibleProxy<'_>,
+    proxies: &Proxies<'_>,
+    summary: &FocusedElementSummary,
+    requested: &str,
+) -> Result<FocusedTextInsert> {
+    let deadline = Instant::now() + ACTION_QUERY_TIMEOUT;
+    let role = read_before_edit(deadline, proxy.get_role(), "role").await?;
+    if role == atspi::Role::PasswordText || summary.role.to_ascii_lowercase().contains("password") {
+        return Ok(FocusedTextInsert::PasswordField);
+    }
+    if summary.is_terminal || role == atspi::Role::Terminal {
+        return Ok(FocusedTextInsert::NotEditable(
+            "the focused element is a terminal".to_string(),
+        ));
+    }
+    if matches!(role, atspi::Role::Invalid | atspi::Role::Unknown) {
+        return Ok(FocusedTextInsert::NotEditable(
+            "the focused element's role does not show whether it hides input".to_string(),
+        ));
+    }
+    if !summary.states.iter().any(|state| state == "editable") {
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the focused {} is not editable",
+            summary.role
+        )));
+    }
+    let Ok(editable) = proxies.editable_text().await else {
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the focused {} does not expose AT-SPI EditableText",
+            summary.role
+        )));
+    };
+    let Ok(text) = proxies.text().await else {
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the focused {} does not expose AT-SPI Text, so the result could not be read back",
+            summary.role
+        )));
+    };
+    let count = read_before_edit(deadline, text.character_count(), "character count").await?;
+    let caret = read_before_edit(deadline, text.caret_offset(), "caret offset").await?;
+    let selections =
+        read_before_edit(deadline, text_selection_count(&text), "selection count").await?;
+    let (start, end) = match selections {
+        ..=0 => (caret, caret),
+        1 => {
+            let (a, b) = read_before_edit(deadline, text.get_selection(0), "selection").await?;
+            (a.min(b), a.max(b))
+        }
+        n => {
+            return Ok(FocusedTextInsert::NotEditable(format!(
+                "the field has {n} selections, so the insertion point is ambiguous"
+            )))
+        }
+    };
+    if count < 0 || start < 0 || end > count {
+        return Err(anyhow!(
+            "the field reported an insertion point ({start}..{end}) outside its {count} characters"
+        ));
+    }
+
+    let replaced_selection = start < end;
+    let whole_field = start == 0 && end == count;
+    // Rewriting the whole field for a partial edit would flatten embedded
+    // objects and formatting, so a partial edit always uses InsertText.
+    let insert_length = if whole_field {
+        None
+    } else {
+        match insert_text_length(proxy, requested, deadline).await {
+            Ok(length) => Some(length),
+            Err(reason) => return Ok(FocusedTextInsert::NotEditable(reason)),
+        }
+    };
+    let untouched = read_untouched_text(&text, start, end, count, deadline).await?;
+
+    if let Some(length) = insert_length {
+        if replaced_selection {
+            match edit_call(editable.delete_text(start, end), "DeleteText").await {
+                Ok(()) => {}
+                Err(EditCallError::Refused) => {
+                    return Ok(FocusedTextInsert::EditFailed {
+                        reason: "the app refused to delete the selection".to_string(),
+                        may_have_changed: false,
+                    })
+                }
+                Err(EditCallError::Failed(reason)) => {
+                    return Ok(FocusedTextInsert::EditFailed {
+                        reason,
+                        may_have_changed: true,
+                    })
+                }
+            }
+        }
+        match edit_call(editable.insert_text(start, requested, length), "InsertText").await {
+            Ok(()) => {}
+            Err(EditCallError::Refused) => {
+                return Ok(FocusedTextInsert::EditFailed {
+                    reason: if replaced_selection {
+                        "the app deleted the selection but refused InsertText".to_string()
+                    } else {
+                        "the app refused InsertText".to_string()
+                    },
+                    may_have_changed: replaced_selection,
+                })
+            }
+            Err(EditCallError::Failed(reason)) => {
+                return Ok(FocusedTextInsert::EditFailed {
+                    reason,
+                    may_have_changed: true,
+                })
+            }
+        }
+    } else {
+        match edit_call(editable.set_text_contents(requested), "SetTextContents").await {
+            Ok(()) => {}
+            Err(EditCallError::Refused) => {
+                return Ok(FocusedTextInsert::EditFailed {
+                    reason: "the app refused SetTextContents".to_string(),
+                    may_have_changed: false,
+                })
+            }
+            Err(EditCallError::Failed(reason)) => {
+                return Ok(FocusedTextInsert::EditFailed {
+                    reason,
+                    may_have_changed: true,
+                })
+            }
+        }
+    }
+
+    verify_inserted_text(&text, start, count - (end - start), requested, &untouched)
+        .await
+        .map(|outcome| match outcome {
+            InsertReadback::Verified { caret_after_text } => FocusedTextInsert::Verified {
+                role: summary.role.clone(),
+                replaced_selection,
+                caret_after_text,
+            },
+            InsertReadback::Other(outcome) => outcome,
+        })
+}
+
+enum EditCallError {
+    /// The app answered false: it did not make the edit.
+    Refused,
+    /// The call failed or timed out, so the edit may have happened.
+    Failed(String),
+}
+
+/// One EditableText call, bounded like the other AT-SPI calls.
+async fn edit_call(
+    call: impl Future<Output = zbus::Result<bool>>,
+    name: &str,
+) -> std::result::Result<(), EditCallError> {
+    match timeout(ACTION_QUERY_TIMEOUT, call).await {
+        Ok(Ok(true)) => Ok(()),
+        Ok(Ok(false)) => Err(EditCallError::Refused),
+        Ok(Err(error)) => Err(EditCallError::Failed(format!("{name} failed: {error}"))),
+        Err(_) => Err(EditCallError::Failed(format!(
+            "{name} did not answer within 5 seconds"
+        ))),
+    }
+}
+
+/// Characters on each side of the edit that a large field's readback checks.
+const UNTOUCHED_SPAN_UNITS: i32 = 32;
+
+/// The text an edit of `start..end` must leave alone, read before the edit.
+enum UntouchedText {
+    /// A field of at most `MAX_TEXT_READBACK_CHARS`: everything before and
+    /// after the edit.
+    Whole { before: String, after: String },
+    /// A larger field: the spans just before and after the edit.
+    Spans {
+        before: String,
+        before_units: i32,
+        after: String,
+        after_units: i32,
+    },
+}
+
+async fn read_untouched_text(
+    text: &TextProxy<'_>,
+    start: i32,
+    end: i32,
+    count: i32,
+    deadline: Instant,
+) -> Result<UntouchedText> {
+    if count <= MAX_TEXT_READBACK_CHARS {
+        return Ok(UntouchedText::Whole {
+            before: read_before_edit(deadline, text.get_text(0, start), "text").await?,
+            after: read_before_edit(deadline, text.get_text(end, count), "text").await?,
+        });
+    }
+    let before_units = start.min(UNTOUCHED_SPAN_UNITS);
+    let after_units = (count - end).min(UNTOUCHED_SPAN_UNITS);
+    Ok(UntouchedText::Spans {
+        before: read_before_edit(deadline, text.get_text(start - before_units, start), "text")
+            .await?,
+        before_units,
+        after: read_before_edit(deadline, text.get_text(end, end + after_units), "text").await?,
+        after_units,
+    })
+}
+
+enum InsertReadback {
+    Verified { caret_after_text: bool },
+    Other(FocusedTextInsert),
+}
+
+/// Whether the field holds `requested` at `start`, `units` long in the app's
+/// offsets, with the untouched text unchanged around it.
+async fn edit_reads_back(
+    text: &TextProxy<'_>,
+    start: i32,
+    units: i32,
+    read_count: i32,
+    requested: &str,
+    untouched: &UntouchedText,
+    deadline: Instant,
+) -> std::result::Result<bool, EditableTextReadbackError> {
+    match untouched {
+        UntouchedText::Whole { before, after } => {
+            let contents = readback_within(deadline, text.get_text(0, read_count)).await?;
+            Ok(
+                contents.len() == before.len() + requested.len() + after.len()
+                    && contents.starts_with(before.as_str())
+                    && contents[before.len()..].starts_with(requested)
+                    && contents.ends_with(after.as_str()),
+            )
+        }
+        UntouchedText::Spans {
+            before,
+            before_units,
+            after,
+            after_units,
+        } => {
+            let inserted = readback_within(deadline, text.get_text(start, start + units)).await?;
+            if inserted != requested {
+                return Ok(false);
+            }
+            let read_before =
+                readback_within(deadline, text.get_text(start - before_units, start)).await?;
+            let after_start = start + units;
+            let read_after = readback_within(
+                deadline,
+                text.get_text(after_start, after_start + after_units),
+            )
+            .await?;
+            Ok(&read_before == before && &read_after == after)
+        }
+    }
+}
+
+/// Poll until the edit reads back: `requested` at `start`, `kept` other
+/// characters in Unicode scalars or UTF-16 code units (whichever the app
+/// counts in), and the untouched text unchanged. Then put the caret after the
+/// text.
+async fn verify_inserted_text(
+    text: &TextProxy<'_>,
+    start: i32,
+    kept: i32,
+    requested: &str,
+    untouched: &UntouchedText,
+) -> Result<InsertReadback> {
+    let deadline = Instant::now() + EDITABLE_TEXT_VERIFY_TIMEOUT;
+    let scalars = requested.chars().count() as i64;
+    let utf16 = requested.encode_utf16().count() as i64;
+    let mut read_count = 0;
+    // A read cut by the deadline after the field already read back wrong is
+    // a mismatch, not a readback timeout.
+    let mut mismatched = false;
+    loop {
+        let count = match readback_within(deadline, text.character_count()).await {
+            Ok(count) => count,
+            Err(EditableTextReadbackError::Failed) => {
+                return Ok(InsertReadback::Other(FocusedTextInsert::ReadbackFailed))
+            }
+            Err(EditableTextReadbackError::TimedOut) => {
+                if mismatched {
+                    break;
+                }
+                return Ok(InsertReadback::Other(FocusedTextInsert::ReadbackTimedOut));
+            }
+        };
+        read_count = count;
+        let units = i64::from(read_count) - i64::from(kept);
+        let matched = if units == scalars || units == utf16 {
+            edit_reads_back(
+                text,
+                start,
+                units as i32,
+                read_count,
+                requested,
+                untouched,
+                deadline,
+            )
+            .await
+            .map(|matched| matched.then_some(units))
+        } else {
+            Ok(None)
+        };
+        match matched {
+            Ok(Some(units)) => {
+                let after = (i64::from(start) + units) as i32;
+                let caret_deadline = Instant::now() + EDITABLE_TEXT_VERIFY_TIMEOUT;
+                let caret_after_text =
+                    match readback_within(caret_deadline, text.caret_offset()).await {
+                        Ok(caret) if caret == after => true,
+                        _ => matches!(
+                            readback_within(caret_deadline, text.set_caret_offset(after)).await,
+                            Ok(true)
+                        ),
+                    };
+                return Ok(InsertReadback::Verified { caret_after_text });
+            }
+            Ok(None) => mismatched = true,
+            Err(EditableTextReadbackError::Failed) => {
+                return Ok(InsertReadback::Other(FocusedTextInsert::ReadbackFailed))
+            }
+            Err(EditableTextReadbackError::TimedOut) => {
+                if mismatched {
+                    break;
+                }
+                return Ok(InsertReadback::Other(FocusedTextInsert::ReadbackTimedOut));
+            }
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        sleep_until((now + EDITABLE_TEXT_VERIFY_INTERVAL).min(deadline)).await;
+        if Instant::now() >= deadline {
+            break;
+        }
+    }
+
+    // Quote what the field holds where the text should be.
+    let wanted = scalars.max(utf16);
+    let shown = wanted.min(MAX_REPORTED_READBACK_CHARS as i64);
+    let read_end = (i64::from(start) + shown).min(i64::from(read_count.max(0)));
+    let read_text = if read_end > i64::from(start) {
+        let quote_deadline = Instant::now() + EDITABLE_TEXT_VERIFY_TIMEOUT;
+        readback_within(quote_deadline, text.get_text(start, read_end as i32))
+            .await
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let read_truncated = wanted > shown;
+    Ok(InsertReadback::Other(FocusedTextInsert::Mismatch {
+        expected_count: (i64::from(kept) + scalars) as i32,
+        read_count,
+        read_text,
+        read_truncated,
+    }))
+}
+
 async fn connect() -> Result<AccessibilityConnection> {
     hydrate_session_bus_env();
     AccessibilityConnection::new()
@@ -1143,7 +1802,7 @@ struct SelectedRoots {
 }
 
 /// Normalized app-name filter, or `None` when the caller passed nothing usable.
-/// A `None` needle with no pid match means the snapshot covers the whole desktop.
+/// A `None` needle without a PID target means the snapshot covers the whole desktop.
 fn app_name_needle(app_name_or_bundle_identifier: Option<&str>) -> Option<String> {
     app_name_or_bundle_identifier
         .map(str::trim)
@@ -1156,6 +1815,7 @@ async fn select_roots(
     roots: Vec<ObjectRefOwned>,
     app_name_or_bundle_identifier: Option<&str>,
     target_pid: Option<u32>,
+    pid_fallback_name: Option<&str>,
     remaining_child_reads: &mut usize,
 ) -> SelectedRoots {
     let needle = app_name_needle(app_name_or_bundle_identifier);
@@ -1197,6 +1857,35 @@ async fn select_roots(
                 scoped: true,
                 pid: Some(target_pid),
                 app_filter_matched: needle.is_none(),
+            };
+        }
+
+        if needle.is_none() {
+            // A listed window's pid can own no root: a Flatpak app registers
+            // through xdg-dbus-proxy. Its name then finds the root, and the
+            // tree records no pid, so element calls check each node's owner.
+            if let Some(fallback) = app_name_needle(pid_fallback_name) {
+                let mut selected = Vec::new();
+                for object_ref in non_pid_matches {
+                    if root_matches(conn, &object_ref, &fallback, remaining_child_reads).await {
+                        selected.push(object_ref);
+                    }
+                }
+                if !selected.is_empty() {
+                    return SelectedRoots {
+                        roots: selected,
+                        scoped: true,
+                        pid: None,
+                        app_filter_matched: true,
+                    };
+                }
+            }
+            // A PID-only target that disappeared must not widen to the desktop.
+            return SelectedRoots {
+                roots: Vec::new(),
+                scoped: true,
+                pid: None,
+                app_filter_matched: false,
             };
         }
 
@@ -1343,6 +2032,22 @@ pub(crate) async fn object_ref_owner_pid(object_ref_id: &str) -> Result<Option<u
     Ok(object_ref_pid(dbus.as_ref(), &object_ref).await)
 }
 
+/// PID of the application root, which may differ from an embedded element's process.
+pub(crate) async fn object_ref_application_pid(object_ref_id: &str) -> Result<Option<u32>> {
+    let object_ref = object_ref_from_id(object_ref_id)?;
+    let conn = connect().await?;
+    let application = timeout(ACTION_QUERY_TIMEOUT, async {
+        let proxy = open_accessible(&conn, &object_ref).await.ok()?;
+        proxy.get_application().await.ok()
+    })
+    .await
+    .ok()
+    .flatten()
+    .filter(|application| !application.is_null());
+    let dbus = DBusProxy::new(conn.connection()).await.ok();
+    Ok(object_ref_pid(dbus.as_ref(), application.as_ref().unwrap_or(&object_ref)).await)
+}
+
 async fn object_ref_pid(dbus: Option<&DBusProxy<'_>>, object_ref: &ObjectRefOwned) -> Option<u32> {
     let dbus = dbus?;
     let bus_name = BusName::try_from(object_ref.name_as_str()?.to_string()).ok()?;
@@ -1464,6 +2169,16 @@ async fn value_from_proxies(
     })
 }
 
+/// `GetNSelections`. The generated proxy method calls `GetNselections`,
+/// which no toolkit implements, so call the method by its real name.
+async fn text_selection_count(text: &TextProxy<'_>) -> zbus::Result<i32> {
+    text.inner()
+        .call_method("GetNSelections", &())
+        .await?
+        .body()
+        .deserialize()
+}
+
 async fn text_from_proxies(
     proxies: Option<&atspi::proxy::proxy_ext::Proxies<'_>>,
 ) -> Option<AccessibilityText> {
@@ -1476,8 +2191,7 @@ async fn text_from_proxies(
     } else {
         None
     };
-    let selection_count = text
-        .get_nselections()
+    let selection_count = text_selection_count(&text)
         .await
         .unwrap_or_default()
         .clamp(0, MAX_TEXT_SELECTIONS);
@@ -1597,6 +2311,7 @@ fn object_ref_id(object_ref: &ObjectRefOwned) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::insert_fixture::*;
     use super::*;
     use crate::test_sockets::PrivateBus;
     use std::sync::{
@@ -2422,6 +3137,119 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pid_roots_keep_all_toolkits_and_a_missing_pid_stays_empty() {
+        let bus = PrivateBus::start("cul-atspi-roots");
+        let root_path = "/org/a11y/atspi/accessible/root";
+        let mut peers = Vec::new();
+        for child_count in [0, 1] {
+            let children = (0..child_count)
+                .map(|_| (String::new(), "/child".try_into().unwrap()))
+                .collect();
+            peers.push(
+                zbus::connection::Builder::address(bus.address())
+                    .unwrap()
+                    .serve_at(
+                        root_path,
+                        FakeAccessible {
+                            name: "qt-app".into(),
+                            children,
+                            has_action: false,
+                        },
+                    )
+                    .unwrap()
+                    .build()
+                    .await
+                    .unwrap(),
+            );
+        }
+        let conn = AccessibilityConnection::from_address(bus.address().parse().unwrap())
+            .await
+            .unwrap();
+        let roots = peers
+            .iter()
+            .map(|peer| {
+                object_ref_from_id(&format!("{}{root_path}", peer.unique_name().unwrap())).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let pid = std::process::id();
+        let mut budget = MAX_DISCOVERY_CHILD_READS;
+        let selected = select_roots(&conn, roots.clone(), None, Some(pid), None, &mut budget).await;
+        assert_eq!(selected.roots, roots);
+        assert_eq!(selected.pid, Some(pid));
+        assert!(selected.scoped);
+        assert!(selected.app_filter_matched);
+
+        let explicit = object_ref_id(&roots[1]);
+        let selected = select_roots(
+            &conn,
+            roots.clone(),
+            Some(&explicit),
+            Some(pid),
+            None,
+            &mut budget,
+        )
+        .await;
+        assert_eq!(selected.roots, vec![roots[1].clone()]);
+        assert_eq!(selected.pid, Some(pid));
+        assert!(selected.app_filter_matched);
+
+        let selected = select_roots(
+            &conn,
+            roots.clone(),
+            None,
+            Some(u32::MAX),
+            None,
+            &mut budget,
+        )
+        .await;
+        assert!(selected.roots.is_empty());
+        assert_eq!(selected.pid, None);
+        assert!(selected.scoped);
+        assert!(!selected.app_filter_matched);
+
+        // A listed window whose pid owns no root (a Flatpak app behind
+        // xdg-dbus-proxy) finds the root by name. No pid is recorded.
+        let selected = select_roots(
+            &conn,
+            roots.clone(),
+            None,
+            Some(u32::MAX),
+            Some("qt-app"),
+            &mut budget,
+        )
+        .await;
+        assert_eq!(selected.roots, roots);
+        assert_eq!(selected.pid, None);
+        assert!(selected.scoped);
+        assert!(selected.app_filter_matched);
+
+        // The name is a fallback only: the pid's own roots win.
+        let selected = select_roots(
+            &conn,
+            roots.clone(),
+            None,
+            Some(pid),
+            Some("no such window"),
+            &mut budget,
+        )
+        .await;
+        assert_eq!(selected.roots, roots);
+        assert_eq!(selected.pid, Some(pid));
+
+        let selected = select_roots(
+            &conn,
+            roots,
+            None,
+            Some(u32::MAX),
+            Some("no such window"),
+            &mut budget,
+        )
+        .await;
+        assert!(selected.roots.is_empty());
+        assert!(!selected.app_filter_matched);
+    }
+
+    #[tokio::test]
     async fn indexed_children_resolve_webkit_names_on_the_accessibility_bus() {
         let bus = PrivateBus::start("cul-atspi-bus");
         let address = bus.address();
@@ -2980,5 +3808,777 @@ mod tests {
             "the budget spent before narrowing still counts"
         );
         assert!(traversal.truncated());
+    }
+
+    #[tokio::test]
+    async fn text_snapshot_reads_selections_through_get_n_selections() {
+        let running = start_field_fixture(FieldFixture {
+            contents: "/tmp/old",
+            caret: 8,
+            selection: Some((5, 8)),
+            ..Default::default()
+        })
+        .await;
+        let proxy = open_accessible(&running.conn, &running.fields[0].0)
+            .await
+            .unwrap();
+        let proxies = proxy.proxies().await.unwrap();
+        let text = text_from_proxies(Some(&proxies)).await.unwrap();
+        assert_eq!(text.content.as_deref(), Some("/tmp/old"));
+        assert_eq!(text.selections.len(), 1);
+        assert_eq!(
+            (
+                text.selections[0].start_offset,
+                text.selections[0].end_offset
+            ),
+            (5, 8)
+        );
+    }
+
+    fn verified(replaced_selection: bool) -> FocusedTextInsert {
+        FocusedTextInsert::Verified {
+            role: "text".to_string(),
+            replaced_selection,
+            caret_after_text: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_lands_at_the_caret_and_reads_back() {
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                contents: "/home/",
+                caret: 6,
+                ..Default::default()
+            },
+            "x/doc",
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), verified(false));
+        assert_eq!(state.contents, "/home/x/doc");
+        assert_eq!(state.calls, ["insert", "caret"]);
+        assert_eq!(state.caret, 11, "the caret ends after the text");
+
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                contents: "ab",
+                caret: 1,
+                ..Default::default()
+            },
+            "שלום",
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), verified(false));
+        assert_eq!(state.contents, "aשלוםb");
+        assert_eq!(state.caret, 5);
+        assert_eq!(state.calls, ["insert", "caret"]);
+
+        // A partial edit never rewrites the field, so embedded objects stay.
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                contents: "\u{fffc}\u{fffc}",
+                caret: 1,
+                ..Default::default()
+            },
+            "שלום",
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), verified(false));
+        assert_eq!(state.contents, "\u{fffc}שלום\u{fffc}");
+        assert_eq!(state.calls, ["insert", "caret"]);
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_is_exact_under_qt_length_rules() {
+        for (text, selection, expected) in [
+            ("x/doc", None, "/home/x/doc"),
+            ("שלום", None, "/home/שלום"),
+            ("שלום", Some((1, 5)), "/שלום/"),
+        ] {
+            let (outcome, state) = insert_into_fixture(
+                FieldFixture {
+                    contents: "/home/",
+                    caret: 6,
+                    selection,
+                    edit: FieldEdit::QtLength,
+                    toolkit: Some("Qt"),
+                    ..Default::default()
+                },
+                text,
+            )
+            .await;
+            assert_eq!(outcome.unwrap(), verified(selection.is_some()), "{text}");
+            assert_eq!(state.contents, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_needs_the_toolkit_for_non_ascii_text() {
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                contents: "/home/",
+                caret: 6,
+                toolkit: None,
+                ..Default::default()
+            },
+            "שלום",
+        )
+        .await;
+        assert!(
+            matches!(&outcome, Ok(FocusedTextInsert::NotEditable(reason)) if reason.contains("toolkit")),
+            "{outcome:?}"
+        );
+        assert_eq!(state.contents, "/home/");
+        assert!(state.calls.is_empty(), "{:?}", state.calls);
+
+        // ASCII text has one length in every unit.
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                contents: "/home/",
+                caret: 6,
+                toolkit: None,
+                ..Default::default()
+            },
+            "x",
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), verified(false));
+        assert_eq!(state.contents, "/home/x");
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_replaces_the_selection() {
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                contents: "/tmp/old/x",
+                caret: 8,
+                selection: Some((8, 5)),
+                ..Default::default()
+            },
+            "new",
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), verified(true));
+        assert_eq!(state.contents, "/tmp/new/x");
+        assert_eq!(state.calls, ["delete", "insert", "caret"]);
+
+        // An empty or fully selected field gets its contents set, as set_value does.
+        for (contents, selection) in [("", None), ("/old/path", Some((0, 9)))] {
+            let (outcome, state) = insert_into_fixture(
+                FieldFixture {
+                    contents,
+                    caret: contents.chars().count() as i32,
+                    selection,
+                    ..Default::default()
+                },
+                "/home/x",
+            )
+            .await;
+            assert_eq!(outcome.unwrap(), verified(selection.is_some()));
+            assert_eq!(state.contents, "/home/x");
+            assert_eq!(state.calls, ["set", "caret"]);
+            assert_eq!(state.caret, 7);
+        }
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_needs_a_focused_editable_field() {
+        let unfocused = StateSet::new(atspi::State::Editable | atspi::State::Showing);
+        let read_only = StateSet::new(atspi::State::Focused | atspi::State::Showing);
+        for states in [unfocused, read_only] {
+            let (outcome, state) = insert_into_fixture(
+                FieldFixture {
+                    contents: "keep",
+                    caret: 4,
+                    states,
+                    ..Default::default()
+                },
+                "x",
+            )
+            .await;
+            assert!(
+                matches!(outcome.unwrap(), FocusedTextInsert::NotEditable(_)),
+                "{states:?}"
+            );
+            assert_eq!(state.contents, "keep");
+            assert!(state.calls.is_empty(), "{:?}", state.calls);
+        }
+    }
+
+    fn entry(contents: &'static str, focused: bool) -> FieldFixture {
+        let mut states = StateSet::new(atspi::State::Editable | atspi::State::Showing);
+        if focused {
+            states.insert(atspi::State::Focused);
+        }
+        FieldFixture {
+            contents,
+            caret: contents.chars().count() as i32,
+            states,
+            ..Default::default()
+        }
+    }
+
+    /// Chromium puts every window under one app root, and AT-SPI focus can
+    /// lag behind the compositor: a field still marked focused in another
+    /// window is not the target.
+    #[tokio::test]
+    async fn focused_field_insert_stays_in_the_target_window() {
+        let stale_and_target = |target_focused, target_active| {
+            vec![
+                FixtureWindow {
+                    name: "Inbox",
+                    active: false,
+                    field: entry("stale", true),
+                },
+                FixtureWindow {
+                    name: "Compose",
+                    active: target_active,
+                    field: entry("to: ", target_focused),
+                },
+            ]
+        };
+        let running = start_windows_fixture(stale_and_target(true, true)).await;
+        let outcome =
+            insert_text_at_focus_on(&running.conn, std::process::id(), Some("Compose"), "x").await;
+        assert_eq!(outcome.unwrap(), verified(false));
+        assert_eq!(running.take_state(0).contents, "stale");
+        assert_eq!(running.take_state(1).contents, "to: x");
+
+        for (target_focused, target_active, title, why) in [
+            (false, true, Some("Compose"), "has keyboard focus"),
+            (true, false, Some("Compose"), "not active"),
+            (true, true, Some("Drafts"), "could not be matched"),
+            (true, true, None, "could not be matched"),
+        ] {
+            let running =
+                start_windows_fixture(stale_and_target(target_focused, target_active)).await;
+            let outcome =
+                insert_text_at_focus_on(&running.conn, std::process::id(), title, "x").await;
+            assert!(
+                matches!(&outcome, Ok(FocusedTextInsert::NotEditable(reason)) if reason.contains(why)),
+                "{title:?} focused={target_focused} active={target_active}: {outcome:?}"
+            );
+            for index in 0..2 {
+                let state = running.take_state(index);
+                assert!(state.calls.is_empty(), "{:?}", state.calls);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_checks_the_untouched_text() {
+        // Inserting "y" at 1 gives "xyyx"; appending gives "xyxy", which has
+        // "y" at 1 and the right length too.
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                contents: "xyx",
+                caret: 1,
+                edit: FieldEdit::AppendAtEnd,
+                ..Default::default()
+            },
+            "y",
+        )
+        .await;
+        assert!(
+            matches!(outcome, Ok(FocusedTextInsert::Mismatch { .. })),
+            "{outcome:?}"
+        );
+        assert_eq!(state.contents, "xyxy");
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_bounds_each_edit_call() {
+        let (outcome, state) = timeout(
+            ACTION_QUERY_TIMEOUT + Duration::from_secs(3),
+            insert_into_fixture(
+                FieldFixture {
+                    contents: "/home/",
+                    caret: 6,
+                    edit: FieldEdit::StallInsert,
+                    ..Default::default()
+                },
+                "x",
+            ),
+        )
+        .await
+        .expect("a stalled InsertText must not hold the call");
+        assert!(
+            matches!(
+                &outcome,
+                Ok(FocusedTextInsert::EditFailed { reason, may_have_changed: true })
+                    if reason.contains("did not answer")
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(state.contents, "/home/");
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_skips_password_fields() {
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                role: atspi::Role::PasswordText,
+                role_name: "password text",
+                ..Default::default()
+            },
+            "hunter2",
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), FocusedTextInsert::PasswordField);
+        assert_eq!(state.contents, "");
+        assert!(state.calls.is_empty(), "{:?}", state.calls);
+    }
+
+    #[tokio::test]
+    async fn focused_field_insert_reports_a_readback_mismatch() {
+        let (outcome, state) = insert_into_fixture(
+            FieldFixture {
+                contents: "/home/",
+                caret: 6,
+                edit: FieldEdit::DropLastChar,
+                ..Default::default()
+            },
+            "xyz",
+        )
+        .await;
+        assert_eq!(
+            outcome.unwrap(),
+            FocusedTextInsert::Mismatch {
+                expected_count: 9,
+                read_count: 8,
+                read_text: "xy".to_string(),
+                read_truncated: false,
+            }
+        );
+        assert_eq!(state.contents, "/home/xy");
+        assert!(!state.calls.contains(&"caret"), "{:?}", state.calls);
+    }
+}
+
+/// Private-bus AT-SPI fixture for the type_text insert route: a registry, one
+/// app owned by this process, its windows, and one text field in each.
+#[cfg(test)]
+pub(crate) mod insert_fixture {
+    use super::*;
+    use crate::test_sockets::PrivateBus;
+    use std::sync::{Arc, Mutex};
+
+    const FOCUS_ROOT_PATH: &str = "/org/a11y/atspi/accessible/root";
+
+    #[derive(Default)]
+    pub(crate) struct FieldState {
+        pub(crate) contents: String,
+        pub(crate) caret: i32,
+        pub(crate) selection: Option<(i32, i32)>,
+        pub(crate) calls: Vec<&'static str>,
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    pub(crate) enum FieldEdit {
+        Apply,
+        /// Qt's bridge: InsertText resizes the text to `length` UTF-16 code
+        /// units, padding with NUL.
+        QtLength,
+        /// The app keeps all but the last inserted character.
+        DropLastChar,
+        /// The app appends inserted text at the end, ignoring the position.
+        AppendAtEnd,
+        /// InsertText never answers.
+        StallInsert,
+    }
+
+    struct FocusNode {
+        name: &'static str,
+        role: atspi::Role,
+        role_name: &'static str,
+        states: StateSet,
+        children: Vec<(String, OwnedObjectPath)>,
+        text_field: bool,
+    }
+
+    #[zbus::interface(name = "org.a11y.atspi.Accessible")]
+    impl FocusNode {
+        #[zbus(property)]
+        fn child_count(&self) -> i32 {
+            self.children.len() as i32
+        }
+
+        #[zbus(property)]
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn get_role(&self) -> atspi::Role {
+            self.role
+        }
+
+        fn get_role_name(&self) -> &str {
+            self.role_name
+        }
+
+        fn get_state(&self) -> StateSet {
+            self.states
+        }
+
+        fn get_interfaces(&self) -> Vec<&str> {
+            let mut interfaces = vec!["org.a11y.atspi.Accessible"];
+            if self.text_field {
+                interfaces.extend(["org.a11y.atspi.EditableText", "org.a11y.atspi.Text"]);
+            }
+            interfaces
+        }
+
+        fn get_child_at_index(
+            &self,
+            index: i32,
+        ) -> zbus::fdo::Result<((String, OwnedObjectPath),)> {
+            self.children
+                .get(index as usize)
+                .cloned()
+                .map(|child| (child,))
+                .ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid child index".into()))
+        }
+    }
+
+    fn char_byte(contents: &str, offset: i32) -> zbus::fdo::Result<usize> {
+        if offset < 0 {
+            return Err(zbus::fdo::Error::InvalidArgs("invalid text offset".into()));
+        }
+        contents
+            .char_indices()
+            .map(|(byte_index, _)| byte_index)
+            .chain(std::iter::once(contents.len()))
+            .nth(offset as usize)
+            .ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid text offset".into()))
+    }
+
+    struct FieldText(Arc<Mutex<FieldState>>);
+
+    #[zbus::interface(name = "org.a11y.atspi.Text")]
+    impl FieldText {
+        #[zbus(property)]
+        fn character_count(&self) -> i32 {
+            self.0.lock().unwrap().contents.chars().count() as i32
+        }
+
+        #[zbus(property)]
+        fn caret_offset(&self) -> i32 {
+            self.0.lock().unwrap().caret
+        }
+
+        #[zbus(name = "GetNSelections")]
+        fn get_n_selections(&self) -> i32 {
+            i32::from(self.0.lock().unwrap().selection.is_some())
+        }
+
+        fn get_selection(&self, index: i32) -> zbus::fdo::Result<(i32, i32)> {
+            let state = self.0.lock().unwrap();
+            state
+                .selection
+                .filter(|_| index == 0)
+                .ok_or_else(|| zbus::fdo::Error::InvalidArgs("no such selection".into()))
+        }
+
+        fn get_text(&self, start_offset: i32, end_offset: i32) -> zbus::fdo::Result<String> {
+            let state = self.0.lock().unwrap();
+            let start = char_byte(&state.contents, start_offset)?;
+            let end = char_byte(&state.contents, end_offset)?;
+            if end < start {
+                return Err(zbus::fdo::Error::InvalidArgs("invalid text offsets".into()));
+            }
+            Ok(state.contents[start..end].to_string())
+        }
+
+        fn set_caret_offset(&self, offset: i32) -> bool {
+            let mut state = self.0.lock().unwrap();
+            state.calls.push("caret");
+            state.caret = offset;
+            true
+        }
+    }
+
+    struct FixtureApplication(&'static str);
+
+    #[zbus::interface(name = "org.a11y.atspi.Application")]
+    impl FixtureApplication {
+        #[zbus(property)]
+        fn toolkit_name(&self) -> &str {
+            self.0
+        }
+    }
+
+    struct FieldEditable {
+        state: Arc<Mutex<FieldState>>,
+        edit: FieldEdit,
+    }
+
+    impl FieldEditable {
+        fn apply(&self, text: &str) -> String {
+            let mut text = text.to_string();
+            if self.edit == FieldEdit::DropLastChar {
+                text.pop();
+            }
+            text
+        }
+    }
+
+    #[zbus::interface(name = "org.a11y.atspi.EditableText")]
+    impl FieldEditable {
+        async fn insert_text(
+            &self,
+            position: i32,
+            text: &str,
+            length: i32,
+        ) -> zbus::fdo::Result<bool> {
+            if self.edit == FieldEdit::StallInsert {
+                std::future::pending::<()>().await;
+            }
+            let text = if self.edit == FieldEdit::QtLength {
+                let mut units = text.encode_utf16().collect::<Vec<_>>();
+                units.resize(length.max(0) as usize, 0);
+                String::from_utf16_lossy(&units)
+            } else {
+                // Bytes, as the AT-SPI documentation and GTK count them.
+                let take = (length.max(0) as usize).min(text.len());
+                self.apply(text.get(..take).unwrap_or(text))
+            };
+            let mut state = self.state.lock().unwrap();
+            state.calls.push("insert");
+            let at = if self.edit == FieldEdit::AppendAtEnd {
+                state.contents.len()
+            } else {
+                char_byte(&state.contents, position)?
+            };
+            state.contents.insert_str(at, &text);
+            // Like a GTK entry, an insert does not move the caret.
+            state.selection = None;
+            Ok(true)
+        }
+
+        fn delete_text(&self, start_pos: i32, end_pos: i32) -> zbus::fdo::Result<bool> {
+            let mut state = self.state.lock().unwrap();
+            state.calls.push("delete");
+            let start = char_byte(&state.contents, start_pos)?;
+            let end = char_byte(&state.contents, end_pos)?;
+            state.contents.replace_range(start..end, "");
+            state.caret = start_pos;
+            state.selection = None;
+            Ok(true)
+        }
+
+        fn set_text_contents(&self, new_contents: &str) -> bool {
+            let text = self.apply(new_contents);
+            let mut state = self.state.lock().unwrap();
+            state.calls.push("set");
+            state.contents = text;
+            state.caret = 0;
+            state.selection = None;
+            true
+        }
+    }
+
+    pub(crate) struct FieldFixture {
+        pub(crate) role: atspi::Role,
+        pub(crate) role_name: &'static str,
+        pub(crate) states: StateSet,
+        pub(crate) contents: &'static str,
+        pub(crate) caret: i32,
+        pub(crate) selection: Option<(i32, i32)>,
+        pub(crate) edit: FieldEdit,
+        /// The app root's ToolkitName; `None` serves no Application interface.
+        /// The first window's field sets it.
+        pub(crate) toolkit: Option<&'static str>,
+    }
+
+    impl Default for FieldFixture {
+        fn default() -> Self {
+            Self {
+                role: atspi::Role::Text,
+                role_name: "text",
+                states: StateSet::new(
+                    atspi::State::Focused
+                        | atspi::State::Focusable
+                        | atspi::State::Editable
+                        | atspi::State::Showing,
+                ),
+                contents: "",
+                caret: 0,
+                selection: None,
+                edit: FieldEdit::Apply,
+                toolkit: Some("GTK"),
+            }
+        }
+    }
+
+    pub(crate) struct FixtureWindow {
+        pub(crate) name: &'static str,
+        pub(crate) active: bool,
+        pub(crate) field: FieldFixture,
+    }
+
+    pub(crate) struct RunningFields {
+        // Dropped last: the bus outlives the peers.
+        _peers: [zbus::Connection; 2],
+        pub(crate) conn: AccessibilityConnection,
+        pub(crate) fields: Vec<(ObjectRefOwned, Arc<Mutex<FieldState>>)>,
+        _bus: PrivateBus,
+    }
+
+    impl RunningFields {
+        pub(crate) fn take_state(&self, index: usize) -> FieldState {
+            std::mem::take(&mut *self.fields[index].1.lock().unwrap())
+        }
+    }
+
+    pub(crate) const FIXTURE_WINDOW: &str = "Files";
+
+    pub(crate) async fn start_windows_fixture(windows: Vec<FixtureWindow>) -> RunningFields {
+        let bus = PrivateBus::start("cul-atspi-insert");
+        let app = zbus::connection::Builder::address(bus.address())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let app_name = app.unique_name().unwrap().to_string();
+        let toolkit = windows.first().and_then(|window| window.field.toolkit);
+        let path = |kind: &str, index: usize| -> OwnedObjectPath {
+            format!("/{kind}{index}").try_into().unwrap()
+        };
+        app.object_server()
+            .at(
+                FOCUS_ROOT_PATH,
+                FocusNode {
+                    name: "fixture-app",
+                    role: atspi::Role::Application,
+                    role_name: "application",
+                    states: StateSet::empty(),
+                    children: (0..windows.len())
+                        .map(|index| (app_name.clone(), path("frame", index)))
+                        .collect(),
+                    text_field: false,
+                },
+            )
+            .await
+            .unwrap();
+        if let Some(toolkit) = toolkit {
+            app.object_server()
+                .at(FOCUS_ROOT_PATH, FixtureApplication(toolkit))
+                .await
+                .unwrap();
+        }
+        let mut fields = Vec::new();
+        for (index, window) in windows.into_iter().enumerate() {
+            let mut frame_states = StateSet::new(atspi::State::Showing);
+            if window.active {
+                frame_states.insert(atspi::State::Active);
+            }
+            app.object_server()
+                .at(
+                    path("frame", index),
+                    FocusNode {
+                        name: window.name,
+                        role: atspi::Role::Frame,
+                        role_name: "frame",
+                        states: frame_states,
+                        children: vec![(app_name.clone(), path("field", index))],
+                        text_field: false,
+                    },
+                )
+                .await
+                .unwrap();
+            let fixture = window.field;
+            let state = Arc::new(Mutex::new(FieldState {
+                contents: fixture.contents.to_string(),
+                caret: fixture.caret,
+                selection: fixture.selection,
+                calls: Vec::new(),
+            }));
+            let field_path = path("field", index);
+            app.object_server()
+                .at(
+                    field_path.clone(),
+                    FocusNode {
+                        name: "Location",
+                        role: fixture.role,
+                        role_name: fixture.role_name,
+                        states: fixture.states,
+                        children: Vec::new(),
+                        text_field: true,
+                    },
+                )
+                .await
+                .unwrap();
+            app.object_server()
+                .at(field_path.clone(), FieldText(Arc::clone(&state)))
+                .await
+                .unwrap();
+            app.object_server()
+                .at(
+                    field_path.clone(),
+                    FieldEditable {
+                        state: Arc::clone(&state),
+                        edit: fixture.edit,
+                    },
+                )
+                .await
+                .unwrap();
+            let field = object_ref_from_id(&format!("{app_name}{}", field_path.as_str())).unwrap();
+            fields.push((field, state));
+        }
+        let registry = zbus::connection::Builder::address(bus.address())
+            .unwrap()
+            .name("org.a11y.atspi.Registry")
+            .unwrap()
+            .serve_at(
+                FOCUS_ROOT_PATH,
+                FocusNode {
+                    name: "main",
+                    role: atspi::Role::DesktopFrame,
+                    role_name: "desktop frame",
+                    states: StateSet::empty(),
+                    children: vec![(app_name, FOCUS_ROOT_PATH.try_into().unwrap())],
+                    text_field: false,
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let conn = AccessibilityConnection::from_address(bus.address().parse().unwrap())
+            .await
+            .unwrap();
+        RunningFields {
+            _peers: [app, registry],
+            conn,
+            fields,
+            _bus: bus,
+        }
+    }
+
+    /// One active window, [`FIXTURE_WINDOW`], holding `field`.
+    pub(crate) async fn start_field_fixture(field: FieldFixture) -> RunningFields {
+        start_windows_fixture(vec![FixtureWindow {
+            name: FIXTURE_WINDOW,
+            active: true,
+            field,
+        }])
+        .await
+    }
+
+    /// Insert into a fresh one-window fixture. Returns the outcome and the
+    /// field's state afterwards.
+    pub(crate) async fn insert_into_fixture(
+        field: FieldFixture,
+        text: &str,
+    ) -> (Result<FocusedTextInsert>, FieldState) {
+        let running = start_field_fixture(field).await;
+        let outcome = insert_text_at_focus_on(
+            &running.conn,
+            std::process::id(),
+            Some(FIXTURE_WINDOW),
+            text,
+        )
+        .await;
+        (outcome, running.take_state(0))
     }
 }
