@@ -72,10 +72,10 @@ test("current platform mapper returns Linux and native PC selectors retain Windo
 });
 
 test("locked Computer Use remains macOS-only under every capability and readiness combination", () => {
-  const guard = fixture.flow.moduleSource.match(/eh=("macOS"===M&&s&&L&&N\.data\?\.enabled!=null)/u)?.[1];
+  const guard = fixture.flow.moduleSource.match(/eh=("macOS"===M&&s&&L&&_\.data\?\.enabled!=null)/u)?.[1];
   assert.ok(guard);assert.ok(fixture.flow.moduleSource.includes("es.showComputerUseSetup&&es.showLockedComputerUse"));
   for (const M of ["linux", "windows", "macOS"]) for (const s of [false, true]) for (const L of [false, true]) for (const enabled of [undefined, false, true]) {
-    const actual = vm.runInNewContext(guard, { M, s, L, N: { data: { enabled } } });
+    const actual = vm.runInNewContext(guard, { M, s, L, _: { data: { enabled } } });
     assert.equal(actual, M === "macOS" && s && L && enabled != null);
     if (M === "linux") assert.equal(actual, false);
   }
@@ -115,14 +115,14 @@ test("copy IDs, default text, descriptions, PC/Mac selectors and provider bindin
     ["settings", 'defaultMessage:"Devices that can control this PC"', 'defaultMessage:"Devices that can control Linux"'],
     ["settings", 'description:"Header title for devices that can control this Windows device"', 'description:"other"'],
     ["settings", '"macOS"!==J?', '"macOS"===J?'],
-    ["settings", '{platform:J}=(0,O.V)()', '{platform:J}=(0,p.V)()'],
+    ["settings", '{platform:J}=(0,k.V)()', '{platform:J}=(0,p.V)()'],
     ["settings", 'p=n("oyxz")', 'p=n("wrong")'],
     ["settings", 'o=n("ABep")', 'o=n("wrong")'],
-    ["settings", 'O=n("wwME")', 'O=n("wrong")'],
+    ["settings", 'k=n("wwME")', 'k=n("wrong")'],
     ["settings", 'J=n("Qgfj")', 'J=n("wrong")'],
-    ["settings", 'RemoteConnectionsSettings:()=>t8', 'RemoteConnectionsSettings:()=>eO'],
-    ["settings", 'keepLiveWindowsLabel}):(0,o.jsx)(p.A,{...eP.keepLiveMacLabel}', 'keepLiveMacLabel}):(0,o.jsx)(p.A,{...eP.keepLiveWindowsLabel}'],
-    ["settings", 'keepLiveWindowsLabel):b.formatMessage(eP.keepLiveMacLabel)', 'keepLiveMacLabel):b.formatMessage(eP.keepLiveWindowsLabel)'],
+    ["settings", 'RemoteConnectionsSettings:()=>t6', 'RemoteConnectionsSettings:()=>eO'],
+    ["settings", 'keepLiveWindowsLabel}):(0,o.jsx)(p.A,{...eT.keepLiveMacLabel}', 'keepLiveMacLabel}):(0,o.jsx)(p.A,{...eT.keepLiveWindowsLabel}'],
+    ["settings", 'keepLiveWindowsLabel):b.formatMessage(eT.keepLiveMacLabel)', 'keepLiveMacLabel):b.formatMessage(eT.keepLiveWindowsLabel)'],
     ["settings", 'Open the ChatGPT app on the computer you want to control', 'Open the ChatGPT app on this Linux desktop'],
     ["settings", '<controlMac>Control this Mac</controlMac> or <pc>PC</pc>', '<controlMac>Control this Linux desktop</controlMac> or <pc>PC</pc>'],
     ["platformMap", ':"linux"', ':"windows"'],
@@ -131,25 +131,25 @@ test("copy IDs, default text, descriptions, PC/Mac selectors and provider bindin
     ["formatted", 'h=e.values', 'h={}'],
     ["formatted", '{ignoreTag:e.ignoreTag}', '{ignoreTag:true}'],
     ["intlHook", 'return(0,i.HM)(e),e', 'return(0,i.HM)(e),{}'],
-    ["flow", 'eh="macOS"===M&&s&&L&&N.data?.enabled!=null', 'eh=s&&L&&N.data?.enabled!=null'],
+    ["flow", 'eh="macOS"===M&&s&&L&&_.data?.enabled!=null', 'eh=s&&L&&_.data?.enabled!=null'],
     ["flow", 'es.showComputerUseSetup&&es.showLockedComputerUse', 'es.showComputerUseSetup||es.showLockedComputerUse'],
     ["initial", 'codexMobile.setupDialog.initial.heading.windows', 'other.heading'],
     ["allow", 'codexMobile.setupDialog.initial.title.windows', 'other.title'],
   ];
   for (const [role, before, after] of mutations) rejects(input => replace(input, role, before, after));
-  rejects(input => replace(input, "settings", '}});var eT=', '}});eP={};var eT='));
+  rejects(input => replace(input, "settings", '}});var eP=', '}});eT={};var eP='));
 });
 
 test("search publication, selected records, loader, state and section consumer fail closed", () => {
   for (const [role, before, after] of [
     ["search", 'settingsSearchDocuments:', 'otherDocuments:'],
     ["search", 'connections:[', 'otherConnections:['],
-    ["searchConsumer", '.e(327607)', '.e(999999)'],
-    ["searchConsumer", '.bind(s,"y5gB")', '.bind(s,"wrong")'],
+    ["searchConsumer", '.e(948216)', '.e(999999)'],
+    ["searchConsumer", '.bind(s,"j1jw")', '.bind(s,"wrong")'],
     ["searchConsumer", 'e=>e.settingsSearchDocuments', 'e=>e.otherDocuments'],
     ["searchConsumer", 'messages:(W?.[e]??[])', 'messages:(X?.[e]??[])'],
     ["searchConsumer", ',sectionSlug:e,...null==t?{}:{terms:t}', '.filter(()=>false),sectionSlug:e,...null==t?{}:{terms:t}'],
-    ["searchConsumer", 'SettingsLayout:()=>tL', 'SettingsLayout:()=>e7'],
+    ["searchConsumer", 'SettingsLayout:()=>tz', 'SettingsLayout:()=>e7'],
   ]) rejects(input => replace(input, role, before, after));
   const row = contracts.searchMessages[0], text = `{defaultMessage:${JSON.stringify(row.defaultMessage)},id:${JSON.stringify(row.id)}}`;
   rejects(input => replace(input, "search", text, text + "," + text));
@@ -207,11 +207,11 @@ test("copy-site qualification leaves the unrelated native revoke callback outsid
 
 test("root function-head authority rejects generators replacing published copy consumers or native providers", () => {
   for (const [role, suffix] of [
-    ["settings", "function* t8(){return null}"],
-    ["searchConsumer", "function* tL(){return null}"],
-    ["settings", "async/*head*/function /*star*/ * /*name*/ t8({x}={}){return null}"],
-    ["searchConsumer", "function\n*\n tL({x}={}){return null}"],
-    ["settings", "function* O(){return null}"],
+    ["settings", "function* t6(){return null}"],
+    ["searchConsumer", "function* tz(){return null}"],
+    ["settings", "async/*head*/function /*star*/ * /*name*/ t6({x}={}){return null}"],
+    ["searchConsumer", "function\n*\n tz({x}={}){return null}"],
+    ["settings", "function* k(){return null}"],
     ["settings", "function /*head*/ * /*name*/ p({x}={}){return null}"],
     ["settings", "function* n(){return null}"],
   ]) {

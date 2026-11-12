@@ -5,7 +5,7 @@ const { rspackModuleFactories } = require("../../../scripts/patches/lib/rspack-m
 function sources({ settingsId = fixture.settings.moduleId } = {}) {
   return Object.fromEntries(Object.entries(fixture).map(([role, row], index) => [
     "async/remote-copy-" + role + ".js",
-    `export const __rspack_esm_ids=[${role === "search" ? 327607 : index + 1}];export const __webpack_modules__={${role === "settings" ? settingsId : row.moduleId}(${row.params}){${row.moduleSource}}};`,
+    `export const __rspack_esm_ids=[${role === "search" ? 948216 : index + 1}];export const __webpack_modules__={${role === "settings" ? settingsId : row.moduleId}(${row.params}){${row.moduleSource}}};`,
   ]));
 }
 function snapshots(input = sources(), { settingsId = fixture.settings.moduleId } = {}) {
