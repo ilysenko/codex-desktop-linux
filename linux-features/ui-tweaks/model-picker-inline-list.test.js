@@ -85,7 +85,35 @@ for (const kind of ["workRenderer", "workRendererPeer"]) {
     denied.modelListConfig.options.find(option => option.id === "model-b").onSelect();
     assert.deepEqual(denied.events, []);
   });
+
+  test(`${kind} typed native wrapper retains its callback context and model configuration`, () => {
+    const onCloseAutoFocus = () => {};
+    const provider = renderModelProvider(kind, { modelPickerTriggerConfig: null, onCloseAutoFocus });
+    assert.equal(provider.nativeRoot.type, "NativeSubmenu");
+    assert.equal(provider.output.type, "NativeAdvancedView");
+    assert.equal(provider.nativeRoot.props.onOpenChange, provider.props.onOpenChange);
+    assert.equal(provider.nativeRoot.props.onCloseAutoFocus, provider.props.onCloseAutoFocus);
+    assert.equal(provider.output.props.modelListConfig, provider.modelListConfig);
+    provider.modelListConfig.options.find(option => option.id === "model-b").onSelect();
+    assert.deepEqual(provider.events, [["before", "model-b"], ["select", "model-b", "low"], ["complete"]]);
+  });
 }
+
+test("native default-index rows and older models retain their grouping and callbacks", () => {
+  const events = [];
+  const option = (id, group) => ({ id, group, label: id, onSelect: () => events.push(id) });
+  const menu = renderInlineMenu({ active: true, menuView: "advanced", powerSelections: [],
+    modelListConfig: { options: [option("first"), option("older", "older"), option("last")],
+      defaultOption: { index: 1, onSelect: () => events.push("default") } },
+    onToggleMenuView: view => events.push(view) });
+  assert.deepEqual(rows(menu).filter(row => row.key != null).map(row => row.key), ["first", "last", "older"]);
+  const older = findNodes(menu.output, node => node.type === "NativeOlderSubmenu");
+  assert.equal(older.length, 1);
+  assert.equal(older[0].props.children[0].key, "older");
+  rows(menu).find(row => row.key == null).props.onSelect(rowEvent());
+  older[0].props.children[0].props.onSelect(rowEvent());
+  assert.deepEqual(events, ["default", "simple", "older", "simple"]);
+});
 
 test("Chat native model rows forward the resolved model, effort and version", () => {
   const provider = renderChatOptions();
@@ -143,14 +171,14 @@ test("native keyboard navigation skips disabled and hidden rows and respects sli
   assert.equal(menu.refs[2].current, null);
 });
 
-test("native focus restoration and tooltip keyboard entry remain reachable", () => {
+test("native focus restoration and delegated tooltip Tab navigation remain reachable", () => {
   const menu = renderInlineMenu({ active: true, menuView: "advanced", powerSelections: [], modelListConfig: { options: [] } });
   const first = keyboardNode(menu, "first"), selected = keyboardNode(menu, "selected");
   const tooltip = keyboardNode(menu, "tooltip", {
     getAttribute: name => name === "aria-describedby" ? "keyboard-help" : null,
     ownerDocument: { getElementById: id => ({ hasAttribute: name => id === "keyboard-help" && name === "data-tooltip-keyboard-navigation" }) },
   });
-  assert.deepEqual(keyboardEvent(menu, [first, selected, tooltip], tooltip, "Tab"), { prevented: false, stopped: false });
+  assert.deepEqual(keyboardEvent(menu, [first, selected, tooltip], tooltip, "Tab"), { prevented: true, stopped: true });
   keyboardEvent(menu, [first, selected], selected, "Enter");
   menu.refs[1].current = { querySelector: selector => selector.includes("aria-checked") ? selected : first };
   menu.context.document.activeElement = menu.context.document.body;
@@ -218,7 +246,7 @@ test("readonly audits refuse incomplete, duplicate and unknown native cohorts wi
     { ...assets, "async/menu.current.js": carrier(["dropdownRenderer", "inlineRenderer", "inlineRenderer"]) },
     { ...assets, "async/work-peer.current.js": brokenPeer },
     { ...assets, "async/menu.current.js": carrier(["dropdownRenderer", "inlineRenderer"], {
-      inlineRenderer: { moduleSource: fixture.inlineRenderer.moduleSource.replace("B=eo.options.map(e)", "B=eo.options.filter(e)") },
+      inlineRenderer: { moduleSource: fixture.inlineRenderer.moduleSource.replace("for(let e of(j=[],A=[],em.options))", "for(let e of(j=[],A=[],other.options))") },
     }) },
   ];
   for (const files of cases) withApp(files, ({ root, snapshot }) => {

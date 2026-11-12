@@ -44,12 +44,13 @@ function renderModelProvider(kind, overrides = {}, enabledEfforts = ["low", "med
     zTeN: { gh: () => ({ get: () => new Set(enabledEfforts) }), Ul: () => null, _U: () => false },
     WPra: { _: { options: ["low", "medium", "high", "xhigh", "ultra"] } },
     Wf1j: { A: () => ({ formatMessage: value => value.defaultMessage }) },
-    oyxz: { A: "NativeFormattedMessage" }, ivi7: { Y: "NativePickerDropdown" },
-    TWUU: { ig: () => undefined, CT: choices }, moNn: {},
+    oyxz: { A: "NativeFormattedMessage" }, t7ME: { Y: "NativePickerDropdown" },
+    TWUU: { ig: () => undefined, CT: choices },
+    moNn: { h: new Proxy({}, { get: (_target, effort) => ({ id: effort }) }) },
     hI9J: { uR: choices, MD: effort => effort },
     bqtn: { ms: { Separator: "NativeSeparator" }, yl: "NativeSubmenu" },
     Q3tq: { pN: "enabled-efforts" }, OWtl: { u: "store" }, OMIV: { JW: "model-query" },
-    m5SM: { O: "NativePermissionControls" }, vdOM: { e: "NativeAdvancedView" },
+    m5SM: { O: "NativePermissionControls" }, sByQ: { e: "NativeAdvancedView" },
     pap3: { a: "NativeModelDescription" }, TI8r: { R: () => true }, eR8N: { P: "NativeModelLabel" },
   };
   const props = {
@@ -73,8 +74,10 @@ function renderModelProvider(kind, overrides = {}, enabledEfforts = ["low", "med
   const context = vm.createContext({ load, exports: {}, props });
   const owner = fixture[kind];
   vm.runInContext(`(function(${owner.params.join(",")}){${owner.moduleSource}})({},exports,load); output=exports.i(props)`, context, { timeout: 1000 });
-  assert.equal(context.output.type, "NativePickerDropdown");
-  return { output: context.output, modelListConfig: context.output.props.modelListConfig, events, props };
+  const nativeRoot = context.output;
+  const output = nativeRoot.type === "NativeSubmenu" ? nativeRoot.props.children : nativeRoot;
+  assert.ok(["NativePickerDropdown", "NativeAdvancedView"].includes(output.type));
+  return { output, nativeRoot, modelListConfig: output.props.modelListConfig, events, props };
 }
 
 
@@ -82,13 +85,13 @@ function renderChatOptions({ allowSelection = true } = {}) {
   const events = [];
   const source = require("./fixtures/current-model-picker-default-view.json").chat.moduleSource;
   const lexical = createJavaScriptLexicalIndex(source);
-  const selectionStart = source.indexOf("nd=function(e){");
+  const selectionStart = source.indexOf("nU=function(e){");
   const selectionOpen = source.indexOf("{", selectionStart);
   const selectionEnd = lexical.matchingBrace(selectionOpen);
   const selection = source.slice(selectionStart + 3, selectionEnd + 1);
-  const start = source.indexOf("let n_={");
+  const start = source.indexOf("let nH={");
   const objectEnd = lexical.matchingBrace(source.indexOf("{", start));
-  const after = source.indexOf("if(!tR){", objectEnd);
+  const after = source.indexOf("if(!t0){", objectEnd);
   assert.equal(after, objectEnd + 2);
   const end = lexical.matchingBrace(source.indexOf("{", after));
   const construction = source.slice(start, end + 1);
@@ -103,33 +106,34 @@ function renderChatOptions({ allowSelection = true } = {}) {
   ]);
   const entries = versions.map(version => ({ version }));
   const context = vm.createContext({
-    n: jsxRuntime, p: { A: "NativeFormattedMessage" }, C: { a: "NativeDescription" },
-    eM: "NativeRateLimitDescription", e_: undefined, tR: false, tE: false, tC: false,
-    lN: undefined, lH: versions[0], lw: false, lK: entries[0], lO: { versionOptions: entries },
-    tO: { versionOptions: versions, options: [] }, tN: true, lG: false, ly: undefined,
-    B: { y3: "special-model" }, lZ: undefined, l$: undefined, tS: undefined, t2: false,
-    l8: null, l2: [], lL: false, lU: "model", nc: undefined, lj: [], lI: [], tp: false,
-    lv: new Map([["limited", { resets_after: 200, description: "Usage limit reached" }]]),
-    tj: { formatDate: value => value }, eW: version => version.slugs, eq: option => option.slug, lC: new Set(),
-    e3: (_catalog, version) => choices.get(version.id),
-    ns: () => undefined, nr: false,
-    tw: slug => { events.push(["before", slug]); return allowSelection; },
-    t1: (...values) => events.push(["selectionMode", ...values]),
-    tY: slug => events.push(["modelChanged", slug]),
-    l0: value => events.push(["select", structuredClone(value)]),
-    tV: value => events.push(["telemetry", value]),
+    n: jsxRuntime, m: { A: "NativeFormattedMessage" }, I: { a: "NativeDescription" }, nj: new Set(),
+    eG: "NativeRateLimitDescription", eI: undefined, t0: false, tD: false, tw: false,
+    l9: undefined, ni: versions[0], ne: false, nn: entries[0], l5: { versionOptions: entries },
+    tX: { versionOptions: versions, options: [] }, t5: true, nl: false, lX: undefined,
+    q: { y3: "special-model" }, nE: undefined, np: undefined, tV: undefined, lC: false,
+    nS: null, nC: [], l3: false, nt: "model", nK: undefined, no: [], t2: [], tp: false,
+    lz: new Map([["limited", { resets_after: 200, description: "Usage limit reached" }]]),
+    lo: { formatDate: value => value }, eW: version => version.slugs, eq: option => option.slug, lZ: new Set(),
+    tl: (_catalog, version) => choices.get(version.id),
+    nw: () => undefined, nM: false,
+    t6: slug => { events.push(["before", slug]); return allowSelection; },
+    lT: (...values) => events.push(["selectionMode", ...values]),
+    ls: slug => events.push(["modelChanged", slug]),
+    nh: value => events.push(["select", structuredClone(value)]),
+    la: value => events.push(["telemetry", value]),
   });
-  vm.runInContext(`const nd=(${selection});${construction};modelListConfig=n_`, context, { timeout: 1000 });
+  vm.runInContext(`const nU=(${selection});${construction};modelListConfig=nH`, context, { timeout: 1000 });
   return { modelListConfig: context.modelListConfig, events };
 }
 
 function renderInlineMenu(props, source = fixture.inlineRenderer.moduleSource) {
+  props = { compactAutoModel: "auto", selectedModel: "model-a", ...props };
   const refs = [];
   const layoutEffects = [];
   const effects = [];
   let id = 0;
   const context = vm.createContext({
-    props, r: jsxRuntime, o: memo, i: { G: "NativeSelectedIcon" }, l: { Pg: () => null },
+    props, o: jsxRuntime, i: memo, l: { G: "NativeSelectedIcon" }, r: { Pg: () => null },
     a: {
       useId: () => `native-model-description-${++id}`,
       useRef: value => { const ref = { current: value }; refs.push(ref); return ref; },
@@ -139,11 +143,11 @@ function renderInlineMenu(props, source = fixture.inlineRenderer.moduleSource) {
     },
     s: { A: "NativeFormattedMessage" }, d: { F: "Space" }, c: { nr3: "NativeLockIcon" },
     u: { ms: { Item: "NativeMenuItem" } },
-    et: { A: new Proxy({}, { get: (_target, key) => `Native${key}` }) },
-    eL: "NativeViewControls", en: "NativeSimpleSlider", e6: "NativeModelHeading",
+    er: { A: new Proxy({}, { get: (_target, key) => `Native${key}` }) },
+    eL: "NativeViewControls", ea: "NativeSimpleSlider", h: "NativeOlderSubmenu",
     document: { body: {}, activeElement: null }, HTMLElement: class HTMLElement {},
   });
-  vm.runInContext(`${nativeFunction(source, "eT")}\n${nativeFunction(source, "eA")}\n${nativeFunction(source, "eP")}\n${nativeFunction(source, "eS")}\noutput=eS(props)`, context, { timeout: 1000 });
+  vm.runInContext(`${nativeFunction(source, "eT")}\n${nativeFunction(source, "eD")}\n${nativeFunction(source, "eP")}\n${nativeFunction(source, "eA")}\noutput=eA(props)`, context, { timeout: 1000 });
   return { output: context.output, context, refs, layoutEffects, effects };
 }
 
@@ -165,6 +169,7 @@ function keyboardEvent(menu, nodes, target, key, shiftKey = false) {
     stopPropagation: () => { state.stopped = true; },
   };
   menu.output.props.onKeyDownCapture(event);
+  if (!state.stopped) menu.output.props.onKeyDown?.(event);
   return state;
 }
 

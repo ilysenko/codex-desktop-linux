@@ -11,15 +11,15 @@ const { createJavaScriptLexicalIndex, escapeRegExp: q } = require("../../../scri
 // semantic role and publication are checked before accepting its native ABI.
 const NATIVE = {
   dig0: { kind: "work-options", exportKey: "i", hashes: [
-    "6df2fc8782e3dd26feacf6b0b461e95746f25709a36e78cce51827197bc5a006",
-    "12006e19841af37914ecd5090610dc62469fcbdde01a1be245e0d0be298418b1",
+    "e25ca3f0e1c20da63a69fbc87a498f4014d29710901442e7c3cf440dd1e9eff5",
+    "1e43ce7f6916ddb6b8c1f46770eaf222d750f92ffc2258a5ad9cbd29a76d48bf",
   ], needles: ["modelOptionsDisabled:", "supportedReasoningEfforts", "onBeforeSelectModel:"] },
-  ivi7: { kind: "menu-bridge", exportKey: "Y", hashes: [
-    "ebc83d7dad746b5633521203fe76aa8b9d4bd4e21795354021d444123c9ff396",
+  t7ME: { kind: "menu-bridge", exportKey: "Y", hashes: [
+    "4a6e9c805e0f35937dda53281561fda03436bbbc629ff3d3de54c9eef8f51c1a",
   ], needles: ["modelListConfig:", "keepSimpleView:", "onToggleMenuView:"] },
-  vdOM: { kind: "inline-rows", exportKey: "e", hashes: [
-    "1f6d4eb3590a8e923ba8a835bc94fd68840e8c646f9c45bb049551f2ea5157cc",
-  ], needles: [".options.map(", 'role:"menuitemradio"', '"data-model-picker-view":', "onKeyDownCapture:"] },
+  sByQ: { kind: "inline-rows", exportKey: "e", hashes: [
+    "ba08b2d7b83e976fae7299d369323c26ca58dee4c1fcbb4cc33320a78f9f5cf1",
+  ], needles: ['"older"===', "defaultOption?.index", 'role:"menuitemradio"', '"data-model-picker-view":', "onKeyDownCapture:"] },
 };
 
 const ID = "[A-Za-z_$][\\w$]*";
@@ -54,11 +54,12 @@ function inlineRendererFacts(copy, publication) {
   const view = one(matches(header, new RegExp(`menuView:(${ID}),`, "gu")), "missing native view input")[1];
   const confirm = one(matches(header, new RegExp(`onConfirmCurrentSelection:(${ID}),`, "gu")), "missing native confirmation input")[1];
   const toggle = one(matches(header, new RegExp(`onToggleMenuView:(${ID}),`, "gu")), "missing native view-toggle input")[1];
-  const mapped = one(matches(body, new RegExp(`(${ID})=${q(config)}\\.options\\.map\\((${ID})\\)`, "gu")),
-    "models do not come directly from the native options");
-  const row = one(matches(body, new RegExp(`${q(mapped[2])}=(${ID})=>\\(0,(${ID})\\.jsx\\)\\((${ID})\\.ms\\.Item,\\{`, "gu")),
-    "missing native inline option renderer");
-  const option = row[1], jsx = row[2], menu = row[3], rowOpen = row.index + row[0].length - 1;
+  const row = one(matches(body, new RegExp(
+    `for\\(let (?<option>${ID}) of\\((?<ordinary>${ID})=\\[\\],(?<older>${ID})=\\[\\],${q(config)}\\.options\\)\\)` +
+    `\\("older"===\\k<option>\\.group\\?\\k<older>:\\k<ordinary>\\)\\.push\\(\\(0,(?<jsx>${ID})\\.jsx\\)\\((?<menu>${ID})\\.ms\\.Item,\\{`, "gu")),
+  "models do not reach the native grouped option renderer");
+  const { option, jsx, ordinary, older } = row.groups;
+  const rowOpen = row.index + row[0].length - 1;
   const props = body.slice(rowOpen + 1, lexical.matchingBrace(rowOpen));
   for (const property of [
     `"aria-checked":${option}.selected`, `disabled:${option}.disabled`,
@@ -70,20 +71,33 @@ function inlineRendererFacts(copy, publication) {
   }
   const select = new RegExp(`onSelect:(${ID})=>\\{\\1\\.preventDefault\\(\\),!${q(option)}\\.selected\\|\\|${q(option)}\\.isLocked\\?${q(option)}\\.onSelect\\(\\):${q(confirm)}\\?\\.\\(\\),${q(toggle)}\\("simple"\\)\\}`, "u");
   if (!select.test(props)) throw new Error("Current inline model list: changed native selection callback");
-  const list = one(matches(body, new RegExp(`(${ID})=\\(0,${q(jsx)}\\.jsxs\\)\\("div",\\{className:(${ID})\\.A\\.ModelList,children:\\[(?:${ID},)*${q(mapped[1])},${q(config)}\\.extras\\]\\}\\)`, "gu")),
+  const rowEnd = lexical.matchingBrace(rowOpen);
+  const prefix = new RegExp(`^,${q(option)}\\.id\\)\\);(?<prefix>${ID})=${q(ordinary)}\\.splice\\(0,${q(config)}\\.defaultOption\\?\\.index\\?\\?0\\)`, "u")
+    .exec(body.slice(rowEnd + 1));
+  if (!prefix) throw new Error("Current inline model list: changed native default-index partition");
+  const prefixAlias = one(matches(body, new RegExp(`let (${ID})=${q(prefix.groups.prefix)};`, "gu")),
+    "default-index rows do not reach their native binding")[1];
+  const olderMenu = one(matches(body, new RegExp(`(${ID})=${q(older)}\\.length>0&&\\(0,${q(jsx)}\\.jsx\\)\\(${ID},\\{[^{}]{0,250}label:\\(0,${q(jsx)}\\.jsx\\)\\(${ID}\\.A,\\{[^{}]{0,400}\\}\\),children:${q(older)}\\}\\)`, "gu")),
+    "older rows do not reach their native submenu")[1];
+  const list = one(matches(body, new RegExp(`(${ID})=\\(0,${q(jsx)}\\.jsxs\\)\\("div",\\{className:(${ID})\\.A\\.ModelList,children:\\[${ID},${q(config)}\\.beforeModels,(?:${ID},)*${q(prefixAlias)},${ID},${q(ordinary)},${q(olderMenu)},${q(config)}\\.extras\\]\\}\\)`, "gu")),
     "inline rows do not reach the native ModelList");
   const advanced = one(matches(body, new RegExp(`(${ID})="advanced"===${q(view)}`, "gu")), "missing native advanced-view gate")[1];
   const panel = one(matches(body, new RegExp(`(${ID})=\\(0,${q(jsx)}\\.jsx\\)\\("div",\\{className:${q(list[2])}\\.A\\.ViewPanel,ref:${ID},children:\\(0,${q(jsx)}\\.jsx\\)\\("div",\\{className:${q(list[2])}\\.A\\.ModelListMotion,"data-active":${q(advanced)},children:${q(list[1])}\\}\\)\\}\\)`, "gu")),
     "model list is outside the native advanced panel");
   const track = one(matches(body, new RegExp(`(${ID})=\\(0,${q(jsx)}\\.jsx\\)\\("div",\\{"aria-hidden":${ID},className:${q(list[2])}\\.A\\.ViewTrack,"data-active":${q(advanced)},inert:${ID},children:${q(panel[1])}\\}\\)`, "gu")),
     "missing native advanced track");
-  const returned = one(matches(body, new RegExp(`(${ID})=\\(0,${q(jsx)}\\.jsxs\\)\\("div",\\{className:${q(list[2])}\\.A\\.Menu,[^{}]{1,300}onKeyDownCapture:(${ID}),onPointerDownCapture:${ID},style:${ID},children:\\[${ID},${q(track[1])}\\]\\}\\)`, "gu")),
+  const returned = one(matches(body, new RegExp(`(${ID})=\\(0,${q(jsx)}\\.jsxs\\)\\("div",\\{role:"group",className:${q(list[2])}\\.A\\.Menu,[^{}]{1,300}onKeyDownCapture:(${ID}),onKeyDown:(${ID}),onPointerDownCapture:${ID},style:${ID},children:\\[${ID},${q(track[1])}\\]\\}\\)`, "gu")),
     "advanced track does not reach the returned native menu");
   const exits = matches(body, /\b(?:return|throw)\b/gu).filter(match => lexical.isRoot(match.index));
   if (exits.length !== 1 || exits[0][0] !== "return" || !body.endsWith("," + returned[1])) {
     throw new Error("Current inline model list: changed native renderer return");
   }
-  const keyboard = one(matches(body, new RegExp(`${q(returned[2])}=(${ID})=>\\{`, "gu")), "missing native keyboard callback");
+  const delegated = one(matches(body, new RegExp(
+    `${q(returned[2])}=(${ID})=>\\{"Tab"!==\\1\\.key&&(${ID})\\(\\1\\)\\},${q(returned[3])}=(${ID})=>\\{"Tab"===\\3\\.key&&\\2\\(\\3\\)\\}`, "gu")),
+  "changed native keyboard delegation");
+  const keyboardName = one(matches(body, new RegExp(`let ${q(delegated[2])}=(${ID});`, "gu")),
+    "missing shared native keyboard binding")[1];
+  const keyboard = one(matches(body, new RegExp(`${q(keyboardName)}=function\\((${ID})\\)\\{`, "gu")), "missing native keyboard callback");
   const keyboardOpen = keyboard.index + keyboard[0].length - 1;
   const keys = body.slice(keyboardOpen + 1, lexical.matchingBrace(keyboardOpen));
   if (!["ArrowUp", "ArrowDown", "Tab", "[data-disabled]", "[data-interactive=", "[role=\"slider\"]", ".preventDefault()", ".stopPropagation()", "?.focus()"].every(needle => keys.includes(needle))) {
@@ -108,7 +122,7 @@ function inspectInlineModelList(copy) {
   if (!contract.needles.every(needle => source.includes(needle)) || !publication) {
     throw new Error("Current inline model list: missing native role publication");
   }
-  const facts = copy.moduleId === "vdOM" ? inlineRendererFacts(copy, publication) : {};
+  const facts = copy.moduleId === "sByQ" ? inlineRendererFacts(copy, publication) : {};
   const digest = crypto.createHash("sha256").update(source).digest("hex");
   if (!contract.hashes.includes(digest)) {
     throw new Error("Current inline model list: changed current native capability");
@@ -137,9 +151,9 @@ function auditCopies(copies) {
     for (const copy of peers) {
       inspectInlineModelList(copy);
       if (moduleId === "dig0") {
-        requireNativeBridge(copy, "ivi7");
-        requireNativeBridge(copy, "vdOM");
-      } else if (moduleId === "ivi7") requireNativeBridge(copy, "vdOM");
+        requireNativeBridge(copy, "t7ME");
+        requireNativeBridge(copy, "sByQ");
+      } else if (moduleId === "t7ME") requireNativeBridge(copy, "sByQ");
     }
   }
   return { matched: true, changed: false, changedAssets: [], nativePhysicalCopies: copies.length };
