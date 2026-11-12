@@ -44,7 +44,7 @@ function rectangleIntersection(window, area) {
 // Execute the actual outer layout body. Its inner draw function and imported
 // geometry collaborators are inert, so this tests forwarding, post-processing
 // and manager receiver ownership without app, compositor or native IPC work.
-function runtime(nativeMethod, selectedMethod, { platform, ozone = "", kwin = false, manager, displays }) {
+function runtime(nativeMethod, selectedMethod, { platform, ozone = "", kwin = false, hyprland = false, manager, displays }) {
   const outer = required(/function\(\{display:[^{}]+\}\)\{/u, nativeMethod, "outer pure layout parameters");
   const fields = Object.fromEntries(outer[0].slice("function({".length, -3).split(",").map(field => field.split(":")));
   const display = fields.display, mode = fields.layoutMode;
@@ -71,6 +71,7 @@ function runtime(nativeMethod, selectedMethod, { platform, ozone = "", kwin = fa
     nativeMethod, "native display enumeration")[1];
   const options = [], events = [];
   const kwinBounds = { x: 40, y: 50, width: 900, height: 700 };
+  const hyprlandBounds = { x: 60, y: 70, width: 800, height: 600 };
   let finalLayout;
   const globals = {
     process: { platform },
@@ -106,6 +107,15 @@ function runtime(nativeMethod, selectedMethod, { platform, ozone = "", kwin = fa
     assert.equal(this, controller);
     return platform === "linux" && ozone === "wayland" && kwin;
   };
+  controller.codexPetOverlayIsNativeHyprland = function () {
+    assert.equal(this, controller);
+    return platform === "linux" && ozone === "wayland" && hyprland;
+  };
+  controller.codexPetOverlayHyprlandDrawBounds = function () {
+    assert.equal(this, controller);
+    events.push("hyprland-draw-bounds");
+    return hyprlandBounds;
+  };
   controller.codexPetOverlayKWinDrawBounds = function () {
     assert.equal(this, controller);
     events.push("kwin-draw-bounds");
@@ -124,7 +134,7 @@ function runtime(nativeMethod, selectedMethod, { platform, ozone = "", kwin = fa
     finalLayout = value;
     return value;
   };
-  return { controller, options, events, kwinBounds, finalLayout: () => finalLayout };
+  return { controller, options, events, kwinBounds, hyprlandBounds, finalLayout: () => finalLayout };
 }
 
 module.exports = { method, innerFunction, runtime };
