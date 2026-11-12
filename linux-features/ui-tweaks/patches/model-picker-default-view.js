@@ -14,7 +14,7 @@ const ID = "[A-Za-z_$][\\w$]*";
 const MARKER = "codexLinuxModelPickerDefaultAdvancedView";
 const CONTRACTS = {
   work: { exportKey: "M", renderer: "dig0", stateReferences: 3, setterReferences: 4 },
-  chat: { exportKey: "N", renderer: "ivi7", stateReferences: 5, setterReferences: 4 },
+  chat: { exportKey: "N", renderer: "t7ME", stateReferences: 5, setterReferences: 4 },
 };
 
 function one(values, description) {
@@ -237,7 +237,7 @@ function inspectDefaultView(copy, kind) {
   let returnedMenuProps;
   if (kind === "work") {
     const derived = one(codeMatches(body, new RegExp(
-      `(${ID})=!\\((${ID})\\.length<2\\)\\|\\|(${ID})\\?${escapeRegExp(view)}:"advanced"`, "gu")),
+      `(${ID})=!\\((${ID})\\.length<2\\)\\|\\|(${ID})\\|\\|(${ID})\\?${escapeRegExp(view)}:"advanced"`, "gu")),
     "missing native Work view resolver");
     const consumer = menuConsumer(copy, body, derived[1], contract);
     requireReturnedMenu(body, consumer, kind);
