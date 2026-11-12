@@ -199,7 +199,7 @@ function nativeEditorContract(editorChunks) {
   const directBridge = uniqueMatch(editorProps, `onDirectSubmit:(?<callback>${IDENT})(?=[,}])`, "selected-text editor direct callback").groups.callback;
   const directBridgeMatch=uniqueMatch(editorOwner.source,
     `${escapeRegExp(directBridge)}=(?<request>${IDENT})=>\\{let\\{body:(?<body>${IDENT})\\}=\\k<request>;` +
-    `(?<busy>${IDENT})\\.current\\|\\|\\(\\k<busy>\\.current=!0,\\(async\\(\\)=>${escapeRegExp(editorCallbacks.direct)}\\(\\k<body>\\)\\)\\(\\)\\.finally\\(\\(\\)=>\\{\\k<busy>\\.current=!1\\}\\)\\)\\}`,
+    `null==${escapeRegExp(editorCallbacks.direct)}\\|\\|(?<busy>${IDENT})\\.current\\|\\|\\(\\k<busy>\\.current=!0,\\(async\\(\\)=>${escapeRegExp(editorCallbacks.direct)}\\(\\k<body>\\)\\)\\(\\)\\.finally\\(\\(\\)=>\\{\\k<busy>\\.current=!1\\}\\)\\)\\}`,
     "selected-text editor direct-submit bridge");
   const savedBridge=uniqueMatch(editorProps,`onSubmit:(?<callback>${IDENT})(?=[,}])`,"selected-text editor saved callback").groups.callback;
   const savedBridgeMatch=uniqueMatch(editorOwner.source,

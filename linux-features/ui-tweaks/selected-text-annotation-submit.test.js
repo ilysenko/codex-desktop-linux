@@ -112,7 +112,9 @@ function chunk(id, modules) {
     `export const __webpack_modules__={${modules}};\n//# sourceMappingURL=${id}.js.map`;
 }
 
-const editorModule = `Edit(e,t,r){${official.editorModule.replace('u=r("ntJV")','u=r("Card")')}}`;
+const currentEditorModule = official.editorModule.replace(
+  "let{body:t}=e;W.current||", "let{body:t}=e;null==T||W.current||");
+const editorModule = `Edit(e,t,r){${currentEditorModule.replace('u=r("ntJV")','u=r("Card")')}}`;
 const cardModule = `Card(e,t,r){r.d(t,{s:()=>tq});${official.cardWrapper}${official.nativeInnerHeader}${official.submitComment};return{onKeyDownCapture:${official.annotationKeyDown}}}}`;
 
 function appFixture(t, source = official.shortcutOwner) {
@@ -319,6 +321,9 @@ test("missing or changed native annotation scope and Ctrl+Enter handling reject 
     // The editor must render the card module it requires, with onDirectSubmit.
     (app) => rewrite(editor(app), 'u=r("Card")', 'u=r("Other")'),
     (app) => rewrite(editor(app), 'u=r("Card")', 'u=wrongLoader("Card")'),
+    (app) => rewrite(editor(app), 'null==T||W.current||', 'W.current||'),
+    (app) => rewrite(editor(app), 'null==T||W.current||', 'null==L||W.current||'),
+    (app) => rewrite(editor(app), 'null==T||W.current||', 'null!=T||W.current||'),
     (app) => rewrite(editor(app), 'async()=>T(t)', 'async()=>L(t)'),
     (app) => rewrite(editor(app), 'SelectedTextAnnotationEditor:()=>f', 'SelectedTextAnnotationEditor:()=>wrongEditor'),
     (app) => rewrite(editor(app), "(0,a.jsx)(u.s,", "(0,a.jsx)(u.other,"),
@@ -509,6 +514,39 @@ test("latest native direct policy stays available when the native editor selects
     assert.deepEqual(runtime.saved, []);
     assert.equal(runtime.textReads, 1);
   }
+});
+
+test("latest native direct bridge ignores missing callbacks and serializes asynchronous submissions", {
+  skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
+}, async () => {
+  const { editor } = signedNative().plan;
+  const busy = { current: false };
+  const globals = { [editor.directBridge.busy]: busy, [editor.callbacks.direct]: undefined };
+  const context = vm.createContext(globals);
+  const bridge = vm.runInContext(`(${editor.directBridge.source})`, context);
+  for (const callback of [undefined, null]) {
+    context[editor.callbacks.direct] = callback;
+    assert.doesNotThrow(() => bridge({ body: "未提交文字" }));
+    assert.equal(busy.current, false);
+  }
+  const submitted = [];
+  let finish;
+  context[editor.callbacks.direct] = body => {
+    submitted.push(body);
+    return new Promise(resolve => { finish = resolve; });
+  };
+  bridge({ body: "首次提交文字" });
+  bridge({ body: "重复提交文字" });
+  assert.deepEqual(submitted, ["首次提交文字"]);
+  assert.equal(busy.current, true);
+  finish();
+  await new Promise(setImmediate);
+  assert.equal(busy.current, false);
+  bridge({ body: "随后提交文字" });
+  assert.deepEqual(submitted, ["首次提交文字", "随后提交文字"]);
+  finish();
+  await new Promise(setImmediate);
+  assert.equal(busy.current, false);
 });
 
 test("latest native IME/repeat and submit validation guard the yielded event", {
