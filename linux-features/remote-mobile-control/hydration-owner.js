@@ -205,7 +205,7 @@ function inspectHydrationOwner(copy) {
   const manager = rootClass(copy, publicName), ctor = method(manager, "constructor"), on = method(manager, "onNotification");
   const base = new RegExp(`^class ${ID} extends (${ID})\\.TF\\{`, "u").exec(manager.source);
   if (!base) fail("native public manager base");
-  imported(copy, base[1], "Fkn8", manager.start);
+  imported(copy, base[1], "ZG9f", manager.start);
   equivalent(method(manager, "getHostId").source, data.getHost);
   const ctorLexical = createJavaScriptLexicalIndex(ctor.body);
   const input = one([...ctor.body.matchAll(/\blet\{hostId:/gu)].filter(row => ctorLexical.isRoot(row.index)), "native constructor host input");

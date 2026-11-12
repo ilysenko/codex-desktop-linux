@@ -43,8 +43,9 @@ test("native role aliases remain independent of minified symbol spelling", () =>
 
 test("orphan, dead, captured, partial and split native authorities reject", () => {
   const native = nativeCarrier(), patched = prepareHydrationSource(native);
-  const withoutBase = native.replace('p=n("Fkn8"),', "");
-  const lateBaseImport = withoutBase.slice(0, -3) + ';var p=n("Fkn8");' + withoutBase.slice(-3);
+  assert.throws(() => prepareHydrationSource(native.replace('p=n("ZG9f")', 'p=n("Fkn8")')), /hydration/u);
+  const withoutBase = native.replace('p=n("ZG9f"),', "");
+  const lateBaseImport = withoutBase.slice(0, -3) + ';var p=n("ZG9f");' + withoutBase.slice(-3);
   const bad = [
     native.replace("O3:()=>sD", "Other:()=>sD"),
     native.replace("O3:()=>sD", 'O3:()=>sD,"O3":()=>Foreign'),
