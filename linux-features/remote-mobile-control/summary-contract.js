@@ -11,7 +11,7 @@ const MAX_TURN=64*1024,MAX_REGION=16*1024,MAX_CLASS=256*1024,MAX_SOURCE=16*1024*
 // These are literal free globals in the bounded current native regions.
 // They are not alpha-renamable module identifiers.
 const NATIVE_GLOBALS=["Array","Date","Error","Map","Object","Promise","String"];
-const CONSTRUCTOR_GLOBALS=["Array","Error","Map","Object","Promise","String"];
+const CONSTRUCTOR_GLOBALS=["Array","Date","Error","Map","Object","Promise","String"];
 const FIXED=new Set("async await function return if else for of while do let const var new this class extends super typeof instanceof void null true false undefined Object Array Set Map Symbol Number Date JSON Promise Error String navigator globalThis try catch finally switch case break continue throw yield constructor getDefaultFeatureOverride getHostId getConversation startTurn".split(" "));
 const lexicalCache=new WeakMap();
 function fail(reason){throw Error("Unsupported current turn-summary contract: "+reason)}

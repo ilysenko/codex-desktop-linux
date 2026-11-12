@@ -37,7 +37,7 @@ test("native String identity and current intrinsic factory/constructor bindings 
   for(const declaration of[`var ${name}=WeakMap;`,`${name}=WeakMap;`])assert.throws(()=>api.prepareSummaryLayer(copies(native.replace('var p=n("Fkn8");',declaration+'var p=n("Fkn8");')),"mobile"),/turn-summary contract/);
   assert.throws(()=>api.prepareSummaryLayer(copies(native.replace('V7mA(e,t,n)',`V7mA(${name},t,n)`)),"mobile"),/turn-summary contract/);
  }
- for(const name of["Array","Error","Map","Object","Promise","String"])for(const declaration of[`var ${name}=WeakMap;`,`${name}=WeakMap;`])assert.throws(()=>api.prepareSummaryLayer(copies(native.replace('constructor(e){super();','constructor(e){super();'+declaration)),"mobile"),/turn-summary contract/);
+ for(const name of["Array","Date","Error","Map","Object","Promise","String"])for(const declaration of[`var ${name}=WeakMap;`,`${name}=WeakMap;`])assert.throws(()=>api.prepareSummaryLayer(copies(native.replace('constructor(e){super();','constructor(e){super();'+declaration)),"mobile"),/turn-summary contract/);
 });
 
 
