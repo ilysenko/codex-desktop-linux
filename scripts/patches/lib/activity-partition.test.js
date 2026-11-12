@@ -19,15 +19,15 @@ function assertRanges(source, owner) {
   assert.ok(owner.loop.end < owner.partition.end);
   assert.equal(source[owner.classifier.end - 1], "}");
   assert.equal(owner.names.plainAsync, "s");
-  assert.equal(owner.partition.bindings.plainAsync, "i");
-  assert.equal(owner.call.unit, "x");
+  assert.equal(owner.partition.bindings.options, "s");
+  assert.equal(owner.call.unit, "n");
 }
 
 test("current activity snapshot proves native expression, partition, loop and complete caller ranges", () => {
   const owner = inspectActivityPartition(fixture);
   assertRanges(fixture, owner);
   assert.equal(owner.expression.source, owner.nativeExpression.source);
-  assert.ok(owner.nativeExpression.source.includes('"async"===l.delivery&&null!=l.searchItemId&&s?.has(l.searchItemId)===!0'));
+  assert.ok(owner.nativeExpression.source.includes('"async"===i.delivery&&null!=i.searchItemId&&s?.has(i.searchItemId)===!0'));
   assert.equal(inspectActivityPartition(fixture).nativeExpression.source, owner.nativeExpression.source);
 });
 
@@ -42,16 +42,16 @@ test("activity snapshot leaves surrounding expression policy to its consumers", 
 });
 
 test("activity snapshot refuses retired, quoted, duplicated, changed and disconnected native roles", () => {
-  const outsideLoop = fixture.replace('r.push(x),n&&g>=0&&t>g||function', 'r.push(x)};{let x={},t=0;void function');
+  const outsideLoop = fixture.replace('l.push(n),n===f||a&&h>=0&&t>h||function', 'l.push(n)};{let n={},t=0;void function');
   for (const source of [
     null, "const unrelated=true;", fixture + fixture, `const decoy=\`${fixture}\`;`, outsideLoop,
-    fixture.replace("plainAsyncMessageIds:s,renderMcpApps:i", "renderMcpApps:i"),
-    fixture.replace("s?.has(l.searchItemId)", "wrong?.has(l.searchItemId)"),
-    fixture.replace("plainAsyncMessageIds:i,renderMcpApps:l})", "plainAsyncMessageIds:wrong,renderMcpApps:l})"),
-    fixture.replace("hasFollowingFinalAnswer:t<g", "hasFollowingFinalAnswer:t<wrong"),
+    fixture.replace("plainAsyncMessageIds:s}", "unknownAsync:s}"),
+    fixture.replace("s?.has(i.searchItemId)", "wrong?.has(i.searchItemId)"),
+    fixture.replace("}(n,t<h,s)", "}(n,t<h,wrong)"),
+    fixture.replace("}(n,t<h,s)", "}(n,t<wrong,s)"),
     fixture.replace("mcpServerStatuses:a", "mcpServerStatuses:wrong"),
     fixture.replace("server:e.invocation.server", "server:wrong.invocation.server"),
-    fixture.replace('"not-sent"===l.deliveryStatus', '"queued"===l.deliveryStatus'),
+    fixture.replace('"not-sent"===i.deliveryStatus', '"queued"===i.deliveryStatus'),
   ]) {
     assert.notEqual(source, fixture);
     assert.equal(inspectActivityPartition(source).ok, false);
@@ -73,29 +73,29 @@ test("latest signed activity resource contains the exact current fixture and sou
 test("activity predicate requires the current ordinary function token and direct invocation", () => {
   const { Script } = require("node:vm");
   for (const header of [
-    "async function({unit:",
-    "async/*gap*/function({unit:",
-    "async\tfunction({unit:",
-    "async /* gap */ function({unit:",
-    "async function\n({unit:",
-    "async/*gap*/function\n({unit:",
-    "function*({unit:",
-    "async function*({unit:",
-    "new function({unit:",
+    "async function(e,t,{",
+    "async/*gap*/function(e,t,{",
+    "async\tfunction(e,t,{",
+    "async /* gap */ function(e,t,{",
+    "async function\n(e,t,{",
+    "async/*gap*/function\n(e,t,{",
+    "function*(e,t,{",
+    "async function*(e,t,{",
+    "new function(e,t,{",
   ]) {
-    const source = fixture.replace("function({unit:", header);
+    const source = fixture.replace("function(e,t,{", header);
     assert.notEqual(source, fixture);
     assert.doesNotThrow(() => new Script(source), header);
     assert.equal(inspectActivityPartition(source).ok, false, header);
   }
-  const called = fixture.replace("}({unit:x,", "}.call(null,{unit:x,");
-  const sequence = fixture.replace("||function({unit:", "||(0,function({unit:")
-    .replace("}({unit:x,", "})({unit:x,");
+  const called = fixture.replace("}(n,t<h,s)", "}.call(null,n,t<h,s)");
+  const sequence = fixture.replace("||function(e,t,{", "||(0,function(e,t,{")
+    .replace("}(n,t<h,s)", "})(n,t<h,s)");
   for (const source of [called, sequence]) {
     assert.doesNotThrow(() => new Script(source));
     assert.equal(inspectActivityPartition(source).ok, false);
   }
-  const ordinary = fixture.replace("||function({unit:", "|| /* ordinary gap\n */ function({unit:");
+  const ordinary = fixture.replace("||function(e,t,{", "|| /* ordinary gap\n */ function(e,t,{");
   assert.doesNotThrow(() => new Script(ordinary));
   assertRanges(ordinary, inspectActivityPartition(ordinary));
 });
@@ -104,13 +104,25 @@ test("activity snapshot proves native result collections and rejects marker-stri
   const original = inspectActivityPartition(fixture);
   assert.equal(fixture.slice(original.result.start, original.result.end), original.result.source);
   assert.equal(fixture.slice(original.routing.start, original.routing.end), original.routing.source);
-  assert.deepEqual(original.result.bindings, { collapsible: "o", expanded: "r", persistent: "c", preToggle: "d", workedFor: "u" });
+  assert.deepEqual(original.result.bindings, { collapsible: "i", expanded: "l", persistent: "r", preToggle: "m", workedFor: "p" });
   const missing = fixture.replace("collapsibleUnits:", "missingCollapsible:").replace("persistentUnits:", "missingPersistent:");
   const decoy = missing.slice(0, original.loop.start) + 'const note="collapsibleUnits:persistentUnits:";' + missing.slice(original.loop.start);
-  for (const source of [missing, decoy, fixture.replace("persistentUnits:c", "persistentUnits:o"),
-    fixture.replace("?c.push(x):o.push(x)", "?o.push(x):c.push(x)")]) {
+  for (const source of [missing, decoy, fixture.replace("persistentUnits:r", "persistentUnits:i"),
+    fixture.replace("?r.push(n):i.push(n)", "?i.push(n):r.push(n)")]) {
     assert.notEqual(source, fixture);
     assert.doesNotThrow(() => new (require("node:vm").Script)(source));
+    assert.equal(inspectActivityPartition(source).ok, false);
+  }
+});
+
+test("current activity partition binds keep-first-reply and in-progress options to its loop", () => {
+  for (const source of [
+    fixture.replace("f=n&&h<0?", "f=wrong&&h<0?"),
+    fixture.replace("n===f||a&&h>=0&&t>h||", "n===wrong||a&&h>=0&&t>h||"),
+    fixture.replace("n===f||a&&h>=0&&t>h||", "n===f||wrong&&h>=0&&t>h||"),
+    fixture.replace("...s}={})", "...wrong}={})"),
+  ]) {
+    assert.notEqual(source, fixture);
     assert.equal(inspectActivityPartition(source).ok, false);
   }
 });

@@ -19,7 +19,7 @@ const { MESSAGE_IDS, translations, settingsContract, settingComponent, catalogPa
 // Current signed rspack/SWC shapes: double-quoted strings, literal-first
 // comparisons and the transcript key as the only template literal.
 const standaloneSource = 'function classify(e,{includeGeneratedImages:n=!1}={}){switch(e.type){case"exec":return wrap(e,"groupable");case"generated-image":return n?wrap(e,"standalone"):null;case"worktree-init":return wrap(e,"standalone");case"reasoning":case"automation-update":case"todo-list":return null}}function wrap(e,t){return{item:e,grouping:t}}';
-const persistentSource = 'var f={o:e=>e.mcpPersistent},m={Yr:e=>e.important,rt:e=>e.important},p={Q1:e=>e.dynamicPersistent},h={i$:()=>null};' +
+const persistentSource = 'var d={o:e=>e.mcpPersistent},o={Yr:e=>e.important,rt:e=>e.important},c={Q1:e=>e.dynamicPersistent},u={Hn:()=>null};' +
   fs.readFileSync(path.join(__dirname,"../../scripts/patches/lib/fixtures/current-activity-partition.js"),"utf8") +
   'function persistent(input){return partition([input.unit],input).persistentUnits.includes(input.unit)}';
 const transcriptSource = 'const classifier={c:item=>({grouping:item.grouping})};function key(item,fallback){return item.id??fallback}function transcript(items,n){let i=[],a=[],s=()=>{a.length&&(i.push({type:"agent-activity",items:a,collapseWhenPossible:!0}),a=[])};for(let[index,o]of items.entries()){let turn=0;let l="reasoning"===o.type||"automatic-approval-review"===o.type||"subagent-activity"===o.type?null:(0,classifier.c)(o);if(l?.grouping==="standalone"||n?.has(o)===!0){s(),i.push({type:"activity-item",key:`transcript-activity-item-${key(o,`${turn}-${index}`)}`,item:o});continue}a.push(o)}s();return i}';

@@ -17,16 +17,16 @@ const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript
 const fixture = fs.readFileSync(path.join(__dirname, "../../scripts/patches/lib/fixtures/current-activity-partition.js"), "utf8");
 const ids = units => Array.from(units, unit => unit.item?.item.id ?? unit.id);
 function unit(type, id, extra = {}) {
-  return { kind: "standalone", item: { item: { type, id, completed: true,
+  return { kind: "standalone", item: { item: { type, id, content: "", completed: true,
     invocation: { server: "test", tool: "test" }, result: { type: "success", raw: {} }, ...extra } } };
 }
 function partition(source, enabled = true) {
   return vm.runInNewContext(`${source};partition`, {
     localStorage: { getItem: () => enabled ? "1" : null },
-    f: { o: item => item.persist },
-    m: { Yr: item => item.final, rt: item => item.final },
-    p: { Q1: item => item.interactive },
-    h: { i$: ({ toolResult }) => toolResult?.interactive ? {} : null },
+    d: { o: item => item.persist },
+    o: { Yr: item => item.final, rt: item => item.final },
+    c: { Q1: item => item.interactive },
+    u: { Hn: ({ toolResult }) => toolResult?.interactive ? {} : null },
   });
 }
 
@@ -66,8 +66,8 @@ test("disabled preference and every non-reasoning persistence rule remain upstre
   for (const hasFollowingFinalAnswer of [false, true]) {
     for (const isTurnInProgress of [false, true]) {
       for (const keepMcpAppEntriesPersistent of [false, true]) {
-        for (const renderMcpApps of [false, true]) {
-          const options = { hasFollowingFinalAnswer, isTurnInProgress, keepMcpAppEntriesPersistent, renderMcpApps };
+        for (const keepFirstReply of [false, true]) {
+          const options = { hasFollowingFinalAnswer, isTurnInProgress, keepMcpAppEntriesPersistent, keepFirstReply };
           assert.equal(JSON.stringify(off(items, options)), JSON.stringify(before(items, options)));
           const nonReasoning = items.filter(item => item.item?.item.type !== "reasoning");
           assert.equal(JSON.stringify(on(nonReasoning, options)), JSON.stringify(before(nonReasoning, options)));
@@ -100,12 +100,12 @@ test("persistent contract rejects missing, duplicate, mixed, and damaged prefere
   const patched = apply(fixture);
   for (const source of [
     "const unrelated=true;", fixture + fixture, patched + fixture, patched + patched,
-    patched.replace('"reasoning"===x.item.item.type', '"reasoning"===other.item.item.type'),
+    patched.replace('"reasoning"===n.item.item.type', '"reasoning"===other.item.item.type'),
     patched.replace("/*community-reasoning-visibility-persistent*/", ""),
     patched.replace(RUNTIME, ""), RUNTIME + patched,
     fixture + ";function orphan(){return codexLinuxReasoningVisibilityEnabled()}",
     fixture.replace('if("standalone"!==e.kind)', 'if(e.kind!==`standalone`)'),
-    fixture.replace("l=e.item.item", "l=e.item.other"),
+    fixture.replace("i=e.item.item", "i=e.item.other"),
   ]) {
     assert.notEqual(source, fixture);
     assert.equal(apply(source), source);
@@ -181,7 +181,7 @@ test("production descriptor finds numeric async owners and preserves ambiguous/p
   assert.equal(run().status, "applied");
   const patched = fs.readFileSync(first, "utf8");
   assert.equal(run().status, "already-applied");
-  const partial = patched.replace('"reasoning"===x.item.item.type', '"reasoning"===other.item.item.type');
+  const partial = patched.replace('"reasoning"===n.item.item.type', '"reasoning"===other.item.item.type');
   const second = write("other/366297.hash.js", partial);
   assert.equal(run().status, "skipped-optional");
   assert.equal(fs.readFileSync(first, "utf8"), patched);
@@ -204,9 +204,9 @@ test("current signed owner contains the verbatim partition and patches through t
   assert.equal(javascriptSourceParses(patched), true);
   assert.equal(authored(patched), apply(authored(owner.source)));
   assert.equal(run().status, "already-applied");
-  for (const header of ["async function({unit:", "async/*gap*/function({unit:", "async\tfunction({unit:",
-    "async function\n({unit:", "function*({unit:", "async function*({unit:"]) {
-    const mutant = owner.source.replace("function({unit:", header);
+  for (const header of ["async function(e,t,{", "async/*gap*/function(e,t,{", "async\tfunction(e,t,{",
+    "async function\n(e,t,{", "function*(e,t,{", "async function*(e,t,{"]) {
+    const mutant = owner.source.replace("function(e,t,{", header);
     assert.ok(javascriptSourceParses(mutant));
     assert.equal(apply(mutant), mutant);
     const invalid = workspace(t);
@@ -250,10 +250,10 @@ test("reasoning persistence preserves current native plain-async delivery cases"
 test("reasoning persistence refuses drifted async Set and complete caller mapping", t => {
   t.mock.method(console, "warn", () => {});
   for (const source of [
-    fixture.replace("plainAsyncMessageIds:s,renderMcpApps:i", "renderMcpApps:i"),
-    fixture.replace("s?.has(l.searchItemId)", "wrong?.has(l.searchItemId)"),
-    fixture.replace("plainAsyncMessageIds:i,renderMcpApps:l})", "plainAsyncMessageIds:wrong,renderMcpApps:l})"),
-    fixture.replace("hasFollowingFinalAnswer:t<g", "hasFollowingFinalAnswer:t<wrong"),
+    fixture.replace("plainAsyncMessageIds:s}", "unknownAsync:s}"),
+    fixture.replace("s?.has(i.searchItemId)", "wrong?.has(i.searchItemId)"),
+    fixture.replace("}(n,t<h,s)", "}(n,t<h,wrong)"),
+    fixture.replace("}(n,t<h,s)", "}(n,t<wrong,s)"),
   ]) {
     assert.notEqual(source, fixture);
     assert.equal(apply(source), source);
@@ -266,9 +266,9 @@ test("reasoning persistence refuses drifted async Set and complete caller mappin
 
 test("non-current activity callable kinds remain parseable and byte-identical after refusal", t => {
   t.mock.method(console, "warn", () => {});
-  for (const header of ["async function({unit:", "async/*gap*/function({unit:", "async\tfunction({unit:",
-    "async function\n({unit:", "function*({unit:", "async function*({unit:", "new function({unit:"]) {
-    const source = fixture.replace("function({unit:", header);
+  for (const header of ["async function(e,t,{", "async/*gap*/function(e,t,{", "async\tfunction(e,t,{",
+    "async function\n(e,t,{", "function*(e,t,{", "async function*(e,t,{", "new function(e,t,{"]) {
+    const source = fixture.replace("function(e,t,{", header);
     assert.doesNotThrow(() => new vm.Script(source));
     assert.equal(apply(source), source);
     const project = workspace(t);
@@ -319,7 +319,7 @@ test("registered reasoning cohort rejects missing-needle, decoy, damaged and mix
   const missing = fixture.replace("collapsibleUnits:", "missingCollapsible:").replace("persistentUnits:", "missingPersistent:");
   const owner = require("../../scripts/patches/lib/activity-partition.js").inspectActivityPartition(fixture);
   const decoy = missing.slice(0, owner.loop.start) + 'const note="collapsibleUnits:persistentUnits:";' + missing.slice(owner.loop.start);
-  for (const other of [missing, decoy, fixture.replace("s?.has(l.searchItemId)", "wrong?.has(l.searchItemId)"),
+  for (const other of [missing, decoy, fixture.replace("s?.has(i.searchItemId)", "wrong?.has(i.searchItemId)"),
     apply(fixture), asChunk(fixture).replace("QypQ(e,t,n)", "Other(e,t,n)")]) {
     const project = registeredWorkspace(t, { "async/good.js": fixture, "async/other.js": other });
     assert.equal(enabledFeatureFailuresFromReport(project.run()).length, 1);
@@ -352,4 +352,22 @@ test("disabled reasoning cohort performs no asset discovery", t => {
   t.mock.method(fs, "readdirSync", () => { discovered = true; throw new Error("unexpected discovery"); });
   assert.deepEqual(project.run().patches, []);
   assert.equal(discovered, false);
+});
+
+test("reasoning persistence preserves the native first nonempty reply option", () => {
+  const items = [unit("exec", "tool"),
+    unit("assistant-message", "empty", { content: "   " }),
+    unit("assistant-message", "first", { content: "A useful first reply" }),
+    unit("reasoning", "summary", { content: "Available summary" }),
+    unit("assistant-message", "later", { content: "A later reply" })];
+  const native = partition(fixture);
+  const enabled = partition(apply(fixture));
+  const disabled = partition(apply(fixture), false);
+  for (const keepFirstReply of [false, true]) {
+    const options = { keepFirstReply };
+    assert.deepEqual(ids(native(items, options).persistentUnits), keepFirstReply ? ["first"] : []);
+    assert.equal(JSON.stringify(disabled(items, options)), JSON.stringify(native(items, options)));
+    assert.deepEqual(ids(enabled(items, options).persistentUnits),
+      keepFirstReply ? ["first", "summary"] : ["summary"]);
+  }
 });

@@ -17,14 +17,14 @@ const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript
 const fixture = fs.readFileSync(path.join(__dirname, "../../scripts/patches/lib/fixtures/current-activity-partition.js"), "utf8").replace("const partition=", "const xO=").trim();
 function partition(source, units, options, reasoningEnabled = false) {
   return vm.runInNewContext(source + ";xO", {
-    f: { o: item => item.persist },
-    m: { Yr: item => item.final, rt: item => item.final },
-    p: { Q1: item => item.interactive },
-    h: { i$: ({ toolResult }) => toolResult?.interactive ? {} : null },
+    d: { o: item => item.persist },
+    o: { Yr: item => item.final, rt: item => item.final },
+    c: { Q1: item => item.interactive },
+    u: { Hn: ({ toolResult }) => toolResult?.interactive ? {} : null },
     localStorage: { getItem: () => reasoningEnabled ? "1" : null },
   })(units, options);
 }
-const unit = (type, id, extra = {}) => ({kind:"standalone",item:{item:{type,id,completed:true,invocation:{server:"test",tool:"tool"},result:{type:"success",raw:{interactive:extra.interactive}},...extra}}});
+const unit = (type, id, extra = {}) => ({kind:"standalone",item:{item:{type,id,content:"",completed:true,invocation:{server:"test",tool:"tool"},result:{type:"success",raw:{interactive:extra.interactive}},...extra}}});
 const chunk = source => `export const __rspack_esm_ids=[101];export const __webpack_modules__={QypQ(e,t,n){${source}}};`;
 const ids = units => Array.from(units, unit => unit.item.item.id);
 
@@ -45,7 +45,7 @@ test("commentary stays visible in order while tools collapse; expansion contains
 
 test("tool exceptions, grouped activity and worked-for handling remain upstream-owned", () => {
   const tools = [unit("exec","exec"),unit("dynamic-tool-call","dynamic",{interactive:true}),unit("mcp-tool-call","mcp",{interactive:true}),unit("mcp-tool-call","persisted",{persist:true}),unit("user-input-response","pending",{completed:false}),unit("user-input-response","completed"),unit("worked-for","duration")];
-  const options = {hasFollowingFinalAnswer:true,keepMcpAppEntriesPersistent:true,renderMcpApps:true};
+  const options = {hasFollowingFinalAnswer:true,keepMcpAppEntriesPersistent:true};
   assert.equal(JSON.stringify(partition(apply(fixture),tools,options)),JSON.stringify(partition(fixture,tools,options)));
   const group = {kind:"group",items:[]};
   assert.equal(partition(apply(fixture),[group]).collapsibleUnits[0],group);
@@ -65,16 +65,16 @@ test("turns without tools and history replay preserve authored messages without 
 
 test("missing, duplicate, mixed and changed classifiers remain byte-identical with actionable warnings", () => {
   const patched = apply(fixture);
-  const partialAssistant = fixture.replace('"assistant-message"===l.type?(0,m.Yr)(l)', '"assistant-message"===l.type?!0');
-  const partialUser = patched.replace('"assistant-message"===l.type||', '"assistant-message"===l.type&&(0,m.Yr)(l)||');
+  const partialAssistant = fixture.replace('"assistant-message"===i.type?(0,o.Yr)(i)', '"assistant-message"===i.type?!0');
+  const partialUser = patched.replace('"assistant-message"===i.type||', '"assistant-message"===i.type&&(0,o.Yr)(i)||');
   const retiredShape = fixture.replace('if("standalone"!==e.kind)', 'if(e.kind!==`standalone`)');
   for (const source of ["",fixture+fixture,patched+patched,fixture+patched,partialAssistant,partialUser,retiredShape,
-    fixture.replace('"not-sent"===l.deliveryStatus','"queued"===l.deliveryStatus'),fixture.replace("l=e.item.item","l=e.item.other"),
+    fixture.replace('"not-sent"===i.deliveryStatus','"queued"===i.deliveryStatus'),fixture.replace("i=e.item.item","i=e.item.other"),
     fixture.replace("toolResult:n", "toolResult:unknown"),
     fixture.replace("mcpServerStatuses:t,server:e.invocation.server", "mcpServerStatuses:unknown,server:e.invocation.server"),
     fixture.replace("server:e.invocation.server", "server:unknown.invocation.server"),
     fixture.replace("e.result.raw:null", "unknown.result.raw:null"),
-    fixture.replace("item:l,mcpServerStatuses:a", "item:unknown,mcpServerStatuses:a")]) {
+    fixture.replace("item:i,mcpServerStatuses:a", "item:unknown,mcpServerStatuses:a")]) {
     const result = captureWarnings(() => apply(source));
     assert.equal(result.value,source);
     assert.equal(result.warnings.length,1);
@@ -84,9 +84,9 @@ test("missing, duplicate, mixed and changed classifiers remain byte-identical wi
 
 test("a valid classifier never hides a second drifted or partially applied classifier", () => {
   for (const drifted of [
-    fixture.replace('"not-sent"===l.deliveryStatus','"queued"===l.deliveryStatus'),
+    fixture.replace('"not-sent"===i.deliveryStatus','"queued"===i.deliveryStatus'),
     fixture.replace("toolResult:n","toolResult:unknown"),
-    apply(fixture).replace('"assistant-message"===l.type||','"assistant-message"===l.type&&(0,m.Yr)(l)||'),
+    apply(fixture).replace('"assistant-message"===i.type||','"assistant-message"===i.type&&(0,o.Yr)(i)||'),
   ]) {
     const source=`export const __webpack_modules__={Good(e){${fixture}},Drifted(e){${drifted}}};`;
     assert.ok(javascriptSourceParses(source));
@@ -109,7 +109,7 @@ test("authored visibility keeps the existing reasoning prefix in both applicatio
 });
 
 test("classifier aliases can change without changing behavior", () => {
-  const source = fixture.replace(/(?<![\w$])l(?![\w$])/g,"itemAlias");
+  const source = fixture.replace(/(?<![\w$])i(?![\w$])/g,"itemAlias");
   assert.deepEqual(ids(partition(apply(source),[unit("assistant-message","c")] ).persistentUnits),["c"]);
 });
 
@@ -128,7 +128,7 @@ test("feature registration, duplicate chunk copies and enabled drift enforcement
     const file = path.join(assets,"async","366297.f0d89078fe.js");
     for (const scenario of ["valid","already","missing","drift","duplicated","mixed"]) {
       fs.rmSync(assets,{recursive:true,force:true}); fs.mkdirSync(assets,{recursive:true});
-      const source = scenario === "already" ? apply(fixture) : scenario === "drift" ? fixture.replace('"not-sent"===l.deliveryStatus','"queued"===l.deliveryStatus') : fixture;
+      const source = scenario === "already" ? apply(fixture) : scenario === "drift" ? fixture.replace('"not-sent"===i.deliveryStatus','"queued"===i.deliveryStatus') : fixture;
       fs.mkdirSync(path.dirname(file),{recursive:true});
       if (scenario !== "missing") fs.writeFileSync(file,chunk(source));
       // rspack can copy one module into several async chunks: patch every copy,
@@ -198,7 +198,7 @@ function descriptorWorkspace(t, sources, enabled = true) {
 
 test("current native async delivery expression remains verbatim behind authored overrides", () => {
   const start = fixture.indexOf('return"user-input-response"') + "return".length;
-  const end = fixture.indexOf("}({unit:x", start);
+  const end = fixture.indexOf("}(n,t<h,s)", start);
   const native = fixture.slice(start, end);
   const patched = apply(fixture);
   assert.ok(patched.includes(native));
@@ -214,10 +214,10 @@ test("current native async delivery expression remains verbatim behind authored 
 
 test("current classifier refuses missing or disconnected async Set and caller bindings", () => {
   for (const source of [
-    fixture.replace("plainAsyncMessageIds:s,renderMcpApps:i", "renderMcpApps:i"),
-    fixture.replace("s?.has(l.searchItemId)", "wrong?.has(l.searchItemId)"),
-    fixture.replace("plainAsyncMessageIds:i,renderMcpApps:l})", "plainAsyncMessageIds:wrong,renderMcpApps:l})"),
-    fixture.replace("mcpServerStatuses:s,plainAsyncMessageIds:i,renderMcpApps:l=!1", "mcpServerStatuses:s,plainAsyncMessageIds:wrong,renderMcpApps:l=!1"),
+    fixture.replace("plainAsyncMessageIds:s}", "unknownAsync:s}"),
+    fixture.replace("s?.has(i.searchItemId)", "wrong?.has(i.searchItemId)"),
+    fixture.replace("}(n,t<h,s)", "}(n,t<h,wrong)"),
+    fixture.replace("...s}={})", "...wrong}={})"),
   ]) {
     assert.notEqual(source, fixture);
     const result = captureWarnings(() => apply(source));
@@ -228,7 +228,7 @@ test("current classifier refuses missing or disconnected async Set and caller bi
 
 test("normal descriptor validates every same-identity copy and rejects partial application atomically", t => {
   for (const other of [
-    chunk(fixture.replace("s?.has(l.searchItemId)", "wrong?.has(l.searchItemId)")),
+    chunk(fixture.replace("s?.has(i.searchItemId)", "wrong?.has(i.searchItemId)")),
     chunk(apply(fixture)),
     chunk(fixture).replace("QypQ(e,t,n)", "Other(e,t,n)"),
   ]) {
@@ -271,9 +271,9 @@ test("latest signed owner applies through the registered transactional descripto
   const project = descriptorWorkspace(t, { [names[0]]: source });
   assert.equal(project.run().patches[0].status, "applied");
   assert.equal(project.run().patches[0].status, "already-applied");
-  for (const header of ["async function({unit:", "async/*gap*/function({unit:", "async\tfunction({unit:",
-    "async function\n({unit:", "function*({unit:", "async function*({unit:"]) {
-    const mutant = source.replace("function({unit:", header);
+  for (const header of ["async function(e,t,{", "async/*gap*/function(e,t,{", "async\tfunction(e,t,{",
+    "async function\n(e,t,{", "function*(e,t,{", "async function*(e,t,{"]) {
+    const mutant = source.replace("function(e,t,{", header);
     assert.ok(javascriptSourceParses(mutant));
     assert.equal(captureWarnings(() => apply(mutant)).value, mutant);
     const invalid = descriptorWorkspace(t, { [names[0]]: mutant });
@@ -295,9 +295,9 @@ test("latest signed owner applies through the registered transactional descripto
 });
 
 test("non-current activity callable kinds are rejected before normal cohort writes", t => {
-  for (const header of ["async function({unit:", "async/*gap*/function({unit:", "async\tfunction({unit:",
-    "async function\n({unit:", "function*({unit:", "async function*({unit:", "new function({unit:"]) {
-    const source = fixture.replace("function({unit:", header);
+  for (const header of ["async function(e,t,{", "async/*gap*/function(e,t,{", "async\tfunction(e,t,{",
+    "async function\n(e,t,{", "function*(e,t,{", "async function*(e,t,{", "new function(e,t,{"]) {
+    const source = fixture.replace("function(e,t,{", header);
     assert.doesNotThrow(() => new vm.Script(source));
     assert.equal(captureWarnings(() => apply(source)).value, source);
     const project = descriptorWorkspace(t, { "async/current.js": chunk(source) });
