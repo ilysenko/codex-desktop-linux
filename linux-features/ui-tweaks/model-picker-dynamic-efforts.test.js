@@ -61,7 +61,7 @@ test("current official module hashes verify the reused resolver, consumer and na
   for (const [name, record] of [["resolver", resolver], ["consumer", work], ["predicate", dependencies.FQih], ["formatter", dependencies.O5Ra]]) {
     assert.equal(crypto.createHash("sha256").update(record.moduleSource).digest("hex"), current.currentOwners[name].moduleSha256);
   }
-  assert.equal(current.callers.length, 6);
+  assert.equal(current.callers.length, 5);
   for (const caller of current.callers) {
     assert.equal(caller.nativeResolverImport, "TWUU");
     assert.match(caller.assetSha256, /^[a-f0-9]{64}$/);
@@ -163,7 +163,7 @@ test("mounted Work call forwards its actual subscribed Set and current catalog",
   assert.deepEqual(ids(callWork(uiBodies().consumer, active.run, models, new Set()).result), []);
 });
 
-test("all six other native call expressions retain original resolver behavior without opting in", () => {
+test("all five other native call expressions retain original resolver behavior without opting in", () => {
   const models = [model("gpt-5.6-sol", ["low", "medium", "high", "xhigh"]), model("gpt-5.6-terra", ["low", "medium", "high"])];
   const settings = config([["gpt-5.6-sol", "high"], ["gpt-5.6-sol", "medium"], ["gpt-5.6-terra", "low"]]);
   for (const record of current.callers) for (const input of [undefined, null, models]) {
@@ -193,19 +193,19 @@ test("UI resolver and Work contributions invert and repeat exactly while preserv
 
 test("consumer qualification rejects dead resolver output, disconnected menu inputs and replaced native Sets", () => {
   const mutations = [
-    work.moduleSource.replace("powerSelections:oO", "powerSelections:[]"),
-    insertBeforeComponentReturn(work.moduleSource.replace("powerSelections:oO", "powerSelections:[]"),
-      "let unreturnedPicker=(0,o.jsx)(D.i,{powerSelections:oO,});"),
-    work.moduleSource.replace("powerSelections:oO", "powerSelections:[],unused:{powerSelections:oO}"),
-    work.moduleSource.replace("powerSelections:oO", 'powerSelections:oO,"powerSelections":[]'),
-    work.moduleSource.replace("powerSelections:oO", "powerSelections:oO,...unprovenProps"),
-    work.moduleSource.replace("powerSelections:oO", "powerSelections:oO,/* sibling */...{powerSelections:[]}"),
-    work.moduleSource.replace("powerSelections:oO", 'powerSelections:oO,/* sibling */["powerSelections"]:[]'),
-    work.moduleSource.replace("powerSelectionsWithXHigh:oR", "powerSelectionsWithXHigh:[]"),
-    work.moduleSource.replace("powerSelectionsWithXHigh:oR", "powerSelectionsWithXHigh:[],unused:{powerSelectionsWithXHigh:oR}"),
-    insertBeforeComponentReturn(work.moduleSource, "oT=[];"),
-    insertBeforeComponentReturn(work.moduleSource, "oO=[];"),
-    insertBeforeComponentReturn(work.moduleSource, "nF=new Set();"),
+    work.moduleSource.replace("powerSelections:tJ", "powerSelections:[]"),
+    insertBeforeComponentReturn(work.moduleSource.replace("powerSelections:tJ", "powerSelections:[]"),
+      "let unreturnedPicker=(0,t.jsx)(D.i,{powerSelections:tJ,});"),
+    work.moduleSource.replace("powerSelections:tJ", "powerSelections:[],unused:{powerSelections:tJ}"),
+    work.moduleSource.replace("powerSelections:tJ", 'powerSelections:tJ,"powerSelections":[]'),
+    work.moduleSource.replace("powerSelections:tJ", "powerSelections:tJ,...unprovenProps"),
+    work.moduleSource.replace("powerSelections:tJ", "powerSelections:tJ,/* sibling */...{powerSelections:[]}"),
+    work.moduleSource.replace("powerSelections:tJ", 'powerSelections:tJ,/* sibling */["powerSelections"]:[]'),
+    work.moduleSource.replace("powerSelectionsWithXHigh:tG", "powerSelectionsWithXHigh:[]"),
+    work.moduleSource.replace("powerSelectionsWithXHigh:tG", "powerSelectionsWithXHigh:[],unused:{powerSelectionsWithXHigh:tG}"),
+    insertBeforeComponentReturn(work.moduleSource, "tz=[];"),
+    insertBeforeComponentReturn(work.moduleSource, "tJ=[];"),
+    insertBeforeComponentReturn(work.moduleSource, "nH=new Set();"),
   ];
   for (const source of mutations) {
     assert.notEqual(source, work.moduleSource);
@@ -241,7 +241,7 @@ test("dynamic cohort rejects incomplete, damaged and mixed states and rolls back
     { "resolver.js": chunk([resolver]) },
     { ...inputFiles, "resolver.js": chunk([{ ...resolver, moduleSource: uiBodies().resolver }]) },
     { ...inputFiles, "bad-peer.js": chunk([{ ...resolver, moduleSource: resolver.moduleSource.replace('"persistent"!==e', '"invalid"!==e') }]) },
-    { ...inputFiles, "bad-work.js": chunk([{ ...work, moduleSource: work.moduleSource.replace("powerSelections:oO", "powerSelections:[]") }]) },
+    { ...inputFiles, "bad-work.js": chunk([{ ...work, moduleSource: work.moduleSource.replace("powerSelections:tJ", "powerSelections:[]") }]) },
   ];
   for (const files of cases) withApp(files, ({ root, snapshot }) => {
     const before = snapshot();
