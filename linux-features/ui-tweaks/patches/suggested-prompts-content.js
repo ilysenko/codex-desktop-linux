@@ -15,8 +15,11 @@ const CONTEXT = new RegExp(
   `(?<![\\w$.])(?<generated>${ID})=(?<page>${ID})&&null!=(?<project>${ID}),` +
   `(?<query>${ID})=null==(?<debug>${ID})&&\\k<generated>&&(?<runtime>${ID})(?=[,;])`, "g");
 const SOURCE = new RegExp(
-  `(?<![\\w$.])(?<source>${ID})=(?<query>${ID})&&\\((?<loading>${ID})\\|\\|(?<eligible>${ID})&&(?<pending>${ID})\\)\\?null:` +
-  `\\(0,(?<policy>${ID})\\.(?<choose>${ID})\\)\\(\\{debugOverride:(?<debug>${ID}),experimentEligible:\\k<eligible>,personalized:(?<personalized>${ID})\\}\\)`, "g");
+  `if\\((?<query>${ID})&&\\((?<loading>${ID})\\|\\|(?<eligible>${ID})&&(?<pending>${ID})\\)\\)(?<source>${ID})=null;else\\{let (?<value>${ID});` +
+  `(?<cache>${ID})\\[(?<eligibleSlot>\\d+)\\]!==\\k<eligible>\\|\\|\\k<cache>\\[(?<personalizedSlot>\\d+)\\]!==(?<personalized>${ID})\\|\\|\\k<cache>\\[(?<debugSlot>\\d+)\\]!==(?<debug>${ID})\\?` +
+  `\\(\\k<value>=\\(0,(?<policy>${ID})\\.(?<choose>${ID})\\)\\(\\{debugOverride:\\k<debug>,experimentEligible:\\k<eligible>,personalized:\\k<personalized>\\}\\),` +
+  `\\k<cache>\\[\\k<eligibleSlot>\\]=\\k<eligible>,\\k<cache>\\[\\k<personalizedSlot>\\]=\\k<personalized>,\\k<cache>\\[\\k<debugSlot>\\]=\\k<debug>,\\k<cache>\\[(?<valueSlot>\\d+)\\]=\\k<value>\\):` +
+  `\\k<value>=\\k<cache>\\[\\k<valueSlot>\\],\\k<source>=\\k<value>\\}`, "g");
 
 function all(source, pattern) { return [...source.matchAll(pattern)]; }
 function escape(value) { return helpers().escapeRegExp(value); }
@@ -83,21 +86,18 @@ function moduleState(module) {
     `\\{data:(?<data>${ID}),isLoading:${escape(p.loading)}\\}=\\(0,${escape(r.policy)}\\.${ID}\\)\\(${escape(query[0].groups.options)}\\)`, "g"));
   if (queryReads.length !== 1 || !owner.body.includes(`${p.eligible}=${c.query}&&!0===${queryReads[0].groups.data}`)) return null;
 
-  // The source policy belongs to the native memo block, not a nested function
-  // reusing the same short aliases. Keep both branches and the cached value.
-  let block = source.lastIndexOf("{", policy.index);
-  while (block >= owner.start && close(source, block) < policy.index) block = source.lastIndexOf("{", block - 1);
-  const blockEnd = close(source, block);
-  const condition = /if\([^{};]*\)$/.exec(source.slice(owner.start, block));
-  const prefix = `let ${p.personalized}=${p.eligible}&&!${p.pending}&&`;
-  if (condition == null || !topLevel(owner.body, condition.index) || !source.slice(block + 1, policy.index).startsWith(prefix) ||
-      !new RegExp(`^${escape(prefix)}${ID}\\.get\\("personalized",!1\\);$`).test(source.slice(block + 1, policy.index))) return null;
-  const tail = source.slice(policy.index + policy[0].length, blockEnd);
-  const cached = new RegExp(`,(?<cache>${ID})\\[(?<slot>\\d+)\\]=${escape(p.source)}$`).exec(tail);
-  if (cached == null || !/^(?:,[\w$]+\[\d+\]=[^;{},]+)+$/.test(tail)) return null;
-  const afterBlock = `else ${p.source}=${cached.groups.cache}[${cached.groups.slot}];`;
-  if (!source.startsWith(afterBlock, blockEnd + 1)) return null;
-  const flagStart = blockEnd + 1 + afterBlock.length;
+  // Both native memo projections retain their input/output slots. The
+  // conditional loading branch owns the source assigned to the returned flag.
+  const personalized = all(owner.body, new RegExp(
+    `${escape(p.cache)}\\[(?<eligibleSlot>\\d+)\\]!==${escape(p.eligible)}\\|\\|${escape(p.cache)}\\[(?<pendingSlot>\\d+)\\]!==${escape(p.pending)}\\|\\|${escape(p.cache)}\\[(?<configSlot>\\d+)\\]!==(?<config>${ID})\\?` +
+    `\\((?<value>${ID})=${escape(p.eligible)}&&!${escape(p.pending)}&&\\k<config>\\.get\\("personalized",!1\\),` +
+    `${escape(p.cache)}\\[\\k<eligibleSlot>\\]=${escape(p.eligible)},${escape(p.cache)}\\[\\k<pendingSlot>\\]=${escape(p.pending)},${escape(p.cache)}\\[\\k<configSlot>\\]=\\k<config>,` +
+    `${escape(p.cache)}\\[(?<valueSlot>\\d+)\\]=\\k<value>\\):\\k<value>=${escape(p.cache)}\\[\\k<valueSlot>\\];let ${escape(p.personalized)}=\\k<value>;`, "g"));
+  if (personalized.length !== 1 || !topLevel(owner.body, personalized[0].index) ||
+      !topLevel(owner.body, policy.index - owner.start) || personalized[0].index + owner.start >= policy.index ||
+      new Set([p.eligibleSlot,p.personalizedSlot,p.debugSlot,p.valueSlot]).size !== 4 ||
+      new Set(Object.entries(personalized[0].groups).filter(([key])=>key.endsWith("Slot")).map(([,value])=>value)).size !== 4) return null;
+  const flagStart = policy.index + policy[0].length;
   const original = `let ${r.flag}="curated"===${p.source};`;
   const replacement = `let ${r.flag}="curated"===${p.source}&&!${c.query}/*${HOME_CONTENT_SOURCE_MARKER}*/;`;
   const patched = source.startsWith(replacement, flagStart);
