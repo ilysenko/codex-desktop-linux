@@ -1231,8 +1231,8 @@ test("main handler downloads setup files atomically", async () => {
 });
 
 function assistantRenderFixture({ jsxVar = "s", component = "eA.F" } = {}) {
-  const sourceTurnCall = `(0,${jsxVar}.jsx)(${component},{item:o,alwaysShowActions:ge,assistantCopyText:a,sourceTurnId:T,savedContentResponseId:E,after:A,compactAttachment:M,electronAfter:N,autoReviewStats:L,hookStats:R,completedThreadGoal:te,conversationId:p,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:s,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,trailingActions:fe})`;
-  const liveTurnCall = `(0,${jsxVar}.jsx)(${component},{item:n,showShimmer:we,alwaysShowActions:ge,assistantCopyText:w,turnId:T,savedContentResponseId:E,autoReviewStats:L,hookStats:R,completedThreadGoal:te,after:A,compactAttachment:M,electronAfter:N,conversationId:p,getVisualizeTurnTriggerType:m,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:i,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,allowCopyWhileStreaming:Fe,additionalActions:ce,trailingActions:fe,persistentAdditionalActions:de})`;
+  const sourceTurnCall = `(0,${jsxVar}.jsx)(${component},{item:o,alwaysShowActions:ge,assistantCopyText:a,sourceTurnId:T,savedContentResponseId:E,after:A,compactAttachment:M,autoReviewStats:L,hookStats:R,completedThreadGoal:te,conversationId:p,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:s,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,trailingActions:fe,renderUsedSkillsDetails:qe})`;
+  const liveTurnCall = `(0,${jsxVar}.jsx)(${component},{item:n,showShimmer:we,alwaysShowActions:ge,assistantCopyText:w,turnId:T,isReadOnly:!1,savedContentResponseId:E,autoReviewStats:L,hookStats:R,completedThreadGoal:te,after:A,compactAttachment:M,conversationId:p,getVisualizeTurnTriggerType:m,cwd:b,hostId:x,reportEntityType:S,markdownMediaCacheKey:e,projectlessOutputDirectory:Ee,outputFileLinks:O,forceCodeBlockWordWrap:Ye,hasArtifacts:De,onAddResponseTextAnnotation:i,onNavigateResponseTextAnnotation:qe,onFileLinkOpen:I,onFork:ie,renderCodeBlocksAsWritingBlocks:Ye,showActionRow:_e,showTimestampHeader:r,showTimestampWithoutActions:ye,timestampHoverOnly:be,allowCopyWhileStreaming:Fe,additionalActions:ce,trailingActions:fe,renderUsedSkillsDetails:qe,persistentAdditionalActions:de})`;
   const componentMatch = /^([\w$]+)\.([\w$]+)$/.exec(component);
   const namespace = componentMatch?.[1] ?? component;
   const componentExport = componentMatch?.[2] ?? "F";
@@ -1255,6 +1255,23 @@ test("assistant render patch atomically adds buttons to the current two-call top
   assert.ok(patched.includes(fixture.sourceTurnCall));
   assert.ok(patched.includes(fixture.liveTurnCall));
   assert.equal(matchesAssistantRuntimeContract(patched), true);
+});
+
+test("assistant render contract requires current used-skills and live read-only props", () => {
+  const fixture=assistantRenderFixture();
+  for(const changed of [
+    fixture.source.replace(",renderUsedSkillsDetails:qe",""),
+    fixture.source.replace(",isReadOnly:!1",""),
+    fixture.source.replace(",renderUsedSkillsDetails:qe",",electronAfter:N"),
+    fixture.source.replace(/,renderUsedSkillsDetails:value[0-9]+/u,""),
+    fixture.source.replace(/,isReadOnly:value[0-9]+/u,""),
+  ]){
+    assert.notEqual(changed,fixture.source);
+    const result=captureWarnings(()=>applyAssistantRenderPatch(changed));
+    assert.equal(result.result,changed);assert.equal(result.warnings.length,1);
+  }
+  const patched=applyAssistantRenderPatch(fixture.source);
+  assert.ok(patched.includes(fixture.sourceTurnCall));assert.ok(patched.includes(fixture.liveTurnCall));
 });
 
 test("assistant render patch ignores normalized assistant items without render props", () => {

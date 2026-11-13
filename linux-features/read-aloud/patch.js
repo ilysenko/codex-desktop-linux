@@ -28,6 +28,7 @@ const ASSISTANT_RENDER_SHARED_PROPS = [
   "savedContentResponseId",
   "after",
   "compactAttachment",
+  "renderUsedSkillsDetails",
   "autoReviewStats",
   "hookStats",
   "completedThreadGoal",
@@ -52,6 +53,7 @@ const ASSISTANT_RENDER_SHARED_PROPS = [
   "trailingActions",
 ];
 const ASSISTANT_RENDER_LIVE_PROPS = [
+  "isReadOnly",
   "turnId",
   "showShimmer",
   "getVisualizeTurnTriggerType",
@@ -507,7 +509,7 @@ function assistantComponentFacts(nativeComponent, exportName) {
     if (new RegExp(`^=${escapeRegExp(render.params)}(?=[,;])`, "u").test(render.body.slice(end + 1))) destructures.push(assistantFields(render.body.slice(open + 1, end)));
   }
   if (destructures.length !== 1 || destructures[0].unknown ||
-      ![...ASSISTANT_RENDER_SHARED_PROPS, "sourceTurnId", "turnId"].every(name => destructures[0].fields.has(name))) throw new Error("Native assistant component props changed");
+      ![...ASSISTANT_RENDER_SHARED_PROPS, "sourceTurnId", "turnId", "isReadOnly"].every(name => destructures[0].fields.has(name))) throw new Error("Native assistant component props changed");
   return render;
 }
 
