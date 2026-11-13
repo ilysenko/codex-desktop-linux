@@ -59,7 +59,7 @@ function sidebarSource() {
 
 function dictationSource(namespace = "Q") {
   return [
-    "const dictation={isDictationEnabled:enabled}",
+    "const micro={onCodexMicroStop:stopDictation}",
     "const props={onDictationTranscriptInsert:insert,waveformVariant:eZ}",
     `const enabled=${gate(namespace)}`,
   ].join(";");
@@ -101,6 +101,15 @@ function createExtractedApp(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { assets, root };
 }
+
+test("current dictation gate discovery requires the native Micro stop callback", (t) => {
+  const app=createExtractedApp(t),target=path.join(app.assets,"async/4317.dictation.js");
+  const native=fs.readFileSync(target,"utf8");
+  fs.writeFileSync(target,native.replace("onCodexMicroStop:stopDictation","onUnrelatedStop:stopDictation")+";const retired={dictationSoundsEnabled:true}");
+  const found=findCodexMicroFeatureGateAssets(app.root);
+  assert.equal(found.matches,null);assert.match(found.reason,/matches 0 semantic contracts/);
+  assert.equal(fs.readFileSync(target,"utf8"),native.replace("onCodexMicroStop:stopDictation","onUnrelatedStop:stopDictation")+";const retired={dictationSoundsEnabled:true}");
+});
 
 test("official Linux node-hid is reused without a native binding descriptor", () => {
   assert.deepEqual(descriptors.map((descriptor) => descriptor.id), [

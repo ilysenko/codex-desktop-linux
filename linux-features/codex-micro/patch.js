@@ -43,8 +43,7 @@ const CODEX_MICRO_GATE_CONTRACTS = [
     routeCount: 0,
     anchor: (source) =>
       source.includes("onDictationTranscriptInsert")
-      && source.includes("isDictationEnabled:")
-      && !source.includes('surface:"composer"'),
+      && source.includes("onCodexMicroStop:"),
   },
   {
     description: "Codex Micro composer gate",
