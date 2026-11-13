@@ -158,9 +158,8 @@ const CURRENT_GIT_ROUTE_PREFIX_PATTERN =
   `(?<ignoreSource>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\\(\\),` +
   `(?<localHost>${IDENTIFIER_PATTERN})=new ` +
   `(?<localHostClass>${IDENTIFIER_PATTERN})\\(\\k<ignoreSource>,[\\s\\S]{0,600}?\\);` +
-  // The current package exposes the ignore sources lazily and opts the repo
-  // watcher into ignored-directory pruning; the Git ignore environment reader
-  // is inlined by the current minifier.
+  // The current package exposes ignore sources lazily with platform-specific
+  // pruning modes. Its Git ignore environment reader is inlined.
   "return\\{git:\\{getWatchIgnoreSources:\\k<ignoreSource>\\?void 0:\\(\\)=>\\(\\{" +
   `getEnvironment:async\\(\\)=>[\\s\\S]{1,2000}?,getWatchTargets:${IDENTIFIER_PATTERN},` +
   'pruneIgnoredDirectories:"darwin"===process\\.platform\\?"observed":"all"\\}\\),' +

@@ -140,7 +140,7 @@ const CURRENT_GIT_ROUTE_PREFIX =
   "return{git:{getWatchIgnoreSources:s?void 0:" +
   "()=>({getEnvironment:async()=>(function(){let e=process.env.HOME;" +
   'return{defaultExcludesFile:null==e?null:`${e}/.config/git/ignore`,globalConfigFiles:[]}})(),' +
-  'getWatchTargets:Bee,pruneIgnoredDirectories:"darwin"===process.platform?"observed":"all"}),' +
+  "getWatchTargets:Bee,pruneIgnoredDirectories:\"darwin\"===process.platform?\"observed\":\"all\"})," +
   "createExecutionHost:h=>{if(h.id===e.id&&!isRemote(h))return e;" +
   'if(null==n)throw Error("Git hosts require a main RPC connection");' +
   "return new nde(n,h)},startMetadataWatch:(t,n)=>t.isLocal?" +
@@ -339,13 +339,17 @@ test("current ignore source remains a lazy factory with dynamic environment and 
   const result = patchWorkerSource(currentWorkerSource(), normalizedSettings());
   assert.equal(result.changed, 1);
   const member = result.source.split("return{git:{")[1].split(",createExecutionHost:")[0];
-  const processStub = { env: { HOME: "/home/first" } };
+  const processStub = { platform: "linux", env: { HOME: "/home/first" } };
   const targets = () => ["target"];
   const factory = vm.runInNewContext(`({${member}}).getWatchIgnoreSources`, {
     s: false, process: processStub, Bee: targets,
   });
   const first = factory("/repo/first");
-  assert.equal(first.pruneIgnoredDirectories, true);
+  assert.equal(first.pruneIgnoredDirectories, "all");
+  processStub.platform = "darwin";
+  assert.equal(factory("/repo/mac").pruneIgnoredDirectories, "observed");
+  processStub.platform = "win32";
+  assert.equal(factory("/repo/windows").pruneIgnoredDirectories, "all");
   assert.equal(first.getWatchTargets, targets);
   assert.equal((await first.getEnvironment()).defaultExcludesFile, "/home/first/.config/git/ignore");
   processStub.env.HOME = "/home/second";
@@ -360,10 +364,11 @@ test("current ignore source remains a lazy factory with dynamic environment and 
 test("rejects retired ignore source objects and incomplete current factory policy", () => {
   for (const source of [
     currentWorkerSource().replace("getWatchIgnoreSources:s?void 0:()=>({", "watchIgnoreSources:s?void 0:{")
-      .replace("pruneIgnoredDirectories:!0}),", "pruneIgnoredDirectories:!0},"),
-    currentWorkerSource().replace(",pruneIgnoredDirectories:!0", ""),
-    currentWorkerSource().replace("pruneIgnoredDirectories:!0", "pruneIgnoredDirectories:!1"),
+      .replace("pruneIgnoredDirectories:\"darwin\"===process.platform?\"observed\":\"all\"}),", "pruneIgnoredDirectories:\"darwin\"===process.platform?\"observed\":\"all\"},"),
+    currentWorkerSource().replace(",pruneIgnoredDirectories:\"darwin\"===process.platform?\"observed\":\"all\"", ""),
+    currentWorkerSource().replace("pruneIgnoredDirectories:\"darwin\"===process.platform?\"observed\":\"all\"", "pruneIgnoredDirectories:!0"),
   ]) {
+    assert.notEqual(source, currentWorkerSource());
     const result = patchWorkerSource(source, normalizedSettings());
     assert.equal(result.changed, 0);
     assert.equal(result.matched, 0);
@@ -378,7 +383,7 @@ test("correlates minified aliases instead of pinning their spellings", () => {
   const gitRoutePrefix =
     "case\"git\":{let ignoreSource=getIgnoreSource(),localHost=new LocalHost(ignoreSource,event=>{notify(event)});return{git:{" +
     "getWatchIgnoreSources:ignoreSource?void 0:()=>({getEnvironment:async()=>(function(){return readIgnoreEnvironment()})()," +
-    'getWatchTargets:getWatchTargets,pruneIgnoredDirectories:"darwin"===process.platform?"observed":"all"}),createExecutionHost:executionOptions=>{' +
+    "getWatchTargets:getWatchTargets,pruneIgnoredDirectories:\"darwin\"===process.platform?\"observed\":\"all\"}),createExecutionHost:executionOptions=>{" +
     "if(executionOptions.id===localHost.id&&!isRemote(executionOptions))return localHost;" +
     "if(null==mainConnection)" +
     "throw Error(\"Git hosts require a main RPC connection\");" +
