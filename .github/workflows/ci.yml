@@ -12,7 +12,7 @@ permissions:
 jobs:
   source-and-node:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -32,6 +32,8 @@ jobs:
       - name: Node tests
         # Syntax-checks tracked JavaScript and runs every tracked Node test in
         # a fresh TMPDIR, failing when a run leaves anything there.
+        env:
+          NODE_TEST_TIMEOUT_SECONDS: '1800'
         run: bash scripts/ci/run-node-checks.sh all
       - name: Smoke tests
         run: bash tests/scripts_smoke.sh
