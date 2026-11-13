@@ -355,6 +355,9 @@
             cargoLock.lockFile = ./Cargo.lock;
             cargoBuildFlags = lib.concatMap (package: [ "-p" package ]) cargoPackages
               ++ lib.concatMap (binary: [ "--bin" binary ]) expectedBinaries;
+            # The pinned Rust 1.93 compiler overflows its default worker stack
+            # while optimizing wayland-protocols 0.32.12.
+            RUST_MIN_STACK = "16777216";
             doCheck = false;
             installPhase = ''
               runHook preInstall
