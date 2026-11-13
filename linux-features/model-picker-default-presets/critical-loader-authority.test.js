@@ -22,3 +22,15 @@ test("paired factory loader and exports renaming uses semantic receiver identiti
  const renamed=source.replace(/\bn\("/gu,'loader("').replace('n.n(r)','loader.n(r)').replace('n.d(t,','loader.d(output,');
  assert.deepEqual(prove(renamed,{...current,params:["moduleArg","output","loader"]},{allowInterop:true}).map(row=>row.method),["n","d"]);
 });
+
+test("two native interop initializers require an exact bounded count",()=>{
+ const source='var first=n("first"),a=n.n(first),second=n("second"),b=n.n(second);n.d(t,{value:()=>a});';
+ const snapshot={params:["e","t","n"],moduleSource:source,start:0};
+ assert.deepEqual(prove(source,snapshot,{interopCount:2}).map(row=>row.method),["n","n","d"]);
+ assert.throws(()=>prove(source,snapshot));
+ assert.throws(()=>prove(source,snapshot,{allowInterop:true}));
+ for(const interopCount of [-1,1,3,1.5])assert.throws(()=>prove(source,snapshot,{interopCount}));
+ for(const damaged of [source+';n.n=foreign;',source.replace('b=n.n(second)','b=n["n"](second)'),source.replace('n.d(t,','n.d(other,')]){
+  assert.throws(()=>prove(damaged,{...snapshot,moduleSource:damaged},{interopCount:2}));
+ }
+});

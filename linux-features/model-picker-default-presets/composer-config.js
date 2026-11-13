@@ -9,6 +9,7 @@ const {javascriptSourceParses}=require('../../scripts/patches/lib/javascript-syn
 const {requireStableCatalogBinding:stable}=require('./catalog-binding-authority.js');
 const {assertCriticalLoaderMethodUses}=require('./critical-loader-authority.js');
 const {findSynchronousFunctionDeclaration}=require('./synchronous-function-declaration.js');
+const PowerEfforts=require('../../scripts/patches/lib/model-power-effort-contribution.js');
 const Authority=require('./native-catalog-authority.js'),Resolver=require('./local-resolver.js'),Default=require('./upstream-default-selection.js');
 const ID='[A-Za-z_$][\\w$]*',MARKER='codex-linux-model-picker-default-presets-local-composer-config',PREFIX='codexLinuxLocalDefaultPreset';
 const NEEDLES=['sliderModelsConfig:','modelsForPicker(','setDefaultModelAndReasoningEffort:','composer.mode.local.model.custom','onSelectDefault:'];
@@ -105,7 +106,17 @@ function setterFacts(owner,route){
 }
 function consumerFacts(owner,route){
  const body=owner.body;
- const qvHit=match(body,new RegExp(String.raw`(?<choices>${ID})=\(0,(?<namespace>${ID})\.(?<exportName>${ID})\)\((?<models>${ID}),\{sliderModelsConfig:(?<argument>[^,;]+),stripGptPrefix:!(?<strip>${ID})\}\)(?=[,;])`,'gdu'),'native local preset resolver call',true),qv=qvHit.groups;
+ const qvHit=match(body,new RegExp(String.raw`(?<choices>${ID})=\(0,(?<namespace>${ID})\.(?<exportName>${ID})\)\((?<models>${ID}),\{sliderModelsConfig:(?<argument>[^,;]+),stripGptPrefix:!(?<strip>${ID})(?:,enabledReasoningEfforts:(?<efforts>${ID})/\*${PowerEfforts.CONSUMER_MARKER}\*/)?\}\)(?=[,;])`,'gdu'),'native local preset resolver call',true),qv=qvHit.groups;
+ if(owner.source.includes(PowerEfforts.CONSUMER_MARKER)!==Boolean(qv.efforts))throw Error('Orphan dynamic Power effort consumer');
+ if(qv.efforts){
+  const option=PowerEfforts.projectPowerEffortOption(owner.source);
+  const input=PowerEfforts.inspectEnabledPowerEffortInput(body,qv);
+  if(option.enabled!==input.enabled||qv.efforts!==input.enabled||
+    owner.imported(input.reader).moduleId!=='zTeN'||owner.imported(input.atom).moduleId!=='Q3tq'){
+   throw Error('Disconnected native enabled Power effort input');
+  }
+  roleInitializer(body,input.enabled);
+ }
  if(qv.argument!==route.expression)throw Error('Mixed native composer config source');
  const enabled=match(body,new RegExp(String.raw`(?<![\w$.])${escapeRegExp(qv.models)}=(?<options>${ID})\?\.filter\((?<enabled>${ID})\)\.map\((?<model>${ID})\)(?=[,;])`,'gdu'),'enabled model intersection input',true).groups;
  for(const[name,property,tail]of [[enabled.enabled,'disabledReason','null=='],[enabled.model,'model','']]){
@@ -188,9 +199,9 @@ function prepareComposerFactory(source,snapshot,presets,publicEfforts){
 
 function guardFacts(owner,route,c){
  const body=owner.body,m=escapeRegExp(route.query.managed),home=escapeRegExp(route.route.homeFlag),auth=escapeRegExp(route.query.auth);
- const disabledHit=match(body,new RegExp(String.raw`(?<modelDisabled>${ID})=(?<loading>${ID})\|\|"error"===(?<status>${ID})\|\|${m}\?\.isModelLocked===!0,(?<effortDisabled>${ID})=\k<loading>\|\|(?<blocked>${ID})\|\|${m}\?\.lockedReasoningEffort!=null(?=[,;])`,'gdu'),'native loading/lock disabled controls',true),disabled=disabledHit.groups;
+ const disabledHit=match(body,new RegExp(String.raw`(?<modelDisabled>${ID})=(?<loading>${ID})\|\|"error"===(?<status>${ID})\|\|${m}\?\.isModelLocked===!0,(?<effortDisabled>${ID})=\k<loading>\|\|(?<blocked>${ID})(?=[,;])`,'gdu'),'native loading/lock disabled controls',true),disabled=disabledHit.groups;
  for(const [field,value]of[['modelOptionsDisabled',disabled.modelDisabled],['reasoningEffortDisabled',disabled.effortDisabled]])match(body,new RegExp(String.raw`${field}:${escapeRegExp(value)}(?=[,}])`,'gu'),'native disabled output');
- const available=match(body,new RegExp(String.raw`(?<surface>${ID})=!(?<side>${ID})&&!${escapeRegExp(disabled.loading)}&&!(?<busy>${ID})&&!${escapeRegExp(disabled.blocked)},(?<effort>${ID})=!${home}&&\k<surface>&&${m}\?\.lockedReasoningEffort==null,(?<power>${ID})=!${home}&&!\k<side>&&${m}\?\.isModelLocked!==!0&&${m}\?\.lockedReasoningEffort==null&&!${escapeRegExp(disabled.blocked)}&&"error"!==${escapeRegExp(disabled.status)}(?=[,;])`,'gdu'),'native picker surface readiness',true).groups;
+ const available=match(body,new RegExp(String.raw`(?<surface>${ID})=!(?<side>${ID})&&!${escapeRegExp(disabled.loading)}&&!(?<busy>${ID})&&!${escapeRegExp(disabled.blocked)},(?<effort>${ID})=!${home}&&\k<surface>,(?<power>${ID})=!${home}&&!\k<side>&&${m}\?\.isModelLocked!==!0&&!${escapeRegExp(disabled.blocked)}&&"error"!==${escapeRegExp(disabled.status)}(?=[,;])`,'gdu'),'native picker surface readiness',true).groups;
  const blockingHit=match(body,new RegExp(String.raw`${escapeRegExp(disabled.blocked)}=(?<gate>${auth}\?\.authMethod==="copilot"\|\||/\*codexLinuxCopilotEffortDropdown\*/)${escapeRegExp(c.enabled.options)}\?\.find\((?<entry>${ID})=>\{let\{model:(?<model>${ID})\}=\k<entry>;return \k<model>\.model===${escapeRegExp(c.current.model)}\}\)\?\.disabledReason!=null`,'gdu'),'native or exact sibling Copilot/model blocking',true),blocking=blockingHit.groups;
 
  noCapture([blocking.entry,blocking.model],[c.current.model],'native disabled-model callback');
@@ -200,7 +211,7 @@ function guardFacts(owner,route,c){
  // the local Default callback. Keep that original branch and data readers.
  const homeReads=match(body,new RegExp(String.raw`let (?<pending>${ID})=\(0,${escapeRegExp(route.query.framework)}\.${escapeRegExp(route.query.plainReader)}\)\(${home}\?(?<namespace>${ID})\.(?<pendingExport>${ID}):null\),(?<selected>${ID})=\(0,${escapeRegExp(route.query.framework)}\.${escapeRegExp(route.query.plainReader)}\)\(${home}\?(?<merged>${ID}):null\),(?<conversation>${ID})=\(0,${escapeRegExp(route.query.framework)}\.${escapeRegExp(route.query.plainReader)}\)\(${home}\?\k<namespace>\.homeConversationId\$:null\)`,'gdu'),'native home state readers',true).groups;
 
- const guardFragment=match(body,new RegExp(String.raw`if\(${home}\)\{let (?<selectedModel>${ID}),(?<service>${ID}),(?<node>${ID}),(?<extra>${ID}),(?<fragment>${ID}),(?<tpp>${ID})=null==${escapeRegExp(homeReads.selected)},(?<blocked>${ID})=${escapeRegExp(homeReads.selected)}\?\.rateLimitState\.sendBlocked,(?<loading>${ID})=${escapeRegExp(homeReads.pending)}\?\.isPending!==!1,(?<models>${ID})=${escapeRegExp(homeReads.pending)}\?\.models,(?<limits>${ID})=${escapeRegExp(homeReads.selected)}\?\.rateLimitState\.modelLimits,(?<fallback>${ID})=${escapeRegExp(homeReads.selected)}\?\.premiumFallbackModelSlug;`,'gdu'),'native home readiness branch',true);
+ const guardFragment=match(body,new RegExp(String.raw`if\(${home}\)\{let (?<selectedModel>${ID}),(?<service>${ID}),(?<node>${ID}),(?<extra>${ID}),(?<fragment>${ID}),(?<tpp>${ID})="chatgpt"!==${escapeRegExp(c.setter.store)}\.value\.kind\|\|${escapeRegExp(c.setter.store)}\.value\.chatGptSelectionContext\?\.conversationOrigin==="tpp",(?<blocked>${ID})=${escapeRegExp(homeReads.selected)}\?\.rateLimitState\.sendBlocked,(?<loading>${ID})=${escapeRegExp(homeReads.pending)}\?\.isPending!==!1\|\|${escapeRegExp(homeReads.selected)}\?\.savedModelPending===!0,(?<models>${ID})=${escapeRegExp(homeReads.pending)}\?\.models,(?<limits>${ID})=${escapeRegExp(homeReads.selected)}\?\.rateLimitState\.modelLimits,(?<fallback>${ID})=${escapeRegExp(homeReads.selected)}\?\.premiumFallbackModelSlug;`,'gdu'),'native home readiness branch',true);
  if(guardFragment.index>=c.callback.memoHead.index)throw Error('Native home branch no longer precedes local Default callback');
  const hg=guardFragment.groups;distinct([hg.selectedModel,hg.service,hg.node,hg.extra,hg.fragment,hg.tpp,hg.blocked,hg.loading,hg.models,hg.limits,hg.fallback],'home branch locals');noCapture(Object.values(hg),[homeReads.selected,homeReads.pending,homeReads.conversation],'home branch captures');
  const blockOpen=guardFragment.index+guardFragment[0].indexOf('{'),blockEnd=createJavaScriptLexicalIndex(body).matchingBrace(blockOpen),homeBody=body.slice(blockOpen+1,blockEnd);
@@ -253,11 +264,11 @@ function inspectModels(source,snapshot,expected){
  return{kind:state.kind,qv:expected.qv,normalizer:expected.normalizer,fallback:expected.fallback,exact:expected.exact,publicIntersection:true,nativeFlagData:'codexLinuxDefaultPresets',nativeFallbackUnchanged:true};
 }
 const publicationCache=new Map(),dependencyCache=new Map();
-function publicationFrame(source,snapshot){
- const cacheKey=key(source,snapshot);if(publicationCache.has(cacheKey))return publicationCache.get(cacheKey);
+function publicationFrame(source,snapshot,interopCount){
+ const cacheKey=JSON.stringify([key(source,snapshot),interopCount??null]);if(publicationCache.has(cacheKey))return publicationCache.get(cacheKey);
  if(Buffer.byteLength(source)>256*1024)throw Error('Composer dependency exceeds native factory budget');
  stable(source,snapshot.params[2]);stable(source,snapshot.params[1]);const lexical=createJavaScriptLexicalIndex(source),req=escapeRegExp(snapshot.params[2]);
- const interops=hits(source,new RegExp(String.raw`(?<![\w$.])${ID}=${req}\.n\(${ID}\)(?=[,;])`,'gu'),true);if(interops.length>1)throw Error('Unsupported composer dependency interop count');assertCriticalLoaderMethodUses(source,snapshot,{allowInterop:interops.length===1});if(publicationCache.size>=64)publicationCache.delete(publicationCache.keys().next().value);publicationCache.set(cacheKey,lexical);return lexical;
+ const interops=hits(source,new RegExp(String.raw`(?<![\w$.])${ID}=${req}\.n\(${ID}\)(?=[,;])`,'gu'),true);if(interopCount==null&&interops.length>1)throw Error('Unsupported composer dependency interop count');if(interopCount!=null&&interops.length!==interopCount)throw Error('Wrong native composer dependency interop count');assertCriticalLoaderMethodUses(source,snapshot,{interopCount:interops.length});if(publicationCache.size>=64)publicationCache.delete(publicationCache.keys().next().value);publicationCache.set(cacheKey,lexical);return lexical;
 }
 function inspectHomeCommit(source,snapshot,expected){
  const lex=publicationFrame(source,snapshot),req=escapeRegExp(snapshot.params[2]),exp=escapeRegExp(snapshot.params[1]),registration=match(source,new RegExp(String.raw`(?<![\w$.])${req}\.d\(${exp},\{`,'gu'),'home commit publication registry',true);
@@ -303,7 +314,8 @@ function patchComposerConfig(extractedDir,presets,publicEfforts,options={}){
  for(const [label,ref]of Object.entries(mapper.refs))qualify(ref,'home-mapper-'+label,(s,m)=>inspectNamedReference(s,m,ref));
  const direct={host:{...facts.imports.host,exportName:facts.context.hostExport},hostAuth:{...facts.imports.hostAuth,exportName:facts.auth.exportName},selection:{...facts.imports.selection,exportName:facts.state.exportName},managed:{...facts.imports.managed,exportName:facts.managed.exportName}};
  for(const [label,ref]of Object.entries(direct))qualify(ref,label,(s,m)=>inspectNamedReference(s,m,ref,true));
- qualify(branch.homePicker,'home-picker-component',(s,m)=>inspectNamedReference(s,m,branch.homePicker));
+ // The current merged Home component has two explicit native interop initializers.
+ qualify(branch.homePicker,'home-picker-component',(s,m)=>inspectNamedReference(s,m,branch.homePicker,false,{interopCount:2}));
  const ct=match(prepared[0].nativeSource,new RegExp(String.raw`\(0,${escapeRegExp(modelRef.localName)}\.(?<exportName>${ID})\)\(${escapeRegExp(facts.qv.models)},\{stripGptPrefix:!${escapeRegExp(facts.qv.strip)}\}\)\.filter\(`,'gu'),'native ordinary normalizer call').groups.exportName;
  qualify(modelRef,'native-public-pair-resolver',(s,m)=>inspectModels(s,m,{qv:facts.qv.exportName,normalizer:ct,fallback:facts.fallbackExport,exact:facts.exactExport}));
  const homeRef=branch.bridge.commit;if(homeRef.moduleId!==branch.homeState.moduleId)throw Error('Home commit is not the selected-state namespace');qualify(homeRef,'native-home-commit',(s,m)=>inspectHomeCommit(s,m,{exportName:homeRef.exportName,selectedExport:branch.home.pendingExport}));
@@ -321,7 +333,7 @@ function nativeMenuOptionProjection(owner,route,c,menuOptions,defaultIndex){
  capture(body,[g.predicate],[owner.input]);
  const found=route.decl.positions.get(g.write0);if(found==null)throw Error('Unowned native automatic option temporary');
  stableMutableRole(body,g.write0,[found,lookup.indices.groups.write0[0],lookup.indices.groups.write1[0]]);roleInitializer(body,g.value);
- const value=escapeRegExp(g.value),ordered=match(body,new RegExp(String.raw`${cache}\[(?<first>\d+)\]!==${value}\|\|${cache}\[(?<second>\d+)\]!==${raw}\?\((?<write0>${ID})=null!=${value}&&null!=${raw}\?\[${value},\.\.\.${raw}\.filter\((?<entry>${ID})=>\k<entry>!==${value}\)\]:${raw},${cache}\[\k<first>\]=${value},${cache}\[\k<second>\]=${raw},${cache}\[(?<out>\d+)\]=\k<write0>\):(?<write1>\k<write0>)=${cache}\[\k<out>\];let ${escapeRegExp(menuOptions)}=\k<write0>;`,'gdu'),'native automatic option promotion',true),o=ordered.groups;
+ const value=escapeRegExp(g.value),ordered=match(body,new RegExp(String.raw`${cache}\[(?<first>\d+)\]!==${value}\|\|${cache}\[(?<second>\d+)\]!==${raw}\?\((?<write0>${ID})=null!=${value}&&null!=${raw}\?\[${value},\.\.\.${raw}\.filter\((?<entry>${ID})=>\k<entry>!==${value}\)\]:${raw},${cache}\[\k<first>\]=${value},${cache}\[\k<second>\]=${raw},${cache}\[(?<out>\d+)\]=\k<write0>\):(?<write1>\k<write0>)=${cache}\[\k<out>\];let ${escapeRegExp(menuOptions)}=\k<write0>(?=[,;])`,'gdu'),'native automatic option promotion',true),o=ordered.groups;
  noCapture([o.entry],[g.value,c.enabled.options],'automatic option exclusion');
  const projected=route.decl.positions.get(o.write0);if(projected==null)throw Error('Unowned native promoted option temporary');
  stableMutableRole(body,o.write0,[projected,ordered.indices.groups.write0[0],ordered.indices.groups.write1[0]]);roleInitializer(body,menuOptions);roleInitializer(body,defaultIndex);
@@ -358,8 +370,8 @@ function inspectNativeMapper(source,snapshot,ref){
  const imported=name=>{const b=findRspackRequireBinding(snapshot,name);if(!b)throw Error('Missing native home mapper import');stable(source,name,b.start-(snapshot.start??0));return{moduleId:b.moduleId,localName:name};};
  return{kind:'native-home-mapper',moduleId:snapshot.moduleId,exportName:ref.exportName,refs:{schema:{...imported(g.catalog),exportName:g.schemaExport},names:{...imported(g.names),exportName:g.namesExport}},source:text,nativeWorkAliasPreserved:true};
 }
-function inspectNamedReference(source,snapshot,ref,callable=false){
- publicationFrame(source,snapshot);const pub=findRspackExportPublication(snapshot,ref.exportName);if(!pub)throw Error('Missing linked native reference');
+function inspectNamedReference(source,snapshot,ref,callable=false,options={}){
+ publicationFrame(source,snapshot,options.interopCount);const pub=findRspackExportPublication(snapshot,ref.exportName);if(!pub)throw Error('Missing linked native reference');
  if(callable){if(pub.fn){if(!/^function\(/u.test(source.slice(pub.fn.start,pub.fn.end)))throw Error('Non-synchronous native caller dependency');}else if(new RegExp(`^${ID}$`,'u').test(pub.expression??'')){
    const name=pub.expression,declarations=hits(source,new RegExp(String.raw`\bfunction ${escapeRegExp(name)}\(`,'gu'),true);
    if(declarations.length)findSynchronousFunctionDeclaration(source,snapshot,name);

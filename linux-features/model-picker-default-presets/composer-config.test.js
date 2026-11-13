@@ -116,9 +116,30 @@ test('actual Default memo refreshes same-list callbacks on config/profile/host c
  const profileCalls=[];renderDefault(a,cache,{...base,base:(...args)=>{profileCalls.push({profile:'changed',host:'remote',args});return Promise.resolve(true)}}).callback();assert.equal(profileCalls[0].args[0],'model-new');assert.equal(profileCalls[0].args[1],'high');assert.equal(profileCalls[0].args[3],undefined);
 });
 
-test('actual local disabled expressions retain loading, locked, Copilot and error controls',()=>{
+test('actual local disabled expressions retain loading, model lock, Copilot and error controls',()=>{
  const p=current().proof,g=p.fragments.guards.disabled,src=p.fragments.guards.disabledSource,run=options=>vm.runInNewContext(`(()=>{let ${src};return{model:${g.modelDisabled},effort:${g.effortDisabled}}})()`,{[g.loading]:options.loading??false,[g.status]:options.status??'success',[g.blocked]:options.blocked??false,[p.query.managed]:options.managed??null});
- assert.deepEqual(plain(run({})),{model:false,effort:false});assert.deepEqual(plain(run({loading:true})),{model:true,effort:true});assert.equal(run({status:'error'}).model,true);assert.equal(run({blocked:true}).effort,true);assert.deepEqual(plain(run({managed:{isModelLocked:true,lockedReasoningEffort:'high'}})),{model:true,effort:true});
+ assert.deepEqual(plain(run({})),{model:false,effort:false});assert.deepEqual(plain(run({loading:true})),{model:true,effort:true});assert.equal(run({status:'error'}).model,true);assert.equal(run({blocked:true}).effort,true);assert.deepEqual(plain(run({managed:{isModelLocked:true,lockedReasoningEffort:'high'}})),{model:true,effort:false});assert.deepEqual(plain(run({managed:{lockedReasoningEffort:'high'}})),{model:false,effort:false});
+});
+
+test('current Home readiness retains scoped conversation origin and saved-model pending state',()=>{
+ const p=current().proof,g=p.fragments.guards,source=g.homeGuardSource;
+ const tpp=/(?<name>[A-Za-z_$][A-Za-z0-9_$]*)="chatgpt"!==/u.exec(source).groups.name;
+ const loading=/(?<name>[A-Za-z_$][A-Za-z0-9_$]*)=[A-Za-z_$][A-Za-z0-9_$]*\?\.isPending/u.exec(source).groups.name;
+ assert.ok(source.includes(`${loading}=${g.home.pending}?.isPending`));
+ const run=(options={})=>plain(vm.runInNewContext(`(()=>{${source}return{tpp:${tpp},loading:${loading}};}})()`,{
+  [p.context.homeFlag]:true,
+  [p.selector.store]:{value:{kind:options.kind??'chatgpt',chatGptSelectionContext:{conversationOrigin:options.origin}}},
+  [g.home.pending]:{isPending:options.pending??false,models:[]},
+  [g.home.selected]:options.noSelection?null:{savedModelPending:options.savedPending??false,rateLimitState:{sendBlocked:false,modelLimits:[]}},
+ }));
+ assert.deepEqual(run(),{tpp:false,loading:false});
+ assert.deepEqual(run({noSelection:true}),{tpp:false,loading:false});
+ assert.equal(run({kind:'local'}).tpp,true);assert.equal(run({origin:'tpp'}).tpp,true);
+ assert.equal(run({savedPending:true}).loading,true);assert.equal(run({pending:true}).loading,true);
+ const native=fixture.moduleSource;
+ for(const changed of [native.replace('savedModelPending===!0','savedModelPending!==!0'),native.replace(`"chatgpt"!==${p.selector.store}.value.kind`,`"chatgpt"===${p.selector.store}.value.kind`)]){
+  assert.notEqual(changed,native);assert.throws(()=>C.prepareComposerFactory(changed,{...fixture,moduleSource:changed},presets,map));
+ }
 });
 
 test('actual home conversion bridge refuses pending/unsupported pairs and preserves native selection metadata',async()=>{

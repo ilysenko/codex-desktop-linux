@@ -12,7 +12,8 @@ const decodeIdentifier=text=>text.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]
 // shadow remains local. Native allowed uses are then closed by source shape.
 function assertCriticalLoaderMethodUses(source,module,options={}){
  const allowInterop=options.allowInterop??false;
- if(typeof allowInterop!=="boolean"||typeof source!=="string"||Buffer.byteLength(source)>256*1024||module?.params?.length!==3||new Set(module.params).size!==3||module.params.some(name=>!new RegExp(`^${ID}$`,"u").test(name)))throw Error("Invalid native critical-loader authority input");
+ const interopCount=options.interopCount??Number(allowInterop);
+ if(typeof allowInterop!=="boolean"||!Number.isInteger(interopCount)||interopCount<0||interopCount>2||typeof source!=="string"||Buffer.byteLength(source)>256*1024||module?.params?.length!==3||new Set(module.params).size!==3||module.params.some(name=>!new RegExp(`^${ID}$`,"u").test(name)))throw Error("Invalid native critical-loader authority input");
  try{new Script(`"use strict";(function(${module.params.join(",")}){${source}})`)}catch{throw Error("Invalid native critical-loader factory syntax")}
  for(const name of module.params.slice(1))stable(source,name);
  const lexical=createJavaScriptLexicalIndex(source);
@@ -38,7 +39,7 @@ function assertCriticalLoaderMethodUses(source,module,options={}){
  const publications=[...source.matchAll(new RegExp(`(?<![\\w$.])${req}\\.d\\(${exp},\\{`,"gu"))].filter(hit=>lexical.isRoot(hit.index));
  const interops=[...source.matchAll(new RegExp(`(?<![\\w$.])(?<alias>${ID})=${req}\\.n\\(${ID}\\)(?=[,;])`,"gu"))].filter(hit=>lexical.isRoot(hit.index)).map(hit=>hit.index+hit.groups.alias.length+1);
  const expected=[...publications.map(hit=>({method:"d",index:hit.index})),...interops.map(index=>({method:"n",index}))].sort((a,b)=>a.index-b.index);
- if(publications.length!==1||interops.length!==(allowInterop?1:0)||JSON.stringify(uses)!==JSON.stringify(expected))throw Error("Unexpected original local Default critical loader method use");
+ if(publications.length!==1||interops.length!==interopCount||JSON.stringify(uses)!==JSON.stringify(expected))throw Error("Unexpected original local Default critical loader method use");
  return Object.freeze(uses.map(use=>Object.freeze(use)));
 }
 module.exports={assertCriticalLoaderMethodUses};
