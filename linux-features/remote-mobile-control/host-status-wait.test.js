@@ -114,3 +114,14 @@ test("String entry rejects missing, duplicate, partial, altered timeout and orph
   for (const bad of ["const unrelated=1;", native + native, native + `/*${WAIT_MARKER}*/`, patched.replace(WAIT_EXPRESSION, WAIT_EXPRESSION.replace("3e4", "3e5")), native.replace("},5e3)", "},4e3)")]) assert.throws(() => prepareStatusWaitString(bad));
   assert.throws(() => prepareStatusWaitString("stale", { factorySnapshot: copy() }), /stale/);
 });
+
+
+test("wait transaction requires the current subscriber queued-work cancellation before writing", t => {
+  const s = scene(t), file = path.join(s.assets, "lifecycle.js");
+  const source = fs.readFileSync(file, "utf8");
+  assert.equal(source.split("ru.cancel()").length, 2);
+  fs.writeFileSync(file, source.replace("ru.cancel()", "ru.dispose()"));
+  const before = snapshot(s.assets);
+  assert.throws(() => applyStatusWaitPatch(s.dir), /published native status subscriber lifecycle/);
+  assert.deepEqual(snapshot(s.assets), before);
+});
