@@ -112,7 +112,8 @@ function layoutAnimationFlags(source) {
     `(?<collection>${JS_IDENT})\\.map\\(\\((?<tab>${JS_IDENT}),(?<index>${JS_IDENT})\\)=>\\{` +
       `let (?<active>${JS_IDENT})=(?<selected>${JS_IDENT})===\\k<tab>\\.id,` +
       `(?<next>${JS_IDENT})=\\k<collection>\\[\\k<index>\\+1\\],` +
-      `(?<separator>${JS_IDENT})=\\k<index><\\k<collection>\\.length-1&&!\\k<active>&&\\k<selected>!==\\k<next>\\?\\.id,` +
+      `(?<separator>${JS_IDENT})=!\\k<active>&&\\(null==\\k<next>\\?null!=(?<afterSticky>${JS_IDENT}):` +
+      `\\k<selected>!==\\k<next>\\.id\\),` +
       `(?<element>${JS_IDENT})=\\k<tab>\\.render\\(\\{disabled:\\k<tab>\\.disabled,isActive:\\k<active>,isClosable:\\k<tab>\\.isClosable,` +
       `isPresented:${JS_IDENT}===\\k<tab>\\.id,isRenaming:${JS_IDENT}===\\k<tab>\\.id,` +
       `animateLayout:(?<expression>${JS_IDENT}|!1),animateExit:(?<motion>${JS_IDENT})&&!(?<position>${JS_IDENT}),` +

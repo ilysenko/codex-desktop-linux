@@ -22,8 +22,8 @@ const {
 
 // Shapes below follow the latest signed rspack webview.
 function currentAppShellTabLayoutFixture() {
-  return 'function tabs(entries){let selected,presented,renaming,focused,layout,motion,position,width,transition,widths;' +
-    'let rendered=entries.map((entry,index)=>{let active=selected===entry.id,next=entries[index+1],separator=index<entries.length-1&&!active&&selected!==next?.id,view=entry.render({' +
+  return 'function tabs(entries){let selected,presented,renaming,focused,afterSticky,layout,motion,position,width,transition,widths;' +
+    'let rendered=entries.map((entry,index)=>{let active=selected===entry.id,next=entries[index+1],separator=!active&&(null==next?null!=afterSticky:selected!==next.id),view=entry.render({' +
     'disabled:entry.disabled,isActive:active,isClosable:entry.isClosable,isPresented:presented===entry.id,isRenaming:renaming===entry.id,' +
     'animateLayout:layout,animateExit:motion&&!position,animatePosition:motion&&position,animateWidth:width,layoutTransition:transition,targetWidth:widths[index],' +
     'onActionsWidthChange:value=>{measure(value)},onRenamingChange:value=>{rename(value)},' +

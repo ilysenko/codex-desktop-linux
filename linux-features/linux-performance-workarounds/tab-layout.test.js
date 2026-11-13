@@ -14,8 +14,8 @@ const { createPatchReport, captureWarnings } = require("../../scripts/lib/patch-
 const descriptor = require("./patch.js").filter(row => row.id === "app-shell-tab-layout");
 const ID = "[A-Za-z_$][\\w$]*";
 
-const fixture = 'function strip(entries){let selected,presented,renaming,focused,layout,motion,position,width,transition,widths;' +
-  'let rendered=entries.map((entry,index)=>{let active=selected===entry.id,next=entries[index+1],separator=index<entries.length-1&&!active&&selected!==next?.id,view=entry.render({' +
+const fixture = 'function strip(entries){let selected,presented,renaming,focused,afterSticky,layout,motion,position,width,transition,widths;' +
+  'let rendered=entries.map((entry,index)=>{let active=selected===entry.id,next=entries[index+1],separator=!active&&(null==next?null!=afterSticky:selected!==next.id),view=entry.render({' +
   'disabled:entry.disabled,isActive:active,isClosable:entry.isClosable,isPresented:presented===entry.id,isRenaming:renaming===entry.id,' +
   'animateLayout:layout,animateExit:motion&&!position,animatePosition:motion&&position,animateWidth:width,layoutTransition:transition,targetWidth:widths[index],' +
   'onActionsWidthChange:value=>{setWidths(previous=>{if((previous[entry.key]??0)===value)return previous;let next={...previous};return 0===value?delete next[entry.key]:next[entry.key]=value,next})},' +
@@ -41,6 +41,7 @@ function mapFragment(source) {
   };
   const entry = escapeRegExp(head.groups.entry);
   const [selected] = read(new RegExp(`let ${ID}=(${ID})===${entry}\\.id`, "u"));
+  const [afterSticky] = read(new RegExp(`null==${ID}\\?null!=(${ID}):`, "u"));
   const [presented] = read(new RegExp(`isPresented:(${ID})===${entry}\\.id`, "u"));
   const [renaming] = read(new RegExp(`isRenaming:(${ID})===${entry}\\.id`, "u"));
   const [layout, motion, position, width, transition, widths] = read(new RegExp(
@@ -54,7 +55,7 @@ function mapFragment(source) {
   const [setWidths] = read(new RegExp(`onActionsWidthChange:${ID}=>\\{(${ID})\\(`, "u"));
   const [, clearPending, setRenaming] = read(new RegExp(`onRenamingChange:(${ID})=>\\{\\1&&(${ID})\\(null\\),(${ID})\\(`, "u"));
   return { text, list: head.groups.list, selected, presented, renaming, layout, motion, position, width, transition, widths,
-    jsx, classes, clone, controller, aria, dom, focused, setWidths, clearPending, setRenaming };
+    jsx, classes, clone, controller, aria, dom, focused, afterSticky, setWidths, clearPending, setRenaming };
 }
 
 function executeMap(text, bindings, flags, entries, transition) {
@@ -62,7 +63,7 @@ function executeMap(text, bindings, flags, entries, transition) {
   const events = [], renders = [], context = {};
   Object.assign(context, {
     [bindings.list]: entries, [bindings.selected]: "first", [bindings.presented]: "second", [bindings.renaming]: "first",
-    [bindings.focused]: entries[0],
+    [bindings.focused]: entries[0], [bindings.afterSticky]: flags.afterSticky,
     [bindings.layout]: flags.layout, [bindings.motion]: flags.motion, [bindings.position]: flags.position, [bindings.width]: flags.width,
     [bindings.transition]: transition, [bindings.widths]: [120, 100],
     [bindings.jsx]: { jsx: (type, props) => ({ type, props }) },
@@ -90,8 +91,8 @@ function assertRenderPreservation(source) {
     { id: "first", key: "first", disabled: false, isClosable: true, controller, onClose: close },
     { id: "second", key: "second", disabled: true, isClosable: false, controller, onClose: close },
   ];
-  for (const layout of [false, true]) for (const motion of [false, true]) for (const position of [false, true]) for (const width of [false, true]) {
-    const flags = { layout, motion, position, width }, transition = {};
+  for (const layout of [false, true]) for (const motion of [false, true]) for (const position of [false, true]) for (const width of [false, true]) for (const afterSticky of [null, {}]) {
+    const flags = { layout, motion, position, width, afterSticky }, transition = {};
     const a = executeMap(before.text, before, flags, entries, transition);
     const b = executeMap(afterText, before, flags, entries, transition);
     for (let index = 0; index < entries.length; index++) {
@@ -129,6 +130,9 @@ test("incoherent tab, motion, separator and keyboard bindings refuse unchanged",
     fixture.replace('"data-app-shell-tab-separator-index":index', '"data-app-shell-tab-separator-index":other'),
     fixture.replace('"aria-keyshortcuts":entry.isClosable?"Delete"', '"aria-keyshortcuts":entry.isClosable?"Enter"'),
     fixture.replace("tabIndex:focused===entry", "tabIndex:focused===next"),
+    fixture.replace("null!=afterSticky", "null==afterSticky"),
+    fixture.replace("selected!==next.id", "selected!==entry.id"),
+    fixture.replace("separator=!active&&(null==next?null!=afterSticky:selected!==next.id)", "separator=index<entries.length-1&&!active&&selected!==next?.id"),
     fixture.replace("onRenamingChange:", "otherCallback:"),
     fixture.replace("data-app-shell-tab-strip-controller", "other-controller"),
     fixture + fixture.replace("function strip", "function anotherStrip"),
