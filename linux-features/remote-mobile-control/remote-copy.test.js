@@ -62,10 +62,10 @@ test("current platform mapper returns Linux and native PC selectors retain Windo
   for (const [platform, expected] of [["Linux x86_64", "linux"], ["MacIntel", "macOS"], ["Win32", "windows"]]) {
     assert.equal(vm.runInNewContext(`(${fn})(undefined)`, { navigator: { platform } }), expected);
   }
-  const expression = fixture.settings.moduleSource.match(/"macOS"!==J\?\(0,o\.jsx\)\(p\.A,\{id:"settings\.remoteConnections\.remoteControlClients\.devices\.title\.windows"[^}]+\}\):\(0,o\.jsx\)\(p\.A,\{id:"settings\.remoteConnections\.remoteControlClients\.devices\.title"[^}]+\}\)/u)?.[0];
+  const expression = fixture.settings.moduleSource.match(/"macOS"!==Y\?\(0,o\.jsx\)\(p\.A,\{id:"settings\.remoteConnections\.remoteControlClients\.devices\.title\.windows"[^}]+\}\):\(0,o\.jsx\)\(p\.A,\{id:"settings\.remoteConnections\.remoteControlClients\.devices\.title"[^}]+\}\)/u)?.[0];
   assert.ok(expression);
   for (const platform of ["linux", "windows", "macOS"]) {
-    const result = vm.runInNewContext(expression, { J: platform, o: { jsx: (_type, props) => props }, p: { A: "FormattedMessage" } });
+    const result = vm.runInNewContext(expression, { Y: platform, o: { jsx: (_type, props) => props }, p: { A: "FormattedMessage" } });
     assert.equal(result.defaultMessage, platform === "macOS" ? "Devices that can control this Mac" : "Devices that can control this PC");
     assert.equal(result.id.endsWith(".windows"), platform !== "macOS");
   }
@@ -114,15 +114,15 @@ test("copy IDs, default text, descriptions, PC/Mac selectors and provider bindin
     ["settings", 'id:"settings.remoteConnections.tabs.controlThisMac.windows"', 'id:"other.id"'],
     ["settings", 'defaultMessage:"Devices that can control this PC"', 'defaultMessage:"Devices that can control Linux"'],
     ["settings", 'description:"Header title for devices that can control this Windows device"', 'description:"other"'],
-    ["settings", '"macOS"!==J?', '"macOS"===J?'],
-    ["settings", '{platform:J}=(0,k.V)()', '{platform:J}=(0,p.V)()'],
+    ["settings", '"macOS"!==Y?', '"macOS"===J?'],
+    ["settings", '{platform:Y}=(0,R.V)()', '{platform:Y}=(0,p.V)()'],
     ["settings", 'p=n("oyxz")', 'p=n("wrong")'],
     ["settings", 'o=n("ABep")', 'o=n("wrong")'],
-    ["settings", 'k=n("wwME")', 'k=n("wrong")'],
-    ["settings", 'J=n("Qgfj")', 'J=n("wrong")'],
-    ["settings", 'RemoteConnectionsSettings:()=>t6', 'RemoteConnectionsSettings:()=>eO'],
-    ["settings", 'keepLiveWindowsLabel}):(0,o.jsx)(p.A,{...eT.keepLiveMacLabel}', 'keepLiveMacLabel}):(0,o.jsx)(p.A,{...eT.keepLiveWindowsLabel}'],
-    ["settings", 'keepLiveWindowsLabel):b.formatMessage(eT.keepLiveMacLabel)', 'keepLiveMacLabel):b.formatMessage(eT.keepLiveWindowsLabel)'],
+    ["settings", 'R=n("wwME")', 'R=n("wrong")'],
+    ["settings", 'Y=n("Qgfj")', 'Y=n("wrong")'],
+    ["settings", 'RemoteConnectionsSettings:()=>t8', 'RemoteConnectionsSettings:()=>eO'],
+    ["settings", 'keepLiveWindowsLabel}):(0,o.jsx)(p.A,{...eP.keepLiveMacLabel}', 'keepLiveMacLabel}):(0,o.jsx)(p.A,{...eP.keepLiveWindowsLabel}'],
+    ["settings", 'keepLiveWindowsLabel):b.formatMessage(eP.keepLiveMacLabel)', 'keepLiveMacLabel):b.formatMessage(eP.keepLiveWindowsLabel)'],
     ["settings", 'Open the ChatGPT app on the computer you want to control', 'Open the ChatGPT app on this Linux desktop'],
     ["settings", '<controlMac>Control this Mac</controlMac> or <pc>PC</pc>', '<controlMac>Control this Linux desktop</controlMac> or <pc>PC</pc>'],
     ["platformMap", ':"linux"', ':"windows"'],
@@ -137,7 +137,7 @@ test("copy IDs, default text, descriptions, PC/Mac selectors and provider bindin
     ["allow", 'codexMobile.setupDialog.initial.title.windows', 'other.title'],
   ];
   for (const [role, before, after] of mutations) rejects(input => replace(input, role, before, after));
-  rejects(input => replace(input, "settings", '}});var eP=', '}});eT={};var eP='));
+  rejects(input => replace(input, "settings", '}});var eT=', '}});eP={};var eT='));
 });
 
 test("search publication, selected records, loader, state and section consumer fail closed", () => {
@@ -147,9 +147,9 @@ test("search publication, selected records, loader, state and section consumer f
     ["searchConsumer", '.e(948216)', '.e(999999)'],
     ["searchConsumer", '.bind(s,"j1jw")', '.bind(s,"wrong")'],
     ["searchConsumer", 'e=>e.settingsSearchDocuments', 'e=>e.otherDocuments'],
-    ["searchConsumer", 'messages:(W?.[e]??[])', 'messages:(X?.[e]??[])'],
+    ["searchConsumer", 'messages:(H?.[e]??[])', 'messages:(X?.[e]??[])'],
     ["searchConsumer", ',sectionSlug:e,...null==t?{}:{terms:t}', '.filter(()=>false),sectionSlug:e,...null==t?{}:{terms:t}'],
-    ["searchConsumer", 'SettingsLayout:()=>tz', 'SettingsLayout:()=>e7'],
+    ["searchConsumer", 'SettingsLayout:()=>tP', 'SettingsLayout:()=>e7'],
   ]) rejects(input => replace(input, role, before, after));
   const row = contracts.searchMessages[0], text = `{defaultMessage:${JSON.stringify(row.defaultMessage)},id:${JSON.stringify(row.id)}}`;
   rejects(input => replace(input, "search", text, text + "," + text));
@@ -159,7 +159,7 @@ test("search publication, selected records, loader, state and section consumer f
 test("all copies and physical dependencies are qualified before any no-op commit", () => temporary(root => {
   const input = sources();input["async/replica.js"] = input["async/remote-copy-settings.js"];
   assert.equal(prepare(snapshots(input)).targetCopies, 2);
-  input["async/replica.js"] = input["async/replica.js"].replace('"macOS"!==J?', '"macOS"===J?');
+  input["async/replica.js"] = input["async/replica.js"].replace('"macOS"!==Y?', '"macOS"===J?');
   writeApp(root, input);assert.throws(() => apply84(root));assert.deepEqual(readApp(root, input), input);
   const cohort = snapshots();cohort.flow = [];assert.throws(() => prepare(cohort), /missing flow/);
   const physical = snapshots();physical.settings[0].start++;assert.throws(() => prepare(physical), /physical snapshot/);
@@ -207,11 +207,11 @@ test("copy-site qualification leaves the unrelated native revoke callback outsid
 
 test("root function-head authority rejects generators replacing published copy consumers or native providers", () => {
   for (const [role, suffix] of [
-    ["settings", "function* t6(){return null}"],
-    ["searchConsumer", "function* tz(){return null}"],
-    ["settings", "async/*head*/function /*star*/ * /*name*/ t6({x}={}){return null}"],
-    ["searchConsumer", "function\n*\n tz({x}={}){return null}"],
-    ["settings", "function* k(){return null}"],
+    ["settings", "function* t8(){return null}"],
+    ["searchConsumer", "function* tP(){return null}"],
+    ["settings", "async/*head*/function /*star*/ * /*name*/ t8({x}={}){return null}"],
+    ["searchConsumer", "function\n*\n tP({x}={}){return null}"],
+    ["settings", "function* R(){return null}"],
     ["settings", "function /*head*/ * /*name*/ p({x}={}){return null}"],
     ["settings", "function* n(){return null}"],
   ]) {
