@@ -67,9 +67,9 @@ test("expanded native contract rejects partial state/body guards, changed callba
     "const unrelated=true;", fixture + fixture, patched + fixture,
     patched.replace("/*community-reasoning-visibility-expanded*/", ""),
     patched.replace("/*community-reasoning-visibility-expanded-body*/", ""),
-    patched.replace('&&(!codexLinuxReasoningVisibilityEnabled()||!!P)/*community-reasoning-visibility-expanded-body*/', ""),
-    patched.replace("onToggle:()=>{D(aM)}", "onToggle:()=>{other(aM)}"),
-    patched.replace("autoScrollToBottom:_", "autoScrollToBottom:!1"),
+    patched.replace('&&(!codexLinuxReasoningVisibilityEnabled()||!!L)/*community-reasoning-visibility-expanded-body*/', ""),
+    patched.replace("onToggle:()=>{E(aM)}", "onToggle:()=>{other(aM)}"),
+    patched.replace("autoScrollToBottom:R", "autoScrollToBottom:!1"),
     patched.replace(RUNTIME, ""), RUNTIME + patched,
     body + `;function unused(){${RUNTIME}}`, body + `;if(false){${RUNTIME}}`,
     `export const __webpack_modules__={Owner(e,t,n){${body}},Sibling(e,t,n){${RUNTIME}}};`,
@@ -156,10 +156,10 @@ test("signed current native component patches idempotently through production de
 test("expanded rejects inactive or changed callable owners before any source write", t => {
   t.mock.method(console,"warn",()=>{});
   for (const modified of [
-    fixture.replace("function ak(e)","async function ak(e)"),
-    fixture.replace("function ak(e)","async/*gap*/function ak(e)"),
-    fixture.replace("function ak(e)","function* ak(e)"),
-    fixture.replace("function ak(e)","const unused=function ak(e)").replace("}\nfunction aM", "};\nfunction aM"),
+    fixture.replace("function aS(e)","async function aS(e)"),
+    fixture.replace("function aS(e)","async/*gap*/function aS(e)"),
+    fixture.replace("function aS(e)","function* ak(e)"),
+    fixture.replace("function aS(e)","const unused=function aS(e)").replace("}\nfunction aM", "};\nfunction aM"),
   ]) {
     assert.notEqual(modified,fixture);
     assert.equal(javascriptSourceParses(modified),true);
@@ -200,11 +200,11 @@ test("actual expanded owner preserves every other source byte and refuses hidden
   const original=fs.readFileSync(path.join(app,"webview/assets",names[0]),"utf8"),patched=apply(original);
   const restored=patched.replace(RUNTIME+"\n","")
     .replace("codexLinuxReasoningVisibilityEnabled()/*community-reasoning-visibility-expanded*/","!1")
-    .replace("&&(!codexLinuxReasoningVisibilityEnabled()||!!P)/*community-reasoning-visibility-expanded-body*/","");
+    .replace("&&(!codexLinuxReasoningVisibilityEnabled()||!!L)/*community-reasoning-visibility-expanded-body*/","");
   assert.equal(restored,original);
   const missing=original.replace('key:"reasoning-markdown"','key:"retired-reasoning"');
   for(const other of [missing,missing+';const note=\'key:"reasoning-markdown"\';',patched,
-    original.replace("function ak(e)","async/*gap*/function ak(e)")]) {
+    original.replace("function aS(e)","async/*gap*/function aS(e)")]) {
     assert.equal(javascriptSourceParses(other),true);
     const project=workspace(t),a=project.write("async/current.js",original),b=project.write("async/hidden.js",other);
     assert.equal(project.run().status,"skipped-optional");
@@ -237,18 +237,22 @@ test("expanded does not treat a returned named function expression as a declarat
 test("expanded requires the stable component binding and live returned Collapse continuation",t=>{
   t.mock.method(console,"warn",()=>{});
   for(const input of [
-    fixture+";ak=()=>null;",
-    fixture+";"+String.fromCharCode(92)+"u0061k=()=>null;",
-    fixture.replace("expanded:U,children:w","expanded:!1,children:w"),
-    fixture.replace("header:v,body:j","header:v,body:w"),
-    fixture.replace("A[38],C}","A[38],null}"),
-    fixture.replace("return A[17]","return null;A[17]"),
+    fixture+";aS=()=>null;",
+    fixture+";"+String.fromCharCode(92)+"u0061S=()=>null;",
+    fixture.replace("expanded:U,children:C","expanded:!1,children:C"),
+    fixture.replace("children:[y,j]","children:[y,C]"),
+    fixture.replace("children:[y,j]","children:[j,y]"),
+    fixture.replace("children:[y,j]","header:y,body:j"),
+    fixture.replace("externalDisclosure:g","externalDisclosure:foreign"),
+    fixture.replace("g=O?{expanded:D","g=O?{expanded:foreign"),
+    fixture.replace("I[38],A}","I[38],null}"),
+    fixture.replace("return I[17]","return null;I[17]"),
   ]) {
     assert.notEqual(input,fixture);assert.equal(javascriptSourceParses(input),true);
     assert.equal(apply(input),input);
     const {write,run}=workspace(t),file=write("async/disconnected.js",input);
     assert.equal(run().status,"skipped-optional");assert.equal(fs.readFileSync(file,"utf8"),asChunk(input));
   }
-  const alias=fixture.replace(/\bak\b/gu,"CurrentReasoning$");
+  const alias=fixture.replace(/\baS\b/gu,"CurrentReasoning$");
   assert.notEqual(apply(alias),alias);
 });

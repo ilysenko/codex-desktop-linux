@@ -23,7 +23,7 @@ function stableComponentBinding(body,name,declaration,lexical) {
   return true;
 }
 
-function returnedDisclosure(component,visible) {
+function returnedDisclosure(component,visible,state) {
   const body=component.text.slice(component.text.indexOf("{")+1,-1),lexical=createJavaScriptLexicalIndex(body);
   const returns=[...body.matchAll(/\breturn\b/gu)].filter(match=>lexical.isRoot(match.index));
   if(returns.length!==1)return false;
@@ -36,11 +36,16 @@ function returnedDisclosure(component,visible) {
     `\\((?<collapse>${ID})=\\(0,(?<jsx>${ID})\\.jsx\\)\\(${ID}\\.${ID},\\{expanded:${escapeRegExp(visible)},children:\\k<scroll>\\}\\),`+
     `\\k<cache>\\[\\k<visibleSlot>\\]=${escapeRegExp(visible)},\\k<cache>\\[\\k<scrollSlot>\\]=\\k<scroll>,\\k<cache>\\[(?<collapseSlot>\\d+)\\]=\\k<collapse>\\):\\k<collapse>=\\k<cache>\\[\\k<collapseSlot>\\],`+
     `\\k<cache>\\[(?<headerSlot>\\d+)\\]!==(?<header>${ID})\\|\\|\\k<cache>\\[(?<bodySlot>\\d+)\\]!==\\k<collapse>\\?`+
-    `\\((?<result>${ID})=\\(0,\\k<jsx>\\.jsx\\)\\(${ID}\\.${ID},\\{header:\\k<header>,body:\\k<collapse>\\}\\),`+
+    `\\((?<result>${ID})=\\(0,\\k<jsx>\\.jsxs\\)\\(${ID}\\.${ID},\\{children:\\[\\k<header>,\\k<collapse>\\]\\}\\),`+
     `\\k<cache>\\[\\k<headerSlot>\\]=\\k<header>,\\k<cache>\\[\\k<bodySlot>\\]=\\k<collapse>,\\k<cache>\\[(?<resultSlot>\\d+)\\]=\\k<result>\\):\\k<result>=\\k<cache>\\[\\k<resultSlot>\\],\\k<result>$`,"gu");
   const tails=[...body.matchAll(pattern)];if(tails.length!==1||tails[0].index<returned.index||!lexical.isRoot(tails[0].index))return false;
   const g=tails[0].groups;
-  return new Set([g.visibleSlot,g.scrollSlot,g.collapseSlot,g.headerSlot,g.bodySlot,g.resultSlot]).size===6;
+  const disclosure=new RegExp(`(?<disclosure>${ID})=${escapeRegExp(state.disclosure)}\\?\\{expanded:${escapeRegExp(state.state)},onToggle:\\(\\)=>\\{${escapeRegExp(state.setter)}\\(${ID}\\)\\}\\}:void 0`,"gu");
+  const controls=[...body.matchAll(disclosure)].filter(match=>lexical.isRoot(match.index)&&returned.index<match.index&&match.index<tails[0].index);
+  if(controls.length!==1)return false;
+  const header=new RegExp(`${escapeRegExp(g.header)}=\\(0,${escapeRegExp(g.jsx)}\\.jsx\\)\\(${ID}\\.${ID},\\{externalDisclosure:${escapeRegExp(controls[0].groups.disclosure)},children:${ID}\\}\\)`,"gu");
+  const headers=[...body.matchAll(header)].filter(match=>lexical.isRoot(match.index)&&controls[0].index<match.index&&match.index<tails[0].index);
+  return headers.length===1&&new Set([g.visibleSlot,g.scrollSlot,g.collapseSlot,g.headerSlot,g.bodySlot,g.resultSlot]).size===6;
 }
 
 function reasoningComponent(source) {
@@ -93,7 +98,7 @@ function expandedState(source) {
     `(?<renderBody>${ID})=${escapeRegExp(stream)}\\?\\k<streamBody>:${escapeRegExp(body)};`, "g"))];
   if (views.length !== 1) return { kind: "invalid" };
   const [view] = views;
-  if(!returnedDisclosure(component,view.groups.visible))return {kind:"invalid"};
+  if(!returnedDisclosure(component,view.groups.visible,state.groups))return {kind:"invalid"};
   const patched = state.groups.patched != null;
   if (patched !== (view.groups.guard != null) || source.split(STATE_MARKER).length - 1 !== Number(patched) ||
       source.split(BODY_MARKER).length - 1 !== Number(patched) ||

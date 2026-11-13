@@ -34,13 +34,13 @@ function harness(source, { enabled = true, resume = null } = {}) {
   };
   const context = vm.createContext({
     localStorage: { getItem: () => enabled ? "1" : null },
-    s: { c(size) { return caches[cacheIndex++] ??= Array(size).fill(Symbol.for("react.memo_cache_sentinel")); } },
-    c: { _U: () => currentResume }, eh: { nX: "resume" }, ek: React,
-    aC: { k2: content => content }, a: { jsx: (type, props) => ({ type, props }), Fragment: "Fragment" },
-    m: { A: "LocalizedMessage" }, aN: () => "elapsed",
-    K: { A: (...classes) => classes.filter(Boolean).join(" ") }, aA: "heading", aI: "list", aS: () => null,
-    aj: { K: "NativeMarkdown" }, eQ: { N: "ActivityLabel" }, tI: { A: "NativeDisclosure" },
-    aw: { t: "NativeScroll" }, tA: { j: "BodyFrame" }, ts: { Q: "NativeCollapse" }, tk: { n: "ActivityItem" },
+    i: { c(size) { return caches[cacheIndex++] ??= Array(size).fill(Symbol.for("react.memo_cache_sentinel")); } },
+    c: { _U: () => currentResume }, ex: { nX: "resume" }, u: React,
+    aA: { k2: content => content }, a: { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }), Fragment: "Fragment" },
+    p: { A: "LocalizedMessage" }, aT: () => "elapsed",
+    Y: { A: (...classes) => classes.filter(Boolean).join(" ") }, aI: "heading", ak: "list", aN: () => null,
+    aj: { K: "NativeMarkdown" }, ez: { N: "ActivityLabel" }, tx: { A: "NativeDisclosure" },
+    ab: { t: "NativeScroll" }, tg: { j: "BodyFrame" }, aC: { Q: "NativeCollapse" }, tv: { n: "ActivityItem" },
     Date: class extends Date { static now() { return 1000; } },
   });
   const component = /^function ([\w$]+)\(/.exec(reasoningComponent(source).text)[1];
@@ -56,7 +56,7 @@ function harness(source, { enabled = true, resume = null } = {}) {
       return { tree,
         scroll: visible ? nodes(tree, value => value.type === "NativeScroll")[0]?.props : undefined,
         markdown: visible ? nodes(tree, value => value.type === "NativeMarkdown")[0]?.props : undefined,
-        disclosure: nodes(tree, value => value.type === "NativeDisclosure")[0]?.props.disclosure,
+        disclosure: nodes(tree, value => value.type === "NativeDisclosure")[0]?.props.externalDisclosure,
       };
     },
   };
