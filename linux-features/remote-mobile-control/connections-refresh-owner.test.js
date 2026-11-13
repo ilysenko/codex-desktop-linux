@@ -42,7 +42,7 @@ test("native live callback retains pending suppression, availability and late re
 });
 
 test("unpublished/generator/captured or orphaned effects and wrong caller/declaration links reject",()=>{
- for(const[from,to]of[["RemoteConnectionsSettings:()=>t6","RemoteConnectionsSettings:()=>eO"],["let oI=(0,h.useEffectEvent)(eZ)","if(false)var oI=(0,h.useEffectEvent)(eZ)"],["tw[130]!==op||tw[131]!==nF?","if(false)tw[130]!==op||tw[131]!==nF?"],["tw[133]!==oI?","if(false)tw[133]!==oI?"],["(0,h.useEffect)(eB,eX)","(0,h.useEffect)(eZ,eX)"],["if(!op)try","if(op)try"],["nF=(0,t$.wi)()","nF=true"],["let oh=(0,l.n)(eD)","if(false)var oh=(0,l.n)(eD)"],["let oI=(0,h.useEffectEvent)(eZ)","eZ=()=>null;let oI=(0,h.useEffectEvent)(eZ)"],["window.clearInterval(n)","window.clearInterval(e)"],["var o=",`/*${api.MARKER}*/var o=`],["var o=","function* t6(){return null}var o="]])rejects(input=>edit(input,"async/refresh-owner-0.js",from,to));
+ for(const[from,to]of[["RemoteConnectionsSettings:()=>t8","RemoteConnectionsSettings:()=>eO"],["let oI=(0,h.useEffectEvent)(eZ)","if(false)var oI=(0,h.useEffectEvent)(eZ)"],["tw[130]!==op||tw[131]!==nF?","if(false)tw[130]!==op||tw[131]!==nF?"],["tw[133]!==oI?","if(false)tw[133]!==oI?"],["(0,h.useEffect)(eB,eX)","(0,h.useEffect)(eZ,eX)"],["if(!op)try","if(op)try"],["nF=(0,tK.wi)()","nF=true"],["let oh=(0,l.n)(eD)","if(false)var oh=(0,l.n)(eD)"],["let oI=(0,h.useEffectEvent)(eZ)","eZ=()=>null;let oI=(0,h.useEffectEvent)(eZ)"],["window.clearInterval(n)","window.clearInterval(e)"],["var o=",`/*${api.MARKER}*/var o=`],["var o=","function* t8(){return null}var o="]])rejects(input=>edit(input,"async/refresh-owner-0.js",from,to));
 });
 
 test("all late facade/awaiter/availability physical providers remain mandatory and untouched",()=>{
