@@ -14,7 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   the check. The embedded copy keeps the `libxkbcommon` preflight: `kbvm`
   needs Rust 1.95, the pinned nixpkgs builds with Rust 1.93, and the packaged
   app always has the library. The musl release builds and their CI job have no
-  counterpart here.
+  counterpart here. The HTTP listener integration test kills and reaps its
+  server when an assertion fails, as in the standalone release.
 - Synchronize the embedded Computer Use backend to standalone v0.7.52.
   `screenshot`, `get_app_state` and the `screenshot_after` capture of every
   mutating tool take `screenshot_file_path`, an absolute path where the image
