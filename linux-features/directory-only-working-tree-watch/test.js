@@ -1581,6 +1581,39 @@ test("Watchbound staging prefers the copied app runtime over the upstream fallba
   });
 });
 
+test("Watchbound packages stage from read-only source directories", async (t) => {
+  const extractedDir = tempDirectory(t, "watchbound-extracted-app-");
+  writeExtractedAppRuntime(extractedDir);
+  const fixture = packageFixtureManifest(t);
+  // A Nix store source has no owner-write bit on its directories, and newer
+  // Node releases give cpSync destination directories the source mode.
+  const sourceDirs = [
+    "watchbound",
+    "@gadicc/watchbound-node",
+    "@gadicc/watchbound-node-linux-x64-gnu",
+  ].map((name) => fixture.packages.get(name));
+  for (const sourceDir of sourceDirs) fs.chmodSync(sourceDir, 0o555);
+
+  try {
+    const result = await stageWatchboundPackages(packageStageOptions(extractedDir, fixture, {
+      arch: "x64",
+      materializePackage: fixtureMaterializer(fixture),
+    }));
+    assert.equal(result.changed, true);
+  } finally {
+    for (const sourceDir of sourceDirs) fs.chmodSync(sourceDir, 0o755);
+  }
+
+  assert.equal(
+    fs.readFileSync(path.join(packageTarget(extractedDir, "watchbound"), "index.js"), "utf8"),
+    "export const fixture = true;\n",
+  );
+  assert.deepEqual(
+    fs.readdirSync(extractedDir).filter((name) => name.startsWith(".codex-watchbound-")),
+    [],
+  );
+});
+
 test("verified Watchbound packages stage idempotently into app node_modules", async (t) => {
   const extractedDir = tempDirectory(t, "watchbound-extracted-app-");
   writeExtractedAppRuntime(extractedDir);
