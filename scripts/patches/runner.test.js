@@ -88,7 +88,7 @@ test("the signed baseline owns approved quit completion", {
 
 });
 
-test("the signed native before-quit callback permits Linux quit and preserves the macOS privacy boundary", {
+test("the signed native before-quit callback preserves privacy, approval and pending-review decisions", {
   skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null,
 }, () => {
   const inventory = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
@@ -98,16 +98,16 @@ test("the signed native before-quit callback permits Linux quit and preserves th
   for (const name of inventory.chunks) {
     const source = fs.readFileSync(path.join(inventory.buildDir, name), "utf8");
     const owners = [...source.matchAll(new RegExp(
-      `function\\(\\{isWindows:${id},quitState:(${id}),windows:(${id}),applicationMenuManager:`, "gu",
+      `function\\(\\{isWindows:${id},quitState:(${id}),windows:(${id}),applicationMenuManager:` +
+        `[^{}]*hasPendingLocalGitReviewComments:(${id}),[^{}]*\\}\\)\\{`, "gu",
     ))];
     for (const owner of owners) {
-      const open = source.indexOf("){", owner.index) + 1;
-      assert.ok(open > owner.index);
+      const open = owner.index + owner[0].length - 1;
       const close = findMatchingBrace(source, open);
       assert.ok(close > open);
       const body = source.slice(open + 1, close);
       const heads = [...body.matchAll(new RegExp(
-        `(${id})\\.app\\.on\\("before-quit",(${id})=>\\{!function\\(\\{addon:`, "gu",
+        `(${id})\\.app\\.on\\("before-quit",(${id})=>\\{if\\(function\\(\\{addon:`, "gu",
       ))];
       assert.equal(heads.length, 1);
       const head = heads[0], callbackOpen = head.index + head[0].indexOf("=>{") + 2;
@@ -115,7 +115,7 @@ test("the signed native before-quit callback permits Linux quit and preserves th
       assert.ok(callbackClose > callbackOpen);
       const callback = body.slice(callbackOpen, callbackClose + 1);
       const accepted = [...callback.matchAll(new RegExp(
-        `\\?\\((${id})=!0,${owner[2]}\\.markAppQuitting\\(\\)\\):${head[2]}\\.preventDefault\\(\\)`, "gu",
+        `(${id})=!0,${owner[2]}\\.markAppQuitting\\(\\)\\}$`, "gu",
       ))];
       const addon = [...callback.matchAll(new RegExp(
         `\\?\\?(${id})\\(\\{electronAppPath:${id},resourcesPath:${id}\\}\\)`, "gu",
@@ -123,36 +123,50 @@ test("the signed native before-quit callback permits Linux quit and preserves th
       assert.equal(accepted.length, 1);
       assert.equal(addon.length, 1);
       callbacks.push({ callback, event: head[2], electron: head[1], quitState: owner[1], windows: owner[2],
-        quitting: accepted[0][1], addon: addon[0][1] });
+        pending: owner[3], quitting: accepted[0][1], addon: addon[0][1] });
     }
   }
   assert.equal(callbacks.length, 1, "Expected the unique current native quit lifecycle owner");
   const site = callbacks[0];
+  const states = [
+    { name: "ordinary", approved: false, alreadyQuitting: false, approvalReads: 1, pendingReads: 1 },
+    { name: "approved", approved: true, alreadyQuitting: false, approvalReads: 1, pendingReads: 0 },
+    { name: "already quitting", approved: false, alreadyQuitting: true, approvalReads: 0, pendingReads: 0 },
+  ];
   for (const platform of ["linux", "win32", "darwin"]) {
     for (const privacy of [false, true, "throws"]) {
-      let marked = 0, prevented = 0, approvalReads = 0, addonLoads = 0;
-      const context = {
-        process: { platform, resourcesPath: "/inert/resources" },
-        [site.electron]: { app: { getAppPath: () => "/inert/app" } },
-        [site.windows]: { markAppQuitting: () => { marked++; } },
-        [site.quitState]: { canQuitWithoutPrompt: () => { approvalReads++; return false; } },
-        [site.quitting]: false,
-        [site.addon]: () => {
-          addonLoads++;
-          return { isPrivacySettingsTerminationRequest() {
-            if (privacy === "throws") throw new Error("inert unavailable addon");
-            return privacy;
-          } };
-        },
-      };
-      const callback = vm.runInNewContext(`(${site.event}=>${site.callback})`, context);
-      callback({ preventDefault() { prevented++; } });
-      const rejected = platform === "darwin" && privacy === true;
-      assert.equal(marked, rejected ? 0 : 1, `${platform}/${privacy}: native quitting transition`);
-      assert.equal(prevented, rejected ? 1 : 0, `${platform}/${privacy}: native event cancellation`);
-      assert.equal(context[site.quitting], !rejected);
-      assert.equal(approvalReads, 0, "Ordinary native quits do not require approval consumption");
-      assert.equal(addonLoads, platform === "darwin" ? 1 : 0, "The privacy addon stays macOS-only");
+      for (const state of states) {
+        let marked = 0, prevented = 0, approvalReads = 0, pendingReads = 0, approvals = 0, addonLoads = 0;
+        const context = {
+          process: { platform, resourcesPath: "/inert/resources", env: {} },
+          [site.electron]: { app: { getAppPath: () => "/inert/app", isPackaged: true } },
+          [site.windows]: { markAppQuitting: () => { marked++; } },
+          [site.quitState]: {
+            canQuitWithoutPrompt: () => { approvalReads++; return state.approved; },
+            markQuitApproved: () => { approvals++; },
+          },
+          [site.pending]: () => { pendingReads++; return false; },
+          [site.quitting]: state.alreadyQuitting,
+          [site.addon]: () => {
+            addonLoads++;
+            return { isPrivacySettingsTerminationRequest() {
+              if (privacy === "throws") throw new Error("inert unavailable addon");
+              return privacy;
+            } };
+          },
+        };
+        const callback = vm.runInNewContext(`(${site.event}=>${site.callback})`, context);
+        callback({ preventDefault() { prevented++; } });
+        const rejected = platform === "darwin" && privacy === true;
+        const label = `${platform}/${privacy}/${state.name}`;
+        assert.equal(marked, rejected ? 0 : 1, `${label}: native quitting transition`);
+        assert.equal(prevented, rejected ? 1 : 0, `${label}: native event cancellation`);
+        assert.equal(context[site.quitting], state.alreadyQuitting || !rejected, label);
+        assert.equal(approvalReads, rejected ? 0 : state.approvalReads, `${label}: native approval check`);
+        assert.equal(pendingReads, rejected ? 0 : state.pendingReads, `${label}: native pending-review check`);
+        assert.equal(approvals, 0, `${label}: no pending review approval`);
+        assert.equal(addonLoads, platform === "darwin" ? 1 : 0, `${label}: native privacy addon`);
+      }
     }
   }
 });

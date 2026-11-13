@@ -26,20 +26,21 @@ with empty Codex state and a fresh browser profile. Restoring the captured libuv
 handler in the running test process immediately reaped the children and allowed
 a new chat to start and reply.
 
-The latest signed 26.1103 package retains the same normalized shell-loader body
-and synchronous spawn timing. Its loader is now an anonymous IIFE called by the
-published shell request function. The patch verifies that request, its startup
-caller, exports, pending-request ownership and direct IIFE call, then inserts
-one Linux-only `await new Promise(setImmediate)` before the loader body.
-Upstream owns the timeout, environment processing, cache and error handling.
+The historical 26.1103 source qualification found the same normalized shell-loader
+body and synchronous spawn timing as the reproduced path. The current patch
+resolves the anonymous loader IIFE through the published shell request
+function. It verifies that request, its startup caller, exports, pending-request
+ownership and direct IIFE call, then inserts one Linux-only
+`await new Promise(setImmediate)` before the loader body. Upstream owns the
+timeout, environment processing, cache and error handling.
 
-A bounded headless native qualification completed both raw and deferred cases
-on the latest package and the older package used for positive calibration.
-Because that harness also failed to reproduce the older reported failure, it
-provides no evidence that the desktop-specific ordering failure is resolved.
-The existing whole-turn workaround is retained with its original runtime
-payload. Retirement requires evidence that the affected startup ordering is
-resolved.
+The historical bounded headless matrix completed raw and deferred cases for its
+then-current package and the older calibration package. Both versions completed
+that harness, including the older version associated with the reported desktop
+failure. These results retain their original package epochs and cover headless
+completion. The retained whole-turn workaround addresses the reproduced desktop
+startup ordering. Retirement requires calibrated evidence that the affected
+ordering is resolved.
 
 Regression tests execute actual request/startup function fragments with inert
 spawn and timer collaborators. They cover whole-turn deferral, other platforms,
@@ -50,21 +51,16 @@ build and runtime distributions may differ.
 
 ## Retired Quit confirmation repair
 
-The latest signed package removed the old before-quit confirmation flow and its
-`desktop.quitConfirmation.quit` anchor. The former `quit-confirmation-focus`
-repair and compound descriptor have been retired. The current core registry
-preserves the latest native Quit lifecycle.
+The former `quit-confirmation-focus` repair and compound descriptor are retired.
+The current signed package owns approval checks and pending local
+Git review confirmation in its `before-quit` handler. The core registry retains
+that native lifecycle.
 
-The current `before-quit` handler negates the macOS privacy-termination check.
-On Linux and Windows that native check returns false, so the handler already
-marks the application quitting and permits the event without consulting
-`canQuitWithoutPrompt()`. Adding approval consumption to its other branch would
-instead change macOS privacy-termination handling. The signed-bundle regression
-in `../runner.test.js` evaluates the original callback with inert collaborators
-to preserve this platform boundary; it is not a live desktop quit test.
-
-The current native
-`before-quit` owner now reads `canQuitWithoutPrompt()`, records local approval
-through `markQuitApproved()`, and reaches the existing `markAppQuitting()`
-transition without a downstream repair. `../runner.test.js` binds that native
-contract to unique semantic anchors in the current signed ASAR.
+The native callback first evaluates the macOS privacy-termination veto. Its subsequent approval and pending-review checks can request confirmation
+for unsent Git review comments. Approved confirmation marks quit approved before
+the application transitions to quitting. Ordinary quits with no pending review
+read approval and pending state once, then mark the application quitting. An
+existing approval or an active quitting transition short-circuits the relevant
+checks. The signed-bundle regression in `../runner.test.js` executes these
+current branches with inert collaborators across the native platform cases.
+Desktop quit behavior is tracked by the runtime acceptance evidence.
