@@ -94,18 +94,18 @@
       "bodySha256": "cffb987a4360f87d4b01e2ed8404769f938edcd7fd6550c694631723d4d4b29e"
     },
     "lTvi": {
-      "version": "26.1106.51428",
-      "asset": "webview/assets/async/739301.001f92e5ca.js",
-      "start": 3520876,
-      "end": 3521932,
+      "version": "26.1111.21308",
+      "asset": "webview/assets/async/907538.ce3dfb2b2a.js",
+      "start": 3594441,
+      "end": 3595501,
       "params": [
         "e",
         "t",
         "n"
       ],
       "moduleId": "lTvi",
-      "moduleSource": "var r=n(\"zTeN\"),i=n(\"SPnB\"),a=n(\"OWtl\"),s=n(\"Sb7n\"),o=n(\"OMIV\"),l=n(\"rvFo\"),u=n(\"TFzY\"),d=n(\"Ghh3\");let c=(0,r.RD)(a.u,({scope:e})=>f(e,\"chat\")),p=(0,r.RD)(a.u,({scope:e})=>f(e,\"gizmo\")),h=(0,r.RD)(a.u,({scope:e})=>f(e,\"merged\"));function f(e,t){return{queryFn:async()=>{let n=function(e){try{if(!e.get(o.JW,\"3533491684\"))return;let t=e.get(i.chatGptAuthenticatedUserId$),n=e.get(i.chatGptAuthenticatedAccountId$);return null==t||null==n?void 0:s.b6.modelsRequestContext(t,n)}catch{return}}(e),r=null,a=await d.Request.safeGet(\"/models\",{onResponseHeaders:void 0===n?void 0:e=>{r=e.get(\"x-request-id\")},parameters:{query:{iim:!1,include_icons:!1,is_gizmo:\"gizmo\"===t,merged:\"merged\"===t||void 0}}}),l=(0,u.Ov)(a);try{void 0!==n&&null!=r&&e.get(i.chatGptAuthenticatedUserId$)===n.userId&&e.get(i.chatGptAuthenticatedAccountId$)===n.accountId&&e.get(o.JW,\"3533491684\")&&s.b6.modelsResponseReceived(n,r)}catch{}return l},queryKey:\"chat\"===t?[\"chatgpt-models\"]:[\"chatgpt-models\",t],refetchOnWindowFocus:!0,staleTime:l.D.FIVE_MINUTES}}n.d(t,{},{KL:h,c8:c,us:p})",
-      "bodySha256": "b7be62a202c194885f46dd79202b45719ce94a5880be5cec72206b4f6b01737b"
+      "moduleSource": "var r=n(\"zTeN\"),i=n(\"SPnB\"),a=n(\"OWtl\"),s=n(\"Sb7n\"),o=n(\"OMIV\"),l=n(\"rvFo\"),u=n(\"TFzY\"),d=n(\"Ghh3\");let c=(0,r.RD)(a.u,({scope:e})=>_(e,\"chat\")),p=(0,r.RD)(a.u,({scope:e})=>_(e,\"gizmo\")),h=(0,r.RD)(a.u,({scope:e})=>_(e,\"merged\"));function _(e,t){return{queryFn:async()=>{let n=function(e){try{if(!e.get(o.JW,\"3533491684\"))return;let t=e.get(i.chatGptAuthenticatedUserId$),n=e.get(i.chatGptAuthenticatedAccountId$);return null==t||null==n?void 0:s.b6.modelsRequestContext(t,n)}catch{return}}(e),r=null,a=await d.Request.safeGet(\"/models\",{onResponseHeaders:void 0===n?void 0:e=>{r=e.get(\"x-oai-request-id\")},parameters:{query:{iim:!1,include_icons:!1,is_gizmo:\"gizmo\"===t,merged:\"merged\"===t||void 0}}}),l=(0,u.Ov)(a);try{void 0!==n&&null!=r&&e.get(i.chatGptAuthenticatedUserId$)===n.userId&&e.get(i.chatGptAuthenticatedAccountId$)===n.accountId&&e.get(o.JW,\"3533491684\")&&s.b6.modelsResponseReceived(n,r)}catch{}return l},queryKey:\"chat\"===t?[\"chatgpt-models\"]:[\"chatgpt-models\",t],refetchOnWindowFocus:!0,staleTime:l.D.FIVE_MINUTES}}n.d(t,{},{KL:h,c8:c,us:p})",
+      "bodySha256": "02f4ea63da1ea041d7883bcaacc8345b62c9910f5fa5c2b79d3f83d9b0ca6b4f"
     },
     "iLYI": {
       "asset": "webview/assets/async/182735.d3d917f28d.js",

@@ -396,7 +396,7 @@ function inspectQueryOwner(source,snapshot,authority) {
       `^let (?<context>${ID})=function\\((?<localScope>${ID})\\)\\{try\\{if\\(!\\k<localScope>\\.get\\((?<flags>${ID})\\.(?<flagExport>${ID}),(?<gate>"[0-9]+")\\)\\)return;`+
       `let (?<user>${ID})=\\k<localScope>\\.get\\((?<identity>${ID})\\.(?<userExport>${ID})\\),(?<account>${ID})=\\k<localScope>\\.get\\(\\k<identity>\\.(?<accountExport>${ID})\\);`+
       `return null==\\k<user>\\|\\|null==\\k<account>\\?void 0:(?<telemetry>${ID})\\.(?<telemetryExport>${ID})\\.modelsRequestContext\\(\\k<user>,\\k<account>\\)\\}catch\\{return\\}\\}\\(${queryScope}\\),`+
-      `(?<requestId>${ID})=null,(?<raw>${ID})=await (?<request>${ID})\\.Request\\.safeGet\\("/models",\\{onResponseHeaders:void 0===\\k<context>\\?void 0:(?<headers>${ID})=>\\{\\k<requestId>=\\k<headers>\\.get\\("x-request-id"\\)\\},`+
+      `(?<requestId>${ID})=null,(?<raw>${ID})=await (?<request>${ID})\\.Request\\.safeGet\\("/models",\\{onResponseHeaders:void 0===\\k<context>\\?void 0:(?<headers>${ID})=>\\{\\k<requestId>=\\k<headers>\\.get\\("x-oai-request-id"\\)\\},`+
       `parameters:\\{query:\\{iim:!1,include_icons:!1,is_gizmo:"gizmo"===${mode},merged:"merged"===${mode}\\|\\|void 0\\}\\}\\}\\),(?<normalized>${ID})=\\(0,(?<catalog>${ID})\\.(?<normalizer>${ID})\\)\\(\\k<raw>\\);`+
       `try\\{void 0!==\\k<context>&&null!=\\k<requestId>&&${queryScope}\\.get\\(\\k<identity>\\.\\k<userExport>\\)===\\k<context>\\.userId&&${queryScope}\\.get\\(\\k<identity>\\.\\k<accountExport>\\)===\\k<context>\\.accountId&&`+
       `${queryScope}\\.get\\(\\k<flags>\\.\\k<flagExport>,\\k<gate>\\)&&\\k<telemetry>\\.\\k<telemetryExport>\\.modelsResponseReceived\\(\\k<context>,\\k<requestId>\\)\\}catch\\{\\}return \\k<normalized>$`,"u");

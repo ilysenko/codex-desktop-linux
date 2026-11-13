@@ -254,9 +254,10 @@ test("all actual native query modes prepare/inverse/replay and empty config is b
 test("current scoped chat queries retain native telemetry identity, header and feature-gate bindings",()=>{
   const input=policyFixture.owners.lTvi;
   for(const [from,to]of [
-    ['({scope:e})=>f(e,"chat")','({scope:e})=>f(other,"chat")'],
-    ['function f(e,t)','function f(t,e)'],
-    ['r=e.get("x-request-id")','other=e.get("x-request-id")'],
+    ['({scope:e})=>_(e,"chat")','({scope:e})=>_(other,"chat")'],
+    ['function _(e,t)','function _(t,e)'],
+    ['r=e.get("x-oai-request-id")','other=e.get("x-oai-request-id")'],
+    ['get("x-oai-request-id")','get("x-request-id")'],
     ['===n.userId','===n.accountId'],
     ['===n.accountId','===n.userId'],
     ['modelsResponseReceived(n,r)','modelsResponseReceived(other,r)'],
@@ -270,10 +271,10 @@ test("current scoped chat queries retain native telemetry identity, header and f
 });
 
 test("scoped query readers reject a captured builder and retain coherent local aliases",()=>{
-  const input=policyFixture.owners.lTvi,original='({scope:e})=>f(e,"chat")';
+  const input=policyFixture.owners.lTvi,original='({scope:e})=>_(e,"chat")';
   assert.equal(input.moduleSource.split(original).length,2);
-  const captured=input.moduleSource.replace(original,'({scope:f})=>f(f,"chat")');
-  const renamed=input.moduleSource.replace(original,'({scope:queryScope})=>f(queryScope,"chat")');
+  const captured=input.moduleSource.replace(original,'({scope:_})=>_(_,"chat")');
+  const renamed=input.moduleSource.replace(original,'({scope:queryScope})=>_(queryScope,"chat")');
   for(const presets of[[],high]){
     assert.throws(()=>prepareQueryFactory(captured,{...input,moduleSource:captured},presets,linked,auth),/scope shadows its options builder/);
     const first=prepareQueryFactory(renamed,{...input,moduleSource:renamed},presets,linked,auth);
@@ -305,7 +306,7 @@ test("query input captures and partial/new scope/dependency mismatches refuse",(
   for(const changed of [a.patchedSource.replace(constants.QUERY_MARKER,"wrong-stamp"),a.patchedSource.replace('},e)','},other)'),a.patchedSource+`/*${constants.QUERY_HELPER}*/`])assert.throws(()=>prepareQueryFactory(changed,{...input,moduleSource:changed},high,linked,auth));
   const other={...linked,visibility:{...linked.visibility,scope:{moduleId:"wrong",exportName:"u"}}};assert.throws(()=>prepareQueryFactory(source,input,high,other,auth));
   const q=policyFixture.owners.lTvi,b=prepareQueryFactory(q.moduleSource,q,high,linked,auth);
-  const partial=b.patchedSource.replace('codexLinuxPresetQueryOptions(f(e,"merged"),codexLinuxPresetGet)','f(e,"merged")');assert.throws(()=>prepareQueryFactory(partial,{...q,moduleSource:partial},high,linked,auth));
+  const partial=b.patchedSource.replace('codexLinuxPresetQueryOptions(_(e,"merged"),codexLinuxPresetGet)','_(e,"merged")');assert.notEqual(partial,b.patchedSource);assert.throws(()=>prepareQueryFactory(partial,{...q,moduleSource:partial},high,linked,auth));
 });
 
 function actualWorld(){
@@ -352,11 +353,11 @@ test("actual lTvi three readers and native /models producer reach Default and ne
   for(const mode of ["chat","gizmo","merged"]){
     const runtime=wrapRuntime(prepared,null,state);Object.assign(runtime.schemaNamespace,world.schema,{[linked.catalog.projectionExport]:(base,policy)=>projectCatalog(base,high,policy)});
     const telemetry=[],flag={},requestScope={get:token=>token===flag?true:runtime.get(token)};
-    const nativeBuilder=vm.runInNewContext(`(${named(input.moduleSource,"f")})`,{
+    const nativeBuilder=vm.runInNewContext(`(${named(input.moduleSource,"_")})`,{
       u:runtime.schemaNamespace,l:{D:{FIVE_MINUTES:300000}},
       i:{chatGptAuthenticatedUserId$:runtime.atoms.user,chatGptAuthenticatedAccountId$:runtime.atoms.account},o:{JW:flag},
       s:{b6:{modelsRequestContext:(userId,accountId)=>({userId,accountId}),modelsResponseReceived:(context,id)=>telemetry.push({context,id})}},
-      d:{Request:{safeGet:(route,options)=>{requests.push({route,options});options.onResponseHeaders?.({get:header=>{assert.equal(header,"x-request-id");return `request-${mode}`;}});return Promise.resolve(rawResponse());}}},
+      d:{Request:{safeGet:(route,options)=>{requests.push({route,options});options.onResponseHeaders?.({get:header=>{assert.equal(header,"x-oai-request-id");return `request-${mode}`;}});return Promise.resolve(rawResponse());}}},
     });
     const globals={...runtime.globals,nativeBuilder,[constants.QUERY_HELPER]:runtime.wrap};
     const read=patchedReader(prepared,input,mode,globals),options=read({scope:requestScope,get:runtime.get});
