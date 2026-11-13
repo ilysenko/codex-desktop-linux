@@ -47,8 +47,8 @@ test("both native full-function filters preserve beta and every non-target exclu
 
 test("native toggle callback/search mapper retain list identities, ordering and the separate request-input exclusion", () => {
   const original = snapshots(), changed = snapshots(patched());
-  const caller = scope.rootFunction(original.toggles[0], "eC").source;
-  const mapper = scope.rootFunction(original.search[0], "e7").source;
+  const caller = scope.rootFunction(original.toggles[0], "ej").source;
+  const mapper = scope.rootFunction(original.search[0], "te").source;
   const terms = new Function(`return (${mapper});`)();
   const features = Object.freeze(["remote_control", "unrelated", "memories", "workspace_dependencies", "default_mode_request_user_input", "chronicle"]
     .map(name => Object.freeze({ name, stage: "beta", displayName: name.toUpperCase(), description: name + " details", enabled: false })));
@@ -72,7 +72,7 @@ test("the native row callback forwards only the user's feature choice through th
   const start = body.indexOf('e=e=>({key:e.name,label:e.displayName??e.name');assert.ok(start >= 0);
   const open = body.indexOf("{", start), close = findMatchingBrace(body, open);
   const expression = body.slice(start + 2, close + 2), calls = [];
-  const mapper = new Function("N", "M", `return (${expression});`)({ mutate: (...args) => calls.push(args) }, () => {});
+  const mapper = new Function("P", "M", `return (${expression});`)({ mutate: (...args) => calls.push(args) }, () => {});
   const item = Object.freeze({ name: "remote_control", displayName: "Remote", description: "Current native metadata", enabled: false });
   const model = mapper(item);assert.equal(model.enabled, false);model.onChange(true);
   assert.deepEqual(calls[0][0], { featureName: "remote_control", enabled: true });
@@ -104,22 +104,23 @@ test("wrong filter exports/imports, shadowing, opaque bodies and literal/ASI tam
 
 test("wrong caller import/host/publication/capture and mutable namespace authority refuse", () => {
   for (const change of [
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('em=n("v6J2")', 'em=n("other")'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('em=t("v6J2")', 'em=t("other")'); },
     s => { s[assetFor("search")] = s[assetFor("search")].replace('eV.u9,e.selectedHostId', 'eV.u9,"local"'); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('N=(0,X.jv)(n)', 'N=(0,X.jv)(v)'); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('ConfigurationPanel:()=>eJ', 'WrongPanel:()=>eJ'); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){', 'function eC(e){let em={R:()=>true};'); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){', 'function ek(e){X={u9:()=>[]};'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('P=(0,H.jv)(t)', 'P=(0,H.jv)(v)'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('ConfigurationPanel:()=>eQ', 'WrongPanel:()=>eQ'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ev(e){', 'function ev(e){let em={R:()=>true};'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ev(e){', 'function ev(e){H={u9:()=>[]};'); },
     s => { s[assetFor("search")] = s[assetFor("search")].replace('eU=s("v6J2"),', 'eU=s("v6J2");eU={R:()=>true};var '); },
-    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ek(e){', 'function eC(e){eval("em={R:()=>true}");'); },
+    s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ev(e){', 'function ev(e){eval("em={R:()=>true}");'); },
   ]) rejects(change);
 });
 
 test("selected-host list/write owner, constant chain and every physical dependency remain mandatory", () => {
   rejects(s => { s[assetFor("list")] = s[assetFor("list")].replace('experimentalFeature/list', 'other/list'); });
   rejects(s => { s[assetFor("list")] = s[assetFor("list")].replace('config/batchWrite', 'other/write'); });
-  rejects(s => { s[assetFor("barrel")] = s[assetFor("barrel")].replace('R1o:()=>q.R1', 'R1o:()=>q.R2'); });
+  rejects(s => { s[assetFor("barrel")] = s[assetFor("barrel")].replace('R1o:()=>V.R1', 'R1o:()=>V.R2'); });
   rejects(s => { s[assetFor("settings")] = s[assetFor("settings")].replace('R1:"workspace_dependencies"', 'R1:"different_feature"'); });
+  rejects(s => { s[assetFor("settings")] = s[assetFor("settings")].replace('"mcp_lazy_stdio_startup"', '"changed_native_setting"'); });
   rejects(s => { s[assetFor("chronicle", 6)] = s[assetFor("chronicle", 6)].replace('c:"chronicle"', 'c:"changed"'); });
   const c = snapshots();c.chronicle[0] = { ...c.chronicle[0], start: c.chronicle[0].start + 1 };
   assert.throws(() => prepare(c), /stale/);
@@ -135,8 +136,8 @@ test("missing identities, mixed canonical copies and unmarked former flat output
 
 test("current native consumers tolerate their real unrelated local shadows but reject new block captures", () => {
   assert.equal(prepare(snapshots()).physicalFilterCopies, 2);
-  rejects(s => { s[assetFor("search")] = s[assetFor("search")].replace('w.filter(eU.R).flatMap(e7)', 'w.filter((eU={R:()=>true}).R).flatMap(e7)'); });
-  rejects(s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function eC(e){return', 'function eC(e){{let em={R:()=>true};return').replace('e.name!==ec.il}', 'e.name!==ec.il}}'); });
+  rejects(s => { s[assetFor("search")] = s[assetFor("search")].replace('w.filter(eU.R).flatMap(te)', 'w.filter((eU={R:()=>true}).R).flatMap(te)'); });
+  rejects(s => { s[assetFor("toggles")] = s[assetFor("toggles")].replace('function ej(e){return', 'function ej(e){{let em={R:()=>true};return').replace('e.name!==ec.il}', 'e.name!==ec.il}}'); });
 });
 
 test("minified filter aliases and module identities can rename without changing the consumer ABI", () => {
@@ -181,17 +182,17 @@ test("root function-head guard preserves the exact native UP79 preparation outpu
   const hash = value => require("node:crypto").createHash("sha256").update(value).digest("hex");
   const plan = prepare(snapshots());
   const rows = plan.edits.map(row => ({ assetName: row.assetName, source: hash(row.source), patchedSource: hash(row.patchedSource) }));
-  // Captured from the complete current 1106 physical fixture cohort.
-  assert.equal(hash(JSON.stringify(rows)), "1ba31aa33e2093f0dba28d5a5c00870a2ec5b9b18caf0f1b59a45b503a77604c");
+  // Captured from the complete current 1111 physical fixture cohort.
+  assert.equal(hash(JSON.stringify(rows)), "ca6002d363bf16761abf67b71d72e1471bfc9dc86201eac501aebb67890e901b");
   assert.equal(plan.edits.filter(row => row.source !== row.patchedSource).length, 2);
 });
 
 test("root function-head guard rejects coherent generators replacing UP79 published consumers or imports", () => {
   for (const [role, suffix] of [
-    ["toggles", "function* eJ(){return null}"],
-    ["search", "function* tz(){return null}"],
-    ["toggles", "async/*head*/function /*star*/ * /*name*/ eJ({x}={}){return null}"],
-    ["search", "function\n*\n tz({x}={}){return null}"],
+    ["toggles", "function* eQ(){return null}"],
+    ["search", "function* tP(){return null}"],
+    ["toggles", "async/*head*/function /*star*/ * /*name*/ eQ({x}={}){return null}"],
+    ["search", "function\n*\n tP({x}={}){return null}"],
     ["toggles", "function* em(){return null}"],
     ["search", "function /*head*/ * /*name*/ eU({x}={}){return null}"],
   ]) {
