@@ -10,8 +10,8 @@ test("native classifier is exactly durable and linked native per-host lifecycle 
   assert.equal(graph.inspectNativeAwaiter(copy("q77y"), "P").exportName, "P");
   const manager = graph.inspectNativeManager(copy("hms3")), lifecycle = graph.inspectReadLifecycle(copy(manager.subscriber.moduleId), "ihPm");
   assert.equal(manager.facade.moduleId, "GaA7");assert.equal(manager.classifierFacade.moduleId, facade.moduleId);
-  assert.equal(lifecycle.nativeFunctionBytes, 60883);assert.equal(lifecycle.status.moduleId, "ihPm");
-  assert.deepEqual(lifecycle.mount, { host: "t", client: "I", current: "C", disposer: "nH" });
+  assert.equal(lifecycle.nativeFunctionBytes, 66233);assert.equal(lifecycle.status.moduleId, "ihPm");
+  assert.deepEqual(lifecycle.mount, { host: "t", client: "i", current: "A", disposer: "nQ" });
   assert.equal(lifecycle.prefixProviders.AP.moduleId, "ihPm");assert.equal(lifecycle.prefixProviders.v.moduleId, "WFY2");
   assert.throws(() => { manager.facade.moduleId = "wrong"; }, TypeError);
   assert.throws(() => { lifecycle.mount.host = "other"; }, TypeError);
@@ -36,22 +36,22 @@ test("native await/dispose and per-host manager identity cannot be replaced by m
 });
 
 test("published subscriber root heads include complex defaults and generators", () => {
-  for (const decl of ['function nx(unused=()=>{}){return null}', 'function* nx(){return null}', 'function /* head */ * nx(){return null}']) {
+  for (const decl of ['function nz(unused=()=>{}){return null}', 'function* nz(){return null}', 'function /* head */ * nz(){return null}']) {
     const c = copy("J8Ro");assert.throws(() => graph.inspectReadLifecycle({ ...c, moduleSource: c.moduleSource + decl }, "ihPm"));
   }
-  let c = change(copy("J8Ro"), "x:()=>nx", "x:()=>n");c = change(c, "function nx(e,t,I,C)", "function n(e,t,I,C)");
+  let c = change(copy("J8Ro"), "x:()=>nz", "x:()=>n");c = change(c, "function nz(e,t,i,A)", "function n(e,t,i,A)");
   assert.throws(() => graph.inspectReadLifecycle(c, "ihPm"));
 });
 
 test("wrong host, skipped disposer and changed bounded mount prefix reject", () => {
-  assert.throws(() => graph.inspectReadLifecycle(change(copy("J8Ro"), "let nH=(0,ek.UL)(e,t,I,C)", 'let nH=(0,ek.UL)(e,"other",I,C)'), "ihPm"));
-  assert.throws(() => graph.inspectReadLifecycle(change(copy("J8Ro"), "nH()", "void 0"), "ihPm"));
-  assert.throws(() => graph.inspectReadLifecycle(change(copy("J8Ro"), "let nH=(0,ek.UL)", "!function(){I=other}();let nH=(0,ek.UL)"), "ihPm"));
-  assert.throws(() => graph.inspectReadLifecycle({ ...copy("J8Ro"), moduleSource: copy("J8Ro").moduleSource + ";ex=new WeakSet;" }, "ihPm"));
+  assert.throws(() => graph.inspectReadLifecycle(change(copy("J8Ro"), "let nQ=(0,eY.UL)(e,t,i,A)", 'let nQ=(0,eY.UL)(e,"other",i,A)'), "ihPm"));
+  assert.throws(() => graph.inspectReadLifecycle(change(copy("J8Ro"), "nQ()", "void 0"), "ihPm"));
+  assert.throws(() => graph.inspectReadLifecycle(change(copy("J8Ro"), "let nQ=(0,eY.UL)", "!function(){i=other}();let nQ=(0,eY.UL)"), "ihPm"));
+  assert.throws(() => graph.inspectReadLifecycle({ ...copy("J8Ro"), moduleSource: copy("J8Ro").moduleSource + ";eK=new WeakSet;" }, "ihPm"));
 });
 
 test("native WeakSet and durable values must initialize their actual root let declarators", () => {
-  const scope = change(copy("J8Ro"), "let ex=new WeakSet;", "let ex;if(false)ex=new WeakSet;");
+  const scope = change(copy("J8Ro"), "let eK=new WeakSet;", "let eK;if(false)eK=new WeakSet;");
   assert.throws(() => graph.inspectReadLifecycle(scope, "ihPm"), /WeakSet let-declarator/);
   const literal = change(copy("N2rm"), 'let r="durable",a=', 'let r;if(false)r="durable";let a=');
   assert.throws(() => graph.inspectDurableLiteral(literal, "ZJ"), /durable let-declarator/);
@@ -61,4 +61,14 @@ test("native Map constructors and Math retry arithmetic are literal intrinsics, 
   const c = copy("hms3");assert.equal(c.moduleSource.split("new Map").length, 3);
   assert.throws(() => graph.inspectNativeManager({ ...c, moduleSource: c.moduleSource.replaceAll("new Map", "new WeakMap") }));
   assert.throws(() => graph.inspectNativeManager(change(c, "Math.min", "WeakMap.min")));
+});
+
+
+test("current larger subscriber preserves its queued-work cancellation and bounded mount prefix", () => {
+  const c = copy("J8Ro"), lifecycle = graph.inspectReadLifecycle(c, "ihPm");
+  assert.ok(lifecycle.nativeFunctionBytes > 64 * 1024);
+  assert.ok(lifecycle.nativeFunctionBytes < 96 * 1024);
+  assert.throws(() => graph.inspectReadLifecycle(change(c, "ru.cancel()", "ru.dispose()"), "ihPm"), /cleanup/);
+  assert.throws(() => graph.inspectReadLifecycle(change(c, "var S,b,w,O,L;let U,", "var S,b,w,O,L;let obsolete,U,"), "ihPm"), /prefix/);
+  assert.throws(() => graph.inspectReadLifecycle({ ...c, moduleSource: c.moduleSource + "/*" + "x".repeat(96 * 1024) + "*/" }, "ihPm"), /bounded/);
 });

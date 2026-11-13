@@ -106,7 +106,7 @@ function inspectNativeManager(copy) {
 function inspectReadLifecycle(copy, statusId) {
   const pub = findRspackExportPublication(copy, "x");
   if (!pub?.expression || !new RegExp(`^${ID}$`, "u").test(pub.expression)) fail("native read lifecycle publication");
-  const fn = rootFunction(copy, pub.expression), args = fn.params.split(",");
+  const fn = rootFunction(copy, pub.expression, 96 * 1024), args = fn.params.split(",");
   if (args.length !== 4 || new Set(args).size !== 4 || args.some(name => !new RegExp(`^${ID}$`, "u").test(name))) fail("native read lifecycle arguments");
   const [store, host, client, current] = args.map(escapeRegExp), lexical = createJavaScriptLexicalIndex(fn.body);
   const pattern = new RegExp(String.raw`let (?<dispose>${ID})=\(0,(?<status>${ID})\.UL\)\(${store},${host},${client},${current}\),`, "gu");
