@@ -23,7 +23,6 @@ const ASSISTANT_RENDER_SHARED_PROPS = [
   "savedContentResponseId",
   "after",
   "compactAttachment",
-  "electronAfter",
   "autoReviewStats",
   "hookStats",
   "completedThreadGoal",

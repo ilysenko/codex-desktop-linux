@@ -139,7 +139,7 @@ const CURRENT_GIT_ROUTE_PREFIX =
   "return{git:{getWatchIgnoreSources:s?void 0:" +
   "()=>({getEnvironment:async()=>(function(){let e=process.env.HOME;" +
   'return{defaultExcludesFile:null==e?null:`${e}/.config/git/ignore`,globalConfigFiles:[]}})(),' +
-  "getWatchTargets:Bee,pruneIgnoredDirectories:!0})," +
+  'getWatchTargets:Bee,pruneIgnoredDirectories:"darwin"===process.platform?"observed":"all"}),' +
   "createExecutionHost:h=>{if(h.id===e.id&&!isRemote(h))return e;" +
   'if(null==n)throw Error("Git hosts require a main RPC connection");' +
   "return new nde(n,h)},startMetadataWatch:(t,n)=>t.isLocal?" +
@@ -341,7 +341,7 @@ test("correlates minified aliases instead of pinning their spellings", () => {
   const gitRoutePrefix =
     "case\"git\":{let ignoreSource=getIgnoreSource(),localHost=new LocalHost(ignoreSource,event=>{notify(event)});return{git:{" +
     "getWatchIgnoreSources:ignoreSource?void 0:()=>({getEnvironment:async()=>(function(){return readIgnoreEnvironment()})()," +
-    "getWatchTargets:getWatchTargets,pruneIgnoredDirectories:!0}),createExecutionHost:executionOptions=>{" +
+    'getWatchTargets:getWatchTargets,pruneIgnoredDirectories:"darwin"===process.platform?"observed":"all"}),createExecutionHost:executionOptions=>{' +
     "if(executionOptions.id===localHost.id&&!isRemote(executionOptions))return localHost;" +
     "if(null==mainConnection)" +
     "throw Error(\"Git hosts require a main RPC connection\");" +

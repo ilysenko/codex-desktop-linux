@@ -23,8 +23,66 @@ function requireUsages(source, name, expected) {
   // Include bare references as well as calls so an added alias/export fails
   // closed. Property accesses such as constants.Aa and private class members
   // such as #Aa are different bindings.
-  const uses = [...source.matchAll(new RegExp(`(?<![\\w$.#])${escapeRegExp(name)}(?![\\w$])`, "g"))];
-  if (uses.length !== expected) throw drift(`unexpected ${name} consumers`);
+  // Current rspack modules also embed large serialized tables. Scan JavaScript
+  // tokens so identifier-shaped data in strings, comments, and regexes does
+  // not look like a consumer of a short minified binding.
+  let uses = 0;
+  let previousToken = null;
+  for (let index = 0; index < source.length;) {
+    const char = source[index];
+    if (/\s/u.test(char)) { index += 1; continue; }
+    if (char === "/" && source[index + 1] === "/") {
+      index = source.indexOf("\n", index + 2);
+      if (index < 0) break;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      index = source.indexOf("*/", index + 2);
+      if (index < 0) break;
+      index += 2;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      const quote = char;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") index += 2;
+        else if (source[index++] === quote) break;
+      }
+      previousToken = "literal";
+      continue;
+    }
+    const regexPrefix = previousToken == null || /^(?:return|throw|case|delete|void|typeof|instanceof|in)$/u.test(previousToken) ||
+      /^[([{,:;=!?&|+*%^~<>-]$/u.test(previousToken);
+    if (char === "/" && regexPrefix) {
+      let inClass = false;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") index += 2;
+        else if (source[index] === "[") { inClass = true; index += 1; }
+        else if (source[index] === "]") { inClass = false; index += 1; }
+        else if (source[index] === "/" && !inClass) { index += 1; break; }
+        else index += 1;
+      }
+      while (/[a-z]/iu.test(source[index] ?? "")) index += 1;
+      previousToken = "literal";
+      continue;
+    }
+    if (/[A-Za-z_$]/u.test(char)) {
+      const start = index++;
+      while (/[\w$]/u.test(source[index] ?? "")) index += 1;
+      const token = source.slice(start, index);
+      let next = index;
+      while (/\s/u.test(source[next] ?? "")) next += 1;
+      const property = source[start - 1] === "." || source[start - 1] === "#" || source[next] === ":";
+      if (token === name && !property) uses += 1;
+      previousToken = token;
+      continue;
+    }
+    previousToken = char;
+    index += 1;
+  }
+  if (uses !== expected) throw drift(`unexpected ${name} consumers`);
 }
 
 // Minified names are module scoped. Restrict every relationship check to the

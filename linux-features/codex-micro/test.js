@@ -55,7 +55,7 @@ function sidebarSource() {
 
 function dictationSource(namespace = "Q") {
   return [
-    "const sounds=o.Szl.dictationSoundsEnabled",
+    "const dictation={isDictationEnabled:enabled}",
     "const props={onDictationTranscriptInsert:insert,waveformVariant:eZ}",
     `const enabled=${gate(namespace)}`,
   ].join(";");

@@ -161,7 +161,7 @@ const CURRENT_GIT_ROUTE_PREFIX_PATTERN =
   // is inlined by the current minifier.
   "return\\{git:\\{getWatchIgnoreSources:\\k<ignoreSource>\\?void 0:\\(\\)=>\\(\\{" +
   `getEnvironment:async\\(\\)=>[\\s\\S]{1,2000}?,getWatchTargets:${IDENTIFIER_PATTERN},` +
-  "pruneIgnoredDirectories:!0\\}\\)," +
+  'pruneIgnoredDirectories:"darwin"===process\\.platform\\?"observed":"all"\\}\\),' +
   `createExecutionHost:(?<executionConfig>${IDENTIFIER_PATTERN})=>\\{` +
   `if\\(\\k<executionConfig>\\.id===\\k<localHost>\\.id&&!${IDENTIFIER_PATTERN}\\(\\k<executionConfig>\\)\\)` +
   "return \\k<localHost>;if\\(null==" +

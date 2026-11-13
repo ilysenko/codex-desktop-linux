@@ -274,15 +274,16 @@ test("missing, ambiguous, changed, and partially patched contracts leave assets 
   }
 });
 
-test("an ambiguous asset set is rejected before either copy changes", (t) => {
+test("duplicate rspack shortcut owners are patched as one semantic owner set", (t) => {
   const app = appFixture(t);
   const duplicate = path.join(app.assets, "async", "100005.0000000005.js");
   fs.copyFileSync(app.target, duplicate);
   const result = withWarnings(() => applyAnnotationSubmit(app.root, enabledContext));
-  assert.equal(result.result.changed, 0);
-  assert.equal(result.messages.length, 1);
-  assert.equal(fs.readFileSync(app.target, "utf8"), app.ownerChunk);
-  assert.equal(fs.readFileSync(duplicate, "utf8"), app.ownerChunk);
+  assert.equal(result.result.matched, 2);
+  assert.equal(result.result.changed, 2);
+  assert.deepEqual(result.messages, []);
+  assert.equal(shortcutContract(fs.readFileSync(app.target, "utf8")).state, "applied");
+  assert.equal(shortcutContract(fs.readFileSync(duplicate, "utf8")).state, "applied");
 });
 
 test("missing or changed native annotation scope and Ctrl+Enter handling reject the patch", (t) => {
@@ -331,22 +332,24 @@ test("enabled patch changes one asset once and can coexist with another appended
 // the same discovery the patch uses must find exactly one shortcut owner and
 // one native editor -> card linkage in the current official ASAR, and the
 // patch must apply once and validate.
-test("current official ASAR exposes one native shortcut owner and accepts the patch", {
+test("current official ASAR exposes a coherent native shortcut owner set and accepts the patch", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, (t) => {
   const { owners, editors, cards } = discoverAnnotationSubmitAssets(process.env.CODEX_SIGNED_EXTRACTED_APP);
-  assert.equal(owners.length, 1);
-  assert.match(owners[0].name, /^async\/\d+\.[0-9a-f]+\.js$/u);
-  assert.equal(shortcutContract(owners[0].source).state, "current");
+  assert.ok(owners.length >= 1);
+  for (const owner of owners) {
+    assert.match(owner.name, /^async\/\d+\.[0-9a-f]+\.js$/u);
+    assert.equal(shortcutContract(owner.source).state, "current");
+    assert.equal(shortcutContract(patchSource(owner.source)).state, "applied");
+  }
   validateNativeEditor(editors, cards);
-  assert.equal(shortcutContract(patchSource(owners[0].source)).state, "applied");
 
   const copy = fs.mkdtempSync(path.join(os.tmpdir(), "annotation-submit-official-"));
   t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
   fs.cpSync(process.env.CODEX_SIGNED_EXTRACTED_APP, copy, { recursive: true });
   const applied = applyAnnotationSubmit(copy, enabledContext);
-  assert.equal(applied.changed, 1);
-  assert.deepEqual(applied.targets, [path.join("webview", "assets", owners[0].name)]);
+  assert.equal(applied.changed, owners.length);
+  assert.deepEqual(applied.targets, owners.map((owner) => path.join("webview", "assets", owner.name)));
   const moreDetails = require("./patches/selected-text-more-details.js");
   const both = { feature: { settings: { tweaks: { selection: {
     annotationSubmit: { enabled: true }, moreDetails: { enabled: true },
@@ -356,7 +359,9 @@ test("current official ASAR exposes one native shortcut owner and accepts the pa
   const moreDetailsApplied = moreDetails.applySelectedTextMoreDetails(copy, both);
   assert.ok(moreDetailsApplied.changed >= 2);
   assert.equal(moreDetailsApplied.changed, moreDetailsApplied.targets.length);
-  assert.ok(!moreDetailsApplied.targets.includes(path.join("webview", "assets", owners[0].name)));
+  for (const owner of owners) {
+    assert.ok(!moreDetailsApplied.targets.includes(path.join("webview", "assets", owner.name)));
+  }
   assert.equal(applyAnnotationSubmit(copy, both).changed, 0);
   assert.equal(moreDetails.applySelectedTextMoreDetails(copy, both).changed, 0);
 });

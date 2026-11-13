@@ -195,7 +195,7 @@ function applyCopilotReasoningEffortDropdownPatch(source) {
 function analyzeCompiledCopilotReasoningSlashContract(source) {
   const clean = findAllMatches(source, new RegExp(
     `let (?<enabled>${JS_IDENT})=(?<requires>${JS_IDENT})&&(?<ready>${JS_IDENT})&&!` +
-      `(?<copilot>${JS_IDENT})&&!0;`,
+      `(?<copilot>${JS_IDENT});`,
   ));
   const patched = findAllMatches(source, new RegExp(
     `let (?<enabled>${JS_IDENT})=(?<requires>${JS_IDENT})&&(?<ready>${JS_IDENT})&&!0` +

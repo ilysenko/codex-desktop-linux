@@ -11,17 +11,11 @@ test without it. Every descriptor needs reproduction evidence and a required
 regression test. Remove the patch, its tests, and this record when upstream
 resolves the blocker.
 
-The current signed stable package requires one core patch:
-
-- `quit-confirmation-focus`: the upstream quit coordinator records approval
-  through `markQuitApproved()`, but its unique `before-quit` owner never reads
-  `canQuitWithoutPrompt()` and unconditionally prevents every non-privacy quit.
-  The patch consumes that approval in the existing owner and reuses its
-  `markAppQuitting()` transition so approved quit flows can reach `will-quit`.
-  `quit-confirmation-focus/test.js` covers the behavior and fail-closed drift
-  handling; `../runner.test.js` binds the unique owner to the current signed
-  ASAR. Retire the patch when the signed upstream owner uniquely consumes the
-  approval itself.
+The current signed stable package requires no core patches. Its unique
+`before-quit` owner now reads `canQuitWithoutPrompt()`, records local approval
+through `markQuitApproved()`, and reaches the existing `markAppQuitting()`
+transition without a downstream repair. `../runner.test.js` binds that native
+contract to unique semantic anchors in the current signed ASAR.
 
 Upstream still owns shell-environment startup after awaited app readiness; no
 core shell-startup patch is required.

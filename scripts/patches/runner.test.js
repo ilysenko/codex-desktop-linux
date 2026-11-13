@@ -18,31 +18,20 @@ const {
 } = require("./runner.js");
 const { findMainProcessChunks } = require("./lib/assets.js");
 const {
-  findQuitLifecycleContract,
-} = require("./core/quit-confirmation-focus/patch.js");
+  findMatchingBrace,
+} = require("./lib/minified-js.js");
 
 const emptyConfig = path.join(__dirname, "..", "..", "linux-features", "features.example.json");
 
-test("the official Linux baseline registers the required quit compatibility patch", () => {
-  assert.deepEqual(
-    corePatchDescriptors().map(({ id, phase, ciPolicy }) => ({ id, phase, ciPolicy })),
-    [{
-      id: "quit-confirmation-focus",
-      phase: "main-bundle",
-      ciPolicy: "required-upstream",
-    }],
-  );
-  assert.deepEqual(allPatchPolicies({ featuresConfigPath: emptyConfig }), [{
-    name: "quit-confirmation-focus",
-    ciPolicy: "required-upstream",
-    phase: "main-bundle",
-  }]);
+test("the official Linux baseline needs no core compatibility patch", () => {
+  assert.deepEqual(corePatchDescriptors(), []);
+  assert.deepEqual(allPatchPolicies({ featuresConfigPath: emptyConfig }), []);
   assert.deepEqual(requiredPatchNamesForProfile("upstream-build", {
     featuresConfigPath: emptyConfig,
-  }), ["quit-confirmation-focus"]);
+  }), []);
 });
 
-test("the signed baseline needs one quit repair and retains the retired shell replacement", {
+test("the signed baseline owns approved quit completion and shell startup", {
   skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null,
 }, () => {
   const mainProcess = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
@@ -62,50 +51,52 @@ test("the signed baseline needs one quit repair and retains the retired shell re
     return owners[0].source;
   };
 
-  const quitOwners = chunks
-    .map((chunk) => ({ ...chunk, contract: findQuitLifecycleContract(chunk.source) }))
-    .filter(({ contract }) => contract != null);
-  assert.equal(quitOwners.length, 1, "Expected one signed before-quit owner tied to quit state");
-  assert.equal(
-    quitOwners[0].contract.approvalConsumed,
-    false,
-    "The signed before-quit owner must reproduce the missing approval consumption",
+  const quitOwner = uniqueOwner([
+    "canQuitWithoutPrompt(){return this.allowQuitWithoutPrompt}",
+    "markQuitApproved(){this.allowQuitWithoutPrompt=!0}",
+    "hasPendingLocalGitReviewComments:",
+    '.app.on("before-quit",',
+  ], "native approved-quit lifecycle owner");
+  const identifier = "[A-Za-z_$][\\w$]*";
+  const lifecycleHeader = new RegExp(
+    `function\\(\\{[^{}]*quitState:(?<quitState>${identifier}),` +
+      `windows:(?<windows>${identifier}),[^{}]*` +
+      `hasPendingLocalGitReviewComments:(?<pending>${identifier}),[^{}]*\\}\\)\\{`,
+    "gu",
   );
-
-  const quitPatch = corePatchDescriptors().find(({ id }) => id === "quit-confirmation-focus");
-  assert.ok(quitPatch, "Expected the required quit patch descriptor");
-  const originalWarn = console.warn;
-  console.warn = () => {};
-  let patchedChunks;
-  try {
-    patchedChunks = chunks.map((chunk) => ({
-      ...chunk,
-      source: quitPatch.apply(chunk.source),
-    }));
-  } finally {
-    console.warn = originalWarn;
-  }
-  const changed = patchedChunks.filter(({ source }, index) => source !== chunks[index].source);
-  assert.deepEqual(
-    changed.map(({ name }) => name),
-    [quitOwners[0].name],
-    "The required quit patch must change only the unique signed before-quit owner",
+  const lifecycleMatches = [...quitOwner.matchAll(lifecycleHeader)];
+  assert.equal(lifecycleMatches.length, 1, "Expected one native quit lifecycle owner");
+  const { quitState, windows, pending } = lifecycleMatches[0].groups;
+  const lifecycleOpen = lifecycleMatches[0].index + lifecycleMatches[0][0].length - 1;
+  const lifecycleClose = findMatchingBrace(quitOwner, lifecycleOpen);
+  assert.ok(lifecycleClose > lifecycleOpen, "Expected a complete native quit lifecycle owner");
+  const lifecycleBody = quitOwner.slice(lifecycleOpen, lifecycleClose + 1);
+  const beforeQuitPattern = new RegExp(
+    `${identifier}\\.app\\.on\\("before-quit",(?<event>${identifier})=>\\{`,
+    "gu",
   );
-  const patchedQuitOwners = patchedChunks
-    .map((chunk) => findQuitLifecycleContract(chunk.source))
-    .filter((contract) => contract != null);
-  assert.equal(patchedQuitOwners.length, 1, "Expected one patched signed before-quit owner");
-  assert.equal(
-    patchedQuitOwners[0].approvalConsumed,
-    true,
-    "The patched signed before-quit owner must consume the coordinator approval",
-  );
+  const beforeQuitMatches = [...lifecycleBody.matchAll(beforeQuitPattern)];
+  assert.equal(beforeQuitMatches.length, 1, "Expected one native before-quit handler");
+  const handlerOpen = beforeQuitMatches[0].index + beforeQuitMatches[0][0].length - 1;
+  const handlerClose = findMatchingBrace(lifecycleBody, handlerOpen);
+  assert.ok(handlerClose > handlerOpen, "Expected a complete native before-quit handler");
+  const handlerBody = lifecycleBody.slice(handlerOpen, handlerClose + 1);
+  const approvalGate = `!${quitState}.canQuitWithoutPrompt()`;
+  const pendingCheck = `${pending}()`;
+  const localApproval = `${quitState}.markQuitApproved()`;
+  const quittingTransition = `${windows}.markAppQuitting()`;
+  assert.equal(handlerBody.split(approvalGate).length - 1, 1);
+  assert.equal(handlerBody.split(pendingCheck).length - 1, 1);
+  assert.equal(handlerBody.split(localApproval).length - 1, 1);
+  assert.equal(handlerBody.split(quittingTransition).length - 1, 1);
+  assert.ok(handlerBody.indexOf(approvalGate) < handlerBody.indexOf(pendingCheck));
+  assert.ok(handlerBody.indexOf(pendingCheck) < handlerBody.indexOf(localApproval));
+  assert.ok(handlerBody.indexOf(localApproval) < handlerBody.indexOf(quittingTransition));
 
   const shellOwner = uniqueOwner([
     "main app.whenReady resolved",
     "shell environment hydrated",
   ], "upstream shell-startup owner");
-  const identifier = "[A-Za-z_$][\\w$]*";
   const readyPattern = new RegExp(
     `await ${identifier}\\.app\\.whenReady\\(\\),${identifier}\\(` +
       `"main app\\.whenReady resolved"`,
@@ -139,7 +130,7 @@ test("runner context exposes enabled feature IDs", () => {
   }
 });
 
-test("required core drift fails closed without changing unmatched application assets", () => {
+test("an empty core registry leaves unmatched application assets unchanged", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-baseline-"));
   try {
     const mainDir = path.join(root, ".vite", "build");
@@ -159,9 +150,7 @@ test("required core drift fails closed without changing unmatched application as
     });
     assert.deepEqual(fs.readFileSync(main), mainBefore);
     assert.deepEqual(fs.readFileSync(webview), webviewBefore);
-    assert.equal(report.patches.length, 1);
-    assert.equal(report.patches[0].name, "quit-confirmation-focus");
-    assert.equal(report.patches[0].status, "failed-required");
+    assert.deepEqual(report.patches, []);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

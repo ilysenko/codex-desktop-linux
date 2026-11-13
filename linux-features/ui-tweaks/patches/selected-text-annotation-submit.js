@@ -215,13 +215,18 @@ function applyAnnotationSubmit(extractedDir, context = {}) {
   if (!enabled(context)) return { matched: 0, changed: 0 };
   try {
     const { assets, owners, editors, cards } = discoverAnnotationSubmitAssets(extractedDir);
-    if (owners.length !== 1) throw new Error(`Expected one app shortcut asset, found ${owners.length}`);
+    if (owners.length === 0) throw new Error("Expected at least one app shortcut asset, found 0");
     validateNativeEditor(editors, cards);
-    const asset = owners[0];
-    const result = patchSource(asset.source);
-    const changed = result !== asset.source;
-    if (changed) fs.writeFileSync(path.join(assets, asset.name), result);
-    return { matched: 1, changed: Number(changed), targets: [path.join("webview", "assets", asset.name)] };
+    const patched = owners.map((asset) => ({ asset, result: patchSource(asset.source) }));
+    const targets = patched.map(({ asset }) => path.join("webview", "assets", asset.name));
+    for (const { asset, result } of patched) {
+      if (result !== asset.source) fs.writeFileSync(path.join(assets, asset.name), result);
+    }
+    return {
+      matched: owners.length,
+      changed: patched.filter(({ asset, result }) => result !== asset.source).length,
+      targets,
+    };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`WARN: Could not restore selected-text annotation submit: ${reason} - skipping ui-tweaks patch`);
