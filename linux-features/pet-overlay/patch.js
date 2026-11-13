@@ -148,26 +148,63 @@ function findAvatarOverlayMethod(source, signatureRegex) {
   return findMethodAfter(source, signatureRegex, overlayClass.start, overlayClass.end);
 }
 
-// Native layout authority belongs to one ordinary direct manager member.
-// Nested object methods can retain matching text while the real entry differs.
+// Native layout authority belongs to one effective public instance method.
+// Direct fields/accessors and constructor writes can replace its prototype.
 function findAvatarOverlayLayoutMethod(source) {
   const overlayClass = findAvatarOverlayClass(source);
   if (overlayClass == null) return null;
+  const { classMemberDefinitions, staticMemberKey } = require("../../scripts/patches/lib/class-member-definitions.js");
   const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
-  const start = overlayClass.start + overlayClass.text.indexOf("{") + 1;
+  const { Script } = require("node:vm");
+  const offset = overlayClass.text.indexOf("{") + 1;
+  const start = overlayClass.start + offset;
   const body = source.slice(start, overlayClass.end - 1);
   const lexical = createJavaScriptLexicalIndex(body);
-  const headers = [...body.matchAll(/(?<![\w$.])getLayoutForDisplay\([^{}]*\)\{/gu)]
-    .filter(match => lexical.isRoot(match.index));
-  if (headers.length !== 1) return null;
-  const match = headers[0];
-  const prefix = body.slice(0, match.index).split("")
-    .map((character, index) => lexical.isCode(index) ? character : " ").join("");
-  if (/(?:\b(?:async|get|set|static)|\*)\s*$/u.test(prefix)) return null;
-  const open = match.index + match[0].length - 1, end = lexical.matchingBrace(open);
-  if (end < open) return null;
-  return { match, start: start + match.index, end: start + end + 1,
-    text: body.slice(match.index, end + 1) };
+  const scope = { text: body, lexical };
+  try {
+    new Script(`(${overlayClass.text})`);
+    const members = classMemberDefinitions(body);
+    const owned = members.filter(member => member.name === "getLayoutForDisplay" &&
+      !member.privateKey && !member.kinds.includes("static"));
+    if (owned.length !== 1 || owned[0].kind !== "method" || owned[0].kinds.length !== 0) return null;
+    const selected = owned[0];
+    const text = body.slice(selected.keyStart, selected.end);
+    const match = /^getLayoutForDisplay\([^{}]*\)\{/.exec(text);
+    if (!match) return null;
+    const initialization = members.filter(member => !member.kinds.includes("static") &&
+      (member.kind === "method" && member.name === "constructor" || member.initializerStart != null));
+    for (const member of initialization) {
+      const lower = member.bodyStart ?? member.initializerStart;
+      const upper = member.bodyEnd ?? member.initializerEnd;
+      for (const receiver of body.slice(lower, upper).matchAll(/(?<![\w$.#])(?:this|[A-Za-z_$][\w$]*)\b/gu)) {
+        const at = lower + receiver.index;
+        if (!lexical.isCode(at)) continue;
+        let next = at + receiver[0].length;
+        while (next < upper && (!lexical.isCode(next) || /\s/u.test(body[next]))) next++;
+        if (body.startsWith("?.", next)) next += 2;
+        else if (body[next] !== "." && body[next] !== "[") continue;
+        if (body[next] === ".") next++;
+        while (next < upper && (!lexical.isCode(next) || /\s/u.test(body[next]))) next++;
+        let key;
+        try { key = staticMemberKey(scope, next); }
+        catch {
+          if (receiver[0] === "this") return null;
+          continue;
+        }
+        if (receiver[0] === "Object" && ["assign", "defineProperty", "defineProperties", "setPrototypeOf"].includes(key.name) ||
+          receiver[0] === "Reflect" && ["set", "defineProperty", "setPrototypeOf"].includes(key.name)) return null;
+        if (key.privateKey || key.name !== "getLayoutForDisplay") continue;
+        // A read can become a literal. Assignment and update targets cannot.
+        const projected = body.slice(0, at) + "(0)" + body.slice(key.end);
+        try { new Script(`class PetLayoutWriteProbe extends Object{${projected}}`); }
+        catch { return null; }
+        const prefix = body.slice(lower, at).split("")
+          .map((character, index) => lexical.isCode(lower + index) ? character : " ").join("");
+        if (/\bdelete\s*\(*\s*$/u.test(prefix)) return null;
+      }
+    }
+    return { match, start: start + selected.keyStart, end: start + selected.end, text };
+  } catch { return null; }
 }
 
 function replaceMethodText(source, method, replacement) {

@@ -4781,8 +4781,45 @@ function returnedLayoutAuthorityControls(source) {
     ["nested unused layout member", `codexUnusedLayout(){return {${text}}}${head}return null}`],
     ["duplicate direct layout member", `${text}${head}return null}`],
   ]);
-  return [...replacements].map(([name, replacement]) => [name,
+  const fields = [
+    ["bare instance field", "getLayoutForDisplay=()=>null;"],
+    ["uninitialized instance field", "getLayoutForDisplay;"],
+    ["quoted instance field", '"getLayoutForDisplay"=()=>null;'],
+    ["computed literal instance field", '["getLayoutForDisplay"]=()=>null;'],
+    ["computed expression instance field", '["getLayout"+"ForDisplay"]=()=>null;'],
+    ["escaped instance field", "getLayoutForDispl\\u0061y=()=>null;"],
+    ["bare accessor", "get getLayoutForDisplay(){return ()=>null}"],
+    ["quoted accessor", 'get "getLayoutForDisplay"(){return ()=>null}'],
+    ["computed accessor", 'get ["getLayoutForDisplay"](){return ()=>null}'],
+    ["instance initializer override", "codexInitialization=(this.getLayoutForDisplay=()=>null);"],
+    ["instance reflection initializer override", 'codexInitialization=Object.defineProperty(this,"getLayoutForDisplay",{value:()=>null});'],
+  ];
+  for (const [name, field] of fields) replacements.set(name, text + field);
+  const owner = [...source.matchAll(/class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[A-Za-z_$][\w$.]*)?\{/gu)]
+    .map(header => ({ start: header.index + header[0].length,
+      end: closeBrace(source, header.index + header[0].length - 1) }))
+    .find(candidate => candidate.start < method.start && candidate.end > method.end);
+  assert.ok(owner);
+  const { classMemberDefinitions } = require("../../scripts/patches/lib/class-member-definitions.js");
+  const constructor = classMemberDefinitions(source.slice(owner.start, owner.end))
+    .find(member => member.name === "constructor" && member.kind === "method");
+  assert.ok(constructor);
+  const constructorStart = owner.start + constructor.bodyStart;
+  const writes = [
+    ["constructor direct override", "this.getLayoutForDisplay=()=>null;"],
+    ["constructor computed override", 'this["getLayoutForDisplay"]=()=>null;'],
+    ["constructor dynamic override", 'this["getLayout"+"ForDisplay"]=()=>null;'],
+    ["constructor alias override", "const alias=this;alias.getLayoutForDisplay=()=>null;"],
+    ["constructor reflection override", 'Object.defineProperty(this,"getLayoutForDisplay",{value:()=>null});'],
+    ["constructor alias reflection override", 'const alias=this;Object.defineProperty(alias,"getLayoutForDisplay",{value:()=>null});'],
+    ["constructor computed reflection override", 'Object["defineProperty"](this,"getLayoutForDisplay",{value:()=>null});'],
+    ["constructor optional reflection override", 'Reflect?.["set"](this,"getLayoutForDisplay",()=>null);'],
+  ];
+  const controls = [...replacements].map(([name, replacement]) => [name,
     source.slice(0, method.start) + replacement + source.slice(method.end)]);
+  for (const [name, write] of writes) controls.push([name,
+    source.slice(0, constructorStart) + write + source.slice(constructorStart)]);
+  return controls;
 }
 
 for (const canonical of [false, true]) test(`native returned-layout authority rejects unreachable and non-authoritative members in ${canonical ? "canonical" : "raw"} state`, t => {
