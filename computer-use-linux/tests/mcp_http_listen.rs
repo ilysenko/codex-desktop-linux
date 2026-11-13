@@ -114,11 +114,35 @@ impl Drop for Hermetic {
     }
 }
 
-fn spawn(hermetic: &Hermetic, token: Option<&str>) -> std::process::Child {
+/// A spawned server that is killed and reaped when it goes out of scope, so
+/// a failed assertion does not leave a listener running after the test.
+struct Server(std::process::Child);
+
+impl std::ops::Deref for Server {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Server {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn spawn(hermetic: &Hermetic, token: Option<&str>) -> Server {
     spawn_with(hermetic, token, &[])
 }
 
-fn spawn_with(hermetic: &Hermetic, token: Option<&str>, args: &[&str]) -> std::process::Child {
+fn spawn_with(hermetic: &Hermetic, token: Option<&str>, args: &[&str]) -> Server {
     let mut command = hermetic.command();
     command
         .args(["mcp", "--listen", "127.0.0.1:0"])
@@ -129,7 +153,7 @@ fn spawn_with(hermetic: &Hermetic, token: Option<&str>, args: &[&str]) -> std::p
     if let Some(token) = token {
         command.env("CODEX_COMPUTER_USE_MCP_TOKEN", token);
     }
-    command.spawn().unwrap()
+    Server(command.spawn().unwrap())
 }
 
 /// Waits up to eight seconds for the `listening` line. A reader thread owns
@@ -239,7 +263,12 @@ fn listen_requires_token() {
         let mut child = spawn(&hermetic, token);
         let status = child.wait().unwrap();
         let mut err = String::new();
-        child.stderr.unwrap().read_to_string(&mut err).unwrap();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut err)
+            .unwrap();
         assert!(!status.success(), "{err}");
         assert!(
             err.contains(
