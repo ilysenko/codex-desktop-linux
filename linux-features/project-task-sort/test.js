@@ -19,10 +19,10 @@ const {
   descriptors,
 } = require("./patch.js");
 
-// Current signed 26.1029.61003 shape: the project task sorter compiles its
+// Current signed shape: the project task sorter compiles its local-only
 // timestamp selector as an inline function expression.
 const comparator =
-  'function(e,t){switch(e.kind){case"local":if(null==e.summary)return e.at;return"updated_at"===t?e.summary.recencyAt??e.summary.updatedAt:e.summary.createdAt;case"remote":return(("updated_at"===t?e.task.updated_at??e.task.created_at:e.task.created_at??e.task.updated_at)??0)*1e3}}';
+  'function(e,t){if("local"===e.kind)return null==e.summary?e.at:"updated_at"===t?e.summary.recencyAt??e.summary.updatedAt:e.summary.createdAt}';
 const currentProjectSource = `function u(e,t){return e.map((e,n)=>({task:e,timestamp:${comparator}(e,t),index:n}))}`;
 const chunk = (body) => "export const __rspack_esm_id=24191;export const __rspack_esm_ids=[24191];" +
   `export const __webpack_modules__={YZnq(e,t,n){${body}n.d(t,{u:()=>u})}};`;
@@ -109,7 +109,7 @@ test("populated local conversations recover Created time from UUIDv7 keys", () =
   assert.equal(timestamp(older, "updated_at"), 400);
 });
 
-test("explicit, pending, legacy, invalid, and remote timestamps retain upstream behavior", () => {
+test("explicit, pending, legacy, invalid, and non-local timestamps retain upstream behavior", () => {
   const timestamp = timestampFunction();
   const local = {
     key: "local:019e0000-0000-7000-8000-000000000001",
@@ -131,15 +131,15 @@ test("explicit, pending, legacy, invalid, and remote timestamps retain upstream 
   );
 
   const remote = { kind: "remote", task: { created_at: 10, updated_at: 20 } };
-  assert.equal(timestamp(remote, "created_at"), 10_000);
-  assert.equal(timestamp(remote, "updated_at"), 20_000);
+  assert.equal(timestamp(remote, "created_at"), undefined);
+  assert.equal(timestamp(remote, "updated_at"), undefined);
 });
 
 test("semantic comparator matching is independent of minified aliases", () => {
   const renamed = currentProjectSource
-    .replace("function(e,t){switch", "function createdComparator(task,mode){switch")
-    .replaceAll("e.summary", "task.summary").replaceAll("e.at", "task.at").replaceAll("e.task", "task.task")
-    .replace("switch(e.kind)", "switch(task.kind)")
+    .replace("function(e,t){if", "function createdComparator(task,mode){if")
+    .replaceAll("e.summary", "task.summary").replaceAll("e.at", "task.at")
+    .replace('"local"===e.kind', '"local"===task.kind')
     .replaceAll("===t?", "===mode?");
   const timestamp = timestampFunction(renamed);
   assert.equal(
@@ -153,7 +153,7 @@ test("semantic comparator matching is independent of minified aliases", () => {
 });
 
 test("drift and duplicate semantic comparators fail closed byte-identically", () => {
-  const drifted = currentProjectSource.replace("return e.at", "return e.pendingWorktree.createdAt");
+  const drifted = currentProjectSource.replace("e.at:", "e.pendingWorktree.createdAt:");
   for (const source of [
     drifted,
     `${currentProjectSource}${currentProjectSource}`,

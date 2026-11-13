@@ -244,11 +244,105 @@ function applyCurrentDockIconMainPatch(source, current) {
   return currentMainContract(patchedSource, "patched") != null ? patchedSource : source;
 }
 
+// The current release moved Dock ownership into the unified window manager.
+// macOS still owns the preference reader and appearance observer, while Linux
+// now has an upstream tray icon path. Bind the Linux extension to those
+// semantic owners without relying on the chunk filename or minified aliases.
+const dockIconV2Marker = "codexLinuxDockIconV2";
+
+function currentMainContractV2(source) {
+  const base = mainPatterns("current");
+  const contract = {
+    preview: oneMatch(source, base.preview),
+    appInfo: oneMatch(source, base.appInfo),
+    tray: oneMatch(source, base.tray),
+    trayState: oneMatch(source, base.trayState),
+    owner: oneMatch(source, new RegExp(
+      `let (?<update>${id})=(?<isMac>${id})\\?function\\(\\{buildFlavor:(?<build>${id}),repoRoot:(?<repo>${id}),` +
+        `isDevMode:(?<dev>${id}),settingsStore:(?<settings>${id}),disposables:(?<disposables>${id}),` +
+        `errorReporter:(?<error>${id})\\}\\)\\{`, "g")),
+    roots: oneMatch(source, new RegExp(
+      `(?<roots>${id})=\\[\\.\\.\\.(?<electron>${id})\\.app\\.isPackaged\\?\\[process\\.resourcesPath\\]:\\[\\],` +
+        `\\(0,(?<path>${id})\\.join\\)\\((?<repo>${id}),"electron","src","icons"\\)\\]`, "g")),
+    guard: oneMatch(source, new RegExp(
+      `(?<apply>${id})=(?<arg>${id})=>\\{if\\((?<disposed>${id})\\|\\|null==(?<appearance>${id})&&` +
+        `"app-default"!==\\k<arg>\\)return;`, "g")),
+    defaultGate: oneMatch(source, new RegExp(
+      `if\\("app-default"===(?<arg>${id})&&(?<build>${id})!==${id}\\.${id}\\.Dev&&!(?<devIcons>${id})\\)\\{`, "g")),
+    applyTail: oneMatch(source, new RegExp(
+      `if\\(!(?<image>${id})\\.isEmpty\\(\\)\\)\\{if\\("app-default"!==(?<arg>${id})\\)\\{` +
+        `let\\{width:(?<width>${id}),height:(?<height>${id})\\}=\\k<image>\\.getSize\\(\\),` +
+        `(?<inset>${id})=Math\\.round\\(\\k<width>/128\\);\\k<image>=\\k<image>\\.crop\\(` +
+        `\\{x:\\k<inset>,y:\\k<inset>,width:\\k<width>-2\\*\\k<inset>,height:\\k<height>-2\\*\\k<inset>\\}\\)\\}` +
+        `(?<electron>${id})\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}`, "g")),
+    observer: oneMatch(source, new RegExp(
+      `\\(async function\\((?<callback>${id})\\)\\{if\\(26>Number\\.parseInt\\(process\\.getSystemVersion\\(\\),10\\)\\)` +
+        `return (?<fallback>${id})\\(\\k<callback>\\);`, "g")),
+  };
+  if (Object.values(contract).some((match) => match == null) || source.includes(dockIconV2Marker)) return null;
+  const groups = Object.fromEntries(Object.entries(contract).map(([name, match]) => [name, match.groups]));
+  const aliasesAgree =
+    groups.preview.resource === groups.appInfo.owner &&
+    sameAliases(groups.appInfo.electron, groups.roots.electron, groups.applyTail.electron, groups.tray.electron) &&
+    sameAliases(groups.appInfo.path, groups.roots.path) &&
+    sameAliases(groups.owner.repo, groups.roots.repo) &&
+    sameAliases(groups.guard.arg, groups.defaultGate.arg, groups.applyTail.arg) &&
+    contract.observer.index > contract.owner.index && contract.observer.index < contract.owner.index + 10_000;
+  return aliasesAgree ? { contract, groups } : null;
+}
+
+function patchedMainContractV2(source) {
+  const required = [
+    `var ${dockIconV2Marker}=1`,
+    `function ${dockIconResourceHelper}(`,
+    '"linux"===process.platform?codexLinuxDockIconResourcePath(',
+    '"linux"===process.platform)return',
+    "globalThis.codexLinuxDockIconImage=",
+    'codexLinuxDockIconResourcePath("sync-desktop-icon.sh")',
+    '"linux"===process.platform&&globalThis.codexLinuxDockIconImage',
+  ];
+  return required.every((needle) => source.split(needle).length === 2) &&
+    source.split('if("darwin"!==process.platform&&"linux"!==process.platform)return null').length === 2;
+}
+
+function applyCurrentDockIconMainPatchV2(source, current) {
+  const { contract, groups } = current;
+  const preview = groups.preview;
+  const info = groups.appInfo;
+  const roots = groups.roots;
+  const guard = groups.guard;
+  const tail = groups.applyTail;
+  const trayState = groups.trayState.trayState;
+  const linux = '"linux"===process.platform';
+  const replacements = [
+    [contract.preview, `dockIconPreviews:${preview.include}?function(${preview.arg}){if("darwin"!==process.platform&&"linux"!==process.platform)return null;let ${preview.theme}=${preview.themeHelper}(${preview.arg}),${preview.defaultIcon}=${preview.resource}(\`\${${preview.iconName}(${preview.arg})}.png\`),${preview.codexDark}=${preview.resource}(${preview.theme}.dark),${preview.codexLight}=${preview.resource}(${preview.theme}.light),${preview.spaceDark}=${linux}?${preview.codexDark}:${preview.resource}(${preview.theme}.spaceDark),${preview.spaceLight}=${linux}?${preview.codexLight}:${preview.resource}(${preview.theme}.spaceLight);return null==${preview.defaultIcon}||null==${preview.codexDark}||null==${preview.codexLight}||null==${preview.spaceDark}||null==${preview.spaceLight}?null:{appDefault:${preview.defaultIcon},codexDark:${preview.codexDark},codexLight:${preview.codexLight},spaceDark:${preview.spaceDark},spaceLight:${preview.spaceLight}}}(${preview.preference}):null`],
+    [contract.appInfo, `var ${dockIconV2Marker}=1;function ${dockIconResourceHelper}(${info.arg}){return ${linux}?(0,${info.path}.join)(process.resourcesPath,"dock-icon",${info.arg}):(0,${info.path}.join)(process.resourcesPath,${info.arg})}function ${info.owner}(${info.arg}){if(null==${info.arg})return null;let ${info.candidate}=${info.electron}.app.isPackaged||${linux}?${dockIconResourceHelper}(${info.arg}):null;return ${info.normalize}(null!=${info.candidate}&&(0,${info.exists}.existsSync)(${info.candidate})?${info.candidate}:(0,${info.path}.join)(${info.electron}.app.getAppPath(),"src","icons",${info.arg}))}`],
+    [contract.owner, contract.owner[0].replace(`${groups.owner.isMac}?function`, `${groups.owner.isMac}||${linux}?function`)],
+    [contract.roots, `${roots.roots}=[...${roots.electron}.app.isPackaged?[${linux}?(0,${roots.path}.join)(process.resourcesPath,"dock-icon"):process.resourcesPath]:[],(0,${roots.path}.join)(${roots.repo},"electron","src","icons")]`],
+    [contract.guard, `${guard.apply}=${guard.arg}=>{if(${guard.disposed}||null==${guard.appearance}&&"app-default"!==${guard.arg}&&"linux"!==process.platform)return;`],
+    [contract.defaultGate, contract.defaultGate[0].replace("&&", '&&"linux"!==process.platform&&')],
+    [contract.applyTail, `if(${tail.image}.isEmpty())return;if("linux"!==process.platform&&"app-default"!==${tail.arg}){let{width:${tail.width},height:${tail.height}}=${tail.image}.getSize(),${tail.inset}=Math.round(${tail.width}/128);${tail.image}=${tail.image}.crop({x:${tail.inset},y:${tail.inset},width:${tail.width}-2*${tail.inset},height:${tail.height}-2*${tail.inset}})}if(${linux}){let codexLinuxIconSelection="app-default"===${tail.arg}?"chatgpt":${tail.electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?"codex-dark":"codex-light";globalThis.codexLinuxDockIconImage=${tail.image};for(let codexLinuxWindow of ${tail.electron}.BrowserWindow.getAllWindows())codexLinuxWindow.isDestroyed()||codexLinuxWindow.setIcon(${tail.image});null!=${trayState}?.tray&&!${trayState}.tray.isDestroyed()&&${trayState}.tray.setImage(${tail.image});let codexLinuxSyncScript=${dockIconResourceHelper}("sync-desktop-icon.sh");if(require("node:fs").existsSync(codexLinuxSyncScript))try{let codexLinuxChild=require("node:child_process").spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:["pipe","ignore","ignore"]});codexLinuxChild.on("error",()=>{}),codexLinuxChild.stdin.on("error",()=>{}),codexLinuxChild.stdin.end(${tail.image}.toPNG()),codexLinuxChild.unref()}catch{}return}${tail.electron}.app.dock?.setIcon(${tail.image})`],
+    [contract.observer, contract.observer[0].replace("{if(", `{if(${linux})return ${groups.observer.fallback}(${groups.observer.callback});if(`)],
+    [contract.tray, contract.tray[0].replace(
+      `${groups.tray.iconInfo}.defaultIcon`,
+      `${linux}&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:${groups.tray.iconInfo}.defaultIcon`,
+    )],
+  ];
+  let patched = source;
+  for (const [match, replacement] of replacements.sort(([left], [right]) => right.index - left.index)) {
+    patched = replaceMatch(patched, match, replacement);
+  }
+  return patchedMainContractV2(patched) ? patched : source;
+}
+
 function applyDockIconMainPatch(source) {
   const currentSigned = currentMainContract(source, "current");
   const patchedSigned = currentMainContract(source, "patched");
   if (patchedSigned != null && currentSigned == null) return source;
   if (currentSigned != null && patchedSigned == null) return applyCurrentDockIconMainPatch(source, currentSigned);
+  if (patchedMainContractV2(source)) return source;
+  const currentV2 = currentMainContractV2(source);
+  if (currentV2 != null) return applyCurrentDockIconMainPatchV2(source, currentV2);
   console.warn(
     "WARN: Could not find the complete current Dock icon main-process contract - skipping Dock icon main patch",
   );

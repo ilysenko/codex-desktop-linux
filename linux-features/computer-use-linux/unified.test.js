@@ -266,6 +266,8 @@ test("unified propagation rejects missing, ambiguous, or changed builder consume
     assert.throws(() => patch(changed), /unified.*contract/i);
   }
   assert.doesNotThrow(() => patch(selector + "function unrelated(){return constants.build(extra)}"));
+  assert.doesNotThrow(() => patch(selector +
+    'const serialized="build ap";const entities={ap:"approximately"};'));
   const patched = patch(selector);
   for (const changed of [
     patched.replace("codexLinuxCuaContext:selection", "codexLinuxCuaContext:other"),
