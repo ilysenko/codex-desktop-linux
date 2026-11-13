@@ -378,11 +378,12 @@ test("disabled native metadata feature performs zero main-process discovery", t 
   assert.equal(discovered, false);
 });
 
-test("latest signed native metadata applies through all nineteen main chunks and preserves signed inputs", {
+test("latest signed native metadata applies through all twenty-one main chunks and preserves signed inputs", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, t => {
   const inventory = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
-  assert.equal(inventory.chunks.length, 19);
+  assert.equal(inventory.chunks.length, 21);
+  assert.equal(new Set(inventory.chunks).size, inventory.chunks.length);
   const sources = Object.fromEntries(inventory.chunks.map(name => [name, fs.readFileSync(path.join(inventory.buildDir, name), "utf8")]));
   const project = extractedWorkspace(t, sources);
   assert.equal(project.run().patches[0].status, "applied");
