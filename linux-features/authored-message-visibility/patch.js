@@ -28,8 +28,8 @@ function applyAuthoredMessageVisibilityPatch(source) {
     return source;
   }
   if (shape.patched) return source;
-  // Keep the complete native expression, including async delivery and Set
-  // persistence. Only the feature's existing authored-message types override it.
+  // Keep the complete native MCP-rendering and steering prerequisites.
+  // The feature's existing authored-message types override that expression.
   return source.slice(0, shape.expression.start) + shape.prefix + shape.nativeExpression.source + ")" + source.slice(shape.expression.end);
 }
 

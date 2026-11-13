@@ -6,9 +6,9 @@ const { escapeRegExp, createJavaScriptLexicalIndex } = require("./minified-js.js
 const identifier = String.raw`[A-Za-z_$][\w$]*`;
 const call = String.raw`(?:\(0,${identifier}\.${identifier}\)|${identifier})`;
 const classifierHead = new RegExp(
-  String.raw`function\((?<unit>${identifier}),(?<following>${identifier}),\{` +
+  String.raw`function\(\{unit:(?<unit>${identifier}),hasFollowingFinalAnswer:(?<following>${identifier}),` +
     String.raw`keepMcpAppEntriesPersistent:(?<keep>${identifier}),mcpServerStatuses:(?<statuses>${identifier}),` +
-    String.raw`plainAsyncMessageIds:(?<plainAsync>${identifier})\}\)\{` +
+    String.raw`renderMcpApps:(?<render>${identifier})\}\)\{` +
     String.raw`if\("standalone"!==\k<unit>\.kind\)return!1;let (?<item>${identifier})=\k<unit>\.item\.item;return`,
   "g",
 );
@@ -19,13 +19,13 @@ function ordinaryPredicatePosition(source, index, lexical) {
   return previous > 0 && source[previous] === "|" && source[previous - 1] === "|" && lexical.isCode(previous - 1);
 }
 
-// The classifier's Set comes from the same partition invocation as its unit
-// and native options. No upstream code is evaluated to establish these roles.
+// The classifier's explicit options come from the same partition invocation
+// as its unit. No upstream code is evaluated to establish these roles.
 function currentPartitionCall(source, start, end, lexical) {
   const header = new RegExp(
     String.raw`function\((?<items>${identifier}),\{hasFollowingFinalAnswer:(?<following>${identifier})=!1,` +
-      String.raw`keepFirstReply:(?<keepFirstReply>${identifier})=!1,isTurnInProgress:(?<inProgress>${identifier})=!1,` +
-      String.raw`\.\.\.(?<options>${identifier})\}=\{\}\)\{`, "g");
+      String.raw`isTurnInProgress:(?<inProgress>${identifier})=!1,keepMcpAppEntriesPersistent:(?<keep>${identifier})=!1,` +
+      String.raw`mcpServerStatuses:(?<statuses>${identifier}),renderMcpApps:(?<render>${identifier})=!1\}=\{\}\)\{`, "g");
   const owners = [...source.matchAll(header)].filter(head => lexical.isCode(head.index) && head.index < start &&
     lexical.matchingBrace(head.index + head[0].length - 1) > end);
   if (owners.length !== 1) return null;
@@ -41,40 +41,35 @@ function currentPartitionCall(source, start, end, lexical) {
   if (!lexical.isCode(loopStart) || lexical.matchingBrace(loopOpen) <= end) return null;
   const loop = loops[0].groups;
   const limit = limits[0].groups.limit;
-  const firstReplies = [...before.matchAll(new RegExp(
-    String.raw`(?<firstReply>${identifier})=${escapeRegExp(names.keepFirstReply)}&&${escapeRegExp(limit)}<0\?` +
-      String.raw`${escapeRegExp(names.items)}\.find\((?<item>${identifier})=>"standalone"===\k<item>\.kind&&` +
-      String.raw`"assistant-message"===\k<item>\.item\.item\.type&&\k<item>\.item\.item\.content\.trim\(\)\):void 0`, "g"))];
-  if (firstReplies.length !== 1) return null;
-  const firstReplyStart = owner.index + owner[0].length + firstReplies[0].index;
-  if (firstReplyStart >= loopStart || !lexical.isCode(firstReplyStart)) return null;
-  const firstReply = firstReplies[0].groups.firstReply;
-  const expected = `(${loop.unit},${loop.index}<${limit},${names.options})`;
+  const expected = `({unit:${loop.unit},hasFollowingFinalAnswer:${loop.index}<${limit},` +
+    `keepMcpAppEntriesPersistent:${names.keep},mcpServerStatuses:${names.statuses},renderMcpApps:${names.render}})`;
   if (!source.startsWith(expected, end + 1)) return null;
   const partitionEnd = lexical.matchingBrace(owner.index + owner[0].length - 1);
   return {
     partition: { start: owner.index, end: partitionEnd + 1,
       body: { start: owner.index + owner[0].length, end: partitionEnd }, bindings: { ...names } },
     loop: { start: loopStart, end: lexical.matchingBrace(loopOpen) + 1,
-      bindings: { ...loop, limit, firstReply } },
+      bindings: { ...loop, limit } },
     call: { start: end + 1, end: end + 1 + expected.length, source: expected, unit: loop.unit },
   };
 }
 
 function nativeActivityExpression(expression, names) {
-  const { item, following, keep, statuses, plainAsync } = names;
+  const { item, following, keep, statuses, render } = names;
   const i = escapeRegExp(item);
   const first = new RegExp(String.raw`^"user-input-response"===${i}\.type\?!${i}\.completed:!!\("mcp-tool-call"===${i}\.type&&${call}\(${i}\)\)`).exec(expression);
-  const assistant = new RegExp(String.raw`"assistant-message"===${i}\.type\?${call}\(${i}\)\|\|"async"===${i}\.delivery&&null!=${i}\.searchItemId&&${escapeRegExp(plainAsync)}\?\.has\(${i}\.searchItemId\)===!0`).exec(expression);
+  const assistant = new RegExp(String.raw`"assistant-message"===${i}\.type\?${call}\(${i}\)`).exec(expression);
   const dynamic = new RegExp(String.raw`"dynamic-tool-call"===${i}\.type&&${call}\(${i}\)`).exec(expression);
   const mcp = new RegExp(
-    String.raw`${escapeRegExp(keep)}&&"mcp-tool-call"===${i}\.type&&` +
+    String.raw`${escapeRegExp(keep)}&&${escapeRegExp(render)}&&"mcp-tool-call"===${i}\.type&&` +
       String.raw`function\(\{item:(?<mcpItem>${identifier}),mcpServerStatuses:(?<mcpStatuses>${identifier})\}\)\{let (?<result>${identifier})=\k<mcpItem>\.result\?\.type==="success"\?\k<mcpItem>\.result\.raw:null;` +
       String.raw`return\(!\k<mcpItem>\.completed\|\|null!=\k<mcpItem>\.result\)&&\(null!=\k<mcpItem>\.mcpAppResourceUri\|\|null!=${call}\(\{mcpServerStatuses:\k<mcpStatuses>,server:\k<mcpItem>\.invocation\.server,tool:\k<mcpItem>\.invocation\.tool,toolResult:\k<result>\}\)\)\}` +
       String.raw`\(\{item:${i},mcpServerStatuses:${escapeRegExp(statuses)}\}\)`, "g");
   const mcps = [...expression.matchAll(mcp)];
   if (!first || !assistant || !dynamic || mcps.length !== 1) return null;
   const user = `"user-message"===${item}.type&&("pending"===${item}.steeringStatus||!0===${item}.followsInterruptedFinalAnswer||` +
+    `"accepted"===${item}.steeringStatus&&null==${item}.questionReplies&&null==${item}.codexDelegation&&` +
+    `!${item}.isToolOutput&&!${item}.isHistoricalSteering||` +
     `!0===${item}.wasInHistoryPreview||"not-sent"===${item}.deliveryStatus||!0===${item}.hookFeedback||!${following})`;
   const expected = `${first[0]}||(${assistant[0]}:!!(${dynamic[0]}||${mcps[0][0]})||${user})`;
   return expression.startsWith(expected) ? expected : null;
@@ -113,7 +108,7 @@ function inspectActivityPartition(source) {
   const declarations = `let ${roles.collapsible}=[],${roles.expanded}=[],${roles.persistent}=[],${roles.preToggle}=[],${roles.workedFor}=null,`;
   const routing = `?${roles.persistent}.push(${owner.call.unit}):${roles.collapsible}.push(${owner.call.unit})`;
   const loop = owner.loop.bindings;
-  const nativePrefix = `${roles.expanded}.push(${owner.call.unit}),${owner.call.unit}===${loop.firstReply}||` +
+  const nativePrefix = `${roles.expanded}.push(${owner.call.unit}),` +
     `${owner.partition.bindings.inProgress}&&${loop.limit}>=0&&${loop.index}>${loop.limit}||`;
   const prefixes = [...source.slice(owner.loop.start, head.index).matchAll(new RegExp(escapeRegExp(nativePrefix), "g"))];
   if (!source.startsWith(declarations, owner.partition.body.start) || prefixes.length !== 1 ||

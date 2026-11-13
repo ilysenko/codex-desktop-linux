@@ -23,10 +23,10 @@ function unit(type, id, extra = {}) {
 function partition(source, enabled = true) {
   return vm.runInNewContext(`${source};partition`, {
     localStorage: { getItem: () => enabled ? "1" : null },
-    d: { o: item => item.persist },
-    o: { Yr: item => item.final, rt: item => item.final },
-    c: { Q1: item => item.interactive },
-    u: { Hn: ({ toolResult }) => toolResult?.interactive ? {} : null },
+    f: { o: item => item.persist },
+    p: { Yr: item => item.final, rt: item => item.final },
+    h: { Q1: item => item.interactive },
+    m: { Hn: ({ toolResult }) => toolResult?.interactive ? {} : null },
   });
 }
 
@@ -66,8 +66,8 @@ test("disabled preference and every non-reasoning persistence rule remain upstre
   for (const hasFollowingFinalAnswer of [false, true]) {
     for (const isTurnInProgress of [false, true]) {
       for (const keepMcpAppEntriesPersistent of [false, true]) {
-        for (const keepFirstReply of [false, true]) {
-          const options = { hasFollowingFinalAnswer, isTurnInProgress, keepMcpAppEntriesPersistent, keepFirstReply };
+        for (const renderMcpApps of [false, true]) {
+          const options = { hasFollowingFinalAnswer, isTurnInProgress, keepMcpAppEntriesPersistent, renderMcpApps };
           assert.equal(JSON.stringify(off(items, options)), JSON.stringify(before(items, options)));
           const nonReasoning = items.filter(item => item.item?.item.type !== "reasoning");
           assert.equal(JSON.stringify(on(nonReasoning, options)), JSON.stringify(before(nonReasoning, options)));
@@ -100,12 +100,12 @@ test("persistent contract rejects missing, duplicate, mixed, and damaged prefere
   const patched = apply(fixture);
   for (const source of [
     "const unrelated=true;", fixture + fixture, patched + fixture, patched + patched,
-    patched.replace('"reasoning"===n.item.item.type', '"reasoning"===other.item.item.type'),
+    patched.replace('"reasoning"===g.item.item.type', '"reasoning"===other.item.item.type'),
     patched.replace("/*community-reasoning-visibility-persistent*/", ""),
     patched.replace(RUNTIME, ""), RUNTIME + patched,
     fixture + ";function orphan(){return codexLinuxReasoningVisibilityEnabled()}",
     fixture.replace('if("standalone"!==e.kind)', 'if(e.kind!==`standalone`)'),
-    fixture.replace("i=e.item.item", "i=e.item.other"),
+    fixture.replace("s=e.item.item", "s=e.item.other"),
   ]) {
     assert.notEqual(source, fixture);
     assert.equal(apply(source), source);
@@ -181,7 +181,7 @@ test("production descriptor finds numeric async owners and preserves ambiguous/p
   assert.equal(run().status, "applied");
   const patched = fs.readFileSync(first, "utf8");
   assert.equal(run().status, "already-applied");
-  const partial = patched.replace('"reasoning"===n.item.item.type', '"reasoning"===other.item.item.type');
+  const partial = patched.replace('"reasoning"===g.item.item.type', '"reasoning"===other.item.item.type');
   const second = write("other/366297.hash.js", partial);
   assert.equal(run().status, "skipped-optional");
   assert.equal(fs.readFileSync(first, "utf8"), patched);
@@ -204,9 +204,11 @@ test("current signed owner contains the verbatim partition and patches through t
   assert.equal(javascriptSourceParses(patched), true);
   assert.equal(authored(patched), apply(authored(owner.source)));
   assert.equal(run().status, "already-applied");
-  for (const header of ["async function(e,t,{", "async/*gap*/function(e,t,{", "async\tfunction(e,t,{",
-    "async function\n(e,t,{", "function*(e,t,{", "async function*(e,t,{"]) {
-    const mutant = owner.source.replace("function(e,t,{", header);
+  for (const header of ["async function({unit:e,", "async/*gap*/function({unit:e,", "async\tfunction({unit:e,",
+    "async function\n({unit:e,", "function*({unit:e,", "async function*({unit:e,"]) {
+    const activity = require("../../scripts/patches/lib/activity-partition.js").inspectActivityPartition(owner.source);
+    const start = activity.classifier.start;
+    const mutant = owner.source.slice(0, start) + header + owner.source.slice(start + "function({unit:e,".length);
     assert.ok(javascriptSourceParses(mutant));
     assert.equal(apply(mutant), mutant);
     const invalid = workspace(t);
@@ -229,31 +231,25 @@ test("current signed owner contains the verbatim partition and patches through t
   assert.equal(fs.readFileSync(path.join(assets, owner.assetName), "utf8"), owner.source);
 });
 
-test("reasoning persistence preserves current native plain-async delivery cases", () => {
-  const source = apply(fixture);
-  const before = partition(fixture);
-  const enabled = partition(source);
-  const disabled = partition(source, false);
-  for (const plainAsyncMessageIds of [undefined, new Set(), new Set(["ticket"])]) {
-    for (const delivery of ["async", "sync"]) {
-      for (const searchItemId of [undefined, "ticket", "other"]) {
-        const items = [unit("assistant-message", "message", { delivery, searchItemId }), unit("exec", "tool")];
-        const options = { hasFollowingFinalAnswer: true, plainAsyncMessageIds };
-        const expected = JSON.stringify(before(items, options));
-        assert.equal(JSON.stringify(enabled(items, options)), expected);
-        assert.equal(JSON.stringify(disabled(items, options)), expected);
-      }
-    }
+test("reasoning persistence preserves native MCP rendering and accepted steering policy", () => {
+  const before = partition(fixture), enabled = partition(apply(fixture)), disabled = partition(apply(fixture), false);
+  for (const renderMcpApps of [false, true]) {
+    const items = [unit("mcp-tool-call", "mcp", { mcpAppResourceUri: "ui://test" }),
+      unit("user-message", "accepted", { steeringStatus: "accepted" }), unit("exec", "tool")];
+    const options = { hasFollowingFinalAnswer: true, keepMcpAppEntriesPersistent: true, renderMcpApps };
+    const expected = JSON.stringify(before(items, options));
+    assert.equal(JSON.stringify(enabled(items, options)), expected);
+    assert.equal(JSON.stringify(disabled(items, options)), expected);
   }
 });
 
-test("reasoning persistence refuses drifted async Set and complete caller mapping", t => {
+test("reasoning persistence refuses disconnected MCP rendering and caller mapping", t => {
   t.mock.method(console, "warn", () => {});
   for (const source of [
-    fixture.replace("plainAsyncMessageIds:s}", "unknownAsync:s}"),
-    fixture.replace("s?.has(i.searchItemId)", "wrong?.has(i.searchItemId)"),
-    fixture.replace("}(n,t<h,s)", "}(n,t<h,wrong)"),
-    fixture.replace("}(n,t<h,s)", "}(n,t<wrong,s)"),
+    fixture.replace("renderMcpApps:i})", "unknownRendering:i})"),
+    fixture.replace('n&&i&&"mcp-tool-call"', 'n&&wrong&&"mcp-tool-call"'),
+    fixture.replace("mcpServerStatuses:i,renderMcpApps:s})", "mcpServerStatuses:wrong,renderMcpApps:s})"),
+    fixture.replace("hasFollowingFinalAnswer:t<u,", "hasFollowingFinalAnswer:t<wrong,"),
   ]) {
     assert.notEqual(source, fixture);
     assert.equal(apply(source), source);
@@ -266,9 +262,9 @@ test("reasoning persistence refuses drifted async Set and complete caller mappin
 
 test("non-current activity callable kinds remain parseable and byte-identical after refusal", t => {
   t.mock.method(console, "warn", () => {});
-  for (const header of ["async function(e,t,{", "async/*gap*/function(e,t,{", "async\tfunction(e,t,{",
-    "async function\n(e,t,{", "function*(e,t,{", "async function*(e,t,{", "new function(e,t,{"]) {
-    const source = fixture.replace("function(e,t,{", header);
+  for (const header of ["async function({unit:e,", "async/*gap*/function({unit:e,", "async\tfunction({unit:e,",
+    "async function\n({unit:e,", "function*({unit:e,", "async function*({unit:e,", "new function({unit:e,"]) {
+    const source = fixture.replace("function({unit:e,", header);
     assert.doesNotThrow(() => new vm.Script(source));
     assert.equal(apply(source), source);
     const project = workspace(t);
@@ -319,7 +315,7 @@ test("registered reasoning cohort rejects missing-needle, decoy, damaged and mix
   const missing = fixture.replace("collapsibleUnits:", "missingCollapsible:").replace("persistentUnits:", "missingPersistent:");
   const owner = require("../../scripts/patches/lib/activity-partition.js").inspectActivityPartition(fixture);
   const decoy = missing.slice(0, owner.loop.start) + 'const note="collapsibleUnits:persistentUnits:";' + missing.slice(owner.loop.start);
-  for (const other of [missing, decoy, fixture.replace("s?.has(i.searchItemId)", "wrong?.has(i.searchItemId)"),
+  for (const other of [missing, decoy, fixture.replace('i&&"mcp-tool-call"===s.type', 'wrong&&"mcp-tool-call"===s.type'),
     apply(fixture), asChunk(fixture).replace("QypQ(e,t,n)", "Other(e,t,n)")]) {
     const project = registeredWorkspace(t, { "async/good.js": fixture, "async/other.js": other });
     assert.equal(enabledFeatureFailuresFromReport(project.run()).length, 1);
@@ -354,20 +350,15 @@ test("disabled reasoning cohort performs no asset discovery", t => {
   assert.equal(discovered, false);
 });
 
-test("reasoning persistence preserves the native first nonempty reply option", () => {
-  const items = [unit("exec", "tool"),
-    unit("assistant-message", "empty", { content: "   " }),
-    unit("assistant-message", "first", { content: "A useful first reply" }),
-    unit("reasoning", "summary", { content: "Available summary" }),
-    unit("assistant-message", "later", { content: "A later reply" })];
-  const native = partition(fixture);
-  const enabled = partition(apply(fixture));
-  const disabled = partition(apply(fixture), false);
-  for (const keepFirstReply of [false, true]) {
-    const options = { keepFirstReply };
-    assert.deepEqual(ids(native(items, options).persistentUnits), keepFirstReply ? ["first"] : []);
+test("reasoning persistence preserves every current accepted-steering prerequisite", () => {
+  const native = partition(fixture), enabled = partition(apply(fixture)), disabled = partition(apply(fixture), false);
+  for (const extra of [{}, { questionReplies: [] }, { codexDelegation: {} }, { isToolOutput: true }, { isHistoricalSteering: true }]) {
+    const items = [unit("user-message", "accepted", { steeringStatus: "accepted", ...extra }),
+      unit("reasoning", "summary", { content: "Available summary" }), unit("exec", "tool")];
+    const options = { hasFollowingFinalAnswer: true };
+    const expected = Object.keys(extra).length === 0 ? ["accepted"] : [];
+    assert.deepEqual(ids(native(items, options).persistentUnits), expected);
     assert.equal(JSON.stringify(disabled(items, options)), JSON.stringify(native(items, options)));
-    assert.deepEqual(ids(enabled(items, options).persistentUnits),
-      keepFirstReply ? ["first", "summary"] : ["summary"]);
+    assert.deepEqual(ids(enabled(items, options).persistentUnits), [...expected, "summary"]);
   }
 });
