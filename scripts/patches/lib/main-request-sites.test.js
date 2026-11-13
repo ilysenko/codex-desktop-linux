@@ -61,7 +61,7 @@ function add(source, siteName, render, helper) {
   return helper + "\n" + source.slice(0, site.nativeStart) + route + source.slice(site.nativeStart);
 }
 function runtime(source, avatarOptions = {}) {
-  const exports = {}, context = vm.createContext({ exports, Error, JSON, Promise, _P: () => null });
+  const exports = {}, context = vm.createContext({ exports, Error, JSON, Promise, z$: () => null });
   vm.runInContext(source, context);
   const module = { exports: {} }, load = () => { throw Error("unexpected import"); };
   load.d = (target, getters) => { for (const [name, get] of Object.entries(getters)) Object.defineProperty(target, name, { get }); };
@@ -484,7 +484,7 @@ function nativeFragments(source) {
   const sender = { sendInlineMessageForView(view, message) { assert.equal(this, sender); messages.push({ view, message }); } };
   const windowManager = { sendMessageToWebContents(view, message) { assert.equal(this, windowManager); messages.push({ view, message }); } };
   const originCalls = [], manager = { isOpen: () => true };
-  const context = vm.createContext({ Error, JSON, Promise, _P: () => null });
+  const context = vm.createContext({ Error, JSON, Promise, z$: () => null });
   vm.runInContext(STATE_HELPER + ASYNC_HELPER + WRAPPER_HELPER + SELECTOR_HELPER, context);
   const method = site => vm.runInContext(`(async function(${site.webContentsVar},${site.requestVar}){${source.slice(site.methodBodyStart, site.methodBodyEnd)}})`, context);
   const wrapper = { options: { chunkedMessageSender: sender },
@@ -552,3 +552,11 @@ for (const envName of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACT
     for (const candidate of candidates) assert.equal(fs.readFileSync(path.join(inventory.buildDir, candidate.name), "utf8"), candidate.source);
   });
 }
+
+
+test("public eager main binding authority preserves its deferred-scope policy", () => {
+  const { hasStableEagerMainBinding: stable } = require("./main-request-sites.js");
+  assert.equal(stable("if(ready){role>>>=1;}", "role"), false);
+  assert.equal(stable("function later(){role=other}class Deferred{method(){role=other}}", "role"), true);
+  assert.equal(stable("holder.role=other;const opaque=\"role=other\";", "role"), true);
+});
