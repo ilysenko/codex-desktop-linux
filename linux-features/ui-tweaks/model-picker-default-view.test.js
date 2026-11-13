@@ -116,9 +116,9 @@ test("cohort qualification refuses absent, ambiguous, mixed and damaged owners w
     { "shell-work.current.js": chunk("work") },
     { ...owners, "another-work.js": chunk("work", fixture.work.moduleSource, "anotherWorkOwner") },
     { ...owners, "shell-work.current.js": changedWork },
-    { ...owners, "async/chat-current.js": changedChat.replace('lS("advanced")', 'lS("simple")') },
+    { ...owners, "async/chat-current.js": changedChat.replace('nD("advanced")', 'nD("simple")') },
     { ...owners, "orphan.js": `const label=${JSON.stringify(helper.MARKER)};` },
-    { ...owners, "damaged-work-copy.js": chunk("work").replace('ns("simple")', 'ns("broken")') },
+    { ...owners, "damaged-work-copy.js": chunk("work").replace('nx("simple")', 'nx("broken")') },
   ];
   for (const files of cases) withApp(files, ({ root, read }) => {
     assert.throws(() => helper.applyDefaultView(root));
@@ -128,9 +128,9 @@ test("cohort qualification refuses absent, ambiguous, mixed and damaged owners w
 
 test("owner qualification rejects escaped setters and ambiguous object-division source", () => {
   for (const [kind, mutation] of [
-    ["chat", source => source.replace(/\blS\b/g, String.raw`\u006cS`)],
-    ["work", source => `const hostile={} / (g=foreign) / 1;${source}`],
-    ["chat", source => source.replace('l("zd8w")', 'l("foreign-react")')],
+    ["chat", source => source.replace(/\bnD\b/g, String.raw`\u006eD`)],
+    ["work", source => `const hostile={} / (p=foreign) / 1;${source}`],
+    ["chat", source => source.replace('n("zd8w")', 'n("foreign-react")')],
   ]) {
     const source = chunk(kind, mutation(fixture[kind].moduleSource));
     const [copy] = copies(source, kind);
@@ -142,11 +142,11 @@ test("owner qualification rejects escaped setters and ambiguous object-division 
 test("published menus retain native return paths and live open callback bindings", () => {
   const mutations = [
     ["work", source => source.replace('M:function(e){', 'M:function(e){return null;')],
-    ["chat", source => source.replace('function eW(e){', 'function eW(e){return null;')],
-    ["chat", source => source.replace(';function n3(e,t){', ';n3=()=>{};function n3(e,t){')],
-    ["work", source => source.replace('return lH[298]', 'ot=()=>{};return lH[298]')],
-    ["chat", source => source.replace('let ic=(0,n.jsxs)', 'eW=()=>{};let ic=(0,n.jsxs)')],
-    ["chat", source => source.replace('if(!lt)return null;', 'if(!lt)return "discarded";')],
+    ["chat", source => source.replace('function te(e){', 'function te(e){return null;')],
+    ["chat", source => source.replace(';function ie(e,t){', ';ie=()=>{};function ie(e,t){')],
+    ["work", source => source.replace('return nl[342]', 'oS=()=>{};return nl[342]')],
+    ["chat", source => source.replace('function te(e){', 'te=()=>{};function te(e){')],
+    ["chat", source => source.replace('if(!ns)return null;', 'if(!ns)return "discarded";')],
   ];
   for (const [kind, mutate] of mutations) {
     const original = fixture[kind].moduleSource;

@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
-const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
+const { createJavaScriptLexicalIndex, escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 const fixture = require("./fixtures/current-model-picker-default-view.json");
 
 function chunk(kind, moduleSource = fixture[kind].moduleSource, moduleId = fixture[kind].moduleId) {
@@ -21,16 +21,37 @@ function extract(source, prefix, expressionPrefix = prefix) {
   return { start, end: close + 1, source: text.replace(prefix, expressionPrefix) };
 }
 
-const chatOpenChange = extract(sources.chat, 'function n3(e,t){');
-const workOpenChange = extract(sources.work, 'ot=function(e){', 'function(e){');
-const workAction = extract(sources.work, 'lr=(e,l)=>{', '(e,l)=>{');
-const workToggle = extract(sources.work, 'lD=e=>{', 'e=>{');
+// The fixtures retain complete signed factories. Execute only the native
+// lifecycle fragments, coherently renamed to this harness's stable bindings.
+function renamedBindings(source, bindings) {
+  const lexical = createJavaScriptLexicalIndex(source);
+  return source.replace(/[A-Za-z_$][\w$]*/gu, (name, index) =>
+    lexical.isCode(index) && Object.hasOwn(bindings, name) && source[index - 1] !== "." &&
+      !/^\s*:/u.test(source.slice(index + name.length)) ? bindings[name] : name);
+}
+
+function nativePrefix(prefix, kind) {
+  return prefix.replace(/[A-Za-z_$][\w$]*/gu, name => fixture.lifecycleAliases[kind][name] ?? name);
+}
+
+function extractLifecycle(source, kind, prefix, expressionPrefix = prefix) {
+  const part = extract(source, nativePrefix(prefix, kind));
+  const inverse = Object.fromEntries(Object.entries(fixture.lifecycleAliases[kind]).map(([stable, current]) => [current, stable]));
+  const normalized = renamedBindings(part.source, inverse);
+  assert.ok(normalized.startsWith(prefix));
+  return { ...part, source: normalized.replace(prefix, expressionPrefix) };
+}
+
+const chatOpenChange = extractLifecycle(sources.chat, 'chat', 'function n3(e,t){');
+const workOpenChange = extractLifecycle(sources.work, 'work', 'ot=function(e){', 'function(e){');
+const workAction = extractLifecycle(sources.work, 'work', 'lr=(e,l)=>{', '(e,l)=>{');
+const workToggle = extractLifecycle(sources.work, 'work', 'lD=e=>{', 'e=>{');
 assert.equal((chatOpenChange.source.match(/lS\("simple"\)/g) ?? []).length, 1);
 assert.equal((chatOpenChange.source.match(/tw&&!le\?"simple":lb/g) ?? []).length, 1);
 assert.equal((workOpenChange.source.match(/ns\("simple"\)/g) ?? []).length, 1);
 assert.equal((workAction.source.match(/ns\(l\?\.showModelList\?"advanced":"simple"\)/g) ?? []).length, 1);
-assert.match(sources.chat, /onToggleMenuView:lS,/);
-assert.match(sources.work, /onToggleMenuView:lD,/);
+assert.match(sources.chat, new RegExp("onToggleMenuView:" + escapeRegExp(fixture.lifecycleAliases.chat.lS) + ","));
+assert.match(sources.work, new RegExp("onToggleMenuView:" + escapeRegExp(fixture.lifecycleAliases.work.lD) + ","));
 
 function clock() {
   let next = 1;
@@ -137,18 +158,18 @@ function workScenario(initial, openChange, action, toggleSource) {
 
 
 function lifecycle(source, kind) {
-  const expression = kind === "chat"
-    ? /\[lb,lS\]=\(0,E\.useState\)\(("(?:simple|advanced)")\)/
-    : /\[ni,ns\]=\(0,g\.useState\)\(("(?:simple|advanced)")\)/;
-  const initial = source.match(expression);
-  assert.ok(initial, "native view state declaration");
+  const prefix = nativePrefix(kind === "chat" ? "[lb,lS]=(0,E.useState)(" : "[ni,ns]=(0,g.useState)(", kind);
+  const at = source.indexOf(prefix);
+  assert.ok(at >= 0 && source.indexOf(prefix, at + prefix.length) < 0, "native view state declaration");
+  const initial = /^("(?:simple|advanced)")\)/u.exec(source.slice(at + prefix.length));
+  assert.ok(initial, "native view state value");
   return kind === "chat"
-    ? chatScenario(JSON.parse(initial[1]), extract(source, "function n3(e,t){").source,
-      extract(source, "n2=function(e){", "function(e){").source)
+    ? chatScenario(JSON.parse(initial[1]), extractLifecycle(source, "chat", "function n3(e,t){").source,
+      extractLifecycle(source, "chat", "n2=function(e){", "function(e){").source)
     : workScenario(JSON.parse(initial[1]),
-      extract(source, "ot=function(e){", "function(e){").source,
-      extract(source, "lr=(e,l)=>{", "(e,l)=>{").source,
-      extract(source, "lD=e=>{", "e=>{").source);
+      extractLifecycle(source, "work", "ot=function(e){", "function(e){").source,
+      extractLifecycle(source, "work", "lr=(e,l)=>{", "(e,l)=>{").source,
+      extractLifecycle(source, "work", "lD=e=>{", "e=>{").source);
 }
 
 module.exports = { fixture, chunk, lifecycle };

@@ -7,14 +7,14 @@ const { createJavaScriptLexicalIndex, escapeRegExp } = require("../../../scripts
 const { findRspackExportPublication } = require("../../../scripts/patches/lib/rspack-export-publication.js");
 const { findRspackRequireBinding, findUniqueRspackModuleCopies, rspackModuleFactories } = require("../../../scripts/patches/lib/rspack-module-assets.js");
 const { listWebviewAssetFiles, patchWebviewAssets } = require("../../../scripts/patches/lib/assets.js");
-const { hasStableEagerMainBinding } = require("../../../scripts/patches/lib/main-request-sites.js");
+const { hasStableEagerMainBinding } = require("../../../scripts/patches/lib/javascript-binding-authority.js");
 const { assertUnambiguousModelComposerLexicalSource } = require("../../../scripts/patches/lib/model-composer-lexical-guard.js");
 
 const ID = "[A-Za-z_$][\\w$]*";
 const MARKER = "codexLinuxModelPickerDefaultAdvancedView";
 const CONTRACTS = {
   work: { exportKey: "M", renderer: "dig0", stateReferences: 3, setterReferences: 4 },
-  chat: { exportKey: "N", renderer: "t7ME", stateReferences: 5, setterReferences: 4 },
+  chat: { exportKey: "N", renderer: "erx1", stateReferences: 5, setterReferences: 4 },
 };
 
 function one(values, description) {
