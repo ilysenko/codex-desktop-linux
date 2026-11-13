@@ -7,7 +7,9 @@ KDE shows descriptive action names when requesting approval.
 
 The five portal actions keep their native Popout ownership, Pet availability,
 Appshots trigger policy, voice lock-screen check and Meetings access, window and
-keymap checks. Region Screenshot and Spotlight retain their native registrations.
+keymap checks. Pet preference initialization, updates and resets follow the
+native application and desktop-service wiring. Its disposed controller ignores
+later preference synchronization. Region Screenshot and Spotlight retain their native registrations.
 The build validates the complete main-process chunk inventory before committing
 the five action tags together. Repeated builds validate the complete feature
 state, including its native owners and shared portal dependency. Incomplete or
@@ -41,8 +43,9 @@ pending-turn read and synchronous save attempt, then disables Portal registratio
 and initiates helper stop before native window and action-owner cleanup. Both
 will-quit drains join the stop Promise settlement before timeout-bound context
 cleanup and final application disposal. Settlement includes failed stop results.
-The native macOS privacy veto keeps the backend running, and upstream retains its
-Windows forced-exit policy. This keeps KDE's saved action set stable across
+The native macOS privacy veto and cancelled confirmation for unsent Git review
+comments keep the backend running. The review check uses the same window context
+as the final context drain. Upstream retains its Windows forced-exit policy. This keeps KDE's saved action set stable across
 ordinary restarts and update exits.
 On KDE, edit actual bindings under
 **System Settings > Keyboard > Shortcuts > ChatGPT Community**. A changed

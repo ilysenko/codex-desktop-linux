@@ -7,7 +7,7 @@ const { createJavaScriptLexicalIndex, escapeRegExp } = require("../../scripts/pa
 const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
 const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
 const { appshotHotkeyState, linuxAppshotWaylandHelperSource } = require("../../scripts/patches/lib/appshot-hotkey-contract.js");
-const { IDENT, inspectGlobalShortcutsPortal, installPortalBackend } = require("../../scripts/patches/lib/global-shortcuts-portal.js");
+const { IDENT, inspectGlobalShortcutsPortal, installPortalBackend, portalOwnerFailureReason } = require("../../scripts/patches/lib/global-shortcuts-portal.js");
 
 const PATCH_MARKER = "codex-linux-wayland-global-shortcuts-v1";
 const MARKER_NAME = "codexLinuxWaylandGlobalShortcutsPatch";
@@ -162,9 +162,9 @@ function classMembers(controller) {
   }
   return members;
 }
-function method(controller, name) {
+function method(controller, name, asynchronous = false) {
   const member = one(classMembers(controller).filter(member => member.name === name), name + " class member");
-  if (member.kind !== "method" || member.privateKey || member.kinds.length !== 0) throw new Error(name + " changed its native public instance method kind");
+  if (member.kind !== "method" || member.privateKey || member.kinds.join(",") !== (asynchronous ? "async" : "")) throw new Error(name + " changed its native public instance method kind");
   return { ...member.body, parameters: member.parameters };
 }
 function constructedController(factory, producer, metadata, role) {
@@ -291,6 +291,174 @@ function requireAppshotAvailability(source, factory, controller) {
   assertReadOnlyBinding(owner, "codexLinuxAppshotIsWayland", helper.index + "function ".length,
     "AppShots Wayland helper");
 }
+function objectValues(owner, description) {
+  const values = new Map();
+  let index = 0;
+  while ((index = skipTrivia(owner, index)) < owner.text.length) {
+    if (owner.text.startsWith("...{}", index)) {
+      index = skipTrivia(owner, index + 5);
+    } else {
+      const key = memberKey(owner, index);
+      index = skipTrivia(owner, key.end);
+      if (key.privateKey || owner.text[index] !== ":" || values.has(key.name)) {
+        throw new Error(description + " has a non-data or duplicate member");
+      }
+      const start = ++index;
+      for (; index < owner.text.length; index++) {
+        if (!owner.lexical.isCode(index)) continue;
+        if (owner.text[index] === ",") break;
+        if ("([{".includes(owner.text[index])) index = delimiterEnd(owner, index);
+      }
+      values.set(key.name, owner.text.slice(start, index).trim());
+    }
+    if (index < owner.text.length && owner.text[index] !== ",") throw new Error(description + " has an incomplete member");
+    index++;
+  }
+  return values;
+}
+function objectAt(owner, open, description) {
+  const close = owner.lexical.matchingBrace(open);
+  if (close <= open) throw new Error(description + " has no complete object");
+  return scope(owner.source, owner.start + open + 1, owner.start + close);
+}
+function nativeClass(factory, name, description) {
+  const head = one(matches(factory, new RegExp("\\bclass " + escapeRegExp(name) + "(?: extends " + IDENT + "(?:\\." + IDENT + ")?)?\\{", "gu")), description + " declaration");
+  if (!evaluatedAt(factory, head.index)) throw new Error(description + " is not an evaluated module class");
+  assertReadOnlyBinding(factory, name, head.index + "class ".length, description);
+  return bodyAt(factory, head, description);
+}
+function evaluatedInitializerAt(owner, index) {
+  let start = index;
+  const assignment = new RegExp("(?:(?:let|const|var) )?" + IDENT + "=$", "u").exec(owner.text.slice(0, start));
+  if (assignment) start -= assignment[0].length;
+  const declaration = /(?:let|const|var) $/u.exec(owner.text.slice(0, start));
+  if (declaration) start -= declaration[0].length;
+  if (owner.text[start - 1] === "(") start--;
+  return evaluatedAt(owner, start);
+}
+function requireConstructorFieldWrite(controller, constructor, name, authorizedIndex) {
+  const { classMemberDefinitions, staticMemberKey } = require("../../scripts/patches/lib/class-member-definitions.js");
+  const initializations = classMemberDefinitions(controller.text).filter(member => !member.kinds.includes("static") &&
+    (member.kind === "method" && member.name === "constructor" || member.initializerStart != null));
+  const allowed = constructor.start - controller.start + authorizedIndex;
+  let initialized = false;
+  for (const member of initializations) {
+    const lower = member.bodyStart ?? member.initializerStart, upper = member.bodyEnd ?? member.initializerEnd;
+    const owner = scope(controller.source, controller.start + lower, controller.start + upper);
+    for (const reference of matches(owner, /(?<![\w$.#])(?:this|[A-Za-z_$][\w$]*)\b/gu, false)) {
+      let next = skipTrivia(owner, reference.index + reference[0].length);
+      if (owner.text.startsWith("?.", next)) next += 2;
+      else if (![".", "["].includes(owner.text[next])) continue;
+      if (owner.text[next] === ".") next++;
+      next = skipTrivia(owner, next);
+      let key;
+      try { key = staticMemberKey(owner, next); }
+      catch {
+        if (reference[0] === "this") throw new Error("Unproven native instance initializer member");
+        continue;
+      }
+      if (reference[0] === "Object" && ["assign", "defineProperty", "defineProperties", "setPrototypeOf"].includes(key.name) ||
+          reference[0] === "Reflect" && ["set", "defineProperty", "setPrototypeOf"].includes(key.name)) {
+        throw new Error("Native instance initializer can replace its field authority");
+      }
+      if (key.privateKey || key.name !== name) continue;
+      const start = lower + reference.index, end = lower + key.end;
+      if (reference[0] === "this" && start === allowed) {
+        initialized = true;
+        continue;
+      }
+      // Reads remain valid as literals inside the original private-name class.
+      const projected = controller.text.slice(0, start) + "(0)" + controller.text.slice(end);
+      try { new Script("class NativeFieldWriteProbe extends Object{" + projected + "}"); }
+      catch { throw new Error("Native " + name + " instance field is overwritten"); }
+      const prefix = [...owner.text.slice(0, reference.index)]
+        .map((character, index) => owner.lexical.isCode(index) ? character : " ").join("");
+      if (/\bdelete\s*\(*\s*$/u.test(prefix)) throw new Error("Native " + name + " instance field is deleted");
+    }
+  }
+  if (!initialized) throw new Error("Missing native " + name + " instance field initialization");
+}
+function requirePetKeymapWiring(factory, metadata) {
+  const { hasStableEagerMainBinding } = require("../../scripts/patches/lib/javascript-binding-authority.js");
+  const nativeStartup = metadata.owner.windowServices.startup;
+  const startup = scope(factory.source, nativeStartup.start, nativeStartup.end);
+  const desktop = one(matches(startup, /function\(\{/gu).map(head => {
+    const parameters = objectAt(startup, head.index + head[0].length - 1, "Desktop context parameters");
+    if (!parameters.text.includes("windowServices:")) return null;
+    const windows = objectValues(parameters, "Desktop context parameters").get("windowServices");
+    const open = parameters.end - startup.start + 2;
+    if (!new RegExp("^" + IDENT + "$", "u").test(windows ?? "") ||
+        startup.text.slice(open - 1, open + 1) !== "){" || !evaluatedInitializerAt(startup, head.index)) return null;
+    const close = startup.lexical.matchingBrace(open);
+    if (startup.text.slice(close + 1, close + 3) !== "({") return null;
+    const args = objectAt(startup, close + 2, "Desktop context arguments");
+    if (objectValues(args, "Desktop context arguments").get("windowServices") !== nativeStartup.binding) return null;
+    const body = scope(factory.source, startup.start + open + 1, startup.start + close);
+    if (matches(body, new RegExp("syncAvatarOverlayHotkey:" + escapeRegExp(windows) + "\\.overlayHotkeyController\\.syncCommandKeybinding(?=,|\\})", "gu"), false).length !== 1) return null;
+    return { body, windows };
+  }).filter(Boolean), "Pet live desktop context");
+  const expected = desktop.windows + ".overlayHotkeyController.syncCommandKeybinding";
+  const construction = one(matches(desktop.body, new RegExp("(?<binding>" + IDENT + ")=new (?<name>" + IDENT + ")\\(\\{", "gu"))
+    .map(head => ({ head, args: objectAt(desktop.body, head.index + head[0].length - 1, "Application service arguments") }))
+    .filter(item => item.args.text.includes("syncAvatarOverlayHotkey:") &&
+      objectValues(item.args, "Application service arguments").get("syncAvatarOverlayHotkey") === expected),
+  "Pet native application service wiring");
+  if (!evaluatedInitializerAt(desktop.body, construction.head.index)) throw new Error("Pet application service is not reached by startup");
+  const application = nativeClass(factory, construction.head.groups.name, "Pet application service");
+  const desktopField = one(classMembers(application).filter(member => member.name === "desktopServices"), "native desktop services field");
+  if (desktopField.kind !== "field" || desktopField.privateKey || desktopField.kinds.length) throw new Error("Native desktop services field is overridden");
+  const constructor = method(application, "constructor");
+  if (!new RegExp("^" + IDENT + "$", "u").test(constructor.parameters) ||
+      !hasStableEagerMainBinding(constructor.text, constructor.parameters)) throw new Error("Pet application options are rewritten");
+  const producerHead = one(matches(constructor, /this\.desktopServices=function\(\{/gu), "Pet desktop services producer");
+  if (!evaluatedAt(constructor, producerHead.index)) throw new Error("Pet desktop services are not initialized by their constructor");
+  requireConstructorFieldWrite(application, constructor, "desktopServices", producerHead.index);
+  const parameters = objectAt(constructor, producerHead.index + producerHead[0].length - 1, "Desktop service parameters");
+  const parameterValues = objectValues(parameters, "Desktop service parameters");
+  const syncParameter = new RegExp("^(" + IDENT + ")=\\(\\)=>\\{\\}$", "u").exec(parameterValues.get("syncAvatarOverlayHotkey") ?? "");
+  if (!syncParameter) throw new Error("Pet desktop sync parameter changed");
+  const bodyOpen = parameters.end + 2 - constructor.start;
+  if (constructor.text.slice(bodyOpen - 1, bodyOpen + 1) !== "){") throw new Error("Pet desktop service body changed");
+  const bodyClose = constructor.lexical.matchingBrace(bodyOpen);
+  const services = scope(factory.source, constructor.start + bodyOpen + 1, constructor.start + bodyClose);
+  if (constructor.text.slice(bodyClose + 1, bodyClose + 3) !== "({") throw new Error("Pet desktop service producer is not directly called");
+  const args = objectAt(constructor, bodyClose + 2, "Desktop service arguments");
+  if (objectValues(args, "Desktop service arguments").get("syncAvatarOverlayHotkey") !== constructor.parameters + ".syncAvatarOverlayHotkey") {
+    throw new Error("Pet desktop service sync is disconnected from application options");
+  }
+  const keymapHead = one(matches(services, new RegExp("(?<binding>" + IDENT + ")=new (?<name>" + IDENT + ")\\(\\{", "gu"))
+    .map(head => ({ head, args: objectAt(services, head.index + head[0].length - 1, "Keymap service arguments") }))
+    .filter(item => item.args.text.includes("syncAvatarOverlayHotkey:") &&
+      objectValues(item.args, "Keymap service arguments").get("syncAvatarOverlayHotkey") === syncParameter[1]),
+  "Pet keymap service construction").head;
+  if (!evaluatedAt(services, keymapHead.index) || !hasStableEagerMainBinding(services.text, syncParameter[1])) {
+    throw new Error("Pet keymap service callback is rewritten or unreachable");
+  }
+  const returned = one(matches(services, /\breturn\b/gu), "Pet desktop service return");
+  const resultHead = one(matches(services, /\{/gu).filter(head => services.lexical.matchingBrace(head.index) === services.text.length - 1), "Pet returned desktop services");
+  if (returned.index < keymapHead.index || resultHead.index < returned.index ||
+      objectValues(objectAt(services, resultHead.index, "Returned desktop services"), "Returned desktop services").get("commandKeybindingsService") !== keymapHead.groups.binding) {
+    throw new Error("Pet keymap service is disconnected from the returned services");
+  }
+  assertReadOnlyBinding(services, keymapHead.groups.binding, keymapHead.index, "Pet keymap service binding");
+  const keymap = nativeClass(factory, keymapHead.groups.name, "Pet keymap service");
+  for (const name of ["dependencies", "initialQuickChatKeybinding"]) {
+    const field = one(classMembers(keymap).filter(member => member.name === name), "Pet keymap " + name + " field");
+    if (field.kind !== "field" || field.privateKey || field.kinds.length) throw new Error("Pet keymap field is overridden");
+  }
+  const initial = method(keymap, "constructor"), reset = method(keymap, "reset", true);
+  const initialCall = one(matches(initial, new RegExp("^super\\(\\),this\\.dependencies=(?<options>" + IDENT + "),this\\.initialQuickChatKeybinding=(?<read>" + IDENT + ")\\(\\)\\.then\\((?<state>" + IDENT + ")=>\\k<options>\\.syncAvatarOverlayHotkey\\((?<preferred>" + IDENT + ")\\(\\k<state>\\)\\)\\)\\.catch\\((?<error>" + IDENT + ")=>\\{\\(0," + IDENT + "\\.tZQ\\)\\(\\)\\.warning\\(\"Failed to initialize Quick Chat shortcut\",\\{safe:\\{\\},sensitive:\\{error:\\k<error>\\}\\}\\)\\}\\)$", "gu")), "Pet initial preferred keymap");
+  if (initialCall.groups.options !== initial.parameters) throw new Error("Pet initial keymap uses foreign dependencies");
+  const preferredName = initialCall.groups.preferred;
+  requireText(reset, new RegExp("this\\.dependencies\\.syncAvatarOverlayHotkey\\(" + escapeRegExp(preferredName) + "\\(" + IDENT + "\\)\\)", "gu"), "Pet reset preferred keymap");
+  const update = method(keymap, "update", true);
+  const updateState = one(matches(update, new RegExp("let (?<old>" + IDENT + ")=" + escapeRegExp(preferredName) + "\\(" + IDENT + "\\),(?<next>" + IDENT + ")=" + escapeRegExp(preferredName) + "\\(" + IDENT + "\\),(?<changed>" + IDENT + ")=\"openAvatarOverlay\"!==" + IDENT + "&&\\k<old>!==\\k<next>;return ", "gu")), "Pet updated preferred keymaps");
+  requireText(update, new RegExp('\\("openAvatarOverlay"===' + IDENT + '\\|\\|"notchVoice"===' + IDENT + '\\|\\|"notchDictation"===' + IDENT + "\\)&&this\\.dependencies\\.syncAvatarOverlayHotkey\\(" + escapeRegExp(updateState.groups.next) + "\\)," + escapeRegExp(updateState.groups.changed) + "&&null!=" + escapeRegExp(updateState.groups.next) + "&&this\\.dependencies\\.syncAvatarOverlayHotkey\\(" + escapeRegExp(updateState.groups.next) + "\\)", "gu"), "Pet updated preferred keymap consumption");
+  const preferredHead = one(matches(factory, new RegExp("\\bfunction " + escapeRegExp(preferredName) + "\\((?<state>" + IDENT + ")\\)\\{", "gu")), "Pet preferred keymap helper");
+  if (!evaluatedAt(factory, preferredHead.index)) throw new Error("Pet preferred keymap helper is not evaluated");
+  assertReadOnlyBinding(factory, preferredName, preferredHead.index + "function ".length, "Pet preferred keymap helper");
+  requireText(bodyAt(factory, preferredHead, "Pet preferred keymap helper"), new RegExp('^return\\(0,' + IDENT + '\\.' + IDENT + '\\)\\(\\{commandId:"openAvatarOverlay",keymapState:' + escapeRegExp(preferredHead.groups.state) + ',isMacOS:"darwin"===process\\.platform\\}\\)$', "gu"), "Pet effective preferred keymap");
+}
 function actionPlan(source, metadata) {
   if (!metadata.owner) throw new Error(metadata.reason || "Shared Portal owner is unavailable");
   const factory = scope(source, metadata.owner.factoryBody.start, metadata.owner.factoryBody.end);
@@ -319,12 +487,13 @@ function actionPlan(source, metadata) {
   const petGate = /^if\(null==([A-Za-z_$][\w$]*)\|\|!([A-Za-z_$][\w$]*)\(\)\)return void ([A-Za-z_$][\w$]*)\(\);if\(([A-Za-z_$][\w$]*)===\1\)return;/u.exec(petSync.text);
   if (!petGate) throw new Error("Pet availability or registration identity changed");
   const [, petKey, available, clear] = petGate;
-  requireText(pet, /commandId:"openAvatarOverlay",isMacOS:"darwin"===process\.platform/gu, "Pet preferred keymap");
+  requirePetKeymapWiring(factory, metadata);
   requireText(pet, /syncCommandKeybinding:[A-Za-z_$][\w$]*=>\{/gu, "Pet preference synchronization");
-  const petCleanup = one(matches(pet, new RegExp(escapeRegExp(petGate[4]) + "=null,(?<registration>" + IDENT + ")=null,(?<preferred>" + IDENT + ")=null," + escapeRegExp(clear) + "=\\(\\)=>\\{\\k<registration>\\?\\.unregister\\(\\),\\k<registration>=null," + escapeRegExp(petGate[4]) + "=null\\}", "gu")), "Pet native cleanup");
+  const petCleanup = one(matches(pet, new RegExp("^let " + escapeRegExp(petKey) + ",(?<disposed>" + IDENT + ")=!1," + escapeRegExp(petGate[4]) + "=null,(?<registration>" + IDENT + ")=null,(?<preferred>" + IDENT + ")=null," + escapeRegExp(clear) + "=\\(\\)=>\\{\\k<registration>\\?\\.unregister\\(\\),\\k<registration>=null," + escapeRegExp(petGate[4]) + "=null\\}", "gu")), "Pet native cleanup");
   const preferred = escapeRegExp(petCleanup.groups.preferred);
   requireText(pet, new RegExp("return\\{setQuickChatHandler:(" + IDENT + ")=>\\{" + preferred + "=\\1\\},dispose:", "gu"), "Pet preferred Quick Chat handler publication", true);
-  requireText(pet, new RegExp("syncCommandKeybinding:(" + IDENT + ")=>\\{null!=\\1&&\\1!==" + escapeRegExp(petKey) + "&&" + IDENT + "\\(\\1\\)," + escapeRegExp(petKey) + "=\\1;try\\{" + escapeRegExp(petSync.name) + "\\(\\)\\}", "gu"), "Pet preferred keymap consumption");
+  requireText(pet, new RegExp("dispose:\\(\\)=>\\{" + escapeRegExp(petCleanup.groups.disposed) + "=!0," + IDENT + "\\?\\.\\(\\)," + IDENT + "\\(\\)," + escapeRegExp(clear) + "\\(\\)\\}", "gu"), "Pet disposal fence");
+  requireText(pet, new RegExp("syncCommandKeybinding:(" + IDENT + ")=>\\{if\\(!" + escapeRegExp(petCleanup.groups.disposed) + "\\)\\{void 0!==" + escapeRegExp(petKey) + "&&null!=\\1&&\\1!==" + escapeRegExp(petKey) + "&&" + IDENT + "\\(\\1\\)," + escapeRegExp(petKey) + "=\\1;try\\{" + escapeRegExp(petSync.name) + "\\(\\)\\}", "gu"), "Pet preferred keymap consumption");
   const petCall = registration(petSync, register, "openAvatarOverlay", escapeRegExp(petKey), "onPressed:\\(\\)=>\\{" + escapeRegExp(available) + "\\(\\)\\?\\(null==" + preferred + '\\|\\|"locked"!==' + escapeRegExp(electron) + "\\.powerMonitor\\.getSystemIdleState\\(1\\)\\)&&\\(" + preferred + "\\?\\?" + escapeRegExp(pet.parameters.toggle) + "\\)\\(\\)\\.catch\\((?<failure>" + IDENT + ")=>\\{\\(0," + IDENT + "\\." + IDENT + "\\)\\(\\)\\.warning\\(\"Failed to open Quick Chat from global hotkey\",\\{safe:\\{\\},sensitive:\\{error:\\k<failure>\\}\\}\\)\\}\\):" + escapeRegExp(clear) + "\\(\\)\\}");
 
   const voice = returnedClosure(producer, metadata, "realtimeVoiceHotkeyController", "requestRealtimeToggle:(?<toggle>" + IDENT + "),subscribeRealtimeVoiceSessionReservation:(?<subscribe>" + IDENT + ")");
@@ -420,13 +589,13 @@ function applyToExtractedApp(extractedDir) {
   const reject = reason => { warn(reason); return { matched: 0, changed: 0, changedAssets: [], reason }; };
   const inventory = findMainProcessChunks(extractedDir);
   if (!inventory) return reject("Missing main-process inventory for Wayland shortcuts");
-  if (inventory.chunks.length !== 19 || !inventory.chunks.includes("early-bootstrap.js")) return reject("Incomplete current nineteen-file main-process inventory");
+  if (inventory.chunks.length !== 21 || !inventory.chunks.includes("early-bootstrap.js")) return reject("Incomplete current twenty-one-file main-process inventory");
   const records = inventory.chunks.map(assetName => {
     const source = fs.readFileSync(path.join(inventory.buildDir, assetName), "utf8"), metadata = inspectGlobalShortcutsPortal(source);
     return { assetName, source, metadata };
   });
   const owners = records.filter(record => record.metadata.owner);
-  if (owners.length !== 1) return reject("Missing or ambiguous Wayland owner cohort");
+  if (owners.length !== 1) return reject(portalOwnerFailureReason(records, "Missing or ambiguous Wayland owner cohort"));
   const owner = owners[0], identity = owner.metadata.owner.id;
   const cohort = records.filter(record => record.metadata.factoryIds.includes(identity) || hasOwnArtifact(record.source) || hasUnexpectedCommandTag(record.source) || record.metadata.state === "drifted");
   if (cohort.length !== 1 || cohort[0] !== owner) return reject("Duplicate, damaged or partial Wayland owner cohort");

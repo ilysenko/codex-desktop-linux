@@ -215,6 +215,43 @@ test("F1 marker-only, partial, duplicate, escaped and foreign action claims refu
   ]) refused(candidate);
 });
 
+test("F1 Pet preferred keymap follows the live application and desktop-service chain", () => {
+  const native = mainBundleFixture();
+  const mutations = [
+    ["keymapState:e,isMacOS", "keymapState:foreign,isMacOS"],
+    ["e.syncAvatarOverlayHotkey(preferredPetKeymap(t))", "other.syncAvatarOverlayHotkey(preferredPetKeymap(t))"],
+    ["this.dependencies=e,this.initialQuickChatKeybinding", "this.dependencies=foreign,this.initialQuickChatKeybinding"],
+    ["{dependencies;initialQuickChatKeybinding;", "{get dependencies(){return foreign}set dependencies(value){}initialQuickChatKeybinding;"],
+    ["syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey})}}", "syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey});this.desktopServices=foreign}}"],
+    ["syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey})}}", 'syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey});this["desktopServices"]=foreign}}'],
+    ["syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey})}}", "syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey});delete this.desktopServices}}"],
+    ["syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey})}}", "syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey});({service:this.desktopServices}=foreign)}}"],
+    ["syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey})}}", "syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey});let alias=this;alias.desktopServices=foreign}}"],
+    ["syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey})}}", 'syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey});Object.defineProperty(this,"desktopServices",{value:foreign})}}'],
+    ["class NativeApplication{desktopServices;", 'class NativeApplication{desktopServices;shadow=Object.defineProperty(this,"desktopServices",{get(){return foreign},set(value){}});'],
+    ["class NativeApplication{desktopServices;", "class NativeApplication{get desktopServices(){return foreign}set desktopServices(value){}"],
+    ["syncAvatarOverlayHotkey:options.syncAvatarOverlayHotkey", "syncAvatarOverlayHotkey:other.syncAvatarOverlayHotkey"],
+    ["syncAvatarOverlayHotkey:sync}", "syncAvatarOverlayHotkey:foreign}"],
+    ["syncAvatarOverlayHotkey:c.overlayHotkeyController.syncCommandKeybinding", "syncAvatarOverlayHotkey:c.realtimeVoiceHotkeyController.syncCommandKeybinding"],
+    ["windowServices:windows});let nativeContext", "windowServices:other});let nativeContext"],
+    ["application=new NativeApplication({syncAvatarOverlayHotkey:c.overlayHotkeyController.syncCommandKeybinding});", "false&&(application=new NativeApplication({syncAvatarOverlayHotkey:c.overlayHotkeyController.syncCommandKeybinding}));"],
+    ["commandKeybindingsService:keymap", "commandKeybindingsService:foreign"],
+    ["keymap=new NativeKeymap", "return;keymap=new NativeKeymap"],
+    ["let r,d=!1,n=null", "let r=foreign,d=!1,n=null"],
+    ["dispose:()=>{d=!0,l?.()", "dispose:()=>{d=!1,l?.()"],
+    ["if(!d){void 0!==r", "if(d){void 0!==r"],
+    ["void 0!==r&&null!=e", "null!=e"],
+  ];
+  for (const [from, to] of mutations) {
+    for (const source of [native, patched(native)]) {
+      const damaged = source.replace(from, to);
+      assert.notEqual(damaged, source, from);
+      assert.doesNotThrow(() => new vm.Script(damaged));
+      refused(damaged);
+    }
+  }
+});
+
 test("F1 native action callback, ownership, availability, keymap and window gates refuse drift", () => {
   const source = mainBundleFixture(), result = patched(source);
   const mutations = [
@@ -402,6 +439,8 @@ test("F1 inert Pet and voice retain availability, sync, locked-screen and native
   };
   const makePet = fixtureClosure(source, "Q", context);
   const pet = makePet({ toggleAvatarOverlay: async () => { events.push("pet"); }, notch: null });
+  assert.equal(registrations.length, 0);
+  pet.syncCommandKeybinding("Ctrl+Alt+P");
   const firstPet = registrations.at(-1);
   assert.equal(firstPet.callbacks.linuxCommandId, "openAvatarOverlay");
   firstPet.callbacks.onPressed();
@@ -426,6 +465,9 @@ test("F1 inert Pet and voice retain availability, sync, locked-screen and native
   locked = true; activeVoice.callbacks.onPressed(); locked = false; activeVoice.callbacks.onPressed();
   voice.syncCommandKeybinding("Ctrl+Alt+R"); assert.equal(activeVoice.unregistered, true);
   voice.dispose(); pet.dispose();
+  const afterDispose = registrations.length;
+  pet.syncCommandKeybinding("Ctrl+Alt+Z");
+  assert.equal(registrations.length, afterDispose);
   await Promise.resolve();
   assert.deepEqual(events, ["pet", "quick-chat", "pet", "warning", "voice"]);
 });
@@ -437,7 +479,7 @@ function inventory(t, source = mainBundleFixture()) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const build = path.join(root, ".vite/build"); fs.mkdirSync(build, { recursive: true });
   fs.writeFileSync(path.join(build, "early-bootstrap.js"), 'const entry="ordinary runtime";');
-  for (let id = 1; id <= 17; id++) fs.writeFileSync(path.join(build, "early-bootstrap-" + id + "-abc.js"), "exports.ids=[" + id + "],exports.modules={" + id + "(){return false}};");
+  for (let id = 1; id <= 19; id++) fs.writeFileSync(path.join(build, "early-bootstrap-" + id + "-abc.js"), "exports.ids=[" + id + "],exports.modules={" + id + "(){return false}};");
   const owner = path.join(build, "early-bootstrap-45-abc.js"); fs.writeFileSync(owner, source);
   return { root, build, owner };
 }
@@ -452,9 +494,9 @@ function registered(root) {
   return report.patches[0];
 }
 
-test("F1 registered nineteen-file inventory applies once and revalidates the complete cohort", t => {
+test("F1 registered twenty-one-file inventory applies once and revalidates the complete cohort", t => {
   const data = inventory(t), original = snapshot(data.build);
-  assert.equal(Object.keys(original).length, 19);
+  assert.equal(Object.keys(original).length, 21);
   assert.equal(registered(data.root).status, "applied");
   const applied = snapshot(data.build);
   assert.deepEqual(Object.keys(applied).filter(name => applied[name] !== original[name]), [path.basename(data.owner)]);
@@ -510,11 +552,11 @@ test("F1 registered preimage rechecks include every unchanged inventory member",
 
 for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
   const signedApp = process.env[variable];
-  test("signed nineteen-file app-shortcut preservation and canonical registration " + variable, { skip: !signedApp }, t => {
+  test("signed twenty-one-file app-shortcut preservation and canonical registration " + variable, { skip: !signedApp }, t => {
     const directory = path.join(signedApp, ".vite/build"), data = inventory(t);
     for (const name of fs.readdirSync(data.build)) fs.unlinkSync(path.join(data.build, name));
     const names = fs.readdirSync(directory).filter(name => /^early-bootstrap(?:-\d+-[0-9a-f]+)?\.js$/u.test(name));
-    assert.equal(names.length, 19);
+    assert.equal(names.length, 21);
     for (const name of names) fs.copyFileSync(path.join(directory, name), path.join(data.build, name));
     const originals = snapshot(data.build);
     assert.equal(registered(data.root).status, "applied");
@@ -535,7 +577,7 @@ for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRAC
       const directory = path.join(signedApp, ".vite/build"), data = inventory(t);
       for (const name of fs.readdirSync(data.build)) fs.unlinkSync(path.join(data.build, name));
       const names = fs.readdirSync(directory).filter(name => /^early-bootstrap(?:-\d+-[0-9a-f]+)?\.js$/u.test(name));
-      assert.equal(names.length, 19);
+      assert.equal(names.length, 21);
       for (const name of names) fs.copyFileSync(path.join(directory, name), path.join(data.build, name));
       const original = snapshot(data.build);
       const applyAppshots = expectedChanges => {
