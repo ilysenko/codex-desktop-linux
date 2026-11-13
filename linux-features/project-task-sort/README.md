@@ -7,7 +7,9 @@ may omit `conversation.createdAt` even though their `local:<UUIDv7>` keys
 contain a creation timestamp. The upstream `task.at` timestamp only covers
 pending rows whose conversation is still null. This feature recovers the
 timestamp from valid UUIDv7 keys for populated rows while preserving explicit
-creation timestamps, remote tasks, and the existing Last updated behavior.
+creation timestamps and the existing Last updated behavior. Other task kinds
+retain the current native timestamp selector's undefined result and the parent
+sorter's existing stable ordering.
 
 The feature is disabled by default because the affected alternate sidebar is
 rollout-dependent upstream behavior. Enable it in

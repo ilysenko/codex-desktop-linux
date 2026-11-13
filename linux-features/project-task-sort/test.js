@@ -21,12 +21,12 @@ const {
   descriptors,
 } = require("./patch.js");
 
-// Current signed shape: the project task sorter compiles its local-only
+// Current signed 26.1111.21308 shape: the project task sorter compiles its
 // timestamp selector as an inline function expression.
 const comparator =
   'function(e,t){if("local"===e.kind)return null==e.summary?e.at:"updated_at"===t?e.summary.recencyAt??e.summary.updatedAt:e.summary.createdAt}';
 const currentProjectSource = `function u(e,t){return e.map((e,n)=>({task:e,timestamp:${comparator}(e,t),index:n}))}`;
-const chunk = (body) => "export const __rspack_esm_id=24191;export const __rspack_esm_ids=[24191];" +
+const chunk = (body) => "export const __rspack_esm_ids=[24191];" +
   `export const __webpack_modules__={YZnq(e,t,n){${body}n.d(t,{u:()=>u})}};`;
 
 function captureWarns(fn) {
@@ -111,7 +111,7 @@ test("populated local conversations recover Created time from UUIDv7 keys", () =
   assert.equal(timestamp(older, "updated_at"), 400);
 });
 
-test("explicit, pending, legacy, invalid, and non-local timestamps retain upstream behavior", () => {
+test("explicit, pending, legacy, invalid, and non-local timestamps retain native behavior", () => {
   const timestamp = timestampFunction();
   const local = {
     key: "local:019e0000-0000-7000-8000-000000000001",
@@ -141,7 +141,7 @@ test("explicit, pending, legacy, invalid, and non-local timestamps retain upstre
 test("semantic comparator matching is independent of minified aliases", () => {
   const renamed = currentProjectSource
     .replace("function(e,t){if", "function createdComparator(task,mode){if")
-    .replaceAll("e.summary", "task.summary").replaceAll("e.at", "task.at")
+    .replaceAll("e.summary", "task.summary").replaceAll("e.at", "task.at").replaceAll("e.task", "task.task")
     .replace('"local"===e.kind', '"local"===task.kind')
     .replaceAll("===t?", "===mode?");
   const timestamp = timestampFunction(renamed);
@@ -156,7 +156,7 @@ test("semantic comparator matching is independent of minified aliases", () => {
 });
 
 test("drift and duplicate semantic comparators fail closed byte-identically", () => {
-  const drifted = currentProjectSource.replace("e.at:", "e.pendingWorktree.createdAt:");
+  const drifted = currentProjectSource.replace("?e.at:", "?e.pendingWorktree.createdAt:");
   for (const source of [
     drifted,
     `${currentProjectSource}${currentProjectSource}`,
@@ -169,6 +169,17 @@ test("drift and duplicate semantic comparators fail closed byte-identically", ()
     assert.match(warnings[0], /one unique current project task timestamp comparator/);
     assert.equal(matchesProjectTaskSortContract(source), false);
   }
+});
+
+test("retired remote-switch comparators and opaque source lookalikes refuse", () => {
+  const retired=currentProjectSource.replace(comparator,'function(e,t){switch(e.kind){case"local":if(null==e.summary)return e.at;return"updated_at"===t?e.summary.recencyAt??e.summary.updatedAt:e.summary.createdAt;case"remote":return(("updated_at"===t?e.task.updated_at??e.task.created_at:e.task.created_at??e.task.updated_at)??0)*1e3}}');
+  for(const source of [retired,`const opaque=\`${comparator}\`;`]){
+    const result=captureWarns(()=>applyProjectTaskSortPatch(source));
+    assert.equal(result.value,source);assert.equal(result.warnings.length,1);
+    assert.equal(matchesProjectTaskSortContract(source),false);
+  }
+  const note=`;const opaque=\`${comparator}\`;`;
+  assert.equal(applyProjectTaskSortPatch(currentProjectSource+note),applyProjectTaskSortPatch(currentProjectSource)+note);
 });
 
 test("descriptor locates one semantic rspack chunk and rejects missing or ambiguous chunks", () => {
@@ -231,7 +242,7 @@ test("current signed sort owner runs stable Created ordering and normal descript
     {key:"local:019f0000-0000-7000-8000-000000000002",kind:"local",summary:{recencyAt:100}},
     {key:"remote",kind:"remote",task:{created_at:20,updated_at:40}},
     {key:"tie",kind:"local",summary:{createdAt:100,recencyAt:100}}];
-  assert.deepEqual(Array.from(sorter(patched)(tasks,"created_at").threadIds,task=>task.key),[tasks[1].key,"remote","older","tie"]);
+  assert.deepEqual(Array.from(sorter(patched)(tasks,"created_at").threadIds,task=>task.key),[tasks[1].key,"older","remote","tie"]);
   assert.equal(JSON.stringify(sorter(patched)(tasks,"updated_at")),JSON.stringify(sorter(source)(tasks,"updated_at")));
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"task-sort-signed-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const file=path.join(dir,"webview/assets",owners[0]);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,source);
   for(const expected of ["applied","already-applied"]){const report=createPatchReport();applyWebviewAssetPatchDescriptors(dir,descriptors,{},report);assert.equal(report.patches[0].status,expected);}

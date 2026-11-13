@@ -1,11 +1,12 @@
 "use strict";
 
+const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
+
 const identifier = String.raw`[A-Za-z_$][\w$]*`;
-// The timestamp selector is compiled inline into the project task sorter.
-// The current release has a local-only selector; remote task timestamps are
-// no longer handled by this function.
+// The current task sorter selects populated and pending local timestamps in
+// one inline function. Other task kinds retain its implicit undefined result.
 const comparatorPattern = new RegExp(
-  String.raw`function(?: ${identifier})?\((${identifier}),(${identifier})\)\{if\("local"===\1\.kind\)return ((?:\{\d+\}|[^{}]){1,1200}?)\}`,
+  String.raw`function(?: ${identifier})?\((${identifier}),(${identifier})\)\{if\("local"===\1\.kind\)return `,
   "g",
 );
 
@@ -23,11 +24,19 @@ function comparatorContracts(source) {
   const candidates = [];
   const current = [];
   const patched = [];
-  for (const match of source.matchAll(new RegExp(comparatorPattern.source, comparatorPattern.flags))) {
-    candidates.push(match);
-    const [, task, mode, localTimestamp] = match;
-    if (localTimestamp === currentLocalTimestamp(task, mode)) current.push(match);
-    if (localTimestamp === patchedLocalTimestamp(task, mode)) patched.push(match);
+  const matches = [...source.matchAll(comparatorPattern)];
+  if (matches.length === 0) return { candidates, current, patched };
+  const lexical = createJavaScriptLexicalIndex(source);
+  for (const match of matches) {
+    if (!lexical.isCode(match.index)) continue;
+    const open = match.index + match[0].indexOf("{"), end = lexical.matchingBrace(open);
+    if (end < open) continue;
+    const [, task, mode] = match;
+    const localTimestamp = source.slice(match.index + match[0].length, end);
+    const contract = { index: match.index, text: source.slice(match.index, end + 1), task, mode, localTimestamp };
+    candidates.push(contract);
+    if (localTimestamp === currentLocalTimestamp(task, mode)) current.push(contract);
+    if (localTimestamp === patchedLocalTimestamp(task, mode)) patched.push(contract);
   }
   return { candidates, current, patched };
 }
@@ -47,13 +56,12 @@ function applyProjectTaskSortPatch(source) {
   }
 
   const match = current[0];
-  const task = match[1];
-  const mode = match[2];
-  const patchedComparator = match[0].replace(
+  const { task, mode } = match;
+  const patchedComparator = match.text.replace(
     currentLocalTimestamp(task, mode),
     patchedLocalTimestamp(task, mode),
   );
-  return source.slice(0, match.index) + patchedComparator + source.slice(match.index + match[0].length);
+  return source.slice(0, match.index) + patchedComparator + source.slice(match.index + match.text.length);
 }
 
 function matchesProjectTaskSortContract(source) {
@@ -67,7 +75,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_900,
     ciPolicy: "optional",
-    assetNeedles: ["timestamp:function", "summary.recencyAt??", "summary.createdAt"],
+    assetNeedles: [".summary.recencyAt", ".summary.createdAt"],
     assetMatch: matchesProjectTaskSortContract,
     missingDescription: "unique project task timestamp comparator",
     skipDescription: "project task creation timestamp feature patch",
