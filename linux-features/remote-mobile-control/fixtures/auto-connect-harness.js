@@ -8,7 +8,7 @@ function main() {
   let body = graphBody().replace("class Host{constructor", "class Host{appState;remoteConnectionsHandler;visualizations;constructor").replace('this.scopedState=e.globalState,', 'this.scopedState=e.globalState,this.appState=e.globalState,' + c.mainVisualizationConstruction + ',' + c.mainLiveHandlerConstruction + ',')
     .replace('async handleMessage(e,t){await this.messageHandler', 'createAppHost(e){let o,c,g;let ' + c.mainSystemServicesInitializer + ';return new Er({getConnection:this.getAppServerClient,globalState:this.scopedState,...{' + c.mainLiveServicePublication + ',remoteControlEnvironments:this.remoteControlEnvironments,...I,...' + c.mainReturnedConditionalSpreads.join(',...') + ',...' + c.mainVisualizationSpread + '})}async handleMessage(e,t){await this.messageHandler')
     .replace('require.d(exports,', 'r.d(t,').replace('module.exports=exports;', 'e.exports=t;');
-  body = 'var ei=r(24240),en=r(33491),edC=r(23507);' + handler + c.mainServiceClass + c.mainAppHostClass + c.mainVisualizationOwner + body;
+  body = 'var ei=r(93246),en=r(33491),edC=r(23507);' + handler + c.mainServiceClass + c.mainAppHostClass + c.mainVisualizationOwner + body;
   return `exports.ids=[815],exports.modules={26307(e,t,r){${body}}};`;
 }
 function chunk(id, row) { return `export const __rspack_esm_ids=[${id}];export const __webpack_modules__={${row.moduleId}(${row.params}){${row.moduleSource}}};`; }

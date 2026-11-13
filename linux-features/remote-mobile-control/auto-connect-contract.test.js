@@ -66,10 +66,10 @@ test("bounded actual row controls read stored checked choice and forward supplie
 test("missing or disconnected Settings never qualifies the main service as its own caller",()=>{
  const cohort=h.snapshots();for(const role of["main","settings","facade","bootstrap"])assert.throws(()=>prepare({...cohort,[role]:[]}),/missing/);
  reject(mutate('return o.setAutoConnect({hostId:t,autoConnect:n})','return o.setAutoConnect({hostId:n,autoConnect:t})'));
- reject(mutate('mutationFn:ng','mutationFn:foreign'));
+ reject(mutate('mutationFn:nh','mutationFn:foreign'));
  reject(mutate('onToggleConnection:oD','onToggleConnection:foreign'));
  reject(mutate('children:[tl,tc,td,tu,tm]','children:[tl,tc,td,null,null]'));
- reject(mutate('RemoteConnectionsSettings:()=>t6','RemoteConnectionsSettings:()=>foreign'));
+ reject(mutate('RemoteConnectionsSettings:()=>t8','RemoteConnectionsSettings:()=>foreign'));
 });
 test("wrong persisted key, getter fallback, write order, live service or host choice refuses",()=>{
  for(const[from,to]of[
@@ -78,7 +78,7 @@ test("wrong persisted key, getter fallback, write order, live service or host ch
   ['this.ensureRemoteConnectionConnected(e)','this.ensureRemoteConnectionConnected(t)'],['this.disconnectRemoteConnection(e)','this.disconnectRemoteConnection(t)'],
   ['return this.connections.setRemoteConnectionAutoConnect(e.hostId,e.autoConnect)','return this.connections.setRemoteConnectionAutoConnect(e.autoConnect,e.hostId)'],
   ['new edV(this.appState,','new foreign(this.appState,'],['remoteConnections:new edM(o=this.remoteConnectionsHandler','remoteConnections:new edM(o=this.unrelatedHandler'],
-  ['var ei=r(24240)','var ei=r(1)'],['en=r(33491)','en=r(1)'],
+  ['var ei=r(93246)','var ei=r(1)'],['en=r(33491)','en=r(1)'],
   ['edC=r(23507)','edC=r(1)'],[',edC=r(23507)',''],
   ['new edC.M(', 'new edC.Q('],['edC.Q.map(', 'edC.M.map('],
   ['this.remoteConnectionsHandler=new edV','if(false)this.remoteConnectionsHandler=new edV'],
@@ -112,14 +112,14 @@ test("changed pending/error behavior, captured locals, disconnected list caches 
  for(const[from,to]of[
   ['of=oc.isPending','of=false'],['om.isPending||og.isPending','foreign.isPending||og.isPending'],
   ['om.mutateAsync({hostId:e,autoConnect:t','om.mutateAsync({hostId:t,autoConnect:e'],['.finally(s)},tw[148]','.finally(()=>{})},tw[148]'],
-  ['checked:T.autoConnect','checked:!T.autoConnect'],['e=>X(T.hostId,e)','e=>X(e,T.hostId)'],['ex=Z.autoConnect','ex=Z.autoConnect||true'],['w=e=>Y(Z.hostId,e)','w=e=>Y(e,Z.hostId)'],
-  ['onToggleConnection:T},e.hostId)','onToggleConnection:foreign},e.hostId)'],['let oO=eJ,oD=','let oO=foreign,oD='],
-  ['let om=(0,l.n)(ek);','let om=(0,l.n)(foreign);'],['return tw[326]','return null;return tw[326]'],
+  ['checked:P.autoConnect','checked:!T.autoConnect'],['e=>X(P.hostId,e)','e=>X(e,T.hostId)'],['ex=Z.autoConnect','ex=Z.autoConnect||true'],['w=e=>J(Z.hostId,e)','w=e=>J(e,Z.hostId)'],
+  ['onToggleConnection:P},e.hostId)','onToggleConnection:foreign},e.hostId)'],['let oO=eY,oD=','let oO=foreign,oD='],
+  ['let om=(0,l.n)(eR);','let om=(0,l.n)(foreign);'],['return tw[326]','return null;return tw[326]'],
   ['tw[237]!==n9','if(false)tw[237]!==n9'],
  ])reject(mutate(from,to));
- for(const statement of['om=foreign;','oO=foreign;','oD=foreign;','tw=foreign;','ek=foreign;','eJ=foreign;','tM=foreign;','tI=foreign;','t_=foreign;'])reject(mutate('let oW=null!=nH;',statement+'let oW=null!=nH;'));
+ for(const statement of['om=foreign;','oO=foreign;','oD=foreign;','tw=foreign;','eR=foreign;','eY=foreign;','tA=foreign;','tI=foreign;','t_=foreign;'])reject(mutate('let oG=null!=nH;',statement+'let oG=null!=nH;'));
  for(const name of currentSettings.criticalNames)for(const declaration of[`function ${name}(unused=()=>{}){return null}`,`function* ${name}(){return null}`])reject(mutate(currentSettings.entryHead,declaration+currentSettings.entryHead));
- reject(mutate('eJ=async(e,t,n)=>{','eJ=async(e,t,om)=>{'));
+ reject(mutate('eY=async(e,t,n)=>{','eY=async(e,t,om)=>{'));
 });
 test("all selected dependency bytes are preflighted, including symlinks; no-op needs no write permission",()=>temporary(root=>{
  h.writeApp(root);const plan=locate(root),name='webview/assets/async/facade-b.js',file=path.join(root,name);
@@ -143,8 +143,8 @@ test("map spread binding rejects a declaration-only rename and accepts coherent 
  assert.equal(prepare(h.snapshots(mutate(c.mainPersistentSetter,renamed,mainName))).alreadyApplied,true);
 });
 test("ternary value identifiers retain the declaration binding while object property keys stay literal",()=>{
- reject(mutate('let eu=x;','let wrongTooltip=x;'));
- const row=currentSettings.remoteRow.replace('let eu=x;','let longerTooltip=x;').replace('T.online?eu:ed','T.online?longerTooltip:ed');
+ reject(mutate(currentSettings.remoteRow,currentSettings.remoteRow.replace('let eu=x;','let wrongTooltip=x;')));
+ const row=currentSettings.remoteRow.replace('let eu=x;','let longerTooltip=x;').replace('P.online?eu:ed','P.online?longerTooltip:ed');
  assert.equal(prepare(h.snapshots(mutate(currentSettings.remoteRow,row))).alreadyApplied,true);
 });
 
@@ -386,7 +386,7 @@ test("v5 native cohort and coherent namespace aliases retain zero-edit qualifica
   let renamed = source;
   for (const row of replacements.reverse()) renamed = renamed.slice(0, row.index) + "LongerNativeState" + renamed.slice(row.index + 2);
   assert.equal(prepare(h.snapshots({...native, [mainName]: renamed})).alreadyApplied, true);
-  reject(mutate("var ei=r(24240)", "var renamedOnly=r(24240)", mainName));
+  reject(mutate("var ei=r(93246)", "var renamedOnly=r(24240)", mainName));
 });
 
 function hostConstructorEdit(input, transform) {
@@ -452,4 +452,35 @@ test("v6 native and shadow-safe block locals keep constructor context baseline v
   assert.equal(prepare(h.snapshots(block)).alreadyApplied, true);
   const captureActualHandler = hostConstructorEdit(native, source => source.replace("constructor(e){", "constructor(e){var edV;"));
   reject(captureActualHandler);
+});
+
+
+test("current cloud preview spread retains a fixed unrelated service key and retires the old state provider",()=>{
+ assert.equal(prepare(h.snapshots(native)).alreadyApplied,true);
+ reject(mutate('cloudPreviews:this.cloudPreviews','remoteConnections:this.cloudPreviews',mainName));
+ reject(mutate('var ei=r(93246)','var ei=r(24240)',mainName));
+});
+
+test("current native rename keyboard handler preserves composition veto and Enter/Escape actions",()=>{
+ const start=c.rendererRemoteControlRow.indexOf('onKeyDown:e=>{');assert.ok(start>=0);
+ const open=c.rendererRemoteControlRow.indexOf('{',start),end=createJavaScriptLexicalIndex(c.rendererRemoteControlRow).matchingBrace(open);
+ const text=c.rendererRemoteControlRow.slice(start+'onKeyDown:'.length,end+1);
+ for(const composing of[false,true])for(const key of['Enter','Escape','A']){
+  const events=[],nativeEvent={composing};
+  const handler=vm.runInNewContext('('+text+')',{ime:{X(value){assert.equal(value,nativeEvent);events.push('composition');return composing}},ep:()=>events.push('save'),ef:()=>events.push('cancel')});
+  handler({key,nativeEvent,preventDefault:()=>events.push('prevent')});
+  assert.deepEqual(events,composing||key==='A'?['composition']:['composition','prevent',key==='Enter'?'save':'cancel']);
+ }
+ reject(mutate('(0,e6.X)(e.nativeEvent)','(0,e6.X)(foreignEvent)'));
+ reject(mutate('e6=n("i7fz")','e6=n("foreignComposition")'));
+});
+
+
+test("method-like bytes inside an opaque native caller message remain literal source",()=>{
+ const original=c.rendererCaller;
+ try{
+  c.rendererCaller=original.replace('Remote connections are unavailable','}statement()');
+  const source=mutate('Remote connections are unavailable','}statement()');
+  assert.equal(prepare(h.snapshots(source)).alreadyApplied,true);
+ }finally{c.rendererCaller=original}
 });

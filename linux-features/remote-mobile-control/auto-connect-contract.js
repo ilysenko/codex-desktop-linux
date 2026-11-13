@@ -30,7 +30,8 @@ function expression(text, seeds = {}, whole = false) {
     // Literal field names belong to the root member list of a class template.
     const field = /[;{]\s*$/u.test(before) && /^[;=]/u.test(after) &&
       classBodies.some(body => body.start <= at && at < body.end && body.lexical.isRoot(at - body.start));
-    const method=/^(?:\s*)\(/u.test(after)&&(/[;{}]\s*(?:(?:async|get|set)\s+)*$/u.test(before)||/,\s*(?:async|get|set)\s+$/u.test(before));
+    const method=lex.isCode(at)&&/^(?:\s*)\(/u.test(after)&&(/[;{}]\s*(?:(?:async|get|set)\s+)*$/u.test(before)||/,\s*(?:async|get|set)\s+$/u.test(before))&&
+      text[trivia(text,delimiter(text,lex,text.indexOf("(",at+name.length))+1)]==="{";
     const member=text[at-1]==="."&&text.slice(at-3,at)!=="...";
     const key=/[,{]\s*$/u.test(before)&&/^\s*:/u.test(after);
     if (!lex.isCode(at) || fixed.has(name) || field || method || member || key) continue;
@@ -489,7 +490,7 @@ function inspectAutoConnectMain(source) {
   const getters = method(handler, "getAutoConnectForRemoteConnection").source + method(handler, "getRemoteConnectionAutoConnectByHostId").source;
   const getRoles = exact(getters, contract.mainChoiceAndMapGetters, { ei: setter.ei });
   exact(method(handler, "clearRemoteConnectionAutoConnect").source, contract.mainClearChoice, { ei: getRoles.ei });
-  mainImport(factory, setter.ei, "24240");
+  mainImport(factory, setter.ei, "93246");
   // A native constructor expression and its same-host service return must be
   // actual live host methods, never nested examples or dead conditional blocks.
   const makePattern = expression(contract.mainLiveHandlerConstruction, { edV: handler.name });
