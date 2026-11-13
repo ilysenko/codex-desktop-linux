@@ -144,8 +144,9 @@ test("all contracts tolerate fresh minified identifiers and fail closed on missi
 });
 
 test("incomplete native disclosure is preserved instead of patching a neighboring state hook", () => {
-  for (const source of [expandedSource.replace("autoScrollToBottom:_", "autoScrollToBottom:!1"),
-    expandedSource.replace("onToggle:()=>{D(aM)}", "onToggle:handleToggle")]) {
+  for (const source of [expandedSource.replace("autoScrollToBottom:R", "autoScrollToBottom:!1"),
+    expandedSource.replace("onToggle:()=>{E(aM)}", "onToggle:handleToggle")]) {
+    assert.notEqual(source,expandedSource,"current native disclosure mutation must apply");
     const result = warnings(() => applyExpandedPatch(source));
     assert.equal(result.value, source);
     assert.equal(result.messages.length, 1);
