@@ -166,27 +166,27 @@ test("selected native getters, configuration failure and inheritance gate keep t
   assert.throws(() => make(m)(manager, false, undefined, undefined, {}, {}), error => error === failure);
   const on = selectedRuntime(joint, { navigator: { userAgent: "Linux" }, localStorage: { getItem: () => "1" } });
   assert.equal(on(manager, false, undefined, undefined, {}, {}), "detailed");
-  const read = nativeConfigReader({ em: { ZJ: host => host === "durable" }, r0: { Y$: value => value } });
+  const read = nativeConfigReader({ e2: { ZJ: host => host === "durable" }, iH: { Y$: value => value } });
   const calls = [], client = { hostId: "local", sendRequest(method, args, options) { calls.push([method, args, options]); return Promise.resolve({ config: {} }); } };
   assert.deepEqual(JSON.parse(JSON.stringify(await read(client, "/workspace"))), {});
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), ["config/read", { cwd: "/workspace", includeLayers: false }, { priority: "critical", timeoutMs: 500 }]);
   client.sendRequest = () => Promise.reject(Error("controlled config failure"));
   assert.equal(await read(client, "/workspace"), null);
   let selectedReads = 0;
-  const select = nativeConfigurationSelection({ aE(...args) { selectedReads++; return read(...args); } });
+  const select = nativeConfigurationSelection({ ss(...args) { selectedReads++; return read(...args); } });
   assert.equal(select({ requestClient: client }, { summary: null }, "/workspace"), undefined);
   assert.equal(select({ requestClient: client }, { summary: "none" }, "/workspace"), undefined);
   assert.equal(selectedReads, 0);
   assert.equal(await select({ requestClient: client }, {}, "/workspace"), null);
   assert.equal(selectedReads, 1);
-  const normalizeFailure = nativeConfigReader({ em: { ZJ: () => false }, r0: { Y$() { throw Error("controlled config conversion failure"); } } });
+  const normalizeFailure = nativeConfigReader({ e2: { ZJ: () => false }, iH: { Y$() { throw Error("controlled config conversion failure"); } } });
   assert.equal(await normalizeFailure({ sendRequest: () => Promise.resolve({ config: {} }) }, "/workspace"), null);
   const synchronousFailure = Error("controlled synchronous request failure");
   await assert.rejects(() => read({ hostId: "local", sendRequest() { throw synchronousFailure; } }, "/workspace"), error => error === synchronousFailure);
   client.getHostId = manager.getHostId; client.getConversation = manager.getConversation; client.getDefaultFeatureOverride = () => true;
   assert.equal(make(m)(client, false, { summary: "prior" }, undefined, await read(client, "/workspace"), {}), null);
-  const inherit = nativeInheritance({ P: { d: () => ({ entries: [{ value: "accepted" }] }) }, k: () => [] });
-  const conversation = { latestThreadSettings: { summary: null }, turnHistory: { kind: "canonical", history: { entitiesByKey: { accepted: { turnId: "turn", params: { summary: "prior" } } } } } };
+  const inherit = nativeInheritance({});
+  const conversation = { latestThreadSettings: { summary: null }, turnHistory: { kind: "canonical", history: { islands: [{ newerBoundary: { status: "exhausted" }, entries: [{ value: "missing" }, { value: "accepted" }] }], entitiesByKey: { accepted: { turnId: "turn", params: { summary: "prior" } } } } } };
   const gated = inherit(conversation, false), accepted = inherit(conversation, true);
   assert.equal(gated.H, null); assert.equal(gated.Q, null);
   assert.equal(accepted.H, conversation.latestThreadSettings); assert.equal(accepted.Q.summary, "prior");
@@ -202,10 +202,74 @@ test("each production feature works with the sibling feature directory absent", 
       const own = path.join(root, "linux-features", feature);
       fs.cpSync(__dirname.replace(/remote-mobile-control$/u, feature), own, { recursive: true });
       fs.cpSync(path.join(__dirname, "../../scripts/patches"), path.join(root, "scripts/patches"), { recursive: true });
+      if (feature === "reasoning-visibility") {
+        fs.rmSync(path.join(root, "scripts/patches/lib/main-request-sites.js"));
+      }
       const sibling = feature === "remote-mobile-control" ? "reasoning-visibility" : "remote-mobile-control";
       assert.equal(fs.existsSync(path.join(root, "linux-features", sibling)), false);
       const adapter = require(path.join(own, entry));
       assert.notEqual(adapter[method](nativeCarrier()), nativeCarrier());
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("current native canonical and flat history providers retain incomplete-entry handling", () => {
+  const inherit = nativeInheritance({});
+  const accepted = { turnId: "accepted", params: { summary: "prior" } };
+  const history = {
+    islands: [{ newerBoundary: { status: "loading" }, entries: [{ value: "missing" }, { value: "accepted" }] }],
+    entitiesByKey: { accepted },
+  };
+  const canonical = inherit({ turnHistory: { kind: "canonical", history } }, true);
+  const flat = inherit({ turns: [null, { turnId: null }, accepted, null] }, true);
+  assert.equal(canonical.Q, accepted.params);
+  assert.equal(flat.Q, accepted.params);
+  const native = nativeCarrier();
+  const variants = [
+    native.replace('newerBoundary.status==="exhausted"', 'newerBoundary.status==="loading"'),
+    native.replace("e.entitiesByKey[t.value]", "e.entitiesByKey[foreign]"),
+    native.replace("function ep(e){", "function ep(e){return null;"),
+    native.replace('var p=n("Fkn8");', 'var p=n("Fkn8");ep=()=>null;'),
+  ];
+  for (const changed of variants) {
+    assert.notEqual(changed, native);
+    assert.throws(() => mobile.prepareSummaryLayer([...rspackModuleFactories(changed, "async/history.js")], "mobile"));
+  }
+});
+
+test("current native request reuse includes explicit summary, service tier and extra context", () => {
+  const data = require("./summary-contract-data.js");
+  const start = data.route.indexOf("if(0!==p.request.input.length");
+  const end = data.route.indexOf(")return sU(g);", start);
+  assert.ok(start >= 0 && end > start);
+  const condition = data.route.slice(start + 3, end);
+  const requiresIndependentRequest = new Function("p", "return " + condition);
+  const cases = [
+    [{}, {}, false],
+    [{ summary: "none" }, {}, true],
+    [{ summary: null }, {}, true],
+    [{ serviceTier: "fast" }, {}, true],
+    [{ futureOption: false }, {}, true],
+    [{ futureOption: null }, {}, false],
+    [{}, { attachments: [] }, false],
+    [{}, { attachments: ["inert"] }, true],
+    [{}, { futureContext: false }, true],
+  ];
+  for (const [request, context, expected] of cases) {
+    assert.equal(requiresIndependentRequest({ request: { threadId: "thread", input: [], ...request }, context }), expected);
+  }
+  const native = nativeCarrier();
+  for (const source of [mobileSource(native), visibilitySource(native), mobileSource(visibilitySource(native))]) {
+    assert.ok(source.includes("if(" + condition + ")return sU(g);"));
+  }
+  for (const [from, to] of [
+    ['"durable"===a.mode&&("aeon"===u||', '("aeon"===u||'],
+    ["n.context?.useAppServerServiceTierDefault?void 0:iJ", "false?void 0:iJ"],
+    ["void 0!==p.request.summary||", ""],
+    ["void 0!==p.request.serviceTier||", ""],
+  ]) {
+    const changed = native.replace(from, to);
+    assert.notEqual(changed, native);
+    assert.throws(() => mobile.prepareSummaryLayer([...rspackModuleFactories(changed, "async/current-policy.js")], "mobile"));
   }
 });

@@ -5,7 +5,7 @@ const FIELD="this.executeTurnStart=this.streamRecovery.wrapTurnStart(X)";
 function instrumentedPlacement(){const filename=path.join(__dirname,"summary-contract.js"),source=fs.readFileSync(filename,"utf8")+"\nmodule.exports.__placement=ctorEagerAssignmentAt;",owned={exports:{}};vm.runInNewContext("(function(require,module,exports){"+source+"\n})",{Buffer})(createRequire(filename),owned,owned.exports);return owned.exports.__placement}
 const placement=instrumentedPlacement();
 function inspect(body,privateName=true){const source=`class Probe{${privateName?"#V(){}":""}constructor(e){${body}}}`,index=createJavaScriptLexicalIndex(source),start=source.indexOf("constructor(e){"),open=start+"constructor(e){".length-1,close=index.matchingBrace(open),ctor={params:"e",open,close,body:source.slice(open+1,close)};return placement({source},ctor,ctor.body.indexOf("this.executeTurnStart"))}
-function carrier(statement){const body='n.d(t,{O3:()=>sM});var p=n("Fkn8");'+data.previousLookup+data.previousGetter+data.configReader+data.turn+'class sM extends p.TF{#V(){}constructor(e){super();'+data.constructorInput+'this.logger=R;'+data.route+'this.settings=Y;this.hostId=b;'+statement+'}'+data.getDefault+data.getHost+data.getConversation+data.startTurn+'}';return 'export const __rspack_esm_ids=[1];export const __webpack_modules__={V7mA(e,t,n){'+body+'}};'}
+function carrier(statement){const body='n.d(t,{O3:()=>sM});var p=n("Fkn8");'+data.canonicalIsland+data.flatten+data.turns+data.previousLookup+data.previousGetter+data.configReader+data.turn+'class sM extends p.TF{#Z(){}constructor(e){super();'+data.constructorInput+'this.logger=v;'+data.route+data.settingsField+';'+data.hostField+';'+statement+'}'+data.getDefault+data.getHost+data.getConversation+data.startTurn+'}';return 'export const __rspack_esm_ids=[1];export const __webpack_modules__={V7mA(e,t,n){'+body+'}};'}
 function copies(source){return[...rspackModuleFactories(source,"async/summary.js")]}
 
 test("native root-if initialization prefix links the wrapped route in original private class syntax",()=>{
@@ -26,7 +26,7 @@ test("branch, short-circuit, ternary, call, extra-parenthesis, loop and dead sco
 
 test("preceding native operands and lifecycle callback boundary must qualify, not just parse",()=>{
  const good=carrier(data.executionBoundary+data.executionPrefix+',false){}');
- for(const bad of[good.replace('this.lifecycle.addAuthStatusCallback(ee)','this.lifecycle.addAuthStatusCallback(foreign)'),good.replace('startTurn:X,isDisposed:()=>this.disposed','startTurn:foreign,isDisposed:()=>this.disposed'),good.replace(data.executionBoundary,'let ee=()=>{};'),good.replace('if(this.lifecycle.addAuthStatusCallback','if(false&&this.lifecycle.addAuthStatusCallback')])assert.throws(()=>api.prepareSummaryLayer(copies(bad),"mobile"),/turn-summary contract/);
+ for(const bad of[good.replace('this.lifecycle.addAuthStatusCallback(W)','this.lifecycle.addAuthStatusCallback(foreign)'),good.replace('startTurn:H,isDisposed:()=>this.disposed','startTurn:foreign,isDisposed:()=>this.disposed'),good.replace(data.executionBoundary,'let W=()=>{};'),good.replace('if(this.lifecycle.addAuthStatusCallback','if(false&&this.lifecycle.addAuthStatusCallback')])assert.throws(()=>api.prepareSummaryLayer(copies(bad),"mobile"),/turn-summary contract/);
 });
 
 
@@ -55,8 +55,8 @@ test("public manager declaration must initialize after its live publication",()=
 
 test("live route external module roles cannot be constructor-captured or eagerly rebound",()=>{
  const native=carrier(data.executionBoundary+data.executionPrefix+',false){}');assert.doesNotThrow(()=>api.prepareSummaryLayer(copies(native),"mobile"));
- for(const name of["a4","rn","eE"])for(const declaration of[`var ${name}=()=>null;`,`${name}=()=>null;`,`function ${name}(unused=()=>{}){return null}`,`function* ${name}(){return null}`])assert.throws(()=>api.prepareSummaryLayer(copies(native.replace('this.logger=R;','this.logger=R;'+declaration)),"mobile"),/constructor captures or eagerly rewrites a native route module role/);
- const harmless=native.replace('this.logger=R;','this.logger=R;function unrelated(a4){a4=()=>null}');assert.doesNotThrow(()=>api.prepareSummaryLayer(copies(harmless),"mobile"));
+ for(const name of data.roles.routeModules)for(const declaration of[`var ${name}=()=>null;`,`${name}=()=>null;`,`function ${name}(unused=()=>{}){return null}`,`function* ${name}(){return null}`])assert.throws(()=>api.prepareSummaryLayer(copies(native.replace('this.logger=v;','this.logger=v;'+declaration)),"mobile"),/constructor captures or eagerly rewrites a native route module role/);
+ const harmless=native.replace('this.logger=v;','this.logger=v;function unrelated(sU){sU=()=>null}');assert.doesNotThrow(()=>api.prepareSummaryLayer(copies(harmless),"mobile"));
 });
 
 
@@ -65,4 +65,31 @@ test("safe native aliases normalize spread and ternary values while literal prop
  assert.ok(renamed.includes('join("\\n")'));assert.doesNotThrow(()=>new Script(renamed.replaceAll("export const ","const ")));
  for(const layer of["mobile","visibility"]){const plan=api.prepareSummaryLayer(copies(renamed),layer);assert.notEqual(plan.edits[0].patchedSource,renamed);assert.equal(api.prepareSummaryLayer(copies(plan.edits[0].patchedSource),layer,false).edits[0].patchedSource,renamed);}
  for(const[from,to]of[[".context",".foreignContext"],["manager:inputArg","foreignManager:inputArg"],["?.summary","?.foreignSummary"]]){assert.ok(renamed.includes(from));assert.throws(()=>api.prepareSummaryLayer(copies(renamed.replace(from,to)),"mobile"),/turn-summary contract/);}
+});
+
+test("canonical history providers reject captured constructor writes and retain local callback bindings", () => {
+  const native = carrier(data.executionBoundary + data.executionPrefix + ',false){}');
+  const seam = ',false){}}';
+  assert.equal(native.split(seam).length, 2);
+  for (const role of [data.roles.canonicalIsland, data.roles.turns, data.roles.flatten]) {
+    for (const statement of [
+      `${role}=()=>[];`,
+      `Promise.resolve().then(()=>{${role}=()=>[]});`,
+      `this.callback=()=>{${role}=()=>[]};`,
+    ]) {
+      const changed = native.replace(seam, ',false){}' + statement + '}');
+      assert.notEqual(changed, native);
+      for (const layer of ['mobile', 'visibility']) {
+        assert.throws(() => api.prepareSummaryLayer(copies(changed), layer), /captured or rewritten canonical history provider/);
+      }
+    }
+    for (const statement of [
+      `Promise.resolve().then(${role}=>{${role}=()=>[]});`,
+      `Promise.resolve().then(()=>{let ${role};${role}=()=>[]});`,
+    ]) {
+      const changed = native.replace(seam, ',false){}' + statement + '}');
+      assert.notEqual(changed, native);
+      assert.doesNotThrow(() => api.prepareSummaryLayer(copies(changed), 'mobile'));
+    }
+  }
 });
