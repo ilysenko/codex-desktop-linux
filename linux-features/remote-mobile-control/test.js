@@ -363,7 +363,10 @@ function currentEnablementBridgeRegistry() {
   const fixture = require("./fixtures/current-enablement-bridge.json"), f = fixture.bridgeFragments;
   const bridge = { moduleId: f.moduleId, params: f.params, moduleSource:
     "var " + f.imports.map(row => `${row.local}=n(${JSON.stringify(row.moduleId)})`).join(",") + ";" + f.functions.map(row => row.source).join("") };
-  const rows = [bridge, fixture.pairing, fixture.hook, fixture.facades[0]];
+  // Share the current signed Statsig provider across every integrated carrier.
+  const hook = remoteLoadGateHarness.fixture.callee;
+  assert.equal(hook.moduleId, fixture.hook.moduleId);
+  const rows = [bridge, fixture.pairing, hook, fixture.facades[0]];
   return `export const __webpack_modules__={${rows.map(row => `${JSON.stringify(row.moduleId)}(${row.params.join(",")}){${row.moduleSource}}`).join(",")}};`;
 }
 
@@ -2477,6 +2480,11 @@ test("remote mobile control feature participates in ASAR patching and reports", 
       const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-remote-mobile-app-"));
       try {
         const { buildDir, assetsDir } = writeRspackRemoteMobileApp(tempApp);
+        const loadGate = require("./remote-load-gate.js").locateRemoteLoadGate(assetsDir);
+        assert.deepEqual(loadGate.moduleIds, {
+          owner: remoteLoadGateHarness.fixture.owner.moduleId,
+          callee: remoteLoadGateHarness.fixture.callee.moduleId,
+        });
         const report = createPatchReport();
         const patchOptions = { corePatchRoot: path.join(tempApp, "empty-core") };
         patchExtractedApp(tempApp, { ...patchOptions, report });
