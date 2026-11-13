@@ -1,7 +1,17 @@
 {
-  "version": "26.1106.51428",
+  "version": "26.1111.21308",
   "roles": {
     "visibility": [
+      {
+        "moduleId": "uodG",
+        "params": [
+          "e",
+          "l",
+          "n"
+        ],
+        "moduleSource": "var t=n(\"QosV\"),s=n(\"zTeN\"),i=n(\"xS4d\"),a=n(\"PIwo\");function r({remoteControlConnectionsState:e,slingshotEnabled:l}){return l&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(l,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:l,showControlThisMacTab:n,showRemoteControlConnectionsSection:t,showRemoteSshConnections:s,showTabbedSshPage:i,isWslConnectionsLoading:a,showWslConnections:r}){return\"wsl\"===e&&a?\"wsl\":t?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||l?\"ssh\"!==e||i?\"wsl\"!==e||r?e:\"ssh\":l?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":l?\"access-other-devices\":\"ssh\":\"wsl\"===e&&r?\"wsl\":s?\"ssh\":\"access-other-devices\"},Zi:r,wi:function(){let e,l=(0,t.c)(3),n=(0,s.Ul)(i.h9),o=(0,a.mC)();return l[0]!==n||l[1]!==o?(e=r({remoteControlConnectionsState:n,slingshotEnabled:o}),l[0]=n,l[1]=o,l[2]=e):e=l[2],e}})",
+        "sourceAsset": "webview/assets/async/214192.7c0019789e.js"
+      },
       {
         "moduleId": "uodG",
         "params": [
@@ -9,8 +19,8 @@
           "t",
           "n"
         ],
-        "moduleSource": "var i=n(\"QosV\"),a=n(\"zTeN\"),r=n(\"xS4d\"),o=n(\"PIwo\");function s({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:i,showRemoteSshConnections:a,showTabbedSshPage:r,isWslConnectionsLoading:o,showWslConnections:s}){return\"wsl\"===e&&o?\"wsl\":i?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||t?\"ssh\"!==e||r?\"wsl\"!==e||s?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&s?\"wsl\":a?\"ssh\":\"access-other-devices\"},Zi:s,wi:function(){let e,t=(0,i.c)(3),n=(0,a.Ul)(r.h9),l=(0,o.mC)();return t[0]!==n||t[1]!==l?(e=s({remoteControlConnectionsState:n,slingshotEnabled:l}),t[0]=n,t[1]=l,t[2]=e):e=t[2],e}})",
-        "sourceAsset": "webview/assets/async/160740.20fabf4348.js"
+        "moduleSource": "var i=n(\"QosV\"),r=n(\"zTeN\"),a=n(\"xS4d\"),o=n(\"PIwo\");function s({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:i,showRemoteSshConnections:r,showTabbedSshPage:a,isWslConnectionsLoading:o,showWslConnections:s}){return\"wsl\"===e&&o?\"wsl\":i?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||t?\"ssh\"!==e||a?\"wsl\"!==e||s?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&s?\"wsl\":r?\"ssh\":\"access-other-devices\"},Zi:s,wi:function(){let e,t=(0,i.c)(3),n=(0,r.Ul)(a.h9),l=(0,o.mC)();return t[0]!==n||t[1]!==l?(e=s({remoteControlConnectionsState:n,slingshotEnabled:l}),t[0]=n,t[1]=l,t[2]=e):e=t[2],e}})",
+        "sourceAsset": "webview/assets/async/220029.4466d65fca.js"
       },
       {
         "moduleId": "uodG",
@@ -20,17 +30,17 @@
           "t"
         ],
         "moduleSource": "var i=t(\"QosV\"),a=t(\"zTeN\"),o=t(\"xS4d\"),n=t(\"PIwo\");function r({remoteControlConnectionsState:e,slingshotEnabled:s}){return s&&(e?.available??!0)&&e?.accessRequired!==!0}t.d(s,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:s,showControlThisMacTab:t,showRemoteControlConnectionsSection:i,showRemoteSshConnections:a,showTabbedSshPage:o,isWslConnectionsLoading:n,showWslConnections:r}){return\"wsl\"===e&&n?\"wsl\":i?\"control-this-mac\"!==e||t?\"access-other-devices\"!==e||s?\"ssh\"!==e||o?\"wsl\"!==e||r?e:\"ssh\":s?\"access-other-devices\":\"control-this-mac\":t?\"control-this-mac\":\"ssh\":s?\"access-other-devices\":\"ssh\":\"wsl\"===e&&r?\"wsl\":a?\"ssh\":\"access-other-devices\"},Zi:r,wi:function(){let e,s=(0,i.c)(3),t=(0,a.Ul)(o.h9),l=(0,n.mC)();return s[0]!==t||s[1]!==l?(e=r({remoteControlConnectionsState:t,slingshotEnabled:l}),s[0]=t,s[1]=l,s[2]=e):e=s[2],e}})",
-        "sourceAsset": "webview/assets/async/28918.2950780448.js"
+        "sourceAsset": "webview/assets/async/28918.48c9cffd9d.js"
       },
       {
         "moduleId": "uodG",
         "params": [
           "e",
           "t",
-          "l"
+          "n"
         ],
-        "moduleSource": "var n=l(\"QosV\"),r=l(\"zTeN\"),s=l(\"xS4d\"),a=l(\"PIwo\");function i({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}l.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:l,showRemoteControlConnectionsSection:n,showRemoteSshConnections:r,showTabbedSshPage:s,isWslConnectionsLoading:a,showWslConnections:i}){return\"wsl\"===e&&a?\"wsl\":n?\"control-this-mac\"!==e||l?\"access-other-devices\"!==e||t?\"ssh\"!==e||s?\"wsl\"!==e||i?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":l?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&i?\"wsl\":r?\"ssh\":\"access-other-devices\"},Zi:i,wi:function(){let e,t=(0,n.c)(3),l=(0,r.Ul)(s.h9),o=(0,a.mC)();return t[0]!==l||t[1]!==o?(e=i({remoteControlConnectionsState:l,slingshotEnabled:o}),t[0]=l,t[1]=o,t[2]=e):e=t[2],e}})",
-        "sourceAsset": "webview/assets/async/389433.ef60c5b97b.js"
+        "moduleSource": "var a=n(\"QosV\"),s=n(\"zTeN\"),l=n(\"xS4d\"),o=n(\"PIwo\");function i({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:a,showRemoteSshConnections:s,showTabbedSshPage:l,isWslConnectionsLoading:o,showWslConnections:i}){return\"wsl\"===e&&o?\"wsl\":a?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||t?\"ssh\"!==e||l?\"wsl\"!==e||i?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&i?\"wsl\":s?\"ssh\":\"access-other-devices\"},Zi:i,wi:function(){let e,t=(0,a.c)(3),n=(0,s.Ul)(l.h9),r=(0,o.mC)();return t[0]!==n||t[1]!==r?(e=i({remoteControlConnectionsState:n,slingshotEnabled:r}),t[0]=n,t[1]=r,t[2]=e):e=t[2],e}})",
+        "sourceAsset": "webview/assets/async/583085.4250d5c902.js"
       },
       {
         "moduleId": "uodG",
@@ -40,17 +50,7 @@
           "a"
         ],
         "moduleSource": "var n=a(\"QosV\"),i=a(\"zTeN\"),s=a(\"xS4d\"),r=a(\"PIwo\");function o({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}a.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:a,showRemoteControlConnectionsSection:n,showRemoteSshConnections:i,showTabbedSshPage:s,isWslConnectionsLoading:r,showWslConnections:o}){return\"wsl\"===e&&r?\"wsl\":n?\"control-this-mac\"!==e||a?\"access-other-devices\"!==e||t?\"ssh\"!==e||s?\"wsl\"!==e||o?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":a?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&o?\"wsl\":i?\"ssh\":\"access-other-devices\"},Zi:o,wi:function(){let e,t=(0,n.c)(3),a=(0,i.Ul)(s.h9),l=(0,r.mC)();return t[0]!==a||t[1]!==l?(e=o({remoteControlConnectionsState:a,slingshotEnabled:l}),t[0]=a,t[1]=l,t[2]=e):e=t[2],e}})",
-        "sourceAsset": "webview/assets/async/464477.6e7962c333.js"
-      },
-      {
-        "moduleId": "uodG",
-        "params": [
-          "e",
-          "t",
-          "n"
-        ],
-        "moduleSource": "var o=n(\"QosV\"),i=n(\"zTeN\"),a=n(\"xS4d\"),l=n(\"PIwo\");function s({remoteControlConnectionsState:e,slingshotEnabled:t}){return t&&(e?.available??!0)&&e?.accessRequired!==!0}n.d(t,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:t,showControlThisMacTab:n,showRemoteControlConnectionsSection:o,showRemoteSshConnections:i,showTabbedSshPage:a,isWslConnectionsLoading:l,showWslConnections:s}){return\"wsl\"===e&&l?\"wsl\":o?\"control-this-mac\"!==e||n?\"access-other-devices\"!==e||t?\"ssh\"!==e||a?\"wsl\"!==e||s?e:\"ssh\":t?\"access-other-devices\":\"control-this-mac\":n?\"control-this-mac\":\"ssh\":t?\"access-other-devices\":\"ssh\":\"wsl\"===e&&s?\"wsl\":i?\"ssh\":\"access-other-devices\"},Zi:s,wi:function(){let e,t=(0,o.c)(3),n=(0,i.Ul)(a.h9),r=(0,l.mC)();return t[0]!==n||t[1]!==r?(e=s({remoteControlConnectionsState:n,slingshotEnabled:r}),t[0]=n,t[1]=r,t[2]=e):e=t[2],e}})",
-        "sourceAsset": "webview/assets/async/62425.b732a2cb25.js"
+        "sourceAsset": "webview/assets/async/861981.614cf1592f.js"
       },
       {
         "moduleId": "uodG",
@@ -60,7 +60,7 @@
           "t"
         ],
         "moduleSource": "var c=t(\"QosV\"),l=t(\"zTeN\"),i=t(\"xS4d\"),o=t(\"PIwo\");function n({remoteControlConnectionsState:e,slingshotEnabled:r}){return r&&(e?.available??!0)&&e?.accessRequired!==!0}t.d(r,{},{HZ:function({selectedConnectionsTab:e,showControlOtherDevices:r,showControlThisMacTab:t,showRemoteControlConnectionsSection:c,showRemoteSshConnections:l,showTabbedSshPage:i,isWslConnectionsLoading:o,showWslConnections:n}){return\"wsl\"===e&&o?\"wsl\":c?\"control-this-mac\"!==e||t?\"access-other-devices\"!==e||r?\"ssh\"!==e||i?\"wsl\"!==e||n?e:\"ssh\":r?\"access-other-devices\":\"control-this-mac\":t?\"control-this-mac\":\"ssh\":r?\"access-other-devices\":\"ssh\":\"wsl\"===e&&n?\"wsl\":l?\"ssh\":\"access-other-devices\"},Zi:n,wi:function(){let e,r=(0,c.c)(3),t=(0,l.Ul)(i.h9),a=(0,o.mC)();return r[0]!==t||r[1]!==a?(e=n({remoteControlConnectionsState:t,slingshotEnabled:a}),r[0]=t,r[1]=a,r[2]=e):e=r[2],e}})",
-        "sourceAsset": "webview/assets/async/996150.23ce8ddb7a.js"
+        "sourceAsset": "webview/assets/async/996150.82849ab38d.js"
       }
     ],
     "catalog": [
@@ -71,8 +71,8 @@
           "t",
           "n"
         ],
-        "moduleSource": "let r,i;var a=n(\"SZCv\"),s=n.n(a),o=n(\"zTeN\"),l=n(\"OWtl\");let u=new Set,d=(0,o.SZ)(l.u,()=>void 0,({set:e})=>{let t=()=>e(r);return u.add(t),t(),()=>{u.delete(t)}}),c=(0,o.un)(l.u,({get:e})=>e(d)?.ssh,{isEqual:s()}),p=(0,o.un)(l.u,({get:e})=>e(d)?.wsl,{isEqual:s()}),h=(0,o.un)(l.u,({get:e})=>e(d)?.remoteControl,{isEqual:s()}),f=(0,o.un)(l.u,({get:e})=>e(d)?.remoteControlState,{isEqual:s()}),m=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlClientId),g=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlEnvironmentId),_=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlEnabled);function v(e){for(let t of(r=null==e?void 0:{remoteControlState:void 0,localRemoteControlClientId:void 0,localRemoteControlEnvironmentId:void 0,localRemoteControlInstallationId:void 0,localRemoteControlEnabled:void 0,ssh:void 0,wsl:void 0,remoteControl:void 0,...r,...e},u))t()}n.d(t,{},{BJ:g,EP:c,K:p,Zr:h,dZ:m,h9:f,mi:_,y5:async function(e){i?.[Symbol.dispose](),i=void 0,v(void 0),null!=e&&(i=await e.catalog.subscribe(v))}})",
-        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
+        "moduleSource": "let r,i;var a=n(\"SZCv\"),s=n.n(a),o=n(\"zTeN\"),l=n(\"OWtl\");let u=new Set,d=(0,o.SZ)(l.u,()=>void 0,({set:e})=>{let t=()=>e(r);return u.add(t),t(),()=>{u.delete(t)}}),c=(0,o.un)(l.u,({get:e})=>e(d)?.ssh,{isEqual:s()}),p=(0,o.un)(l.u,({get:e})=>e(d)?.wsl,{isEqual:s()}),h=(0,o.un)(l.u,({get:e})=>e(d)?.remoteControl,{isEqual:s()}),_=(0,o.un)(l.u,({get:e})=>e(d)?.remoteControlState,{isEqual:s()}),m=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlClientId),f=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlEnvironmentId),g=(0,o.un)(l.u,({get:e})=>e(d)?.localRemoteControlEnabled);function E(e){for(let t of(r=null==e?void 0:{remoteControlState:void 0,localRemoteControlClientId:void 0,localRemoteControlEnvironmentId:void 0,localRemoteControlInstallationId:void 0,localRemoteControlEnabled:void 0,ssh:void 0,wsl:void 0,remoteControl:void 0,...r,...e},u))t()}n.d(t,{},{BJ:f,EP:c,K:p,Zr:h,dZ:m,h9:_,mi:g,y5:async function(e){i?.[Symbol.dispose](),i=void 0,E(void 0),null!=e&&(i=await e.catalog.subscribe(E))}})",
+        "sourceAsset": "webview/assets/async/907538.ce3dfb2b2a.js"
       }
     ],
     "gate": [
@@ -84,7 +84,7 @@
           "n"
         ],
         "moduleSource": "var r=n(\"QosV\"),i=n(\"zTeN\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"OWtl\"),l=n(\"hZax\"),u=n(\"OMIV\"),d=n(\"kx7U\");let c=(0,i.un)(o.u,({get:e})=>{let t=e(a.Dc),{data:n}=e(s.I2,t),r=e(u.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let i=n?.config.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?r:Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0||r});function p(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,i.Ul)(c)},bc:c,mC:function(){return(0,l.Zj)(\"1042620455\")},mw:function(){let e,t,n=(0,r.c)(5),a=(0,i.Ul)(d.u8)??[];return n[0]!==a?(e=new Set(a.flatMap(p)),n[0]=a,n[1]=e):e=n[1],n[2]!==a||n[3]!==e?(t={remoteConnections:a,enabledRemoteHostIdSet:e},n[2]=a,n[3]=e,n[4]=t):t=n[4],t}})",
-        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
+        "sourceAsset": "webview/assets/async/907538.ce3dfb2b2a.js"
       }
     ],
     "gateHook": [
@@ -95,8 +95,8 @@
           "t",
           "n"
         ],
-        "moduleSource": "var r=n(\"QosV\"),i=n(\"JlWK\"),a=n(\"zTeN\"),s=n(\"zd8w\"),o=n(\"OMIV\");let l=(0,s.createContext)(!1);function u(){return f(),(0,i.useStatsigClient)()}function d(e,t,n){return e.getLayer(t,n)}function c(e){let t={};return Object.entries(e).forEach(([e,n])=>{(\"number\"==typeof n||\"string\"==typeof n||\"boolean\"==typeof n)&&(t[e]=String(n))}),t}function p(e,t){let n;return{...(n=e.getContext().user,{origin:`codex_${\"electron\".replace(\"-\",\"_\")}`,codex_window_type:\"electron\",...n?.appVersion?{app_version:n.appVersion}:{},...n?.locale?{browser_locale:n.locale}:{}}),...t}}function h(e,t,{value:n,metadata:r}={}){let i=c(p(e,r));e.logEvent(t,n,i)}function f(e){(0,s.useContext)(l)}n.d(t,{},{$R:p,AS:function(){return u().client},DR:function(e){return f(),(0,a._U)(o.dx,e)},Fj:function(e,t){let n,i=(0,r.c)(4),{getDynamicConfig:a}=u();return i[0]!==e||i[1]!==a||i[2]!==t?(n=a(e,t),i[0]=e,i[1]=a,i[2]=t,i[3]=n):n=i[3],n},Ks:function(e,t){return e.checkGate(t)},Ou:function(e,t){let n,i=(0,r.c)(8),{client:a,getLayer:s}=u();return i[4]!==a||i[5]!==e||i[6]!==t?(n=d(a,e,t),i[4]=a,i[5]=e,i[6]=t,i[7]=n):n=i[7],n},XM:d,XR:function(){return u().isLoading},Zj:function(e){let t,n=(0,r.c)(2);return f(\"string\"==typeof e),n[0]!==e?(t=\"boolean\"==typeof e?e:{cache:\"signal\",resolve:(t,n)=>o.JW.resolve(t,n,e).atom,scope:o.JW.scope},n[0]=e,n[1]=t):t=n[1],(0,a.Ul)(t)},cB:function(){return f(),(0,i.useStatsigUser)().user},cn:u,fd:function(){let e,t,n,i=(0,r.c)(7),{client:a}=u();i[0]!==a?(e=(e,t)=>{h(a,e,{metadata:t})},i[0]=a,i[1]=e):e=i[1];let s=e;i[2]!==a?(t=(e,t)=>h(a,e,t),i[2]=a,i[3]=t):t=i[3];let o=t;return i[4]!==s||i[5]!==o?(n={logEventWithStatsig:s,logValueEventWithStatsig:o},i[4]=s,i[5]=o,i[6]=n):n=i[6],n},hW:function(e,t,n){return e.getExperiment(t,n)},j3:l,ml:c})",
-        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
+        "moduleSource": "var r=n(\"QosV\"),i=n(\"IozE\"),a=n(\"zTeN\"),s=n(\"zd8w\"),o=n(\"OMIV\");let l=(0,s.createContext)(!1);function u(){return c(),(0,i.useStatsigClient)()}function d(e,t,n){return e.getLayer(t,n)}function c(e){(0,s.useContext)(l)}n.d(t,{},{AS:function(){return u().client},DR:function(e){return c(),(0,a._U)(o.dx,e)},Fj:function(e,t){let n,i=(0,r.c)(4),{getDynamicConfig:a}=u();return i[0]!==e||i[1]!==a||i[2]!==t?(n=a(e,t),i[0]=e,i[1]=a,i[2]=t,i[3]=n):n=i[3],n},Ks:function(e,t){return e.checkGate(t)},Ou:function(e,t){let n,i=(0,r.c)(8),{client:a,getLayer:s}=u();return i[4]!==a||i[5]!==e||i[6]!==t?(n=d(a,e,t),i[4]=a,i[5]=e,i[6]=t,i[7]=n):n=i[7],n},XM:d,XR:function(){return u().isLoading},Zj:function(e){let t,n=(0,r.c)(2);return c(\"string\"==typeof e),n[0]!==e?(t=\"boolean\"==typeof e?e:{cache:\"signal\",resolve:(t,n)=>o.JW.resolve(t,n,e).atom,scope:o.JW.scope},n[0]=e,n[1]=t):t=n[1],(0,a.Ul)(t)},cB:function(){return c(),(0,i.useStatsigUser)().user},cn:u,hW:function(e,t,n){return e.getExperiment(t,n)},j3:l})",
+        "sourceAsset": "webview/assets/async/907538.ce3dfb2b2a.js"
       }
     ]
   },
