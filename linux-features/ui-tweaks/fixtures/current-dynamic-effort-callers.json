@@ -8,10 +8,11 @@
       "moduleSha256": "81c85ec914babd28a7202182e5366942116038404345b8a3b0c517b0fd8c4b7e"
     },
     "consumer": {
+      "version": "26.1111.21308",
       "moduleId": "cyhU",
-      "asset": "webview/assets/async/549505.de50db1d13.js",
-      "assetSha256": "06d76aa7a9569261f3a2d29448f8beb18bc30c6bce24a06f244a4cb8e529798c",
-      "moduleSha256": "7b8c54250699943460015886d100c377a0cc99045a74161d7cdf0efba9f0ddbf"
+      "asset": "webview/assets/async/79584.0a91de2528.js",
+      "assetSha256": "c11817795adc5bc2994ee4b76827b7d29b46204b084b363e7c37f6874a4009d0",
+      "moduleSha256": "db5d7b74bc5db91de303877fb8299b96576726ee203b7d6be671afa35232fe1d"
     },
     "formatter": {
       "moduleId": "O5Ra",

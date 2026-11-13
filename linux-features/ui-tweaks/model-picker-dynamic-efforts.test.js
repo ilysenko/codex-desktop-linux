@@ -27,6 +27,16 @@ const inputFiles = {
   "async/work.js": chunk([work]),
 };
 
+const returnedProps = defaultView.inspectDefaultView(copy(work), "work").returnedMenuProps;
+const powerSelection = /powerSelections:([A-Za-z_$][A-Za-z0-9_$]*)/u.exec(returnedProps)[1];
+const fullSelection = /powerSelectionsWithXHigh:([A-Za-z_$][A-Za-z0-9_$]*)/u.exec(work.moduleSource)[1];
+const resolverSelection = /([A-Za-z_$][A-Za-z0-9_$]*)=\(0,[A-Za-z_$][A-Za-z0-9_$]*\.Qv\)/u.exec(work.moduleSource)[1];
+const enabledEffortSet = dynamic.inspectEffortConsumer(copy(work)).enabledEfforts;
+const propsAt = work.moduleSource.indexOf(returnedProps);
+assert.ok(propsAt >= 0 && work.moduleSource.indexOf(returnedProps, propsAt + returnedProps.length) < 0);
+const menuCall = /\(0,([A-Za-z_$][A-Za-z0-9_$]*)\.jsx\)\(([A-Za-z_$][A-Za-z0-9_$]*)\.([A-Za-z_$][A-Za-z0-9_$]*),\{$/u.exec(work.moduleSource.slice(0, propsAt));
+assert.ok(menuCall);
+
 function withApp(files, callback) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-power-efforts-"));
   const directory = path.join(root, "webview/assets");
@@ -193,19 +203,19 @@ test("UI resolver and Work contributions invert and repeat exactly while preserv
 
 test("consumer qualification rejects dead resolver output, disconnected menu inputs and replaced native Sets", () => {
   const mutations = [
-    work.moduleSource.replace("powerSelections:tJ", "powerSelections:[]"),
-    insertBeforeComponentReturn(work.moduleSource.replace("powerSelections:tJ", "powerSelections:[]"),
-      "let unreturnedPicker=(0,t.jsx)(D.i,{powerSelections:tJ,});"),
-    work.moduleSource.replace("powerSelections:tJ", "powerSelections:[],unused:{powerSelections:tJ}"),
-    work.moduleSource.replace("powerSelections:tJ", 'powerSelections:tJ,"powerSelections":[]'),
-    work.moduleSource.replace("powerSelections:tJ", "powerSelections:tJ,...unprovenProps"),
-    work.moduleSource.replace("powerSelections:tJ", "powerSelections:tJ,/* sibling */...{powerSelections:[]}"),
-    work.moduleSource.replace("powerSelections:tJ", 'powerSelections:tJ,/* sibling */["powerSelections"]:[]'),
-    work.moduleSource.replace("powerSelectionsWithXHigh:tG", "powerSelectionsWithXHigh:[]"),
-    work.moduleSource.replace("powerSelectionsWithXHigh:tG", "powerSelectionsWithXHigh:[],unused:{powerSelectionsWithXHigh:tG}"),
-    insertBeforeComponentReturn(work.moduleSource, "tz=[];"),
-    insertBeforeComponentReturn(work.moduleSource, "tJ=[];"),
-    insertBeforeComponentReturn(work.moduleSource, "nH=new Set();"),
+    work.moduleSource.replace(`powerSelections:${powerSelection}`, "powerSelections:[]"),
+    insertBeforeComponentReturn(work.moduleSource.replace(`powerSelections:${powerSelection}`, "powerSelections:[]"),
+      `let unreturnedPicker=(0,${menuCall[1]}.jsx)(${menuCall[2]}.${menuCall[3]},{powerSelections:${powerSelection},});`),
+    work.moduleSource.replace(`powerSelections:${powerSelection}`, `powerSelections:[],unused:{powerSelections:${powerSelection}}`),
+    work.moduleSource.replace(`powerSelections:${powerSelection}`, `powerSelections:${powerSelection},"powerSelections":[]`),
+    work.moduleSource.replace(`powerSelections:${powerSelection}`, `powerSelections:${powerSelection},...unprovenProps`),
+    work.moduleSource.replace(`powerSelections:${powerSelection}`, `powerSelections:${powerSelection},/* sibling */...{powerSelections:[]}`),
+    work.moduleSource.replace(`powerSelections:${powerSelection}`, `powerSelections:${powerSelection},/* sibling */["powerSelections"]:[]`),
+    work.moduleSource.replace(`powerSelectionsWithXHigh:${fullSelection}`, "powerSelectionsWithXHigh:[]"),
+    work.moduleSource.replace(`powerSelectionsWithXHigh:${fullSelection}`, `powerSelectionsWithXHigh:[],unused:{powerSelectionsWithXHigh:${fullSelection}}`),
+    insertBeforeComponentReturn(work.moduleSource, `${resolverSelection}=[];`),
+    insertBeforeComponentReturn(work.moduleSource, `${powerSelection}=[];`),
+    insertBeforeComponentReturn(work.moduleSource, `${enabledEffortSet}=new Set();`),
   ];
   for (const source of mutations) {
     assert.notEqual(source, work.moduleSource);
@@ -241,7 +251,7 @@ test("dynamic cohort rejects incomplete, damaged and mixed states and rolls back
     { "resolver.js": chunk([resolver]) },
     { ...inputFiles, "resolver.js": chunk([{ ...resolver, moduleSource: uiBodies().resolver }]) },
     { ...inputFiles, "bad-peer.js": chunk([{ ...resolver, moduleSource: resolver.moduleSource.replace('"persistent"!==e', '"invalid"!==e') }]) },
-    { ...inputFiles, "bad-work.js": chunk([{ ...work, moduleSource: work.moduleSource.replace("powerSelections:tJ", "powerSelections:[]") }]) },
+    { ...inputFiles, "bad-work.js": chunk([{ ...work, moduleSource: work.moduleSource.replace(`powerSelections:${powerSelection}`, "powerSelections:[]") }]) },
   ];
   for (const files of cases) withApp(files, ({ root, snapshot }) => {
     const before = snapshot();
