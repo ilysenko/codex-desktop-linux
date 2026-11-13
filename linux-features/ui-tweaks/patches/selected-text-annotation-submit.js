@@ -276,7 +276,7 @@ function validateNativeEditor(editorChunks,cardChunks) {
 
 // Collect semantic candidates, then use the shared indexer to inventory every
 // copy of the resolved shortcut/editor/card identities. Markerless damaged
-// peers must be rejected before the single shortcut asset can change.
+// peers must be rejected before the shortcut cohort can change.
 function discoverAnnotationSubmitAssets(extractedDir) {
   const assets = path.join(extractedDir, "webview", "assets");
   const owners = [];
@@ -299,10 +299,22 @@ function discoverAnnotationSubmitAssets(extractedDir) {
     sourceMatch:source=>new RegExp(`(?:${helpers().escapeRegExp(id)}|${helpers().escapeRegExp(JSON.stringify(id))})\\s*\\(`,"u").test(source),
     matchModule:(_body,module)=>module.moduleId===id,
   });
-  if(owners.length===1){
-    const at=shortcutContract(owners[0].source).ownerStart;
-    const module=webpackModules(owners[0].source).find(module=>module.start<=at&&at<module.end);
-    if(!module||copies(module.id).length!==1)throw new Error("Expected one complete app shortcut module copy");
+  if(owners.length){
+    const identities=owners.map(owner=>{
+      const at=shortcutContract(owner.source).ownerStart;
+      const module=webpackModules(owner.source).find(module=>module.start<=at&&at<module.end);
+      if(!module)throw new Error("Missing app shortcut module identity");
+      return module.id;
+    });
+    if(new Set(identities).size!==1)throw new Error("Expected one app shortcut module identity");
+    const cohort=copies(identities[0]);
+    const states=cohort.map(copy=>{
+      const contract=shortcutContract(copy.source);
+      if(contract.ownerStart<copy.start||contract.ownerStart>=copy.end)throw new Error("App shortcut owner is outside its indexed copy");
+      return contract.state;
+    });
+    if(states.some(state=>state!==states[0]))throw new Error("Partially applied app shortcut copies");
+    owners.splice(0,owners.length,...cohort.map(copy=>({name:copy.assetName,source:copy.source})));
   }
   if(editors.length){
     const contract=nativeEditorContract(editors);
@@ -316,13 +328,15 @@ function applyAnnotationSubmit(extractedDir, context = {}) {
   if (!enabled(context)) return { matched: 0, changed: 0 };
   try {
     const { assets, owners, editors, cards } = discoverAnnotationSubmitAssets(extractedDir);
-    if (owners.length === 0) throw new Error("Expected at least one app shortcut asset, found 0");
+    if (owners.length === 0) throw new Error("Missing app shortcut module identity");
     validateNativeEditor(editors, cards);
-    const asset = owners[0];
-    const result = patchSource(asset.source);
+    const edits = new Map([...editors,...cards].map(asset=>[asset.name,
+      {assetName:asset.name,source:asset.source,patchedSource:asset.source}]));
+    for(const asset of owners)edits.set(asset.name,
+      {assetName:asset.name,source:asset.source,patchedSource:patchSource(asset.source)});
     const { commitAssetEdits } = require("../../../scripts/patches/lib/asset-edits.js");
-    const committed = commitAssetEdits(assets,[{assetName:asset.name,source:asset.source,patchedSource:result}]);
-    return { matched: 1, changed: committed.changed, targets: [path.join("webview", "assets", asset.name)] };
+    const committed = commitAssetEdits(assets,[...edits.values()]);
+    return { matched: 1, changed: committed.changed, targets: owners.map(asset=>path.join("webview", "assets", asset.name)) };
   } catch (error) {
     if (error?.code === "PATCH_INTEGRITY_FAILURE") throw error;
     const reason = error instanceof Error ? error.message : String(error);

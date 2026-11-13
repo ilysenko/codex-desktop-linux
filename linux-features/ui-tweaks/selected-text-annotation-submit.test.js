@@ -295,16 +295,43 @@ test("missing, ambiguous, changed, and partially patched contracts leave assets 
   }
 });
 
-test("duplicate rspack shortcut owners are patched as one semantic owner set", (t) => {
+test("every complete physical copy of one shortcut module patches together", (t) => {
   const app = appFixture(t);
   const duplicate = path.join(app.assets, "async", "100005.0000000005.js");
   fs.copyFileSync(app.target, duplicate);
   const result = withWarnings(() => applyAnnotationSubmit(app.root, enabledContext));
-  assert.equal(result.result.matched, 2);
+  assert.equal(result.result.matched, 1);
   assert.equal(result.result.changed, 2);
   assert.deepEqual(result.messages, []);
-  assert.equal(shortcutContract(fs.readFileSync(app.target, "utf8")).state, "applied");
-  assert.equal(shortcutContract(fs.readFileSync(duplicate, "utf8")).state, "applied");
+  for(const file of [app.target,duplicate])assert.equal(fs.readFileSync(file,"utf8"),patchSource(app.ownerChunk));
+  assert.equal(applyAnnotationSubmit(app.root,enabledContext).changed,0);
+});
+
+test("different shortcut identities and partially applied physical copies reject together", (t) => {
+  for(const partial of [false,true]){
+    const app=appFixture(t),duplicate=path.join(app.assets,"async/100005.0000000005.js");
+    fs.writeFileSync(duplicate,partial?patchSource(app.ownerChunk):app.ownerChunk.replace("Shrt(e,t,r)","Other(e,t,r)"));
+    const before=new Map([app.target,duplicate].map(file=>[file,fs.readFileSync(file)]));
+    const result=withWarnings(()=>applyAnnotationSubmit(app.root,enabledContext));
+    assert.equal(result.result.changed,0);assert.equal(result.messages.length,1);
+    for(const[file,bytes]of before)assert.deepEqual(fs.readFileSync(file),bytes);
+  }
+});
+
+test("a later shortcut-copy write failure restores the whole cohort before retry", (t) => {
+  const app=appFixture(t),duplicate=path.join(app.assets,"async/100005.0000000005.js");
+  fs.copyFileSync(app.target,duplicate);
+  const write=fs.writeFileSync;let failed=false;
+  fs.writeFileSync=(file,bytes,...args)=>{
+    if(file===duplicate&&!failed){failed=true;write(file,bytes.subarray(0,10));throw Error("inert second-copy write failure")}
+    return write(file,bytes,...args);
+  };
+  try{const result=withWarnings(()=>applyAnnotationSubmit(app.root,enabledContext));assert.equal(result.result.changed,0);assert.equal(result.messages.length,1)}
+  finally{fs.writeFileSync=write}
+  assert.equal(failed,true);
+  for(const file of [app.target,duplicate])assert.equal(fs.readFileSync(file,"utf8"),app.ownerChunk);
+  assert.equal(applyAnnotationSubmit(app.root,enabledContext).changed,2);
+  assert.equal(applyAnnotationSubmit(app.root,enabledContext).changed,0);
 });
 
 test("missing or changed native annotation scope and Ctrl+Enter handling reject the patch", (t) => {
@@ -401,7 +428,7 @@ test("an unrecoverable write rollback remains a fatal patch integrity failure", 
 // The behavioral tests above run frozen excerpts of the native shortcut and
 // annotation code. Minified names and rspack chunk boundaries change every
 // upstream release, so this signed test checks the semantic contract instead:
-// the same discovery the patch uses must find exactly one shortcut owner and
+// the same discovery must inventory one shortcut identity across its copies and
 // one native editor -> card linkage in the current official ASAR, and the
 // patch must apply once and validate.
 for (const id of ["Shrt", "Edit", "Card"]) {
@@ -452,11 +479,11 @@ function signedNative() {
   return currentNative;
 }
 
-test("current official ASAR exposes the published editor/card route and patches only the shortcut asset", {
+test("current official ASAR exposes the published editor/card route and patches only the shortcut copies", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, t => {
   const native = signedNative(), { owners, editors, cards } = native.found;
-  assert.equal(owners.length, 1);
+  assert.equal(owners.length, 2);
   assert.equal(native.plan.editor.createMode, "saved");
   assert.equal(native.defaults.allowDirect, true);
   assert.equal(native.defaults.allowDirectOnEdit, false);
@@ -473,11 +500,11 @@ test("current official ASAR exposes the published editor/card route and patches 
     fs.writeFileSync(target, source);
   }
   const applied = applyAnnotationSubmit(copy, enabledContext);
-  assert.equal(applied.changed, 1);
-  assert.deepEqual(applied.targets, [path.join("webview", "assets", owners[0].name)]);
+  assert.equal(applied.changed, owners.length);
+  assert.deepEqual(applied.targets, owners.map(owner=>path.join("webview", "assets", owner.name)));
   for (const [name, source] of sources) {
     const actual = fs.readFileSync(path.join(copy, "webview/assets", name), "utf8");
-    assert.equal(actual, name === owners[0].name ? patchSource(source) : source);
+    assert.equal(actual, owners.some(owner=>owner.name===name) ? patchSource(source) : source);
   }
   assert.equal(applyAnnotationSubmit(copy, enabledContext).changed, 0);
 });

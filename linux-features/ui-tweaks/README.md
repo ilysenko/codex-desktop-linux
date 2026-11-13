@@ -460,7 +460,9 @@ The patch finds the app shortcut owner by content across the rspack webview
 chunks. It resolves the published editor function and its card dependency
 through their actual factory snapshots, then validates the native key handler,
 current-text validation and callback forwarding. Contract drift produces a
-warning and a skipped optional-patch report.
+warning and a skipped optional-patch report. Every physical copy of the resolved
+shortcut module is validated and patched in one transaction. Distinct owner
+identities, damaged peers and mixed application states refuse the complete edit.
 
 This tweak is independently disabled by default:
 
