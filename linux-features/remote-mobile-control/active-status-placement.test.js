@@ -25,24 +25,24 @@ test("native published row and indicator patch exactly once and invert only thei
   assert.equal(copy.moduleSource, inverse.patchedSource); new vm.Script(patched.replaceAll("export const ", "const "));
 });
 test("coherent longer factory/function aliases preserve native indicator identity", () => {
-  const source = carrier(), lex = createJavaScriptLexicalIndex(source), aliases = { ea: "nativeActivityIndicator", e_: "publishedConversationRow", eU: "nativeConversationRow", ee: "nativeActivityStyles", et: "nativeActivityLabels" };
+  const source = carrier(), lex = createJavaScriptLexicalIndex(source), aliases = { en: "nativeActivityIndicator", eP: "publishedConversationRow", eN: "nativeConversationRow", ee: "nativeActivityStyles", et: "nativeActivityLabels" };
   const renamed = source.replace(/[A-Za-z_$][\w$]*/gu, (name, at) => lex.isCode(at) && source[at - 1] !== "." && Object.hasOwn(aliases, name) ? aliases[name] : name);
   const patched = prepareActiveStatusSource(renamed); assert.notEqual(patched, renamed); assert.equal(prepareActiveStatusSource(patched), patched);
 });
 test("missing, dead, captured, wrong-key, wrong-provider and partial state fail closed", () => {
   const source = carrier(), patched = prepareActiveStatusSource(source);
   const bad = [
-    source.replace("E:()=>e_", "E:()=>eR"), source.replace("E:()=>e_", 'E:()=>e_,"E":()=>eR'),
-    source.replace("function ea(e){", "if(false){function ea(e){").replace("function eU(e){", "}function eU(e){"),
-    source.replace("(m.nX,h)", "(m.nX,foreignConversation)"),
-    source.replace("conversationId:r})}:null", "conversationId:foreignConversation})}:null"),
-    source.replace('m=a("tl5a")', 'm=a("foreign")'),
-    source.replace('o=a("QosV")', 'o=a("foreign")'),
-    source.replace("function ea(e){", "function ea(e){let m;"),
-    source.replace("function e_(e){", "eU=()=>null;function e_(e){"),
+    source.replace("E:()=>eP", "E:()=>eR"), source.replace("E:()=>eP", 'E:()=>eP,"E":()=>eR'),
+    source.replace("function en(e){", "if(false){function en(e){").replace("function eN(e){", "}function eN(e){"),
+    source.replace("(p.nX,h)", "(m.nX,foreignConversation)"),
+    source.replace("conversationId:i})}:null", "conversationId:foreignConversation})}:null"),
+    source.replace('p=n("tl5a")', 'p=n("foreign")'),
+    source.replace('o=n("QosV")', 'o=n("foreign")'),
+    source.replace("function en(e){", "function en(e){let p;"),
+    source.replace("function eP(e){", "eN=()=>null;function eP(e){"),
     source.replace('id:"active-status"', 'id:"unused-status"'),
-    source.replace("extraIconBadges:au", "extraIconBadges:foreignBadges"),
-    source.replace(",th}", ",eq,null}"),
+    source.replace("extraIconBadges:nu", "extraIconBadges:foreignBadges"),
+    source.replace("[...nu,nd]", "[...nu,null]"),
     patched.replace("/*codexLinuxRemoteMobileActiveStatus*/", ""),
     patched.replace('"active":null==', '"inactive":null=='),
     source + "/*codexLinuxRemoteMobileActiveStatus*/",
@@ -70,12 +70,12 @@ test("mixed states, foreign identities, stale snapshots and stale commit plans p
 test("selected presentation and selector member authority rejects later writers and deletes", () => {
   const mutations = [
     'ee.active="wrong-presentation";', 'ee["active"]="wrong-presentation";', 'delete et["active"];',
-    'delete (et)?.["active"];', '(ee).active="wrong-presentation";', 'm["nX"]=m.hf;',
-    'delete (m).F9;', 'm[unknownKey]=m.hf;', 'Object.assign(ee,{active:"wrong"});', 'Reflect.set(m,"nX",m.hf);',
-    '(ee.active)="wrong";', '((m["nX"]))=m.hf;', '++(ee.active);',
+    'delete (et)?.["active"];', '(ee).active="wrong-presentation";', 'p["nX"]=p.hf;',
+    'delete (p).F9;', 'p[unknownKey]=p.hf;', 'Object.assign(ee,{active:"wrong"});', 'Reflect.set(p,"nX",p.hf);',
+    '(ee.active)="wrong";', '((p["nX"]))=p.hf;', '++(ee.active);',
     '[ee.active]=["wrong"];', '({active:ee.active}={active:"wrong"});',
-    'Object["assign"](ee,{active:"wrong"});', 'Reflect["set"](m,"nX",m.hf);',
-    'function later(){(ee.active)="wrong";}', 'const later=()=>((m["nX"]))=m.hf;',
+    'Object["assign"](ee,{active:"wrong"});', 'Reflect["set"](p,"nX",p.hf);',
+    'function later(){(ee.active)="wrong";}', 'const later=()=>((p["nX"]))=p.hf;',
     'const later=()=>{[ee.active]=["wrong"];};', 'class Later{write(){++(ee.active);}}',
     'Object[unknownMutator](ee,{active:"wrong"});',
   ];
@@ -85,22 +85,22 @@ test("selected presentation and selector member authority rejects later writers 
   }
   for (const control of [
     'function unrelatedPresentation(){let ee={};(ee.active)="unrelated";}',
-    'function unrelatedSelector(m){((m["nX"]))=m.hf;}',
-    'void (ee.active);void ((m["nX"]));Object.keys(ee);Reflect.get(m,"nX");',
-    'const later=()=>((ee.active));class Reader{read(){return (m["nX"]);}}',
+    'function unrelatedSelector(p){((p["nX"]))=p.hf;}',
+    'void (ee.active);void ((p["nX"]));Object.keys(ee);Reflect.get(p,"nX");',
+    'const later=()=>((ee.active));class Reader{read(){return (p["nX"]);}}',
   ]) {
     const unrelated = carrier(fixture.moduleSource + control);
     assert.notEqual(prepareActiveStatusSource(unrelated), unrelated);
   }
 });
 test("native visibility atom, store scope and flag-provider identities remain closed", () => {
-  const nativeGateCell = data.gateCell.replace("let J=", "let $=");
+  const nativeGateCell = "let J=(0,r.vP)(V.u,!1);";
   const mutations = [
     fixture.moduleSource.replace(nativeGateCell, nativeGateCell.replace("!1", "!0")),
-    fixture.moduleSource.replace('ew=a("hZax")', 'ew=a("wrong-provider")'),
-    fixture.moduleSource.replace('F=a("OWtl")', 'F=a("wrong-provider")'),
-    fixture.moduleSource + '$=foreignGate;',
-    fixture.moduleSource.replace('var Y=a("slpy");', 'return;var Y=a("slpy");'),
+    fixture.moduleSource.replace('ek=n("hZax")', 'ek=n("wrong-provider")'),
+    fixture.moduleSource.replace('V=n("OWtl")', 'V=n("wrong-provider")'),
+    fixture.moduleSource + 'J=foreignGate;',
+    fixture.moduleSource.replace('var $=n("slpy");', 'return;var $=n("slpy");'),
   ];
   for (const body of mutations) { assert.notEqual(body, fixture.moduleSource); assert.throws(() => prepareActiveStatusSource(carrier(body))); }
 });
@@ -110,7 +110,20 @@ test("registered current-conversation descriptor owns native peers and reports a
   const descriptor = normalizeDescriptor({ ...raw, id: "feature:remote-mobile-control:" + raw.id, featureId: "remote-mobile-control" });
   const run = () => { const report = createPatchReport(); applyExtractedAppPatchDescriptors(root, [descriptor], {}, report, raw.phase); return report.patches; };
   assert.equal(run()[0].status, "applied"); assert.equal(run()[0].status, "already-applied");
-  const first = fs.readFileSync(files[0]); fs.writeFileSync(files[1], carrier().replace("(m.hf,h)", "(m.F9,h)"));
+  const first = fs.readFileSync(files[0]); fs.writeFileSync(files[1], carrier().replace("(p.hf,h)", "(p.F9,h)"));
   t.mock.method(console, "warn", () => {}); assert.equal(run()[0].status, "skipped-optional"); assert.deepEqual(fs.readFileSync(files[0]), first);
 });
 module.exports = { carrier };
+
+
+test("current parent keeps its sidebar thread key and247-slot cache contract", () => {
+  const source = carrier();
+  for (const [before, after] of [
+    ["sidebarThreadKey:em", "sidebarThreadKey:foreign"],
+    ["sidebarThreadKey:em,preferClickActions", "sidebarThreadKey:em,labelColor:foreign,preferClickActions"],
+    ["tp=(0,o.c)(247)", "tp=(0,o.c)(249)"],
+  ]) {
+    assert.equal(source.split(before).length, 2);
+    assert.throws(() => prepareActiveStatusSource(source.replace(before, after)));
+  }
+});
