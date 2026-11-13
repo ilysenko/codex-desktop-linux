@@ -69,13 +69,22 @@ function failures(source) {
   const found = site(source), selector = found.scope, value = found.optionsVar;
   const local = source.slice(found.localReturn.start, found.localReturn.end), cb = callback(source, found);
   const selectorName = /^function ([\w$]+)\(/u.exec(source.slice(selector.selectorStart))[1];
+  const callerSource = source.slice(selector.callerStart, selector.callerEnd);
+  const callerHead = /^createAppServerConnection\([^{}]*\)\{/u.exec(callerSource)?.[0];
+  assert(callerHead, "Expected the qualified caller's method header");
+  const nativePrefix = source.slice(found.overrides.arrayStart + 1, found.overrides.nativePrefixEnd);
+  const globalTerm = /^(\.\.\.\(0,[\w$]+\.[\w$]+\)\([^)]*\)),/u.exec(nativePrefix)?.[1];
+  assert(globalTerm, "Expected the qualified native global-config term");
+  assert(globalTerm.endsWith(`(${value}.globalState,${value}.hostConfig)`));
+  const orderedNativeTerms = `${globalTerm},...await ${value}.secretAuthStorageConfigOverrides`;
+  assert(cb.startsWith(`async()=>[${orderedNativeTerms},`));
   const encoded = selectorName.slice(0, -1) + "\\u" + selectorName.charCodeAt(selectorName.length - 1).toString(16).padStart(4, "0");
   const graph = inspectMainRequestSites(source), ctor = source.indexOf("constructor(e){", graph.scope.hostStart);
   assert(ctor > graph.scope.hostStart && ctor < graph.scope.hostEnd);
   const ctorBody = ctor + "constructor(e){".length;
   return [
     ["earlier selector return", source.slice(0, selector.selectorBodyStart) + "return null;" + source.slice(selector.selectorBodyStart)],
-    ["earlier caller return", changed(source, "createAppServerConnection(e,t=sp.a,r=!1,n,i){", "createAppServerConnection(e,t=sp.a,r=!1,n,i){return null;")],
+    ["earlier caller return", changed(source, callerHead, `${callerHead}return null;`, selector.callerStart, selector.callerEnd)],
     ["unused nested local constructor", changed(source, local, `const unused=()=>{${local}};return null;`, selector.selectorBodyStart, selector.selectorBodyEnd)],
     ["conditional final local constructor", changed(source, local, `if(false)${local}`, selector.selectorBodyStart, selector.selectorBodyEnd)],
     ["callback outside returned options", changed(source, cb, "otherCallback", found.overrides.start, found.overrides.end)],
@@ -85,7 +94,7 @@ function failures(source) {
     ["wrong global options role", changed(source, `${value}.globalState,${value}.hostConfig`, `${value}.otherState,${value}.hostConfig`, found.overrides.start, found.overrides.end)],
     ["wrong secret input", changed(source, `${value}.secretAuthStorageConfigOverrides`, `${value}.otherOverrides`, found.overrides.start, found.overrides.end)],
     ["lost secret await", changed(source, `...await ${value}.secretAuthStorageConfigOverrides`, `...${value}.secretAuthStorageConfigOverrides`, found.overrides.start, found.overrides.end)],
-    ["reordered native terms", changed(source, `...(0,KS.s1)(${value}.globalState,${value}.hostConfig),...await ${value}.secretAuthStorageConfigOverrides`, `...await ${value}.secretAuthStorageConfigOverrides,...(0,KS.s1)(${value}.globalState,${value}.hostConfig)`, found.overrides.start, found.overrides.end)],
+    ["reordered native terms", changed(source, orderedNativeTerms, `...await ${value}.secretAuthStorageConfigOverrides,${globalTerm}`, found.overrides.start, found.overrides.end)],
     ["lost IIFE await", changed(source, "...await async function(e)", "...async function(e)", found.overrides.start, found.overrides.end)],
     ["wrong IIFE generator", changed(source, "...await async function(e)", "...await async function*(e)", found.overrides.start, found.overrides.end)],
     ["retired named IIFE", changed(source, "...await async function(e)", "...await async function unused(e)", found.overrides.start, found.overrides.end)],
@@ -111,7 +120,7 @@ function failures(source) {
     ["function default body-lexical free options write", source.slice(0, selector.selectorBodyStart) + `function unused(x=(${value}=otherOptions)){let ${value};}` + source.slice(selector.selectorBodyStart)],
     ["arrow default free options write", source.slice(0, selector.selectorBodyStart) + `const unused=(x=(${value}=otherOptions))=>{var ${value};};` + source.slice(selector.selectorBodyStart)],
     ["function default free options pattern", source.slice(0, selector.selectorBodyStart) + `function unused(x=({${value}}=otherOptions)){var ${value};}` + source.slice(selector.selectorBodyStart)],
-    ["caller method async kind", changed(source, "createAppServerConnection(e,t=sp.a", "async createAppServerConnection(e,t=sp.a", selector.callerStart, selector.callerEnd)],
+    ["caller method async kind", changed(source, callerHead, `async ${callerHead}`, selector.callerStart, selector.callerEnd)],
     ["caller method instance overwrite", source.slice(0, ctorBody) + "this.createAppServerConnection=other;" + source.slice(ctorBody)],
     ["caller method encoded overwrite", source.slice(0, ctorBody) + String.raw`this.\u0063reateAppServerConnection=other;` + source.slice(ctorBody)],
     ["caller method computed literal overwrite", source.slice(0, ctorBody) + 'this["createAppServerConnection"]=other;' + source.slice(ctorBody)],
@@ -119,8 +128,8 @@ function failures(source) {
     ["caller method unknown computed overwrite", source.slice(0, ctorBody) + 'this[key]=other;' + source.slice(ctorBody)],
     ["caller method prefix overwrite", source.slice(0, ctorBody) + '++this.createAppServerConnection;' + source.slice(ctorBody)],
     ["caller method deleted", source.slice(0, ctorBody) + 'delete this.createAppServerConnection;' + source.slice(ctorBody)],
-    ["caller local selector shadow", changed(source, "createAppServerConnection(e,t=sp.a,r=!1,n,i){", "createAppServerConnection(e,t=sp.a,r=!1,n,i){let evZ=other;")],
-    ["remote transport branch shadow", changed(source, 'a=evZ({transportKind:"remote-control"', 'let a=evZ({transportKind:"remote-control"', selector.callerStart, selector.callerEnd)],
+    ["caller local selector shadow", changed(source, callerHead, `${callerHead}let ${selectorName}=other;`, selector.callerStart, selector.callerEnd)],
+    ["remote transport branch shadow", changed(source, `a=${selectorName}({transportKind:"remote-control"`, `let a=${selectorName}({transportKind:"remote-control"`, selector.callerStart, selector.callerEnd)],
     ["wrong caller app-global state", changed(source, "globalState:this.appState", "globalState:this.scopedState", selector.callerStart, selector.callerEnd)],
     ["wrong caller secret source", changed(source, "secretAuthStorageConfigOverrides:this.secretAuthStorageConfigOverrides", "secretAuthStorageConfigOverrides:this.otherSecret", selector.callerStart, selector.callerEnd)],
     ["wrong client transport link", changed(source, "transport:a", "transport:other", selector.callerStart, selector.callerEnd)],
@@ -285,13 +294,15 @@ test("exact native callback retains ordered await, app/profile inputs and reject
 
 for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRACTED_APP"]) {
   test(`current signed native local site and exact source conservation (${variable})`, { skip: !process.env[variable] }, () => {
-    const inventory = findMainProcessChunks(process.env[variable]); assert.equal(inventory.chunks.length, 19);
+    const inventory = findMainProcessChunks(process.env[variable]);
+    assert.equal(inventory.chunks.length, 21);
+    assert.equal(new Set(inventory.chunks).size, inventory.chunks.length);
     const rows = inventory.chunks.map(name => ({ name, source: fs.readFileSync(path.join(inventory.buildDir, name), "utf8") }));
     const owners = rows.map(row => ({ ...row, site: inspect(row.source) })).filter(row => row.site.ok);
     assert.equal(owners.length, 1);
     const { source, site: found } = owners[0];
-    assert.equal(found.scope.factoryId, "14630");
-    assert.equal(hash(callback(source, found)), "eac7dfef90be312435fd8c824d787631377627878998593559a1a7d879980c74");
+    assert.equal(found.scope.factoryId, "71817");
+    assert.equal(hash(callback(source, found)), "5feb7c6f1435caf8dac7414a2be2140f1b958f2274690888e20f711ee95949d2");
     assert.equal(exampleEdits(rows).length, 1);
     conserve(source);
     const opaque = changed(source, "plugins.codex-app-tools@openai-bundled", "opaque-source-authority@native-data", found.overrides.start, found.overrides.end);
@@ -303,7 +314,7 @@ for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRAC
       assert.equal(rejected.ok, false, reason);
       assert.deepEqual(rejected.factoryIds, found.factoryIds, reason);
     }
-    const hidden = 'exports.ids=[999],exports.modules={14630(e,t,r){return null}};';
+    const hidden = `exports.ids=[999],exports.modules={${found.scope.factoryId}(e,t,r){return null}};`;
     const bad = inspect(hidden);
     assert.equal(bad.ok, false);
     assert(bad.factoryIds.includes(found.scope.factoryId));

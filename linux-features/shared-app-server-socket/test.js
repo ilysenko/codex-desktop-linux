@@ -2285,7 +2285,8 @@ test(
     );
     assert.match(patched, /return new CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async\(\)=>\[/);
     new vm.Script(patched, { filename: "patched-chunk.js" });
-    assert.equal(chunks.length, 19);
+    assert.equal(chunks.length, 21);
+    assert.equal(new Set(chunks).size, chunks.length);
     const app = mainWorkspace(t, originals);
     assert.equal(normalShared(app.root).patch.status, "applied");
     assert.equal(normalShared(app.root).patch.status, "already-applied");
