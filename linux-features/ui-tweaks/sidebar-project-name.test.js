@@ -16,8 +16,7 @@ const {
 
 const CURRENT = 'const attrs={sidebarProjectRow:"data-app-action-sidebar-project-row",sidebarProjectLabel:"data-app-action-sidebar-project-label"};' +
   'const selectors={sidebarProjectRow:`[${attrs.sidebarProjectRow}]`};' +
-  'const actions={sidebarProjectRow:({collapsed:e,label:t,projectId:n})=>({collapsed:e,label:t,projectId:n})};' +
-  'function marquee(){return {"data-marquee-text":!0}}';
+  'const actions={sidebarProjectRow:({collapsed:e,label:t,projectId:n})=>({collapsed:e,label:t,projectId:n})};';
 
 test("sidebar runtime installs one scoped stylesheet and reuses it on DOM ready and repeated execution",()=>{
   const styles=[],listeners=[];
@@ -45,10 +44,13 @@ test("sidebar complete-state idempotence rejects partial and duplicated owner/ru
   const repeated=captureWarnings(()=>applySidebarProjectNameStylePatch(patched));
   assert.equal(repeated.value,patched);assert.deepEqual(repeated.warnings,[]);
   assert.equal(applySidebarProjectNameStylePatch(patched+"\n;const anotherFeature=true;"),patched+"\n;const anotherFeature=true;");
+  assert.equal(descriptors[0].assetMatch(CURRENT),true);
+  const unrelatedMarquee='function marquee(){return {"data-marquee-text":!1}}';
+  assert.equal(applySidebarProjectNameStylePatch(patched+unrelatedMarquee),patched+unrelatedMarquee);
   for(const source of [CURRENT+CURRENT,patched+sidebarProjectNameStyleRuntimeSource(),
     CURRENT+`;const ${RUNTIME_MARKER}=true;`,CURRENT+`;const style=${JSON.stringify(STYLE_ID)};`,
     patched.replace("function install(){","function damaged(){"),
-    patched.replace('"data-marquee-text":!0','"data-marquee-text":!1'),
+    patched.replace('sidebarProjectLabel:', 'renamedProjectLabel:'),
     CURRENT.replace('sidebarProjectRow:"data-app-action-sidebar-project-row"','sidebarProjectRow:`data-app-action-sidebar-project-row`')]){
     const result=captureWarnings(()=>applySidebarProjectNameStylePatch(source,{warnOnMissingMarkers:true}));
     assert.equal(result.value,source);assert.equal(result.warnings.length,1);
