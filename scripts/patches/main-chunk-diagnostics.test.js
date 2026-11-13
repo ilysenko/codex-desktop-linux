@@ -117,8 +117,9 @@ for (const feature of ["global-dictation", "wayland-global-shortcuts"]) {
     const directory = path.join(root, ".vite/build");
     fs.mkdirSync(directory, { recursive: true });
     const files = { "early-bootstrap.js": "const unrelated=true;", [ownerName]: mutant };
-    for (let i = 0; i < 17; i++) files[`early-bootstrap-${1000 + i}-abc.js`] = `const unrelated${i}=true;`;
+    for (let i = 0; i < 19; i++) files[`early-bootstrap-${1000 + i}-abc.js`] = `const unrelated${i}=true;`;
     for (const [name, bytes] of Object.entries(files)) fs.writeFileSync(path.join(directory, name), bytes);
+    assert.equal(findMainProcessChunks(root).chunks.length, 21, "Complete current main inventory precedes the owner diagnostic");
     const descriptor = require(`../../linux-features/${feature}/patch.js`).descriptors[0];
     assert.equal(descriptor.phase, "extracted-app:pre-webview");
     const report = createPatchReport();
@@ -170,9 +171,11 @@ for (const descriptor of actualDescriptors) {
     const owner = nativeOwner(descriptor), mutant = ownerMutant(descriptor.id, owner.source);
     const inventory = findMainProcessChunks(signed);
     const unrelated = descriptor.id === "main-process-proxy-auth"
-      ? { name: inventory.chunks.find(name => name.startsWith("early-bootstrap-339-")) }
+      ? inventory.chunks.filter(name => name !== owner.name).map(name => ({
+        name, source: fs.readFileSync(path.join(inventory.buildDir, name), "utf8"),
+      })).find(chunk => descriptor.assetMatch(chunk.source, chunk.name, {}) === false)
       : { name: noiseName, source: "const unrelated=true;" };
-    if (unrelated.source == null) unrelated.source = fs.readFileSync(path.join(inventory.buildDir, unrelated.name), "utf8");
+    assert.ok(unrelated, "Expected an unrelated current native main chunk");
     assert.equal(typeof descriptor.assetMatch, "function");
     assert.equal(descriptor.assetMatch(unrelated.source, unrelated.name, {}), false);
     assert.equal(descriptor.assetMatch(mutant, owner.name, {}), true);
