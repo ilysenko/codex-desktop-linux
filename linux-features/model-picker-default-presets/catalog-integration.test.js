@@ -33,7 +33,18 @@ test('empty and configured production catalogs validate all three actual cache r
  const empty={feature:{manifest:{presets:[]},settings:{}}};
  for(const changes of [{moduleId:'foreignCache'},{moduleSource:nativeCache.moduleSource.replace('TB:function','foreignRead:function')},{moduleSource:nativeCache.moduleSource.replace('jx:function','foreignWrite:function')}]){
   const input=files();input['providers.js']=sourceChunk(providers().map(owner=>owner.moduleId===nativeCache.moduleId?{...owner,...changes}:owner));
-  for(const settings of [empty,context])app(input,(root,assets)=>{let writes=0;assert.throws(()=>patchCatalog(root,settings,{writeFileSync(){writes++}}),/cache/i);assert.equal(writes,0);unchanged(assets,input);});
+  for (const [settings, expectedMessage] of [
+    [empty, "Inconsistent Default preset tpp native cache"],
+    [context, "Could not find current TPP catalog query in <assets>"],
+  ]) app(input, (root, assets) => {
+    let writes = 0;
+    assert.throws(() => patchCatalog(root, settings, {writeFileSync(){writes++}}), error => {
+      assert.equal(error.message.replace(assets, "<assets>"), expectedMessage);
+      return true;
+    });
+    assert.equal(writes, 0);
+    unchanged(assets, input);
+  });
  }
 });
 
