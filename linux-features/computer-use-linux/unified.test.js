@@ -17,8 +17,8 @@ const { createPatchReport, captureWarnings, enabledFeatureFailuresFromReport } =
 const selector = [
   "function select(f,l,t,u){let p=f&&t.computerUse&&u.enabled&&(\"win32\"===l.platform||\"darwin\"===l.platform&&null!=u.paths.serviceAppPath),m=t.computerUse&&(!t.browserUseTinysky||\"darwin\"!==l.platform||u.enabled),h=[];return f&&t.browser&&h.push(\"browser\"),p&&h.push(\"computer\"),{computerUse:m,cuaReplSurfaces:h}}",
   "function build({browserBackends:b,deferTools:d,surfaces:s,nodeRepl:n,accessBootstrapPath:a}){let l={};s.includes(\"browser\")&&(l.browser=\"@oai/browser-desktop/service\"),s.includes(\"computer\")&&(l.sky=\"@oai/sky/service\");let o={...n?.env,CUA_REPL_ENABLED_SURFACES:s.join(\",\"),...n?.env.SKY_ENABLE_AUDIO===\"1\"?{SKY_ENABLE_AUDIO:s.includes(\"computer\")?\"1\":\"0\",NODE_REPL_ENABLE_AUDIO:s.includes(\"computer\")?n.env.NODE_REPL_ENABLE_AUDIO:\"0\"}:{},[constants.Il]:JSON.stringify(l)};return{env:function({env:e}){let t={};return t.sky=\"@oai/sky/service\",{...e,NODE_REPL_TRUSTED_SERVICES:e.NODE_REPL_TRUSTED_SERVICES??JSON.stringify(t),NODE_REPL_JS_BANNER:e.NODE_REPL_JS_BANNER??\"await import(\\\"@oai/cua/tinyskyAlt\\\");\"}}({env:o})}}",
-  "let syncQueue=new WeakMap,pendingPlugins=new WeakMap;async function readCached(e){for(;;){let other=pendingPlugins.get(e),pending=syncQueue.get(e),value=await Promise.all([other,pending]).then(([,result])=>result??null,()=>null);if(other===pendingPlugins.get(e)&&pending===syncQueue.get(e))return value}}class PluginChange{constructor(e,t){this.options=e,this.onPluginsChanged=t}async syncAfterPluginChange(){let pending=initialize({...this.options,reloadUserConfig:!1});for(let outcome of(await Promise.allSettled([pending,this.onPluginsChanged?.()])))if(\"rejected\"===outcome.status)throw outcome.reason}}function initialize(e){let pending=(syncQueue.get(e.appServerConnection)??Promise.resolve()).catch(()=>{}).then(()=>(async function({appServerConnection:connection,selection:input}){let selection=input,features=selection.desktopFeatureAvailability,{codexHome:home,marketplaceName:marketplace,runtimePaths:runtime,browserBackends:backends,cuaReplSurfaces:surfaces}=selection,marketplaces=[],skip=!1,node=selection.nodeRepl,enabled=!1;enabled=await async function(e){let t=lookup(),enabled=null!=e.nodeRepl&&e.surfaces.length>0,i=(0,constants.Kt)({codexHome:e.codexHome,localVersion:t.plugin.localVersion,marketplaceName:t.marketplace.name,pluginName:t.plugin.name}),a=ei().join(i,\".mcp.json\"),bootstrap=ei().join(i,\"require-browser-access.mjs\"),c={};Object.assign(c,build({...e,accessBootstrapPath:bootstrap}));return enabled}({browserBackends:backends,deferTools:features.deferCuaTools,surfaces:surfaces,codexHome:home,marketplaceName:marketplace,marketplaces:marketplaces,nodeRepl:skip?void 0:node});return {selection:selection,cuaReplEnabled:enabled}})(e));return syncQueue.set(e.appServerConnection,pending),pending}async function startup(options){await initialize({appServerConnection:options.getLocalAppServerConnection(),appVersion:options.appVersion,getDesktopFeatureAvailability:()=>availability??defaults,isPackaged:options.isPackaged,platform:platform,repoRoot:options.repoRoot,resourcesPath:resources})}",
-  "async function threadConfig(e){let{appServerConnection:connection}=e,local=\"local\"===connection.hostConfig.kind,cached=local?await readCached(connection):null,features=e.features,posture=features.browserUseTinysky?cached:null,principal=local?await connection.getAuthenticatedPrincipal().catch(()=>null):null,selection=posture?.selection??await selectForThread(e);selection={...selection,browserServicePluginVersion:null};let node=e.nodeRepl??selection.nodeRepl;return posture?.cuaReplEnabled?build({browserBackends:selection.browserBackends,deferTools:selection.desktopFeatureAvailability.deferCuaTools,surfaces:selection.cuaReplSurfaces,nodeRepl:node}):{enabled:!1}}",
+  "let syncQueue=new WeakMap,pendingPlugins=new WeakMap;async function readCached(e,{waitForReconcile:wait=!0}={}){for(;;){let other=pendingPlugins.get(e);if(null!=other&&!wait)return null;let pending=syncQueue.get(e),value=await Promise.all([other,pending]).then(([,result])=>result??null,()=>null);if(other===pendingPlugins.get(e)&&pending===syncQueue.get(e))return value}}class PluginChange{constructor(e,t){this.options=e,this.onPluginsChanged=t}async syncAfterPluginChange(){let pending=initialize({...this.options,reloadUserConfig:!1});for(let outcome of(await Promise.allSettled([pending,this.onPluginsChanged?.()])))if(\"rejected\"===outcome.status)throw outcome.reason}}function initialize(e){let pending=(syncQueue.get(e.appServerConnection)??Promise.resolve()).catch(()=>{}).then(()=>(async function({appServerConnection:connection,selection:input}){let selection=input,features=selection.desktopFeatureAvailability,{codexHome:home,marketplaceName:marketplace,runtimePaths:runtime,browserBackends:backends,cuaReplSurfaces:surfaces}=selection,marketplaces=[],skip=!1,node=selection.nodeRepl,enabled=!1;enabled=await async function(e){let t=lookup(),enabled=null!=e.nodeRepl&&e.surfaces.length>0,i=(0,constants.Kt)({codexHome:e.codexHome,localVersion:t.plugin.localVersion,marketplaceName:t.marketplace.name,pluginName:t.plugin.name}),a=ei().join(i,\".mcp.json\"),bootstrap=ei().join(i,\"require-browser-access.mjs\"),c={};Object.assign(c,build({...e,accessBootstrapPath:bootstrap}));return enabled}({browserBackends:backends,deferTools:features.deferCuaTools,surfaces:surfaces,codexHome:home,marketplaceName:marketplace,marketplaces:marketplaces,nodeRepl:skip?void 0:node});return {selection:selection,cuaReplEnabled:enabled}})(e));return syncQueue.set(e.appServerConnection,pending),pending}async function startup(options){await initialize({appServerConnection:options.getLocalAppServerConnection(),appVersion:options.appVersion,getDesktopFeatureAvailability:()=>availability??defaults,isPackaged:options.isPackaged,platform:platform,repoRoot:options.repoRoot,resourcesPath:resources})}",
+  "async function threadConfig(e){let{appServerConnection:connection}=e,local=\"local\"===connection.hostConfig.kind,cached=local?await readCached(connection,{waitForReconcile:!1}):null,features=e.features,posture=features.browserUseTinysky?cached:null,principal=local?await connection.getAuthenticatedPrincipal().catch(()=>null):null,selection=posture?.selection??await selectForThread(e);selection={...selection,browserServicePluginVersion:null};let node=e.nodeRepl??selection.nodeRepl;return posture?.cuaReplEnabled?build({browserBackends:selection.browserBackends,deferTools:selection.desktopFeatureAvailability.deferCuaTools,surfaces:selection.cuaReplSurfaces,nodeRepl:node}):{enabled:!1}}",
 ].join("");
 const SERVICES = "NODE_REPL_TRUSTED_SERVICES";
 const { applyUnifiedComputerUsePatch: unified } = require("./unified.js");
@@ -444,6 +444,38 @@ test("current cache reader retries changed synchronization and plugin-work snaps
   assert.equal(await read, second);
 });
 
+test("current native non-waiting thread reads fall back during reconciliation", async () => {
+  let fallbackReads=0;
+  const native=queuedRuntime(unified(selector),{selectForThread:async()=>{fallbackReads++;return selected("/fallback")}});
+  const local=connection(),cached={selection:selected("/cached"),cuaReplEnabled:true};
+  native.syncQueue.set(local,Promise.resolve(cached));
+  assert.equal(await native.readCached(local,{waitForReconcile:false}),cached);
+  native.pendingPlugins.set(local,new Promise(()=>{}));
+  assert.equal(await native.readCached(local,{waitForReconcile:false}),null);
+  const result=await native.threadConfig({appServerConnection:local,features:{browserUseTinysky:true}});
+  assert.equal(result.enabled,false);assert.equal(fallbackReads,1);
+  for(const[from,to]of[
+    ["{waitForReconcile:!1}","{waitForReconcile:!0}"],
+    ["null!=other&&!wait","null!=other&&wait"],
+    ["if(null!=other&&!wait)return null;",""],
+    ["waitForReconcile:wait=!0","waitForReconcile:wait=!1"],
+  ]){const changed=selector.replace(from,to);assert.notEqual(changed,selector);assert.throws(()=>unified(changed),/unified.*contract/i)}
+});
+
+test("native helper reference census ignores opaque vendor data and identifier-key properties", () => {
+  const opaque = ';const table={initialize:"≈",build:"native",syncQueue:"queue",readCached:"cache"};const data="initialize build syncQueue readCached";const regexp=/initialize|build|syncQueue|readCached/;/* initialize build syncQueue readCached */';
+  const patched = unified(selector + opaque);
+  assert.equal(patched, unified(selector) + opaque);
+  assert.equal(unified(patched), patched);
+  assert.doesNotThrow(() => new vm.Script(patched));
+  for (const extra of [
+    ";const alias=true?initialize:null;",
+    ";const alias={initialize};",
+    ";const alias=true?build:null;",
+    ";const alias={syncQueue};",
+  ]) assert.throws(() => unified(selector + extra), /unified.*contract/i);
+});
+
 test("current anonymous sync and queue roles refuse disconnected or replaced native relationships", () => {
   for (const [from, to] of [
     [".catch(()=>{}).then", ".then"],
@@ -456,7 +488,7 @@ test("current anonymous sync and queue roles refuse disconnected or replaced nat
     ["getLocalAppServerConnection()", "getOtherConnection()"],
     ["other===pendingPlugins.get(e)", "other===pendingPlugins.get(otherConnection)"],
     ["return value}}", "return pending}}"],
-    ["cached=local?await readCached(connection)", "cached=local?await readCached(otherConnection)"],
+    ["cached=local?await readCached(connection,{waitForReconcile:!1})", "cached=local?await readCached(otherConnection,{waitForReconcile:!1})"],
     ["posture=features.browserUseTinysky?cached:null", "posture=features.browserUseTinysky?other:null"],
     ["browserBackends:backends,cuaReplSurfaces:surfaces}=selection", "browserBackends:backends,cuaReplSurfaces:surfaces}=other"],
   ]) {
@@ -557,7 +589,7 @@ test("latest signed unified owner applies through all current main chunks withou
   const original = process.env.CODEX_SIGNED_EXTRACTED_APP;
   const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
   const inventory = findMainProcessChunks(original);
-  assert.equal(inventory.chunks.length, 19);
+  assert.equal(inventory.chunks.length, 21);
   const sources = Object.fromEntries(inventory.chunks.map(name =>
     [name, fs.readFileSync(path.join(inventory.buildDir, name), "utf8")]));
   const project = extractedWorkspace(t, sources);
@@ -756,7 +788,7 @@ test("latest actual builder, queue, cache reader and resume roles reject inactiv
   const resumeCall = [...source.matchAll(new RegExp(`${functions.builder.name}\\(\\{browserBackends:${id}\\.browserBackends`, "g"))];
   assert.equal(resumeCall.length, 1);
   const resume = nativeFunctions(source, resumeCall[0].index)[0];
-  const readerCall = /\?await ([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*\):null,/.exec(resume.source);
+  const readerCall = /\?await ([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*,\{waitForReconcile:!1\}\):null,/.exec(resume.source);
   assert.ok(readerCall);
   for (const name of [functions.builder.name, queue.name, readerCall[1], resume.name]) {
     const mutant = inactiveDeclaration(source, name);

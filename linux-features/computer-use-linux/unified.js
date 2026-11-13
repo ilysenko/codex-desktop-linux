@@ -6,7 +6,7 @@ const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js")
 const { commitAssetEdits } = require("../../scripts/patches/lib/asset-edits.js");
 const { Script } = require("node:vm");
 const { mainProcessFactories } = require("../../scripts/patches/lib/main-process-factories.js");
-const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { escapeRegExp, findMatchingBrace, createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
 
 const ID = "[A-Za-z_$][\\w$]*";
 const ROOT_KEY = "codexLinuxCuaPluginRoot";
@@ -23,70 +23,25 @@ function uniqueMatch(source, pattern, description) {
   return matches[0];
 }
 
-function requireUsages(source, name, expected) {
+function bindingReferences(source, name) {
   // Include bare references as well as calls so an added alias/export fails
   // closed. Property accesses such as constants.Aa and private class members
   // such as #Aa are different bindings.
-  // Current rspack modules also embed large serialized tables. Scan JavaScript
-  // tokens so identifier-shaped data in strings, comments, and regexes does
-  // not look like a consumer of a short minified binding.
-  let uses = 0;
-  let previousToken = null;
-  for (let index = 0; index < source.length;) {
-    const char = source[index];
-    if (/\s/u.test(char)) { index += 1; continue; }
-    if (char === "/" && source[index + 1] === "/") {
-      index = source.indexOf("\n", index + 2);
-      if (index < 0) break;
-      continue;
-    }
-    if (char === "/" && source[index + 1] === "*") {
-      index = source.indexOf("*/", index + 2);
-      if (index < 0) break;
-      index += 2;
-      continue;
-    }
-    if (char === '"' || char === "'" || char === "`") {
-      const quote = char;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === "\\") index += 2;
-        else if (source[index++] === quote) break;
-      }
-      previousToken = "literal";
-      continue;
-    }
-    const regexPrefix = previousToken == null || /^(?:return|throw|case|delete|void|typeof|instanceof|in)$/u.test(previousToken) ||
-      /^[([{,:;=!?&|+*%^~<>-]$/u.test(previousToken);
-    if (char === "/" && regexPrefix) {
-      let inClass = false;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === "\\") index += 2;
-        else if (source[index] === "[") { inClass = true; index += 1; }
-        else if (source[index] === "]") { inClass = false; index += 1; }
-        else if (source[index] === "/" && !inClass) { index += 1; break; }
-        else index += 1;
-      }
-      while (/[a-z]/iu.test(source[index] ?? "")) index += 1;
-      previousToken = "literal";
-      continue;
-    }
-    if (/[A-Za-z_$]/u.test(char)) {
-      const start = index++;
-      while (/[\w$]/u.test(source[index] ?? "")) index += 1;
-      const token = source.slice(start, index);
-      let next = index;
-      while (/\s/u.test(source[next] ?? "")) next += 1;
-      const property = source[start - 1] === "." || source[start - 1] === "#" || source[next] === ":";
-      if (token === name && !property) uses += 1;
-      previousToken = token;
-      continue;
-    }
-    previousToken = char;
-    index += 1;
-  }
-  if (uses !== expected) throw drift(`unexpected ${name} consumers`);
+  const lexical = createJavaScriptLexicalIndex(source);
+  const uses = [...source.matchAll(new RegExp(`(?<![\\w$.#])${escapeRegExp(name)}(?![\\w$])`, "g"))].filter(match => {
+    if (!lexical.isCode(match.index)) return false;
+    let before = match.index - 1, after = match.index + match[0].length;
+    while (before >= 0 && (!lexical.isCode(before) || /\s/u.test(source[before]))) before--;
+    while (after < source.length && (!lexical.isCode(after) || /\s/u.test(source[after]))) after++;
+    // Native vendored tables contain identifier-key data properties. A
+    // conditional value before a colon remains a real binding reference.
+    return source[after] !== ":" || !["{", ","].includes(source[before]);
+  });
+  return uses;
+}
+
+function requireUsages(source, name, expected) {
+  if (bindingReferences(source, name).length !== expected) throw drift(`unexpected ${name} consumers`);
 }
 
 // Keep relationships inside the actual CommonJS factory body. Standalone
@@ -211,7 +166,7 @@ function serializedQueueContract(source, initializer) {
 
 function cacheReaderContract(source, cache, resumeSource, posture, argument) {
   const access = uniqueMatch(resumeSource, new RegExp(
-    String.raw`(?<cached>${ID})=(?<local>${ID})\?await (?<reader>${ID})\((?<connection>${ID})\):null,`, "g"),
+    String.raw`(?<cached>${ID})=(?<local>${ID})\?await (?<reader>${ID})\((?<connection>${ID}),\{waitForReconcile:!1\}\):null,`, "g"),
     "expected thread configuration to read its connection cache");
   if (!new RegExp(`^${ID}$`).test(argument)) throw drift("unexpected thread configuration arguments");
   uniqueCodeMatch(resumeSource, new RegExp(String.raw`\{appServerConnection:${escapeRegExp(access.groups.connection)}\}=${escapeRegExp(argument)},` +
@@ -221,21 +176,21 @@ function cacheReaderContract(source, cache, resumeSource, posture, argument) {
     String.raw`${escapeRegExp(posture)}=${ID}\.browserUseTinysky\?${escapeRegExp(access.groups.cached)}:null`, "g"),
     "expected thread browser posture to use synchronized cache data");
   const reader = access.groups.reader;
-  const declaration = uniqueCodeMatch(source, new RegExp(String.raw`async function ${escapeRegExp(reader)}\(${ID}\)\{`, "g"),
+  const declaration = uniqueCodeMatch(source, new RegExp(String.raw`async function ${escapeRegExp(reader)}\(${ID},\{waitForReconcile:(?<wait>${ID})=!0\}=\{\}\)\{`, "g"),
     "expected one native connection cache reader declaration");
   assertRootDeclaration(source, enclosingFunction(source, declaration.index));
   const declarationName = declaration.index + "async function ".length;
-  const references = [...source.matchAll(new RegExp(String.raw`(?<![\w$.#])${escapeRegExp(reader)}(?![\w$])`, "g"))].filter(reference => codeAt(source, reference.index));
+  const references = bindingReferences(source, reader);
   for (const reference of references) {
     if (reference.index === declarationName) continue;
     if (!/await $/.test(source.slice(0, reference.index)) ||
-        !new RegExp(String.raw`^${escapeRegExp(reader)}\(${ID}\)`).test(source.slice(reference.index))) {
+        !new RegExp(String.raw`^${escapeRegExp(reader)}\(${ID}(?:,\{waitForReconcile:!1\})?\)`).test(source.slice(reference.index))) {
       throw drift("native connection cache reader is aliased or rebound");
     }
   }
   uniqueCodeMatch(source, new RegExp(
-    String.raw`async function ${escapeRegExp(reader)}\((?<connection>${ID})\)\{for\(;;\)\{let ` +
-    String.raw`(?<otherPending>${ID})=(?<otherCache>${ID})\.get\(\k<connection>\),(?<pending>${ID})=${escapeRegExp(cache)}\.get\(\k<connection>\),` +
+    String.raw`async function ${escapeRegExp(reader)}\((?<connection>${ID}),\{waitForReconcile:${escapeRegExp(declaration.groups.wait)}=!0\}=\{\}\)\{for\(;;\)\{let ` +
+    String.raw`(?<otherPending>${ID})=(?<otherCache>${ID})\.get\(\k<connection>\);if\(null!=\k<otherPending>&&!${escapeRegExp(declaration.groups.wait)}\)return null;let (?<pending>${ID})=${escapeRegExp(cache)}\.get\(\k<connection>\),` +
     String.raw`(?<value>${ID})=await Promise\.all\(\[\k<otherPending>,\k<pending>\]\)\.then\(\(\[,(?<result>${ID})\]\)=>\k<result>\?\?null,\(\)=>null\);` +
     String.raw`if\(\k<otherPending>===\k<otherCache>\.get\(\k<connection>\)&&\k<pending>===${escapeRegExp(cache)}\.get\(\k<connection>\)\)return \k<value>\}\}`, "g"),
     "expected stable native plugin-work and synchronization cache snapshot");
