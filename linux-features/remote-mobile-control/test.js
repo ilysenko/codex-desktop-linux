@@ -1497,7 +1497,7 @@ test("Linux remote-control load gate keeps the native subscription before the Li
   const source = syntheticRemoteConnectionVisibilityBundle();
   const patched = applyLinuxRemoteControlLoadGatePatch(source);
   assert.notEqual(patched, source);
-  assert.match(patched, /const codexLinuxRemoteControlNativeLoadGateResult=\(0,o\.Zj\)\("1042620455"\);return typeof navigator/u);
+  assert.match(patched, /const codexLinuxRemoteControlNativeLoadGateResult=\(0,[A-Za-z_$][\w$]*\.Zj\)\("1042620455"\);return typeof navigator/u);
   assert.equal(applyLinuxRemoteControlLoadGatePatch(patched), patched);
   for (const userAgent of ["X11; Linux x86_64", "Macintosh"]) {
     const observed = remoteLoadGateHarness.callMC({ "async/load-gate.js": patched }, userAgent, false);
@@ -1510,7 +1510,8 @@ test("Linux remote-control load gate keeps the native subscription before the Li
 test("Linux remote-control load gate rejects non-current and ambiguous shapes", () => {
   const current = syntheticRemoteConnectionVisibilityBundle();
   for (const source of ["function f(){return c(`1042620455`)}", current + current,
-    current.replace('mC:function(){return(0,o.Zj)("1042620455")}', 'mC:function(){return true}')]) {
+    current.replace(/mC:function\(\)\{return\(0,[A-Za-z_$][\w$]*\.Zj\)\("1042620455"\)\}/u, 'mC:function(){return true}')]) {
+    assert.notEqual(source, current);
     assert.throws(() => applyLinuxRemoteControlLoadGatePatch(source), /Remote load gate|Rspack/);
   }
 });
