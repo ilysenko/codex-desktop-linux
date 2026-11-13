@@ -20,7 +20,8 @@ function reducer(source) {
 }
 function inputResolver(source) {
   const text = frame(source, /function\(\{mcpServerElicitationKind:[^}]+\}\)\{/gu);
-  return vm.runInNewContext(`${HELPER};(${text})`, { l: { PZ: requests => requests.some(x => x.method === "approval"), w_: kind => kind === "approval" }, m: kind => kind === "mcpServerElicitation" ? "mcp" : "approval" });
+  const classifier = frame(source, /function f\(e\)\{/gu);
+  return vm.runInNewContext(`${HELPER};${classifier};(${text})`, { l: { PZ: requests => requests.some(x => x.method === "approval"), w_: kind => kind === "approval" } });
 }
 
 test("three native keyed status modules prepare as one contribution with exact inverse and replay", () => {
@@ -29,7 +30,7 @@ test("three native keyed status modules prepare as one contribution with exact i
   assert.deepEqual(output(first), output(second));assert.deepEqual(output(first, "nativeSource"), g);
   assert.deepEqual(first.rows.map(x => Buffer.byteLength(x.patchedSource) - Buffer.byteLength(x.nativeSource)), [1174, 522, 493]);
   const bundle = rows => "export const __webpack_modules__={" + Object.values(rows).map(([x]) => `${x.moduleId}(${x.params.join(",")}){${x.moduleSource}}`).join(",") + "};";
-  assert.equal(require("node:crypto").createHash("sha256").update(bundle(output(first))).digest("hex"), fixture.legacyPatchedBundleSha256, "runtime edits preserve the current established business byte-for-byte");
+  assert.equal(require("node:crypto").createHash("sha256").update(bundle(output(first))).digest("hex"), fixture.patchedBundleSha256, "the current native fixture retains the established community transform");
 });
 
 test("native reducer keeps terminal priorities and only settles stale pending-input flags", () => {
@@ -80,7 +81,7 @@ test("native caller links keep one reducer, pending owner and host/thread state 
 });
 
 test("all physical modules agree on native imports and share the atom factory and scope", () => {
-  assert.throws(() => prepare(change(groups(), "pendingInput", 'p=n("OWtl")', 'p=n("foreignScope")')), /different native atom factory or scope/);
+  assert.throws(() => prepare(change(groups(), "pendingInput", 'h=n("OWtl")', 'h=n("foreignScope")')), /different native atom factory or scope/);
   const peers = groups();peers.terminal.push({ ...peers.terminal[0], moduleSource: peers.terminal[0].moduleSource.replace('a=n("zTeN")', 'a=n("foreignAtoms")') });
   assert.throws(() => prepare(peers), /inconsistent native provider identities/);
 });
@@ -94,4 +95,46 @@ test("complete native grammar, intrinsic authority and canonical output reject p
   const mixed = groups();mixed.terminal.push({ ...mixed.terminal[0], moduleSource: output(prepare(groups())).terminal[0].moduleSource });assert.throws(() => prepare(mixed), /mixed physical peer/);
   const bad = groups();bad.terminal.push({ ...bad.terminal[0], moduleSource: bad.terminal[0].moduleSource + ';function* m(){return null}' });assert.throws(() => prepare(bad), /complete small native/);
   const cap = groups().terminal[0];assert.throws(() => modulePlan({ ...cap, moduleSource: cap.moduleSource + "/*" + "x".repeat(16 * 1024) + "*/" }, "terminal"), /bounded small native/);
+});
+
+
+test("current native async-question gates retain mode, start-kind and source policy before the terminal guard", () => {
+  const plan = prepare(groups()).prepared.pendingInput[0];
+  const native = frame(plan.nativeSource, /\(e,\{get:t\}\)=>\{/gu);
+  assert.equal(frame(plan.patchedSource, /\(e,\{get:t\}\)=>\{/gu), native);
+  for (const scenario of [
+    { mode: "local", async: true, voice: "off", expected: true },
+    { mode: "durable", async: false, voice: "off", expected: true },
+    { mode: "durable", async: true, voice: "off", expected: false },
+    { mode: "local", async: true, voice: "on", expected: false },
+    { mode: "durable", async: false, voice: "off", absent: true, expected: false },
+  ]) {
+    const key = { hostId: "host-a", threadId: "thread-a" }, modeCalls = [], sourceCalls = [], requested = [];
+    const read = vm.runInNewContext("(" + native + ")", {
+      s: { ok: "runtime" }, u: { NU: "voice" }, p: { TH: "question" },
+      d: { d(host, mode) { modeCalls.push([host, mode]); return scenario.mode; } },
+      c: { N(kind, source) { sourceCalls.push([kind, source]); return scenario.async; } },
+    });
+    const value = read(key, { get(atom, argument) {
+      if (atom === "runtime") return scenario.absent ? null : {
+        summary: { mode: "stored-mode", threadStartKind: "start-kind", threadSource: "thread-source" },
+        unansweredAsyncQuestions: { entityKey: "entity-a", questionIds: ["answered", "skipped", "pending"] },
+      };
+      if (atom === "voice") { assert.equal(argument, key.threadId); return scenario.voice; }
+      assert.equal(atom, "question");requested.push(argument.itemId);
+      assert.equal(argument.hostId, key.hostId);assert.equal(argument.threadId, key.threadId);assert.equal(argument.entityKey, "entity-a");
+      return argument.itemId === "answered" ? { lastSubmission: {} } : argument.itemId === "skipped" ? { isSkipped: true } : null;
+    } });
+    if (scenario.expected) assert.deepEqual(JSON.parse(JSON.stringify(value)), { ...key, entityKey: "entity-a", itemId: "pending" });
+    else assert.equal(value, null);
+    assert.deepEqual(requested, scenario.expected ? ["answered", "skipped", "pending"] : []);
+    if (!scenario.absent && scenario.voice === "off") assert.deepEqual(modeCalls, [[key.hostId, "stored-mode"]]);
+    else assert.deepEqual(modeCalls, []);
+    assert.deepEqual(sourceCalls, !scenario.absent && scenario.voice === "off" && scenario.mode === "durable" ? [["start-kind", "thread-source"]] : []);
+  }
+  for (const [before, after] of [
+    ['"durable"===(0,d.d)', '"local"===(0,d.d)'],
+    ['n.summary.threadStartKind,n.summary.threadSource', 'n.summary.threadSource,n.summary.threadStartKind'],
+    ['(0,c.N)', '(0,c.Other)'],
+  ]) assert.throws(() => prepare(change(groups(), "pendingInput", before, after)), /complete small native/);
 });

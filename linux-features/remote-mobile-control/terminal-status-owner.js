@@ -88,7 +88,7 @@ function qualify(copy, role) {
   const get = expected => imports[index(expected)];
   const proof = { role, moduleId: copy.moduleId, imports: Object.freeze(imports) };
   proof.atomFactory = get("a");
-  proof.atomScope = get(role === "terminal" ? "d" : role === "statusCaller" ? "c" : "p");
+  proof.atomScope = get(role === "terminal" ? "d" : role === "statusCaller" ? "c" : "h");
   if (role === "terminal") {
     const reducer = terminalFrame(copy.moduleSource, false), pub = findRspackExportPublication(copy, "sX");
     if (pub?.expression !== reducer.roles.fn) fail("native terminal publication");

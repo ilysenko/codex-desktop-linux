@@ -26,9 +26,9 @@ function behavior(patched) {
   const terminalRead = selectedFrame(terminal.moduleSource, /\(\{conversationId:e,hostId:t\},\{get:n\}\)=>\{/gu);
   const read = vm.runInNewContext(`${HELPER};(${terminalRead})`, { o: { pC: "pC", ok: "ok" }, u: { Oz: "Oz" }, [proof.reducerName]: status });
   const pendingRead = selectedFrame(pending.moduleSource, /\(\{conversationId:e,hostId:t\},\{get:n\}\)=>\{/gu);
-  const approval = selectedFrame(pending.moduleSource, /function m\(e\)\{/gu);
+  const approval = selectedFrame(pending.moduleSource, /function f\(e\)\{/gu);
   const resolve = vm.runInNewContext(`${HELPER};${approval};(${pendingRead})`, {
-    s: { hF: "hF" }, o: { r: "resolution" }, h: "async-input",
+    s: { hF: "hF" }, o: { r: "resolution" }, _: "async-input",
     l: { PZ: requests => Array.isArray(requests) && requests.some(x => x.method?.endsWith("/requestApproval")), w_: type => type === "approval" },
   });
   return { terminal: { sX: status, h: read }, pending: { Z: resolve } };

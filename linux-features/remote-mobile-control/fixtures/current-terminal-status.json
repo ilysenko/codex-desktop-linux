@@ -1,10 +1,11 @@
 {
-  "version": "26.1103.32239",
-  "provenance": "Three retained signed native small modules; tests execute selected pure callbacks under controlled dependencies, never a module factory.",
+  "version": "26.1111.21308",
+  "provenance": "Fixture target1111. sZJm is byte-exact from signed1111 input. EU9a/e9KY retain versioned historical1103.32239 semantic aliases for their unchanged native interfaces. Only selected pure callbacks execute in tests, never module factories.",
   "raw": {
-    "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/182735.d3d917f28d.js",
-    "sha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
-    "bytes": 8273821
+    "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1111.21308-inputs/amd64/asar-extracted/webview/assets/async/907538.ce3dfb2b2a.js",
+    "sha256": "74d2c1274ea874fbf1590a9c8f09213cafe772a4fb6738f65f0100ed54f4579f",
+    "bytes": 8405643,
+    "version": "26.1111.21308"
   },
   "modules": [
     {
@@ -23,7 +24,13 @@
         "terminal": true,
         "pending": false
       },
-      "role": "terminal"
+      "role": "terminal",
+      "origin": {
+        "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/182735.d3d917f28d.js",
+        "rawSha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
+        "moduleSha256": "e75c46e9272055467b4a705cae6b4c51152d3026258b29e80a994c8565237d19",
+        "version": "26.1103.32239"
+      }
     },
     {
       "moduleId": "e9KY",
@@ -41,7 +48,13 @@
         "terminal": true,
         "pending": false
       },
-      "role": "statusCaller"
+      "role": "statusCaller",
+      "origin": {
+        "path": "/home/vgm/.cache/codex-desktop-dev/latest-stable-26.1103.32239-inputs/amd64/asar-extracted/webview/assets/async/182735.d3d917f28d.js",
+        "rawSha256": "11870f9f8005c5fce0e422bb6aad4840478b1110fe8086a97e7020afc64ce830",
+        "moduleSha256": "0f880e3e3c65eb035180ecaacbc0995cc8f7b6528d8df9f01feb5b7071ab7a31",
+        "version": "26.1103.32239"
+      }
     },
     {
       "moduleId": "sZJm",
@@ -50,7 +63,7 @@
         "t",
         "n"
       ],
-      "moduleSource": "n.d(t,{Z:()=>f});var r=n(\"SZCv\"),i=n.n(r),a=n(\"zTeN\"),s=n(\"tl5a\"),o=n(\"BgXp\"),l=n(\"vc9M\"),u=n(\"MtDh\"),d=n(\"JQtI\"),c=n(\"HAYt\"),p=n(\"OWtl\");let h=(0,a.i1)(p.u,(e,{get:t})=>{let n=t(s.ok,e);if(null==n||\"off\"!==t(u.NU,e.threadId)||(0,d.N)(n.summary.threadStartKind,n.summary.threadSource))return null;let r=n.unansweredAsyncQuestions;if(null==r)return null;let i=r.questionIds.find(n=>{let i=t(c.TH,{...e,entityKey:r.entityKey,itemId:n});return null==i||null==i.lastSubmission&&!i.isSkipped});return null==i?null:{...e,entityKey:r.entityKey,itemId:i}},{isEqual:i(),owner:e=>e.threadId}),f=(0,a.i1)(p.u,({conversationId:e,hostId:t},{get:n})=>{let r=n(s.hF,{hostId:t,threadId:e}),i=function({mcpServerElicitationKind:e,pendingRequestType:t,requests:n,resumeState:r,threadRuntimeStatus:i,userInputRequestId:a}){var s;if(null==n||null==r)return null;return\"mcpServerElicitation\"===t&&(\"formElicitation\"===(s=e)||\"openaiForm\"===s||\"legacyOpenAIForm\"===s)?\"needs_resume\"!==r||i?.type===\"active\"&&(i.activeFlags.includes(\"waitingOnUserInput\")||i.activeFlags.includes(\"waitingOnApproval\")&&(0,l.PZ)(n))?{autoResolution:null,blocking:!0,kind:\"input\",requestId:null,source:\"mcp\"}:null:\"needs_resume\"===r?i?.type===\"active\"&&i.activeFlags.includes(\"waitingOnApproval\")&&(0,l.PZ)(n)?{blocking:!0,kind:\"approval\",source:m(t)}:i?.type===\"active\"&&i.activeFlags.includes(\"waitingOnUserInput\")?{autoResolution:null,blocking:!0,kind:\"input\",requestId:a,source:\"userInput\"}:null:(0,l.w_)(t)?{blocking:!0,kind:\"approval\",source:m(t)}:\"userInput\"===t?{autoResolution:null,blocking:!0,kind:\"input\",requestId:a,source:\"userInput\"}:null}({mcpServerElicitationKind:r?.pendingRequest?.kind===\"mcpServerElicitation\"?r.pendingRequest.elicitationKind:null,pendingRequestType:r?.pendingRequest?.kind??null,requests:r?.requests??null,resumeState:r?.resumeState??null,threadRuntimeStatus:r?.threadRuntimeStatus??null,userInputRequestId:r?.pendingRequest?.kind===\"userInput\"?r.pendingRequest.userInputRequestId:null});if(null!=i){if(\"input\"!==i.kind||null==i.requestId)return i;let r=n(o.r,{conversationId:e,hostId:t});return{...i,autoResolution:r?.requestId===i.requestId?r.resolutionState:null}}let a=n(h,{hostId:t,threadId:e});return null==a?null:{autoResolution:null,blocking:!1,kind:\"input\",questionKey:a,requestId:null,source:\"userInputAsync\"}},{isEqual:i(),key:({conversationId:e,hostId:t})=>`${t}:${e}`});function m(e){return\"mcpServerElicitation\"===e?\"mcp\":\"permissionRequest\"===e?\"permission\":\"approval\"}",
+      "moduleSource": "n.d(t,{Z:()=>m});var r=n(\"SZCv\"),i=n.n(r),a=n(\"zTeN\"),s=n(\"tl5a\"),o=n(\"BgXp\"),l=n(\"vc9M\"),u=n(\"MtDh\"),d=n(\"nIa3\"),c=n(\"JQtI\"),p=n(\"HAYt\"),h=n(\"OWtl\");let _=(0,a.i1)(h.u,(e,{get:t})=>{let n=t(s.ok,e);if(null==n||\"off\"!==t(u.NU,e.threadId)||\"durable\"===(0,d.d)(e.hostId,n.summary.mode)&&(0,c.N)(n.summary.threadStartKind,n.summary.threadSource))return null;let r=n.unansweredAsyncQuestions;if(null==r)return null;let i=r.questionIds.find(n=>{let i=t(p.TH,{...e,entityKey:r.entityKey,itemId:n});return null==i||null==i.lastSubmission&&!i.isSkipped});return null==i?null:{...e,entityKey:r.entityKey,itemId:i}},{isEqual:i(),owner:e=>e.threadId}),m=(0,a.i1)(h.u,({conversationId:e,hostId:t},{get:n})=>{let r=n(s.hF,{hostId:t,threadId:e}),i=function({mcpServerElicitationKind:e,pendingRequestType:t,requests:n,resumeState:r,threadRuntimeStatus:i,userInputRequestId:a}){var s;if(null==n||null==r)return null;return\"mcpServerElicitation\"===t&&(\"formElicitation\"===(s=e)||\"openaiForm\"===s||\"legacyOpenAIForm\"===s)?\"needs_resume\"!==r||i?.type===\"active\"&&(i.activeFlags.includes(\"waitingOnUserInput\")||i.activeFlags.includes(\"waitingOnApproval\")&&(0,l.PZ)(n))?{autoResolution:null,blocking:!0,kind:\"input\",requestId:null,source:\"mcp\"}:null:\"needs_resume\"===r?i?.type===\"active\"&&i.activeFlags.includes(\"waitingOnApproval\")&&(0,l.PZ)(n)?{blocking:!0,kind:\"approval\",source:f(t)}:i?.type===\"active\"&&i.activeFlags.includes(\"waitingOnUserInput\")?{autoResolution:null,blocking:!0,kind:\"input\",requestId:a,source:\"userInput\"}:null:(0,l.w_)(t)?{blocking:!0,kind:\"approval\",source:f(t)}:\"userInput\"===t?{autoResolution:null,blocking:!0,kind:\"input\",requestId:a,source:\"userInput\"}:null}({mcpServerElicitationKind:r?.pendingRequest?.kind===\"mcpServerElicitation\"?r.pendingRequest.elicitationKind:null,pendingRequestType:r?.pendingRequest?.kind??null,requests:r?.requests??null,resumeState:r?.resumeState??null,threadRuntimeStatus:r?.threadRuntimeStatus??null,userInputRequestId:r?.pendingRequest?.kind===\"userInput\"?r.pendingRequest.userInputRequestId:null});if(null!=i){if(\"input\"!==i.kind||null==i.requestId)return i;let r=n(o.r,{conversationId:e,hostId:t});return{...i,autoResolution:r?.requestId===i.requestId?r.resolutionState:null}}let a=n(_,{hostId:t,threadId:e});return null==a?null:{autoResolution:null,blocking:!1,kind:\"input\",questionKey:a,requestId:null,source:\"userInputAsync\"}},{isEqual:i(),key:({conversationId:e,hostId:t})=>`${t}:${e}`});function f(e){return\"mcpServerElicitation\"===e?\"mcp\":\"permissionRequest\"===e?\"permission\":\"approval\"}",
       "start": 5250729,
       "end": 5253207,
       "bytes": 2478,
@@ -59,9 +72,15 @@
         "terminal": false,
         "pending": true
       },
-      "role": "pendingInput"
+      "role": "pendingInput",
+      "origin": {
+        "path": "webview/assets/async/907538.ce3dfb2b2a.js",
+        "rawSha256": "74d2c1274ea874fbf1590a9c8f09213cafe772a4fb6738f65f0100ed54f4579f",
+        "moduleSha256": "9f3c75f7dd30a0e374fc5dad7712c2f837dc3ec4710c1dc5e21da3712c793f75",
+        "version": "26.1111.21308"
+      }
     }
   ],
-  "legacyPatchedBundleSha256": "9f387bd2cb6b4e03a697e29bbe565c9f0eed651e5e3ba8cb32e693bb20c5a3d2",
-  "legacyEvidence": "Current f940 legacy String API output on these three exact native modules, before production entry migration; preserved as output regression reference. No old implementation retained."
+  "outputEvidence": "Current1111 fixture output from the unchanged terminal transform. Exact native inverse/replay and per-role inserted byte counts are checked separately.",
+  "patchedBundleSha256": "35c4d6e0edde7d3880fa474eaa16ae4718753115897dece885631fe69a43ab7c"
 }

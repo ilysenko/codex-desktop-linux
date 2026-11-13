@@ -31,3 +31,11 @@ test("per-thread subscription and thread host selection remain native readonly i
   assert.throws(() => graph.inspectTerminalStateProviders(all, "tl5a"));
   assert.throws(() => graph.inspectThreadState({ ...copy("tl5a"), moduleSource: copy("tl5a").moduleSource + '/*' + 'x'.repeat(32 * 1024) + '*/' }));
 });
+
+
+test("current runtime provider retains its summary and both subscription entrypoints", () => {
+  const native = copy("XQr6");
+  assert.equal(native.moduleSource.split("(0,u.jf)").length, 3);
+  assert.throws(() => graph.inspectRuntimeState(change(native, '(0,u.tv)("summary")', '(0,u.t)("summary")')), /complete native state interface/);
+  assert.throws(() => graph.inspectRuntimeState({ ...native, moduleSource: native.moduleSource.replaceAll("(0,u.jf)", "(0,u.j)") }), /complete native state interface/);
+});
