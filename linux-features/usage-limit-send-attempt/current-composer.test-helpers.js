@@ -22,8 +22,8 @@ function nativeGate(record) {
 }
 
 const blockerBindings = [
-  { callerDisabled: "tg", readOnlySsh: "nO", providerBlocked: "nL", modelUnavailable: "of", environmentBusy: "nK", draftsLoading: "nM", draftsCondition: "nS", policyViolation: "nH", collaborationLoading: "os", collaborationCondition: "n9", tierLoading: "oc", reserveLimit: "n$" },
-  { callerDisabled: "tg", readOnlySsh: "nV", providerBlocked: "nG", modelUnavailable: "aC", environmentBusy: "nB", draftsLoading: "nS", draftsCondition: "nk", policyViolation: "n$", collaborationLoading: "ao", collaborationCondition: "n7", tierLoading: "ac", reserveLimit: "nz" },
+  { callerDisabled: "tp", readOnlySsh: "nF", providerBlocked: "nW", modelUnavailable: "om", environmentBusy: "nL", draftsLoading: "nM", draftsCondition: "nj", policyViolation: "nQ", collaborationLoading: "on", collaborationCondition: "n4", tierLoading: "oa", reserveLimit: "nK" },
+  { callerDisabled: "th", readOnlySsh: "nU", providerBlocked: "nq", modelUnavailable: "rp", environmentBusy: "nF", draftsLoading: "nE", draftsCondition: "nM", policyViolation: "nH", collaborationLoading: "rn", collaborationCondition: "n4", tierLoading: "ri", reserveLimit: "nK" },
 ];
 
 function disabledReasons(record, source, values = {}) {

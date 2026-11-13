@@ -11,12 +11,12 @@ const ID = "[A-Za-z_$][\\w$]*";
 const MARKER = "codexLinuxUsageLimitSendAttempt";
 const OWNER = "CodexComposerAdapter:";
 // These factory-level ABI guards supplement the published returned-chain
-// checks below. They cover both physical variants in signed 26.1106.51428.
+// checks below. They cover both physical variants in signed 26.1111.21308.
 const FACTORIES = new Map([
-  ["2d7b16cd3c1adbc0facdf91b4610315eeee297e7aadf134a7be83005024cf97d", "native"],
-  ["e4e37f88f5614fab8d3c20d2bec745fbc967fffb9404212ad38f0b9787270a66", "applied"],
-  ["eb07bb8f36ea64a425cdcbb0c51f88e27fab527b20da2f257ffde11a3f6de33d", "native"],
-  ["7dae20fbd43ec4ca2a3958d994d98c6db82cb4718f472847521fd17b6e6aa8b8", "applied"],
+  ["5fd1dbe661c7605232a984b9e9082fdf8fc627a51d4103ed1e28f8428428141c", "native"],
+  ["b2f21bd07e9e71b8372525c7e19e0249c3588d536b6fb18284582539cb3f5063", "applied"],
+  ["ca7bef94da60f7c5f76f41307181aed2b5f1d5852976ce573995b62cf2c1d1d4", "native"],
+  ["b0daf3c99a6701c8b0f6d75bfdbf727b65825da7f93b1f38b77932b38a17875b", "applied"],
 ]);
 
 function one(values, reason) {
@@ -87,29 +87,29 @@ function returnedReasonChain(body, gate) {
     }), "missing native disabled-reason JSX consumer");
   const open = render.index + render[0].length - 1;
   const close = createJavaScriptLexicalIndex(body).matchingBrace(open);
-  const cache = one(codeMatches(body, new RegExp(`(${ID})=\\(0,${ID}\\.c\\)\\(265\\)`, "gu"), true),
+  const cache = one(codeMatches(body, new RegExp(`(${ID})=\\(0,${ID}\\.c\\)\\(262\\)`, "gu"), true),
     "missing native composer memo")[1];
   const escapedCache = escapeRegExp(cache), child = escapeRegExp(render[1]), jsx = escapeRegExp(render[2]);
   const branch = body.slice(returned.index, render.index);
-  if (!new RegExp(`^return ${escapedCache}\\[177\\]!==${escapeRegExp(render[3])}`).test(branch) ||
-      !branch.includes(`${cache}[236]!==${joined[1]}`) || !branch.endsWith("?(")) {
+  if (!new RegExp(`^return ${escapedCache}\\[175\\]!==${escapeRegExp(render[3])}`).test(branch) ||
+      !branch.includes(`${cache}[234]!==${joined[1]}`) || !branch.endsWith("?(")) {
     throw new Error("Usage-limit send attempt: reason JSX is outside the return branch");
   }
   const tail = body.slice(close + 2);
   const controller = one(codeMatches(tail, new RegExp(
-    `${escapedCache}\\[242\\]=${child}\\):${child}=${escapedCache}\\[242\\],[^?]+\\?\\((${ID})=\\(0,${jsx}\\.jsxs\\)\\((${ID}),\\{composerController:(${ID}),`, "gu")),
+    `${escapedCache}\\[239\\]=${child}\\):${child}=${escapedCache}\\[239\\],[^?]+\\?\\((${ID})=\\(0,${jsx}\\.jsxs\\)\\((${ID}),\\{composerController:(${ID}),`, "gu")),
   "missing returned composer controller");
   // The controller head ends after its first property. Locate its actual
   // object, then require the disabled-reason consumer as its literal child.
   const objectOpen = tail.indexOf("{composerController:", controller.index);
   const objectClose = createJavaScriptLexicalIndex(tail).matchingBrace(objectOpen);
   const controllerProps = tail.slice(objectOpen + 1, objectClose);
-  if (!new RegExp(`children:\\[${ID},${ID},${ID},${ID},${ID},${child}\\]$`, "u").test(controllerProps)) {
+  if (!new RegExp(`children:\\[${ID},${ID},${ID},${ID},${child}\\]$`, "u").test(controllerProps)) {
     throw new Error("Usage-limit send attempt: discarded reason JSX");
   }
   const container = escapeRegExp(controller[1]);
   const final = one(codeMatches(tail.slice(objectClose + 1), new RegExp(
-    `${escapedCache}\\[258\\]=${container}\\):${container}=${escapedCache}\\[258\\],[^?]+\\?\\((${ID})=\\(0,${jsx}\\.jsxs\\)\\("div",\\{`, "gu")),
+    `${escapedCache}\\[255\\]=${container}\\):${container}=${escapedCache}\\[255\\],[^?]+\\?\\((${ID})=\\(0,${jsx}\\.jsxs\\)\\("div",\\{`, "gu")),
   "missing returned composer root");
   const finalStart = objectClose + 1 + final.index;
   const finalOpen = finalStart + final[0].length - 1;
@@ -117,7 +117,7 @@ function returnedReasonChain(body, gate) {
   const rootProps = tail.slice(finalOpen + 1, finalClose);
   if (!rootProps.includes('"data-codex-composer-root":""') ||
       !new RegExp(`children:\\[${ID},${ID},${container}\\]$`, "u").test(rootProps) ||
-      !new RegExp(`,${escapedCache}\\[264\\]=${escapeRegExp(final[1])}\\):${escapeRegExp(final[1])}=${escapedCache}\\[264\\],${escapeRegExp(final[1])}$`, "u").test(tail.slice(finalClose + 2))) {
+      !new RegExp(`,${escapedCache}\\[261\\]=${escapeRegExp(final[1])}\\):${escapeRegExp(final[1])}=${escapedCache}\\[261\\],${escapeRegExp(final[1])}$`, "u").test(tail.slice(finalClose + 2))) {
     throw new Error("Usage-limit send attempt: discarded composer root");
   }
   return { reason: reason[1], blockers, list: list[1], joined: joined[1], consumer: render[1], controller: controller[1], root: final[1] };

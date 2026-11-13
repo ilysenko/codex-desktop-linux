@@ -49,6 +49,25 @@ test("feature stays disabled by default and registers through the production fea
 });
 
 for (const [index, owner] of fixture.owners.entries()) {
+  test(`current composer ${index} requires the signed memo and returned controller layout`, () => {
+    assert.equal(fixture.version, "26.1111.21308");
+    const plan = inspect(owner);
+    assert.equal(plan.chain.blockers.length, 11);
+    const memo = /([A-Za-z_$][\w$]*)=\(0,[A-Za-z_$][\w$]*\.c\)\(262\)/u.exec(owner.moduleSource);
+    assert.ok(memo);
+    const cache = memo[1];
+    const cases = [
+      [memo[0], memo[0].replace("(262)", "(265)"), /missing native composer memo/],
+      [`return ${cache}[175]!==`, `return ${cache}[177]!==`, /reason JSX is outside the return branch/],
+      [`${cache}[234]!==${plan.chain.joined}`, `${cache}[236]!==${plan.chain.joined}`, /reason JSX is outside the return branch/],
+      [`${cache}[239]=${plan.chain.consumer})`, `${cache}[242]=${plan.chain.consumer})`, /missing returned composer controller/],
+    ];
+    for (const [before, after, reason] of cases) {
+      assert.ok(owner.moduleSource.includes(before));
+      assert.throws(() => inspect(owner, owner.moduleSource.replace(before, after)), reason);
+    }
+  });
+
   test(`current composer ${index} changes only its local usage gate and recognizes applied source`, () => {
     assert.equal(crypto.createHash("sha256").update(owner.moduleSource).digest("hex"), owner.provenance.moduleSha256);
     const original = nativeGate(owner), plan = inspect(owner);
