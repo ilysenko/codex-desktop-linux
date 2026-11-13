@@ -261,7 +261,7 @@ state.
 | Transactional update manager | Native packages | Included unless built with `PACKAGE_WITH_UPDATER=0` |
 | Official Browser and Chrome integrations | Upstream | Reused from the official Linux package; no legacy port layer |
 | Linux shell startup ordering | Always | Required compatibility patch defers the shell loader by one event-loop turn |
-| Reliable approved quit completion | Upstream | The verified runtime consumes quit approval in its unique `before-quit` owner so teardown reaches `will-quit` |
+| Reliable approved quit completion | Upstream | The verified runtime checks quit approval state in its unique `before-quit` owner so teardown reaches `will-quit` |
 | Optional Linux feature framework | Disabled | Configure with `make setup-native` |
 | Distinct desktop identity | Always | **ChatGPT Community**, blue `C` icon, `codex-desktop` package identity |
 

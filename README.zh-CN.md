@@ -235,7 +235,7 @@ Nix 用户应从 profile、Home Manager 配置或 NixOS module 中删除该包�
 | 事务式更新管理器 | 原生包 | 除非设置 `PACKAGE_WITH_UPDATER=0` |
 | 官方 Browser 和 Chrome 集成 | 上游提供 | 直接复用官方 Linux 实现，不保留旧移植层 |
 | Linux shell 启动顺序 | 始终启用 | 必要兼容性补丁将 shell loader 延后一个事件循环轮次 |
-| 可靠地完成已批准的退出 | 上游提供 | 已验证的 runtime 在唯一的 `before-quit` owner 中消费退出批准，使清理流程能够到达 `will-quit` |
+| 可靠地完成已批准的退出 | 上游提供 | 已验证的 runtime 在唯一的 `before-quit` owner 中读取退出批准状态，使清理流程能够到达 `will-quit` |
 | Linux 可选扩展框架 | 默认关闭 | 使用 `make setup-native` 配置 |
 | 独立桌面标识 | 始终启用 | **ChatGPT Community**、蓝色 `C` 图标、`codex-desktop` package identity |
 
