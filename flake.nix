@@ -1224,7 +1224,7 @@
         checks.nix-runtime-maximal-shallow-watch =
           mkRuntimeCheck "nix-runtime-maximal-shallow-watch" maximalShallow true false;
         checks.nix-installer = pkgs.runCommand "nix-installer-check" {
-          nativeBuildInputs = [ installer pkgs.nodejs pkgs.patchelf ];
+          nativeBuildInputs = [ installer pkgs.nodejs pkgs.patchelf pkgs.findutils ];
         } ''
           set -euo pipefail
           export CODEX_INSTALL_DIR="$TMPDIR/installed"
@@ -1260,11 +1260,13 @@
           test "$rejected_status" -ne 0
           test "$(stat -c %i "$CODEX_INSTALL_DIR/ChatGPT")" = "$first_chatgpt"
           test "$(readlink -f "$runtime_root")" = ${installerPreviousRuntimeClosure}
-          if compgen -G "$TMPDIR/.installed.nix-runtime-candidate-*" >/dev/null; then
+          leaked_candidate_runtime_root="$(find "$TMPDIR" -maxdepth 1 -name '.installed.nix-runtime-candidate-*' -print -quit)"
+          if [ -n "$leaked_candidate_runtime_root" ]; then
             echo "Rejected promotion leaked a candidate runtime root" >&2
             exit 1
           fi
-          if compgen -G "$TMPDIR/.installed.nix-runtime-previous-*" >/dev/null; then
+          leaked_previous_runtime_root="$(find "$TMPDIR" -maxdepth 1 -name '.installed.nix-runtime-previous-*' -print -quit)"
+          if [ -n "$leaked_previous_runtime_root" ]; then
             echo "Rejected promotion leaked a previous runtime root" >&2
             exit 1
           fi
@@ -1276,11 +1278,13 @@
           test "$(cat "$runtime_marker")" = ${installerRuntimeClosure}
           test "$(cat "$backup/.codex-linux/nix-runtime-closure")" = ${installerPreviousRuntimeClosure}
           test "$(readlink -f "$backup/.codex-nix-runtime")" = ${installerPreviousRuntimeClosure}
-          if compgen -G "$TMPDIR/.installed.nix-runtime-candidate-*" >/dev/null; then
+          leaked_candidate_runtime_root="$(find "$TMPDIR" -maxdepth 1 -name '.installed.nix-runtime-candidate-*' -print -quit)"
+          if [ -n "$leaked_candidate_runtime_root" ]; then
             echo "Successful promotion leaked a candidate runtime root" >&2
             exit 1
           fi
-          if compgen -G "$TMPDIR/.installed.nix-runtime-previous-*" >/dev/null; then
+          leaked_previous_runtime_root="$(find "$TMPDIR" -maxdepth 1 -name '.installed.nix-runtime-previous-*' -print -quit)"
+          if [ -n "$leaked_previous_runtime_root" ]; then
             echo "Successful promotion leaked a previous runtime root" >&2
             exit 1
           fi
