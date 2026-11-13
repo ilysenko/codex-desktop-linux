@@ -10,14 +10,14 @@ function reject(source, label) { assert.throws(() => prepare(source), /Unsupport
 function deferred() { let resolve;const promise = new Promise(done => { resolve = done; });return { promise, resolve }; }
 function app(fn, files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "remote-feature-sync-")), build = path.join(root, ".vite/build");fs.mkdirSync(build, { recursive: true });
-  const sources = files ?? Object.fromEntries(Array.from({ length: 19 }, (_, index) => [index ? `early-bootstrap-${index}-feedface.js` : "early-bootstrap-920-deadbeef.js", index ? `exports.ids=[${index}],exports.modules={${index}(e){e.exports=true}};` : h.fixture()]));
+  const sources = files ?? Object.fromEntries(Array.from({ length: 21 }, (_, index) => [index ? `early-bootstrap-${index}-feedface.js` : "early-bootstrap-920-deadbeef.js", index ? `exports.ids=[${index}],exports.modules={${index}(e){e.exports=true}};` : h.fixture()]));
   for (const [name, source] of Object.entries(sources)) fs.writeFileSync(path.join(build, name), source, { mode: 0o640 });
   try { return fn({ root, build, sources }); } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
 test("qualified native class, live startup and exact request replay retain all outside bytes", () => {
   const source = h.fixture(), first = prepare(source), repeat = prepare(first.patchedSource);
-  assert.equal(first.state, "current");assert.equal(repeat.state, "patched");assert.equal(first.proof.ownerBytes, 4102);assert.equal(first.proof.factoryId, "26307");
+  assert.equal(first.state, "current");assert.equal(repeat.state, "patched");assert.equal(first.proof.ownerBytes, 4155);assert.equal(first.proof.factoryId, "26307");
   assert.equal(Buffer.byteLength(first.patchedSource) - Buffer.byteLength(source), 192);
   assert.equal(repeat.nativeSource, source);assert.equal(repeat.patchedSource, first.patchedSource);
   const call = first.proof.nativeCall, replacement = call.replace("{enablement:i}", "{enablement:codexLinuxRemoteControlFeatureSyncEnabled(i,e.connection.hostId)}");
@@ -47,6 +47,29 @@ test("selected sendEnablement keeps every native flag and ack policy across plat
     assert.equal(JSON.stringify(changed.state.assignment), assignments);assert.deepEqual(changed.trace, baseline.trace);
     for (const field of ["generation", "supportsPropagation", "acknowledgedGeneration", "acknowledgedEnrollment", "rolloutCompressionRequested"]) assert.equal(changed.record[field], baseline.record[field], field);
   }
+});
+
+test("current native MCP lazy startup flag preserves strict boolean selection across platforms and hosts", async () => {
+  const source = patched();
+  for (const platform of ["linux", "darwin", "win32"]) for (const host of ["local", "ssh:host", "cloud"]) {
+    for (const value of [undefined, true, false, 1, "true", null]) {
+      const baseline = h.scene(h.native.owner, { platform, host }), changed = h.scene(source, { platform, host });
+      baseline.state.assignment.defaultEnableFeatures.mcp_lazy_stdio_startup = value;
+      changed.state.assignment.defaultEnableFeatures.mcp_lazy_stdio_startup = value;
+      const original = JSON.stringify(changed.state.assignment);
+      await baseline.run();await changed.run();
+      assert.equal(changed.calls[0].args.enablement.mcp_lazy_stdio_startup, value === true);
+      assert.deepEqual(clean(changed.calls[0].args.enablement), {
+        ...clean(baseline.calls[0].args.enablement),
+        ...(platform === "linux" && host === "local" ? { remote_control: true } : {}),
+      });
+      assert.equal(JSON.stringify(changed.state.assignment), original);
+    }
+  }
+  for (const replacement of ["mcp_lazy_stdio_startup:e.mcp_lazy_stdio_startup", "mcp_lazy_stdio_startup:!1"]) {
+    reject(h.fixture().replace("mcp_lazy_stdio_startup:!0===e.mcp_lazy_stdio_startup", replacement), replacement);
+  }
+  reject(h.fixture().replace(",mcp_lazy_stdio_startup:!0===e.mcp_lazy_stdio_startup", ""), "retired owner without native MCP flag");
 });
 
 test("disposed, missing assignments and stale generations send no request or ack", async () => {
@@ -138,7 +161,7 @@ test("semantic owner/import names and scientific factory identities retain the n
   source = source.replace("26307(e,t,r)", "9e4(e,t,r)");const first = prepare(source);assert.equal(first.proof.owner, "EnablementOwner");assert.equal(first.proof.factoryId, "90000");assert.equal(prepare(first.patchedSource).nativeSource, source);
 });
 
-test("complete nineteen-row main transaction changes one asset and rolls back interrupted writes with modes", () => app(({ root, build, sources }) => {
+test("complete twenty-one-row main transaction changes one asset and rolls back interrupted writes with modes", () => app(({ root, build, sources }) => {
   let writes = 0;assert.throws(() => apply(root, { writeFileSync(file, bytes) { if (++writes === 1) { fs.writeFileSync(file, bytes.subarray(0, 7));throw Error("controlled interrupted sync write"); }fs.writeFileSync(file, bytes); } }), /controlled interrupted sync write/);
   for (const [name, before] of Object.entries(sources)) { assert.equal(fs.readFileSync(path.join(build, name), "utf8"), before);assert.equal(fs.statSync(path.join(build, name)).mode & 0o777, 0o640); }
   assert.equal(apply(root).changed, 1);const after = Object.fromEntries(Object.keys(sources).map(name => [name, fs.readFileSync(path.join(build, name), "utf8")]));assert.equal(Object.keys(after).filter(name => after[name] !== sources[name]).length, 1);assert.equal(apply(root).changed, 0);
