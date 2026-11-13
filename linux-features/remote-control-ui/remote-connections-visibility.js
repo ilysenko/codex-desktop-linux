@@ -123,11 +123,12 @@ function prepareRemoteConnectionsVisibility(cohort) {
   }
   if (qualified.navigationCaller[0].imports[1].moduleId !== boolean[0].moduleId) fail("memo provider disagrees across owner and navigation");
   if (qualified.booleanCaller[0].imports[2].moduleId !== cohort.boolean[0].moduleId ||
-      qualified.stateCaller[0].imports[4].moduleId !== cohort.state[0].moduleId ||
+      qualified.stateCaller[0].imports[5].moduleId !== cohort.state[0].moduleId ||
       qualified.navigationCaller[0].imports[3].moduleId !== cohort.boolean[0].moduleId) fail("orphan caller import");
-  for (const [role, pairs] of [["booleanCaller", [[0, 1], [3, 4], [8, 6]]], ["stateCaller", [[0, 1], [2, 4]]]]) {
+  for (const [role, pairs] of [["booleanCaller", [[0, 1], [3, 4], [8, 6]]], ["stateCaller", [[0, 1], [3, 4]]]]) {
     for (const [caller, owner] of pairs) if (qualified[role][0].imports[caller].moduleId !== boolean[owner].moduleId) fail("caller uses different native provider");
   }
+  if (qualified.stateCaller[0].imports[2].moduleId !== qualified.booleanCaller[0].imports[1].moduleId) fail("activity caller uses different native provider");
   const states = [...qualified.boolean, ...qualified.state].map(row => row.applied);
   if (states.some(Boolean) && !states.every(Boolean)) fail("partially applied cohort");
   const groups = new Map();

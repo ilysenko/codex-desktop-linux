@@ -78,6 +78,20 @@ test("the bounded native RemoteConnectionsPage uses the published boolean to pre
   }
 });
 
+test("the current native activity alternative and its shared provider remain intact", () => {
+  const native = snapshots(), canonical = snapshots(patchedSources(fixtureSources()));
+  for (const [index, copy] of native.stateCaller.entries()) {
+    assert.match(copy.moduleSource, /e\([\w$]+\.xm\)\|\|e\([\w$]+\.Hn\)\|\|"connection"===t/u);
+    assert.equal(canonical.stateCaller[index].moduleSource, copy.moduleSource);
+  }
+  assertRefuses(sources => {
+    sources["async/stateCaller-0.js"] = sources["async/stateCaller-0.js"].replace('"j9xU"', '"otherActivity"');
+  });
+  assertRefuses(sources => {
+    sources["async/stateCaller-0.js"] = sources["async/stateCaller-0.js"].replace("e(i.Hn)", "e(i.F6)");
+  });
+});
+
 test("semantic local and module identity renames retain the two native caller links", () => {
   let sources = fixtureSources();
   const modules = { PIwo: "newBoolean", cpC0: "newStatus", zTeN: "newAtoms", tl5a: "newHost", B81s: "newConfig", OWtl: "newScope", OMIV: "newGates" };

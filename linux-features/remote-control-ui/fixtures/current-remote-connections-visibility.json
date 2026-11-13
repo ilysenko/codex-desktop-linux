@@ -1,5 +1,5 @@
 {
-  "version": "26.1106.51428",
+  "version": "26.1111.21308",
   "roles": {
     "booleanCaller": [
       {
@@ -9,8 +9,8 @@
           "t",
           "n"
         ],
-        "moduleSource": "var r=n(\"zTeN\");n(\"ChYf\");var i=n(\"j9xU\"),a=n(\"PIwo\"),s=n(\"OWtl\"),o=n(\"Sd8U\"),l=n(\"o4oB\"),u=n(\"ndjw\"),d=n(\"qixt\"),c=n(\"OMIV\");function p(){return!0}let h=(0,r.un)(s.u,({get:e})=>p()?\"/settings/connections/ssh\":null),f=(0,r.un)(s.u,({get:e})=>e(i.s8)||e(u.Ro)&&e(i.m$)),m=(0,r.un)(o.PR,({get:e})=>e(i.F6)&&(e(c.JW,\"1678134557\")||!e(i.s8)||e(l.S)?.type!==\"remote\")),g=(0,r.un)(o.PR,({get:e})=>e(a.bc)&&(e(c.JW,\"1678134557\")||e(l.S)?.type!==\"local\"||e(c.JW,\"3296668107\"))),_=(0,r.un)(s.u,({get:e})=>!e(f)||e(d.e2)||!e(c.JW,\"1678134557\")),v=(0,r.un)(s.u,({get:e})=>!1);n.d(t,{},{CC:p,G8:m,Kc:_,Sn:f,XO:g,k5:v,m4:h})",
-        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
+        "moduleSource": "var r=n(\"zTeN\");n(\"ChYf\");var i=n(\"j9xU\"),a=n(\"PIwo\"),s=n(\"OWtl\"),o=n(\"Sd8U\"),l=n(\"o4oB\"),u=n(\"ndjw\"),d=n(\"qixt\"),c=n(\"OMIV\");function p(){return!0}let h=(0,r.un)(s.u,({get:e})=>p()?\"/settings/connections/ssh\":null),_=(0,r.un)(s.u,({get:e})=>e(i.s8)||e(u.Ro)&&e(i.m$)),m=(0,r.un)(o.PR,({get:e})=>e(i.F6)&&(e(c.JW,\"1678134557\")||!e(i.s8)||e(l.S)?.type!==\"remote\")),f=(0,r.un)(o.PR,({get:e})=>e(a.bc)&&(e(c.JW,\"1678134557\")||e(l.S)?.type!==\"local\"||e(c.JW,\"3296668107\"))),g=(0,r.un)(s.u,({get:e})=>!e(_)||e(d.e2)||!e(c.JW,\"1678134557\")),E=(0,r.un)(s.u,({get:e})=>!1);n.d(t,{},{CC:p,G8:m,Kc:g,Sn:_,XO:f,k5:E,m4:h})",
+        "sourceAsset": "webview/assets/async/907538.ce3dfb2b2a.js"
       }
     ],
     "boolean": [
@@ -22,7 +22,7 @@
           "n"
         ],
         "moduleSource": "var r=n(\"QosV\"),i=n(\"zTeN\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"OWtl\"),l=n(\"hZax\"),u=n(\"OMIV\"),d=n(\"kx7U\");let c=(0,i.un)(o.u,({get:e})=>{let t=e(a.Dc),{data:n}=e(s.I2,t),r=e(u.JW,\"4114442250\");if(!0===n?.config[\"features.remote_connections\"])return!0;let i=n?.config.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?r:Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0||r});function p(e){return e.autoConnect?[e.hostId]:[]}n.d(t,{},{Ik:function(){return(0,i.Ul)(c)},bc:c,mC:function(){return(0,l.Zj)(\"1042620455\")},mw:function(){let e,t,n=(0,r.c)(5),a=(0,i.Ul)(d.u8)??[];return n[0]!==a?(e=new Set(a.flatMap(p)),n[0]=a,n[1]=e):e=n[1],n[2]!==a||n[3]!==e?(t={remoteConnections:a,enabledRemoteHostIdSet:e},n[2]=a,n[3]=e,n[4]=t):t=n[4],t}})",
-        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
+        "sourceAsset": "webview/assets/async/907538.ce3dfb2b2a.js"
       }
     ],
     "state": [
@@ -33,8 +33,8 @@
           "t",
           "n"
         ],
-        "moduleSource": "var r=n(\"zTeN\"),i=n(\"rljs\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"kx7U\"),l=n(\"OWtl\"),u=n(\"ndjw\"),d=n(\"RFDv\"),c=n(\"r6TF\"),p=n(\"OMIV\");let h=(0,r.un)(l.u,()=>!0),f=(0,r.un)(l.u,({get:e})=>e(h)&&\"local\"===e(u.fm,e(a.Dc)).kind),m=(0,r.un)(l.u,({get:e})=>{let t=e(a.Dc),n=e(s.I2,t);if(e(p.JW,\"4114442250\"))return\"enabled\";if(n.isLoading)return\"loading\";let r=n.data?.config;if(r?.[\"features.remote_connections\"]===!0)return\"enabled\";let i=r?.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?\"disabled\":Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0?\"enabled\":\"disabled\"}),g=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).some(t=>\"connected\"===e(a.y2,t.hostId))),_=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).length>0),v=(0,r.un)(l.u,({get:e})=>{let t=e(m);if(\"loading\"===t)return!0;if(\"disabled\"===t)return!1;if(e(o.kj))return!0;let n=e(a.Dj);return e(c.Kj).some(({hostId:t})=>{if(!n.includes(t)||!e(i.EX,t))return!0;let r=e(a.y2,t);return\"connecting\"===r||\"restarting\"===r})}),y=(0,r.i1)(l.u,({localProjectActionsEnabled:e},{get:t})=>{let n=t(g),r=t(d.$G);return\"project\"===r&&!e&&n?\"connection\":r});n.d(t,{},{$e:y,Lk:h,T$:f,cC:v,e:m,gK:_,xm:g})",
-        "sourceAsset": "webview/assets/async/739301.001f92e5ca.js"
+        "moduleSource": "var r=n(\"zTeN\"),i=n(\"rljs\"),a=n(\"tl5a\"),s=n(\"B81s\"),o=n(\"kx7U\"),l=n(\"OWtl\"),u=n(\"ndjw\"),d=n(\"RFDv\"),c=n(\"r6TF\"),p=n(\"OMIV\");let h=(0,r.un)(l.u,()=>!0),_=(0,r.un)(l.u,({get:e})=>e(h)&&\"local\"===e(u.fm,e(a.Dc)).kind),m=(0,r.un)(l.u,({get:e})=>{let t=e(a.Dc),n=e(s.I2,t);if(e(p.JW,\"4114442250\"))return\"enabled\";if(n.isLoading)return\"loading\";let r=n.data?.config;if(r?.[\"features.remote_connections\"]===!0)return\"enabled\";let i=r?.features;return null==i||\"object\"!=typeof i||Array.isArray(i)?\"disabled\":Object.getOwnPropertyDescriptor(i,\"remote_connections\")?.value===!0?\"enabled\":\"disabled\"}),f=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).some(t=>\"connected\"===e(a.y2,t.hostId))),g=(0,r.un)(l.u,({get:e})=>\"enabled\"===e(m)&&e(c.Kj).length>0),E=(0,r.un)(l.u,({get:e})=>{let t=e(m);if(\"loading\"===t)return!0;if(\"disabled\"===t)return!1;if(e(o.kj))return!0;let n=e(a.Dj);return e(c.Kj).some(({hostId:t})=>{if(!n.includes(t)||!e(i.EX,t))return!0;let r=e(a.y2,t);return\"connecting\"===r||\"restarting\"===r})}),v=(0,r.i1)(l.u,({localProjectActionsEnabled:e},{get:t})=>{let n=t(f),r=t(d.$G);return\"project\"===r&&!e&&n?\"connection\":r});n.d(t,{},{$e:v,Lk:h,T$:_,cC:E,e:m,gK:g,xm:f})",
+        "sourceAsset": "webview/assets/async/907538.ce3dfb2b2a.js"
       }
     ],
     "stateCaller": [
@@ -43,20 +43,20 @@
         "params": [
           "e",
           "t",
-          "r"
+          "n"
         ],
-        "moduleSource": "var n=r(\"zTeN\"),a=r(\"eFn4\"),o=r(\"OWtl\"),i=r(\"DZgh\"),s=r(\"cpC0\"),l=r(\"RFDv\"),d=r(\"y5af\"),u=r(\"v8tC\"),c=r(\"Rrp3\"),h=r(\"Og9d\");let p=(0,n.i1)(o.u,(e,{get:t})=>f(t,e));function f(e,{mode:t,sidebarMode:r}){return(e(s.xm)||\"connection\"===t)&&(\"codex\"===r||(0,l.sV)(e(a.rQ)))}r.d(t,{},{Db:function(e,{tasks:t,conversationByKey:r,visibleKeys:n,allKeys:a},o){if(\"manual\"!==e.get(i.by).chatSortMode)return;let s=e=>e.flatMap(e=>{let t=r.get(e);return t?.source===\"codex\"?[t.threadKey]:[]});(0,h.ZG)(e,(0,c.q5)({allKeys:a,nextVisibleKeys:o.filter(e=>r.has(e)),preserveUnloadedStoredKeys:!0,storedOrder:e.get(h.t6)})),(0,u.Gd)(e,{tasks:t,visibleThreadIds:(0,d.jF)(s(n),t),nextVisibleThreadIds:(0,d.jF)(s(o),t)})},FQ:f,R$:p})",
-        "sourceAsset": "webview/assets/async/475196.19cfbf2397.js"
+        "moduleSource": "var r=n(\"zTeN\"),a=n(\"eFn4\"),i=n(\"j9xU\"),o=n(\"OWtl\"),l=n(\"DZgh\"),s=n(\"cpC0\"),c=n(\"RFDv\"),d=n(\"y5af\"),u=n(\"v8tC\"),h=n(\"Rrp3\"),p=n(\"Og9d\");let g=(0,r.i1)(o.u,(e,{get:t})=>m(t,e));function m(e,{mode:t,sidebarMode:n}){return(e(s.xm)||e(i.Hn)||\"connection\"===t)&&(\"codex\"===n||(0,c.sV)(e(a.rQ)))}n.d(t,{},{Db:function(e,{tasks:t,conversationByKey:n,visibleKeys:r,allKeys:a},i){if(\"manual\"!==e.get(l.by).chatSortMode)return;let o=e=>e.flatMap(e=>{let t=n.get(e);return t?.source===\"codex\"?[t.threadKey]:[]});(0,p.ZG)(e,(0,h.q5)({allKeys:a,nextVisibleKeys:i.filter(e=>n.has(e)),preserveUnloadedStoredKeys:!0,storedOrder:e.get(p.t6)})),(0,u.Gd)(e,{tasks:t,visibleThreadIds:(0,d.jF)(o(r),t),nextVisibleThreadIds:(0,d.jF)(o(i),t)})},FQ:m,R$:g})",
+        "sourceAsset": "webview/assets/async/200114.00ab46ce6d.js"
       },
       {
         "moduleId": "TkZM",
         "params": [
           "e",
           "t",
-          "n"
+          "r"
         ],
-        "moduleSource": "var a=n(\"zTeN\"),r=n(\"eFn4\"),i=n(\"OWtl\"),o=n(\"DZgh\"),l=n(\"cpC0\"),s=n(\"RFDv\"),c=n(\"y5af\"),d=n(\"v8tC\"),u=n(\"Rrp3\"),h=n(\"Og9d\");let p=(0,a.i1)(i.u,(e,{get:t})=>g(t,e));function g(e,{mode:t,sidebarMode:n}){return(e(l.xm)||\"connection\"===t)&&(\"codex\"===n||(0,s.sV)(e(r.rQ)))}n.d(t,{},{Db:function(e,{tasks:t,conversationByKey:n,visibleKeys:a,allKeys:r},i){if(\"manual\"!==e.get(o.by).chatSortMode)return;let l=e=>e.flatMap(e=>{let t=n.get(e);return t?.source===\"codex\"?[t.threadKey]:[]});(0,h.ZG)(e,(0,u.q5)({allKeys:r,nextVisibleKeys:i.filter(e=>n.has(e)),preserveUnloadedStoredKeys:!0,storedOrder:e.get(h.t6)})),(0,d.Gd)(e,{tasks:t,visibleThreadIds:(0,c.jF)(l(a),t),nextVisibleThreadIds:(0,c.jF)(l(i),t)})},FQ:g,R$:p})",
-        "sourceAsset": "webview/assets/async/885910.dd99d2e364.js"
+        "moduleSource": "var n=r(\"zTeN\"),a=r(\"eFn4\"),o=r(\"j9xU\"),i=r(\"OWtl\"),s=r(\"DZgh\"),l=r(\"cpC0\"),d=r(\"RFDv\"),u=r(\"y5af\"),c=r(\"v8tC\"),p=r(\"Rrp3\"),h=r(\"Og9d\");let f=(0,n.i1)(i.u,(e,{get:t})=>m(t,e));function m(e,{mode:t,sidebarMode:r}){return(e(l.xm)||e(o.Hn)||\"connection\"===t)&&(\"codex\"===r||(0,d.sV)(e(a.rQ)))}r.d(t,{},{Db:function(e,{tasks:t,conversationByKey:r,visibleKeys:n,allKeys:a},o){if(\"manual\"!==e.get(s.by).chatSortMode)return;let i=e=>e.flatMap(e=>{let t=r.get(e);return t?.source===\"codex\"?[t.threadKey]:[]});(0,h.ZG)(e,(0,p.q5)({allKeys:a,nextVisibleKeys:o.filter(e=>r.has(e)),preserveUnloadedStoredKeys:!0,storedOrder:e.get(h.t6)})),(0,c.Gd)(e,{tasks:t,visibleThreadIds:(0,u.jF)(i(n),t),nextVisibleThreadIds:(0,u.jF)(i(o),t)})},FQ:m,R$:f})",
+        "sourceAsset": "webview/assets/async/559929.51467d90f1.js"
       }
     ],
     "navigationCaller": [
