@@ -76,16 +76,15 @@ function createHarness({
     g: { J: value => value, D: value => value },
     // These are dependencies of the selected native merge/resolution helpers,
     // not replacement discovery or queue implementations.
-    R: { H(canonical, live, options) { merges.push({ canonical, live, options }); return [...canonical, ...live]; } },
+    mergeCanonical(canonical, live, options) { merges.push({ canonical, live, options }); return [...canonical, ...live]; },
     i6(params) { parserCalls.push({ kind: "dynamic-tool", params }); return params; },
     tT: { ER(params, enabled, parseUrl) { parserCalls.push({ kind: "elicitation", params, enabled, parseUrl }); return params.invalid ? null : params; } },
-    e5: { It(conversation, visit) { for (const turn of conversation.turns) visit(turn); } },
     tw: unexpected, tO: unexpected, tR: unexpected,
   };
   const name = /^class ([A-Za-z_$][\w$]*)\{/u.exec(lifeSource)?.[1];
   assert.ok(name);
   const Lifecycle = vm.runInNewContext(
-    data.readThreadId + data.bufferText + data.bufferKey + data.canonicalIslands + data.canonicalReader + data.merge + data.resolved + data.buffer + lifeSource + `;${name}`,
+    data.readThreadId + data.bufferText + data.bufferKey + data.canonicalIslands + data.canonicalReader + data.readCanonicalHistory + data.visitTurns + data.merge + data.resolved + data.buffer + lifeSource + `;${name}`,
     globals,
   );
   const lifecycle = new Lifecycle(manager, context, schedule);

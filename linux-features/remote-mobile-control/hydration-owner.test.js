@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const vm = require("node:vm");
 const data = require("./hydration-contract-data.json");
 const { createHarness, selectLifecycle } = require("./hydration-harness.js");
 const { prepareHydrationLifecycle } = require("./hydration-owner.js");
@@ -163,4 +164,30 @@ test("canonical hydration forwards its existing merge policy while dynamic tool 
   assert.equal(h.merges.length, 1); assert.deepEqual(h.merges[0].canonical, canonical); assert.equal(h.merges[0].canonical[0], canonical[0]); assert.equal(h.merges[0].live, live); assert.equal(h.merges[0].options.policy, policy);
   assert.equal(h.parserCalls[0].kind, "dynamic-tool"); assert.equal(h.parserCalls[1].kind, "elicitation"); assert.equal(h.parserCalls[1].enabled, true);
   assert.deepEqual(plain(h.notifications.map(row => row.method)), ["turn/completed"]);
+});
+
+
+test("current local resolution traversal visits canonical entities and flat turns with native missing-entity handling", () => {
+  const resolve = vm.runInNewContext(data.readCanonicalHistory + data.visitTurns + ";(" + data.resolved + ")", {
+    g: { J: value => value, D: value => value },
+  });
+  for (const canonical of [false, true]) {
+    const matched = { type: "mcpServerElicitation", requestId: "done", completed: false };
+    const other = { type: "mcpServerElicitation", requestId: "other", completed: false };
+    const live = { type: "mcpServerElicitation", requestId: "done", completed: false };
+    const stored = { items: [matched, other] }, conversation = { requests: [], turns: [canonical ? { items: [live] } : stored] };
+    if (canonical) conversation.turnHistory = {
+      kind: "canonical",
+      history: { islands: [{ entries: [{ value: "missing" }, { value: "present" }] }], entitiesByKey: { present: stored } },
+    };
+    const manager = {
+      getConversation: () => conversation,
+      updateConversationState(threadId, update) { assert.equal(threadId, "thread-a"); update(conversation); },
+    };
+    resolve(manager, { params: { threadId: "thread-a", requestId: "done" } });
+    assert.equal(matched.completed, true);
+    assert.equal(other.completed, false);
+    assert.equal(live.completed, false);
+    assert.deepEqual(plain(conversation.requests), []);
+  }
 });

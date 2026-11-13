@@ -71,8 +71,8 @@ test("orphan, dead, captured, partial and split native authorities reject", () =
     native.slice(0, -4) + '["on"+"Notification"](){return null}' + native.slice(-4),
     native.replace('var g=n("E7Ps")', 'Map=WeakMap;var g=n("E7Ps")'),
     native.replace("Math.min(", "WeakMap.min("),
-    native.replace("constructor(e){super();let Q;", "constructor(e){super();let Q;var i9=class{};"),
-    native.replace("constructor(e){super();let Q;", "constructor(e){super();let Q;i9=class{};"),
+    native.replace("constructor(e){super();", "constructor(e){super();var i9=class{};"),
+    native.replace("constructor(e){super();", "constructor(e){super();i9=class{};"),
     native.replace("let n=k(e);", "let n=foreignCanonicalReader(e);"),
     lateBaseImport,
     native.replace("getHostId(){return this.hostId}", "getHostId(){return 'local'}"),
@@ -143,4 +143,40 @@ test("the registered hydration descriptor owns complete native peers and reports
   t.mock.method(console, "warn", () => {});
   assert.equal(run()[0].status, "skipped-optional");
   assert.deepEqual(fs.readFileSync(files[0]), before);
+});
+
+
+test("current local canonical helpers and constructor callbacks remain qualified through their native caller links", () => {
+  const native = nativeCarrier();
+  const variants = [
+    native.replace("function mergeCanonical(", "function unrelatedMerge("),
+    native.replace('e.turnHistory?.kind==="canonical"?e.turnHistory.history:null', 'e.turnHistory?.kind==="canonical"?e.turns:null'),
+    native.replace("constructor(e){super();", "constructor(e){super();let findTurn=()=>null;"),
+    native.replace("constructor(e){super();", "constructor(e){super();lastTurn=()=>null;"),
+    native.replace("onThreadAccepted:void 0", "onThreadAccepted:()=>null"),
+    native.replace("clearPersistedUnreadState:e=>this.readState.forget(e)", "clearPersistedUnreadState:e=>this.readState.set(e,!1)"),
+    native.slice(0, -3) + "function* visitTurns(){return null}" + native.slice(-3),
+  ];
+  for (const source of variants) {
+    assert.notEqual(source, native);
+    assert.throws(() => prepareHydrationSource(source), /hydration/u);
+  }
+});
+
+
+test("canonical helper bindings reject deferred captured writes and retain actual callback-local shadows", () => {
+  const native = nativeCarrier(), seam = ",false){}}";
+  assert.equal(native.split(seam).length, 2);
+  for (const name of ["visitTurns", "readCanonicalHistory", "mergeCanonical", "findTurn", "lastTurn", "readLastTurnEntry"]) {
+    const captured = native.replace(seam, `,false){}Promise.resolve().then(()=>{${name}=()=>null});}`);
+    new vm.Script(captured.replaceAll("export const ", "const "));
+    assert.throws(() => prepareHydrationSource(captured), /captured or written canonical helper/);
+    for (const callback of [
+      `(${name})=>{${name}=()=>null}`,
+      `()=>{let ${name}=()=>null;${name}=()=>{}}`,
+    ]) {
+      const local = native.replace(seam, `,false){}Promise.resolve().then(${callback});}`);
+      assert.notEqual(prepareHydrationSource(local), local);
+    }
+  }
 });

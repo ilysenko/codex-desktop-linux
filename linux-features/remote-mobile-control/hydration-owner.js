@@ -7,6 +7,7 @@ const data = require("./hydration-contract-data.json");
 const { createJavaScriptLexicalIndex, escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { findUniqueRspackModuleCopies, rspackModuleFactories, findRspackRequireBinding } = require("../../scripts/patches/lib/rspack-module-assets.js");
 const { hasStableEagerMainBinding } = require("../../scripts/patches/lib/main-request-sites.js");
+const { prepareBindingAuthority, proveBindingAuthority, MAX_FACTORY_BYTES } = require("../../scripts/patches/lib/javascript-binding-authority.js");
 const { listWebviewAssetFiles, patchWebviewAssets } = require("../../scripts/patches/lib/assets.js");
 const { findRspackExportPublication } = require("../../scripts/patches/lib/rspack-export-publication.js");
 
@@ -83,6 +84,22 @@ function rootFunction(copy, name, expected) {
   const source = copy.moduleSource.slice(head.index, end + 1), roles = equivalent(source, expected);
   return { start: head.index, source, roles };
 }
+const helperBindingAuthorities = new Map();
+function readonlyHelperBindings(copy, roots) {
+  const key = copy.params.join(",") + "\0" + copy.moduleSource;
+  let prepared = helperBindingAuthorities.get(key);
+  if (!prepared) {
+    prepared = prepareBindingAuthority(copy.moduleSource, copy.params, { maxSourceBytes: MAX_FACTORY_BYTES });
+    if (helperBindingAuthorities.size === 2) helperBindingAuthorities.delete(helperBindingAuthorities.keys().next().value);
+    helperBindingAuthorities.set(key, prepared);
+  }
+  for (const [name, root] of roots) {
+    const binder = root.start + "function ".length;
+    if (copy.moduleSource.slice(binder, binder + name.length) !== name ||
+        !proveBindingAuthority(prepared, name, [binder]).stable) fail("captured or written canonical helper " + name);
+  }
+}
+
 function method(cls, name) {
   const body = cls.source.slice(cls.source.indexOf("{") + 1, -1), lex = createJavaScriptLexicalIndex(body);
   // The selected identifier method must remain the sole instance authority.
@@ -183,10 +200,13 @@ function inspectHydrationOwner(copy) {
   const buffer = rootClass(copy, roles("rD"));
   if (Buffer.byteLength(buffer.source) > 16 * 1024) fail("bounded native queue");
   equivalent(buffer.source, data.buffer);
-  for (const [name, template] of [[roles("eM"), data.readThreadId], [roles("iK"), data.resolved]]) rootFunction(copy, name, template);
+  rootFunction(copy, roles("eM"), data.readThreadId);
+  const resolved = rootFunction(copy, roles("iK"), data.resolved);
+  const visit = rootFunction(copy, resolved.roles("visitTurns"), data.visitTurns);
+  const history = rootFunction(copy, visit.roles("readCanonicalHistory"), data.readCanonicalHistory);
   const merge = rootFunction(copy, roles("D"), data.merge), canonical = rootFunction(copy, merge.roles("k"), data.canonicalReader);
   rootFunction(copy, canonical.roles("N"), data.canonicalIslands);
-  imported(copy, merge.roles("R"), data.mergeNamespaceModuleId);
+  const canonicalMerge = rootFunction(copy, merge.roles("mergeCanonical"), data.mergeCanonical);
   // These queue helpers are certified together so their shared names cannot be
   // silently swapped while preserving the class's apparent shape.
   const queueRoles = equivalent(buffer.source, data.buffer);
@@ -236,7 +256,23 @@ function inspectHydrationOwner(copy) {
   // point is a constructor statement. Closing arbitrary parentheses would
   // incorrectly accept a new short-circuit guard around initialization.
   const eager = one([...ctor.body.matchAll(new RegExp(`let ${ID}=\\(\\)=>this\\.turnStartObservations\\.clear\\(\\);if\\(`, "gu"))].filter(row => ctorLexical.isRoot(row.index)), "native eager constructor prelude");
-  equivalent(ctor.body.slice(eager.index, ctor.body.indexOf(construction) + construction.length), data.constructionIfPrefix);
+  const constructionRoles = equivalent(ctor.body.slice(eager.index, ctor.body.indexOf(construction) + construction.length), data.constructionIfPrefix);
+  const constructionHelpers = [constructionRoles("findTurn"), constructionRoles("lastTurn")];
+  if (!parses(manager.source.slice(0, ctor.classClose) + `\n;let ${constructionHelpers.join(",")};` + manager.source.slice(ctor.classClose)) ||
+      constructionHelpers.some(name => !hasStableEagerMainBinding(ctor.body, name))) fail("captured constructor canonical helper");
+  const find = rootFunction(copy, constructionRoles("findTurn"), data.findTurn);
+  const last = rootFunction(copy, constructionRoles("lastTurn"), data.lastTurn);
+  const lastEntry = rootFunction(copy, last.roles("readLastTurnEntry"), data.readLastTurnEntry);
+  if (find.roles("readCanonicalHistory") !== visit.roles("readCanonicalHistory") ||
+      lastEntry.roles("readCanonicalHistory") !== visit.roles("readCanonicalHistory")) fail("split canonical history reader");
+  readonlyHelperBindings(copy, [
+    [resolved.roles("visitTurns"), visit],
+    [visit.roles("readCanonicalHistory"), history],
+    [merge.roles("mergeCanonical"), canonicalMerge],
+    [constructionRoles("findTurn"), find],
+    [constructionRoles("lastTurn"), last],
+    [last.roles("readLastTurnEntry"), lastEntry],
+  ]);
   const before = ctor.body.slice(0, eager.index), prefix = before.endsWith(",") ? before.slice(0, -1) + ";" : before;
   const ctorProjection = before => manager.source.slice(0, ctor.classOpen + 1) + before + "\nconst __hydrationCtor=0;" + manager.source.slice(ctor.classClose);
   const beforeHost = ctor.body.slice(0, hostFields.index).replace(/,$/u, ";");
