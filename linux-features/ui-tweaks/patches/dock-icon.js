@@ -3,330 +3,316 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { Script } = require("node:vm");
-// Feature discovery, including isolated disabled copies, needs no ASAR helpers.
+const nativeController = require("./dock-icon-contract.json");
+// Feature discovery also loads disabled copies without the ASAR framework.
 function createJavaScriptLexicalIndex(source) { return require("../../../scripts/patches/lib/minified-js.js").createJavaScriptLexicalIndex(source); }
 function escapeRegExp(source) { return require("../../../scripts/patches/lib/minified-js.js").escapeRegExp(source); }
 function findMatchingBrace(source, open) { return require("../../../scripts/patches/lib/minified-js.js").findMatchingBrace(source, open); }
 function inspectMainRequestSites(source) { return require("../../../scripts/patches/lib/main-request-sites.js").inspectMainRequestSites(source); }
+function mainProcessFactories(source) { return require("../../../scripts/patches/lib/main-process-factories.js").mainProcessFactories(source); }
 function findMainProcessChunks(directory) { return require("../../../scripts/patches/lib/assets.js").findMainProcessChunks(directory); }
 function commitAssetEdits(...args) { return require("../../../scripts/patches/lib/asset-edits.js").commitAssetEdits(...args); }
+function bindingAuthority() { return require("../../../scripts/patches/lib/javascript-binding-authority.js"); }
 
-const identifier = "[A-Za-z_$][\\w$]*";
+const id = "[A-Za-z_$][\\w$]*";
+const linuxOnly = '"linux"===process.platform';
+const notLinux = '"linux"!==process.platform';
 const dockIconResourceHelper = "codexLinuxDockIconResourcePath";
 const dockIconApplyHelper = "codexLinuxApplyDockIcon";
+const COMMUNITY_NAMES = new Set([dockIconResourceHelper, dockIconApplyHelper, "codexLinuxDockIconThemeListener", "codexLinuxDockIconImage",
+  "codexLinuxIconSelection", "codexLinuxWindow", "codexLinuxSyncScript", "codexLinuxChild"]);
+const FIXED = new Set(("async await function return if else for of let const var new this true false null undefined void typeof instanceof try catch throw switch case break " +
+  "process globalThis require Reflect Math Promise Error Number String Object Array Set Map setImmediate").split(" "));
+for (const name of COMMUNITY_NAMES) FIXED.add(name);
 
 function matches(source, pattern) {
-  if (typeof source !== "string") return [];
   pattern.lastIndex = 0;
-  return [...source.matchAll(pattern)];
+  return typeof source === "string" ? [...source.matchAll(pattern)] : [];
 }
-
 function oneMatch(source, pattern) {
   const found = matches(source, pattern);
   return found.length === 1 ? found[0] : null;
 }
-
-function sameAliases(...aliases) {
-  return aliases.every((alias) => alias === aliases[0]);
+function sameAliases(...aliases) { return aliases.every(alias => alias === aliases[0]); }
+function parses(source) { try { new Script(source); return true; } catch { return false; } }
+function replaceOnce(source, before, after) {
+  if (source.split(before).length !== 2) throw Error("Changed native Dock controller seam");
+  return source.replace(before, after);
+}
+function controllerTokens(source) {
+  const lexical = createJavaScriptLexicalIndex(source);
+  return [...source.matchAll(/[A-Za-z_$][\w$]*/gu)].filter(token => lexical.isCode(token.index) && !FIXED.has(token[0]) &&
+    (source[token.index - 1] !== "." || source.slice(token.index - 3, token.index) === "...") && !/^\s*:/u.test(source.slice(token.index + token[0].length)));
+}
+function normalizeController(source, parameters) {
+  const names = new Map(parameters.map((name, index) => [name, "$" + index]));
+  let text = "", cursor = 0;
+  for (const token of controllerTokens(source)) {
+    if (!names.has(token[0])) names.set(token[0], "$" + names.size);
+    text += source.slice(cursor, token.index) + names.get(token[0]);
+    cursor = token.index + token[0].length;
+  }
+  return { text: text + source.slice(cursor), names };
+}
+function controllerAliases(source, expected, parameters) {
+  const actual = normalizeController(source, parameters), template = normalizeController(expected, nativeController.parameters);
+  if (actual.text !== template.text) return null;
+  const inverse = new Map([...actual.names].map(([name, canonical]) => [canonical, name]));
+  return new Map([...template.names].map(([name, canonical]) => [name, inverse.get(canonical)]));
+}
+function renderController(source, aliases) {
+  let text = "", cursor = 0;
+  for (const token of controllerTokens(source)) {
+    text += source.slice(cursor, token.index) + (aliases.get(token[0]) ?? token[0]);
+    cursor = token.index + token[0].length;
+  }
+  return text + source.slice(cursor);
 }
 
-// Current signed Rspack main source: the request host consumes the returned
-// window-services instance. Its icon state and macOS appearance observer stay
-// owned by that ordinary startup IIFE; Linux adds its own theme listener.
-const id = identifier;
-const linuxOnly = '"linux"===process\\.platform';
-const notLinux = '"linux"!==process\\.platform';
+function linuxControllerBody() {
+  let body = nativeController.body;
+  body = replaceOnce(body, '"space-system":{light:c.spaceLight,dark:c.spaceDark',
+    `"space-system":{light:${linuxOnly}?c.light:c.spaceLight,dark:${linuxOnly}?c.dark:c.spaceDark`);
+  body = replaceOnce(body, 'p=[...eZ.app.isPackaged?[process.resourcesPath]:[],',
+    `p=[...${linuxOnly}?[(0,eJ.join)(process.resourcesPath,"dock-icon")]:eZ.app.isPackaged?[process.resourcesPath]:[],`);
+  body = replaceOnce(body, "m=null,g=!1", `m=${linuxOnly}?{dark:eZ.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI,style:"regular"}:null,g=!1`);
+  body = replaceOnce(body, "y=t=>{", `y=function ${dockIconApplyHelper}(t){`);
+  body = replaceOnce(body, 'n=e!==tk.x.Agent&&null!=m&&"regular"!==m.style',
+    `n=${notLinux}&&e!==tk.x.Agent&&null!=m&&"regular"!==m.style`);
+  body = replaceOnce(body, 'if("app-default"===t&&e!==tk.x.Dev&&!h){',
+    `if("app-default"===t&&${notLinux}&&e!==tk.x.Dev&&!h){`);
+  body = replaceOnce(body, "if(h){", `if(h&&${notLinux}){`);
+  const nativeTail = 'if(!a.isEmpty()){if("app-default"!==t){let{width:e,height:t}=a.getSize(),r=Math.round(e/128);a=a.crop({x:r,y:r,width:e-2*r,height:t-2*r})}eZ.app.dock?.setIcon(a)}';
+  const linuxTail = `if(a.isEmpty())return;if(${notLinux}&&"app-default"!==t){let{width:e,height:t}=a.getSize(),r=Math.round(e/128);a=a.crop({x:r,y:r,width:e-2*r,height:t-2*r})}` +
+    `if(${linuxOnly}){let codexLinuxIconSelection="codex-system"===t||"space-system"===t?eZ.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?"codex-dark":"codex-light":"chatgpt";` +
+    'globalThis.codexLinuxDockIconImage=a;for(let codexLinuxWindow of eZ.BrowserWindow.getAllWindows())codexLinuxWindow.isDestroyed()||codexLinuxWindow.setIcon(a);' +
+    'null!=__dockTrayState?.tray&&!__dockTrayState.tray.isDestroyed()&&__dockTrayState.tray.setImage(a);' +
+    `let codexLinuxSyncScript=${dockIconResourceHelper}("sync-desktop-icon.sh");if(require("node:fs").existsSync(codexLinuxSyncScript))try{` +
+    'let codexLinuxChild=require("node:child_process").spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:["pipe","ignore","ignore"]});' +
+    'codexLinuxChild.on("error",()=>{}),codexLinuxChild.stdin.on("error",()=>{}),codexLinuxChild.stdin.end(a.toPNG()),codexLinuxChild.unref()}catch{}return}eZ.app.dock?.setIcon(a)';
+  body = replaceOnce(body, nativeTail, linuxTail);
+  body = replaceOnce(body, "v=()=>{let e=f();y(e);", `v=()=>{let e=f();y(e);if(${linuxOnly})return;`);
+  const lead = "return s.add(()=>{g=!0,l?.()}),", tail = ",v(),v";
+  const start = body.lastIndexOf(lead), end = body.length - tail.length;
+  if (start < 0 || !body.endsWith(tail)) throw Error("Changed native Dock observer ownership");
+  const observer = body.slice(start + lead.length, end);
+  const linuxObserver = '(()=>{let codexLinuxDockIconThemeListener=()=>{if(g)return;m={dark:eZ.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI,style:"regular"};let e=f();"app-default"!==e&&y(e)};' +
+    'eZ.nativeTheme.on("updated",codexLinuxDockIconThemeListener);return()=>eZ.nativeTheme.off("updated",codexLinuxDockIconThemeListener)})()';
+  return body.slice(0, start) + lead + `(${linuxOnly}?l=${linuxObserver}:${observer})` + tail;
+}
 
 function mainPatterns(state) {
-  const patched = state === "patched";
-  const previewGate = patched
-    ? `"darwin"!==process\\.platform&&${notLinux}`
-    : '"darwin"!==process\\.platform';
-  const spaceDark = patched
-    ? `${linuxOnly}\\?\\k<codexDark>:\\k<resource>\\(\\k<theme>\\.spaceDark\\)`
-    : "\\k<resource>\\(\\k<theme>\\.spaceDark\\)";
-  const spaceLight = patched
-    ? `${linuxOnly}\\?\\k<codexLight>:\\k<resource>\\(\\k<theme>\\.spaceLight\\)`
-    : "\\k<resource>\\(\\k<theme>\\.spaceLight\\)";
-  const packaged = patched
-    ? `(?<electron>${id})\\.app\\.isPackaged\\|\\|${linuxOnly}\\?\\k<helper>\\(\\k<arg>\\):null`
-    : `(?<electron>${id})\\.app\\.isPackaged\\?\\(0,(?<path>${id})\\.join\\)\\(process\\.resourcesPath,\\k<arg>\\):null`;
-  const appInfoTail =
-    `return (?<normalize>${id})\\(null!=\\k<candidate>&&\\(0,(?<exists>${id})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:` +
-    `\\(0,\\k<path>\\.join\\)\\(\\k<electron>\\.app\\.getAppPath\\(\\),"src","icons",\\k<arg>\\)\\)\\}`;
-  const appInfoOwner =
-    `function (?<owner>${id})\\((?<arg>${id})\\)\\{if\\(null==\\k<arg>\\)return null;let (?<candidate>${id})=${packaged};${appInfoTail}`;
-  const windowResource = patched
-    ? `\\((?<arg>${id})=>\\{if\\(!(?<electron>${id})\\.app\\.isPackaged&&${notLinux}\\)return null;let (?<candidate>${id})=${dockIconResourceHelper}\\(\\k<arg>\\);` +
-      `return\\(0,(?<exists>${id})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:null\\}\\)`
-    : `\\((?<arg>${id})=>\\{if\\(!(?<electron>${id})\\.app\\.isPackaged\\)return null;let (?<candidate>${id})=\\(0,(?<path>${id})\\.join\\)\\(process\\.resourcesPath,\\k<arg>\\);` +
-      `return\\(0,(?<exists>${id})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:null\\}\\)`;
-  const spaceSystem = patched
-    ? `${linuxOnly}\\?\\k<dark>\\?\\k<theme>\\.dark:\\k<theme>\\.light:\\k<dark>\\?\\k<theme>\\.spaceDark:\\k<theme>\\.spaceLight`
-    : "\\k<dark>\\?\\k<theme>\\.spaceDark:\\k<theme>\\.spaceLight";
-  const applyDefaultGate = patched
-    ? `if\\("app-default"===(?<arg>${id})&&${notLinux}&&(?<build>${id})!==(?:${id})\\.(?:${id})\\.Dev\\)\\{`
-    : `if\\("app-default"===(?<arg>${id})&&(?<build>${id})!==(?:${id})\\.(?:${id})\\.Dev\\)\\{`;
-  const crop =
-    `let\\{width:(?<width>${id}),height:(?<height>${id})\\}=\\k<image>\\.getSize\\(\\),(?<inset>${id})=Math\\.round\\(\\k<width>/128\\);` +
-    `\\k<image>=\\k<image>\\.crop\\(\\{x:\\k<inset>,y:\\k<inset>,width:\\k<width>-2\\*\\k<inset>,height:\\k<height>-2\\*\\k<inset>\\}\\)\\}`;
-  const applyTail = patched
-    ? `if\\((?<image>${id})\\.isEmpty\\(\\)\\)return;if\\(${notLinux}&&\\("codex-system"===(?<arg>${id})\\|\\|"space-system"===\\k<arg>\\)\\)\\{${crop}` +
-      `if\\(${linuxOnly}\\)\\{let codexLinuxIconSelection="codex-system"===\\k<arg>\\|\\|"space-system"===\\k<arg>\\?` +
-      `(?<electron>${id})\\.nativeTheme\\.shouldUseDarkColorsForSystemIntegratedUI\\?"codex-dark":"codex-light":"chatgpt";` +
-      "globalThis\\.codexLinuxDockIconImage=\\k<image>;" +
-      "for\\(let codexLinuxWindow of \\k<electron>\\.BrowserWindow\\.getAllWindows\\(\\)\\)codexLinuxWindow\\.isDestroyed\\(\\)\\|\\|codexLinuxWindow\\.setIcon\\(\\k<image>\\);" +
-      `null!=(?<trayState>${id})\\?\\.tray&&!\\k<trayState>\\.tray\\.isDestroyed\\(\\)&&\\k<trayState>\\.tray\\.setImage\\(\\k<image>\\);` +
-      `let codexLinuxSyncScript=${dockIconResourceHelper}\\("sync-desktop-icon\\.sh"\\);` +
-      'if\\(require\\("node:fs"\\)\\.existsSync\\(codexLinuxSyncScript\\)\\)try\\{' +
-      'let codexLinuxChild=require\\("node:child_process"\\)\\.spawn\\(codexLinuxSyncScript,\\[codexLinuxIconSelection\\],\\{detached:!0,stdio:\\["pipe","ignore","ignore"\\]\\}\\);' +
-      'codexLinuxChild\\.on\\("error",\\(\\)=>\\{\\}\\),codexLinuxChild\\.stdin\\.on\\("error",\\(\\)=>\\{\\}\\),' +
-      "codexLinuxChild\\.stdin\\.end\\(\\k<image>\\.toPNG\\(\\)\\),codexLinuxChild\\.unref\\(\\)\\}catch\\{\\}return\\}" +
-      "\\k<electron>\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}"
-    : `if\\(!(?<image>${id})\\.isEmpty\\(\\)\\)\\{if\\("codex-system"===(?<arg>${id})\\|\\|"space-system"===\\k<arg>\\)\\{${crop}` +
-      `(?<electron>${id})\\.app\\.dock\\?\\.setIcon\\(\\k<image>\\)\\}\\}`;
-  const updateGate = patched ? `!(?<isMac>${id})&&${notLinux}` : `!(?<isMac>${id})`;
-
+  const patched = state === "patched", linux = '"linux"===process\\.platform';
+  const previewGate = patched ? '"darwin"!==process\\.platform&&"linux"!==process\\.platform' : '"darwin"!==process\\.platform';
+  const packaged = patched ? `(?<electron>${id})\\.app\\.isPackaged\\|\\|${linux}\\?${dockIconResourceHelper}\\(\\k<arg>\\):null` :
+    `(?<electron>${id})\\.app\\.isPackaged\\?\\(0,(?<path>${id})\\.join\\)\\(process\\.resourcesPath,\\k<arg>\\):null`;
+  const appInfo = `function (?<owner>${id})\\((?<arg>${id})\\)\\{if\\(null==\\k<arg>\\)return null;let (?<candidate>${id})=${packaged};` +
+    `return (?<normalize>${id})\\(null!=\\k<candidate>&&\\(0,(?<exists>${id})\\.existsSync\\)\\(\\k<candidate>\\)\\?\\k<candidate>:\\(0,\\k<path>\\.join\\)\\(\\k<electron>\\.app\\.getAppPath\\(\\),"src","icons",\\k<arg>\\)\\)\\}`;
   return {
-    preview: new RegExp(
-      `dockIconPreviews:(?<include>${id})\\?function\\((?<arg>${id})\\)\\{if\\(${previewGate}\\)return null;let (?<theme>${id})=(?<themeHelper>${id})\\(\\k<arg>\\),` +
-        `(?<defaultIcon>${id})=(?<resource>${id})\\(\`\\$\\{(?<iconName>${id})\\(\\k<arg>\\)\\}\\.png\`\\),` +
-        `(?<codexDark>${id})=\\k<resource>\\(\\k<theme>\\.dark\\),(?<codexLight>${id})=\\k<resource>\\(\\k<theme>\\.light\\),` +
-        `(?<spaceDark>${id})=${spaceDark},(?<spaceLight>${id})=${spaceLight};` +
-        "return null==\\k<defaultIcon>\\|\\|null==\\k<codexDark>\\|\\|null==\\k<codexLight>\\|\\|null==\\k<spaceDark>\\|\\|null==\\k<spaceLight>\\?null:" +
-        `\\{appDefault:\\k<defaultIcon>,codexDark:\\k<codexDark>,codexLight:\\k<codexLight>,spaceDark:\\k<spaceDark>,spaceLight:\\k<spaceLight>\\}\\}\\((?<preference>${id})\\):null`,
-      "g",
-    ),
-    resourceName: new RegExp(
-      `(?<resourceName>${id})=\\((?<preference>${id}),(?<dark>${id})\\)=>\\{switch\\(\\k<preference>\\)\\{case"app-default":return null;` +
-        `case"codex-system":return \\k<dark>\\?(?<theme>${id})\\.dark:\\k<theme>\\.light;case"space-system":return ${spaceSystem}\\}\\}`,
-      "g",
-    ),
-    appInfo: new RegExp(
-      patched
-        ? `function (?<helper>${dockIconResourceHelper})\\((?<helperArg>${id})\\)\\{return ${linuxOnly}\\?\\(0,(?<path>${id})\\.join\\)\\(process\\.resourcesPath,"dock-icon",\\k<helperArg>\\):` +
-          `\\(0,\\k<path>\\.join\\)\\(process\\.resourcesPath,\\k<helperArg>\\)\\}${appInfoOwner}`
-        : appInfoOwner,
-      "g",
-    ),
-    windowResource: new RegExp(windowResource, "g"),
-    applyDefaultGate: new RegExp(applyDefaultGate, "g"),
-    applyTail: new RegExp(applyTail, "g"),
-    updateHead: new RegExp(
-      `(?<update>${id})=\\(\\)=>\\{if\\(${updateGate}\\)return;let (?<preference>${id})=(?<read>${id})\\(\\);(?<apply>${id})\\(\\k<preference>\\),` +
-        `\\(function\\(\\{preference:${id},resourceName:${id}\\}\\)\\{`,
-      "g",
-    ),
-    updateTail: new RegExp(
-      `\\}\\)\\(\\{preference:(?<preference>${id}),resourceName:(?<resourceName>${id})\\(\\k<preference>,!1\\)\\}\\)` +
-        `\\.then\\((?<changed>${id})=>\\{\\k<changed>&&(?<apply>${id})\\((?<read>${id})\\(\\)\\)\\}\\)\\}`,
-      "g",
-    ),
-    windowRegistration: new RegExp(
-      `onWindowRegistered:(?<window>${id})=>\\{(?<registrar>${id})\\?\\.registerWindow\\(\\k<window>\\),(?<callback>${id})\\?\\.\\(\\k<window>\\)` +
-        `${patched ? `,${linuxOnly}&&setImmediate\\((?<update>${id})\\)` : ""}\\}`,
-      "g",
-    ),
-    tray: new RegExp(
-      `(?<tray>${id})=new (?<electron>${id})\\.Tray\\(` +
-        (patched
-          ? `${linuxOnly}&&globalThis\\.codexLinuxDockIconImage&&!globalThis\\.codexLinuxDockIconImage\\.isEmpty\\(\\)\\?globalThis\\.codexLinuxDockIconImage:`
-          : "") +
-        `(?<iconInfo>${id})\\.defaultIcon,"win32"===process\\.platform&&\\k<electron>\\.app\\.isPackaged\\?`,
-      "g",
-    ),
-    trayState: new RegExp(
-      `let (?<controller>${id})=new (?:${id})\\((?<tray>${id})(?:,|\\))[^;]*;return\\((?<trayState>${id})=\\k<controller>,` +
-        "await \\k<controller>\\.waitForReady\\(\\)&&\\k<trayState>===\\k<controller>\\)\\?",
-      "g",
-    ),
+    preview: new RegExp(`dockIconPreviews:(?<include>${id})\\?function\\((?<arg>${id})\\)\\{if\\(${previewGate}\\)return null;let (?<theme>${id})=(?<themeHelper>${id})\\(\\k<arg>\\),` +
+      `(?<defaultIcon>${id})=(?<resource>${id})\\(\`\\$\\{(?<iconName>${id})\\(\\k<arg>\\)\\}\\.png\`\\),(?<codexDark>${id})=\\k<resource>\\(\\k<theme>\\.dark\\),(?<codexLight>${id})=\\k<resource>\\(\\k<theme>\\.light\\),` +
+      `(?<spaceDark>${id})=${patched ? linux + "\\?\\k<codexDark>:" : ""}\\k<resource>\\(\\k<theme>\\.spaceDark\\),(?<spaceLight>${id})=${patched ? linux + "\\?\\k<codexLight>:" : ""}\\k<resource>\\(\\k<theme>\\.spaceLight\\);` +
+      'return null==\\k<defaultIcon>\\|\\|null==\\k<codexDark>\\|\\|null==\\k<codexLight>\\|\\|null==\\k<spaceDark>\\|\\|null==\\k<spaceLight>\\?null:' +
+      `\\{appDefault:\\k<defaultIcon>,codexDark:\\k<codexDark>,codexLight:\\k<codexLight>,spaceDark:\\k<spaceDark>,spaceLight:\\k<spaceLight>\\}\\}\\((?<preference>${id})\\):null`, "g"),
+    appInfo: new RegExp(patched ? `function ${dockIconResourceHelper}\\((?<helperArg>${id})\\)\\{return ${linux}\\?\\(0,(?<path>${id})\\.join\\)\\(process\\.resourcesPath,"dock-icon",\\k<helperArg>\\):\\(0,\\k<path>\\.join\\)\\(process\\.resourcesPath,\\k<helperArg>\\)\\}${appInfo}` : appInfo, "g"),
+    windowRegistration: new RegExp(`onWindowRegistered:(?<window>${id})=>\\{(?<registrar>${id})\\?\\.registerWindow\\(\\k<window>\\),(?<callback>${id})\\?\\.\\(\\k<window>\\)` +
+      (patched ? `,${linux}&&setImmediate\\((?<update>${id})\\)` : "") + "\\}", "g"),
+    tray: new RegExp(`(?<tray>${id})=new (?<electron>${id})\\.Tray\\(` +
+      (patched ? `${linux}&&globalThis\\.codexLinuxDockIconImage&&!globalThis\\.codexLinuxDockIconImage\\.isEmpty\\(\\)\\?globalThis\\.codexLinuxDockIconImage:` : "") +
+      `(?<iconInfo>${id})\\.defaultIcon,"win32"===process\\.platform&&\\k<electron>\\.app\\.isPackaged\\?`, "g"),
+    trayState: new RegExp(`let (?<controller>${id})=new (?:${id})\\((?<tray>${id})(?:,|\\))[^;]*;return\\((?<trayState>${id})=\\k<controller>,await \\k<controller>\\.waitForReady\\(\\)&&\\k<trayState>===\\k<controller>\\)\\?`, "g"),
   };
 }
-
-// The current signed package keeps the Dock apply callback behind a separate
-// appearance-state guard and owns macOS appearance observation in an async
-// native observer. Linux adds its nativeTheme listener beside that owner.
-function currentMainContract(source, state) {
+function currentController(source, state) {
   const patched = state === "patched";
-  const patterns = mainPatterns(state);
-  const names = ["preview", "resourceName", "appInfo", "windowResource", "applyDefaultGate", "applyTail",
-    "updateHead", "updateTail", "windowRegistration", "tray", "trayState"];
-  const contract = Object.fromEntries(names.map((name) => [name, oneMatch(source, patterns[name])]));
-  if (Object.values(contract).some((match) => match == null)) return null;
-  const applyPrefix = oneMatch(source, new RegExp(patched
-    ? `(?<apply>${id})=function ${dockIconApplyHelper}\\((?<arg>${id})\\)\\{if\\("app-default"!==\\k<arg>&&null==(?<themeState>${id})\\)return;if\\((?<devIcons>${id})&&${notLinux}\\)\\{`
-    : `(?<apply>${id})=(?<arg>${id})=>\\{if\\("app-default"!==\\k<arg>&&null==(?<themeState>${id})\\)return;if\\((?<devIcons>${id})\\)\\{`, "g"));
-  if (applyPrefix == null) return null;
-  const themePrefixPattern = new RegExp(
-    `if\\((?<isMac>${id})\\)\\{let (?<cleanup>${id}),(?<disposed>${id})=!1;(?<disposables>${id})\\.add\\(\\(\\)=>\\{\\k<disposed>=!0,\\k<cleanup>\\?\\.\\(\\)\\}\\);let (?<listener>${id})=`,
-    "g",
-  );
-  const themePrefix = oneMatch(source, themePrefixPattern);
-  const themeMarker = "codexLinuxDockIconThemeListener";
-  const markerCount = source.split(themeMarker).length - 1;
-  if (themePrefix == null || (patched ? markerCount !== 3 : markerCount !== 0)) return null;
-  const themeOpen = themePrefix.index + themePrefix[0].indexOf("{");
-  const themeEnd = findMatchingBrace(source, themeOpen);
-  if (themeEnd < themeOpen) return null;
-  const themeOwner = source.slice(themePrefix.index, themeEnd + 1);
-  if (!themeOwner.includes("Failed to observe macOS Dock icon appearance")) return null;
+  const header = oneMatch(source, new RegExp(`(?<![\\w$.])(?<update>${id})=(?<isMac>${id})` + (patched ? '\\|\\|"linux"===process\\.platform' : "") +
+    `\\?function\\(\\{buildFlavor:(?<flavor>${id}),repoRoot:(?<repo>${id}),isDevMode:(?<dev>${id}),settingsStore:(?<settings>${id}),disposables:(?<disposables>${id}),errorReporter:(?<report>${id})\\}\\)\\{`, "gu"));
+  if (!header) return null;
+  const open = header.index + header[0].length - 1, close = findMatchingBrace(source, open);
+  if (close < open || !source.startsWith("({", close + 1)) return null;
+  const argumentOpen = close + 2, argumentClose = findMatchingBrace(source, argumentOpen), suffix = "):()=>{}";
+  if (argumentClose < argumentOpen || !source.startsWith(suffix, argumentClose + 1)) return null;
+  const end = argumentClose + 1 + suffix.length, body = source.slice(open + 1, close);
+  const parameters = ["flavor", "repo", "dev", "settings", "disposables", "report"].map(key => header.groups[key]);
+  if (new Set(parameters).size !== parameters.length || parameters.some(name => FIXED.has(name))) return null;
+  const aliases = controllerAliases(body, patched ? linuxControllerBody() : nativeController.body, parameters);
+  if (!aliases || renderController(patched ? linuxControllerBody() : nativeController.body, aliases) !== body) return null;
+  const argumentsByKey = Object.fromEntries(["buildFlavor", "repoRoot", "isDevMode", "settingsStore", "disposables", "errorReporter"]
+    .map(key => [key, recordBinding(source, argumentOpen, argumentClose, key)]));
+  if (Object.values(argumentsByKey).some(value => !value || !new RegExp(`^${id}$`, "u").test(value))) return null;
+  return { index: header.index, end, header, open, close, body, parameters, aliases, argumentsByKey,
+    nativeExpression: header[0].replace('||"linux"===process.platform', "") + renderController(nativeController.body, aliases) + source.slice(close, end) };
+}
+function currentMainContract(source, state) {
+  const patterns = mainPatterns(state), contract = Object.fromEntries(Object.entries(patterns).map(([name, pattern]) => [name, oneMatch(source, pattern)]));
+  if (Object.values(contract).some(value => !value)) return null;
+  const controller = currentController(source, state);
+  if (!controller) return null;
   const groups = Object.fromEntries(Object.entries(contract).map(([name, match]) => [name, match.groups]));
-  const aliasesAgree =
-    groups.preview.resource === groups.appInfo.owner &&
-    sameAliases(groups.appInfo.electron, groups.windowResource.electron, groups.applyTail.electron, groups.tray.electron) &&
-    sameAliases(groups.appInfo.path, groups.windowResource.path ?? groups.appInfo.path) &&
-    sameAliases(groups.appInfo.exists, groups.windowResource.exists) &&
-    sameAliases(applyPrefix.groups.apply, groups.updateHead.apply, groups.updateTail.apply) &&
-    sameAliases(groups.resourceName.resourceName, groups.updateTail.resourceName) &&
-    sameAliases(applyPrefix.groups.arg, groups.applyDefaultGate.arg, groups.applyTail.arg) &&
-    sameAliases(groups.updateHead.read, groups.updateTail.read) &&
-    sameAliases(groups.updateHead.preference, groups.updateTail.preference) &&
-    sameAliases(groups.updateHead.isMac, themePrefix.groups.isMac) &&
-    sameAliases(groups.tray.tray, groups.trayState.tray) &&
-    sameAliases(groups.applyTail.trayState ?? groups.trayState.trayState, groups.trayState.trayState);
-  if (!aliasesAgree || !themeOwner.endsWith(`,${groups.updateHead.update}()}`)) return null;
-  const nativeListener = new RegExp(
-    `^(${id})=>\\{if\\(${escapeRegExp(themePrefix.groups.disposed)}\\|\\|${escapeRegExp(applyPrefix.groups.themeState)}===\\1\\)return;` +
-      `${escapeRegExp(applyPrefix.groups.themeState)}=\\1;let (${id})=${escapeRegExp(groups.updateHead.read)}\\(\\);` +
-      `"app-default"!==\\2&&${escapeRegExp(applyPrefix.groups.apply)}\\(\\2\\)\\};`, "u",
-  );
-  if (!nativeListener.test(source.slice(themePrefix.index + themePrefix[0].length))) return null;
-  const result = { contract: { ...contract, applyPrefix, themePrefix }, groups: {
-    ...groups, applyPrefix: applyPrefix.groups, themePrefix: themePrefix.groups,
-  }, themeEnd: themeEnd + 1 };
-  if (patched && source.slice(themePrefix.index - linuxThemeSource(result).length, themePrefix.index) !== linuxThemeSource(result)) return null;
-  return result;
+  const aliases = controller.aliases;
+  if (groups.preview.resource !== groups.appInfo.owner || !sameAliases(aliases.get("eZ"), groups.appInfo.electron, groups.tray.electron) ||
+      aliases.get("eJ") !== groups.appInfo.path || aliases.get("re") !== groups.appInfo.exists || aliases.get("EH") !== groups.preview.themeHelper ||
+      aliases.get("EU") !== groups.preview.iconName || groups.tray.tray !== groups.trayState.tray ||
+      state === "patched" && (groups.windowRegistration.update !== controller.header.groups.update || aliases.get("__dockTrayState") !== groups.trayState.trayState)) return null;
+  return { contract, groups, controller };
 }
 
-function linuxThemeSource({ groups }) {
-  const state = groups.applyPrefix.themeState, electron = groups.applyTail.electron;
-  const read = groups.updateHead.read, update = groups.updateHead.update, apply = groups.applyPrefix.apply;
-  const listener = "codexLinuxDockIconThemeListener";
-  return `if("linux"===process.platform){${state}=${electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI;${update}();` +
-    `let ${listener}=()=>{${state}=${electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI;let e=${read}();"app-default"!==e&&${apply}(e)};` +
-    `${electron}.nativeTheme.on("updated",${listener}),${groups.themePrefix.disposables}.add(()=>{${electron}.nativeTheme.off("updated",${listener})})}`;
+function declaredBinding(body, parameters, name) {
+  if (!parses(`async function nativeDockBindings(${parameters}){${body}\n}`)) return false;
+  return !parses(`async function nativeDockBindings(${parameters}){${body}\n;let ${name};}`);
 }
-
+function nativeDeclarator(body, lexical, at, name) {
+  const heads = [...body.matchAll(/\b(?:let|const|var)\s+/gu)].filter(head => head.index <= at && lexical.isRoot(head.index));
+  const head = heads.at(-1);
+  if (!head || !parses(`async function nativeDockEntry(){${body.slice(0, head.index)}\nconst dockEntry=0;}`)) return false;
+  return parses(`async function nativeDockDeclaration(){for(${body.slice(head.index, at)}${name}=0;;){break;}}`);
+}
+const authorityCache = new Map();
+function authority(body, parameters) {
+  const key = parameters.join(",") + "\0" + body;
+  if (authorityCache.has(key)) return authorityCache.get(key);
+  const prepared = bindingAuthority().prepareBindingAuthority(body, parameters);
+  if (authorityCache.size === 8) authorityCache.delete(authorityCache.keys().next().value);
+  authorityCache.set(key, prepared);
+  return prepared;
+}
+function readonlyBindings(body, parameters, names, initializers = new Map()) {
+  const prepared = authority(body, parameters);
+  return names.every(name => bindingAuthority().proveBindingAuthority(prepared, name, initializers.get(name) ?? []).stable);
+}
 function currentWindowServices(source, info, graph) {
   if (!graph?.ok || !info) return null;
-  const { scope } = graph, { contract, groups } = info;
-  const factory = source.slice(scope.factoryStart, scope.factoryEnd);
-  const factoryCode = createJavaScriptLexicalIndex(factory);
-  if (Object.values(contract).some(match => match.index < scope.factoryStart ||
-      match.index + match[0].length > scope.factoryEnd || !factoryCode.isCode(match.index - scope.factoryStart))) return null;
-  const startup = source.slice(scope.startupStart, scope.startupEnd);
-  const startupCode = createJavaScriptLexicalIndex(startup);
-  const declarations = [...startup.matchAll(new RegExp(
-    `(?:let|const|var) (?<name>${id})=function\\(\\{(?<parameters>[^{}()]*)\\}\\)\\{`, "gu",
-  ))].filter(head => {
+  const { scope } = graph, { contract, groups, controller } = info;
+  const factory = mainProcessFactories(source).find(value => value.start === scope.factoryStart && value.end === scope.factoryEnd);
+  if (!factory) return null;
+  const factoryCode = createJavaScriptLexicalIndex(factory.body);
+  if (Object.values(contract).some(match => match.index < factory.start || match.index + match[0].length > factory.end || !factoryCode.isCode(match.index - factory.start))) return null;
+  const startup = source.slice(scope.startupStart, scope.startupEnd), startupCode = createJavaScriptLexicalIndex(startup);
+  const startupHeader = new RegExp(`\\((?<parameter>${id})?\\)\\{$`, "u").exec(source.slice(0, scope.startupStart));
+  if (!startupHeader) return null;
+  const ambient = ["require", "process", "globalThis", "Math", "Reflect", "Promise", "setImmediate"];
+  for (const name of ambient) {
+    if (factory.parameters.includes(name) || startupHeader.groups.parameter === name ||
+        declaredBinding(factory.body, factory.parameters.join(","), name) || declaredBinding(startup, startupHeader.groups.parameter ?? "", name)) return null;
+  }
+  const declarations = [...startup.matchAll(new RegExp(`(?<![\\w$.])(?<name>${id})=function\\(\\{(?<parameters>[^{}()]*)\\}\\)\\{`, "gu"))].filter(head => {
     if (!startupCode.isRoot(head.index)) return false;
-    const open = scope.startupStart + head.index + head[0].length - 1;
-    const close = findMatchingBrace(source, open);
-    return open < contract.applyPrefix.index && contract.applyPrefix.index < close &&
-      open < contract.windowRegistration.index && contract.windowRegistration.index < close;
+    const open = scope.startupStart + head.index + head[0].length - 1, close = findMatchingBrace(source, open);
+    return open < controller.index && controller.end < close && open < contract.windowRegistration.index && contract.windowRegistration.index < close;
   });
   if (declarations.length !== 1) return null;
-  const head = declarations[0], open = scope.startupStart + head.index + head[0].length - 1;
-  const close = findMatchingBrace(source, open), body = source.slice(open + 1, close);
-  if (["resourceName", "windowResource", "applyPrefix", "applyDefaultGate", "applyTail", "updateHead", "updateTail", "themePrefix", "windowRegistration"]
-    .some(name => !(open < contract[name].index && contract[name].index + contract[name][0].length <= close))) return null;
-  const bodyCode = createJavaScriptLexicalIndex(body);
-  try { new Script(`async function nativeWindowServices(){${startup.slice(0, head.index)}const dockDeclaration=0;}`); }
-  catch { return null; }
-  if (!source.startsWith("({", close + 1)) return null;
+  const head = declarations[0], open = scope.startupStart + head.index + head[0].length - 1, close = findMatchingBrace(source, open), body = source.slice(open + 1, close), bodyCode = createJavaScriptLexicalIndex(body);
+  if (!nativeDeclarator(startup, startupCode, head.index, head.groups.name) || !declaredBinding(startup, "", head.groups.name) || !source.startsWith("({", close + 1)) return null;
+  const windowInitializer = startup.slice(0, head.index) + "__dockWindowInitializer" + startup.slice(head.index + head.groups.name.length);
+  if (!bindingAuthority().hasStableEagerMainBinding(windowInitializer, head.groups.name)) return null;
   const argumentClose = findMatchingBrace(source, close + 2);
   if (argumentClose < close || source[argumentClose + 1] !== ")") return null;
-  const parameter = key => {
-    const found = [...head.groups.parameters.matchAll(new RegExp(`(?:^|,)${key}:(${id})(?=,|$)`, "gu"))];
-    return found.length === 1 ? found[0][1] : null;
-  };
-  if (parameter("isMacOS") !== groups.updateHead.isMac || parameter("disposables") !== groups.themePrefix.disposables) return null;
-  const returned = [...body.matchAll(/\breturn\{/gu)].filter(match => bodyCode.isRoot(match.index));
-  if (returned.length !== 1) return null;
-  const completions = serviceCompletions(body, bodyCode);
-  if (completions.length !== 1 || completions[0].value !== "return" || completions[0].index !== returned[0].index) return null;
+  const pairs = [...head.groups.parameters.matchAll(new RegExp(`(?:^|,)(${id}):(${id})(?=,|=|$)`, "gu"))];
+  const parameter = key => pairs.filter(pair => pair[1] === key).map(pair => pair[2]);
+  const value = key => parameter(key).length === 1 ? parameter(key)[0] : null;
+  const parameters = pairs.map(pair => pair[2]);
+  if (new Set(parameters).size !== parameters.length || parameters.some(name => FIXED.has(name)) || value("isMacOS") !== controller.header.groups.isMac) return null;
+  for (const key of ["buildFlavor", "repoRoot", "isDevMode", "settingsStore", "disposables", "errorReporter"]) if (controller.argumentsByKey[key] !== value(key)) return null;
+  const update = controller.header.groups.update, controllerAt = controller.index - open - 1;
+  if (parameters.includes(update) || !nativeDeclarator(body, bodyCode, controllerAt, update) || !declaredBinding(body, "{" + head.groups.parameters + "}", update)) return null;
+  const external = [...new Set(["eZ", "eJ", "re", "EH", "EU", "tk", "e0", "eAs"].map(name => controller.aliases.get(name)))];
+  if (external.some(name => !name || parameters.includes(name))) return null;
+  const protectedNames = [...external, head.groups.name, "process", "require", "globalThis", "Math", "Reflect", "Promise", "setImmediate", update];
+  if (!readonlyBindings(body, parameters, protectedNames, new Map([[update, [controllerAt]]]))) return null;
+  const returned = [...body.matchAll(/\breturn\{/gu)].filter(match => bodyCode.isRoot(match.index)), completions = serviceCompletions(body, bodyCode);
+  if (returned.length !== 1 || completions.length !== 1 || completions[0].value !== "return" || completions[0].index !== returned[0].index) return null;
   const recordOpen = returned[0].index + "return".length, recordClose = bodyCode.matchingBrace(recordOpen);
   if (recordClose < recordOpen || !/^\s*;?\s*$/u.test(body.slice(recordClose + 1))) return null;
-  const record = body.slice(recordOpen + 1, recordClose), recordCode = createJavaScriptLexicalIndex(record);
-  const property = key => {
-    const found = [...record.matchAll(new RegExp(`(?:^|,)${key}:(${id})(?=,|$)`, "gu"))]
-      .filter(match => recordCode.isRoot(match.index));
-    return found.length === 1 ? found[0][1] : null;
-  };
-  const manager = property("windowManager");
-  if (manager == null || property("updateDockIcon") !== groups.updateHead.update) return null;
-  const constructed = [...body.matchAll(new RegExp(`(?<![\\w$.])${escapeRegExp(manager)}=new (${id})\\([^{}]*?\\{`, "gu"))]
-    .filter(match => bodyCode.isRoot(match.index));
-  if (constructed.length !== 1) return null;
-  if (parameter("onWindowRegistered") !== groups.windowRegistration.callback ||
-      !new RegExp(`(?:let|const|var) ${escapeRegExp(groups.windowRegistration.registrar)}=null,$`, "u")
-        .test(body.slice(0, constructed[0].index))) return null;
-  const optionsOpen = open + 1 + constructed[0].index + constructed[0][0].length - 1;
-  const optionsClose = findMatchingBrace(source, optionsOpen);
-  if (!(optionsOpen < contract.windowRegistration.index && contract.windowRegistration.index < optionsClose)) return null;
-  if (!new RegExp(`(?<![\\w$.])${escapeRegExp(groups.applyPrefix.themeState)}=null(?=[,;])`, "u").test(body) ||
-      !new RegExp(`${escapeRegExp(groups.resourceName.theme)}=${escapeRegExp(groups.preview.themeHelper)}\\(${escapeRegExp(parameter("buildFlavor") ?? "__missing")}\\)`, "u").test(body)) return null;
-  const reads = [...body.matchAll(new RegExp(
-    `(?<![\\w$.])${escapeRegExp(groups.updateHead.read)}=\\(\\)=>\\{switch\\(${escapeRegExp(parameter("buildFlavor") ?? "__missing")}\\)\\{`, "gu",
-  ))].filter(match => bodyCode.isRoot(match.index));
-  if (reads.length !== 1) return null;
-  const readOpen = reads[0].index + reads[0][0].indexOf("=>{") + 2;
-  const readClose = bodyCode.matchingBrace(readOpen);
-  if (readClose < readOpen || !new RegExp(
-    `return ${escapeRegExp(parameter("settingsStore") ?? "__missing")}\\.get\\(${id}(?:\\.${id})*\\.DOCK_ICON_PREFERENCE\\)\\?\\?"app-default";`, "u",
-  ).test(body.slice(readOpen + 1, readClose))) return null;
+  const manager = recordBinding(body, recordOpen, recordClose, "windowManager");
+  if (!manager || recordBinding(body, recordOpen, recordClose, "updateDockIcon") !== update) return null;
+  const construction = [...body.matchAll(new RegExp(`(?<![\\w$.])${escapeRegExp(manager)}=new (${id})\\([^{}]*?\\{`, "gu"))].filter(match => bodyCode.isRoot(match.index));
+  if (construction.length !== 1 || !nativeDeclarator(body, bodyCode, construction[0].index, manager)) return null;
+  const optionsOpen = construction[0].index + construction[0][0].length - 1, optionsClose = bodyCode.matchingBrace(optionsOpen);
+  if (!(open + 1 + optionsOpen < contract.windowRegistration.index && contract.windowRegistration.index < open + 1 + optionsClose) || value("onWindowRegistered") !== groups.windowRegistration.callback) return null;
+  const prefix = body.slice(0, construction[0].index), registrar = groups.windowRegistration.registrar;
+  const initializer = new RegExp(`(?<![\\w$.])${escapeRegExp(registrar)}=null,$`, "u").exec(prefix);
+  if (!initializer || !nativeDeclarator(body, bodyCode, initializer.index, registrar)) return null;
   const hostName = /^class ([A-Za-z_$][\w$]*)/u.exec(source.slice(scope.hostStart, scope.hostEnd))?.[1];
   if (!hostName) return null;
-  const hosts = [...startup.matchAll(new RegExp(`(?<![\\w$.])new ${escapeRegExp(hostName)}\\(\\{`, "gu"))]
-    .filter(match => startupCode.isCode(match.index));
+  const hosts = [...startup.matchAll(new RegExp(`(?<![\\w$.])new ${escapeRegExp(hostName)}\\(\\{`, "gu"))].filter(match => startupCode.isCode(match.index));
   if (hosts.length !== 1) return null;
-  const callerHeads = [...startup.matchAll(new RegExp(
-    `(?:let|const|var) (?<name>${id})=function\\(\\{(?<parameters>[^{}()]*)\\}\\)\\{`, "gu",
-  ))].filter(candidate => {
-    const callerOpen = candidate.index + candidate[0].length - 1;
-    const callerClose = startupCode.matchingBrace(callerOpen);
-    return startupCode.isRoot(candidate.index) && callerOpen < hosts[0].index && hosts[0].index < callerClose;
+  const callers = [...startup.matchAll(new RegExp(`(?<![\\w$.])(?<name>${id})=function\\(\\{(?<parameters>[^{}()]*)\\}\\)\\{`, "gu"))].filter(candidate => {
+    if (!startupCode.isRoot(candidate.index)) return false;
+    const at = candidate.index + candidate[0].length - 1, end = startupCode.matchingBrace(at);
+    return at < hosts[0].index && hosts[0].index < end;
   });
-  if (callerHeads.length !== 1) return null;
-  const caller = callerHeads[0], callerOpen = caller.index + caller[0].length - 1;
-  const callerClose = startupCode.matchingBrace(callerOpen);
-  const callerParameters = [...caller.groups.parameters.matchAll(new RegExp(`(?:^|,)windowServices:(${id})(?=,|$)`, "gu"))];
-  if (callerParameters.length !== 1 || !startup.startsWith("({", callerClose + 1)) return null;
-  const callerArgumentOpen = callerClose + 2, callerArgumentClose = startupCode.matchingBrace(callerArgumentOpen);
-  if (startup[callerArgumentClose + 1] !== ")" || callerArgumentOpen <= argumentClose - scope.startupStart) return null;
-  const hostOptionsOpen = hosts[0].index + hosts[0][0].length - 1;
-  const hostOptionsClose = startupCode.matchingBrace(hostOptionsOpen);
-  if (recordBinding(startup, hostOptionsOpen, hostOptionsClose, "windowManager") !== `${callerParameters[0][1]}.windowManager` ||
-      recordBinding(startup, callerArgumentOpen, callerArgumentClose, "windowServices") !== head.groups.name) return null;
-  return { factoryId: scope.factoryId, start: open + 1, end: close, binding: head.groups.name,
-    windowManager: manager, nativeThemeStart: contract.themePrefix.index, nativeThemeEnd: info.themeEnd };
+  if (callers.length !== 1) return null;
+  const caller = callers[0], callerOpen = caller.index + caller[0].length - 1, callerClose = startupCode.matchingBrace(callerOpen);
+  const callerPairs = [...caller.groups.parameters.matchAll(new RegExp(`(?:^|,)(${id}):(${id})(?=,|=|$)`, "gu"))];
+  const windowParameters = callerPairs.filter(pair => pair[1] === "windowServices");
+  if (windowParameters.length !== 1 || !nativeDeclarator(startup, startupCode, caller.index, caller.groups.name) || !startup.startsWith("({", callerClose + 1)) return null;
+  const callerArgumentOpen = callerClose + 2, callerArgumentClose = startupCode.matchingBrace(callerArgumentOpen), windowParameter = windowParameters[0][2];
+  if (recordBinding(startup, callerArgumentOpen, callerArgumentClose, "windowServices") !== head.groups.name) return null;
+  const hostOptionsOpen = hosts[0].index + hosts[0][0].length - 1, hostOptionsClose = startupCode.matchingBrace(hostOptionsOpen);
+  if (recordBinding(startup, hostOptionsOpen, hostOptionsClose, "windowManager") !== windowParameter + ".windowManager" ||
+      recordBinding(startup, hostOptionsOpen, hostOptionsClose, "updateDockIcon") !== windowParameter + ".updateDockIcon") return null;
+  if (!readonlyBindings(startup.slice(callerOpen + 1, callerClose), callerPairs.map(pair => pair[2]), [windowParameter])) return null;
+  return { factoryId: scope.factoryId, start: open + 1, end: close, binding: head.groups.name, windowManager: manager };
 }
-
-// A label is visible through ordinary blocks, but cannot be jumped to from a
-// nested callable. Compile only: this classifies the service's own return/throw
-// statements without evaluating any native service code or callback.
 function serviceCompletions(body, lexical) {
   let sequence = 0, label;
   do { label = `codexLinuxDockOwnerProof${sequence++}`; } while (body.includes(label));
   return [...body.matchAll(/\b(?:return|throw)\b/gu)].filter(token => {
     if (!lexical.isCode(token.index)) return false;
     const probe = body.slice(0, token.index) + `break ${label};` + body.slice(token.index);
-    try { new Script(`function nativeDockServiceProbe(){${label}:{${probe}\n}}`); return true; }
-    catch { return false; }
+    return parses(`async function nativeDockServiceProbe(){${label}:{${probe}\n}}`);
   }).map(token => ({ index: token.index, value: token[0] }));
 }
-
 function recordBinding(source, open, close, key) {
-  const text = source.slice(open + 1, close), lexical = createJavaScriptLexicalIndex(text);
-  const found = [...text.matchAll(new RegExp(`(?:^|,)${key}:(${id}(?:\\.${id})*)(?=,|$)`, "gu"))]
-    .filter(match => lexical.isRoot(match.index));
-  if (found.length !== 1) return null;
-  const property = found[0];
-  for (const spread of text.matchAll(/\.\.\./gu)) {
-    if (spread.index <= property.index || !lexical.isRoot(spread.index)) continue;
-    if (!text.startsWith("...{}", spread.index)) return null;
+  const text = source.slice(open + 1, close), lexical = createJavaScriptLexicalIndex(text), ends = [];
+  for (const comma of text.matchAll(/,/gu)) if (lexical.isRoot(comma.index) && parses(`({${text.slice(0, comma.index)}})`)) ends.push(comma.index);
+  let start = 0, found = null;
+  for (const end of [...ends, text.length]) {
+    const member = text.slice(start, end).trim();start = end + 1;
+    if (member.startsWith("...")) { if (found != null && member !== "...{}") return null; continue; }
+    const data = new RegExp(`^(${id})\\s*:\\s*([\\s\\S]+)$`, "u").exec(member);
+    const method = new RegExp(`^(?:(?:get|set)\\s+)?(${id})\\s*\\(`, "u").exec(member);
+    if (!data && !method) return null;
+    const name = data?.[1] ?? method[1];
+    if (name !== key) continue;
+    if (!data || found != null || !new RegExp(`^${id}(?:\\.${id})*$`, "u").test(data[2])) return null;
+    found = data[2];
   }
-  return property[1];
+  return found;
+}
+
+function applyCurrentDockIconMainPatch(source, current) {
+  const { contract, groups, controller } = current, p = groups.preview, app = groups.appInfo;
+  const aliases = new Map(controller.aliases);aliases.set("__dockTrayState", groups.trayState.trayState);
+  const controllerHeader = controller.header[0].replace(`${controller.header.groups.update}=${controller.header.groups.isMac}?`, `${controller.header.groups.update}=${controller.header.groups.isMac}||${linuxOnly}?`);
+  const controllerSource = controllerHeader + renderController(linuxControllerBody(), aliases) + source.slice(controller.close, controller.end);
+  const edits = [
+    [contract.preview, contract.preview[0].replace('"darwin"!==process.platform', '"darwin"!==process.platform&&"linux"!==process.platform')
+      .replace(`${p.spaceDark}=${p.resource}(${p.theme}.spaceDark)`, `${p.spaceDark}=${linuxOnly}?${p.codexDark}:${p.resource}(${p.theme}.spaceDark)`)
+      .replace(`${p.spaceLight}=${p.resource}(${p.theme}.spaceLight)`, `${p.spaceLight}=${linuxOnly}?${p.codexLight}:${p.resource}(${p.theme}.spaceLight)`)],
+    [contract.appInfo, `function ${dockIconResourceHelper}(${app.arg}){return ${linuxOnly}?(0,${app.path}.join)(process.resourcesPath,"dock-icon",${app.arg}):(0,${app.path}.join)(process.resourcesPath,${app.arg})}` +
+      contract.appInfo[0].replace(`${app.electron}.app.isPackaged?(0,${app.path}.join)(process.resourcesPath,${app.arg})`, `${app.electron}.app.isPackaged||${linuxOnly}?${dockIconResourceHelper}(${app.arg})`)],
+    [{ index: controller.index, 0: source.slice(controller.index, controller.end) }, controllerSource],
+    [contract.windowRegistration, contract.windowRegistration[0].replace(`?.(${groups.windowRegistration.window})}`, `?.(${groups.windowRegistration.window}),${linuxOnly}&&setImmediate(${controller.header.groups.update})}`)],
+    [contract.tray, contract.tray[0].replace(`${groups.tray.iconInfo}.defaultIcon`, `${linuxOnly}&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:${groups.tray.iconInfo}.defaultIcon`)],
+  ];
+  let result = source;
+  for (const [match, replacement] of edits.sort(([a], [b]) => b.index - a.index)) result = replaceMatch(result, match, replacement);
+  return result;
+}
+function restoreCurrentDockIconSource(source, info) {
+  const { contract: c, groups: g, controller } = info, app = g.appInfo, start = c.appInfo[0].indexOf(`function ${app.owner}(`);
+  if (start < 0) return null;
+  const edits = [
+    [c.preview, c.preview[0].replace('&&"linux"!==process.platform', "").replace(`${linuxOnly}?${g.preview.codexDark}:`, "").replace(`${linuxOnly}?${g.preview.codexLight}:`, "")],
+    [c.appInfo, c.appInfo[0].slice(start).replace(`${app.electron}.app.isPackaged||${linuxOnly}?${dockIconResourceHelper}(${app.arg})`, `${app.electron}.app.isPackaged?(0,${app.path}.join)(process.resourcesPath,${app.arg})`)],
+    [{ index: controller.index, 0: source.slice(controller.index, controller.end) }, controller.nativeExpression],
+    [c.windowRegistration, c.windowRegistration[0].replace(`,${linuxOnly}&&setImmediate(${controller.header.groups.update})`, "")],
+    [c.tray, c.tray[0].replace(`${linuxOnly}&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:`, "")],
+  ];
+  let result = source;
+  for (const [match, replacement] of edits.sort(([a], [b]) => b.index - a.index)) result = replaceMatch(result, match, replacement);
+  return result;
 }
 
 function dockIconConfig(context) {
@@ -346,69 +332,6 @@ function replaceMatch(source, match, replacement) {
   return source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
 }
 
-function applyCurrentDockIconMainPatch(source, current) {
-  const { contract, groups } = current;
-  const preview = groups.preview;
-  const info = groups.appInfo;
-  const win = groups.windowResource;
-  const names = groups.resourceName;
-  const tail = groups.applyTail;
-  const trayState = groups.trayState.trayState;
-  const linux = '"linux"===process.platform';
-  const replacements = [
-    [contract.preview, `dockIconPreviews:${preview.include}?function(${preview.arg}){if("darwin"!==process.platform&&"linux"!==process.platform)return null;let ${preview.theme}=${preview.themeHelper}(${preview.arg}),${preview.defaultIcon}=${preview.resource}(\`\${${preview.iconName}(${preview.arg})}.png\`),${preview.codexDark}=${preview.resource}(${preview.theme}.dark),${preview.codexLight}=${preview.resource}(${preview.theme}.light),${preview.spaceDark}=${linux}?${preview.codexDark}:${preview.resource}(${preview.theme}.spaceDark),${preview.spaceLight}=${linux}?${preview.codexLight}:${preview.resource}(${preview.theme}.spaceLight);return null==${preview.defaultIcon}||null==${preview.codexDark}||null==${preview.codexLight}||null==${preview.spaceDark}||null==${preview.spaceLight}?null:{appDefault:${preview.defaultIcon},codexDark:${preview.codexDark},codexLight:${preview.codexLight},spaceDark:${preview.spaceDark},spaceLight:${preview.spaceLight}}}(${preview.preference}):null`],
-    [contract.appInfo, `function ${dockIconResourceHelper}(${info.arg}){return ${linux}?(0,${info.path}.join)(process.resourcesPath,"dock-icon",${info.arg}):(0,${info.path}.join)(process.resourcesPath,${info.arg})}function ${info.owner}(${info.arg}){if(null==${info.arg})return null;let ${info.candidate}=${info.electron}.app.isPackaged||${linux}?${dockIconResourceHelper}(${info.arg}):null;return ${info.normalize}(null!=${info.candidate}&&(0,${info.exists}.existsSync)(${info.candidate})?${info.candidate}:(0,${info.path}.join)(${info.electron}.app.getAppPath(),"src","icons",${info.arg}))}`],
-    [contract.windowResource, `(${win.arg}=>{if(!${win.electron}.app.isPackaged&&"linux"!==process.platform)return null;let ${win.candidate}=${dockIconResourceHelper}(${win.arg});return(0,${win.exists}.existsSync)(${win.candidate})?${win.candidate}:null})`],
-    [contract.resourceName, `${names.resourceName}=(${names.preference},${names.dark})=>{switch(${names.preference}){case"app-default":return null;case"codex-system":return ${names.dark}?${names.theme}.dark:${names.theme}.light;case"space-system":return ${linux}?${names.dark}?${names.theme}.dark:${names.theme}.light:${names.dark}?${names.theme}.spaceDark:${names.theme}.spaceLight}}`],
-    [contract.applyPrefix, `${groups.applyPrefix.apply}=function ${dockIconApplyHelper}(${groups.applyPrefix.arg}){if("app-default"!==${groups.applyPrefix.arg}&&null==${groups.applyPrefix.themeState})return;if(${groups.applyPrefix.devIcons}&&"linux"!==process.platform){`],
-    [contract.applyDefaultGate, contract.applyDefaultGate[0].replace("&&", '&&"linux"!==process.platform&&')],
-    [contract.applyTail, `if(${tail.image}.isEmpty())return;if("linux"!==process.platform&&("codex-system"===${tail.arg}||"space-system"===${tail.arg})){let{width:${tail.width},height:${tail.height}}=${tail.image}.getSize(),${tail.inset}=Math.round(${tail.width}/128);${tail.image}=${tail.image}.crop({x:${tail.inset},y:${tail.inset},width:${tail.width}-2*${tail.inset},height:${tail.height}-2*${tail.inset}})}if(${linux}){let codexLinuxIconSelection="codex-system"===${tail.arg}||"space-system"===${tail.arg}?${tail.electron}.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI?"codex-dark":"codex-light":"chatgpt";globalThis.codexLinuxDockIconImage=${tail.image};for(let codexLinuxWindow of ${tail.electron}.BrowserWindow.getAllWindows())codexLinuxWindow.isDestroyed()||codexLinuxWindow.setIcon(${tail.image});null!=${trayState}?.tray&&!${trayState}.tray.isDestroyed()&&${trayState}.tray.setImage(${tail.image});let codexLinuxSyncScript=${dockIconResourceHelper}("sync-desktop-icon.sh");if(require("node:fs").existsSync(codexLinuxSyncScript))try{let codexLinuxChild=require("node:child_process").spawn(codexLinuxSyncScript,[codexLinuxIconSelection],{detached:!0,stdio:["pipe","ignore","ignore"]});codexLinuxChild.on("error",()=>{}),codexLinuxChild.stdin.on("error",()=>{}),codexLinuxChild.stdin.end(${tail.image}.toPNG()),codexLinuxChild.unref()}catch{}return}${tail.electron}.app.dock?.setIcon(${tail.image})}`],
-    [contract.updateHead, contract.updateHead[0].replace(`if(!${groups.updateHead.isMac})`, `if(!${groups.updateHead.isMac}&&"linux"!==process.platform)`)],
-    [contract.themePrefix, `${linuxThemeSource(current)}${contract.themePrefix[0]}`],
-    [contract.windowRegistration, contract.windowRegistration[0].replace(
-      `?.(${groups.windowRegistration.window})}`,
-      `?.(${groups.windowRegistration.window}),"linux"===process.platform&&setImmediate(${groups.updateHead.update})}`,
-    )],
-    [contract.tray, contract.tray[0].replace(
-      `${groups.tray.iconInfo}.defaultIcon`,
-      `"linux"===process.platform&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:${groups.tray.iconInfo}.defaultIcon`,
-    )],
-  ];
-  let patchedSource = source;
-  for (const [match, replacement] of replacements.sort(([left], [right]) => right.index - left.index)) {
-    patchedSource = replaceMatch(patchedSource, match, replacement);
-  }
-  return currentMainContract(patchedSource, "patched") != null ? patchedSource : source;
-}
-
-function restoreCurrentDockIconSource(source, info) {
-  const { contract: c, groups: g } = info, tail = g.applyTail, prefix = g.applyPrefix, app = g.appInfo, win = g.windowResource;
-  const theme = linuxThemeSource(info);
-  const appStart = c.appInfo[0].indexOf(`function ${app.owner}(`);
-  if (appStart < 0) return null;
-  const appInfo = c.appInfo[0].slice(appStart).replace(
-    `${app.electron}.app.isPackaged||"linux"===process.platform?${dockIconResourceHelper}(${app.arg})`,
-    `${app.electron}.app.isPackaged?(0,${app.path}.join)(process.resourcesPath,${app.arg})`,
-  );
-  const edits = [
-    [c.preview, c.preview[0].replace('&&"linux"!==process.platform', "")
-      .replace(`"linux"===process.platform?${g.preview.codexDark}:`, "")
-      .replace(`"linux"===process.platform?${g.preview.codexLight}:`, "")],
-    [c.appInfo, appInfo],
-    [c.windowResource, `(${win.arg}=>{if(!${win.electron}.app.isPackaged)return null;let ${win.candidate}=(0,${win.path ?? app.path}.join)(process.resourcesPath,${win.arg});return(0,${win.exists}.existsSync)(${win.candidate})?${win.candidate}:null})`],
-    [c.resourceName, c.resourceName[0].replace(`case"space-system":return "linux"===process.platform?${g.resourceName.dark}?${g.resourceName.theme}.dark:${g.resourceName.theme}.light:`, 'case"space-system":return ')],
-    [c.applyPrefix, `${prefix.apply}=${prefix.arg}=>{if("app-default"!==${prefix.arg}&&null==${prefix.themeState})return;if(${prefix.devIcons}){`],
-    [c.applyDefaultGate, c.applyDefaultGate[0].replace('&&"linux"!==process.platform&&', "&&")],
-    [c.applyTail, `if(!${tail.image}.isEmpty()){if("codex-system"===${tail.arg}||"space-system"===${tail.arg}){let{width:${tail.width},height:${tail.height}}=${tail.image}.getSize(),${tail.inset}=Math.round(${tail.width}/128);${tail.image}=${tail.image}.crop({x:${tail.inset},y:${tail.inset},width:${tail.width}-2*${tail.inset},height:${tail.height}-2*${tail.inset}})}${tail.electron}.app.dock?.setIcon(${tail.image})}}`],
-    [c.updateHead, c.updateHead[0].replace(`if(!${g.updateHead.isMac}&&"linux"!==process.platform)`, `if(!${g.updateHead.isMac})`)],
-    [{ index: c.themePrefix.index - theme.length, 0: theme }, ""],
-    [c.windowRegistration, c.windowRegistration[0].replace(`,"linux"===process.platform&&setImmediate(${g.updateHead.update})`, "")],
-    [c.tray, c.tray[0].replace(`"linux"===process.platform&&globalThis.codexLinuxDockIconImage&&!globalThis.codexLinuxDockIconImage.isEmpty()?globalThis.codexLinuxDockIconImage:`, "")],
-  ];
-  let native = source;
-  for (const [match, replacement] of edits.sort(([a], [b]) => b.index - a.index)) native = replaceMatch(native, match, replacement);
-  return native;
-}
 
 function dockArtifacts(source) {
   const names = new Set([dockIconResourceHelper, dockIconApplyHelper, "codexLinuxDockIconThemeListener", "codexLinuxDockIconImage"]);
