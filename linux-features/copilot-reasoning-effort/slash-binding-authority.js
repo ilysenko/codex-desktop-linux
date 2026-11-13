@@ -6,7 +6,7 @@ const {createJavaScriptLexicalIndex}=require("../../scripts/patches/lib/minified
 const {assertUnambiguousModelComposerLexicalSource}=require("../../scripts/patches/lib/model-composer-lexical-guard.js");
 const ID="[A-Za-z_$][\\w$]*",TOKENS=/(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[$_\p{ID_Start}])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[$_\u200C\u200D\p{ID_Continue}])*/gu;
 const hash=value=>crypto.createHash("sha256").update(value).digest("hex"),decode=text=>text.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/gu,(_,a,b)=>String.fromCodePoint(parseInt(a||b,16)));
-const MAX_UNIT=256*1024,MAX_SLASH_FACTORY=512*1024;
+const MAX_UNIT=256*1024,MAX_SLASH_FACTORY=1024*1024;
 function prepare(source,params,options={}){
  const audited=BOUNDS,maxSourceBytes=options.maxSourceBytes??MAX_UNIT;
  if(![MAX_UNIT,MAX_SLASH_FACTORY].includes(maxSourceBytes)||Buffer.byteLength(source)>maxSourceBytes)throw Error("Factory cap");new Script(`"use strict";function originalFactory(${params.join(",")}){${source}\n}`);

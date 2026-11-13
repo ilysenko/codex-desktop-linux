@@ -152,7 +152,7 @@ function inspectFactory(source,params){
 }
 function slashModuleState(source,snapshot){
  if(typeof source!=="string"||!Array.isArray(snapshot?.params)||snapshot.params.length!==3||new Set(snapshot.params).size!==3||snapshot.params.some(name=>!new RegExp(`^${ID}$`,"u").test(name)))return {kind:"missing",reason:"Expected current slash factory snapshot"};
- if(!source.includes(MARKER)&&!NEEDLES.every(needle=>source.includes(needle)))return {kind:"missing"};if(Buffer.byteLength(source)>authority.MAX_SLASH_FACTORY)return {kind:"missing",reason:"Slash owner exceeds explicit512KiB cap"};
+ if(!source.includes(MARKER)&&!NEEDLES.every(needle=>source.includes(needle)))return {kind:"missing"};if(Buffer.byteLength(source)>authority.MAX_SLASH_FACTORY)return {kind:"missing",reason:"Slash owner exceeds explicit1MiB cap"};
  const key=JSON.stringify([source,snapshot.params]);if(states.has(key))return states.get(key);let state;
  try{const owner=inspectFactory(source,snapshot.params);if(!owner.command.patched)state={kind:"current",owner};else{
    const gate=owner.command.gate,native=source.slice(0,gate.start)+gate.native+source.slice(gate.end),original=states.get(JSON.stringify([native,snapshot.params]))?.kind==="current"?states.get(JSON.stringify([native,snapshot.params])).owner:inspectFactory(native,snapshot.params);if(original.command.patched||native.slice(0,original.command.gate.start)+original.command.gate.applied+native.slice(original.command.gate.end)!==source)fail("Slash contribution failed exact inverse");state={kind:"patched",owner,native};

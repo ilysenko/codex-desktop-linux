@@ -76,3 +76,85 @@ const signed=process.env.CODEX_SIGNED_EXTRACTED_APP;
 test("current complete signed factory qualifies source, exact inverse and syntax",{skip:!signed},()=>{
  const meta=fixture.provenance.signedFactory,asset=fs.readFileSync(path.join(signed,meta.asset),"utf8"),{rspackModuleFactories}=require("../../scripts/patches/lib/rspack-module-assets.js"),module=[...rspackModuleFactories(asset,meta.asset)].find(item=>item.moduleId===meta.moduleId);assert(module);assert.equal(crypto.createHash("sha256").update(module.moduleSource).digest("hex"),meta.sha256);const once=apply(module.moduleSource,module),state=slashModuleState(once,module);assert.equal(state.kind,"patched",state.reason);assert.equal(state.native,module.moduleSource);assert.doesNotThrow(()=>new Script(once));
 });
+
+test("composed slash factory has a bounded 1 MiB allowance with 256 KiB context units", () => {
+  assert.equal(binding.MAX_SLASH_FACTORY, 1024 * 1024);
+  assert.equal(binding.MAX_UNIT, 256 * 1024);
+  const composedBytes = 525866;
+  const padded = source + "/*" + "x".repeat(composedBytes - Buffer.byteLength(source) - 4) + "*/";
+  assert.equal(Buffer.byteLength(padded), composedBytes);
+  assert.equal(slashModuleState(padded, snap(padded)).kind, "current");
+  const once = apply(padded, snap(padded));
+  const repeated = slashModuleState(once, snap(once));
+  assert.equal(repeated.kind, "patched", repeated.reason);
+  assert.equal(repeated.native, padded);
+  assert.equal(apply(once, snap(once)), once);
+  const overLimit = source + "/*" + "x".repeat(binding.MAX_SLASH_FACTORY) + "*/";
+  const refused = slashModuleState(overLimit, snap(overLimit));
+  assert.equal(refused.kind, "missing");
+  assert.match(refused.reason, /explicit1MiB cap/);
+  assert.throws(() => binding.prepare(" ".repeat(binding.MAX_UNIT + 1), params), /Factory cap/);
+});
+
+test("signed Copilot slash replays after More details, Micro and persistent-status composition", { skip: !signed }, () => {
+  const { listWebviewAssetFiles } = require("../../scripts/patches/lib/assets.js");
+  const { rspackModuleFactories } = require("../../scripts/patches/lib/rspack-module-assets.js");
+  const moreDetails = require("../ui-tweaks/patches/selected-text-more-details.js");
+  const micro = require("../codex-micro/patch.js");
+  const persistent = require("../persistent-status-panel/patch.js");
+  const assets = path.join(signed, "webview", "assets");
+  const files = {};
+  for (const name of listWebviewAssetFiles(assets, /\.js$/u)) {
+    const text = fs.readFileSync(path.join(assets, name), "utf8");
+    const overlay = ["onAddResponseTextAnnotation:", "targetContainerRefs:", "{actions:", "canOpenSideChat:"]
+      .every(needle => text.includes(needle));
+    const toolbar = text.includes('id:"selectedTextOverlay.moreDetails"') && text.includes("onMoreDetails:");
+    const selector = text.includes("selectComposerModelAndReasoningEffort:") && text.includes("setModelAndReasoningEffortForNextTurn:");
+    const settings = text.includes("setDefaultModelAndReasoningEffort:") && text.includes(".setDefaultModelConfig(");
+    if (overlay || toolbar || selector || settings || text.includes("has-opened-quick-chat-v1") ||
+      text.includes('id:"composer.reasoningSlashCommand.title"')) files[name] = text;
+  }
+  app(files, (root, dir, read) => {
+    assert.equal(report(root).patches[0].status, "applied");
+    let physicalCopies = 0;
+    for (const name of Object.keys(files)) {
+      const text = read(name);
+      const copies = [...rspackModuleFactories(text, name)]
+        .filter(copy => copy.moduleSource.includes(MARKER));
+      let next = text;
+      for (const copy of copies.sort((left, right) => right.start - left.start)) {
+        const contract = micro.CODEX_MICRO_GATE_CONTRACTS.find(candidate =>
+          candidate.description === "Codex Micro composer gate");
+        const withMicro = micro.applyCodexMicroFeatureGatePatch(copy.moduleSource, contract);
+        assert.notEqual(withMicro, copy.moduleSource);
+        const withStatus = persistent.applyPersistentStatusPanelPatch(withMicro);
+        assert.notEqual(withStatus, withMicro);
+        next = next.slice(0, copy.start) + withStatus + next.slice(copy.end);
+        physicalCopies++;
+      }
+      if (next !== text) fs.writeFileSync(path.join(dir, name), next);
+    }
+    assert.ok(physicalCopies > 0);
+    const context = { feature: { settings: { tweaks: { selection: { moreDetails: { enabled: true } } } } } };
+    const more = moreDetails.applySelectedTextMoreDetails(root, context);
+    assert.ok(more.matched >= 2, more.reason);
+    assert.ok(more.changed > 0);
+    let composedCopies = 0;
+    for (const name of Object.keys(files)) {
+      for (const copy of rspackModuleFactories(read(name), name)) {
+        if (!copy.moduleSource.includes(MARKER)) continue;
+        assert.ok(Buffer.byteLength(copy.moduleSource) > 512 * 1024);
+        const state = slashModuleState(copy.moduleSource, copy);
+        assert.equal(state.kind, "patched", state.reason);
+        composedCopies++;
+      }
+    }
+    assert.equal(composedCopies, physicalCopies);
+    const before = Object.fromEntries(Object.keys(files).map(name => [name, read(name)]));
+    const replay = report(root);
+    assert.equal(replay.patches[0].status, "already-applied");
+    assert.deepEqual(enabledFeatureFailuresFromReport(replay), []);
+    for (const [name, text] of Object.entries(before)) assert.equal(read(name), text);
+    assert.equal(moreDetails.applySelectedTextMoreDetails(root, context).changed, 0);
+  });
+});

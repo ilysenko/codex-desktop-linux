@@ -91,8 +91,9 @@ candidate before changing any model-list asset. The enabled-feature build
 gate rejects a skipped or failed required descriptor; inspect its patch report
 before retrying against changed upstream source.
 
-The large published slash owner has an explicit feature-local 512 KiB inspection
-limit; context units and other model/composer owners retain their 256 KiB limit.
+The large published slash owner has an explicit feature-local 1 MiB inspection
+limit for the current native factory and composed Linux feature contributions.
+Context units and other model/composer owners have a 256 KiB limit.
 Binding ownership uses the original complete source and actual callable context,
 with syntax-only probes that preserve defaults, labels, loops and local shadows.
 Semantic API uses must resolve to their actual factory imports. The original
