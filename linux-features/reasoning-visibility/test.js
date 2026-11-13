@@ -9,6 +9,9 @@ const vm = require("node:vm");
 const { descriptors, applyStandalonePatch, applyTranscriptPatch } = require("./patch.js");
 const { applyPersistentPatch } = require("./persistent.js");
 const { applyExpandedPatch } = require("./expanded.js");
+const { applyRequestSummariesPatch } = require("./request-summaries.js");
+const { nativeCarrier, selectedRuntime } = require("./summary-contract.test-helpers.js");
+const { createJavaScriptLexicalIndex } = require("../../scripts/patches/lib/minified-js.js");
 const { fixture: expandedSource, harness: expandedHarness } = require("./expanded.test-helpers.js");
 const { loadLinuxFeaturePatchDescriptors } = require("../../scripts/lib/linux-features.js");
 const { findWebviewAssetsContaining, patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
@@ -23,7 +26,7 @@ const persistentSource = 'var f={o:e=>e.mcpPersistent},p={Yr:e=>e.important,rt:e
   fs.readFileSync(path.join(__dirname,"../../scripts/patches/lib/fixtures/current-activity-partition.js"),"utf8") +
   'function persistent(input){return partition([input.unit],input).persistentUnits.includes(input.unit)}';
 const transcriptSource = 'const classifier={c:item=>({grouping:item.grouping})};function key(item,fallback){return item.id??fallback}function transcript(items,n){let i=[],a=[],s=()=>{a.length&&(i.push({type:"agent-activity",items:a,collapseWhenPossible:!0}),a=[])};for(let[index,o]of items.entries()){let turn=0;let l="reasoning"===o.type||"automatic-approval-review"===o.type||"subagent-activity"===o.type?null:(0,classifier.c)(o);if(l?.grouping==="standalone"||n?.has(o)===!0){s(),i.push({type:"activity-item",key:`transcript-activity-item-${key(o,`${turn}-${index}`)}`,item:o});continue}a.push(o)}s();return i}';
-const summariesSource = 'function options(client,mode){return{reasoningSummaryOverride:!0===client.getDefaultFeatureOverride("concurrent_reasoning_summaries")||mode?"detailed":null,getRequestModel:e=>e,getRequestCollaborationMode(e){return e}}}function resolve(options,config,turn){let summary="none";null!=options.reasoningSummaryOverride&&(summary=options.reasoningSummaryOverride);summary=config.model_reasoning_summary??summary;void 0!==turn.summary&&(summary=turn.summary);return summary}';
+const summariesSource = nativeCarrier();
 
 const sources = [standaloneSource, persistentSource, transcriptSource, summariesSource, expandedSource];
 const preference = (enabled = true) => ({ localStorage: { getItem: () => enabled ? "1" : null } });
@@ -34,7 +37,7 @@ function warnings(fn) {
   try { return { value: fn(), messages }; } finally { console.warn = saved; }
 }
 
-const sourceApply = index => index === 0 ? applyStandalonePatch : index === 1 ? applyPersistentPatch : index === 4 ? applyExpandedPatch : index === 2 ? applyTranscriptPatch : descriptors[index].apply;
+const sourceApply = index => index === 0 ? applyStandalonePatch : index === 1 ? applyPersistentPatch : index === 4 ? applyExpandedPatch : index === 2 ? applyTranscriptPatch : applyRequestSummariesPatch;
 
 function patched(index, source = sources[index]) {
   const result = sourceApply(index)(source);
@@ -42,7 +45,7 @@ function patched(index, source = sources[index]) {
   const repeated = warnings(() => sourceApply(index)(result));
   assert.equal(repeated.value, result);
   assert.deepEqual(repeated.messages, []);
-  new vm.Script(result);
+  new vm.Script(index === 3 ? result.replaceAll("export const ", "const ") : result);
   return result;
 }
 
@@ -108,15 +111,13 @@ test("transcript separates reasoning from surrounding tools and preserves order 
   assert.equal(result[2].items[0], items[2]);
 });
 
-test("requests detailed summaries while explicit config and per-turn choices still win", () => {
-  const { options, resolve } = vm.runInNewContext(patched(3) + ';({options,resolve})', preference());
-  const defaults = options({ getDefaultFeatureOverride: () => false }, false);
-  assert.equal(defaults.reasoningSummaryOverride, "detailed");
-  assert.equal(resolve(defaults, {}, {}), "detailed");
-  assert.equal(resolve(defaults, { model_reasoning_summary: "none" }, {}), "none");
-  assert.equal(resolve(defaults, { model_reasoning_summary: "concise" }, {}), "concise");
-  assert.equal(resolve(defaults, {}, { summary: "none" }), "none");
-  assert.equal(defaults.getRequestModel("example"), "example");
+test("requests detailed summaries through the selected native chain while explicit choices retain precedence", () => {
+  const resolve = selectedRuntime(patched(3), preference());
+  const client = { getDefaultFeatureOverride: () => false };
+  assert.equal(resolve(client, false, undefined, undefined, {}, {}), "detailed");
+  assert.equal(resolve(client, false, undefined, undefined, { model_reasoning_summary: "none" }, {}), "none");
+  assert.equal(resolve(client, false, undefined, undefined, { model_reasoning_summary: "concise" }, {}), "concise");
+  assert.equal(resolve(client, false, undefined, undefined, {}, { summary: "none" }), "none");
 });
 
 test("reasoning starts expanded, survives completion and supports manual collapse and reopen", () => {
@@ -133,7 +134,10 @@ test("reasoning starts expanded, survives completion and supports manual collaps
 
 test("all contracts tolerate fresh minified identifiers and fail closed on missing or duplicate targets", () => {
   for (const [index, source] of sources.entries()) {
-    const renamed = source.replace(/\be\b/g, "inputArg").replace(/\bn\b/g, "optionsArg").replace(/\bh\b/g, "$expanded");
+    const lexical = index === 3 ? createJavaScriptLexicalIndex(source) : null;
+    const aliases = { e: "inputArg", n: "optionsArg", h: "$expanded" };
+    const renamed = index === 3 ? source.replace(/\b[enh]\b/gu, (name, at) => lexical.isCode(at) ? aliases[name] : name)
+      : source.replace(/\be\b/g, "inputArg").replace(/\bn\b/g, "optionsArg").replace(/\bh\b/g, "$expanded");
     patched(index, renamed);
     for (const invalid of ["const unrelated=1;", source + source, patched(index) + source]) {
       const result = warnings(() => sourceApply(index)(invalid));
@@ -193,10 +197,10 @@ test("disabled preference restores upstream classification, grouping and summary
   assert.equal(persistent({ unit: { kind: "standalone", item: { item } } }), false);
   const project = vm.runInNewContext(patched(2) + ';transcript', preference(false));
   assert.equal(project([item])[0].type, "agent-activity");
-  const { options } = vm.runInNewContext(patched(3) + ';({options})', preference(false));
-  assert.equal(options({ getDefaultFeatureOverride: () => false }, false).reasoningSummaryOverride, null);
-  assert.equal(options({ getDefaultFeatureOverride: () => true }, false).reasoningSummaryOverride, "detailed");
-  assert.equal(options({ getDefaultFeatureOverride: () => false }, true).reasoningSummaryOverride, "detailed");
+  const resolve = selectedRuntime(patched(3), preference(false));
+  assert.equal(resolve({ getDefaultFeatureOverride: () => false }, false, undefined, undefined, {}, {}), "none");
+  assert.equal(resolve({ getDefaultFeatureOverride: () => true }, false, undefined, undefined, {}, {}), "detailed");
+  assert.equal(resolve({ getDefaultFeatureOverride: () => false }, true, undefined, undefined, {}, {}), "detailed");
 });
 
 function storage(initial) {
