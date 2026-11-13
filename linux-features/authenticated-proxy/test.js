@@ -344,7 +344,7 @@ test("leaves an incomplete existing proxy helper set untouched", () => {
 
 test("routes current authenticated proxy desktop fetch shape through ClientRequest", async () => {
   const patched = applyPatchTwiceWithoutWarnings(applyAuthenticatedProxyPatch, CURRENT);
-  assert.match(patched, /!m&&\(0,Pv\.\$o\)\(l,n\)&&\(t\.credentials="omit"\),e=await codexLinuxProxyAuthFetch\(this,l,t\)/);
+  assert.match(patched, /\(d\|\|!m&&\(0,Pv\.\$o\)\(l,n\)\)&&\(t\.credentials="omit"\),e=await codexLinuxProxyAuthFetch\(this,l,t\)/);
   assert.match(patched, /codexLinuxAttachProxyAuthToRequest\(d\);let u=-1,h=\(\)=>\{if\(n==null\)return;/);
 
   let fetchCalls = 0;
@@ -546,7 +546,7 @@ test("authenticated-proxy current contracts fail closed when missing, duplicate,
     duplicateReady: chunk(READY + READY.replace("boot", "boot2") + FETCH + REQUEST),
     duplicateNetwork: chunk(READY + FETCH + REQUEST + FETCH + REQUEST),
     ambiguous: patched + FETCH + REQUEST,
-    retiredWithoutCookiePolicy: chunk(READY + FETCH.replace('!m&&(0,Pv.$o)(l,n)&&(t.credentials="omit"),', "") + REQUEST),
+    retiredWithoutCookiePolicy: chunk(READY + FETCH.replace('(d||!m&&(0,Pv.$o)(l,n))&&(t.credentials="omit"),', "") + REQUEST),
     wrongPolicyMethod: chunk(READY + FETCH.replace("(l,n)", "(l,o)") + REQUEST),
     wrongPolicyOptions: chunk(READY + FETCH.replace('t.credentials="omit"', 'other.credentials="omit"') + REQUEST),
     retiredWithoutCache: chunk(READY + FETCH.replace("method:n,cache:k,", "method:n,") + REQUEST),
@@ -554,6 +554,7 @@ test("authenticated-proxy current contracts fail closed when missing, duplicate,
     retiredQuotes: chunk(READY + FETCH.replace('"include":"same-origin"', "`include`:`same-origin`") + REQUEST),
   };
   for (const [name, source] of Object.entries(variants)) {
+    assert.notEqual(source, CURRENT, name);
     const { result, warnings } = withWarnings(() => applyAuthenticatedProxyPatch(source));
     assert.equal(result, source, name);
     assert.ok(warnings.some((warning) => warning.includes("unique current app ready and applicationNetwork")), name);
