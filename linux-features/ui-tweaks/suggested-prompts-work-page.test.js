@@ -29,11 +29,11 @@ test("Work descriptor stays opt-in and runs before webview assets",()=>{
 });
 test("Work page keeps diagnostics and forwards current destination state with a mode callback",()=>{
   const original=fixtures.chunk(),patched=applySource(original),old=fixtureRuntime(original),run=fixtureRuntime(patched),selected=[];
-  const a={hostId:"host-a",authMethod:"chatgpt",email:"fallback@example.test",account:{email:"a@example.test"},plan:"free",editor:{composerProps:{projectId:"project-a"},runLocationState:{effectiveLocation:"local"}},onTaskSuggestionSelected:mode=>selected.push(["a",mode])};
+  const a={hostId:"host-a",authMethod:"chatgpt",email:"fallback@example.test",account:{email:"a@example.test"},plan:"free",editor:{composerProps:{projectId:"project-a"},workCloudUsesLocalExecutor:false,runLocationState:{effectiveLocation:"local"}},onTaskSuggestionSelected:mode=>selected.push(["a",mode])};
   assert.equal(old.render(a).props.generatedSuggestionsEnabled,false);
-  let node=run.render(a);assert.equal(node.props.generatedSuggestionsEnabled,true);assert.equal(node.props.projectId,"project-a");node.props.onSelect("chat");
-  node=run.render({...a,hostId:"host-b",editor:{composerProps:{projectId:"project-b"},runLocationState:{effectiveLocation:"cloud"}},onTaskSuggestionSelected:mode=>selected.push(["b",mode])});
-  assert.equal(node.props.hostId,"host-b");assert.equal(node.props.projectId,"project-b");assert.equal(node.props.workRunLocation,"cloud");node.props.onSelect("work");
+  let node=run.render(a);assert.equal(node.props.generatedSuggestionsEnabled,true);assert.equal(node.props.projectId,"project-a");assert.equal(node.props.workCloudUsesLocalExecutor,false);node.props.onSelect("chat");
+  node=run.render({...a,hostId:"host-b",editor:{composerProps:{projectId:"project-b"},workCloudUsesLocalExecutor:true,runLocationState:{effectiveLocation:"cloud"}},onTaskSuggestionSelected:mode=>selected.push(["b",mode])});
+  assert.equal(node.props.hostId,"host-b");assert.equal(node.props.projectId,"project-b");assert.equal(node.props.workRunLocation,"cloud");assert.equal(node.props.workCloudUsesLocalExecutor,true);node.props.onSelect("work");
   assert.deepEqual(selected,[["a","chat"],["b","work"]]);assert.deepEqual(run.calls.gate,["2425897452","2425897452"]);assert.equal(run.calls.account.length,2);assert.equal(run.calls.account[0].email,"a@example.test");assert.equal(applySource(patched),patched);
 });
 test("Work descriptor validates all page copies and dependencies before idempotent writes",t=>{
@@ -46,6 +46,34 @@ for(const kind of ["missing","ambiguous","damaged","partial","mixed"])test(`Work
   const root=workspace(t,files);assert.throws(()=>descriptor.apply(root));unchanged(root,files);
 });
 const mutations={
+  "missing cloud local-executor forwarding":s=>s.replace("workCloudUsesLocalExecutor:state.workCloudUsesLocalExecutor,",""),
+  "foreign cloud local-executor forwarding":s=>s.replace("workCloudUsesLocalExecutor:state.workCloudUsesLocalExecutor,","workCloudUsesLocalExecutor:other.workCloudUsesLocalExecutor,"),
+  "missing provider early guard":s=>s.replace('if(guard&&null==pending)return null;',''),
+  "wrong provider early guard mode":s=>s.replace('guard=blocked&&("chat"===mode||allow)','guard=blocked&&("work"===mode||allow)'),
+  "wrong provider pending state":s=>s.replace('if(guard&&null==pending)','if(guard&&null==other)'),
+  "foreign provider gate module":s=>s.replace('blockState=require("yhFA")','blockState=require("foreign")'),
+  "foreign provider preference module":s=>s.replace('blockPreference=require("CT62")','blockPreference=require("foreign")'),
+  "wrong provider state initializer":s=>s.replace('(0,react.useState)(null)','(0,react.useState)(false)'),
+  "captured provider early guard write":s=>s.replace('if(guard&&null==pending)','(()=>{guard=false})();if(guard&&null==pending)'),
+  "captured provider pending state write":s=>s.replace('if(guard&&null==pending)','(()=>{pending={}})();if(guard&&null==pending)'),
+  "discarded provider child fragment":s=>s.replace('children:[y,C]','children:[y,null]'),
+  "foreign provider content alias":s=>s.replace('let content=b;','let content=other;'),
+  "captured provider content alias write":s=>s.replace('let content=b;','let content=b;(()=>{content=null})();'),
+  "foreign provider portal target":s=>s.replace('flush.createPortal)(content,portal)','flush.createPortal)(content,other)'),
+  "foreign provider portal child":s=>s.replace('flush.createPortal)(content,portal)','flush.createPortal)(other,portal)'),
+  "captured provider portal target write":s=>s.replace('let content=b;','let content=b;(()=>{portal=null})();'),
+  "captured provider child write":s=>s.replace('let content=b;','let content=b;(()=>{C=null})();'),
+  "captured provider portal write":s=>s.replace('M[7]=x):x=M[7],x','M[7]=x):x=M[7],(()=>{P=null})(),x'),
+  "discarded provider root fragment":s=>s.replace('M[7]=x):x=M[7],x','M[7]=x):x=M[7],null'),
+  "retired direct provider return":s=>s.replace(/M\[0\][\s\S]*?\}function Inner/u,text=>'return'+text.slice(text.indexOf('(0,jsx.jsx)(Inner,'),text.indexOf('}):null')+2)+'}function Inner'),
+  "wrong cloud local-executor normalization":s=>s.replace('cloud=void 0!==cloudInput&&cloudInput','cloud=void 0===cloudInput||cloudInput'),
+  "captured cloud local-executor write":s=>s.replace('if(guard&&null==pending)','(()=>{cloud=false})();if(guard&&null==pending)'),
+  "captured generated eligibility write":s=>s.replace('eligibility=generated&&setting','eligibility=generated&&setting,unused=()=>{eligibility=true}'),
+  "wrong cloud destination mode":s=>s.replace('(destination.entrypoint??mode)!=="work"','(destination.entrypoint??mode)!=="chat"'),
+  "missing cloud local-executor veto":s=>s.replace('||cloud||"cloud"!==run','||"cloud"!==run'),
+  "foreign cloud conversion helper":s=>s.replace('(0,queries.se)(item)','(0,other.se)(item)'),
+  "discarded cloud converted prompt":s=>s.replace('routed=converted?.prompt??text','routed=text'),
+  "discarded cloud metadata write":s=>s.replace('messageMetadata:converted.messageMetadata','messageMetadata:other.messageMetadata'),
   "hidden rollout":s=>s.replace('Pe=(0,er.gate)("2425897452")','Pe=!1;function unused(){return(0,er.gate)("2425897452")}'),
   "wrong rollout role":s=>s.replace('(0,er.gate)("2425897452")','(0,s.eligible)("2425897452")'),
   "unbound rollout":s=>s.replace('(0,er.gate)("2425897452")','(0,missing.gate)("2425897452")'),
@@ -57,13 +85,13 @@ const mutations={
   "wrong selection":s=>s.replace('mode:"work",onSelect:select,projectId:state','mode:"work",onSelect:editor,projectId:state'),
   "wrong project source":s=>s.replace('projectId:state.composerProps.projectId??null','projectId:other.composerProps.projectId??null'),
   "wrong mode":s=>s.replace('hostId:host,mode:"work",onSelect','hostId:host,mode:"chat",onSelect'),
-  "wrong query export":s=>s.replace('queries.ki,args,opts','queries.other,args,opts'),
-  "wrong query args":s=>s.replace('queries.ki,args,opts','queries.ki,opts,args'),
+  "wrong query export":s=>s.replace('queries.ki,args,{enabled:enabled}','queries.other,args,{enabled:enabled}'),
+  "wrong query args":s=>s.replace('queries.ki,args,{enabled:enabled}','queries.ki,{enabled:enabled},args'),
   "project query field":s=>s.replace('hostId:host,mode:mode,supportsHomeFeed:cached','hostId:host,projectId:project,mode:mode,supportsHomeFeed:cached'),
-  "wrong direct query value export":s=>s.replace('{ki:query}','{ki:scope}'),
+  "wrong direct query value export":s=>s.replace('{ki:query,se:','{ki:scope,se:'),
   "text preparation argument":s=>s.replace('prepared=select?.(target)','prepared=select?.(text)'),
   "missing preparation await":s=>s.replace('null!=prepared&&await prepared','null!=prepared&&prepared'),
-  "wrong editor setter":s=>s.replace('editor.setPromptText(text','other.setPromptText(text'),
+  "wrong editor setter":s=>s.replace('editor.setPromptText(routed','other.setPromptText(routed'),
   "missing focus":s=>s.replace('editor.focus()','record()'),
   "wrong list callback":s=>s.replace('let click=action;','let click=record;'),
   "reassigned provider outer":s=>s.replace('function Inner(e){','Outer=()=>null;function Inner(e){'),
@@ -73,9 +101,16 @@ const mutations={
   "encoded reassigned provider inner":s=>s.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})',String.raw`Inne\u0072=()=>null;require.d(exports,{HomeTaskSuggestions:()=>Outer})`),
   "encoded reassigned selection callback":s=>s.replace('let click=action;',String.raw`actio\u006e=()=>null;let click=action;`),
   "reassigned list alias":s=>s.replace('let click=action;','let click=action;click=()=>null;'),
+  "captured provider outer write":s=>s.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})','queueMicrotask(()=>{Outer=()=>null});require.d(exports,{HomeTaskSuggestions:()=>Outer})'),
+  "captured provider inner write":s=>s.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})','queueMicrotask(()=>{Inner=()=>null});require.d(exports,{HomeTaskSuggestions:()=>Outer})'),
+  "captured selection action write":s=>s.replace('let click=action;','let click=action;queueMicrotask(()=>{action=()=>null});'),
+  "captured list alias write":s=>s.replace('let click=action;','let click=action;queueMicrotask(()=>{click=()=>null});'),
+  "captured provider store import write":s=>s.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})','queueMicrotask(()=>{store={}});require.d(exports,{HomeTaskSuggestions:()=>Outer})'),
+  "captured provider query import write":s=>s.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})','queueMicrotask(()=>{queries={}});require.d(exports,{HomeTaskSuggestions:()=>Outer})'),
+  "captured provider portal import write":s=>s.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})','queueMicrotask(()=>{flush={}});require.d(exports,{HomeTaskSuggestions:()=>Outer})'),
   "encoded reassigned list alias":s=>s.replace('let click=action;',String.raw`let click=action;clic\u006b=()=>null;`),
-  "reassigned query value":s=>s.replace('require.d(exports,{},{ki:query})','query=()=>null;require.d(exports,{},{ki:query})'),
-  "encoded reassigned query value":s=>s.replace('require.d(exports,{},{ki:query})',String.raw`quer\u0079=()=>null;require.d(exports,{},{ki:query})`),
+  "reassigned query value":s=>s.replace('require.d(exports,{},{ki:query,se:','query=()=>null;require.d(exports,{},{ki:query,se:'),
+  "encoded reassigned query value":s=>s.replace('require.d(exports,{},{ki:query,se:',String.raw`quer\u0079=()=>null;require.d(exports,{},{ki:query,se:`),
   "wrong lazy target":s=>s.replace('require.bind(require,"WorkPage")','require.bind(require,"OtherPage")'),
   "wrong lazy export":s=>s.replace(').ChatGptWorkHomePage',').OtherPage'),
   "wrong preparation forwarding":s=>s.replace('onChatGptTaskSuggestionSelected:callback','onChatGptTaskSuggestionSelected:change'),
@@ -85,7 +120,7 @@ const mutations={
   "page child callback":s=>s.replace('children:(0,jsx.jsx)(Page,{...e})','children:null,unused:()=>(0,jsx.jsx)(Page,{...e})'),
   "query atom constructor":s=>s.replace('(0,store.vU)','(0,store.vP)'),
   "query read hook":s=>s.replace('(0,store._U)(queries.ki','(0,store.Ul)(queries.ki'),
-  "retired feed content prop":s=>s.replace('renderHomeFeed:null','mobileFeedContent:null'),
+  "retired feed content prop":s=>s.replace('explore:null','renderHomeFeed:null'),
   "retired editor hook":s=>s.replace('(0,composer.a$)()','(0,composer.a)()'),
   "saved lesson request binding":s=>s.replace('supportsSavedLessonChat:saved','supportsSavedLessonChat:account'),
   "saved lesson cache binding":s=>s.replace('host,mode,supports,saved]','host,mode,supports,account]'),
@@ -93,7 +128,7 @@ const mutations={
   "missing preparation early guard":s=>s.replace('if(blocked)return null;',''),
   "wrong preparation early guard":s=>s.replace('if(blocked)return null;','if(other)return null;'),
   "reversed preparation early guard":s=>s.replace('if(blocked)return null;','if(!blocked)return null;'),
-  "unused provider view":s=>s.replace('return(0,jsx.jsx)(Inner,','let unused=(0,jsx.jsx)(Inner,').replace('workRunLocation:run})}function Inner','workRunLocation:run});return null}function Inner'),
+  "unused provider view":s=>s.replace('children:[v,P,N]','children:[v,null,N]'),
 };
 for(const[name,mutate]of Object.entries(mutations))test(`Work descriptor rejects ${name} before writing`,t=>{
   const source=fixtures.chunk(),damaged=mutate(source);assert.notEqual(damaged,source);const files={"owner.js":damaged},root=workspace(t,files);
@@ -103,6 +138,22 @@ test("Work canonical state still rejects changed dependency, export and callback
   const source=applySource(fixtures.chunk());let checked=0;
   for(const[name,mutate]of Object.entries(mutations)){const damaged=mutate(source);if(damaged===source)continue;const files={"owner.js":damaged},root=workspace(t,files);assert.throws(()=>descriptor.apply(root),undefined,name);unchanged(root,files);checked++;}
   assert.ok(checked>=20);
+});
+test("Work provider permits a genuinely local shadow beside the native early guard",t=>{
+  const source=fixtures.chunk().replace('if(guard&&null==pending)','(()=>{let guard=false;return guard})();if(guard&&null==pending)');
+  const root=workspace(t,{"owner.js":source});
+  assert.equal(descriptor.apply(root).changed,1);
+  assert.equal(descriptor.apply(root).changed,0);
+});
+test("Work provider and selection bindings permit real parameter and block shadows",t=>{
+  for(const name of["Outer","Inner","action","click","store","queries","jsx","flush","auth"])for(const kind of["parameter","block"]){
+    const shadow=kind==="parameter"?`queueMicrotask((${name})=>{${name}=()=>null});`:`queueMicrotask(()=>{{let ${name};${name}=()=>null}});`;
+    const original=fixtures.chunk();
+    const source=["action","click"].includes(name)?original.replace('let click=action;','let click=action;'+shadow):original.replace('require.d(exports,{HomeTaskSuggestions:()=>Outer})',shadow+'require.d(exports,{HomeTaskSuggestions:()=>Outer})');
+    const root=workspace(t,{"owner.js":source});
+    assert.equal(descriptor.apply(root).changed,1,`${name}/${kind}`);
+    assert.equal(descriptor.apply(root).changed,0,`${name}/${kind}`);
+  }
 });
 for(const id of ["Hooks","Accounts","WorkContent","Query","Shell","Preparation"])test(`Work descriptor rejects marker-free ${id} dependency copies`,t=>{
   const files={"owner.js":fixtures.chunk(),"replica.js":`export const __webpack_modules__={${id}(){return false}};`},root=workspace(t,files);assert.throws(()=>descriptor.apply(root));unchanged(root,files);
@@ -117,14 +168,20 @@ function signedFixture(){
 }
 const signedOnly={skip:process.env.CODEX_SIGNED_EXTRACTED_APP==null};
 test("signed Work page resolves native callers/provider and patches through production descriptor",signedOnly,t=>{
-  const {files,index,owners,roles}=signedFixture(),root=workspace(t,files,index);assert.equal(owners.length,1);assert.equal(descriptor.apply(root).changed,1);assert.equal(descriptor.apply(root).changed,0);
+  const {files,index,owners,roles,dependencies}=signedFixture(),root=workspace(t,files,index);assert.equal(owners.length,1);
+  const unchangedDependencies=()=>{
+    for(const [name,source]of Object.entries(files))if(!owners.some(owner=>owner.assetName===name))assert.equal(fs.readFileSync(path.join(root,"webview/assets",name),"utf8"),source,name);
+    for(const dependency of dependencies)assert.ok(fs.readFileSync(path.join(root,"webview/assets",dependency.assetName),"utf8").includes(dependency.moduleSource),dependency.moduleId);
+  };
+  assert.equal(descriptor.apply(root).changed,1);unchangedDependencies();
+  assert.equal(descriptor.apply(root).changed,0);unchangedDependencies();
   const output=fs.readFileSync(path.join(root,"webview/assets",owners[0].assetName),"utf8");assert.equal(contract(output),"patched");assert.equal(javascriptSourceParses(output),true);
   assert.ok(roles.callers.preparation.callback);assert.ok(roles.providerRoles.every(role=>role.query.exportName==="ki"));
 });
 test("signed Work JSX forwards mode callback and current host/project/run-location without invoking it",signedOnly,()=>{
   const {owners}=signedFixture(),patched=applySource(owners[0].moduleSource,owners[0]),info=work.inspectModule({...owners[0],moduleSource:patched}),object=info.consumer.text,calls=[];
-  for(const label of["alpha","beta"]){const callback=mode=>calls.push([label,mode]),a=info.accountCall,context={[info.rollout]:true,[a.namespace]:{[a.member]:()=>false},[a.auth]:"chatgpt",[a.info]:{email:`${label}@test`},[a.email]:"fallback",[a.plan]:"free",[info.fields.host]:`host-${label}`,[info.fields.selection]:callback,[info.fields.state]:{composerProps:{projectId:`project-${label}`},runLocationState:{effectiveLocation:label==="alpha"?"local":"cloud"}}};
-    const props=vm.runInNewContext(`(${object})`,context);assert.equal(props.generatedSuggestionsEnabled,true);assert.equal(props.hostId,`host-${label}`);assert.equal(props.projectId,`project-${label}`);assert.equal(props.mode,"work");assert.equal(props.onSelect,callback);assert.equal(calls.length,label==="alpha"?0:1);props.onSelect(label==="alpha"?"chat":"work");}
+  for(const label of["alpha","beta"]){const callback=mode=>calls.push([label,mode]),a=info.accountCall,context={[info.rollout]:true,[a.namespace]:{[a.member]:()=>false},[a.auth]:"chatgpt",[a.info]:{email:`${label}@test`},[a.email]:"fallback",[a.plan]:"free",[info.fields.host]:`host-${label}`,[info.fields.selection]:callback,[info.fields.state]:{composerProps:{projectId:`project-${label}`},workCloudUsesLocalExecutor:label==="beta",runLocationState:{effectiveLocation:label==="alpha"?"local":"cloud"}}};
+    const props=vm.runInNewContext(`(${object})`,context);assert.equal(props.generatedSuggestionsEnabled,true);assert.equal(props.hostId,`host-${label}`);assert.equal(props.projectId,`project-${label}`);assert.equal(props.mode,"work");assert.equal(props.workCloudUsesLocalExecutor,label==="beta");assert.equal(props.onSelect,callback);assert.equal(calls.length,label==="alpha"?0:1);props.onSelect(label==="alpha"?"chat":"work");}
   assert.deepEqual(calls,[["alpha","chat"],["beta","work"]]);
 });
 test("signed Work query keys and requests preserve native host, mode and saved-lesson state",signedOnly,async()=>{
@@ -178,6 +235,14 @@ test("signed Work roles reject altered exports, query aliases, preparation and r
     [provider,body=>body.replace(`HomeTaskSuggestions:()=>${role.outer}`,`HomeTaskSuggestions:()=>${role.inner}`)],
     [provider,body=>body.replace(role.query.source,role.query.source.replace(`.${role.query.exportName},`,'.unknown,'))],
     [provider,body=>body.replace(role.query.source,role.query.source.replace(`,${role.query.args},${role.query.options})`,`,${role.query.options},${role.query.args})`))],
+    [provider,body=>body.replace(role.earlyGuard.source,role.earlyGuard.source.replace("null==","null!="))],
+    [provider,body=>body.replace(role.earlyGuard.condition,role.earlyGuard.condition.replace('"chat"','"work"'))],
+    [provider,body=>body.replace(role.earlyGuard.source,`(()=>{${role.earlyGuard.flag}=false})();${role.earlyGuard.source}`)],
+    [provider,body=>body.replace(role.earlyGuard.source,`(()=>{${role.earlyGuard.pending}={}})();${role.earlyGuard.source}`)],
+    [provider,body=>body.replace(role.selection.cloud.source,role.selection.cloud.source.replace(`||${role.fields.workCloudUsesLocalExecutor}||`,"||"))],
+    [provider,body=>body.replace(role.selection.cloud.source,role.selection.cloud.source.replace(`||"cloud"!==${role.fields.workRunLocation}`,`||"local"!==${role.fields.workRunLocation}`))],
+    [provider,body=>body.replace(role.selection.cloud.source,role.selection.cloud.source.replace(`?.prompt??${role.selection.originalPrompt}`,`?.prompt??foreignPrompt`))],
+    [provider,body=>body.replace(role.selection.cloud.metadataSource,role.selection.cloud.metadataSource.replace(`messageMetadata:${role.selection.cloud.metadata}.messageMetadata`,`messageMetadata:foreignMetadata`))],
     [provider,body=>action(body,text=>text.replace(`${role.selection.prepared}=${role.fields.selection}?.(${role.selection.mode})`,`${role.selection.prepared}=${role.fields.selection}?.(${role.selection.prompt})`))],
     [provider,body=>action(body,text=>text.replace(`null!=${role.selection.prepared}&&await ${role.selection.prepared}`,`null!=${role.selection.prepared}&&${role.selection.prepared}`))],
     [provider,body=>action(body,text=>text.replace(`${role.selection.editor}.setPromptText(`,'other.setPromptText('))],
@@ -225,6 +290,7 @@ test("signed provider preserves native runtime and preference gates", signedOnly
   globals[query.account] = "account";
   globals[role.fields.mode] = "work";
   const read = () => {
+    globals[policy.eligibility] = vm.runInNewContext(policy.eligibilityExpression, globals);
     globals[policy.policy] = vm.runInNewContext(policy.expression, globals);
     return { policy: globals[policy.policy], query: vm.runInNewContext(query.expression, globals) };
   };
@@ -240,6 +306,15 @@ test("signed provider preserves native runtime and preference gates", signedOnly
   globals[policy.generated] = true;
   globals[policy.hidden] = true;
   assert.deepEqual(read(), { policy: false, query: false });
+});
+
+test("signed provider keeps the native mode-sensitive pending-selection guard", signedOnly, () => {
+  const guard=signedFixture().roles.providerRoles[0].earlyGuard;
+  for(const enabled of[false,true])for(const mode of["chat","work"])for(const preference of[false,true])for(const pending of[null,{}]){
+    const globals={[guard.enabled]:enabled,[guard.mode]:mode,[guard.preference]:preference,[guard.pending]:pending};
+    globals[guard.flag]=vm.runInNewContext(guard.condition.slice(guard.flag.length+1),globals);
+    assert.equal(vm.runInNewContext(guard.expression,globals),enabled&&(mode==="chat"||preference)&&pending==null);
+  }
 });
 
 test("signed native selection awaits mode preparation and keeps stale contexts from pasting", signedOnly, async () => {
