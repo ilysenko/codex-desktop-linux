@@ -94,7 +94,7 @@ function graph(module, defs, leaf) {
   const call=one(matches(middle.body,new RegExp(`(?<![\\w$.])(${ID})=(${ID})=>\\(0,${ID}\\.jsx\\)\\(${escapeRegExp(leaf.name)},`,"gu")));
   if(!call)return null;
   const objectStart=middle.body.indexOf("{",call.index+call[0].length),objectEnd=findMatchingBrace(middle.body,objectStart),props=middle.body.slice(objectStart,objectEnd+1);
-  if(!props.includes(`mobileFeed:${call[2]},`)||!props.includes("projectId:")||!props.includes("homeComposerController:"))return null;
+  if(!props.includes(`feedNavigation:${call[2]},`)||!props.includes("projectId:")||!props.includes("homeComposerController:"))return null;
   const alias=one(matches(middle.body,new RegExp(`\\blet (${ID})=${escapeRegExp(call[1])}(?=[,;])`,"gu")));
   if(!alias||writes(middle.body,alias[1]).length!==1)return null;
   const invocation=one(matches(middle.body,new RegExp(`children:${escapeRegExp(alias[1])}\\(\\)`,"gu"),false));

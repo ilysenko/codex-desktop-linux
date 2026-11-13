@@ -139,6 +139,8 @@ for (const state of ["missing", "ambiguous", "damaged-copy-with-no-needles", "pa
 }
 
 const corruptions={
+  "retired middle feed property":s=>s.replace("feedNavigation:feed,","mobileFeed:feed,"),
+  "disconnected middle feed value":s=>s.replace("feedNavigation:feed,","feedNavigation:foreign,"),
   "rollout hidden in unused function":s=>s.replace('rollout=(0,hooks.gate)("2425897452")','rollout=!1;function unused(){return(0,hooks.gate)("2425897452")}'),
   "rollout hidden in string":s=>s.replace('rollout=(0,hooks.gate)("2425897452")',`rollout=!1,decoy='rollout=(0,hooks.gate)("2425897452")'`),
   "wrong gate module":s=>s.replace('(0,hooks.gate)("2425897452")','(0,sdk.eligible)("2425897452")'),
@@ -345,9 +347,11 @@ test("signed native provider keeps runtime-off gating and current host/project t
   const provider=dependencies.find(m=>m.moduleId===roles.providerModule);assert.ok(provider);
   const name=exportGetter(provider,roles.providerExport).expression,source=nativeFunction(provider.moduleSource,name);
   const memo=[],queries=[],effects=[],jsx=[];
+  const modelSettings=/\{modelSettings:[A-Za-z_$][\w$]*\}=\(0,[A-Za-z_$][\w$]*\.([A-Za-z_$][\w$]*)\)\(null\)/u.exec(source);
+  assert.ok(modelSettings,"current native model settings reader");
   let runtime=false;
   const methods={
-    c:()=>memo,a:()=>({modelSettings:{model:"test-model"}}),Ym:()=>({data:{models:[]}}),s4m:()=>"test-domain",r9:()=>"codex",O$:"work",
+    c:()=>memo,[modelSettings[1]]:()=>({modelSettings:{model:"test-model"}}),Ym:()=>({data:{models:[]}}),s4m:()=>"test-domain",r9:()=>"codex",O$:"work",
     Ul:()=>({status:runtime?"enabled":"disabled"}),gh:()=>({query:{fetch:(key,context)=>{queries.push(context);return Promise.resolve()}}}),
     useEffect:(effect)=>{effects.push(effect);effect()},useEffectEvent:effect=>effect,
     AS:()=>({getDynamicConfig:()=>({value:{}})}),w:()=>null,
