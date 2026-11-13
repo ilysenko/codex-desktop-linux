@@ -373,8 +373,8 @@ test("enabled feature descriptors patch rspack async chunks", () => {
       });
       assert.deepEqual(warnings, []);
       assert.match(readAsset(extractedDir, "24191.a.js"), /codexLinuxCopilotReasoningEffortModelList\*\/\[\.\.\.raw\]\.filter/);
-      assert.match(readAsset(extractedDir, "104066.c.js"), /tR=\/\*codexLinuxCopilotEffortDropdown\*\//);
-      assert.match(readAsset(extractedDir, "589850.d.js"), /F=M&&_&&!0\/\*codexLinuxCopilotReasoningSlash\*\//);
+      assert.match(readAsset(extractedDir, "104066.c.js"), /t1=\/\*codexLinuxCopilotEffortDropdown\*\//);
+      assert.match(readAsset(extractedDir, "589850.d.js"), /F=M&&_\/\*codexLinuxCopilotReasoningSlash\*\//);
       assert.match(readAsset(extractedDir, "258607.b.js"), /codexLinuxCopilotEffortPreferences/);
     });
   });

@@ -31,8 +31,8 @@ test("caller token ownership and final returns cannot be borrowed from local or 
  ])assert.equal(slashModuleState(changed,snap(changed)).kind,"missing");
 });
 test("closed command owner preserves normal prerequisites, item callback and exact own contribution",()=>{
- const once=apply(source,snap());const native='let F=M&&_&&!R&&!0;',applied=`let F=M&&_&&!0/*${MARKER}*/;`;assert.equal(once.replace(applied,native),source);
- for(const changed of [source.replace('M&&_&&!R&&!0','M&&_&&!foreign&&!0'),source.replace('L(E.model,t,','L(other,t,'),source.replace('ah.uR)(j?.models,E.model','ah.uR)(other?.models,E.model'),source.replace('requiresEmptyComposer:!1','requiresEmptyComposer:!0'),source.replace('rA.r6)(w)','rA.r6)(other)'),source.replace('n.d(t,','n.d(other,'),source+'/*'+MARKER+'*/',once.replace(applied,'let F=M&&!0/*'+MARKER+'*/;'),once+'/*'+MARKER+'*/'])assert.equal(slashModuleState(changed,snap(changed)).kind,"missing");
+ const once=apply(source,snap());const native='let F=M&&_&&!R;',applied=`let F=M&&_/*${MARKER}*/;`;assert.equal(once.replace(applied,native),source);
+ for(const changed of [source.replace('M&&_&&!R','M&&_&&!foreign'),source.replace('L(E.model,t,','L(other,t,'),source.replace('ah.uR)(j?.models,E.model','ah.uR)(other?.models,E.model'),source.replace('requiresEmptyComposer:!1','requiresEmptyComposer:!0'),source.replace('rA.r6)(w)','rA.r6)(other)'),source.replace('n.d(t,','n.d(other,'),source+'/*'+MARKER+'*/',once.replace(applied,'let F=M&&!0/*'+MARKER+'*/;'),once+'/*'+MARKER+'*/'])assert.equal(slashModuleState(changed,snap(changed)).kind,"missing");
 });
 test("original lexical ambiguity and spread trivia writes refuse before owner acceptance",()=>{
  for(const [left,right]of [["[","]"],["{","}"]])for(const target of ["n",String.raw`\u006e`])for(const trivia of [""," ","\n","/*c*/","//c\n"]){const suffix=";("+left+"..."+trivia+target+right+"=values);";assert.equal(slashModuleState(source+suffix,snap(source+suffix)).kind,"missing",suffix);}
@@ -40,13 +40,13 @@ test("original lexical ambiguity and spread trivia writes refuse before owner ac
  for(const suffix of [';const url=`https://${host}/path`;',';const text="} / (n=foreign)/1";',';const values=[... n];',';holder. /* note */ n=foreign;']){const state=slashModuleState(source+suffix,snap(source+suffix));assert.equal(state.kind,"current",state.reason);}
 });
 function commandHarness(patched){
- const text=patched?apply(source,snap()):source,state=slashModuleState(text,snap(text)),fn=state.owner.command.fn,g=state.owner.command.groups,cache=Array(47).fill(Symbol.for("react.memo_cache_sentinel"));let auth="copilot",ready=true,requires=true,model="model-A",effort="medium",last=null,models=[{model:"model-A",supportedReasoningEfforts:["medium","high"].map(reasoningEffort=>({reasoningEffort}))}];const calls=[],events=[];
+ const text=patched?apply(source,snap()):source,state=slashModuleState(text,snap(text)),fn=state.owner.command.fn,g=state.owner.command.groups,cache=Array(43).fill(Symbol.for("react.memo_cache_sentinel"));let auth="copilot",ready=true,requires=true,model="model-A",effort="medium",last=null,models=[{model:"model-A",supportedReasoningEfforts:["medium","high"].map(reasoningEffort=>({reasoningEffort}))}];const calls=[],events=[];
  const env={
-  [g.memoApi]:{[g.memoKey]:()=>cache},[g.stateApi]:{[g.storeKey]:()=>({scope:"profile"}),[g.queryKey]:(key)=>key==="config"?{model_provider:"provider"}:null},[g.storeApi]:{[g.storeExport]:"store"},
+  [g.memoApi]:{[g.memoKey]:()=>cache},[g.stateApi]:{[g.storeKey]:()=>({scope:"profile"})},[g.storeApi]:{[g.storeExport]:"store"},
   [g.intlApi]:{[g.intlKey]:()=>({formatMessage:value=>value?.defaultMessage??value?.id??value})},[g.contextApi]:{[g.contextKey]:conversationId=>({hostId:"active-host",cwd:"/workspace",conversationId})},[g.hostApi]:{[g.hostKey]:hostId=>({authMethod:auth,requiresAuth:requires,hostId})},
   [g.catalogApi]:{[g.catalogKey]:options=>({data:{models},status:ready?"ready":"pending"}),[g.readyKey]:status=>status==="ready"},
   [g.selectorApi]:{[g.selectorKey]:options=>({modelSettings:{model,reasoningEffort:effort},selectComposerModelAndReasoningEffort:(selectedModel,selectedEffort,onChange)=>{calls.push({selectedModel,selectedEffort,options});onChange();}})},
-  [g.threadApi]:{[g.providerKey]:"provider"},[g.configApi]:{[g.configKey]:"config"},[g.effortApi]:{[g.effortsKey]:(catalog,slug)=>catalog?.find(item=>item.model===slug)?.supportedReasoningEfforts??[],[g.clampKey]:(current,list)=>list.find(item=>item.reasoningEffort===current)?.reasoningEffort??list[0]?.reasoningEffort},
+  [g.effortApi]:{[g.effortsKey]:(catalog,slug)=>catalog?.find(item=>item.model===slug)?.supportedReasoningEfforts??[],[g.clampKey]:(current,list)=>list.find(item=>item.reasoningEffort===current)?.reasoningEffort??list[0]?.reasoningEffort},
   [g.labelsApi]:{[g.labelsKey]:{medium:"Medium",high:"High",low:"Low"}},[g.iconsApi]:{[g.icon16]:"icon16",[g.icon20]:"icon20",[g.right16]:"selected16",[g.right20]:"selected20"},[g.eventApi]:{[g.eventKey]:(store,type,value)=>events.push({type,value})},[g.eventTypes]:{CodexComposerReasoningEffortChanged:"reasoning"},[g.registryApi]:{[g.registryKey]:command=>{last=command;}},
  };
  // Only the qualified2293B semantic callback runs under controlled imports.
@@ -157,4 +157,15 @@ test("signed Copilot slash replays after More details, Micro and persistent-stat
     for (const [name, text] of Object.entries(before)) assert.equal(read(name), text);
     assert.equal(moreDetails.applySelectedTextMoreDetails(root, context).changed, 0);
   });
+});
+
+test("scope thread import tolerates the command host identity shadow and rejects a scope capture",()=>{
+ const changed=source.replace("A=(0,P.tn)(k.hostId)","S=(0,P.tn)(k.hostId)")
+  .replace("M=A?.requiresAuth??!0","M=S?.requiresAuth??!0")
+  .replace('R=A?.authMethod==="copilot"','R=S?.authMethod==="copilot"');
+ assert.notEqual(changed,source);
+ const state=slashModuleState(changed,snap(changed));assert.equal(state.kind,"current",state.reason);
+ const once=apply(changed,snap(changed));assert.equal(slashModuleState(once,snap(once)).native,changed);
+ const captured=source.replace("function dJ(e){let ","function dJ(e){let S,");
+ assert.notEqual(captured,source);assert.doesNotThrow(()=>new Script(captured));assert.equal(slashModuleState(captured,snap(captured)).kind,"missing");
 });

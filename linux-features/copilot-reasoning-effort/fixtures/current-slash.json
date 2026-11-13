@@ -1,48 +1,28 @@
 {
   "provenance": {
-    "version": "26.1103.32239",
+    "version": "26.1111.21308",
     "arch": "amd64",
     "signedFactory": {
-      "version": "26.1106.51428",
+      "version": "26.1111.21308",
       "architectures": [
         "amd64",
         "arm64"
       ],
-      "asset": "webview/assets/async/776931.7ae13b8e20.js",
-      "moduleId": "ArUO",
-      "bytes": 522412,
-      "sha256": "a805f95427ef7b02fcc348175e4739675c4b7a2bd1d7ce9a11f8ded80f9abab5"
+      "asset": "webview/assets/async/486887.e71d287279.js",
+      "moduleId": "cojq",
+      "bytes": 521736,
+      "sha256": "f880b2024665f0436c59711bc6108626762e83cebd65f0a85c0e7e433351ea34"
     },
     "actualFunctions": [
       {
-        "name": "dp",
-        "start": 221912,
-        "open": 221926,
-        "params": "e",
-        "end": 224205,
-        "bytes": 2293,
-        "sha256": "5fdb600d5708d27aba22fe0adef4e077fef66736e009bbfa510da0b475b37edb"
-      },
-      {
-        "name": "dJ",
-        "start": 244150,
-        "open": 244164,
-        "params": "e",
-        "end": 255628,
-        "bytes": 11478,
-        "sha256": "2378409c4df18354a2b4d683fd39c705c9dcb6428d629ac3cc22df9d5723b47d"
-      },
-      {
-        "name": "h3",
-        "start": 286567,
-        "open": 286581,
-        "params": "e",
-        "end": 506347,
-        "bytes": 219780,
-        "sha256": "674b7a3b11ecad162831463cd7a9b3aec1842e6aee1815baa0c3f5b696b63b49"
+        "name": "dj",
+        "start": 226820,
+        "end": 228898,
+        "bytes": 2078,
+        "sha256": "45657bb2ee4007222063e522b7542e0aa5400d07ffec8c530834c2a41613ec61"
       }
     ],
-    "fixturePolicy": "Synthetic reduced h3/dJ chain with the captured2293B dp semantic function from the provenance version. Current complete factory authority is validated through signedFactory metadata and the production normal entry point."
+    "fixturePolicy": "Synthetic reduced publication/scope carriers with the exact current43-slot native semantic command, coherently alpha-renamed to stable fixture bindings. Complete current factory authority is exercised through signed native tests."
   },
   "synthetic": {
     "params": [
@@ -50,7 +30,7 @@
       "t",
       "n"
     ],
-    "source": "n.d(t,{ComposerContent:()=>h3});var a=n(\"QosV\"),c=n(\"zTeN\"),O=n(\"OWtl\"),g=n(\"Wf1j\"),au=n(\"an0a\"),P=n(\"EOo5\"),ty=n(\"j44z\"),lK=n(\"sU9s\"),S=n(\"tl5a\"),ac=n(\"YWOa\"),ah=n(\"hI9J\"),lW=n(\"moNn\"),nE=n(\"GO7r\"),nu=n(\"yGJW\"),lM=n(\"iRMi\"),rA=n(\"By8V\"),o=n(\"ABep\"),tC=n(\"Sd8U\");let ri=(0,c.i1)(O.u,()=>!1);function dp(e){let t,n,o,r,i,s,l,d,u,m,h,p,f,w,v=(0,a.c)(47),{conversationId:b,permissionsCwdOverride:x,permissionsHostId:y}=e,C=(0,c.gh)(O.u),I=(0,g.A)(),k=(0,au.K5)(b),A=(0,P.tn)(k.hostId),M=A?.requiresAuth??!0;v[0]!==k.hostId?(t={hostId:k.hostId},v[0]=k.hostId,v[1]=t):t=v[1];let{data:j,status:T}=(0,ty.Ym)(t);v[2]!==T?(n=(0,ty.SO)(T),v[2]=T,v[3]=n):n=v[3];let _=n,R=A?.authMethod===\"copilot\";v[4]!==b||v[5]!==x||v[6]!==y?(o={conversationId:b,cwdOverride:x,hostId:y},v[4]=b,v[5]=x,v[6]=y,v[7]=o):o=v[7];let{modelSettings:E,selectComposerModelAndReasoningEffort:L}=(0,lK.o)(o),D=(0,c._U)(S.jR,b);v[8]!==k.cwd||v[9]!==k.hostId?(r={cwd:k.cwd,hostId:k.hostId},v[8]=k.cwd,v[9]=k.hostId,v[10]=r):r=v[10];let{data:N}=(0,c._U)(ac.J8,r),U=D??N?.model_provider??null;v[11]!==I||v[12]!==j?.models||v[13]!==E.model||v[14]!==E.reasoningEffort||v[15]!==C||v[16]!==L?(i=(0,ah.uR)(j?.models,E.model),s=(0,ah.MD)(E.reasoningEffort,i),l=\"reasoning-efforts\",d=i.map(e=>{let{reasoningEffort:t}=e,n=I.formatMessage(lW.h[t]);return{id:t,title:n,Icon:{16:nE.UBC,20:nE.RGq},RightIcon:t===s?{16:nE.ALZ,20:nE.jFs}:void 0,onSelect:()=>{L(E.model,t,()=>{(0,nu.yy)(C,lM.CodexComposerReasoningEffortChanged,{reasoningEffort:t})})}}}),v[11]=I,v[12]=j?.models,v[13]=E.model,v[14]=E.reasoningEffort,v[15]=C,v[16]=L,v[17]=i,v[18]=s,v[19]=l,v[20]=d):(i=v[17],s=v[18],l=v[19],d=v[20]),v[21]!==l||v[22]!==d?(u={sections:[{id:l,items:d}]},v[21]=l,v[22]=d,v[23]=u):u=v[23];let B=u;v[24]!==I?(m=I.formatMessage({id:\"composer.reasoningSlashCommand.title\",defaultMessage:\"Reasoning\",description:\"Title for the reasoning slash command\"}),v[24]=I,v[25]=m):m=v[25],v[26]!==I||v[27]!==s?(h=I.formatMessage(lW.h[s]),v[26]=I,v[27]=s,v[28]=h):h=v[28],v[29]===Symbol.for(\"react.memo_cache_sentinel\")?(p={16:nE.UBC,20:nE.RGq},v[29]=p):p=v[29];let F=M&&_&&!R&&!0;return v[30]!==i||v[31]!==b||v[32]!==U||v[33]!==_||v[34]!==M||v[35]!==R||v[36]!==E||v[37]!==C||v[38]!==L||v[39]!==s?(f=[C,i,U,M,b,_,R,E,s,L,!0],v[30]=i,v[31]=b,v[32]=U,v[33]=_,v[34]=M,v[35]=R,v[36]=E,v[37]=C,v[38]=L,v[39]=s,v[40]=f):f=v[40],v[41]!==B||v[42]!==F||v[43]!==f||v[44]!==m||v[45]!==h?(w={id:\"reasoning\",title:m,description:h,requiresEmptyComposer:!1,Icon:p,submenu:B,enabled:F,dependencies:f},v[41]=B,v[42]=F,v[43]=f,v[44]=m,v[45]=h,v[46]=w):w=v[46],(0,rA.r6)(w),null}function dJ(e){let n,s,W,eo=(0,a.c)(11),{agentMode:ea,composerMode:er,hasGitRepo:ei,currentLocalExecutionCwd:es,currentLocalExecutionHostId:el,effectiveIdeContextStatus:ed,effectiveIsAutoContextOn:ec,isAeonThread:eu,isHomeComposer:em,onEnablePlanMode:eh,onOpenGoalEditor:ep,onSubmitInitPrompt:ef,permissionsCwdOverride:eg,permissionsHostId:ew,planSkill:ev,isPlanSkillLoading:eb,resolvedCwd:ex,serviceTierDefaults:ey,setIsStatusMenuOpen:eC,skillLookupRoots:eI}=e,eS=void 0!==eu&&eu,eM=(0,c.gh)(tC.PR);eo[0]!==eM?(n=(0,tC.ah)(eM),eo[0]=eM,eo[1]=n):n=eo[1];let eN=n,eV=(0,c._U)(S.qX,eN);eo[2]!==eN||eo[3]!==eV?(s=null==eN?null:{hostId:eV,threadId:eN},eo[2]=eN,eo[3]=eV,eo[4]=s):s=eo[4];let e$=(0,c._U)(eS?null:ri,s),eZ=!1;eo[5]!==er||eo[6]!==eN||eo[7]!==eg||eo[8]!==ew||eo[9]!==e$?(W=\"cloud\"===er||e$?null:(0,o.jsx)(dp,{conversationId:eN,permissionsCwdOverride:eg,permissionsHostId:ew}),eo[5]=er,eo[6]=eN,eo[7]=eg,eo[8]=ew,eo[9]=e$,eo[10]=W):W=eo[10];return(0,o.jsxs)(o.Fragment,{children:[W]})}function h3(e){let rn,r2=(0,a.c)(2);r2[0]!==e?(rn=e?(0,o.jsx)(dJ,{agentMode:e,composerMode:e,hasGitRepo:e,currentLocalExecutionCwd:e,currentLocalExecutionHostId:e,effectiveIdeContextStatus:e,effectiveIsAutoContextOn:e,isAeonThread:e,isHomeComposer:e,onEnablePlanMode:e,onOpenGoalEditor:e,onSubmitInitPrompt:e,permissionsCwdOverride:e,permissionsHostId:e,planSkill:e,isPlanSkillLoading:e,resolvedCwd:e,serviceTierDefaults:e,setIsStatusMenuOpen:e,skillLookupRoots:e}):null,r2[0]=e,r2[1]=rn):rn=r2[1];return(0,o.jsxs)(o.Fragment,{children:[rn]})}"
+    "source": "n.d(t,{ComposerContent:()=>h3});var o=n(\"ABep\"),tC=n(\"Sd8U\"),S=n(\"tl5a\"),a=n(\"QosV\"),c=n(\"zTeN\"),O=n(\"OWtl\"),g=n(\"Wf1j\"),au=n(\"an0a\"),P=n(\"UOa8\"),ty=n(\"j44z\"),lK=n(\"sU9s\"),ah=n(\"hI9J\"),lW=n(\"moNn\"),nE=n(\"bVeK\"),nu=n(\"yGJW\"),lM=n(\"iRMi\"),rA=n(\"By8V\");let ri=(0,c.i1)(O.u,()=>null);function dp(e){let t,n,o,i,s,l,d,u,m,h,p,f,w,v=(0,a.c)(43),{conversationId:b,permissionsCwdOverride:x,permissionsHostId:y}=e,C=(0,c.gh)(O.u),I=(0,g.A)(),k=(0,au.K5)(b),A=(0,P.tn)(k.hostId),M=A?.requiresAuth??!0;v[0]!==k.hostId?(t={hostId:k.hostId},v[0]=k.hostId,v[1]=t):t=v[1];let{data:j,status:T}=(0,ty.Ym)(t);v[2]!==T?(n=(0,ty.SO)(T),v[2]=T,v[3]=n):n=v[3];let _=n,R=A?.authMethod===\"copilot\";v[4]!==b||v[5]!==x||v[6]!==y?(o={conversationId:b,cwdOverride:x,hostId:y},v[4]=b,v[5]=x,v[6]=y,v[7]=o):o=v[7];let{modelSettings:E,selectComposerModelAndReasoningEffort:L}=(0,lK.o)(o);v[8]!==I||v[9]!==j?.models||v[10]!==E.model||v[11]!==E.reasoningEffort||v[12]!==C||v[13]!==L?(i=(0,ah.uR)(j?.models,E.model),s=(0,ah.MD)(E.reasoningEffort,i),l=\"reasoning-efforts\",d=i.map(e=>{let{reasoningEffort:t}=e,n=I.formatMessage(lW.h[t]);return{id:t,title:n,Icon:{16:nE.UBC,20:nE.RGq},RightIcon:t===s?{16:nE.ALZ,20:nE.jFs}:void 0,onSelect:()=>{L(E.model,t,()=>{(0,nu.yy)(C,lM.CodexComposerReasoningEffortChanged,{reasoningEffort:t})})}}}),v[8]=I,v[9]=j?.models,v[10]=E.model,v[11]=E.reasoningEffort,v[12]=C,v[13]=L,v[14]=i,v[15]=s,v[16]=l,v[17]=d):(i=v[14],s=v[15],l=v[16],d=v[17]),v[18]!==l||v[19]!==d?(u={sections:[{id:l,items:d}]},v[18]=l,v[19]=d,v[20]=u):u=v[20];let B=u;v[21]!==I?(m=I.formatMessage({id:\"composer.reasoningSlashCommand.title\",defaultMessage:\"Reasoning\",description:\"Title for the reasoning slash command\"}),v[21]=I,v[22]=m):m=v[22],v[23]!==I||v[24]!==s?(h=I.formatMessage(lW.h[s]),v[23]=I,v[24]=s,v[25]=h):h=v[25],v[26]===Symbol.for(\"react.memo_cache_sentinel\")?(p={16:nE.UBC,20:nE.RGq},v[26]=p):p=v[26];let F=M&&_&&!R;return v[27]!==i||v[28]!==b||v[29]!==_||v[30]!==M||v[31]!==R||v[32]!==E||v[33]!==C||v[34]!==L||v[35]!==s?(f=[C,i,M,b,_,R,E,s,L],v[27]=i,v[28]=b,v[29]=_,v[30]=M,v[31]=R,v[32]=E,v[33]=C,v[34]=L,v[35]=s,v[36]=f):f=v[36],v[37]!==B||v[38]!==F||v[39]!==f||v[40]!==m||v[41]!==h?(w={id:\"reasoning\",title:m,description:h,requiresEmptyComposer:!1,Icon:p,submenu:B,enabled:F,dependencies:f},v[37]=B,v[38]=F,v[39]=f,v[40]=m,v[41]=h,v[42]=w):w=v[42],(0,rA.r6)(w),null}function dJ(e){let n,s,W,eo=(0,a.c)(11),{agentMode:ea,composerMode:er,hasGitRepo:ei,currentLocalExecutionCwd:es,currentLocalExecutionHostId:el,effectiveIdeContextStatus:ed,effectiveIsAutoContextOn:ec,isAeonThread:eu,isHomeComposer:em,onEnablePlanMode:eh,onOpenGoalEditor:ep,onSubmitInitPrompt:ef,permissionsCwdOverride:eg,permissionsHostId:ew,planSkill:ev,isPlanSkillLoading:eb,resolvedCwd:ex,serviceTierDefaults:ey,setIsStatusMenuOpen:eC,skillLookupRoots:eI}=e,eS=void 0!==eu&&eu,eM=(0,c.gh)(tC.PR);eo[0]!==eM?(n=(0,tC.ah)(eM),eo[0]=eM,eo[1]=n):n=eo[1];let eN=n,eV=(0,c._U)(S.qX,eN);eo[2]!==eN||eo[3]!==eV?(s=null==eN?null:{hostId:eV,threadId:eN},eo[2]=eN,eo[3]=eV,eo[4]=s):s=eo[4];let e$=(0,c._U)(eS?null:ri,s),eZ=!1;eo[5]!==er||eo[6]!==eN||eo[7]!==eg||eo[8]!==ew||eo[9]!==e$?(W=\"cloud\"===er||e$?null:(0,o.jsx)(dp,{conversationId:eN,permissionsCwdOverride:eg,permissionsHostId:ew}),eo[5]=er,eo[6]=eN,eo[7]=eg,eo[8]=ew,eo[9]=e$,eo[10]=W):W=eo[10];return(0,o.jsxs)(o.Fragment,{children:[W]})}function h3(e){let rn,r2=(0,a.c)(2);r2[0]!==e?(rn=e?(0,o.jsx)(dJ,{agentMode:e,composerMode:e,hasGitRepo:e,currentLocalExecutionCwd:e,currentLocalExecutionHostId:e,effectiveIdeContextStatus:e,effectiveIsAutoContextOn:e,isAeonThread:e,isHomeComposer:e,onEnablePlanMode:e,onOpenGoalEditor:e,onSubmitInitPrompt:e,permissionsCwdOverride:e,permissionsHostId:e,planSkill:e,isPlanSkillLoading:e,resolvedCwd:e,serviceTierDefaults:e,setIsStatusMenuOpen:e,skillLookupRoots:e}):null,r2[0]=e,r2[1]=rn):rn=r2[1];return(0,o.jsxs)(o.Fragment,{children:[rn]})}"
   },
   "command": {
     "name": "dp",
