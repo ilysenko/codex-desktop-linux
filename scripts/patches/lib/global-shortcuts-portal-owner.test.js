@@ -22,13 +22,45 @@ for (const key of ["82820", '"82820"', "8.282e4", "0x14384"]) {
   });
 }
 
-test("Portal preserves current leading-not privacy policy and refuses dead startup", () => {
+test("Portal preserves current privacy and review-confirmation policy and refuses dead startup", () => {
   const source = mainBundleFixture(), patched = installPortalBackend(source);
   assert.notEqual(patched, source); assert.equal(installPortalBackend(patched), patched);
   assertRefused(source.replace("function runMainAppStartup(input){", "function runMainAppStartup(input){return;"), "dead startup");
   assertRefused(source.replace('ea.app.on("before-quit",i=>{', 'ea.app.on("before-quit",i=>{return;'), "dead native accepted quit");
-  assertRefused(source.replace('i=>{!function({addon:', 'i=>{!!function({addon:'), "changed leading privacy negation");
-  assertRefused(source.replace('):i.preventDefault()', '):null'), "missing native privacy veto");
+  assertRefused(source.replace('i=>{if(function({addon:', 'i=>{if(!function({addon:'), "changed privacy veto polarity");
+  assertRefused(source.replace('return void i.preventDefault();', 'return void 0;'), "missing native privacy veto");
+});
+
+test("Portal refuses changes to the native pending-review confirmation policy", () => {
+  const native = mainBundleFixture();
+  for (const [name, from, to] of [
+    ["pending checker alias", "&&q()){let accepted", "&&other()){let accepted"],
+    ["prompt approval guard", "!v&&!r.canQuitWithoutPrompt()", "!v&&r.canQuitWithoutPrompt()"],
+    ["packaged policy", 'ea.app.isPackaged||"1"!==', 'ea.app.isPackaged&&"1"!=='],
+    ["development override", '"1"!==process.env.CODEX_ELECTRON_DISABLE_QUIT_CONFIRMATION', '"1"===process.env.CODEX_ELECTRON_DISABLE_QUIT_CONFIRMATION'],
+    ["safe initial decision", "let accepted=!1;try", "let accepted=!0;try"],
+    ["dialog affirmative response", "accepted=1===ea.dialog", "accepted=0===ea.dialog"],
+    ["dialog default", "defaultId:0,cancelId:0", "defaultId:1,cancelId:0"],
+    ["dialog cancellation", "defaultId:0,cancelId:0", "defaultId:0,cancelId:1"],
+    ["cancellation veto", "if(!accepted)return void i.preventDefault();", "if(!accepted)return;"],
+    ["approval persistence", "r.markQuitApproved()", "r.otherApproval()"],
+    ["pending context disconnected", "()=>nativeContext.hasPendingLocalGitReviewComments()", "()=>foreign.hasPendingLocalGitReviewComments()"],
+    ["context drain member rewritten", "let nativeContext=app.getWindowContext();", "let nativeContext=app.getWindowContext();app.flushAndDisposeContext=foreign;"],
+    ["context getter member rewritten", "let nativeContext=app.getWindowContext();", "app.getWindowContext=()=>foreign;let nativeContext=app.getWindowContext();"],
+    ["aliased context drain rewritten", "let nativeContext=app.getWindowContext();", "let nativeContext=app.getWindowContext();const servicesAlias=app;servicesAlias.flushAndDisposeContext=foreign;"],
+    ["context services not called", "}({windowServices:windows});let nativeContext", "};let nativeContext"],
+    ["context services foreign windows", "}({windowServices:windows});let nativeContext", "}({windowServices:foreign});let nativeContext"],
+    ["context services rewritten", "let nativeContext=app.getWindowContext();", "let nativeContext=app.getWindowContext();app=foreign;"],
+    ["pending context rewritten", "let nativeContext=app.getWindowContext();", "let nativeContext=app.getWindowContext();nativeContext=foreign;"],
+    ["context drain disconnected", "flushAndDisposeContext:app.flushAndDisposeContext", "flushAndDisposeContext:foreign.flushAndDisposeContext"],
+    ["pending callback argument", "hasPendingLocalGitReviewComments:()=>nativeContext.hasPendingLocalGitReviewComments(),", ""],
+  ]) {
+    for (const source of [native, installPortalBackend(native)]) {
+      const damaged = source.replace(from, to);
+      assert.notEqual(damaged, source, name);
+      assertRefused(damaged, name);
+    }
+  }
 });
 
 test("Portal requires complete pending commit order and native Windows guard", () => {
@@ -77,7 +109,7 @@ test("Portal requires the published startup and actual direct quit call wiring",
     computedMark: source.replace("U.dispose()}}}(", 'U.dispose()},["markAppQuitting"]:()=>{}}}('),
     overwrittenWindowRole: source.replace("U.dispose()}}}(", "U.dispose()},windowManager:null}}("),
     missingDrain: source.replace("l.flush(),c.flush(),u(),h()", "l.flush(),u(),h()"),
-    missingCancel: source.replace("):i.preventDefault()", "):null"),
+    missingCancel: source.replace("return void i.preventDefault();", "return void 0;"),
   };
   for (const [name, variant] of Object.entries(variants)) assertRefused(variant, name);
 });

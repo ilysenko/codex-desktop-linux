@@ -18,6 +18,10 @@ function assertActualRanges(source, metadata, shared) {
   assert.equal(producer.includes(",codexLinuxGlobalShortcutsPortalShutdown(),"), shared);
   for (const [key, binding] of Object.entries(owner.windowServices.bindings)) assert.ok(producer.includes(`${key}:${binding}`), key);
   assert.equal(source[owner.factoryBody.end], "}"); assert.equal(source[owner.windowServices.body.end], "}");
+  const startup = owner.windowServices.startup;
+  assert.ok(startup.start < owner.windowServices.body.start && owner.windowServices.body.end < startup.end);
+  assert.ok(source.slice(startup.start, startup.end).includes(`${startup.binding}=function({`));
+  assert.equal(source[startup.end], "}");
   assert.deepEqual(Object.keys(owner).sort(), ["factoryBody", "id", "registration", "windowServices"]);
 }
 
@@ -93,11 +97,11 @@ for (const variable of ["CODEX_SIGNED_EXTRACTED_APP", "CODEX_SIGNED_ARM64_EXTRAC
     const build = path.join(signed, ".vite/build");
     const originals = fs.readdirSync(build).filter(name => /^early-bootstrap.*\.js$/u.test(name))
       .map(name => ({ name, source: fs.readFileSync(path.join(build, name), "utf8") }));
-    assert.equal(originals.length, 19);
+    assert.equal(originals.length, 21);
     const owners = originals.map(row => ({ ...row, metadata: inspectGlobalShortcutsPortal(row.source) })).filter(row => row.metadata.owner);
     assert.equal(owners.length, 1); const owner = owners[0];
     assert.equal(inspectGlobalShortcutsPortal(originals.find(row => row.name === "early-bootstrap.js").source).state, "unrelated");
-    assert.equal(owner.metadata.owner.id, "26307"); assert.equal(owner.metadata.state, "current");
+    assert.equal(owner.metadata.owner.id, "71817"); assert.equal(owner.metadata.state, "current");
     assertActualRanges(owner.source, owner.metadata, false);
     const unsupported = owner.source.replace(/exports\.ids=(\[[^\]]*\]),exports\.modules=/u, "exports.ids=$1;exports.modules=");
     assert.notEqual(unsupported, owner.source); assert.equal(inspectGlobalShortcutsPortal(unsupported).state, "drifted");

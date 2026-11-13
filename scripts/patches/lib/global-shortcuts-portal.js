@@ -1,7 +1,7 @@
 "use strict";
 
 const { Script } = require("node:vm");
-const { escapeRegExp, findMatchingBrace } = require("./minified-js.js");
+const { escapeRegExp, findMatchingBrace, createJavaScriptLexicalIndex } = require("./minified-js.js");
 const PATCH_MARKER = "codex-linux-global-shortcuts-portal-v1";
 const IDENT = "[A-Za-z_$][\\w$]*";
 
@@ -676,9 +676,44 @@ function declaredBinding(body, parameters, name) {
   catch { return true; }
 }
 
+function assertReviewContextMemberReads(startup, services) {
+  const { staticMemberKey } = require("./class-member-definitions.js");
+  const body = startup.body, lexical = createJavaScriptLexicalIndex(body), scope = { text: body, lexical };
+  const nextCode = start => {
+    let next = start;
+    while (next < body.length && (!lexical.isCode(next) || /\s/u.test(body[next]))) next++;
+    return next;
+  };
+  for (const reference of body.matchAll(/(?<![\w$.#])(?:this|[A-Za-z_$][\w$]*)\b/gu)) {
+    if (!lexical.isCode(reference.index)) continue;
+    let next = nextCode(reference.index + reference[0].length);
+    if (body.startsWith("?.", next)) next += 2;
+    else if (![".", "["].includes(body[next])) continue;
+    if (body[next] === ".") next++;
+    next = nextCode(next);
+    let key;
+    try { key = staticMemberKey(scope, next); }
+    catch {
+      if (reference[0] === services) throw new Error("Unproven native review context services member");
+      continue;
+    }
+    if (reference[0] === "Object" && ["assign", "defineProperty", "defineProperties", "setPrototypeOf"].includes(key.name) ||
+        reference[0] === "Reflect" && ["set", "defineProperty", "setPrototypeOf"].includes(key.name)) {
+      throw new Error("Native startup can replace review context service members");
+    }
+    if (key.privateKey || !["getWindowContext", "flushAndDisposeContext"].includes(key.name)) continue;
+    const projected = body.slice(0, reference.index) + "(0)" + body.slice(key.end);
+    try { new Script("async function NativeReviewMemberProbe(){" + projected + "\n}"); }
+    catch { throw new Error("Native review context service member is overwritten"); }
+    const prefix = [...body.slice(0, reference.index)]
+      .map((character, index) => lexical.isCode(index) ? character : " ").join("");
+    if (/\bdelete\s*\(*\s*$/u.test(prefix)) throw new Error("Native review context service member is deleted");
+  }
+}
+
 function windowWiringPlan(source, owner) {
   const startup = publishedStartup(owner.factory);
-  const lifecycleHeader = new RegExp(`function\\(\\{((?:${IDENT}:${IDENT},)*isWindows:${IDENT},(?:${IDENT}:${IDENT},)*hotkeyWindowLifecycleManager:${IDENT},globalDictationLifecycleManager:${IDENT},(?:${IDENT}:${IDENT},)*flushAndDisposeContext:${IDENT},disposables:${IDENT}(?:,${IDENT}:${IDENT})*)\\}\\)\\{`, "gu");
+  const lifecycleHeader = new RegExp(`function\\(\\{((?:${IDENT}:${IDENT},)*isWindows:${IDENT},(?:${IDENT}:${IDENT},)*hotkeyWindowLifecycleManager:${IDENT},globalDictationLifecycleManager:${IDENT},(?:${IDENT}:${IDENT},)*flushAndDisposeContext:${IDENT},hasPendingLocalGitReviewComments:${IDENT},disposables:${IDENT}(?:,${IDENT}:${IDENT})*)\\}\\)\\{`, "gu");
   const header = one(codeMatches(startup.body, lifecycleHeader, true), "current accepted-quit installer");
   if (!evaluatedAt(startup.body, header.index)) throw new Error("Quit installer is not evaluated by published startup");
   const localOpen = header.index + header[0].length - 1;
@@ -686,19 +721,56 @@ function windowWiringPlan(source, owner) {
   const parameters = header[1].split(",").map(value => value.split(":"));
   const aliases = Object.fromEntries(parameters);
   if (Object.keys(aliases).length !== parameters.length) throw new Error("Duplicate quit-installer parameter role");
-  for (const name of ["isWindows", "quitState", "windows", "globalState", "settingsStore", "stopCodexMicro", "flushTracingBeforeQuit", "flushAndDisposeContext", "disposables"]) {
+  for (const name of ["isWindows", "quitState", "windows", "globalState", "settingsStore", "stopCodexMicro", "flushTracingBeforeQuit", "flushAndDisposeContext", "hasPendingLocalGitReviewComments", "disposables"]) {
     if (!aliases[name]) throw new Error(`Quit installer has no ${name} parameter`);
   }
   const argumentsProperties = objectProperties(call.arguments, "Quit arguments");
+  for (const name of Object.keys(aliases)) {
+    if (!argumentsProperties.has(name)) throw new Error(`Quit arguments omit ${name}`);
+  }
   const windows = rootProperty(argumentsProperties, "windows");
   if (!new RegExp(`^${IDENT}$`, "u").test(windows) ||
       rootProperty(argumentsProperties, "hotkeyWindowLifecycleManager") !== `${windows}.hotkeyWindowLifecycleManager` ||
       rootProperty(argumentsProperties, "globalDictationLifecycleManager") !== `${windows}.globalDictationLifecycleManager`) {
     throw new Error("Quit installer is disconnected from its window shortcut owners");
   }
+  const pendingComments = /^\(\)=>([A-Za-z_$][\w$]*)\.hasPendingLocalGitReviewComments\(\)$/u.exec(argumentsProperties.get("hasPendingLocalGitReviewComments").value);
+  const flushContext = /^([A-Za-z_$][\w$]*)\.flushAndDisposeContext$/u.exec(argumentsProperties.get("flushAndDisposeContext").value);
+  if (!pendingComments || !flushContext) throw new Error("Native pending-review callback or context drain wiring changed");
+  const contextHead = one(codeMatches(startup.body,
+    new RegExp(`\\blet ${escapeRegExp(pendingComments[1])}=${escapeRegExp(flushContext[1])}\\.getWindowContext\\(\\);`, "gu"), true), "native review context binding");
+  if (!evaluatedAt(startup.body, contextHead.index) || contextHead.index >= header.index) {
+    throw new Error("Native review context is not initialized before quit installation");
+  }
+  const { hasStableEagerMainBinding } = require("./javascript-binding-authority.js");
+  const contextServices = one(codeMatches(startup.body,
+    new RegExp(`(?<![\\w$.])(?:let |const |var )?${escapeRegExp(flushContext[1])}=function\\(\\{`, "gu"), true), "native review context services initializer");
+  if (!evaluatedAt(startup.body, contextServices.index) || contextServices.index >= contextHead.index ||
+      !declaredBinding(startup.body, "", flushContext[1])) throw new Error("Native review context services are not initialized before use");
+  const serviceParametersOpen = startup.start + contextServices.index + contextServices[0].length - 1;
+  const serviceParametersClose = findMatchingBrace(source, serviceParametersOpen);
+  if (source.slice(serviceParametersClose + 1, serviceParametersClose + 3) !== "){") throw new Error("Native review context services parameters changed");
+  const serviceCall = directObjectCall(source, serviceParametersClose + 2);
+  if (serviceCall.end > startup.start + contextHead.index ||
+      rootProperty(objectProperties(serviceCall.arguments, "Review context services arguments"), "windowServices") !== windows) {
+    throw new Error("Native review context services are disconnected from their window services");
+  }
+  const serviceIndex = contextServices.index + contextServices[0].indexOf(flushContext[1] + "=");
+  const withoutServicesInitializer = startup.body.slice(0, serviceIndex) + "__portalContextServicesInitializer" +
+    startup.body.slice(serviceIndex + flushContext[1].length);
+  if (!hasStableEagerMainBinding(withoutServicesInitializer, flushContext[1])) throw new Error("Native review context services binding is rewritten");
+  assertReviewContextMemberReads(startup, flushContext[1]);
+  const contextIndex = contextHead.index + "let ".length;
+  const withoutContextInitializer = startup.body.slice(0, contextIndex) + "__portalReviewContextInitializer" +
+    startup.body.slice(contextIndex + pendingComments[1].length);
+  if (!hasStableEagerMainBinding(withoutContextInitializer, pendingComments[1])) throw new Error("Native review context binding is rewritten");
   const producerHead = one(codeMatches(startup.body,
-    new RegExp(`(?:let|const|var) ${escapeRegExp(windows)}=function\\(\\{([^{}]*)\\}\\)\\{`, "gu"), true), "accepted-quit window producer");
-  if (!evaluatedAt(startup.body, producerHead.index) || producerHead.index >= header.index) throw new Error("Window producer is not evaluated before quit installation");
+    new RegExp(`(?<![\\w$.])${escapeRegExp(windows)}=function\\(\\{([^{}]*)\\}\\)\\{`, "gu"), true), "accepted-quit window producer");
+  if (!evaluatedAt(startup.body, producerHead.index) || producerHead.index >= header.index ||
+      !declaredBinding(startup.body, "", windows)) throw new Error("Window producer is not evaluated before quit installation");
+  const withoutInitializer = startup.body.slice(0, producerHead.index) + "__portalWindowInitializer" +
+    startup.body.slice(producerHead.index + windows.length);
+  if (!hasStableEagerMainBinding(withoutInitializer, windows)) throw new Error("Native window service binding is rewritten");
   const producerOpen = startup.start + producerHead.index + producerHead[0].length - 1;
   const producer = directObjectCall(source, producerOpen);
   if (producer.end > startup.start + header.index) throw new Error("Quit installation is nested inside its window producer");
@@ -735,14 +807,28 @@ function nativeMarkPlan(source, owner, wiring) {
 }
 
 function nativeBeforeQuitPlan(before, event, aliases, electron) {
-  const head = new RegExp(`^!function\\(\\{addon:(${IDENT}),electronAppPath:(${IDENT})=${escapeRegExp(electron)}\\.app\\.getAppPath\\(\\),platform:(${IDENT})=process\\.platform,resourcesPath:(${IDENT})=process\\.resourcesPath\\}=\\{\\}\\)\\{`, "u").exec(before);
-  if (!head) throw new Error("Current leading-not native privacy quit policy is unavailable");
+  const head = new RegExp(`^if\\(function\\(\\{addon:(${IDENT}),electronAppPath:(${IDENT})=${escapeRegExp(electron)}\\.app\\.getAppPath\\(\\),platform:(${IDENT})=process\\.platform,resourcesPath:(${IDENT})=process\\.resourcesPath\\}=\\{\\}\\)\\{`, "u").exec(before);
+  if (!head) throw new Error("Current native privacy quit guard is unavailable");
   const open = head[0].length - 1, end = findMatchingBrace(before, open), body = before.slice(open + 1, end);
   const privacy = new RegExp(`^if\\(${literal("darwin")}!==${escapeRegExp(head[3])}\\)return!1;try\\{return\\(${escapeRegExp(head[1])}\\?\\?${IDENT}\\(\\{electronAppPath:${escapeRegExp(head[2])},resourcesPath:${escapeRegExp(head[4])}\\}\\)\\)\\.isPrivacySettingsTerminationRequest\\(\\)\\}catch\\{return!1\\}$`, "u");
   if (!privacy.test(body)) throw new Error("Native privacy platform/termination policy changed");
-  const accepted = new RegExp(`^\\(\\)\\?\\((${IDENT})=!0,${escapeRegExp(aliases.windows)}\\.markAppQuitting\\(\\)\\):${escapeRegExp(event)}\\.preventDefault\\(\\)$`, "u").exec(before.slice(end + 1));
-  if (!accepted) throw new Error("Native accepted/privacy-cancelled quit arms changed");
-  return { quitting: accepted[1], body: before };
+  const veto = `())return void ${event}.preventDefault();`;
+  const remainder = before.slice(end + 1);
+  if (!remainder.startsWith(veto)) throw new Error("Native privacy cancellation path changed");
+  const prompt = new RegExp([
+    `^if\\(!(?<quitting>${IDENT})&&!${escapeRegExp(aliases.quitState)}\\.canQuitWithoutPrompt\\(\\)&&`,
+    `\\(${escapeRegExp(electron)}\\.app\\.isPackaged\\|\\|${literal("1")}!==process\\.env\\.CODEX_ELECTRON_DISABLE_QUIT_CONFIRMATION\\)&&`,
+    `${escapeRegExp(aliases.hasPendingLocalGitReviewComments)}\\(\\)\\)\\{let (?<approved>${IDENT})=!1;try\\{`,
+    `let (?<intl>${IDENT})=\\(0,${IDENT}\\.F\\$\\)\\(\\);\\k<approved>=1===${escapeRegExp(electron)}\\.dialog\\.showMessageBoxSync\\(\\{`,
+    `type:${literal("warning")},message:\\k<intl>\\.formatMessage\\(\\{\\.\\.\\.${IDENT},values:\\{appName:${escapeRegExp(electron)}\\.app\\.getName\\(\\)\\}\\}\\),`,
+    `detail:\\k<intl>\\.formatMessage\\(${IDENT}\\),buttons:\\[\\k<intl>\\.formatMessage\\(${IDENT}\\),\\k<intl>\\.formatMessage\\(${IDENT}\\)\\],`,
+    `defaultId:0,cancelId:0,noLink:!0\\}\\)\\}catch\\((?<error>${IDENT})\\)\\{`,
+    `\\(0,${IDENT}\\.tZQ\\)\\(\\)\\.warning\\(${literal("Could not confirm quitting with unsent Git review comments")},\\{safe:\\{\\},sensitive:\\{error:\\k<error>\\}\\}\\)\\}`,
+    `if\\(!\\k<approved>\\)return void ${escapeRegExp(event)}\\.preventDefault\\(\\);${escapeRegExp(aliases.quitState)}\\.markQuitApproved\\(\\)\\}`,
+    `\\k<quitting>=!0,${escapeRegExp(aliases.windows)}\\.markAppQuitting\\(\\)$`,
+  ].join(""), "u").exec(remainder.slice(veto.length));
+  if (!prompt) throw new Error("Native pending-review confirmation and accepted-quit policy changed");
+  return { quitting: prompt.groups.quitting, body: before };
 }
 
 function nativeWindowsForcePlan(prefix, aliases, electron) {
@@ -822,7 +908,7 @@ function applyCurrentPortalBackend(source) {
   // Accepted quit (will-quit): upstream disposes the shortcut owners and then
   // drains asynchronously. Stop the portal session before that disposal and
   // make the drain wait for the helper to release its session.
-  const quitLifecycle = new RegExp(`function(?: ${IDENT})?\\(\\{(?:${IDENT}:${IDENT},)*hotkeyWindowLifecycleManager:(?<hotkey>${IDENT}),globalDictationLifecycleManager:(?<dictation>${IDENT}),(?:${IDENT}:${IDENT},)*flushAndDisposeContext:${IDENT},(?:${IDENT}:${IDENT},)*disposables:${IDENT}(?:,${IDENT}:${IDENT})*\\}\\)\\{`, "u");
+  const quitLifecycle = new RegExp(`function(?: ${IDENT})?\\(\\{(?:${IDENT}:${IDENT},)*hotkeyWindowLifecycleManager:(?<hotkey>${IDENT}),globalDictationLifecycleManager:(?<dictation>${IDENT}),(?:${IDENT}:${IDENT},)*flushAndDisposeContext:${IDENT},hasPendingLocalGitReviewComments:${IDENT},disposables:${IDENT}(?:,${IDENT}:${IDENT})*\\}\\)\\{`, "u");
   const quitHeader = uniqueAnchor(quitLifecycle, "accepted application quit lifecycle");
   const quitOpen = quitHeader.index + quitHeader[0].length - 1;
   const quitClose = findMatchingBrace(patched, quitOpen);
@@ -1005,6 +1091,8 @@ function inspectGlobalShortcutsPortal(source) {
         registration,
         windowServices: {
           body: { start: wiring.producer.open + 1, end: wiring.producer.close },
+          startup: { start: wiring.startup.start, end: wiring.startup.end,
+            binding: rootProperty(objectProperties(wiring.call.arguments, "Quit arguments"), "windows") },
           bindings,
         },
       },
@@ -1012,7 +1100,14 @@ function inspectGlobalShortcutsPortal(source) {
   } catch (error) { return { ...result, state: "drifted", reason: error.message }; }
 }
 
+function portalOwnerFailureReason(records, fallback) {
+  const drifted = records.filter(record => record.metadata.state === "drifted" && record.metadata.reason);
+  return drifted.length === 0 ? fallback : drifted
+    .map(record => `${record.assetName} (${record.metadata.reason})`).join(" | ");
+}
+
 module.exports = {
   IDENT, PATCH_MARKER, literal, platformIs, replaceUnique, registrationContract, registrationFunction,
   insertBeforeRegistration, replaceInRegistrationModule, tagCommand, installPortalBackend, inspectGlobalShortcutsPortal,
+  portalOwnerFailureReason,
 };

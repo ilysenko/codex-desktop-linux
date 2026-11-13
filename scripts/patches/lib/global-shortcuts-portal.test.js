@@ -108,6 +108,38 @@ for (const [platform, privacy, expectedVeto] of [["linux", false, false], ["darw
   });
 }
 
+for (const scenario of [
+  { name: "cancel", pending: true, choice: 0, accepted: false },
+  { name: "approve", pending: true, choice: 1, accepted: true },
+  { name: "dialog error", pending: true, failure: true, accepted: false },
+  { name: "empty comments", pending: false, accepted: true },
+  { name: "already approved", pending: true, approved: true, accepted: true },
+  { name: "development override", pending: true, override: true, accepted: true },
+]) test(`native pending-review quit policy preserves ${scenario.name}`, async () => {
+  const child = fakeHelperChild(), ctx = context([child]);
+  const handle = registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");
+  await spawned(ctx, 1); child.ready(); await ctx.codexLinuxGlobalShortcutsPortalQueue;
+  let marks = 0, veto = 0, approved = 0, dialogs = 0;
+  ctx.process.env.CODEX_ELECTRON_DISABLE_QUIT_CONFIRMATION = scenario.override ? "1" : "0";
+  ctx.__reviewDialog = options => {
+    dialogs++; assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0);
+    if (scenario.failure) throw Error("controlled dialog failure");
+    return scenario.choice;
+  };
+  const windows = ctx.createWindowServices({ markAppQuitting() { marks++; } }, { markAppQuitting() {} }, { dispose() {} });
+  ctx.installQuitLifecycle({ windows,
+    quitState: { canQuitWithoutPrompt: () => scenario.approved === true, markQuitApproved() { approved++; } },
+    hasPendingLocalGitReviewComments: () => scenario.pending,
+  });
+  ctx.ea.app.emit("before-quit", { preventDefault() { veto++; } });
+  assert.equal(marks, scenario.accepted ? 1 : 0); assert.equal(veto, scenario.accepted ? 0 : 1);
+  assert.equal(dialogs, scenario.pending && !scenario.approved && !scenario.override ? 1 : 0);
+  assert.equal(approved, scenario.name === "approve" ? 1 : 0);
+  assert.equal(ctx.codexLinuxGlobalShortcutsShuttingDown, scenario.accepted);
+  if (!scenario.accepted) { assert.equal(handle.ready(), true); assert.equal(child.killed, undefined); }
+  await cleanup(ctx);
+});
+
 for (const skip of [false, true]) test(`current native will-quit joins stop settlement after native marking skip=${skip}`, async () => {
   const child = fakeHelperChild(), ctx = context([child]), events = [];
   const handle = registerPortal(ctx, "Ctrl+Alt+G", {}, "hotkeyWindow");

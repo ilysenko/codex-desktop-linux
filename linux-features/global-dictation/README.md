@@ -67,7 +67,9 @@ then disables registration and initiates helper stop before native window and
 shortcut-owner cleanup. Both native asynchronous quit drains join the stop Promise
 before the existing timeout-bound context cleanup, final disposables and app quit.
 The drains wait for settlement, including a failed stop result. The native macOS
-privacy veto leaves the backend running. Upstream retains the platform and packaged
+privacy veto and cancelled confirmation for unsent Git review comments leave the
+backend running. The review check uses the same window context as the final context
+drain. Upstream retains the platform and packaged
 Windows forced-exit policy. This preserves KDE's saved choices across ordinary
 restarts and update exits.
 Session replacement can briefly interrupt global shortcuts. The helper's
