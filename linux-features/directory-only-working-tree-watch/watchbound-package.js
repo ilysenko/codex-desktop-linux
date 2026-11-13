@@ -634,6 +634,20 @@ async function defaultMaterializePackage(request) {
   }
 }
 
+// Newer Node releases give cpSync destination directories the source mode. A
+// read-only source such as the Nix store would then leave this transaction
+// unable to remove its own staged copy.
+function makeCopiedDirectoriesOwnerWritable(directory) {
+  const state = fs.lstatSync(directory);
+  if (!state.isDirectory()) return;
+  if ((state.mode & 0o200) === 0) {
+    fs.chmodSync(directory, (state.mode & 0o7777) | 0o200);
+  }
+  for (const entry of fs.readdirSync(directory)) {
+    makeCopiedDirectoriesOwnerWritable(path.join(directory, entry));
+  }
+}
+
 function atomicCopyPackage(extractedDir, sourceDir, targetDir) {
   const extractedRoot = path.resolve(extractedDir);
   assertNoSymbolicLinkAncestors(extractedRoot, targetDir);
@@ -651,6 +665,7 @@ function atomicCopyPackage(extractedDir, sourceDir, targetDir) {
       errorOnExist: true,
       force: false,
     });
+    makeCopiedDirectoriesOwnerWritable(temporaryDir);
     assertNoSymbolicLinkAncestors(extractedRoot, targetDir);
     fs.renameSync(temporaryDir, targetDir);
   } finally {
