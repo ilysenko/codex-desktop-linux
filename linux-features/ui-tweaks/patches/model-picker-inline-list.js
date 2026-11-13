@@ -11,14 +11,14 @@ const { createJavaScriptLexicalIndex, escapeRegExp: q } = require("../../../scri
 // semantic role and publication are checked before accepting its native ABI.
 const NATIVE = {
   dig0: { kind: "work-options", exportKey: "i", hashes: [
-    "e25ca3f0e1c20da63a69fbc87a498f4014d29710901442e7c3cf440dd1e9eff5",
-    "1e43ce7f6916ddb6b8c1f46770eaf222d750f92ffc2258a5ad9cbd29a76d48bf",
+    "ea5417f8311ebd19f1002135cd0e9db129540c726420885f54456a886afe56b6",
+    "b532ba1c881e108aa2eaf61cc4b1cdef570e6b460a0b798c0732521b743647be",
   ], needles: ["modelOptionsDisabled:", "supportedReasoningEfforts", "onBeforeSelectModel:"] },
-  t7ME: { kind: "menu-bridge", exportKey: "Y", hashes: [
-    "4a6e9c805e0f35937dda53281561fda03436bbbc629ff3d3de54c9eef8f51c1a",
+  erx1: { kind: "menu-bridge", exportKey: "Y", hashes: [
+    "c500e22faf9f3a09b012ef2fb33b8f0ae9c16546bb252cfaac88de44016bddda",
   ], needles: ["modelListConfig:", "keepSimpleView:", "onToggleMenuView:"] },
   sByQ: { kind: "inline-rows", exportKey: "e", hashes: [
-    "ba08b2d7b83e976fae7299d369323c26ca58dee4c1fcbb4cc33320a78f9f5cf1",
+    "91f23e1bfb249a9574ea44601d11149d00a55fd4211db7e0100499efcbd0672b",
   ], needles: ['"older"===', "defaultOption?.index", 'role:"menuitemradio"', '"data-model-picker-view":', "onKeyDownCapture:"] },
 };
 
@@ -151,9 +151,9 @@ function auditCopies(copies) {
     for (const copy of peers) {
       inspectInlineModelList(copy);
       if (moduleId === "dig0") {
-        requireNativeBridge(copy, "t7ME");
+        requireNativeBridge(copy, "erx1");
         requireNativeBridge(copy, "sByQ");
-      } else if (moduleId === "t7ME") requireNativeBridge(copy, "sByQ");
+      } else if (moduleId === "erx1") requireNativeBridge(copy, "sByQ");
     }
   }
   return { matched: true, changed: false, changedAssets: [], nativePhysicalCopies: copies.length };

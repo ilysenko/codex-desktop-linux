@@ -132,6 +132,19 @@ test("Chat native model rows forward the resolved model, effort and version", ()
   assert.deepEqual(events, [["view", "simple"]]);
 });
 
+test("current native extra-model merge excludes existing slugs through its Set projection", () => {
+  const { modelListConfig } = renderChatOptions({
+    fallbackOptions: [{ slug: "limited", title: "Limited fallback", thinkingEffort: "medium" }],
+    extraModels: [
+      { slug: "limited", title: "Duplicate limited model", thinkingEffort: "low" },
+      { slug: "addon", title: "Additional model", thinkingEffort: "high" },
+    ],
+  });
+  assert.equal(modelListConfig.options.filter(option => option.id === "limited:medium").length, 1);
+  assert.equal(modelListConfig.options.some(option => option.id === "limited:low"), false);
+  assert.equal(modelListConfig.options.some(option => option.id === "addon:high"), true);
+});
+
 test("selected, locked and rate-limited rows retain their native metadata and actions", () => {
   const events = [];
   const option = (id, extra = {}) => ({ id, label: id, onSelect: () => events.push(["select", id]), ...extra });
@@ -246,7 +259,9 @@ test("readonly audits refuse incomplete, duplicate and unknown native cohorts wi
     { ...assets, "async/menu.current.js": carrier(["dropdownRenderer", "inlineRenderer", "inlineRenderer"]) },
     { ...assets, "async/work-peer.current.js": brokenPeer },
     { ...assets, "async/menu.current.js": carrier(["dropdownRenderer", "inlineRenderer"], {
-      inlineRenderer: { moduleSource: fixture.inlineRenderer.moduleSource.replace("for(let e of(j=[],A=[],em.options))", "for(let e of(j=[],A=[],other.options))") },
+      inlineRenderer: { moduleSource: fixture.inlineRenderer.moduleSource.replace(
+        `for(let ${fixture.testAliases.inlineRows.e} of(${fixture.testAliases.inlineRows.j}=[],${fixture.testAliases.inlineRows.A}=[],${fixture.testAliases.inlineRows.em}.options))`,
+        `for(let ${fixture.testAliases.inlineRows.e} of(${fixture.testAliases.inlineRows.j}=[],${fixture.testAliases.inlineRows.A}=[],other.options))`) },
     }) },
   ];
   for (const files of cases) withApp(files, ({ root, snapshot }) => {
