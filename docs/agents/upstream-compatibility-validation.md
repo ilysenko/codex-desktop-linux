@@ -2,15 +2,15 @@
 
 This campaign targets the signed stable OpenAI Linux package **26.1111.21308** for **amd64** and **arm64**. The distribution keeps the `codex-desktop` package identity and **ChatGPT Community** desktop name. The branch family retains the historical `fix/1029-61003` campaign name.
 
-The source, all 61 documentation decisions and the technical acceptance described below are complete. Results retain their actual source, package-input and architecture epochs.
+The source and all 61 documentation decisions are audited through the current test/CI code snapshot. Completed builds and tests retain their actual source, package-input and architecture epochs. Natural completion of the new full hosted Node profile is tracked in head-specific CI receipts.
 
 ## Source and signed inputs
 
-The validated code snapshot is `ff497926a3b6fce003854562f5055de6d247bdfc`, tree `acbe2eccaa2e8717f5b500dcb0667a7b1cc7fb6e`, based on upstream `952d165bb76227672078bc0310c7e18b2616d9d1`. Its seal covers all 971 tracked file bytes and canonical Git modes. The nine linear layers retain UP01 → UP06 → UP07 → UP02 → UP03 → UP04 → UP05 → UP09 → UP08. The latest direct rebase preserves all 308 topic commit messages, their order, issue ownership and two issue-labelled empty Nix receipts. This count identifies the code snapshot before the report commit.
+The production-campaign qualified code snapshot is `ff497926a3b6fce003854562f5055de6d247bdfc`, tree `acbe2eccaa2e8717f5b500dcb0667a7b1cc7fb6e`, based on upstream `952d165bb76227672078bc0310c7e18b2616d9d1`. Its seal covers all 971 tracked file bytes and canonical Git modes. The current test/CI-only successor is `1230d0b92a321c10cf370508fa8b677cb3fab02b`, tree `f7146f43991adc7baf446a00b650ab3c3d2dd75b`, on the same upstream base. Its 972-file manifest includes the previously published report. Four test files and the CI workflow differ from published `9d465d17`, with the other 967 postimages and all modes exact. The nine linear layers retain UP01 → UP06 → UP07 → UP02 → UP03 → UP04 → UP05 → UP09 → UP08. The direct rebases retain the relative order of the 309 previously published topic messages and place four issue-owned CI follow-ups in their owning layers. The resulting 313-commit code snapshot precedes this final report-only update.
 
 Upstream first advanced through the Watchbound read-only-copy fix and Computer Use version 0.7.53. That exact incoming patch changes eight files, with 963 other source files and all 971 modes unchanged. The Computer Use change updates version metadata while retaining existing dependencies and feature policy. Watchbound grants owner-write permission to its own copied temporary directories and uses lstat to retain symlink boundaries. Its read-only-source regression passes independently on both signed architectures.
 
-The final successors change the flake's installer-check commands and bring in the upstream listener-test cleanup guard plus CHANGELOG. Release source, application resources and production Nix expressions retain their qualified 48841486 bytes. The final independent base-to-head review covers all 475 changed physical paths through 473 exact prior reviewed postimages and focused CHANGELOG/flake review. It also checks the incoming listener test against the new base and independently rechecks all 971 source byte/blob/mode records. No actionable source findings remain.
+The final successors change the flake's installer-check commands and bring in the upstream listener-test cleanup guard plus CHANGELOG. Release source, application resources and production Nix expressions retain their qualified 48841486 bytes. The final independent base-to-head review covers all 476 changed physical paths through 470 exact prior reviewed postimages, five focused test/workflow postimages and the earlier independent report review. It independently checks all 972 current source byte/blob/mode records and carries the qualified release/runtime inputs through the test-only successors. No actionable source findings remain.
 
 The default source verifier checks the pinned-key InRelease signature, signed Packages metadata and complete package SHA-256 values for both architectures. Fresh signed checks retain version 26.1111.21308 at the current source advance. Every original ASAR passes whole-file and block SHA-256 verification for all 20,220 regular files. The architectures share 9,870 byte-identical JavaScript files. The renderer has 9,564 async JavaScript assets, the main process has 21 chunks, and the native menu has 65 locales.
 
@@ -39,6 +39,8 @@ Every receipt retains its actual producer. The 8043755c → bfafd3e7 proof chang
 | Immutable Nix output proof | `48841486` | Six roots, 383 closure paths and 29 read-only proof commands pass |
 | Corrected Nix installer guard checks | `84f993ff`, with identical final flake bytes | 32 minimal-Bash fixtures and five actual controlled Nix derivations pass |
 | Current listener integration | `ff497926` tests against `48841486` application | All 13 tests pass |
+| Post-publication private feature follow-up | `6f518af9` signed fixtures and UP04 candidate `050f31a0` | 153 test executions pass, comprising 143 signed-adjacent tests and ten catalog tests |
+| Workflow and runner focused checks | UP08 workflow candidate `7b348bec`, adopted in `1230d0b9` | All 14 checks pass, the new hosted Node profile has a 1,800-second watchdog and 45-minute outer job |
 
 These records cover 144 first/canonical phases and 84 successful architecture/case assembly records across their stated epochs, comprising 82 feature/user records and two core-only records. The four targeted profiles repeat earlier coverage against the current native metadata and package hook. Earlier bfafd3e7 Core/literal and Nix successes remain historical records with their original producer labels.
 
@@ -81,13 +83,23 @@ A separate fresh Rust 1.99.1 environment completes all 131 updater tests and loc
 
 Production syntax checks pass at each sealed source. The initial syntax attempt in the Git-free archive exited 128 because production discovery requires Git. Recovery uses the unchanged production command in the byte/mode-identical clean committed checkout.
 
+## Post-publication CI follow-up
+
+The first hosted source-and-node run identified by head `9d465d17` used Ubuntu 26.04 and Node 24.22.2. Its 1,200-second watchdog exited 124 after reporting 3,801 tests, 3,532 passes, one assertion failure, 47 cancellations and 221 skips. Those cancellation rows retain their interrupted-run scope. The raw log and original failed fixture attempts remain preserved.
+
+Signed-adjacent qualification exposed three stale 19-chunk assertions and then old actual factory/callback metadata and minifier-specific mutation anchors. The UP01 and UP06 test-only repairs require 21 unique chunks, current owner 71817 and callback SHA-256 `5feb7c6f1435caf8dac7414a2be2140f1b958f2274690888e20f711ee95949d2`. Five mutators capture the already-qualified caller, selector and global-config term, and the hidden same-ID carrier uses the actual owner ID. All 62 negative cases remain. At `6f518af9`, both native suites pass 20 tests each and the combined transport suites pass all 103 tests, with zero failures, skips or cancellations under Node 26.13.1. The two signed main-local cases exercise all 62 controls each and complete in 590.14 and 591.48 seconds. Both 21-file main inventories and original ASAR hashes remain exact. The current code carries those same test and production-dependency bytes.
+
+The UP04 catalog fixture used `/cache/i` to validate errors, allowing a scratch pathname to satisfy the assertion. Its test-only correction replaces only the exact assets-directory string and compares the complete profile-owned message. The empty profile requires `Inconsistent Default preset tpp native cache`, and the configured profile requires `Could not find current TPP catalog query in <assets>`. The same three mutations and two profiles retain zero-write and original-byte checks. The private candidate `050f31a0` passes its complete ten-test suite, six actual error cases and four cache/noncache path-profile counterexamples, including rejection of unrelated errors containing a cache path.
+
+The UP08 correction changes only the source-and-node workflow profile. Its Node step sets `NODE_TEST_TIMEOUT_SECONDS=1800`, and the outer job allows 45 minutes. The shared runner retains its 1,200-second default, 30-second kill grace, all 199 Git-derived entrypoints, existing concurrency policy, fresh TMPDIR checks and exit-status handling. Fourteen focused workflow/runner checks pass, including the leaked-worker watchdog control. Natural completion of the new full hosted profile remains pending at this report snapshot and has a separate final-head receipt.
+
 ## Current native helpers
 
 All 14 current artifacts use one actual producer, source `488414865d70ee095ba855ff5eb603fd4296a5b1`. The Computer Use crate changes affect its three helper consumers and Record & Replay through its local Cargo path dependency, covering eight architecture outputs. The remaining six outputs have a conservative global Cargo.lock metadata difference. The build refreshes all 14 outputs to retain the approved single-producer helper-group interface.
 
-The producer uses Ubuntu 22.04, Rust 1.99.1, GNU cross compiler 11.4 and Node 24.22.3. Warm dependency targets remain available, while owned package fingerprints and direct executables are purged to force current crate compilation and linking. The producer finishes in 699.3 seconds. Independent readback verifies all 139 current source inputs, artifact SHA-256 values, sizes, executable modes, ELF machines, interpreters and GLIBC version sets. Actual MCP initialization returns Computer Use version 0.7.53.
+The producer uses Ubuntu 22.04, Rust 1.99.1, GNU cross compiler 11.4 and Node 24.22.3. The build reused warm dependency targets and purged owned package fingerprints and direct executables to force current crate compilation and linking. The producer finishes in 699.3 seconds. Independent readback verifies all 139 current source inputs, artifact SHA-256 values, sizes, executable modes, ELF machines, interpreters and GLIBC version sets. Actual MCP initialization returns Computer Use version 0.7.53.
 
-Both indicator binaries require GLIBC 2.35. The other twelve artifacts require at most GLIBC 2.34. These match the existing Ubuntu 22 ABI boundaries. ARM results cover cross compilation, static qualification and assembly. The earlier 8043755c results record the original 1b9de12a artifact bytes, metadata and producer labels.
+Both indicator binaries require GLIBC 2.35. The other twelve artifacts require at most GLIBC 2.34. These match the existing Ubuntu 22 ABI boundaries. The 804/488 ARM artifact and assembly records cover cross compilation, static qualification and assembly. Hosted ARM Nix requirement evidence has its own runner and command scope below. The earlier 8043755c results record the original 1b9de12a artifact bytes, metadata and producer labels.
 
 Final-source qualification classifies 138 of the 139 conservative full-crate input rows as byte-identical to the 488 producer. The remaining row is the changed HTTP-listener integration test. Release-binary inputs remain equal. The unmodified final listener test and diagnostics pass all 13 actual tests against the qualified 488 release binary in an isolated Cargo target, using the exact locked libc dependency. Source and artifact censuses remain unchanged.
 
@@ -108,9 +120,15 @@ Six current profile output roots receive complete immutable-output qualification
 
 Actual-log review exposed a test gap in four installer leak assertions. Minimal Nix Bash did not provide compgen, so those assertions had not been exercised by the original passing installer check. The final test-only flake correction adds findutils and four standalone checked find assignments. Thirty-two fixtures run with the actual minimal Bash 5.3.9 and findutils 4.10.0. A controlled replay reconstructs the original actual Nix derivation exactly, retaining its 50 input derivations, three sources and all unrelated builder/environment fields, then applies only the four corrected checks and findutils. A complete clean installer promotion passes in 177.39 seconds. Four actual injected FILE, DIRECTORY, SYMLINK and DANGLING cases each reach their expected leak diagnostic and fail closed with Nix exit 100 and builder exit 1. The five actual derivations and all 137 transported evidence files pass independent readback. These follow-up controls close the original assertion-coverage gap.
 
+### Hosted ARM Nix requirement scope
+
+GitHub run 43516692489 identifies head `9d465d17` and native runner `ubuntu-24.04-arm` for job 132200326916. The 23:00Z API snapshot records successful default, Chronicle-only and Computer Use runtime-check requirements, with directory-watch still running. The corresponding source contracts include dynamic-loader dependency audits, native C probes, crashpad/cua_node/rg version probes, sharp loading, sky and browser extension-host help, launcher diagnostics and the directory-watch filesystem-event check. Successful Nix steps establish their required derivation results. Full job logs bind fresh check execution versus substitution and the actual checkout merge context.
+
+The signed-baseline arm64 assembly job runs separately on an x86_64 host. The Rust Nix helper derivations use `doCheck=false`. Tectonic version checks and the NixOS VM are scoped to x86_64 by their source conditions. Packaged codex CLI behavior, interactive desktop/account workflows and phone or live RPC scenarios retain their own acceptance scopes.
+
 ## Executable behavior and runtime scope
 
-The completed evidence includes bounded native-function harnesses, actual signed source carriers, registered descriptor dispatch, complete application assemblies, native artifact metadata and package archive readback. GUI interaction, real account switching, phone pairing, live service RPC, host deployment and native ARM execution have separate user-session acceptance scope.
+The completed evidence includes bounded native-function harnesses, actual signed source carriers, registered descriptor dispatch, complete application assemblies, native artifact metadata and package archive readback. GUI interaction, real account switching, phone pairing, live service RPC and host deployment have separate user-session acceptance scope. The hosted ARM Nix requirement record retains its native-runner, derivation and pending raw-log boundaries.
 
 The historical Fedora desktop startup reproduction supports the retained shell whole-turn deferral. Historical 26.1103 and calibration-package headless completion retain those package epochs. Current signed native Quit callback qualification retains its own source and inert-collaborator scope.
 
@@ -184,7 +202,7 @@ The 61 entries below retain the campaign source IDs and historical observations.
 
 ## Evidence clarifications and execution corrections
 
-The five evidence clarifications cover attainable Copilot host/profile identity, observer projection, the empty-preset audit, native profile-query scope and shared summary test commands. Historical issue triage, package snapshots, verifier states and runtime labels retain their original epochs. The final audit binds all 61 selected contracts and 110 source files to ff497926.
+The five evidence clarifications cover attainable Copilot host/profile identity, observer projection, the empty-preset audit, native profile-query scope and shared summary test commands. Historical issue triage, package snapshots, verifier states and runtime labels retain their original epochs. The final audit binds all 61 selected contracts and 110 source files to code snapshot 1230d0b9, with one referenced test fingerprint refreshed and 109 exact referenced postimages. The original production and targeted-test receipts retain their actual epochs.
 
 The coordinating agent initially read the README prerequisite column as Parent for UP109, UP110 and UP111. Checking the issue text established UP09 as Parent and UP04 as a prerequisite. The instruction was withdrawn, and the source writer retained UP09 throughout.
 
@@ -247,4 +265,12 @@ Receipt filenames identify the task-owned evidence packet. Digests bind the exac
 | `UP1111-summary-binding-writer-independent-review-v2.json` | `30f030e4cdebe303dcdf326e0aa6c63d372ac85f82d23aae1bfc8eb595a1a0b6` |
 | `UP1111-hydration-root-independent-review-v2.json` | `349c269b78e1954ced9777e495c7527bdcad1268d32221ad4a21801a157f18b9` |
 | `UP1111-portal-peer-independent-review-final-v2.json` | `91f6439b7cc55e90876aa4ae9aaa52f738b3f9fda72ee10cffaab929ca3a6f93` |
-| `UP1111-final-documentation-decisions-v2.json` | `e2b1db32ca3f9daaa7b48809a68ca784fa5d8f1acde13064fbcfbbe94156e235` |
+| `UP1111-final-documentation-decisions-v3.json` | `f72d59581b3eb79bce633c1d280b593c3940f746713f85eac60df7570b809979` |
+| `UP1111-final-ci-code-snapshot-independent-seal-v1.json` | `c6a0aad2425d066226b974109f65a8529900d54931ae07dd9a4d99f7185e82e8` |
+| `UP1111-final-full-source-independent-review-v4.json` | `4e24b544fee3e8297b64b115fc8ccfdbcf6e4af88270f3676857955b8a8abaf5` |
+| `UP1111-final-ci-corrected-code-equivalence-v1.json` | `d517403ec3994eb6144f8c299a7359a59f4fc1ee985987ca6ef6298df79f21b6` |
+| `UP1111-ci-three-signed-adjacent-independent-complete-v2.json` | `ef084b78cfbac207312b9c3b077f3477f8e03513cbbcb66aa1e689ebdb0931d4` |
+| `UP1111-UP04-catalog-diagnostic-independent-peer-v2.json` | `446a904e1c29fc7ab14dcebd683065cd105eb06b83f49f1d19a6dd234c59c494` |
+| `UP1111-UP08-node-budget-independent-peer-v1.json` | `7c6098eb6d724b5921a62f3279f8f716459ce204c544a211e4fc50eca0429a77` |
+| `UP1111-initial-github-source-node-root-diagnosis-v1.json` | `fed7c752ed54564542548014c1b3a86c13217a988f338cf11a1637e346c3fa5a` |
+| `UP1111-GitHub-1693-native-arm-runtime-coverage-v1/receipt-v1.json` | `8ebf8c7d7f38c0e530c9914a696ba3df0e2cf0bb1865a5a4933e8231ac6c37cb` |
