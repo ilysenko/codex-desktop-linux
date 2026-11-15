@@ -581,8 +581,12 @@ run_feature_config_python() {
         return
     fi
 
-    if ! python3 - "$FEATURES_ROOT" "$config_path" "$enable_raw" "$disable_raw" "$apply_changes" "$output_mode" <<'PY'
+    # The loader reads this checkout's compatibility table whatever
+    # CODEX_LINUX_FEATURES_ROOT says, so the wizard does too.
+    if ! CODEX_FEATURE_COMPATIBILITY_PATH="$REPO_DIR/linux-features/compatibility.json" \
+        python3 - "$FEATURES_ROOT" "$config_path" "$enable_raw" "$disable_raw" "$apply_changes" "$output_mode" <<'PY'
 import json
+import os
 import pathlib
 import re
 import sys
@@ -593,6 +597,9 @@ enable_raw = sys.argv[3]
 disable_raw = sys.argv[4]
 apply_changes = sys.argv[5] == "1"
 output_mode = sys.argv[6] if len(sys.argv) > 6 else ""
+compatibility_path = pathlib.Path(
+    os.environ.get("CODEX_FEATURE_COMPATIBILITY_PATH") or features_root / "compatibility.json"
+)
 
 id_re = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -610,16 +617,21 @@ def split_selectors(raw, features, label):
     feature_ids = list(features)
     seen = set()
     result = []
+    def add_feature_id(item):
+        feature_id = canonical_feature_id(item)
+        if feature_id is None:
+            if item not in ignored_retired:
+                ignored_retired.append(item)
+        elif feature_id not in seen:
+            seen.add(feature_id)
+            result.append(feature_id)
     def add_feature_number(raw_number):
         number = int(raw_number)
         if number < 1 or number > len(feature_ids):
             maximum = len(feature_ids)
             hint = f"1-{maximum}" if maximum else "none available"
             die(f"Feature number {number} is out of range for {label} (available: {hint}). Use feature ids, numbers, or ranges like 1,3-4.")
-        feature_id = feature_ids[number - 1]
-        if feature_id not in seen:
-            seen.add(feature_id)
-            result.append(feature_id)
+        add_feature_id(feature_ids[number - 1])
     for item in items:
         if re.match(r"^[0-9]+-[0-9]+$", item):
             start_raw, end_raw = item.split("-", 1)
@@ -635,9 +647,7 @@ def split_selectors(raw, features, label):
             continue
         if not id_re.match(item):
             die(f"Invalid Linux feature selector for {label}: {item}. Use feature ids, numbers, or ranges like 1,3-4.")
-        if item not in seen:
-            seen.add(item)
-            result.append(item)
+        add_feature_id(item)
     return result
 
 def read_json(path, label):
@@ -647,6 +657,32 @@ def read_json(path, label):
         return None
     except Exception as exc:
         die(f"Could not read {label} at {path}: {exc}")
+
+def read_feature_compatibility(path):
+    # Same table and rules as scripts/lib/linux-features.js: the table is this
+    # checkout's linux-features/compatibility.json, also when
+    # CODEX_LINUX_FEATURES_ROOT points elsewhere; an alias maps to its target,
+    # and an id that is retired (after mapping) is ignored. As in the loader, a
+    # missing table or one without an "aliases" object is an error.
+    data = read_json(path, "Linux feature compatibility table")
+    if data is None:
+        die(f"Linux feature compatibility table not found: {path}")
+    if not isinstance(data, dict):
+        die(f"Linux feature compatibility table {path} must be a JSON object")
+    aliases = data.get("aliases")
+    retired = data.get("retired", [])
+    if not isinstance(aliases, dict) or not all(
+        id_re.match(source) and isinstance(target, str) and id_re.match(target)
+        for source, target in aliases.items()
+    ):
+        die(f"Linux feature compatibility table {path} aliases must map feature ids to feature ids")
+    if not isinstance(retired, list) or not all(isinstance(item, str) and id_re.match(item) for item in retired):
+        die(f"Linux feature compatibility table {path} retired must be an array of feature ids")
+    return aliases, set(retired)
+
+def canonical_feature_id(feature_id):
+    feature_id = feature_aliases.get(feature_id, feature_id)
+    return None if feature_id in retired_feature_ids else feature_id
 
 def normalize_id_list(value, label, manifest_path):
     if value is None:
@@ -738,9 +774,18 @@ def read_enabled_ids(data, path):
     for item in enabled:
         if not isinstance(item, str) or not id_re.match(item):
             die(f"Invalid Linux feature id in {path}: {item}")
-        if item not in seen:
-            seen.add(item)
-            result.append(item)
+        feature_id = canonical_feature_id(item)
+        if feature_id is not None and feature_id not in seen:
+            seen.add(feature_id)
+            result.append(feature_id)
+    return result
+
+def normalized_settings(settings):
+    result = {}
+    for key, value in settings.items():
+        feature_id = canonical_feature_id(key)
+        if feature_id is not None:
+            result[feature_id] = value
     return result
 
 def csv(ids):
@@ -784,6 +829,8 @@ def disabled_with_dependents(ids):
     return disabled
 
 features = discover_features(features_root)
+feature_aliases, retired_feature_ids = read_feature_compatibility(compatibility_path)
+ignored_retired = []
 config_data = read_feature_config(config_path)
 if not isinstance(config_data, dict):
     die(f"Linux features config {config_path} must be a JSON object")
@@ -829,10 +876,15 @@ for feature_id in final:
     if conflicting_enabled:
         die(f"Linux feature '{feature_id}' conflicts with enabled feature(s): {csv(conflicting_enabled)}")
 
+if ignored_retired:
+    print(f"[setup] Ignoring retired Linux feature id(s): {csv(ignored_retired)}")
+
 if apply_changes and (enable or disable):
     config_path.parent.mkdir(parents=True, exist_ok=True)
     updated_config = dict(config_data)
     updated_config["enabled"] = final
+    if isinstance(config_data.get("settings"), dict):
+        updated_config["settings"] = normalized_settings(config_data["settings"])
     config_path.write_text(json.dumps(updated_config, indent=2) + "\n")
     print(f"[setup] Updated Linux feature config: {config_path}")
 elif not config_path.exists():
@@ -1173,6 +1225,14 @@ apply_feature_picker_selection() {
 
 prompt_for_feature_changes_smart_gui() {
     local feature_lines selected status=0
+    # feature-picker.py reads compatibility.json from the features root, while
+    # this wizard, like the loader, uses the checkout's table. When they differ
+    # the two would disagree about which ids are enabled, so use the basic
+    # picker, which shows the wizard's own state.
+    if ! cmp -s "$FEATURES_ROOT/compatibility.json" "$REPO_DIR/linux-features/compatibility.json"; then
+        info "Smart GTK feature picker skipped: $FEATURES_ROOT/compatibility.json is missing or differs from this checkout's; using the basic picker."
+        return 1
+    fi
     feature_lines="$(run_feature_config_python "" "" "0" "tsv")" || return 1
     [ -n "$feature_lines" ] || return 1
 
