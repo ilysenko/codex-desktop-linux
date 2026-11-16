@@ -21,7 +21,7 @@ It supports:
   Codex GNOME Shell extension, XDG Desktop Portal, native X11 or
   `gnome-screenshot`, and through `grim` in Hyprland background mode
 - window listing and focusing on GNOME, KWin/Plasma 5 and 6, Hyprland, Niri,
-  COSMIC, i3 and Sway, labwc with Selkies IPC, other wlroots compositors through
+  Umbriel, COSMIC, i3 and Sway, labwc with Selkies IPC, other wlroots compositors through
   wlr-foreign-toplevel-management, and generic X11/EWMH window managers; GNOME
   extension and X11 windows can also be moved and resized (on X11, the size is
   the client area and decorations add to it)
@@ -45,7 +45,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.53. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.55. A `screenshot` with `monitor` (a 0-based index in reading order) captures one monitor at its own resolution and reports its origin as `monitor_x`/`monitor_y`. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -392,6 +392,16 @@ scale. If niri omits a position or output scaling is unknown or mixed, bounds
 are absent or keep null coordinates rather than guessing. Listing and exact
 focus remain available in those cases; use fresh full-screen screenshot
 coordinates for input.
+
+Umbriel window listing and exact focus use the `umbriel` CLI (`umbriel
+windows --json`, `umbriel msg window-focus`), which needs `UMBRIEL_SOCKET`. The
+backend reads it from the session's environment for GUI starts, or finds
+`umbriel-$WAYLAND_DISPLAY.sock` in `XDG_RUNTIME_DIR`. Windows carry pids and
+workspaces; a minimized window or one on a workspace that is not shown is
+`hidden`. With one enabled output, bounds are scaled to capture pixels with
+`umbriel outputs --json`. With several, bounds are left out: the Umbriel portal
+captures one output, so where a window sits in the capture is unknown. Listing
+and exact focus still work.
 
 The former `x11-ewmh-computer-use` alternative has been retired. The retained
 `computer-use-linux` backend owns generic X11/EWMH support on both official

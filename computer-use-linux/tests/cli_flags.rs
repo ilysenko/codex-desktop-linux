@@ -72,6 +72,7 @@ const RECORDED_COMMANDS: &[&str] = &[
     "spectacle",
     "swaymsg",
     "systemctl",
+    "umbriel",
     "wmctrl",
     "wtype",
     "xdotool",
@@ -168,6 +169,7 @@ impl Sandbox {
             .env("DESKTOP_SESSION", "gnome")
             .env("HYPRLAND_INSTANCE_SIGNATURE", "cul-test-no-hyprland")
             .env("NIRI_SOCKET", dir("no-niri"))
+            .env("UMBRIEL_SOCKET", dir("no-umbriel"))
             .env("YDOTOOL_SOCKET", dir("no-ydotool"))
             .env("CODEX_BROWSER_USE_SOCKET_DIR", &self.chrome_socket_dir)
             .stdin(Stdio::null())

@@ -1,5 +1,5 @@
 use crate::windowing::backends::{
-    cosmic, gnome, hyprland, i3, kwin, labwc, niri, wlr_foreign_toplevel, x11,
+    cosmic, gnome, hyprland, i3, kwin, labwc, niri, umbriel, wlr_foreign_toplevel, x11,
 };
 use crate::windowing::types::WindowInfo;
 use anyhow::{anyhow, Result};
@@ -12,6 +12,7 @@ pub use i3::I3_BACKEND;
 pub use kwin::KWIN_BACKEND;
 pub use labwc::LABWC_BACKEND;
 pub use niri::NIRI_BACKEND;
+pub use umbriel::UMBRIEL_BACKEND;
 pub use wlr_foreign_toplevel::WLR_FOREIGN_TOPLEVEL_BACKEND;
 pub use x11::X11_BACKEND;
 
@@ -47,6 +48,7 @@ enum BackendKind {
     Kwin,
     Hyprland,
     Niri,
+    Umbriel,
     I3,
     Labwc,
     WlrForeignToplevel,
@@ -60,6 +62,7 @@ const BACKEND_ORDER: &[BackendKind] = &[
     BackendKind::Kwin,
     BackendKind::Hyprland,
     BackendKind::Niri,
+    BackendKind::Umbriel,
     BackendKind::I3,
     BackendKind::Labwc,
     // Generic wlroots protocol: after the compositor-specific backends, which
@@ -110,6 +113,13 @@ const DESCRIPTORS: &[BackendDescriptor] = &[
         failure_label: "niri",
         list_note: "Window list came from niri msg or its direct IPC fallback. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
         missing_hint: "On niri, export the session's NIRI_SOCKET or expose an unambiguous matching socket in XDG_RUNTIME_DIR. The niri binary is optional.",
+        can_exact_focus: true,
+    },
+    BackendDescriptor {
+        id: UMBRIEL_BACKEND,
+        failure_label: "Umbriel",
+        list_note: "Window list came from the umbriel CLI over UMBRIEL_SOCKET. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
+        missing_hint: "On Umbriel, ensure the umbriel binary is on PATH and export the session's UMBRIEL_SOCKET.",
         can_exact_focus: true,
     },
     BackendDescriptor {
@@ -268,6 +278,7 @@ async fn list_windows_for(backend: BackendKind) -> Result<Vec<WindowInfo>> {
         BackendKind::Kwin => kwin::list_windows().await,
         BackendKind::Hyprland => hyprland::list_windows().await,
         BackendKind::Niri => niri::list_windows().await,
+        BackendKind::Umbriel => umbriel::list_windows().await,
         BackendKind::I3 => i3::list_windows().await,
         BackendKind::Labwc => labwc::list_windows().await,
         BackendKind::WlrForeignToplevel => wlr_foreign_toplevel::list_windows().await,
@@ -285,6 +296,7 @@ pub async fn activate_window(window: &WindowInfo) -> Result<()> {
         KWIN_BACKEND => kwin::activate_window(window.window_id).await,
         HYPRLAND_BACKEND => hyprland::activate_window(window.window_id).await,
         NIRI_BACKEND => niri::activate_window(window.window_id).await,
+        UMBRIEL_BACKEND => umbriel::activate_window(window.window_id).await,
         I3_BACKEND => i3::activate_window(window.window_id).await,
         LABWC_BACKEND => labwc::activate(window).await,
         WLR_FOREIGN_TOPLEVEL_BACKEND => wlr_foreign_toplevel::activate(window).await,
@@ -303,6 +315,7 @@ pub async fn focused_window_for_backend(backend: &str) -> Result<Option<WindowIn
         KWIN_BACKEND => kwin::list_windows().await?,
         HYPRLAND_BACKEND => hyprland::list_windows().await?,
         NIRI_BACKEND => niri::list_windows().await?,
+        UMBRIEL_BACKEND => umbriel::list_windows().await?,
         I3_BACKEND => i3::list_windows().await?,
         LABWC_BACKEND => return labwc::focused_window().await,
         WLR_FOREIGN_TOPLEVEL_BACKEND => return wlr_foreign_toplevel::focused_window().await,
@@ -352,6 +365,7 @@ pub fn probe_backends() -> Vec<BackendProbe> {
         kwin::probe(),
         hyprland::probe(),
         niri::probe(),
+        umbriel::probe(),
         i3::probe(),
         labwc::probe(),
         wlr_foreign_toplevel::probe(),
@@ -368,6 +382,7 @@ impl BackendKind {
             BackendKind::Kwin => KWIN_BACKEND,
             BackendKind::Hyprland => HYPRLAND_BACKEND,
             BackendKind::Niri => NIRI_BACKEND,
+            BackendKind::Umbriel => UMBRIEL_BACKEND,
             BackendKind::I3 => I3_BACKEND,
             BackendKind::Labwc => LABWC_BACKEND,
             BackendKind::WlrForeignToplevel => WLR_FOREIGN_TOPLEVEL_BACKEND,
