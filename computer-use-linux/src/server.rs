@@ -1093,7 +1093,7 @@ impl ComputerUseLinux {
 
     #[tool(
         name = "screenshot",
-        description = "Capture the screen and return it as a viewable, size-bounded image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped before any resize; outside Hyprland background mode, a target without known bounds is refused, so pass full_screen=true there. Returns the image plus a JSON caption with returned and coordinate dimensions, scale, format, quality, source, cropped_to_window, and window_title. The crop origin is not reported; use relative=true on click or scroll for window-relative input. Callers can request jpeg/quality for compression before resizing. Pass screenshot_file_path (an absolute path to a new file, stdio only; an existing path is refused) to save the image there instead: the result is then only the caption, with file_path.",
+        description = "Capture the screen and return it as a viewable, size-bounded image. Optionally target a window (window_id/pid/wm_class/title/app_id): the window is raised to the front and the image is cropped before any resize; outside Hyprland background mode, a target without known bounds is refused, so pass full_screen=true there. Pass monitor (a 0-based index in reading order: rows of monitors top to bottom, each row left to right) instead to capture one monitor at its own resolution, so a wide multi-monitor span is not shrunk to fit max_width; the caption then adds monitor, monitor_count, monitor_x and monitor_y, the monitor's origin in full-desktop click coordinates. Returns the image plus a JSON caption with returned and coordinate dimensions, scale, format, quality, source, cropped_to_window, and window_title. The crop origin is not reported; use relative=true on click or scroll for window-relative input. Callers can request jpeg/quality for compression before resizing. Pass screenshot_file_path (an absolute path to a new file, stdio only; an existing path is refused) to save the image there instead: the result is then only the caption, with file_path.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -1194,8 +1194,13 @@ impl ComputerUseLinux {
                 self.http_transport,
             )?;
         }
-        let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
         let target = params.window_target();
+        if params.monitor.is_some() && target.is_some() {
+            anyhow::bail!(
+                "screenshot takes a monitor or a window target, not both; pass monitor alone to capture one monitor"
+            );
+        }
+        let _pipeline = crate::screenshot::screenshot_pipeline_permit().await?;
         if let (Some(target), false) = (target.as_ref(), params.full_screen.unwrap_or(false)) {
             if let Some(result) = self.hyprland_background_screenshot(target, &params).await {
                 return result;
@@ -1232,17 +1237,41 @@ impl ComputerUseLinux {
             None => None,
         };
 
-        let (capture, cropped) = match crop_window {
-            Some(window) => {
-                let (x, y, width, height) = self
-                    .window_crop_rect_for_capture(window, &raw_capture)
+        let monitor_crop = match params.monitor {
+            Some(index) => {
+                let rects = self
+                    .capture_monitor_rects((raw_capture.width, raw_capture.height))
                     .await
-                    .context("targeted screenshot crop failed")?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "monitor screenshot failed: the monitor layout of this capture is unknown; capture the full desktop instead"
+                        )
+                    })?;
+                let count = rects.len();
+                let rect =
+                    monitor_crop_rect(&rects, index, (raw_capture.width, raw_capture.height))
+                        .map_err(|error| anyhow::anyhow!("monitor screenshot failed: {error}"))?;
+                Some((index, count, rect))
+            }
+            None => None,
+        };
+
+        let crop_rect = match (crop_window, monitor_crop) {
+            (Some(window), _) => Some(
+                self.window_crop_rect_for_capture(window, &raw_capture)
+                    .await
+                    .context("targeted screenshot crop failed")?,
+            ),
+            (None, Some((_, _, rect))) => Some(rect),
+            (None, None) => None,
+        };
+        let (capture, cropped) = match crop_rect {
+            Some((x, y, width, height)) => {
                 let (raw_capture, bytes, width, height) =
                     crate::screenshot::run_image_task(move || {
                         let (bytes, width, height) =
                             crop_png(&raw_capture.bytes, x, y, width, height).map_err(|error| {
-                                anyhow::anyhow!("targeted screenshot crop failed: {error}")
+                                anyhow::anyhow!("screenshot crop failed: {error}")
                             })?;
                         Ok((raw_capture, bytes, width, height))
                     })
@@ -1255,7 +1284,7 @@ impl ComputerUseLinux {
                         width,
                         height,
                     },
-                    true,
+                    crop_window.is_some(),
                 )
             }
             None => (raw_capture, false),
@@ -1282,6 +1311,12 @@ impl ComputerUseLinux {
             "cropped_to_window": cropped,
             "window_title": window_label,
         });
+        if let Some((index, count, (x, y, _, _))) = monitor_crop {
+            caption["monitor"] = serde_json::json!(index);
+            caption["monitor_count"] = serde_json::json!(count);
+            caption["monitor_x"] = serde_json::json!(x);
+            caption["monitor_y"] = serde_json::json!(y);
+        }
         if let Some(note) = off_screen_note {
             caption["window_off_screen"] = serde_json::json!(true);
             caption["off_screen_note"] = serde_json::json!(note);
@@ -3711,7 +3746,7 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.54",
+    version = "0.7.55",
     instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text goes into the target's focused editable field through AT-SPI EditableText and must read back, and otherwise can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes, optional screenshot_file_path (an absolute path to a new file, stdio only, refused over HTTP) to save the screenshot there instead of returning image content, and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result through a keyboard backend confirms dispatch only and leaves field contents unverified; only the GNOME AT-SPI fallback reads the field back. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {
@@ -4612,6 +4647,18 @@ struct ScreenshotParams {
     /// Capture the whole desktop even when a window is targeted (default false).
     #[serde(default)]
     full_screen: Option<bool>,
+    /// Capture one monitor: its 0-based index in reading order. Monitors
+    /// whose vertical ranges overlap form a row; rows go top to bottom and
+    /// each row left to right, so side-by-side monitors are numbered left to
+    /// right even when they are not top-aligned. The desktop is captured and cropped to
+    /// that monitor before any resize, so a multi-monitor span is not shrunk
+    /// to fit max_width. The caption reports monitor, monitor_count,
+    /// monitor_x and monitor_y, the monitor's origin in full-desktop
+    /// coordinates: image pixel (px, py) is click x = monitor_x + px / scale,
+    /// y = monitor_y + py / scale. Not combined with a window target. Refused
+    /// when the monitor layout cannot be read.
+    #[serde(default)]
+    monitor: Option<u32>,
     /// Maximum returned screenshot width in pixels (default 1920, hard-capped).
     #[serde(default)]
     max_width: Option<u32>,
@@ -10171,6 +10218,74 @@ fn root_monitor_rects(monitors: &[(i32, i32, i32, i32)]) -> Option<Vec<(i64, i64
             })
             .collect(),
     )
+}
+
+/// A monitor's (left, top, right, bottom) edges in capture pixels.
+type MonitorEdges = (i64, i64, i64, i64);
+
+/// Monitor rectangles in reading order: monitors
+/// whose vertical ranges overlap form a row, rows go top to bottom and each
+/// row left to right. A row of monitors that are not top-aligned, such as a
+/// laptop panel bottom-aligned beside a taller external display, is still
+/// numbered left to right.
+fn monitors_in_reading_order(monitors: &[MonitorEdges]) -> Vec<MonitorEdges> {
+    let mut by_top = monitors.to_vec();
+    by_top.sort_by_key(|&(left, top, _, _)| (top, left));
+    // Each row with the lowest bottom edge of its monitors. A monitor joins
+    // the row when it overlaps it by more than 1 px: `monitor_rects_in_capture`
+    // rounds edges outward, so stacked monitors on a scaled capture can share
+    // 1 px at their common edge.
+    let mut rows: Vec<(i64, Vec<MonitorEdges>)> = Vec::new();
+    for monitor in by_top {
+        match rows.last_mut() {
+            Some((row_bottom, row)) if monitor.1 + 1 < *row_bottom => {
+                *row_bottom = (*row_bottom).max(monitor.3);
+                row.push(monitor);
+            }
+            _ => rows.push((monitor.3, vec![monitor])),
+        }
+    }
+    rows.into_iter()
+        .flat_map(|(_, mut row)| {
+            row.sort_by_key(|&(left, top, _, _)| (left, top));
+            row
+        })
+        .collect()
+}
+
+/// Monitor `index` of a capture, as a crop rectangle (x, y, width, height)
+/// clipped to the capture. `monitors` are (left, top, right, bottom) capture
+/// pixels; they are numbered in reading order (`monitors_in_reading_order`),
+/// so the order does not depend on how the compositor lists them.
+fn monitor_crop_rect(
+    monitors: &[(i64, i64, i64, i64)],
+    index: u32,
+    (capture_width, capture_height): (u32, u32),
+) -> std::result::Result<(i32, i32, u32, u32), String> {
+    let ordered = monitors_in_reading_order(monitors);
+    let count = ordered.len();
+    let &(left, top, right, bottom) = usize::try_from(index)
+        .ok()
+        .and_then(|index| ordered.get(index))
+        .ok_or_else(|| {
+            format!(
+                "monitor {index} does not exist; this desktop has {count} (0 to {})",
+                count.saturating_sub(1)
+            )
+        })?;
+    let left = left.clamp(0, i64::from(capture_width));
+    let top = top.clamp(0, i64::from(capture_height));
+    let right = right.clamp(left, i64::from(capture_width));
+    let bottom = bottom.clamp(top, i64::from(capture_height));
+    if right <= left || bottom <= top {
+        return Err(format!("monitor {index} is outside the capture"));
+    }
+    Ok((
+        left as i32,
+        top as i32,
+        (right - left) as u32,
+        (bottom - top) as u32,
+    ))
 }
 
 fn point_on_capture_monitor(monitors: &[(i64, i64, i64, i64)], x: i32, y: i32) -> bool {
@@ -16875,6 +16990,104 @@ esac
         let rects = monitor_rects_in_capture(&[(0, 0, 1920, 1080)], (1920, 1080)).unwrap();
         assert!(point_on_capture_monitor(&rects, 1919, 1079));
         assert!(!point_on_capture_monitor(&rects, 1920, 1079));
+    }
+
+    #[test]
+    fn monitor_crop_rect_numbers_monitors_by_position() {
+        // Three 1920x1080 monitors listed out of order (issue #473).
+        let span = [
+            (3840, 0, 5760, 1080),
+            (0, 0, 1920, 1080),
+            (1920, 0, 3840, 1080),
+        ];
+        assert_eq!(
+            monitor_crop_rect(&span, 0, (5760, 1080)),
+            Ok((0, 0, 1920, 1080))
+        );
+        assert_eq!(
+            monitor_crop_rect(&span, 1, (5760, 1080)),
+            Ok((1920, 0, 1920, 1080))
+        );
+        assert_eq!(
+            monitor_crop_rect(&span, 2, (5760, 1080)),
+            Ok((3840, 0, 1920, 1080))
+        );
+        let error = monitor_crop_rect(&span, 3, (5760, 1080)).unwrap_err();
+        assert!(error.contains("has 3 (0 to 2)"), "{error}");
+
+        // A row that is not top-aligned is still numbered left to right: a
+        // middle monitor 1 px lower, and a 1080p panel bottom-aligned left of
+        // a 1440p display.
+        let offset = [
+            (0, 0, 1920, 1080),
+            (1920, 1, 3840, 1081),
+            (3840, 0, 5760, 1080),
+        ];
+        assert_eq!(
+            monitor_crop_rect(&offset, 1, (5760, 1081)),
+            Ok((1920, 1, 1920, 1080))
+        );
+        let mixed = [(0, 360, 1920, 1440), (1920, 0, 4480, 1440)];
+        assert_eq!(
+            monitor_crop_rect(&mixed, 0, (4480, 1440)),
+            Ok((0, 360, 1920, 1080))
+        );
+
+        // A 2x2 grid of 2560x1440 monitors at 105%: outward rounding gives
+        // the top row a bottom edge 1 px below the bottom row's top, and the
+        // rows must stay apart.
+        let grid = monitor_rects_in_capture(
+            &[
+                (0, 0, 2438, 1371),
+                (2438, 0, 2438, 1371),
+                (0, 1371, 2438, 1371),
+                (2438, 1371, 2438, 1371),
+            ],
+            (5120, 2880),
+        )
+        .unwrap();
+        assert!(
+            grid.iter().any(|&(_, top, _, _)| top == 1439)
+                && grid.iter().any(|&(_, _, _, bottom)| bottom == 1440),
+            "{grid:?}"
+        );
+        assert_eq!(
+            monitor_crop_rect(&grid, 1, (5120, 2880)),
+            Ok((2560, 0, 2560, 1440))
+        );
+        assert_eq!(
+            monitor_crop_rect(&grid, 2, (5120, 2880)).map(|rect| (rect.0, rect.1)),
+            Ok((0, 1439))
+        );
+
+        // Stacked monitors go top to bottom; an edge rounded past the
+        // capture is clipped to it.
+        let stacked = [(0, 1080, 1920, 2161), (0, 0, 1920, 1080)];
+        assert_eq!(
+            monitor_crop_rect(&stacked, 1, (1920, 2160)),
+            Ok((0, 1080, 1920, 1080))
+        );
+        // A monitor wholly outside the capture is refused.
+        assert!(monitor_crop_rect(
+            &[(0, 0, 1920, 1080), (4000, 0, 5000, 1080)],
+            1,
+            (1920, 1080)
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn monitor_screenshot_refuses_a_window_target_before_capture() {
+        let backend = ComputerUseLinux::default();
+        let error = backend
+            .capture_screenshot(ScreenshotParams {
+                monitor: Some(0),
+                title: Some("Firefox".to_string()),
+                ..ScreenshotParams::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("not both"), "{error:#}");
     }
 
     #[tokio::test]

@@ -7,8 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- Synchronize the embedded Computer Use backend to standalone v0.7.54. The
-  crate and the `server.rs` literal are 0.7.54, the standalone version. It adds
+- Synchronize the embedded Computer Use backend to standalone v0.7.55. The
+  crate and the `server.rs` literal are 0.7.55, the standalone version.
+  `screenshot` takes `monitor`, a 0-based index in reading order (monitors
+  whose vertical ranges overlap form a row; rows go top to bottom and each row
+  left to right), and captures that one monitor at its own resolution instead
+  of shrinking a multi-monitor span to fit `max_width`. The caption adds
+  `monitor`, `monitor_count`, `monitor_x` and `monitor_y`, the monitor's origin
+  in full-desktop coordinates. It is refused with a window target and when the
+  capture's monitor layout cannot be read.
+- Synchronize the embedded Computer Use backend to standalone v0.7.54. It adds
   an Umbriel window backend: `list_windows`, `focused_window` and exact
   `activate_window` through the `umbriel` CLI (`umbriel windows --json`,
   `umbriel msg window-focus`), with pids, workspaces and, with one enabled
