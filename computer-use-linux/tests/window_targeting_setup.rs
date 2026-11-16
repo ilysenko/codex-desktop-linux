@@ -174,6 +174,7 @@ impl Home {
             .env("DESKTOP_SESSION", "gnome")
             .env("HYPRLAND_INSTANCE_SIGNATURE", "cul-test-no-hyprland")
             .env("NIRI_SOCKET", dir("no-niri"))
+            .env("UMBRIEL_SOCKET", dir("no-umbriel"))
             .env("YDOTOOL_SOCKET", dir("no-ydotool"))
             .stdin(Stdio::null())
             .output()

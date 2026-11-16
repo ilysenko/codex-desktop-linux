@@ -67,6 +67,7 @@ exit 1
             .env("XDG_SESSION_TYPE", "wayland")
             .env("YDOTOOL_SOCKET", self.dir.join("no-ydotool"))
             .env("NIRI_SOCKET", self.dir.join("no-niri"))
+            .env("UMBRIEL_SOCKET", self.dir.join("no-umbriel"))
             .env("CU_DISABLE_ABS_POINTER", "1");
         // Keep in step with DESKTOP_ENV_KEYS in src/diagnostics.rs: the server
         // fills any empty one from the process tree; checked by

@@ -1,6 +1,6 @@
 use crate::windowing::registry::{
     self, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, LABWC_BACKEND, NIRI_BACKEND,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, LABWC_BACKEND, NIRI_BACKEND, UMBRIEL_BACKEND,
     WLR_FOREIGN_TOPLEVEL_BACKEND, X11_BACKEND,
 };
 use crate::ydotool;
@@ -22,6 +22,7 @@ const DESKTOP_ENV_KEYS: &[&str] = &[
     "DISPLAY",
     "HYPRLAND_INSTANCE_SIGNATURE",
     "NIRI_SOCKET",
+    "UMBRIEL_SOCKET",
     "XAUTHORITY",
     "YDOTOOL_SOCKET",
     "XDG_SESSION_DESKTOP",
@@ -436,7 +437,12 @@ fn capability_map_with_portal_keyboard(
     // i3, labwc, wlr-foreign-toplevel and the generic X11/EWMH backend have
     // no dedicated WindowingReport field; read them from the probe map so the
     // capability list matches the registry order.
-    for backend in [I3_BACKEND, LABWC_BACKEND, WLR_FOREIGN_TOPLEVEL_BACKEND] {
+    for backend in [
+        UMBRIEL_BACKEND,
+        I3_BACKEND,
+        LABWC_BACKEND,
+        WLR_FOREIGN_TOPLEVEL_BACKEND,
+    ] {
         if windowing
             .backends
             .get(backend)

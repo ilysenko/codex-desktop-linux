@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.54. The
+  crate and the `server.rs` literal are 0.7.54, the standalone version. It adds
+  an Umbriel window backend: `list_windows`, `focused_window` and exact
+  `activate_window` through the `umbriel` CLI (`umbriel windows --json`,
+  `umbriel msg window-focus`), with pids, workspaces and, with one enabled
+  output, bounds in capture pixels. With several enabled outputs bounds are
+  left out, because the portal captures one output. It answers ahead of the
+  generic wlr-foreign-toplevel backend, and the backend reads `UMBRIEL_SOCKET`
+  from the session's environment when the launcher did not pass it.
 - Synchronize the embedded Computer Use backend to standalone v0.7.53. The
   crate and the `server.rs` literal are 0.7.53, the standalone version. The
   standalone release replaces `libxkbcommon` in the GNOME `type_text` keymap
