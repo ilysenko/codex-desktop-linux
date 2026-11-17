@@ -1223,6 +1223,13 @@ test("official rspack webview chunks satisfy every descriptor contract", {
   const assetsDir = path.join(signedApp, "webview", "assets");
   const configured = context(scenario.settings.presets);
   const passthrough = { feature: { manifest: { presets: [] }, settings: {} } };
+  const mutatingDescriptorIds = new Set([
+    "model-picker-default-presets-catalog",
+    "model-picker-default-presets-slider-minimum",
+    "model-picker-default-presets-local-composer-resolver",
+    "model-picker-default-presets-existing-chat-optimistic-selection",
+    "model-picker-default-presets-local-composer-config",
+  ]);
   const allNeedles = [...new Set(descriptors.flatMap(({ assetNeedles }) => assetNeedles))];
   const sources = new Map();
   for (const assetName of listWebviewScriptAssets(signedApp)) {
@@ -1246,6 +1253,7 @@ test("official rspack webview chunks satisfy every descriptor contract", {
         descriptor.assetMatch == null ? targets.length > 0 : targets.length === 1,
         `${descriptor.id} matched ${targets.length} official chunks`,
       );
+      let changedTargets = 0;
       for (const assetName of targets) {
         const source = patched.get(assetName) ?? sources.get(assetName);
         const { result, warnings } = withCapturedWarnings(() =>
@@ -1256,13 +1264,21 @@ test("official rspack webview chunks satisfy every descriptor contract", {
         if (featureContext === configured && result !== source) {
           assert.equal(javascriptSourceParses(result), true, `${descriptor.id} broke ${assetName}`);
           patched.set(assetName, result);
+          changedTargets += 1;
         }
+      }
+      if (featureContext === configured) {
+        assert.equal(
+          changedTargets,
+          mutatingDescriptorIds.has(descriptor.id) ? targets.length : 0,
+          `${descriptor.id} did not patch every semantic target atomically`,
+        );
       }
     }
   }
-  // Catalog, slider, local resolver, local composer, and seven inlined
-  // model-settings copies (one per composer surface) are patched.
-  assert.equal(patched.size, 11);
+  // Asset counts and filenames drift as upstream adds or removes composer
+  // surfaces. Every current semantic target must still be patched, while the
+  // two compatibility-audit descriptors must leave their targets unchanged.
   // The reset-effect audit still holds on the slider-patched picker.
   const resetDescriptor = descriptors.find(({ id }) => id.endsWith("upstream-reset-effect"));
   assert.equal(
