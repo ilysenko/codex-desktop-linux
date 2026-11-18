@@ -714,7 +714,7 @@ fn clean_spoken_text(text: &str, max_chars: usize) -> String {
             }
             cleaned.push_str(line.trim());
         }
-        if cleaned.len() >= max_chars {
+        if cleaned.chars().count() >= max_chars {
             cleaned = cleaned.chars().take(max_chars).collect();
             break;
         }
@@ -853,6 +853,14 @@ mod tests {
     #[test]
     fn clean_text_respects_limit() {
         assert_eq!(clean_spoken_text("abcdef", 3), "abc");
+    }
+
+    #[test]
+    fn clean_text_limit_counts_characters_not_bytes() {
+        // Hebrew letters are two bytes each in UTF-8; the budget is in characters.
+        let text = "שלום\nעולם\nטוב מאוד";
+        assert_eq!(clean_spoken_text(text, 12), "שלום\nעולם\nטו");
+        assert_eq!(clean_spoken_text(text, 100), text);
     }
 
     #[test]
