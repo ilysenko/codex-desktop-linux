@@ -38,6 +38,43 @@ pub(crate) struct DragLanding {
     pub(crate) end: PointerLanding,
 }
 
+/// Where a capture sits inside the compositor's output layout, in capture
+/// pixels. A portal that captures one output of several returns an image
+/// smaller than the layout, while the compositor maps an absolute device
+/// across the whole layout: the device then needs the layout's size, and
+/// every capture coordinate the output's offset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CapturePlacement {
+    pub(crate) layout_width: i32,
+    pub(crate) layout_height: i32,
+    pub(crate) offset_x: i32,
+    pub(crate) offset_y: i32,
+}
+
+/// How a capture relates to the layout the compositor maps an absolute
+/// device across.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CaptureFit {
+    /// The capture covers the whole layout (the usual case): the device is
+    /// sized to the capture.
+    WholeLayout,
+    /// The capture is one output of several, at a known place.
+    Placed(CapturePlacement),
+    /// The capture matches neither the layout nor a known output. A device
+    /// sized to it would scale every point, so none may be created.
+    Unsupported(String),
+}
+
+/// How a `width`×`height` capture fits the output layout; an error when the
+/// layout could not be read. May run a compositor CLI, so call it off the
+/// async runtime.
+pub(crate) fn detect_placement(width: i32, height: i32) -> Result<CaptureFit> {
+    if cfg!(test) {
+        return Ok(CaptureFit::WholeLayout);
+    }
+    crate::windowing::backends::umbriel::capture_fit(width, height)
+}
+
 /// The buttons, wheel axes and properties the device declares next to its
 /// absolute X/Y axes.
 struct DeviceCapabilities {
@@ -120,6 +157,7 @@ impl PointerEvents for VirtualDevice {
 pub struct AbsPointer {
     device: Box<dyn PointerEvents>,
     geometry: AbsPointerGeometry,
+    placement: Option<CapturePlacement>,
 }
 
 impl AbsPointer {
@@ -132,7 +170,26 @@ impl AbsPointer {
             anyhow::bail!("unit tests do not create real uinput devices");
         }
         let geometry = AbsPointerGeometry::from_dimensions(width, height);
-        let (max_x, max_y) = geometry.axis_maxima();
+        // An unreadable layout or an unplaceable capture fails the device:
+        // sized to one output of several, it would scale every point.
+        let placement = match detect_placement(width, height)
+            .context("failed to read the output layout for the absolute pointer")?
+        {
+            CaptureFit::WholeLayout => None,
+            CaptureFit::Placed(placement) => Some(placement),
+            CaptureFit::Unsupported(reason) => {
+                anyhow::bail!("the capture cannot be placed in the output layout: {reason}")
+            }
+        };
+        // The axis range covers what the compositor maps the device across:
+        // the capture, or the whole layout when the capture is one output.
+        let (max_x, max_y) = match placement {
+            Some(placement) => {
+                AbsPointerGeometry::from_dimensions(placement.layout_width, placement.layout_height)
+                    .axis_maxima()
+            }
+            None => geometry.axis_maxima(),
+        };
         // value, min, max, fuzz, flat, resolution. resolution=1 unit/px.
         let abs_x =
             UinputAbsSetup::new(AbsoluteAxisCode::ABS_X, AbsInfo::new(0, 0, max_x, 0, 0, 1));
@@ -161,6 +218,7 @@ impl AbsPointer {
         Ok(Self {
             device: Box::new(device),
             geometry,
+            placement,
         })
     }
 
@@ -174,6 +232,22 @@ impl AbsPointer {
         Self {
             device: Box::new(device),
             geometry: AbsPointerGeometry::from_dimensions(width, height),
+            placement: None,
+        }
+    }
+
+    /// A pointer for a `width`×`height` capture placed inside a larger layout.
+    #[cfg(test)]
+    pub(crate) fn with_events_placed(
+        device: impl PointerEvents + 'static,
+        width: i32,
+        height: i32,
+        placement: CapturePlacement,
+    ) -> Self {
+        Self {
+            device: Box::new(device),
+            geometry: AbsPointerGeometry::from_dimensions(width, height),
+            placement: Some(placement),
         }
     }
 
@@ -181,11 +255,23 @@ impl AbsPointer {
         self.geometry.matches_dimensions(width, height)
     }
 
+    /// Where this device places its capture inside the output layout. A
+    /// caller compares it with `detect_placement` to replace a device made
+    /// before an output was turned on or off.
+    pub(crate) fn placement(&self) -> Option<CapturePlacement> {
+        self.placement
+    }
+
     /// Move the pointer to capture-pixel coordinates `(x, y)` and report
     /// both the requested point and the values emitted after edge clamping.
     pub(crate) fn move_to(&mut self, x: i32, y: i32) -> Result<PointerLanding> {
         let landing = self.geometry.landing_for(x, y);
-        let (emitted_x, emitted_y) = landing.emitted;
+        // The landing stays in capture pixels; only the device events carry
+        // the capture's offset inside the layout.
+        let (offset_x, offset_y) = self
+            .placement
+            .map_or((0, 0), |placement| (placement.offset_x, placement.offset_y));
+        let (emitted_x, emitted_y) = (landing.emitted.0 + offset_x, landing.emitted.1 + offset_y);
         self.device
             .emit(&[
                 InputEvent::new_now(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_X.0, emitted_x),
@@ -318,8 +404,8 @@ impl PointerButton {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        AbsPointer, AbsPointerGeometry, EventType, InputEvent, KeyCode, PointerButton,
-        PointerEvents, PointerLanding, RelativeAxisCode,
+        AbsPointer, AbsPointerGeometry, CapturePlacement, EventType, InputEvent, KeyCode,
+        PointerButton, PointerEvents, PointerLanding, RelativeAxisCode,
     };
 
     #[test]
@@ -435,6 +521,31 @@ pub(crate) mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn a_placed_capture_offsets_events_but_not_the_landing() {
+        let recorded = RecordedEvents::default();
+        let mut pointer = AbsPointer::with_events_placed(
+            recorded.clone(),
+            2880,
+            1800,
+            CapturePlacement {
+                layout_width: 2880,
+                layout_height: 3600,
+                offset_x: 0,
+                offset_y: 1800,
+            },
+        );
+        let landing = pointer.move_to(100, 322).unwrap();
+        assert_eq!(landing.emitted, (100, 322));
+        let motion = recorded
+            .all_events()
+            .into_iter()
+            .filter(|(kind, _, _)| *kind == EventType::ABSOLUTE.0)
+            .map(|(_, _, value)| value)
+            .collect::<Vec<_>>();
+        assert_eq!(motion, vec![100, 2122]);
     }
 
     #[test]

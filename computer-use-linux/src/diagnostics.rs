@@ -130,6 +130,9 @@ pub struct PlatformReport {
     pub xdg_runtime_dir: Option<String>,
     pub gnome_shell_version: Check,
     pub gnome_screenshot: Check,
+    /// The DMS shell's `dms screenshot all` route, tried first on Umbriel
+    /// sessions because their portal captures one output.
+    pub dms_screenshot: Check,
     /// Native X11 display for the root-window screenshot route. Fails on
     /// Wayland sessions, including XWayland, by design.
     pub x11_display: Check,
@@ -844,6 +847,7 @@ fn platform_report() -> PlatformReport {
         xdg_runtime_dir: xdg_runtime_dir().map(|path| path.display().to_string()),
         gnome_shell_version: command_check("gnome-shell", &["--version"]),
         gnome_screenshot: command_check("gnome-screenshot", &["--version"]),
+        dms_screenshot: dms_screenshot_check(),
         x11_display: x11_display_check(),
     }
 }
@@ -1051,6 +1055,9 @@ fn screenshot_backends(
     let mut backends = Vec::new();
     if input.pixelflux.ok {
         backends.push("pixelflux".to_string());
+    }
+    if platform.dms_screenshot.ok {
+        backends.push("dms".to_string());
     }
     if platform.gnome_shell_version.ok {
         backends.push("gnome_shell".to_string());
@@ -1821,6 +1828,17 @@ fn gdbus_call_check(destination: &str, object_path: &str, method: &str, args: &[
     command_check_with_session_bus("gdbus", &command_args)
 }
 
+/// The `dms` route `capture_screenshot_raw` tries on an Umbriel session.
+fn dms_screenshot_check() -> Check {
+    if !crate::windowing::backends::umbriel::is_umbriel_session() {
+        Check::fail("not an Umbriel session")
+    } else if crate::screenshot::dms_on_path() {
+        Check::ok("dms is on PATH")
+    } else {
+        Check::fail("dms is not on PATH")
+    }
+}
+
 fn command_check(command: &str, args: &[&str]) -> Check {
     run_command(command, args, false)
 }
@@ -2017,6 +2035,7 @@ pub(crate) mod tests {
             xdg_runtime_dir: Some("/run/user/1000".to_string()),
             gnome_shell_version: Check::ok("GNOME Shell 46.0"),
             gnome_screenshot: Check::ok("gnome-screenshot 41.0"),
+            dms_screenshot: Check::fail("not an Umbriel session"),
             x11_display: Check::fail("not a native X11 session"),
         }
     }

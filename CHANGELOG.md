@@ -7,8 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- Synchronize the embedded Computer Use backend to standalone v0.7.55. The
-  crate and the `server.rs` literal are 0.7.55, the standalone version.
+- Synchronize the embedded Computer Use backend to standalone v0.7.56. The
+  crate and the `server.rs` literal are 0.7.56, the standalone version. On
+  Umbriel, screenshots capture every output with `dms screenshot all` when the
+  DMS shell is installed and fall back to the portal;
+  `CODEX_COMPUTER_USE_SCREENSHOT_BACKEND=dms` (or the standalone
+  `COMPUTER_USE_LINUX_SCREENSHOT_BACKEND`) selects the route. With an
+  all-output capture the Umbriel backend reports window bounds on multi-output
+  layouts, and the server reads them again for each capture before cropping.
+  `doctor` reports `platform.dms_screenshot`. `screenshot` with `monitor` is
+  refused on a capture of one output of several. The uinput pointer no longer
+  lands off target on multi-output Umbriel: when a capture is one output of
+  several, the device covers the whole layout and coordinates are offset by the
+  captured output's position, and the device is replaced when the layout
+  changes.
+- Synchronize the embedded Computer Use backend to standalone v0.7.55.
   `screenshot` takes `monitor`, a 0-based index in reading order (monitors
   whose vertical ranges overlap form a row; rows go top to bottom and each row
   left to right), and captures that one monitor at its own resolution instead

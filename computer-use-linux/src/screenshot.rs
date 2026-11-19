@@ -294,7 +294,7 @@ impl ScreenshotPayloadOptions {
 
 /// Environment variable forcing a single capture backend, skipping the
 /// fallback chain. Accepts `gnome-shell`, `gnome-extension`, `portal`, `x11`,
-/// `gnome-screenshot`, or `pixelflux`.
+/// `gnome-screenshot`, `dms`, or `pixelflux`.
 const SCREENSHOT_BACKEND_ENV: &str = "CODEX_COMPUTER_USE_SCREENSHOT_BACKEND";
 /// Standalone computer-use-linux name for [`SCREENSHOT_BACKEND_ENV`], read
 /// when the Codex name is unset or blank.
@@ -307,6 +307,7 @@ enum ScreenshotBackend {
     Portal,
     X11,
     GnomeScreenshot,
+    Dms,
     Pixelflux,
 }
 
@@ -318,6 +319,7 @@ impl ScreenshotBackend {
             "portal" | "xdg-portal" | "xdg_portal" => Some(Self::Portal),
             "x11" | "x11-native" | "x11_native" | "xgetimage" => Some(Self::X11),
             "gnome-screenshot" | "gnome_screenshot" => Some(Self::GnomeScreenshot),
+            "dms" | "dms-screenshot" | "dms_screenshot" => Some(Self::Dms),
             "pixelflux" => Some(Self::Pixelflux),
             _ => None,
         }
@@ -330,6 +332,7 @@ impl ScreenshotBackend {
             Self::Portal => capture_with_portal().await,
             Self::X11 => capture_with_x11().await,
             Self::GnomeScreenshot => capture_with_gnome_screenshot().await,
+            Self::Dms => capture_with_dms().await,
             Self::Pixelflux => {
                 let config = crate::pixelflux::PixelfluxConfig::from_env()
                     .context("PIXELFLUX_CU and PIXELFLUX_CU_TOKEN are required")?;
@@ -339,7 +342,61 @@ impl ScreenshotBackend {
     }
 }
 
+/// Size of the latest raw capture, for a window backend whose bounds are
+/// only valid under a capture of every output.
+static LAST_CAPTURE_SIZE: std::sync::Mutex<Option<(u32, u32)>> = std::sync::Mutex::new(None);
+
+pub(crate) fn last_capture_size() -> Option<(u32, u32)> {
+    LAST_CAPTURE_SIZE.lock().ok().and_then(|guard| *guard)
+}
+
+/// Whether the next capture on an Umbriel session is expected to cover every
+/// output, in the order `capture_screenshot_raw` picks a route: a forced
+/// backend decides alone, then Pixelflux when configured, then `dms` when it
+/// is on `PATH`. A guess for before the first capture; `last_capture_size`
+/// is the fact afterwards.
+pub(crate) fn all_outputs_capture_expected() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    all_outputs_route_expected(
+        forced_backend(),
+        crate::pixelflux::PixelfluxConfig::from_env().is_some(),
+        dms_on_path(),
+    )
+}
+
+fn all_outputs_route_expected(
+    forced: Result<Option<ScreenshotBackend>>,
+    pixelflux_configured: bool,
+    dms_on_path: bool,
+) -> bool {
+    match forced {
+        Ok(Some(ScreenshotBackend::Dms)) => dms_on_path,
+        Ok(Some(_)) | Err(_) => false,
+        Ok(None) => !pixelflux_configured && dms_on_path,
+    }
+}
+
+/// Whether an executable `dms` is on `PATH`.
+pub(crate) fn dms_on_path() -> bool {
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| {
+            fs::metadata(dir.join("dms"))
+                .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
+        })
+    })
+}
+
 pub async fn capture_screenshot_raw() -> Result<RawScreenshotCapture> {
+    let capture = capture_screenshot_raw_unrecorded().await?;
+    if let Ok(mut last) = LAST_CAPTURE_SIZE.lock() {
+        *last = Some((capture.width, capture.height));
+    }
+    Ok(capture)
+}
+
+async fn capture_screenshot_raw_unrecorded() -> Result<RawScreenshotCapture> {
     hydrate_session_bus_env();
 
     // Explicit override: use exactly the requested backend, no fallback. Lets
@@ -356,6 +413,19 @@ pub async fn capture_screenshot_raw() -> Result<RawScreenshotCapture> {
             Err(error) => return Err(error),
         }
     }
+
+    // xdg-desktop-portal-umbriel answers a non-interactive screenshot with one
+    // output, so on Umbriel a second screen would stay invisible. `dms
+    // screenshot all` stitches every output; any failure falls through to
+    // the portal.
+    let dms_error = if !cfg!(test) && crate::windowing::backends::umbriel::is_umbriel_session() {
+        match capture_with_dms().await {
+            Ok(capture) => return Ok(capture),
+            Err(error) => Some(error),
+        }
+    } else {
+        None
+    };
 
     // The Shell and portal DBus paths can fail for background processes (systemd
     // user services, non-interactive parent shells): GNOME Shell's
@@ -387,8 +457,11 @@ pub async fn capture_screenshot_raw() -> Result<RawScreenshotCapture> {
         Err(error) => error,
     };
 
+    let dms_error = dms_error
+        .map(|error| format!("dms screenshot failed: {error:#}; "))
+        .unwrap_or_default();
     Err(anyhow!(
-        "GNOME Shell screenshot failed: {gnome_error:#}; \
+        "{dms_error}GNOME Shell screenshot failed: {gnome_error:#}; \
          GNOME Shell extension screenshot failed: {extension_error:#}; \
          XDG portal screenshot failed: {portal_error:#}; \
          native X11 screenshot failed: {x11_error:#}; \
@@ -452,7 +525,7 @@ fn forced_backend() -> Result<Option<ScreenshotBackend>> {
                 return ScreenshotBackend::parse(&value).map(Some).ok_or_else(|| {
                     anyhow!(
                         "{key}={value:?} is not a recognized backend \
-                         (expected gnome-shell, gnome-extension, portal, x11, gnome-screenshot, or pixelflux)"
+                         (expected gnome-shell, gnome-extension, portal, x11, gnome-screenshot, dms, or pixelflux)"
                     )
                 });
             }
@@ -703,6 +776,71 @@ async fn read_portal_png_as_capture(
         request,
     };
     read_png_as_capture(path, "xdg-desktop-portal", cleanup).await
+}
+
+/// Upper bound on a `dms screenshot` run. It is tried ahead of the portal on
+/// Umbriel, so a stalled one must not hold every capture for long; a normal
+/// run of two 2880x1800 outputs takes about 150 ms.
+const DMS_SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Every output stitched into one image by the DMS shell's screenshot CLI
+/// (`dms screenshot all`), which captures through the compositor's Wayland
+/// capture protocol without a portal. The cursor is drawn so a caller can
+/// see where its last pointer action landed.
+async fn capture_with_dms() -> Result<RawScreenshotCapture> {
+    let path = temp_png_path("dms");
+    let directory = path
+        .parent()
+        .and_then(Path::to_str)
+        .context("temporary screenshot directory is not valid UTF-8")?;
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("temporary screenshot name is not valid UTF-8")?;
+
+    let mut command = Command::new("dms");
+    command
+        .args([
+            "screenshot",
+            "all",
+            "--no-clipboard",
+            "--no-notify",
+            "--cursor=on",
+            "-d",
+            directory,
+            "--filename",
+            filename,
+        ])
+        // A cancelled request drops the wait below before its kill runs.
+        .kill_on_drop(true)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = match crate::command_runner::spawn_retrying_busy(&mut command).await {
+        Ok(child) => child,
+        Err(error) => {
+            cleanup_gnome_requested_path(&path);
+            return Err(error).context("failed to spawn dms screenshot");
+        }
+    };
+    let status = match tokio::time::timeout(DMS_SCREENSHOT_TIMEOUT, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            cleanup_gnome_requested_path(&path);
+            return Err(error).context("failed to wait for dms screenshot");
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            cleanup_gnome_requested_path(&path);
+            bail!("dms screenshot timed out");
+        }
+    };
+    if !status.success() {
+        cleanup_gnome_requested_path(&path);
+        bail!("dms screenshot exited with {status}");
+    }
+
+    read_png_as_capture(path.clone(), "dms", ScreenshotCleanup::DeletePath(path)).await
 }
 
 /// Upper bound on how long we wait for `gnome-screenshot` before killing it.
@@ -1214,6 +1352,35 @@ mod tests {
             Some(ScreenshotBackend::X11)
         );
         assert_eq!(ScreenshotBackend::parse("nonsense"), None);
+    }
+
+    #[test]
+    fn a_forced_backend_decides_the_all_outputs_route_ahead_of_pixelflux() {
+        let forced = |backend| Ok(Some(backend));
+        // Forced dms wins over a configured Pixelflux, as in the capture chain.
+        assert!(all_outputs_route_expected(
+            forced(ScreenshotBackend::Dms),
+            true,
+            true
+        ));
+        assert!(!all_outputs_route_expected(
+            forced(ScreenshotBackend::Dms),
+            false,
+            false
+        ));
+        assert!(!all_outputs_route_expected(
+            forced(ScreenshotBackend::Portal),
+            false,
+            true
+        ));
+        // Unforced: Pixelflux is tried first.
+        assert!(!all_outputs_route_expected(Ok(None), true, true));
+        assert!(all_outputs_route_expected(Ok(None), false, true));
+        assert!(!all_outputs_route_expected(
+            Err(anyhow!("bad")),
+            false,
+            true
+        ));
     }
 
     #[test]

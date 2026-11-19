@@ -1239,6 +1239,22 @@ impl ComputerUseLinux {
 
         let monitor_crop = match params.monitor {
             Some(index) => {
+                // Umbriel's portal fallback captures one output of several.
+                // Monitor rectangles scaled from the whole layout would crop
+                // an unrelated region of it, even where the two sizes happen
+                // to be in proportion.
+                if crate::windowing::backends::umbriel::is_umbriel_session() {
+                    let (width, height) = (raw_capture.width as i32, raw_capture.height as i32);
+                    let fit = tokio::task::spawn_blocking(move || {
+                        crate::abs_pointer::detect_placement(width, height)
+                    })
+                    .await
+                    .ok()
+                    .and_then(Result::ok);
+                    if let Some(reason) = fit.as_ref().and_then(partial_capture_monitor_refusal) {
+                        anyhow::bail!("monitor screenshot failed: {reason}");
+                    }
+                }
                 let rects = self
                     .capture_monitor_rects((raw_capture.width, raw_capture.height))
                     .await
@@ -1355,11 +1371,65 @@ impl ComputerUseLinux {
         {
             return Ok(false);
         }
+        self.ensure_abs_pointer_with(
+            crate::windowing::backends::umbriel::is_umbriel_session(),
+            raw_capture_size,
+            crate::abs_pointer::AbsPointer::create,
+        )
+        .await
+    }
+
+    /// `ensure_abs_pointer` past its route checks, with the capture and the
+    /// device creation passed in. `umbriel` is whether this is an Umbriel
+    /// session, where captures can come from routes that cover different
+    /// parts of the layout.
+    async fn ensure_abs_pointer_with<C, CFut, F>(
+        &self,
+        umbriel: bool,
+        capture: C,
+        create: F,
+    ) -> std::result::Result<bool, AbsPointerFailure>
+    where
+        C: FnOnce() -> CFut,
+        CFut: Future<Output = Option<(u32, u32)>>,
+        F: FnOnce(i32, i32) -> Result<crate::abs_pointer::AbsPointer> + Send + 'static,
+    {
         let desktop_size = self.desktop_size.lock().ok().and_then(|guard| *guard);
+        // A capture of one output of several keeps its size when another
+        // output turns on or off, so the cached device is also checked
+        // against where the capture now sits in the layout. This reads the
+        // layout from the compositor, so it runs before the lock is taken;
+        // a failed read keeps the device. A capture that can no longer be
+        // placed drops the device, and the other pointer routes are tried.
+        let has_pointer = self.abs_pointer.lock().is_ok_and(|guard| guard.is_some());
+        let current_fit = match desktop_size {
+            Some((width, height)) if has_pointer && umbriel => {
+                tokio::task::spawn_blocking(move || {
+                    crate::abs_pointer::detect_placement(width as i32, height as i32)
+                })
+                .await
+                .ok()
+                .and_then(Result::ok)
+            }
+            _ => None,
+        };
+        let current_placement = match current_fit {
+            Some(crate::abs_pointer::CaptureFit::Unsupported(_)) => {
+                if let Ok(mut guard) = self.abs_pointer.lock() {
+                    *guard = None;
+                }
+                return Ok(false);
+            }
+            Some(crate::abs_pointer::CaptureFit::Placed(placement)) => Some(Some(placement)),
+            Some(crate::abs_pointer::CaptureFit::WholeLayout) => Some(None),
+            None => None,
+        };
         let stale_size = match self.abs_pointer.lock() {
             Ok(mut guard) => match (guard.as_ref(), desktop_size) {
                 (Some(pointer), Some((width, height)))
-                    if !pointer.matches_dimensions(width as i32, height as i32) =>
+                    if !pointer.matches_dimensions(width as i32, height as i32)
+                        || current_placement
+                            .is_some_and(|placement| placement != pointer.placement()) =>
                 {
                     *guard = None;
                     Some((width, height))
@@ -1370,18 +1440,23 @@ impl ComputerUseLinux {
             Err(_) => return Ok(false),
         };
         // The cached size is the latest raw capture, the space the caller's
-        // coordinates come from, so a replacement needs no new capture.
-        let ((width, height), stale) = match stale_size {
-            Some(size) => (size, true),
-            None => {
-                let Ok(cap) = capture_screenshot_raw().await else {
+        // coordinates come from, so a replacement needs no new capture. On
+        // Umbriel a first device needs none either: a new capture could come
+        // from the other route and cover a different part of the layout than
+        // the one the point was mapped in. Creation checks where a capture
+        // of that size sits in the layout.
+        let ((width, height), stale) = match (stale_size, desktop_size) {
+            (Some(size), _) => (size, true),
+            (None, Some(size)) if umbriel => (size, false),
+            (None, _) => {
+                let Some((width, height)) = capture().await else {
                     return Ok(false);
                 };
-                self.cache_desktop_size(cap.width, cap.height);
-                ((cap.width, cap.height), false)
+                self.cache_desktop_size(width, height);
+                ((width, height), false)
             }
         };
-        self.create_abs_pointer_with(width, height, stale, crate::abs_pointer::AbsPointer::create)
+        self.create_abs_pointer_with(width, height, stale, create)
             .await
     }
 
@@ -3746,7 +3821,7 @@ impl ComputerUseLinux {
     // The rmcp tool_handler macro only accepts a string literal here, so this
     // can't be env!("CARGO_PKG_VERSION"); the MCP safety check (CI) fails the
     // build if it drifts from the Cargo version.
-    version = "0.7.55",
+    version = "0.7.56",
     instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text goes into the target's focused editable field through AT-SPI EditableText and must read back, and otherwise can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes, optional screenshot_file_path (an absolute path to a new file, stdio only, refused over HTTP) to save the screenshot there instead of returning image content, and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result through a keyboard backend confirms dispatch only and leaves field contents unverified; only the GNOME AT-SPI fallback reads the field back. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes plus accessibility_tree_spill.path, a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval."
 )]
 impl ServerHandler for ComputerUseLinux {
@@ -3806,6 +3881,48 @@ struct CompletionOutput {
     ok: bool,
     cue: String,
     note: String,
+}
+
+/// Why a `monitor` index cannot be cropped from a capture with this fit, or
+/// None when the capture covers the whole layout.
+fn partial_capture_monitor_refusal(fit: &crate::abs_pointer::CaptureFit) -> Option<String> {
+    match fit {
+        crate::abs_pointer::CaptureFit::WholeLayout => None,
+        crate::abs_pointer::CaptureFit::Placed(_) => Some(
+            "this capture covers one output of several, so a monitor index cannot be cropped from it; capture the full desktop instead"
+                .to_string(),
+        ),
+        crate::abs_pointer::CaptureFit::Unsupported(reason) => Some(format!(
+            "this capture cannot be placed in the output layout ({reason}); capture the full desktop instead"
+        )),
+    }
+}
+
+/// The size of a new full capture, for the paths that only need to know
+/// what the capture covers.
+async fn raw_capture_size() -> Option<(u32, u32)> {
+    let capture = capture_screenshot_raw().await.ok()?;
+    Some((capture.width, capture.height))
+}
+
+/// An Umbriel window as listed for the capture a window-relative point is
+/// mapped in. `capture_rect` is that capture, taken first when the session
+/// has none yet; without one the action is refused, since bounds listed for
+/// a capture that was only assumed can be in another space.
+async fn window_for_primed_capture<L, LFut>(
+    capture_rect: impl Future<Output = Option<(i32, i32, i32, i32)>>,
+    relist: L,
+) -> std::result::Result<crate::windowing::WindowInfo, String>
+where
+    L: FnOnce(u32, u32) -> LFut,
+    LFut: Future<Output = Result<crate::windowing::WindowInfo>>,
+{
+    let (_, _, width, height) = capture_rect.await.ok_or_else(|| {
+        "Could not determine screenshot dimensions for window-relative coordinates.".to_string()
+    })?;
+    relist(width as u32, height as u32)
+        .await
+        .map_err(|error| format!("Could not read target-window bounds for this capture: {error:#}"))
 }
 
 async fn send_completion_notification(program: &Path, limit: Duration) -> CompletionOutput {
@@ -6785,6 +6902,23 @@ impl ComputerUseLinux {
         capture_width: u32,
         capture_height: u32,
     ) -> Result<WindowCoordinateMap> {
+        // The target was resolved before this capture was taken. Umbriel's
+        // bounds depend on what the capture covers, so they are read again
+        // for the frame in hand: bounds for another capture space are never
+        // applied to it.
+        let relisted;
+        let window = if window.backend == crate::windowing::backends::umbriel::UMBRIEL_BACKEND {
+            relisted = crate::windowing::backends::umbriel::window_for_capture(
+                window,
+                capture_width,
+                capture_height,
+            )
+            .await
+            .context("could not read the target window's bounds for this capture")?;
+            &relisted
+        } else {
+            window
+        };
         let bounds = window.bounds.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
                 "targeted screenshot requires window bounds; refusing to return the full desktop"
@@ -6861,6 +6995,21 @@ impl ComputerUseLinux {
             .focused_window
             .as_ref()
             .unwrap_or(&focus.requested_window);
+        // Umbriel's bounds depend on what the capture covers: read them for
+        // the capture the caller's coordinates come from. Before the first
+        // capture of a session there is none yet, and the pointer's own
+        // capture comes after this mapping, so one is taken here instead of
+        // trusting bounds that only assume what the capture will cover.
+        let relisted;
+        let window = if window.backend == crate::windowing::backends::umbriel::UMBRIEL_BACKEND {
+            relisted = window_for_primed_capture(self.capture_space_rect(), |width, height| {
+                crate::windowing::backends::umbriel::window_for_capture(window, width, height)
+            })
+            .await?;
+            &relisted
+        } else {
+            window
+        };
         if !matches!(
             window.backend.as_str(),
             GNOME_SHELL_EXTENSION_BACKEND
@@ -7356,15 +7505,23 @@ impl ComputerUseLinux {
     /// by the screenshot pipeline), for checks against click coordinates.
     /// Best-effort; None disables the check.
     async fn capture_space_rect(&self) -> Option<(i32, i32, i32, i32)> {
+        self.capture_space_rect_with(raw_capture_size).await
+    }
+
+    async fn capture_space_rect_with<C, CFut>(&self, capture: C) -> Option<(i32, i32, i32, i32)>
+    where
+        C: FnOnce() -> CFut,
+        CFut: Future<Output = Option<(u32, u32)>>,
+    {
         let cached = self.desktop_size.lock().ok().and_then(|guard| *guard);
         if let Some((w, h)) = cached {
             return Some((0, 0, w as i32, h as i32));
         }
         // One-time prime: a full-frame capture reveals the desktop size when
         // no prior capture is available.
-        let raw = capture_screenshot_raw().await.ok()?;
-        self.cache_desktop_size(raw.width, raw.height);
-        (raw.width > 0 && raw.height > 0).then_some((0, 0, raw.width as i32, raw.height as i32))
+        let (width, height) = capture().await?;
+        self.cache_desktop_size(width, height);
+        (width > 0 && height > 0).then_some((0, 0, width as i32, height as i32))
     }
 
     /// Warn when a targeted window pokes outside every monitor: clicks and
@@ -17116,6 +17273,181 @@ esac
             .await;
         assert_eq!(ready, Ok(false));
         assert!(backend.abs_pointer.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_monitor_index_is_refused_on_a_capture_of_one_output_of_several() {
+        use crate::abs_pointer::{CaptureFit, CapturePlacement};
+        assert_eq!(
+            partial_capture_monitor_refusal(&CaptureFit::WholeLayout),
+            None
+        );
+        let placed = CaptureFit::Placed(CapturePlacement {
+            layout_width: 2880,
+            layout_height: 3600,
+            offset_x: 0,
+            offset_y: 0,
+        });
+        assert!(partial_capture_monitor_refusal(&placed)
+            .unwrap()
+            .contains("one output of several"));
+        let unsupported = CaptureFit::Unsupported("2880x1800 matches no output".to_string());
+        assert!(partial_capture_monitor_refusal(&unsupported)
+            .unwrap()
+            .contains("matches no output"));
+    }
+
+    #[tokio::test]
+    async fn first_pointer_is_sized_from_the_cached_capture_without_a_new_one() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_desktop_size(2880, 3601);
+        let created = Arc::new(Mutex::new(None));
+        let seen = created.clone();
+
+        let ready = backend
+            .ensure_abs_pointer_with(
+                true,
+                || async { panic!("a cached capture size must not be replaced by a new capture") },
+                move |width, height| {
+                    *seen.lock().unwrap() = Some((width, height));
+                    anyhow::bail!("uinput unavailable")
+                },
+            )
+            .await;
+
+        assert_eq!(ready, Ok(false));
+        assert_eq!(*created.lock().unwrap(), Some((2880, 3601)));
+        assert_eq!(*backend.desktop_size.lock().unwrap(), Some((2880, 3601)));
+    }
+
+    #[tokio::test]
+    async fn first_pointer_without_a_cached_capture_takes_one() {
+        let backend = ComputerUseLinux::default();
+        let created = Arc::new(Mutex::new(None));
+        let seen = created.clone();
+
+        let ready = backend
+            .ensure_abs_pointer_with(
+                true,
+                || async { Some((2880, 1800)) },
+                move |width, height| {
+                    *seen.lock().unwrap() = Some((width, height));
+                    anyhow::bail!("uinput unavailable")
+                },
+            )
+            .await;
+
+        assert_eq!(ready, Ok(false));
+        assert_eq!(*created.lock().unwrap(), Some((2880, 1800)));
+        assert_eq!(*backend.desktop_size.lock().unwrap(), Some((2880, 1800)));
+
+        // Outside Umbriel a first device still takes its own capture.
+        let backend = ComputerUseLinux::default();
+        backend.cache_desktop_size(1920, 1080);
+        let created = Arc::new(Mutex::new(None));
+        let seen = created.clone();
+        let _ = backend
+            .ensure_abs_pointer_with(
+                false,
+                || async { Some((3840, 1080)) },
+                move |width, height| {
+                    *seen.lock().unwrap() = Some((width, height));
+                    anyhow::bail!("uinput unavailable")
+                },
+            )
+            .await;
+        assert_eq!(*created.lock().unwrap(), Some((3840, 1080)));
+
+        // A failed capture creates no device and leaves the other routes.
+        let backend = ComputerUseLinux::default();
+        let ready = backend
+            .ensure_abs_pointer_with(
+                true,
+                || async { None },
+                |_, _| panic!("no device without a capture size"),
+            )
+            .await;
+        assert_eq!(ready, Ok(false));
+    }
+
+    fn umbriel_window_with_bounds(x: i32, y: i32) -> crate::windowing::WindowInfo {
+        let mut window = window_info(7, Some("Files"), None, None, None);
+        window.backend = crate::windowing::backends::umbriel::UMBRIEL_BACKEND.to_string();
+        window.bounds = Some(WindowBounds {
+            x: Some(x),
+            y: Some(y),
+            width: 800,
+            height: 600,
+        });
+        window
+    }
+
+    #[tokio::test]
+    async fn first_umbriel_window_relative_action_maps_against_the_capture_it_primes() {
+        let backend = ComputerUseLinux::default();
+        let captures = Arc::new(Mutex::new(0));
+        let count = captures.clone();
+
+        // Nothing is cached, so the mapping takes the capture itself, and
+        // the window is listed again for that capture's size.
+        let window = window_for_primed_capture(
+            backend.capture_space_rect_with(|| async move {
+                *count.lock().unwrap() += 1;
+                Some((2880, 3601))
+            }),
+            |width, height| async move {
+                assert_eq!((width, height), (2880, 3601));
+                Ok(umbriel_window_with_bounds(100, 1900))
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(*captures.lock().unwrap(), 1);
+        assert_eq!(window.bounds.unwrap().y, Some(1900));
+        assert_eq!(*backend.desktop_size.lock().unwrap(), Some((2880, 3601)));
+
+        // The pointer that follows is sized from that same capture.
+        let created = Arc::new(Mutex::new(None));
+        let seen = created.clone();
+        let _ = backend
+            .ensure_abs_pointer_with(
+                true,
+                || async { panic!("the pointer must use the capture the point was mapped in") },
+                move |width, height| {
+                    *seen.lock().unwrap() = Some((width, height));
+                    anyhow::bail!("uinput unavailable")
+                },
+            )
+            .await;
+        assert_eq!(*created.lock().unwrap(), Some((2880, 3601)));
+    }
+
+    #[tokio::test]
+    async fn first_umbriel_window_relative_action_is_refused_when_the_capture_fails() {
+        let backend = ComputerUseLinux::default();
+        let error = window_for_primed_capture(
+            backend.capture_space_rect_with(|| async { None }),
+            |_, _| async { panic!("bounds must not be read without a capture") },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.contains("Could not determine screenshot dimensions"),
+            "{error}"
+        );
+        assert!(backend.desktop_size.lock().unwrap().is_none());
+
+        // Bounds that cannot be read for the capture refuse the call too.
+        let error = window_for_primed_capture(
+            backend.capture_space_rect_with(|| async { Some((2880, 1800)) }),
+            |_, _| async { anyhow::bail!("Umbriel no longer lists window_id 7") },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.contains("Could not read target-window bounds for this capture"),
+            "{error}"
+        );
     }
 
     #[test]
