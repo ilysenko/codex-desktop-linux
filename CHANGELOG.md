@@ -7,6 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.57. The
+  crate and the `server.rs` literal are 0.7.57, the standalone version.
+  `type_text` and `press_key` take `delivery: "background"`, which reaches the
+  target without moving the user's keyboard focus: an element from
+  `get_app_state` through AT-SPI EditableText or its action, a browser tab over
+  DevTools when `CODEX_COMPUTER_USE_DEVTOOLS` (or the standalone
+  `COMPUTER_USE_LINUX_DEVTOOLS`) names a loopback port or a
+  `DevToolsActivePort` file, and a terminal by tty through kitty remote control,
+  `wezterm cli`, tmux, GNU screen, TIOCSTI or the pty master. Where the desktop
+  ships a second seat (an XInput 2 master on X11, an `ext-transient-seat-v1`
+  seat on sway 1.10 and later, `sendkeystate` on Hyprland), a whole window
+  takes keys through the agent's own seat, and `click` and `scroll` take
+  `delivery: "background"` for the agent pointer on sway and on X11 without a
+  window manager; a successful agent-seat click or scroll moves the avatar
+  cursor. The X11 agent master is named `codex-computer-use-linux agent <id>`.
+  The first background call in a session that no route can serve sends nothing
+  and explains why; repeating it goes through normal focused input. `doctor`
+  reports `capabilities.background_input` and `capabilities.background_seat`.
+  `press_key` accepts `KP_Enter`.
 - Synchronize the embedded Computer Use backend to standalone v0.7.56. The
   crate and the `server.rs` literal are 0.7.56, the standalone version. On
   Umbriel, screenshots capture every output with `dms screenshot all` when the

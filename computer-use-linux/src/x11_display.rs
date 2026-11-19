@@ -83,7 +83,7 @@ where
 
 /// The deadline is enforced in the transport itself, including handshake and
 /// every reply. Timing out a JoinHandle would leave its blocking task alive.
-struct DeadlineStream {
+pub(crate) struct DeadlineStream {
     inner: DefaultStream,
     deadline: Mutex<Instant>,
 }
@@ -221,6 +221,23 @@ pub(crate) struct X11Display {
     conn: RustConnection<DeadlineStream>,
     root: Window,
     screen: usize,
+}
+
+impl X11Display {
+    /// The connection, for callers that keep one open across calls.
+    pub(crate) fn conn(&self) -> &RustConnection<DeadlineStream> {
+        &self.conn
+    }
+
+    pub(crate) fn root(&self) -> Window {
+        self.root
+    }
+
+    /// Moves the transport deadline to limit from now, so a long-lived
+    /// connection stays bounded per call.
+    pub(crate) fn extend_deadline(&self, limit: Duration) {
+        *self.conn.stream().deadline.lock().unwrap() = Instant::now() + limit;
+    }
 }
 
 /// Observe layout and focus events for the complete xdotool dispatch. Unlike

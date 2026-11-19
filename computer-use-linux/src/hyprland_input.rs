@@ -165,6 +165,7 @@ pub fn chord_to_key_press(chord: &str) -> Option<KeyPress> {
 fn named_key(part: &str) -> Option<String> {
     let name = match part {
         "enter" | "return" => "Return",
+        "kpenter" | "kp_enter" => "KP_Enter",
         "escape" | "esc" => "Escape",
         "tab" => "Tab",
         "backspace" => "BackSpace",

@@ -1156,6 +1156,8 @@ pub(crate) enum FocusedTextInsert {
     NotEditable(String),
     /// No text was changed. The focused element is a password field.
     PasswordField,
+    /// A named password field took the text; it cannot be read back.
+    PasswordUnverifiable,
     /// The app took the edit, but the field does not read back the text at
     /// the insertion point.
     Mismatch {
@@ -1242,7 +1244,183 @@ pub(crate) async fn insert_text_at_focus_on(
         .proxies()
         .await
         .context("failed to read the focused element's interfaces")?;
-    insert_text_with_proxies(&proxy, &proxies, &summary, text).await
+    insert_text_with_proxies(&proxy, &proxies, &summary, text, InsertMode::Focused).await
+}
+
+/// Where an AT-SPI text insert goes: the focused field of the window being
+/// typed into, or an element the call named, which may not have focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InsertMode {
+    Focused,
+    Named,
+}
+
+impl InsertMode {
+    fn noun(self) -> &'static str {
+        match self {
+            InsertMode::Focused => "focused",
+            InsertMode::Named => "named",
+        }
+    }
+}
+
+/// Insert `text` into the element `object_ref_id` names, without focusing
+/// it, through AT-SPI EditableText, and read it back. The text goes in at the
+/// element's caret, or at its end when the caret is not in it; a selection
+/// is left alone and the caret is not moved. A line feed or tab goes in only
+/// when the element is multi-line; other control characters are refused. A
+/// password field gets the text with no readback.
+pub(crate) async fn insert_text_into_element(
+    object_ref_id: &str,
+    text: &str,
+) -> Result<FocusedTextInsert> {
+    let conn = connect().await?;
+    let object_ref = object_ref_from_id(object_ref_id)?;
+    let proxy = open_accessible(&conn, &object_ref)
+        .await
+        .with_context(|| format!("failed to open AT-SPI object {object_ref_id}"))?;
+    let proxies = proxy
+        .proxies()
+        .await
+        .context("failed to read the element's interfaces")?;
+    let deadline = Instant::now() + ACTION_QUERY_TIMEOUT;
+    let role = read_before_edit(deadline, proxy.get_role(), "role").await?;
+    let state = read_before_edit(deadline, proxy.get_state(), "states").await?;
+    let summary = FocusedElementSummary {
+        role: role_name(&proxy).await,
+        name: optional_string(proxy.name().await.ok()),
+        editable: supports_editable_text(Some(&proxies)).await,
+        states: state_labels(state),
+        is_terminal: role == atspi::Role::Terminal,
+    };
+    let multi_line = state.contains(atspi::State::MultiLine);
+    if let Some(ch) = text
+        .chars()
+        .find(|ch| ch.is_control() && !(multi_line && (*ch == '\n' || *ch == '\t')))
+    {
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the text has U+{:04X}, which the named {} would not take as text; send the key with press_key",
+            ch as u32, summary.role
+        )));
+    }
+    if role == atspi::Role::PasswordText {
+        return insert_password_text(&proxy, &proxies, &summary, text, deadline).await;
+    }
+    insert_text_with_proxies(&proxy, &proxies, &summary, text, InsertMode::Named).await
+}
+
+/// A password field's text cannot be read back, so the insert is sent at the
+/// caret (or the end) and reported as unverifiable, as set_value does.
+async fn insert_password_text(
+    proxy: &AccessibleProxy<'_>,
+    proxies: &Proxies<'_>,
+    summary: &FocusedElementSummary,
+    requested: &str,
+    deadline: Instant,
+) -> Result<FocusedTextInsert> {
+    if !summary.states.iter().any(|state| state == "editable") {
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the named {} is not editable",
+            summary.role
+        )));
+    }
+    let Ok(editable) = proxies.editable_text().await else {
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the named {} does not expose AT-SPI EditableText",
+            summary.role
+        )));
+    };
+    // Without Text the insertion point is unknown, and SetTextContents would
+    // replace whatever the field holds.
+    let Ok(text) = proxies.text().await else {
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the named {} does not expose AT-SPI Text, so its insertion point is unknown",
+            summary.role
+        )));
+    };
+    let count = read_before_edit(deadline, text.character_count(), "character count").await?;
+    let caret = read_before_edit(deadline, text.caret_offset(), "caret offset").await?;
+    let call = if count <= 0 {
+        edit_call(editable.set_text_contents(requested), "SetTextContents").await
+    } else {
+        let point = if (0..=count).contains(&caret) {
+            caret
+        } else {
+            count
+        };
+        let length = match insert_text_length(proxy, requested, deadline).await {
+            Ok(length) => length,
+            Err(reason) => return Ok(FocusedTextInsert::NotEditable(reason)),
+        };
+        edit_call(editable.insert_text(point, requested, length), "InsertText").await
+    };
+    Ok(match call {
+        Ok(()) => FocusedTextInsert::PasswordUnverifiable,
+        Err(EditCallError::Refused) => FocusedTextInsert::EditFailed {
+            reason: "the app refused the password field edit".to_string(),
+            may_have_changed: false,
+        },
+        Err(EditCallError::Failed(reason)) => FocusedTextInsert::EditFailed {
+            reason,
+            may_have_changed: true,
+        },
+    })
+}
+
+/// Role, state names and action names of the element `object_ref_id` names,
+/// read live, for mapping a key to its action.
+pub(crate) async fn element_role_states_actions(
+    object_ref_id: &str,
+) -> Result<(String, Vec<String>, Vec<String>)> {
+    timeout(ACTION_QUERY_TIMEOUT, async {
+        let conn = connect().await?;
+        let object_ref = object_ref_from_id(object_ref_id)?;
+        let proxy = open_accessible(&conn, &object_ref)
+            .await
+            .with_context(|| format!("failed to open AT-SPI object {object_ref_id}"))?;
+        let states = state_labels(proxy.get_state().await.context("failed to read states")?);
+        let actions = match proxy.proxies().await?.action().await {
+            Ok(action) => read_actions(&action)
+                .await?
+                .into_iter()
+                .map(|action| action.name)
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        Ok::<_, anyhow::Error>((role_name(&proxy).await, states, actions))
+    })
+    .await
+    .context("reading the element exceeded its 5-second deadline")?
+}
+
+/// Gives `object_ref_id` the keyboard focus of its window through AT-SPI
+/// Component.GrabFocus, so focused input to that window reaches it.
+pub(crate) async fn focus_element(object_ref_id: &str) -> Result<()> {
+    timeout(ACTION_QUERY_TIMEOUT, async {
+        let conn = connect().await?;
+        let object_ref = object_ref_from_id(object_ref_id)?;
+        let proxy = open_accessible(&conn, &object_ref)
+            .await
+            .with_context(|| format!("failed to open AT-SPI object {object_ref_id}"))?;
+        let component = proxy
+            .proxies()
+            .await?
+            .component()
+            .await
+            .context("the element has no AT-SPI Component, so it cannot take keyboard focus")?;
+        if !component
+            .grab_focus()
+            .await
+            .context("AT-SPI GrabFocus failed")?
+        {
+            return Err(anyhow!(
+                "the element did not take keyboard focus (AT-SPI GrabFocus returned false)"
+            ));
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("focusing the element exceeded its 5-second deadline")?
 }
 
 /// The AT-SPI window of the app owning `target_pid` that matches the verified
@@ -1394,37 +1572,39 @@ async fn insert_text_with_proxies(
     proxies: &Proxies<'_>,
     summary: &FocusedElementSummary,
     requested: &str,
+    mode: InsertMode,
 ) -> Result<FocusedTextInsert> {
     let deadline = Instant::now() + ACTION_QUERY_TIMEOUT;
+    let what = mode.noun();
     let role = read_before_edit(deadline, proxy.get_role(), "role").await?;
     if role == atspi::Role::PasswordText || summary.role.to_ascii_lowercase().contains("password") {
         return Ok(FocusedTextInsert::PasswordField);
     }
     if summary.is_terminal || role == atspi::Role::Terminal {
-        return Ok(FocusedTextInsert::NotEditable(
-            "the focused element is a terminal".to_string(),
-        ));
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the {what} element is a terminal"
+        )));
     }
     if matches!(role, atspi::Role::Invalid | atspi::Role::Unknown) {
-        return Ok(FocusedTextInsert::NotEditable(
-            "the focused element's role does not show whether it hides input".to_string(),
-        ));
+        return Ok(FocusedTextInsert::NotEditable(format!(
+            "the {what} element's role does not show whether it hides input"
+        )));
     }
     if !summary.states.iter().any(|state| state == "editable") {
         return Ok(FocusedTextInsert::NotEditable(format!(
-            "the focused {} is not editable",
+            "the {what} {} is not editable",
             summary.role
         )));
     }
     let Ok(editable) = proxies.editable_text().await else {
         return Ok(FocusedTextInsert::NotEditable(format!(
-            "the focused {} does not expose AT-SPI EditableText",
+            "the {what} {} does not expose AT-SPI EditableText",
             summary.role
         )));
     };
     let Ok(text) = proxies.text().await else {
         return Ok(FocusedTextInsert::NotEditable(format!(
-            "the focused {} does not expose AT-SPI Text, so the result could not be read back",
+            "the {what} {} does not expose AT-SPI Text, so the result could not be read back",
             summary.role
         )));
     };
@@ -1433,6 +1613,17 @@ async fn insert_text_with_proxies(
     let selections =
         read_before_edit(deadline, text_selection_count(&text), "selection count").await?;
     let (start, end) = match selections {
+        // A named element is not being typed into: its caret marks the
+        // insertion point (the end when it has none) and a selection it
+        // kept from earlier is left alone.
+        _ if mode == InsertMode::Named => {
+            let point = if (0..=count).contains(&caret) {
+                caret
+            } else {
+                count
+            };
+            (point, point)
+        }
         ..=0 => (caret, caret),
         1 => {
             let (a, b) = read_before_edit(deadline, text.get_selection(0), "selection").await?;
@@ -1519,16 +1710,23 @@ async fn insert_text_with_proxies(
         }
     }
 
-    verify_inserted_text(&text, start, count - (end - start), requested, &untouched)
-        .await
-        .map(|outcome| match outcome {
-            InsertReadback::Verified { caret_after_text } => FocusedTextInsert::Verified {
-                role: summary.role.clone(),
-                replaced_selection,
-                caret_after_text,
-            },
-            InsertReadback::Other(outcome) => outcome,
-        })
+    verify_inserted_text(
+        &text,
+        start,
+        count - (end - start),
+        requested,
+        &untouched,
+        mode == InsertMode::Focused,
+    )
+    .await
+    .map(|outcome| match outcome {
+        InsertReadback::Verified { caret_after_text } => FocusedTextInsert::Verified {
+            role: summary.role.clone(),
+            replaced_selection,
+            caret_after_text,
+        },
+        InsertReadback::Other(outcome) => outcome,
+    })
 }
 
 enum EditCallError {
@@ -1653,6 +1851,7 @@ async fn verify_inserted_text(
     kept: i32,
     requested: &str,
     untouched: &UntouchedText,
+    move_caret: bool,
 ) -> Result<InsertReadback> {
     let deadline = Instant::now() + EDITABLE_TEXT_VERIFY_TIMEOUT;
     let scalars = requested.chars().count() as i64;
@@ -1698,6 +1897,9 @@ async fn verify_inserted_text(
                 let caret_after_text =
                     match readback_within(caret_deadline, text.caret_offset()).await {
                         Ok(caret) if caret == after => true,
+                        // Moving the caret of an element that is not
+                        // being typed into can focus it inside its app.
+                        _ if !move_caret => false,
                         _ => matches!(
                             readback_within(caret_deadline, text.set_caret_offset(after)).await,
                             Ok(true)

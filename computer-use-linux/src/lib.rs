@@ -1,8 +1,11 @@
 pub mod abs_pointer;
 mod accessibility_guard;
+mod agent_seat;
 pub mod atspi_tree;
+mod background_input;
 mod cli;
 mod command_runner;
+mod devtools;
 mod diagnostics_cache;
 mod ei_input;
 mod http_listen;

@@ -105,6 +105,17 @@ pub struct CapabilityMap {
     pub accessibility: Vec<String>,
     /// Display/session isolation contexts the host can provide.
     pub isolation: Vec<String>,
+    /// Routes for type_text and press_key with delivery "background", which
+    /// leave the user's keyboard focus alone: at_spi (named elements),
+    /// devtools (a browser tab, when CODEX_COMPUTER_USE_DEVTOOLS names a
+    /// port), for terminals kitty, wezterm, tmux, screen and tiocsti, and
+    /// hyprland when Hyprland background mode is on, and
+    /// seat (a whole window through the agent's own keyboard focus).
+    pub background_input: Vec<String>,
+    /// The agent seat on this desktop: its route (x11-master,
+    /// sway-transient-seat or hyprland-send-key-state) and pointer support,
+    /// or the reason it has none.
+    pub background_seat: serde_json::Value,
     /// The backend the tool will use by default for each selectable layer.
     pub preferred: PreferredBackends,
 }
@@ -477,12 +488,17 @@ fn capability_map_with_portal_keyboard(
         window_control: window_backends.first().cloned(),
     };
 
+    let background_input =
+        crate::background_input::available_routes(!accessibility_backends.is_empty());
+
     CapabilityMap {
         input: input_backends,
         screenshot: screenshot_backends,
         window_control: window_backends,
         accessibility: accessibility_backends,
         isolation,
+        background_input,
+        background_seat: crate::agent_seat::doctor_summary(),
         preferred,
     }
 }

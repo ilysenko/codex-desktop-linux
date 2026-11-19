@@ -138,7 +138,8 @@ pub(crate) async fn serve_http(server: ComputerUseLinux, config: ListenConfig) -
     let service = StreamableHttpService::new(
         {
             let server = server.clone();
-            move || Ok(server.clone())
+            // Each MCP session gets its own one-time background notice.
+            move || Ok(server.for_new_session())
         },
         Arc::new(session_manager),
         http_config,
