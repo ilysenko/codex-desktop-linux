@@ -86,11 +86,12 @@ test("the signed baseline owns approved quit completion and shell startup", {
   const localApproval = `${quitState}.markQuitApproved()`;
   const quittingTransition = `${windows}.markAppQuitting()`;
   assert.equal(handlerBody.split(approvalGate).length - 1, 1);
-  assert.equal(handlerBody.split(pendingCheck).length - 1, 1);
+  const pendingMatches = [...handlerBody.matchAll(new RegExp(`(?<![\\w$.])${pending}\\(\\)`, "g"))];
+  assert.equal(pendingMatches.length, 1);
   assert.equal(handlerBody.split(localApproval).length - 1, 1);
   assert.equal(handlerBody.split(quittingTransition).length - 1, 1);
-  assert.ok(handlerBody.indexOf(approvalGate) < handlerBody.indexOf(pendingCheck));
-  assert.ok(handlerBody.indexOf(pendingCheck) < handlerBody.indexOf(localApproval));
+  assert.ok(handlerBody.indexOf(approvalGate) < pendingMatches[0].index);
+  assert.ok(pendingMatches[0].index < handlerBody.indexOf(localApproval));
   assert.ok(handlerBody.indexOf(localApproval) < handlerBody.indexOf(quittingTransition));
 
   const shellOwner = uniqueOwner([

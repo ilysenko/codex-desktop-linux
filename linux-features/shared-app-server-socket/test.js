@@ -2037,6 +2037,39 @@ test("patch rejects retired, duplicate, and mixed transport layouts", () => {
   }
 });
 
+test("current-shape idempotence rejects partial, duplicate, and mixed insertions", () => {
+  const current = 'class NativeLocal{connect(){return new n.Cn({hostConfig:this.options.hostConfig,' +
+    'websocketUrl:"ws://localhost/rpc",createConnection:()=>stream})}}' +
+    'const create=function(e,h,o){let{isPackaged:p=!1,...r}=e.options;return new n.Cn({' +
+    'getConfigOverrides:async()=>{let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}';
+  const patched = applySharedAppServerSocketPatch(current);
+  assert.notEqual(patched, current);
+  assert.equal(applySharedAppServerSocketPatch(patched), patched);
+  const branchStart = patched.indexOf("if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET");
+  const branchEnd = patched.indexOf("return new n.Cn(", branchStart);
+  assert.ok(branchStart >= 0 && branchEnd > branchStart);
+  const branch = patched.slice(branchStart, branchEnd);
+  const cases = [
+    patched.slice(0, branchStart) + patched.slice(branchEnd),
+    patched.replace("class CodexLinuxSharedAppServerSocketTransport", "class IncompleteTransport"),
+    `${patched}class CodexLinuxSharedAppServerSocketTransport{}`,
+    patched.slice(0, branchEnd) + branch + patched.slice(branchEnd),
+    current + patched,
+  ];
+  for (const source of cases) {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      assert.equal(applySharedAppServerSocketPatch(source), source);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /incomplete or ambiguous current shared app-server socket patch state/i);
+  }
+});
+
 test("patch leaves unsupported bundle shapes unchanged", () => {
   const warnings = [];
   const originalWarn = console.warn;

@@ -176,32 +176,64 @@ function currentSharedTransportClassSource(webSocketTransport) {
     `createConnection:()=>this.createProxyStream()}).connect())}}`;
 }
 
-function applyCurrentSharedAppServerSocketPatch(source) {
-  if (source.includes("class CodexLinuxSharedAppServerSocketTransport")) return source;
-  const daemon = /new ([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\(\{hostConfig:this\.options\.hostConfig,websocketUrl:"ws:\/\/localhost\/rpc",createConnection:/u.exec(source);
-  if (daemon == null) return source;
-  if (source.slice(daemon.index + daemon[0].length).match(/new [A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\(\{hostConfig:this\.options\.hostConfig,websocketUrl:"ws:\/\/localhost\/rpc",createConnection:/u)) {
-    console.warn("WARN: Found ambiguous current local app-server WebSocket transport");
-    return source;
+const CURRENT_DAEMON_PATTERN = /new ([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\(\{hostConfig:this\.options\.hostConfig,websocketUrl:"ws:\/\/localhost\/rpc",createConnection:/gu;
+const CURRENT_FACTORY_PATTERN = /function\((?<options>[A-Za-z_$][\w$]*),(?<host>[A-Za-z_$][\w$]*),(?<overrides>[A-Za-z_$][\w$]*)\)\{let\{isPackaged:(?<packaged>[A-Za-z_$][\w$]*)=!1,\.\.\.(?<rest>[A-Za-z_$][\w$]*)\}=\k<options>\.options;/gu;
+const CURRENT_CONFIGURE_PATTERN = /getConfigOverrides:async\(\)=>\{let\{overrides:([A-Za-z_$][\w$]*),windowsFrameworkRoot:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\(\);return\(0,([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\(\2\),\1\}/gu;
+
+function currentSharedAppServerSocketContract(source) {
+  const daemons = [...source.matchAll(CURRENT_DAEMON_PATTERN)];
+  const factories = [...source.matchAll(CURRENT_FACTORY_PATTERN)];
+  const markerCount = source.split("class CodexLinuxSharedAppServerSocketTransport").length - 1;
+  if (daemons.length === 0 && factories.length === 0) return { state: "absent" };
+  if (daemons.length !== 1 || factories.length !== 1) {
+    return { state: "drifted", reason: `found ${daemons.length} local transports and ${factories.length} factories` };
   }
-  const factory = /function\((?<options>[A-Za-z_$][\w$]*),(?<host>[A-Za-z_$][\w$]*),(?<overrides>[A-Za-z_$][\w$]*)\)\{let\{isPackaged:(?<packaged>[A-Za-z_$][\w$]*)=!1,\.\.\.(?<rest>[A-Za-z_$][\w$]*)\}=\k<options>\.options;return new /u.exec(source);
-  if (factory == null) return source;
-  const configure = /getConfigOverrides:async\(\)=>\{let\{overrides:([A-Za-z_$][\w$]*),windowsFrameworkRoot:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\(\);return\(0,([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\(\2\),\1\}/u.exec(source.slice(factory.index));
-  if (configure == null || configure[3] !== factory.groups.overrides) return source;
-  const classAnchor = source.lastIndexOf("class ", daemon.index);
-  if (classAnchor < 0) return source;
+  const [daemon] = daemons;
+  const [factory] = factories;
+  const configures = [...source.slice(factory.index).matchAll(CURRENT_CONFIGURE_PATTERN)];
+  if (configures.length !== 1 || configures[0][3] !== factory.groups.overrides) {
+    return { state: "drifted", reason: `config override callback found ${configures.length}` };
+  }
+  const [configure] = configures;
   const classSource = currentSharedTransportClassSource(daemon[1]);
   const branch = `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&${factory.groups.host}.kind===\`local\`&&${factory.groups.host}.id===\`local\`)` +
     `return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async()=>{` +
     `let{overrides:e,windowsFrameworkRoot:t}=await ${factory.groups.overrides}();return(0,${configure[4]})(t),e});`;
-  const insertAt = factory.index + factory[0].length - "return new ".length;
+  const classCount = source.split(classSource).length - 1;
+  const branchCount = source.split(branch).length - 1;
+  const factoryTail = source.slice(factory.index + factory[0].length);
+  if (markerCount === 0 && classCount === 0 && branchCount === 0 && factoryTail.startsWith("return new ")) {
+    return { state: "current", daemon, factory, classSource, branch };
+  }
+  if (markerCount === 1 && classCount === 1 && branchCount === 1 &&
+      factoryTail.startsWith(`${branch}return new `)) {
+    return { state: "patched", daemon, factory, classSource, branch };
+  }
+  return { state: "drifted", reason: `found markers ${markerCount}, complete classes ${classCount}, and branches ${branchCount}` };
+}
+
+function applyCurrentSharedAppServerSocketPatch(source, contract = currentSharedAppServerSocketContract(source)) {
+  if (contract.state === "absent" || contract.state === "patched") return source;
+  if (contract.state !== "current") {
+    console.warn(`WARN: Found incomplete or ambiguous current shared app-server socket patch state: ${contract.reason}`);
+    return source;
+  }
+  const { daemon, factory, classSource, branch } = contract;
+  const classAnchor = source.lastIndexOf("class ", daemon.index);
+  if (classAnchor < 0) {
+    console.warn("WARN: Could not find the current local app-server transport class");
+    return source;
+  }
+  const insertAt = factory.index + factory[0].length;
   const withBranch = source.slice(0, insertAt) + branch + source.slice(insertAt);
   return withBranch.slice(0, classAnchor) + classSource + withBranch.slice(classAnchor);
 }
 
 function applySharedAppServerSocketPatch(source) {
-  const current = applyCurrentSharedAppServerSocketPatch(source);
-  if (current !== source || current.includes("class CodexLinuxSharedAppServerSocketTransport")) return current;
+  const currentContract = currentSharedAppServerSocketContract(source);
+  if (currentContract.state !== "absent") {
+    return applyCurrentSharedAppServerSocketPatch(source, currentContract);
+  }
   if (!source.includes("selected app-server transport") || !source.includes("AppServerTransportSshWebsocket")) {
     return source;
   }

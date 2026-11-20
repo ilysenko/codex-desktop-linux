@@ -74,8 +74,8 @@ function fontPickerContract(source) {
   ));
   const label = uniqueMatch(body, new RegExp(
     `\\(0,(?<jsx>${IDENT})\\.jsx\\)\\((?<message>${MEMBER}),` +
-    `\\{id:"${escaped(CUSTOM_VALUE_MESSAGE_ID)}",defaultMessage:"[^"]*",` +
-    `description:"[^"]*"\\}\\)`, "g",
+    `\\{id:"${escaped(CUSTOM_VALUE_MESSAGE_ID)}",defaultMessage:"[^"]*"` +
+    `(?:,description:"[^"]*")?\\}\\)`, "g",
   ));
   if (!cache || !hooks || !gate || !label) return null;
   const { cache: memo, size } = cache.groups;

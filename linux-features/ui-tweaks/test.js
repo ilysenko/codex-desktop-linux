@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const zlib = require("node:zlib");
 
 require("./suggested-prompts.test.js");
 require("./dock-icon.test.js");
@@ -245,13 +246,17 @@ function createUiFontSizeExtractedApp() {
   const targets = [
     path.join(buildDir, "early-bootstrap.js"),
     path.join(buildDir, "worker.js"),
+    path.join(buildDir, "utility-worker.js"),
+    path.join(buildDir, "app-server-host.js"),
+    path.join(buildDir, "background.js"),
+    path.join(buildDir, "bootstrap-helper.js"),
     path.join(webviewDir, "async", "545104.c407c1f749.js"),
     path.join(webviewDir, "async", "976185.66c52a7f23.js"),
   ];
   for (const [index, target] of targets.entries()) {
     fs.writeFileSync(
       target,
-      index < 3 ? uiFontSizeMainProcessFixture() : uiFontSizeBundleFixture(),
+      index < 7 ? uiFontSizeMainProcessFixture() : uiFontSizeBundleFixture(),
     );
   }
   fs.writeFileSync(path.join(buildDir, "early-bootstrap-916-0123456789abcdef.js"), "console.log('chunk');");
@@ -330,6 +335,7 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:home-suggested-prompts-feature-sync", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-app-page", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-work-page", "webview-asset", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
         ["feature:ui-tweaks:appearance-custom-font-input", "webview-asset", "optional"],
         ["feature:ui-tweaks:selected-text-more-details", "extracted-app:post-webview", "optional"],
@@ -398,7 +404,7 @@ test("UI font size tweak atomically patches all four current runtime registries"
     assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
     for (const [index, target] of targets.entries()) {
       const source = fs.readFileSync(target, "utf8");
-      assert.match(source, index < 3 ? /rZ=32\/\*/ : /sans:\{min:11,max:32\/\*/);
+      assert.match(source, index < 7 ? /rZ=32\/\*/ : /sans:\{min:11,max:32\/\*/);
       assert.match(source, new RegExp(UI_FONT_SIZE_RUNTIME_MARKER));
     }
     const registry = evaluateMainProcessFontSizeRegistry(fs.readFileSync(targets[0], "utf8"));
@@ -475,7 +481,7 @@ test("UI font size discovery finds the signed official main and rspack webview r
   assert.equal(discovery.reason, null);
   assert.equal(discovery.candidates.length, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
   const relative = discovery.candidates.map(({ filePath }) => path.relative(root, filePath));
-  assert.equal(relative.filter((name) => name.startsWith(path.join(".vite", "build"))).length, 2);
+  assert.equal(relative.filter((name) => name.startsWith(path.join(".vite", "build"))).length, 6);
   assert.equal(relative.filter((name) => name.startsWith(path.join("webview", "assets", "async"))).length, 2);
   for (const { source, state } of discovery.candidates) {
     assert.equal(state, "current");
@@ -892,18 +898,46 @@ test("reasoning effort descriptor rejects missing, duplicate and mismatched loca
   }
 });
 
-test("reasoning effort labels apply to the signed official Simplified Chinese locale", {
+test("reasoning effort labels apply to the signed official compressed Simplified Chinese locale", {
   skip: process.env.CODEX_SIGNED_EXTRACTED_APP ? false : "CODEX_SIGNED_EXTRACTED_APP is not set",
-}, () => {
-  const { findZhCnLocaleAsset } = require("./patches/reasoning-effort-labels.js");
-  const locale = findZhCnLocaleAsset(process.env.CODEX_SIGNED_EXTRACTED_APP);
-  assert.ok(locale.source.includes('"composer.mode.local.reasoning.none.label":"无"'));
-  const patched = applyEnglishReasoningLabels(locale.source, { warnOnMissingMarkers: true });
-  assert.notEqual(patched, locale.source);
-  for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
-    assert.ok(patched.includes(`"${key}":"${label}"`), key);
+}, (t) => {
+  const signed = process.env.CODEX_SIGNED_EXTRACTED_APP;
+  const signedAssets = path.join(signed, "webview", "assets");
+  const names = ["", "async"].flatMap((directory) => fs.readdirSync(path.join(signedAssets, directory))
+    .filter((name) => name.endsWith(".js"))
+    .map((name) => directory ? `${directory}/${name}` : name));
+  const loaders = names.filter((name) =>
+    fs.readFileSync(path.join(signedAssets, name), "utf8").includes('"../locales/zh-CN.json":'));
+  assert.equal(loaders.length, 1);
+  const loaderSource = fs.readFileSync(path.join(signedAssets, loaders[0]), "utf8");
+  const loader = /"\.\.\/locales\/zh-CN\.json":function\(\)\{return ([\w$]+)\.e\((\d+)\)\.then\(\1\.bind\(\1,"([^"\\]+)"\)\)\}/.exec(loaderSource);
+  assert.ok(loader);
+  const chunks = names.filter((name) => new RegExp(`^async/${loader[2]}\\.[0-9a-f]+\\.js$`).test(name));
+  assert.equal(chunks.length, 1);
+  const chunkSource = fs.readFileSync(path.join(signedAssets, chunks[0]), "utf8");
+  const catalogs = [...chunkSource.matchAll(/"(assets\/locales\/(?:keys|zh-CN)[^"\\]+\.json\.codex-gzip)"/g)]
+    .map((match) => match[1]);
+  assert.equal(catalogs.length, 2);
+
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), "ui-tweaks-current-zh-cn-"));
+  t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
+  for (const relative of [loaders[0], chunks[0]].map((name) => path.join("webview", "assets", name))
+    .concat(catalogs.map((name) => path.join("webview", name)))) {
+    const target = path.join(copy, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(signed, relative), target);
   }
-  assert.equal(applyEnglishReasoningLabels(patched), patched);
+  const descriptor = require("./patch.js").descriptors.find((entry) =>
+    entry.id === "reasoning-effort-labels-english");
+  const applied = descriptor.apply(copy, {});
+  assert.equal(applied.matched, 1);
+  assert.equal(applied.changed, 1);
+  const keys = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(copy, "webview", catalogs[0]))));
+  const values = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(copy, "webview", catalogs[1]))));
+  for (const [key, label] of Object.entries(ENGLISH_REASONING_LABELS)) {
+    assert.equal(values[keys.indexOf(key)], label, key);
+  }
+  assert.equal(descriptor.apply(copy, {}).changed, 0);
 });
 
 test("reasoning effort label drift warns and leaves the asset unchanged", () => {
@@ -1099,11 +1133,6 @@ test("feature settings override the tracked defaults through features.json", () 
     assert.equal(uiFontSizeDescriptor.enabled({}), true);
     const fontSizeFixture = createUiFontSizeExtractedApp();
     try {
-      for (let index = 0; index < 4; index += 1) {
-        const target = path.join(fontSizeFixture.extractedDir, ".vite", "build", `current-copy-${index}.js`);
-        fs.writeFileSync(target, uiFontSizeMainProcessFixture());
-        fontSizeFixture.targets.push(target);
-      }
       const result = uiFontSizeDescriptor.apply(fontSizeFixture.extractedDir, {});
       assert.equal(result.changed, 8);
       for (const target of fontSizeFixture.targets) {

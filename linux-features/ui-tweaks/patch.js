@@ -41,7 +41,13 @@ function currentReasoningLabelsDescriptor() {
       const chunkNames = names.filter((name) => new RegExp(`^async/${chunk}\\.[0-9a-f]+\\.js$`).test(name));
       if (chunkNames.length !== 1) throw Error(`Expected one current Simplified Chinese locale chunk, found ${chunkNames.length}`);
       const source = fs.readFileSync(path.join(assetsDir, chunkNames[0]), "utf8");
-      const modulePattern = new RegExp(`(?:^|[,{])${moduleId}\\([^)]*\\)\\{[\\s\\S]{0,800}?Promise\\.all\\(\\[\\w+\\("(assets/locales/keys\\.[^"\\\\]+\\.json\\.codex-gzip)"\\),\\w+\\("(assets/locales/[^"\\\\]+\\.json\\.codex-gzip)"\\)\\]\\)`, "g");
+      const escapedModuleId = moduleId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const modulePattern = new RegExp(
+        `(?:^|[,{])(?:"${escapedModuleId}"|${escapedModuleId})(?::\\(function)?\\([^)]*\\)\\{` +
+          `[\\s\\S]{0,800}?Promise\\.all\\(\\[\\w+\\("(assets/locales/keys\\.[^"\\\\]+\\.json\\.codex-gzip)"\\),` +
+          `\\w+\\("(assets/locales/[^"\\\\]+\\.json\\.codex-gzip)"\\)\\]\\)`,
+        "g",
+      );
       const modules = [...source.matchAll(modulePattern)];
       if (modules.length !== 1) throw Error(`Expected one current Simplified Chinese compressed catalog, found ${modules.length}`);
       const [keysPath, valuesPath] = modules[0].slice(1).map((name) => path.join(extractedDir, "webview", name));
@@ -196,24 +202,29 @@ function normalizeCurrentQuickChatOwner(source) {
   const outerGroups = outerMatches[0].groups;
   const innerGroups = innerMatches[0].groups;
   let normalized = source.replace(outer, (...args) => {
+    const original = args[0];
     const groups = args.at(-1);
-    return `function ${groups.fn}(${groups.scope},{projectId:${groups.project}=null,projectName:${groups.name}=null,` +
+    const replacement = `function ${groups.fn}(${groups.scope},{projectId:${groups.project}=null,projectName:${groups.name}=null,` +
       `preservePreviousSession:${groups.preserve}=!1,previewSession:${groups.preview},...${groups.rest}}={}){` +
       `let ${groups.owner}=${groups.rest}.pageOwnerKey;`;
+    return selectedTextMoreDetails.normalizationReplacementSpan(original, replacement);
   });
   normalized = normalized.replace(inner, (...args) => {
+    const original = args[0];
     const groups = args.at(-1);
-    return `function(${groups.scope},{conversationId:${groups.conversation}=${groups.make},` +
+    const replacement = `function(${groups.scope},{conversationId:${groups.conversation}=${groups.make},` +
       `contextSourceThread:${groups.thread}=null,projectId:${groups.project}=null,projectName:${groups.name}=null,` +
       `preservePreviousSession:${groups.preserve}=!1,previewSession:${groups.preview}}={}){` +
       `let ${groups.owner}=${groups.preview}?.pageOwnerKey;`;
+    return selectedTextMoreDetails.normalizationReplacementSpan(original, replacement);
   });
   const forwardedOwner = `pageOwnerKey:${outerGroups.owner},previewSession:${outerGroups.preview}`;
   const forwardedCount = normalized.split(forwardedOwner).length - 1;
   if (forwardedCount !== 1) throw Error(`Expected one current Quick Chat owner forwarding call, found ${forwardedCount}`);
   normalized = normalized.replace(forwardedOwner,
-    `previewSession:null==${outerGroups.preview}?{pageOwnerKey:${outerGroups.owner}}:` +
-    `{...${outerGroups.preview},pageOwnerKey:${outerGroups.owner}}`);
+    selectedTextMoreDetails.normalizationReplacementSpan(forwardedOwner,
+      `previewSession:null==${outerGroups.preview}?{pageOwnerKey:${outerGroups.owner}}:` +
+      `{...${outerGroups.preview},pageOwnerKey:${outerGroups.owner}}`));
   if (normalized === source || outerGroups.owner === innerGroups.owner && outerGroups.rest === innerGroups.scope) {
     throw Error("Could not normalize the current Quick Chat owner contract");
   }
@@ -249,8 +260,10 @@ function normalizeCurrentQuickChatSessionSetter(source) {
   }
   if (calls.length !== 1) throw Error(`Expected one current Quick Chat initial session write, found ${calls.length}`);
   return source.replace(callPattern, (...args) => {
+    const original = args[0];
     const groups = args.at(-1);
-    return `${groups.scope}.set(${atom},${groups.object}),${setter}(${groups.scope},${groups.scope}.get(${atom}))`;
+    return selectedTextMoreDetails.normalizationReplacementSpan(original,
+      `${groups.scope}.set(${atom},${groups.object}),${setter}(${groups.scope},${groups.scope}.get(${atom}))`);
   });
 }
 
@@ -266,9 +279,11 @@ function normalizeCurrentQuickChatSubmission(source) {
   const calls = [...source.matchAll(callPattern)];
   if (calls.length === 1) {
     source = source.replace(callPattern, (...args) => {
+      const original = args[0];
       const groups = args.at(-1);
-      return `await (0,${groups.namespace}.submitChatGPTCompletion)(${groups.scope},` +
-        `{${groups.before}model:${groups.model}.slug,thinkingEffort:${groups.model}.thinkingEffort,${groups.middle}`;
+      return selectedTextMoreDetails.normalizationReplacementSpan(original,
+        `await (0,${groups.namespace}.submitChatGPTCompletion)(${groups.scope},` +
+        `{${groups.before}model:${groups.model}.slug,thinkingEffort:${groups.model}.thinkingEffort,${groups.middle}`);
     });
   } else if (calls.length > 1) {
     throw Error(`Expected one current ChatGPT native submission call, found ${calls.length}`);
@@ -278,12 +293,14 @@ function normalizeCurrentQuickChatSubmission(source) {
   const inputs = [...source.matchAll(currentInput)];
   if (inputs.length === 1) {
     source = source.replace(currentInput, (...args) => {
+      const original = args[0];
       const groups = args.at(-1);
-      return `startupSignal:${groups.signal},requireDispatchAcceptance:${groups.accept},` +
+      const replacement = `startupSignal:${groups.signal},requireDispatchAcceptance:${groups.accept},` +
         `requireResponseAcceptance:codexLinuxLegacyResponseAcceptance,` +
         `isRequestCurrent:codexLinuxLegacyRequestCurrent,...${groups.rest}}){` +
         `${groups.accept}??=codexLinuxLegacyResponseAcceptance;` +
         `null!=codexLinuxLegacyRequestCurrent&&(${groups.rest}.isSubmissionCurrent=codexLinuxLegacyRequestCurrent);`;
+      return selectedTextMoreDetails.normalizationReplacementSpan(original, replacement);
     });
   } else if (inputs.length > 1) {
     throw Error(`Expected one current ChatGPT submission input contract, found ${inputs.length}`);
@@ -297,28 +314,14 @@ function normalizeCurrentQuickChatDispatch(source) {
   if (matches.length === 0) return source;
   if (matches.length !== 1) throw Error(`Expected one current response-acceptance dispatch, found ${matches.length}`);
   if (source.slice(Math.max(0, matches[0].index - 24), matches[0].index).includes("gizmoEditor??")) return source;
-  return source.slice(0, matches[0].index) + "/*gizmoEditor??*/" + source.slice(matches[0].index);
+  return source.slice(0, matches[0].index) +
+    selectedTextMoreDetails.normalizationSpan("/*gizmoEditor??*/") + source.slice(matches[0].index);
 }
 
 function currentRspackModules(source) {
-  const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
-  const anchor = "export const __webpack_modules__={";
-  const table = source.indexOf(anchor);
-  if (table < 0) return [];
-  const modules = [];
-  let cursor = table + anchor.length;
-  for (;;) {
-    const header = /^,?(?:"([^"]+)"|([A-Za-z_$][\w$]*))\(([^)]*)\)\{/.exec(source.slice(cursor, cursor + 512));
-    if (header == null) break;
-    const start = cursor + (header[0].startsWith(",") ? 1 : 0);
-    const open = cursor + header[0].length - 1;
-    const close = findMatchingBrace(source, open);
-    if (close < 0) throw Error("Unterminated current rspack module");
-    modules.push({ id: header[1] ?? header[2], params: header[3].split(","), start,
-      bodyStart: open + 1, bodyEnd: close, end: close + 1 });
-    cursor = close + 1;
-  }
-  return modules;
+  return source.includes("export const __webpack_modules__={")
+    ? selectedTextMoreDetails.chunkModules(source)
+    : [];
 }
 
 function normalizeCurrentQuickChatDispatchOwner(source) {
@@ -379,12 +382,19 @@ function normalizeCurrentQuickChatDispatchOwner(source) {
     `{submitChatGPTCompletion:()=>codexLinuxCurrentSubmitProxy});` +
     `var codexLinuxCurrentBlocked=${dispatchRequire}(${JSON.stringify(blockedModuleId)});`;
   const importProxy = `;var codexLinuxCurrentSubmitModule=${followerRequire}(${JSON.stringify(dispatch.id)});`;
+  const normalizedCall = call[0].replace(`${call.groups.namespace}.submitChatGPTCompletion`,
+    "codexLinuxCurrentSubmitModule.submitChatGPTCompletion");
+  const insideNormalizedReplacement =
+    source.lastIndexOf("/*codex-linux-selected-text-more-details-normalize:~", call.index) >
+    source.lastIndexOf("/*codex-linux-selected-text-more-details-normalize:-*/", call.index);
   const edits = [
     { start: call.index, end: call.index + call[0].length,
-      text: call[0].replace(`${call.groups.namespace}.submitChatGPTCompletion`,
-        "codexLinuxCurrentSubmitModule.submitChatGPTCompletion") },
-    { start: follower.bodyEnd, end: follower.bodyEnd, text: importProxy },
-    { start: dispatch.bodyEnd, end: dispatch.bodyEnd, text: proxy },
+      text: insideNormalizedReplacement ? normalizedCall :
+        selectedTextMoreDetails.normalizationReplacementSpan(call[0], normalizedCall) },
+    { start: follower.bodyEnd, end: follower.bodyEnd,
+      text: selectedTextMoreDetails.normalizationSpan(importProxy) },
+    { start: dispatch.bodyEnd, end: dispatch.bodyEnd,
+      text: selectedTextMoreDetails.normalizationSpan(proxy) },
   ];
   let normalized = source;
   for (const edit of edits.sort((left, right) => right.start - left.start)) {
@@ -398,29 +408,57 @@ function currentSelectedTextDescriptor() {
   return {
     ...legacy,
     apply(extractedDir, context) {
+      if (!legacy.enabled(context)) return { matched: 0, changed: 0 };
       const assets = path.join(extractedDir, "webview", "assets");
-      const changed = [];
-      for (const directory of ["", "async"]) {
-        const dir = path.join(assets, directory);
-        if (!fs.existsSync(dir)) continue;
-        for (const file of fs.readdirSync(dir).filter((name) => name.endsWith(".js"))) {
-          const target = path.join(dir, file);
-          const source = fs.readFileSync(target, "utf8");
-          if (!source.includes("has-opened-quick-chat-v1") && !source.includes("onMoreDetails:")) continue;
-          const normalized = normalizeCurrentQuickChatSessionSetter(
-            normalizeCurrentQuickChatSubmission(
-              normalizeCurrentQuickChatDispatchOwner(
-                normalizeCurrentQuickChatDispatch(
-                  normalizeCurrentQuickChatOwner(normalizeWrappedFactories(source)),
+      try {
+        const originals = {};
+        const targets = {};
+        const references = [];
+        let managedInput = false;
+        for (const directory of ["", "async"]) {
+          const dir = path.join(assets, directory);
+          if (!fs.existsSync(dir)) continue;
+          for (const file of fs.readdirSync(dir).filter((name) => name.endsWith(".js"))) {
+            const name = directory ? `${directory}/${file}` : file;
+            const target = path.join(dir, file);
+            const source = fs.readFileSync(target, "utf8");
+            const upstream = selectedTextMoreDetails.restoreUpstream(source);
+            if (upstream !== source) managedInput = true;
+            const isRuntime = upstream.includes("has-opened-quick-chat-v1");
+            const isOverlay = ["onAddResponseTextAnnotation:", "targetContainerRefs:",
+              "{actions:", "canOpenSideChat:"].every((needle) => upstream.includes(needle));
+            if (isRuntime || isOverlay) {
+              originals[name] = source;
+              targets[name] = normalizeCurrentQuickChatSessionSetter(
+                normalizeCurrentQuickChatDispatchOwner(
+                  normalizeCurrentQuickChatSubmission(
+                    normalizeCurrentQuickChatDispatch(
+                      normalizeCurrentQuickChatOwner(upstream),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          );
-          if (normalized !== source) changed.push({ target, source: normalized });
+              );
+            } else if (upstream.includes('id:"selectedTextOverlay.moreDetails"') &&
+                upstream.includes("onMoreDetails:")) {
+              references.push(upstream);
+            }
+          }
         }
+        const result = selectedTextMoreDetails.patchSources(targets, references);
+        const names = Object.keys(targets).sort();
+        const changed = names.filter((name) => result.chunks[name] !== originals[name]);
+        if (managedInput && changed.length > 0) {
+          throw Error("Incomplete or drifted current selected-text adaptation");
+        }
+        for (const name of changed) fs.writeFileSync(path.join(assets, name), result.chunks[name]);
+        const patchedNames = names.filter((name) => selectedTextMoreDetails.hasPatchSpans(result.chunks[name]));
+        return { matched: patchedNames.length, changed: changed.length,
+          targets: patchedNames.map((name) => path.join("webview", "assets", name)) };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`WARN: Could not restore selected-text More details: ${reason} - skipping ui-tweaks patch`);
+        return { matched: 0, changed: 0, reason };
       }
-      for (const change of changed) fs.writeFileSync(change.target, change.source);
-      return legacy.apply(extractedDir, context);
     },
   };
 }
@@ -432,8 +470,7 @@ module.exports = {
     modelPickerModelList,
     { descriptors: [currentReasoningLabelsDescriptor()] },
     dockIcon,
-    { descriptors: suggestedPrompts.descriptors.filter((descriptor) =>
-      descriptor.id !== "home-suggested-prompts-settings-row") },
+    suggestedPrompts,
     { descriptors: [currentCustomFontDescriptor()] },
     { descriptors: [currentSelectedTextDescriptor()] },
     selectedTextAnnotationSubmit,
