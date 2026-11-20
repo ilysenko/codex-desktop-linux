@@ -266,6 +266,10 @@ for (const architecture of ["amd64", "arm64"]) {
         ),
         true,
       );
+      assert.equal(
+        contract.requiredDynamicExecutables.includes("resources/node"),
+        true,
+      );
       const interpreter =
         architecture === "amd64"
           ? "/lib64/ld-linux-x86-64.so.2"
@@ -307,6 +311,11 @@ for (const architecture of ["amd64", "arm64"]) {
       assert.equal(
         actions.find(({ path: itemPath }) => itemPath === "ChatGPT").strategy,
         "relocate-within-detect-libc-range",
+      );
+      assert.equal(
+        actions.find(({ path: itemPath }) => itemPath === "resources/node")
+          .strategy,
+        "patchelf",
       );
       if (architecture === "amd64") {
         assert.equal(
