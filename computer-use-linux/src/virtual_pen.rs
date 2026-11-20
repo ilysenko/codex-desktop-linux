@@ -19,7 +19,9 @@
 //!   (GTK 3 and 4, Qt, Chromium, Firefox and Xwayland bind it);
 //! - scrolling is a one-finger touch pan, which only scrolls where the app
 //!   pans on touch;
-//! - a hovering pen leaves proximity after [HOVER_LIFETIME].
+//! - the pen leaves proximity right after each action: libinput pairs a
+//!   tablet with the first touchscreen it sees and drops that screen's
+//!   touches while the pen is in proximity, which can be the user's own.
 //!
 //! Mapping: mutter maps a tablet or touchscreen to one monitor when its
 //! "output" setting (org.gnome.desktop.peripherals.tablet or .touchscreen,
@@ -35,8 +37,34 @@
 //! device goes away. Those settings paths belong to this server's own
 //! vendor and product ids; no other device's setting is touched.
 //!
-//! Lifecycle: created on first use, the pen leaves proximity after
-//! [HOVER_LIFETIME], and both devices go away after
+//! Buttons: mutter rewrites a stylus button by the tool's button-action
+//! settings before it reaches a client (meta-seat-impl.c), at a path keyed
+//! by the device's ids for a tool with no serial. GNOME 48 changed their
+//! defaults from passing the evdev code through to "right" for the lower
+//! button (BTN_STYLUS) and "middle" for the upper one (BTN_STYLUS2;
+//! gsettings-desktop-schemas f25d3e7c), the opposite of what GTK, Xwayland,
+//! Chromium and KWin make of the bare codes. So the pen writes both actions
+//! for its own tool (lower: middle, upper: right) before every action, which
+//! gives every client the code the pen pressed, and resets them when it goes
+//! away. Every server's pen shares that path, so one server's reset must not
+//! leave another's pen on the defaults. Never write "default" for this:
+//! mutter 48 and later turn it into a left click.
+//!
+//! KDE Plasma: KWin 6.3 and later give a tablet tool its own cursor too
+//! (TabletInputRedirection tracks it, and moves it whether or not the client
+//! under it supports tablets), and send its events through the tablet
+//! protocol. KWin maps a tablet with no setting to the active output, which
+//! follows the user's pointer, and a touchscreen to the internal panel or
+//! the first output. So the pen sets its own device's "mapToWorkspace" and
+//! the touchscreen its "outputName" through org.kde.KWin.InputDevice, reads
+//! them back before any event, and the server removes what KWin wrote into
+//! kcminputrc for them (the groups keyed by these devices' vendor, product
+//! and name) when they go away. KWin's "SyncWithMouse" tablet option moves
+//! the user's pointer to where the pen was, and KWIN_WAYLAND_EMULATE_TABLET
+//! sends pen input over clients without tablet support through it; with
+//! either there is no route.
+//!
+//! Lifecycle: created on first use, and both devices go away after
 //! [crate::agent_seat::IDLE_LIFETIME] without use, or when the server exits.
 
 use crate::agent_seat::SessionFacts;
@@ -49,12 +77,37 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// The route name results report for pen input.
-pub(crate) const PEN_ROUTE: &str = "gnome-pen";
-/// The route name results report for touch scrolling.
-pub(crate) const TOUCH_ROUTE: &str = "gnome-touch";
-/// How long the pen hovers after an action before it leaves proximity.
-pub(crate) const HOVER_LIFETIME: Duration = Duration::from_secs(8);
+/// The desktop the pen and touchscreen run on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Desktop {
+    Gnome,
+    Kwin,
+}
+
+impl Desktop {
+    /// The route name results report for pen input.
+    pub(crate) fn pen_route(self) -> &'static str {
+        match self {
+            Desktop::Gnome => "gnome-pen",
+            Desktop::Kwin => "kwin-pen",
+        }
+    }
+
+    /// The route name results report for touch scrolling.
+    pub(crate) fn touch_route(self) -> &'static str {
+        match self {
+            Desktop::Gnome => "gnome-touch",
+            Desktop::Kwin => "kwin-touch",
+        }
+    }
+}
+
+/// KWin 6.3 moved the tablet cursor into TabletInputRedirection and moves it
+/// for clients without tablet support (4681e9819f, 663f7342d6).
+const KWIN_MIN: (u32, u32) = (6, 3);
+const KWIN_DEVICES: &str = "/org/kde/KWin/InputDevice";
+/// The kcminputrc keys KWin writes for a tablet or touchscreen mapping.
+const KWIN_MAPPING_KEYS: [&str; 3] = ["MapToWorkspace", "OutputName", "OutputUuid"];
 /// The pan distance of one wheel notch, in logical pixels.
 pub(crate) const PAN_PER_NOTCH: f64 = 60.0;
 /// A pan stays this far inside the window and the monitor edges: GNOME
@@ -71,30 +124,35 @@ const AXIS_MAX: i32 = 65535;
 const PRESSURE_MAX: i32 = 4095;
 const MAPPING_TIMEOUT: Duration = Duration::from_secs(3);
 const STEP: Duration = Duration::from_millis(12);
+/// libinput ignores a touchscreen paired with a pen for 90 ms after the pen
+/// leaves proximity, counted from the event's own time.
+const TOUCH_AFTER_PEN: Duration = Duration::from_millis(200);
+/// A new touchscreen's wait before its first touch.
+const TOUCH_SETTLE: Duration = Duration::from_millis(300);
 
 const PEN_NAME: &str = "codex-computer-use-linux virtual pen";
 const TOUCH_NAME: &str = "codex-computer-use-linux virtual touch";
 
 /// Why the pen has no route in a session, or None when it has one. Pure:
 /// the facts come from [SessionFacts::from_env].
-pub(crate) fn classify(facts: &SessionFacts) -> std::result::Result<(), String> {
+pub(crate) fn classify(facts: &SessionFacts) -> std::result::Result<Desktop, String> {
     let desktop = facts.current_desktop.as_str();
     let has = |name: &str| desktop.split(':').any(|part| part.trim() == name);
     if facts.native_x11 {
         return Err("the session runs X11, where a tablet moves the core pointer".to_string());
     }
     if desktop.contains("gnome") && facts.wayland {
-        return Ok(());
+        return Ok(Desktop::Gnome);
     }
-    if has("kde") {
-        return Err("KWin gives a tablet its own cursor too (Plasma 6.2 and later), but maps a tablet without a configured output to the active output, which follows the user's pointer, and needs a configured output for touch, so the virtual pen is GNOME only".to_string());
+    if has("kde") && facts.wayland {
+        return Ok(Desktop::Kwin);
     }
-    Err("the virtual pen needs GNOME on Wayland: on wlroots compositors, Hyprland, niri and COSMIC a tablet moves the one seat cursor".to_string())
+    Err("the virtual pen needs GNOME or KDE Plasma on Wayland: on wlroots compositors, Hyprland, niri and COSMIC a tablet moves the one seat cursor".to_string())
 }
 
 /// The pen route here, or why there is none.
-pub(crate) fn availability() -> std::result::Result<(), String> {
-    classify(&SessionFacts::from_env())?;
+pub(crate) fn availability() -> std::result::Result<Desktop, String> {
+    let desktop = classify(&SessionFacts::from_env())?;
     let writable = std::ffi::CString::new("/dev/uinput")
         .ok()
         // SAFETY: path is a NUL-terminated CString that outlives the call,
@@ -103,16 +161,99 @@ pub(crate) fn availability() -> std::result::Result<(), String> {
     if !writable {
         return Err("/dev/uinput is not writable for this user, so no virtual pen can be made (the same access the uinput pointer needs)".to_string());
     }
+    if desktop == Desktop::Kwin {
+        kwin_ready()?;
+    }
+    Ok(desktop)
+}
+
+fn on_path(tool: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()))
+}
+
+/// The installed KWin's major and minor version, read once.
+fn kwin_version() -> Option<(u32, u32)> {
+    static VERSION: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    *VERSION.get_or_init(|| {
+        let output = std::process::Command::new("kwin_wayland")
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        parse_kwin_version(&String::from_utf8_lossy(&output.stdout))
+    })
+}
+
+/// "kwin 6.6.7" to (6, 6).
+fn parse_kwin_version(text: &str) -> Option<(u32, u32)> {
+    let version = text.split_whitespace().nth(1)?;
+    let mut parts = version.split('.');
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// A kcminputrc boolean as KConfig reads it (every spelling it accepts):
+/// kreadconfig6 --type bool answers in its exit status.
+fn kcminputrc_bool(groups: &[&str], key: &str) -> bool {
+    let mut command = std::process::Command::new("kreadconfig6");
+    command.args(["--file", "kcminputrc"]);
+    for group in groups {
+        command.args(["--group", group]);
+    }
+    command
+        .args(["--key", key, "--type", "bool", "--default", "false"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// What KWin needs for the pen route, or why it falls short.
+fn kwin_ready() -> std::result::Result<(), String> {
+    match kwin_version() {
+        Some(version) if version >= KWIN_MIN => {}
+        Some((major, minor)) => {
+            return Err(format!("KWin {major}.{minor} moves the user's pointer with a tablet; the virtual pen needs KWin 6.3 or later, where a tablet has its own cursor"));
+        }
+        None => {
+            return Err(
+                "kwin_wayland --version did not answer, so KWin's version is unknown".to_string(),
+            );
+        }
+    }
+    for tool in ["kreadconfig6", "kwriteconfig6"] {
+        if !on_path(tool) {
+            return Err(format!("{tool} is not installed; the virtual pen uses it to read KWin's tablet option and to remove its own devices' KWin settings afterwards"));
+        }
+    }
+    if kcminputrc_bool(&["Tablet"], "SyncWithMouse") {
+        return Err("KWin's tablet cursor follows the mouse here (kcminputrc [Tablet] SyncWithMouse), so the user's pointer would jump to where the pen was".to_string());
+    }
     Ok(())
+}
+
+/// The routes the doctor offers: on KWin a scroll needs kscreen-doctor for
+/// the output's rotation.
+fn routes(desktop: Desktop) -> Vec<&'static str> {
+    if desktop == Desktop::Kwin && !on_path("kscreen-doctor") {
+        vec![desktop.pen_route()]
+    } else {
+        vec![desktop.pen_route(), desktop.touch_route()]
+    }
 }
 
 /// Doctor line for the pen route.
 pub(crate) fn doctor_summary() -> serde_json::Value {
     match availability() {
-        Ok(()) => serde_json::json!({
+        Ok(desktop) => serde_json::json!({
             "available": true,
-            "routes": [PEN_ROUTE, TOUCH_ROUTE],
-            "note": "Background click and drag use a virtual pen, background scroll a one-finger touch pan; the user's mouse pointer does not move. A pen tap or a touch gives the window keyboard focus. Apps without tablet support never see the pen, scrolling needs touch panning in the app, a drag stays inside one window, and the pen hovers for up to 8 s after an action. Needs the Codex GNOME Shell extension to check the window under the point.",
+            "routes": routes(desktop),
+            "note": format!("Background click and drag use a virtual pen, background scroll a one-finger touch pan; the user's mouse pointer does not move. A pen tap or a touch gives the window keyboard focus. Apps without tablet support never see the pen, scrolling needs touch panning in the app, and a drag stays inside one window. {}", match desktop {
+                Desktop::Gnome => "Needs the Codex GNOME Shell extension to check the window under the point.",
+                Desktop::Kwin => "KWin scripting checks the window under the point; Show Desktop, an open Overview or another full-screen effect refuses the call.",
+            }),
         }),
         Err(reason) => serde_json::json!({ "available": false, "reason": reason }),
     }
@@ -270,7 +411,7 @@ impl Layout {
             .map(|monitor| monitor.rect)
             .reduce(|a, b| a.union(&b))
             .filter(|bounds| bounds.width > 0.0 && bounds.height > 0.0)
-            .ok_or_else(|| "mutter reported no monitor".to_string())?;
+            .ok_or_else(|| "the compositor reported no monitor".to_string())?;
         if capture_width == 0 || capture_height == 0 {
             return Err("the screenshot size is unknown; take a screenshot first".to_string());
         }
@@ -397,6 +538,54 @@ pub(crate) fn check_point_on_target(
     Ok(rect)
 }
 
+/// The check for a window list that holds only the windows the user can
+/// see, bottom to top (KWin's): the point must be on the target, and no
+/// window above it may cover the point.
+pub(crate) fn check_point_on_visible_target(
+    windows: &[crate::windowing::types::WindowInfo],
+    target_id: u64,
+    point: (f64, f64),
+) -> std::result::Result<Rect, String> {
+    let target = windows
+        .iter()
+        .find(|window| window.window_id == target_id)
+        .ok_or_else(|| {
+            format!("window_id {target_id} is not on the desktop the user sees, or is minimized or hidden")
+        })?;
+    // workspace is Some(-1) where KWin did not say (kwin::windows_stacked).
+    if target.workspace.is_some() {
+        return Err(format!(
+            "KWin did not say whether window_id {target_id} is on the desktop and activity the user sees"
+        ));
+    }
+    let rect = window_rect(target)
+        .ok_or_else(|| format!("window_id {target_id} has no known position"))?;
+    if !rect.contains(point) {
+        return Err(format!(
+            "({:.0}, {:.0}) in layout pixels is outside window_id {target_id}, which spans ({:.0}, {:.0}) to ({:.0}, {:.0})",
+            point.0,
+            point.1,
+            rect.x,
+            rect.y,
+            rect.x + rect.width,
+            rect.y + rect.height
+        ));
+    }
+    let top = windows
+        .iter()
+        .rev()
+        .find(|window| window_rect(window).is_some_and(|rect| rect.contains(point)))
+        .expect("the target contains the point");
+    if top.window_id != target_id {
+        return Err(format!(
+            "window_id {} ({}) is stacked above window_id {target_id} at that point",
+            top.window_id,
+            top.title.as_deref().unwrap_or("untitled")
+        ));
+    }
+    Ok(rect)
+}
+
 /// Finger strokes that pan by motion (logical pixels, along one axis), each
 /// starting at start and staying inside bounds. A point outside bounds, or
 /// one with too little room in the pan's direction, has no strokes.
@@ -462,8 +651,9 @@ pub(crate) fn pan_bounds(window: &Rect, monitor: &Rect) -> Rect {
 pub(crate) enum PenButton {
     /// The tip.
     Tip,
-    /// BTN_STYLUS, the lower barrel button: a middle click (GTK and
-    /// Xwayland map it to button 2, as xf86-input-wacom does).
+    /// BTN_STYLUS, the lower barrel button: a middle click. GTK, Xwayland,
+    /// Chromium and KWin map it to button 2, as xf86-input-wacom does; the
+    /// pen's button actions keep mutter from rewriting it.
     Lower,
     /// BTN_STYLUS2, the upper barrel button: a right click (button 3).
     Upper,
@@ -529,6 +719,8 @@ pub(crate) struct PenEvents<E: Events> {
     events: E,
     in_proximity: bool,
     tip_down: bool,
+    /// When the pen last left proximity.
+    left_at: Option<Instant>,
 }
 
 impl<E: Events> PenEvents<E> {
@@ -537,6 +729,7 @@ impl<E: Events> PenEvents<E> {
             events,
             in_proximity: false,
             tip_down: false,
+            left_at: None,
         }
     }
 
@@ -618,6 +811,7 @@ impl<E: Events> PenEvents<E> {
         ])?;
         self.in_proximity = false;
         self.tip_down = false;
+        self.left_at = Some(Instant::now());
         Ok(())
     }
 }
@@ -688,6 +882,81 @@ impl Kind {
             Kind::Touch => format!(
                 "org.gnome.desktop.peripherals.touchscreen:/org/gnome/desktop/peripherals/touchscreens/{VENDOR:04x}:{TOUCH_PRODUCT:04x}/"
             ),
+        }
+    }
+}
+
+impl Kind {
+    /// The kcminputrc groups KWin keeps this device's settings in.
+    fn kcminputrc_groups(self) -> [String; 4] {
+        let (product, name) = match self {
+            Kind::Pen => (PEN_PRODUCT, PEN_NAME),
+            Kind::Touch => (TOUCH_PRODUCT, TOUCH_NAME),
+        };
+        [
+            "Libinput".to_string(),
+            VENDOR.to_string(),
+            product.to_string(),
+            name.to_string(),
+        ]
+    }
+}
+
+/// Removes the mapping keys KWin wrote into kcminputrc for kind's device.
+/// Run once the device is gone: KWin writes a setting back when it changes
+/// on a live device.
+fn kcminputrc_delete(kind: Kind) {
+    for key in KWIN_MAPPING_KEYS {
+        let mut command = std::process::Command::new("kwriteconfig6");
+        command.args(["--file", "kcminputrc"]);
+        for group in kind.kcminputrc_groups() {
+            command.arg("--group").arg(group);
+        }
+        let _ = command
+            .args(["--key", key, "--delete", "--notify"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+/// What a device changed in the desktop's settings, undone when it drops.
+/// It is the last field of [Pen] and [Touch], so the device is gone first.
+struct Settings {
+    desktop: Desktop,
+    kind: Kind,
+    wrote_output: bool,
+}
+
+impl Settings {
+    /// Clears what an earlier server may have left for kind, before the
+    /// device exists.
+    fn prepare(desktop: Desktop, kind: Kind) -> Self {
+        match desktop {
+            Desktop::Gnome => reset_output(kind),
+            Desktop::Kwin => kcminputrc_delete(kind),
+        }
+        Self {
+            desktop,
+            kind,
+            wrote_output: false,
+        }
+    }
+}
+
+impl Drop for Settings {
+    fn drop(&mut self) {
+        match self.desktop {
+            Desktop::Gnome => {
+                if self.wrote_output {
+                    reset_output(self.kind);
+                }
+                if self.kind == Kind::Pen {
+                    reset_stylus_actions();
+                }
+            }
+            Desktop::Kwin => kcminputrc_delete(self.kind),
         }
     }
 }
@@ -814,10 +1083,56 @@ fn gvariant_string(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
+/// The settings of the pen's tool: a uinput pen has no serial, so mutter
+/// keys them by the device's vendor and product id.
+fn stylus_settings() -> String {
+    format!(
+        "org.gnome.desktop.peripherals.tablet.stylus:/org/gnome/desktop/peripherals/stylus/default-{VENDOR:04x}:{PEN_PRODUCT:04x}/"
+    )
+}
+
+/// The pen's button actions, so mutter hands clients the evdev code the pen
+/// pressed (BTN_STYLUS: middle, BTN_STYLUS2: right) whatever the GNOME
+/// version's defaults are. Written before the device exists: mutter reads
+/// them when the tool first enters proximity.
+const STYLUS_ACTIONS: [(&str, &str); 2] = [
+    ("button-action", "middle"),
+    ("secondary-button-action", "right"),
+];
+
+/// Writes the actions that differ, so an unchanged setting sends no change
+/// signal to every settings listener.
+fn set_stylus_actions() -> Result<()> {
+    for (key, value) in STYLUS_ACTIONS {
+        let current = std::process::Command::new("gsettings")
+            .args(["get", &stylus_settings(), key])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+        if current.as_deref() != Some(gvariant_string(value).as_str()) {
+            gsettings_set(&stylus_settings(), key, value)?;
+        }
+    }
+    Ok(())
+}
+
+fn reset_stylus_actions() {
+    for (key, _) in STYLUS_ACTIONS {
+        gsettings_reset(&stylus_settings(), key);
+    }
+}
+
 fn set_output(kind: Kind, output: [&str; 4]) -> Result<()> {
     let value = format!("[{}]", output.map(gvariant_string).join(", "));
+    gsettings_set(&kind.settings(), "output", &value)
+}
+
+fn gsettings_set(settings: &str, key: &str, value: &str) -> Result<()> {
     let status = std::process::Command::new("gsettings")
-        .args(["set", &kind.settings(), "output", &value])
+        .args(["set", settings, key, value])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -825,8 +1140,7 @@ fn set_output(kind: Kind, output: [&str; 4]) -> Result<()> {
         .context("failed to run gsettings")?;
     if !status.status.success() {
         bail!(
-            "gsettings set {} output failed: {}",
-            kind.settings(),
+            "gsettings set {settings} {key} failed: {}",
             String::from_utf8_lossy(&status.stderr).trim()
         );
     }
@@ -834,46 +1148,41 @@ fn set_output(kind: Kind, output: [&str; 4]) -> Result<()> {
 }
 
 fn reset_output(kind: Kind) {
+    gsettings_reset(&kind.settings(), "output");
+}
+
+fn gsettings_reset(settings: &str, key: &str) {
     let _ = std::process::Command::new("gsettings")
-        .args(["reset", &kind.settings(), "output"])
+        .args(["reset", settings, key])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
 }
 
+// Fields drop in order: the device goes away before its settings.
 struct Pen {
     events: PenEvents<VirtualDevice>,
     node: PathBuf,
-    wrote_output: bool,
     /// Whether libinput has seen the pen leave proximity on its own.
     primed: bool,
+    settings: Settings,
 }
 
 impl Drop for Pen {
     fn drop(&mut self) {
         let _ = self.events.leave();
-        if self.wrote_output {
-            reset_output(Kind::Pen);
-        }
     }
 }
 
 struct Touch {
     events: TouchEvents<VirtualDevice>,
     node: PathBuf,
-    wrote_output: bool,
-}
-
-impl Drop for Touch {
-    fn drop(&mut self) {
-        if self.wrote_output {
-            reset_output(Kind::Touch);
-        }
-    }
+    settings: Settings,
 }
 
 struct Devices {
+    desktop: Desktop,
     pen: Option<Pen>,
     touch: Option<Touch>,
     last_use: Instant,
@@ -888,8 +1197,7 @@ fn lock_devices() -> std::sync::MutexGuard<'static, Option<Devices>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Lifts the pen out of proximity after [HOVER_LIFETIME] and removes the
-/// devices after [crate::agent_seat::IDLE_LIFETIME]. One at a time; it exits
+/// Removes the devices after [crate::agent_seat::IDLE_LIFETIME]. One at a time; it exits
 /// once the devices are gone.
 fn start_reaper() {
     let spawned = std::thread::Builder::new()
@@ -903,18 +1211,15 @@ fn start_reaper() {
                 };
                 let idle = devices.last_use.elapsed();
                 if idle >= crate::agent_seat::IDLE_LIFETIME {
-                    let _process = process_lock(Duration::from_secs(2));
-                    *guard = None;
-                    REAPER.store(false, std::sync::atomic::Ordering::SeqCst);
-                    return;
-                }
-                if idle >= HOVER_LIFETIME {
-                    if let Some(pen) = devices.pen.as_mut() {
-                        let _ = pen.events.leave();
+                    // Removing resets settings every server's pen shares:
+                    // not while another server is using its pen.
+                    if let Ok(_process) = process_lock(Duration::from_secs(2)) {
+                        *guard = None;
+                        REAPER.store(false, std::sync::atomic::Ordering::SeqCst);
+                        return;
                     }
                 }
-                // A later action can start a new hover: look again soon.
-                Duration::from_millis(500)
+                crate::agent_seat::IDLE_LIFETIME.saturating_sub(idle) + Duration::from_millis(500)
             };
             std::thread::sleep(wait);
         });
@@ -925,7 +1230,7 @@ fn start_reaper() {
 
 /// Removes both devices now. Called when the server exits.
 pub(crate) fn shutdown() {
-    let _process = process_lock(Duration::from_secs(2));
+    let _process = process_lock(Duration::from_secs(10));
     *lock_devices() = None;
 }
 
@@ -975,10 +1280,14 @@ fn covering_area(
     connection: &zbus::blocking::Connection,
     kind: Kind,
     node: &Path,
-    wrote_output: &mut bool,
+    settings: &mut Settings,
     point: (f64, f64),
     layout: &Layout,
 ) -> Result<Rect> {
+    if settings.desktop == Desktop::Kwin {
+        return kwin_covering_area(connection, kind, node, point, layout);
+    }
+    let wrote_output = &mut settings.wrote_output;
     let current = wait_mapping(connection, node, |mapping| mapping != Mapping::Unknown)?;
     match (kind, current) {
         (_, Mapping::Layout) => return Ok(layout.bounds),
@@ -1020,21 +1329,197 @@ fn covering_area(
     }
 }
 
+fn kwin_path(node: &Path) -> Result<zbus::zvariant::OwnedObjectPath> {
+    let name = node
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("device node has no name"))?;
+    zbus::zvariant::OwnedObjectPath::try_from(format!("{KWIN_DEVICES}/{name}"))
+        .context("KWin input device path")
+}
+
+fn kwin_get(
+    connection: &zbus::blocking::Connection,
+    path: &str,
+    interface: &str,
+    property: &str,
+) -> Result<zbus::zvariant::OwnedValue> {
+    let reply = connection
+        .call_method(
+            Some("org.kde.KWin"),
+            path,
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &(interface, property),
+        )
+        .with_context(|| format!("KWin's {interface}.{property} did not answer"))?;
+    reply
+        .body()
+        .deserialize()
+        .with_context(|| format!("KWin's {interface}.{property} returned an unexpected reply"))
+}
+
+/// The sysnames (event7) of the input devices KWin has.
+fn kwin_devices(connection: &zbus::blocking::Connection) -> Result<Vec<String>> {
+    let value = kwin_get(
+        connection,
+        KWIN_DEVICES,
+        "org.kde.KWin.InputDeviceManager",
+        "devicesSysNames",
+    )?;
+    Vec::<String>::try_from(value).context("KWin's devicesSysNames is not a string list")
+}
+
+fn kwin_device_get(
+    connection: &zbus::blocking::Connection,
+    path: &str,
+    property: &str,
+) -> Result<zbus::zvariant::OwnedValue> {
+    kwin_get(connection, path, "org.kde.KWin.InputDevice", property)
+}
+
+fn kwin_device_set(
+    connection: &zbus::blocking::Connection,
+    path: &str,
+    property: &str,
+    value: zbus::zvariant::Value<'_>,
+) -> Result<()> {
+    connection
+        .call_method(
+            Some("org.kde.KWin"),
+            path,
+            Some("org.freedesktop.DBus.Properties"),
+            "Set",
+            &("org.kde.KWin.InputDevice", property, value),
+        )
+        .with_context(|| format!("KWin refused {property} for the virtual device"))?;
+    Ok(())
+}
+
+/// Waits for accept to hold, MAPPING_TIMEOUT at most.
+fn wait_kwin(what: &str, mut accept: impl FnMut() -> Result<bool>) -> Result<()> {
+    let deadline = Instant::now() + MAPPING_TIMEOUT;
+    loop {
+        if accept()? {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!("KWin did not {what}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The area a device covers on KWin: the pen maps to the whole workspace,
+/// the touchscreen to the output under point. Both are set on the device
+/// and read back before any event.
+fn kwin_covering_area(
+    connection: &zbus::blocking::Connection,
+    kind: Kind,
+    node: &Path,
+    point: (f64, f64),
+    layout: &Layout,
+) -> Result<Rect> {
+    let path = kwin_path(node)?;
+    let name = path
+        .as_str()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    wait_kwin("list the virtual device", || {
+        Ok(kwin_devices(connection)?.contains(&name))
+    })?;
+    // Settings an earlier user left for a device of this name would move
+    // where the input lands.
+    for (property, default) in [
+        ("calibrationMatrix", "defaultCalibrationMatrix"),
+        ("outputArea", "defaultOutputArea"),
+        ("inputArea", "defaultInputArea"),
+        ("rotation", "defaultRotation"),
+    ] {
+        if let (Ok(current), Ok(default)) = (
+            kwin_device_get(connection, path.as_str(), property),
+            kwin_device_get(connection, path.as_str(), default),
+        ) {
+            if current != default {
+                bail!("KWin applies a {property} setting to the virtual device (kcminputrc [Libinput][{VENDOR}][..])");
+            }
+        }
+    }
+    match kind {
+        Kind::Pen => {
+            // A relative tool moves from its last position, not to the point.
+            if let Ok(relative) = kwin_device_get(connection, path.as_str(), "tabletToolIsRelative")
+            {
+                if bool::try_from(&relative).unwrap_or(true) {
+                    bail!("KWin runs the virtual pen in relative mode");
+                }
+            }
+            let mapped = || -> Result<bool> {
+                bool::try_from(kwin_device_get(
+                    connection,
+                    path.as_str(),
+                    "mapToWorkspace",
+                )?)
+                .context("mapToWorkspace is not a boolean")
+            };
+            if !mapped()? {
+                kwin_device_set(connection, path.as_str(), "mapToWorkspace", true.into())?;
+                wait_kwin("map the pen to the whole workspace", mapped)?;
+            }
+            Ok(layout.bounds)
+        }
+        Kind::Touch => {
+            let monitor = layout
+                .monitor_at(point)
+                .ok_or_else(|| anyhow!("no monitor holds the point"))?;
+            let connector = monitor.spec.connector.clone();
+            let output = || -> Result<String> {
+                String::try_from(kwin_device_get(connection, path.as_str(), "outputName")?)
+                    .context("outputName is not a string")
+            };
+            if output()? != connector {
+                kwin_device_set(
+                    connection,
+                    path.as_str(),
+                    "outputName",
+                    connector.as_str().into(),
+                )?;
+                wait_kwin(&format!("map the touchscreen to {connector}"), || {
+                    Ok(output()? == connector)
+                })?;
+            }
+            Ok(monitor.rect)
+        }
+    }
+}
+
 /// Sends gesture through the pen or the touchscreen, creating them on
 /// first use. Blocking: run it off the async runtime.
-pub(crate) fn perform(gesture: &Gesture, layout: &Layout) -> std::result::Result<(), PenError> {
-    let connection = zbus::blocking::Connection::session()
-        .map_err(|error| PenError::NoRoute(format!("no session bus to reach mutter: {error}")))?;
-    // A device node no device has: mutter answers "does not exist" when its
-    // InputMapping service runs.
-    mapping(
-        &connection,
-        Path::new("/dev/input/computer_use_linux_probe"),
-    )
+pub(crate) fn perform(
+    gesture: &Gesture,
+    layout: &Layout,
+    desktop: Desktop,
+) -> std::result::Result<(), PenError> {
+    let connection = zbus::blocking::Connection::session().map_err(|error| {
+        PenError::NoRoute(format!("no session bus to reach the compositor: {error}"))
+    })?;
+    match desktop {
+        // A device node no device has: mutter answers "does not exist" when
+        // its InputMapping service runs.
+        Desktop::Gnome => mapping(
+            &connection,
+            Path::new("/dev/input/computer_use_linux_probe"),
+        )
+        .map(|_| ()),
+        Desktop::Kwin => kwin_devices(&connection).map(|_| ()),
+    }
     .map_err(|error| PenError::NoRoute(format!("{error:#}")))?;
     let _process = process_lock(Duration::from_secs(5))?;
     let mut guard = lock_devices();
     let devices = guard.get_or_insert_with(|| Devices {
+        desktop,
         pen: None,
         touch: None,
         last_use: Instant::now(),
@@ -1072,15 +1557,16 @@ fn run_pen(
     layout: &Layout,
 ) -> std::result::Result<(), PenError> {
     if devices.pen.is_none() {
-        reset_output(Kind::Pen);
+        // A failure below drops settings, which undoes them.
+        let settings = Settings::prepare(devices.desktop, Kind::Pen);
         let (device, node) = create(Kind::Pen).map_err(|error| {
             PenError::NoRoute(format!("the virtual pen could not be made: {error:#}"))
         })?;
         devices.pen = Some(Pen {
             events: PenEvents::new(device),
             node,
-            wrote_output: false,
             primed: false,
+            settings,
         });
     }
     let pen = devices.pen.as_mut().expect("pen was just made");
@@ -1088,7 +1574,7 @@ fn run_pen(
         connection,
         Kind::Pen,
         &pen.node.clone(),
-        &mut pen.wrote_output,
+        &mut pen.settings,
         first,
         layout,
     )
@@ -1104,8 +1590,17 @@ fn run_pen(
     let started = |error: anyhow::Error| PenError::Partial(format!("{error:#}"));
     // libinput lifts a tablet out of proximity 50 ms after its last event
     // until the tablet sends a proximity out of its own. One in and out at
-    // the first point, once mutter has the device, shows that it does, so
-    // the pen then hovers until HOVER_LIFETIME lifts it.
+    // the first point, once mutter has the device, shows that it does.
+    // Before every action, under the process lock and right before the pen
+    // comes near: mutter reads them as the pen enters proximity, and another
+    // server's pen going away resets the shared path.
+    if pen.settings.desktop == Desktop::Gnome {
+        set_stylus_actions().map_err(|error| {
+            PenError::NotSent(format!(
+                "the pen's button actions could not be set: {error:#}"
+            ))
+        })?;
+    }
     if !pen.primed {
         let value = device_value(first, &area);
         pen.events
@@ -1149,6 +1644,12 @@ fn run_pen(
         }
         Gesture::Pan { .. } => unreachable!("pans go through the touchscreen"),
     }
+    // A hovering pen would silence the touchscreen libinput paired it with,
+    // and does for 90 ms after it leaves; hold the process lock past that,
+    // so no server's scroll starts inside it.
+    std::thread::sleep(Duration::from_millis(30));
+    events.leave().map_err(started)?;
+    std::thread::sleep(TOUCH_AFTER_PEN);
     Ok(())
 }
 
@@ -1160,7 +1661,7 @@ fn run_touch(
     layout: &Layout,
 ) -> std::result::Result<(), PenError> {
     if devices.touch.is_none() {
-        reset_output(Kind::Touch);
+        let settings = Settings::prepare(devices.desktop, Kind::Touch);
         let (device, node) = create(Kind::Touch).map_err(|error| {
             PenError::NoRoute(format!(
                 "the virtual touchscreen could not be made: {error:#}"
@@ -1169,15 +1670,31 @@ fn run_touch(
         devices.touch = Some(Touch {
             events: TouchEvents::new(device),
             node,
-            wrote_output: false,
+            settings,
         });
+        // mutter lists a new touchscreen before it has mapped it; a pan
+        // sent at once never reached the window.
+        std::thread::sleep(TOUCH_SETTLE);
+    }
+    // libinput pairs a tablet with the first touchscreen it sees and, for a
+    // pen with no tilt, drops every touch while the pen is in proximity
+    // (evdev-tablet.c, tablet_toggle_touch_device), and for 90 ms after it
+    // leaves (evdev-fallback.c, the arbitration timer). The pen leaves at the
+    // end of each action; wait out the rest of that.
+    if let Some(pen) = devices.pen.as_mut() {
+        pen.events
+            .leave()
+            .map_err(|error| PenError::NotSent(format!("{error:#}")))?;
+        if let Some(left) = pen.events.left_at {
+            std::thread::sleep(TOUCH_AFTER_PEN.saturating_sub(left.elapsed()));
+        }
     }
     let touch = devices.touch.as_mut().expect("touch was just made");
     let area = covering_area(
         connection,
         Kind::Touch,
         &touch.node.clone(),
-        &mut touch.wrote_output,
+        &mut touch.settings,
         first,
         layout,
     )
@@ -1223,22 +1740,183 @@ fn run_touch(
 
 /// Whether GNOME Shell's lock screen is up (org.gnome.ScreenSaver). The
 /// window list cannot show it, and a tap there would reach the lock screen.
-pub(crate) async fn screen_locked() -> bool {
+pub(crate) async fn screen_locked(desktop: Desktop) -> bool {
     let Ok(connection) = zbus::Connection::session().await else {
         return false;
     };
+    // Plasma's screen locker answers on the freedesktop name.
+    let (name, path) = match desktop {
+        Desktop::Gnome => ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver"),
+        Desktop::Kwin => ("org.freedesktop.ScreenSaver", "/ScreenSaver"),
+    };
     let reply = tokio::time::timeout(
         Duration::from_secs(2),
-        connection.call_method(
-            Some("org.gnome.ScreenSaver"),
-            "/org/gnome/ScreenSaver",
-            Some("org.gnome.ScreenSaver"),
-            "GetActive",
-            &(),
-        ),
+        connection.call_method(Some(name), path, Some(name), "GetActive", &()),
     )
     .await;
     matches!(reply, Ok(Ok(message)) if message.body().deserialize::<bool>().unwrap_or(false))
+}
+
+/// Why KWin's state rules out pen input now, checked before every call:
+/// Show Desktop hides windows without minimizing them, a full-screen effect
+/// such as the Overview takes the input, and KWIN_WAYLAND_EMULATE_TABLET
+/// in KWin's environment sends pen input over clients without tablet
+/// support through the user's pointer. Some(reason) is a refusal; None
+/// means nothing stands in the way.
+pub(crate) async fn kwin_blocker() -> Option<String> {
+    const FULL_SCREEN: [&str; 6] = [
+        "overview",
+        "windowview",
+        "desktopgrid",
+        "expo",
+        "tileseditor",
+        "cube",
+    ];
+    let Ok(connection) = zbus::Connection::session().await else {
+        return Some("no session bus to reach KWin".to_string());
+    };
+    let get = |path: &'static str, interface: &'static str, property: &'static str| {
+        let connection = connection.clone();
+        async move {
+            let reply = tokio::time::timeout(
+                Duration::from_secs(2),
+                connection.call_method(
+                    Some("org.kde.KWin"),
+                    path,
+                    Some("org.freedesktop.DBus.Properties"),
+                    "Get",
+                    &(interface, property),
+                ),
+            )
+            .await
+            .ok()?
+            .ok()?;
+            reply
+                .body()
+                .deserialize::<zbus::zvariant::OwnedValue>()
+                .ok()
+        }
+    };
+    match get("/KWin", "org.kde.KWin", "showingDesktop").await {
+        Some(value) if bool::try_from(&value).unwrap_or(false) => {
+            return Some(
+                "KWin is showing the desktop, which hides windows without minimizing them"
+                    .to_string(),
+            );
+        }
+        Some(_) => {}
+        None => return Some("KWin's showingDesktop did not answer".to_string()),
+    }
+    let active = get("/Effects", "org.kde.kwin.Effects", "activeEffects")
+        .await
+        .and_then(|value| Vec::<String>::try_from(value).ok());
+    match active {
+        Some(effects) => {
+            if let Some(effect) = effects
+                .iter()
+                .find(|effect| FULL_SCREEN.contains(&effect.as_str()))
+            {
+                return Some(format!(
+                    "KWin's {effect} effect is open and takes the input"
+                ));
+            }
+        }
+        None => return Some("KWin's activeEffects did not answer".to_string()),
+    }
+    let pid = async {
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            connection.call_method(
+                Some("org.freedesktop.DBus"),
+                "/org/freedesktop/DBus",
+                Some("org.freedesktop.DBus"),
+                "GetConnectionUnixProcessID",
+                &("org.kde.KWin",),
+            ),
+        )
+        .await
+        .ok()?
+        .ok()?
+        .body()
+        .deserialize::<u32>()
+        .ok()
+    }
+    .await;
+    let Some(environ) = pid.and_then(|pid| std::fs::read(format!("/proc/{pid}/environ")).ok())
+    else {
+        return Some(
+            "KWin's environment could not be read to rule out KWIN_WAYLAND_EMULATE_TABLET"
+                .to_string(),
+        );
+    };
+    let emulated = environ.split(|byte| *byte == 0).any(|entry| {
+        entry
+            .strip_prefix(b"KWIN_WAYLAND_EMULATE_TABLET=")
+            .is_some_and(|value| !value.is_empty() && value != b"0")
+    });
+    emulated.then(|| "KWin runs with KWIN_WAYLAND_EMULATE_TABLET, which sends pen input over clients without tablet support through the user's pointer".to_string())
+}
+
+/// The logical layout from KWin's outputs. KWin's scripting gives no
+/// rotation, so kscreen-doctor supplies it; a monitor whose rotation is
+/// unknown gets transform u32::MAX, which a touch pan refuses.
+pub(crate) async fn kwin_monitors() -> Result<Vec<Monitor>> {
+    let outputs = crate::windowing::backends::kwin::named_outputs().await?;
+    let rotations = kscreen_rotations().await.unwrap_or_default();
+    Ok(outputs
+        .into_iter()
+        .map(|(name, monitor)| Monitor {
+            rect: Rect {
+                x: f64::from(monitor.x),
+                y: f64::from(monitor.y),
+                width: f64::from(monitor.width),
+                height: f64::from(monitor.height),
+            },
+            // kscreen's rotation 1 is none.
+            transform: match rotations.get(&name) {
+                Some(1) => 0,
+                Some(other) => *other,
+                None => u32::MAX,
+            },
+            spec: MonitorSpec {
+                connector: name,
+                vendor: String::new(),
+                product: String::new(),
+                serial: String::new(),
+            },
+        })
+        .collect())
+}
+
+async fn kscreen_rotations() -> Option<std::collections::HashMap<String, u32>> {
+    #[derive(serde::Deserialize)]
+    struct Config {
+        outputs: Vec<Output>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Output {
+        name: String,
+        rotation: u32,
+    }
+    let output = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::process::Command::new("kscreen-doctor")
+            .arg("-j")
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let config: Config = serde_json::from_slice(&output.stdout).ok()?;
+    Some(
+        config
+            .outputs
+            .into_iter()
+            .map(|output| (output.name, output.rotation))
+            .collect(),
+    )
 }
 
 /// The logical layout from mutter's DisplayConfig.GetCurrentState.
@@ -1541,19 +2219,23 @@ mod tests {
     }
 
     #[test]
-    fn only_gnome_on_wayland_gets_the_pen() {
+    fn gnome_and_kde_on_wayland_get_the_pen() {
         let facts = |desktop: &str, wayland: bool, native_x11: bool| SessionFacts {
             native_x11,
             wayland,
             current_desktop: desktop.to_string(),
             ..SessionFacts::default()
         };
-        assert!(classify(&facts("ubuntu:gnome", true, false)).is_ok());
+        assert_eq!(
+            classify(&facts("ubuntu:gnome", true, false)),
+            Ok(Desktop::Gnome)
+        );
         assert!(classify(&facts("gnome", false, true)).is_err());
-        assert!(classify(&facts("kde", true, false))
-            .unwrap_err()
-            .contains("KWin"));
+        assert_eq!(classify(&facts("kde", true, false)), Ok(Desktop::Kwin));
+        assert!(classify(&facts("kde", false, true)).is_err());
         assert!(classify(&facts("sway", true, false)).is_err());
+        assert_eq!(parse_kwin_version("kwin 6.6.7\n"), Some((6, 6)));
+        assert_eq!(parse_kwin_version("kwin_wayland"), None);
     }
 
     #[derive(Clone, Default)]

@@ -8,7 +8,7 @@ COMPUTER_USE_LINUX_TEST_GNOME_SEAT names (for example tty6), on a vkms
 output, with libinput reading the seat's devices: a headless mutter reads
 none, so it never sees a uinput device. The fixture needs passwordless sudo
 for that (modprobe vkms, an ACL on /dev/uinput, a login session on the
-terminal, chvt), and refuses to run while any graphical session is on seat0:
+terminal, its getty masked for the run, chvt), and refuses to run while any graphical session is on seat0:
 uinput devices are machine-wide, so this must never run on a desktop someone
 uses. Without the variable it skips.
 
@@ -18,14 +18,22 @@ pointer. Then background clicks (left, right, middle, double), a drag and a
 scroll go through the pen and the touchscreen: the window sees pen and touch
 events at the points, and no mouse event, so the user's pointer stays where
 the normal click left it. A point under another window is refused before
-input. After the server exits no virtual device and no tablet or touchscreen
-setting is left behind. The pen's proximity ends HOVER seconds after its last
-action, and wev, which binds no tablet, shows what an app without tablet
-support sees of a pen click.
+input. The session's schemas carry GNOME 48's stylus defaults, which swap the
+barrel buttons, and a right click must still be a right click, also after a
+second server's pen came and went (they share one settings path). The pen
+leaves proximity right after each action, and a scroll right after a pen
+click must still pan (libinput drops touches while a paired pen is near).
+When Chromium or Google Chrome is installed, the same clicks, a double
+click, a drag and a scroll go to a page in it, native Wayland and under
+Xwayland, which must see pen and touch input with the buttons named. After
+the server exits no virtual device and no tablet, stylus or touchscreen
+setting is left behind. wev, which binds no tablet, shows what an app
+without tablet support sees of a pen click.
 """
 import contextlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -39,7 +47,6 @@ from agent_seat_test import Server, check, stop, wait_for
 UUID = 'codex-window-control@openai.com'
 EXTENSION = Path(__file__).resolve().parent.parent / 'gnome-shell-extension'
 DISPLAY_NAME = 'cul-pen-0'
-HOVER = 8
 
 
 def gtk_app(root):
@@ -177,6 +184,18 @@ def nudge_mouse():
             fcntl.ioctl(uinput, 0x5502)
 
 
+def unload_vkms(timeout=10):
+    """Removes vkms, retrying while its last user lets go; whether it is gone."""
+    deadline = time.monotonic() + timeout
+    while True:
+        subprocess.run(['sudo', '-n', 'modprobe', '-r', 'vkms'], capture_output=True)
+        if not Path('/sys/module/vkms').exists():
+            return True
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(.5)
+
+
 def seat0_graphical_sessions():
     sessions = []
     listing = subprocess.run(['loginctl', 'list-sessions', '--no-legend'], capture_output=True, text=True).stdout
@@ -230,22 +249,50 @@ def run(binary, root, tty):
         rule = Path('/run/udev/rules.d/61-mutter.rules')
         subprocess.run(['sudo', '-n', 'tee', str(rule)], input=UDEV_RULE, text=True, check=True,
                        stdout=subprocess.DEVNULL)
-        subprocess.run(['sudo', '-n', 'modprobe', '-r', 'vkms'], capture_output=True)
+        # udevd notices new rules through inotify, which a bind mount of
+        # /run/udev (the KWin fixture's container) can leave deaf.
+        subprocess.run(['sudo', '-n', 'udevadm', 'control', '--reload'], check=True)
+        if not unload_vkms():
+            sys.exit('gnome pen fixture: vkms is loaded and in use, so it cannot be reloaded under the rule')
         subprocess.run(['sudo', '-n', 'modprobe', 'vkms'], check=True)
-        cleanup.callback(subprocess.run, ['sudo', '-n', 'modprobe', '-r', 'vkms'], capture_output=True)
+        cleanup.callback(unload_vkms)
         cleanup.callback(lambda: (subprocess.run(['sudo', '-n', 'rm', '-f', str(rule)]),
+                                  subprocess.run(['sudo', '-n', 'udevadm', 'control', '--reload']),
                                   subprocess.run(['sudo', '-n', 'udevadm', 'trigger', '-s', 'drm', '--settle'])))
         subprocess.run(['sudo', '-n', 'udevadm', 'trigger', '-s', 'drm', '--settle'], check=True)
         user = subprocess.run(['id', '-un'], capture_output=True, text=True, check=True).stdout.strip()
         subprocess.run(['sudo', '-n', 'setfacl', '-m', f'u:{user}:rw', '/dev/uinput'], check=True)
         cleanup.callback(subprocess.run, ['sudo', '-n', 'setfacl', '-x', f'u:{user}', '/dev/uinput'])
+        # Without --no-x11 mutter listens for X clients and starts Xwayland
+        # for the first one: the Chromium check runs under it too.
+        xwayland = shutil.which('Xwayland')
+        # GNOME 48's stylus defaults (gsettings-desktop-schemas f25d3e7c) as
+        # schema overrides: the lower button a right click, the upper one a
+        # middle click. GNOME 46 passes the codes through.
+        schemas = root / 'schemas'
+        schemas.mkdir()
+        for source in Path('/usr/share/glib-2.0/schemas').iterdir():
+            if source.suffix in ('.xml', '.override'):
+                shutil.copy(source, schemas / source.name)
+        (schemas / 'zz_cul-gnome48-stylus.gschema.override').write_text(
+            "[org.gnome.desktop.peripherals.tablet.stylus]\nbutton-action='right'\nsecondary-button-action='middle'\n")
+        subprocess.run(['glib-compile-schemas', str(schemas)], check=True)
+        env['GSETTINGS_SCHEMA_DIR'] = str(schemas)
         launcher = root / 'shell.sh'
         exports = ' '.join(f"{key}='{env[key]}'" for key in (
             'DBUS_SESSION_BUS_ADDRESS', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
-            'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP'))
+            'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'GSETTINGS_SCHEMA_DIR'))
         launcher.write_text(f'#!/bin/bash\nexport {exports}\nexec gnome-shell --wayland --display-server '
-                            f'--no-x11 --wayland-display={DISPLAY_NAME} > {root}/shell.log 2>&1\n')
+                            f'{"" if xwayland else "--no-x11 "}--wayland-display={DISPLAY_NAME} > {root}/shell.log 2>&1\n')
         launcher.chmod(0o755)
+        # logind starts a getty on the active terminal when no session holds
+        # it (autovt), and one left from an earlier run takes the terminal
+        # back and hangs up the shell's session. Masked until the end of the
+        # run (--runtime: nothing survives a reboot either).
+        gettys = [f'getty@{tty}.service', f'autovt@{tty}.service']
+        subprocess.run(['sudo', '-n', 'systemctl', 'mask', '--runtime', '--now', *gettys], capture_output=True)
+        cleanup.callback(subprocess.run, ['sudo', '-n', 'systemctl', 'unmask', '--runtime', *gettys],
+                         capture_output=True)
         unit = f'cul-pen-shell-{os.getpid()}'
         subprocess.run(['sudo', '-n', 'systemd-run', '--quiet', f'--unit={unit}', '--collect', '-p', 'PAMName=login',
                         '-p', f'TTYPath=/dev/{tty}', '-p', 'StandardInput=tty-force', '-p', f'User={user}',
@@ -258,6 +305,14 @@ def run(binary, root, tty):
                  'dev.avifenesh.ComputerUseLinux.WindowControl']
         wait_for(lambda: 'true' in subprocess.run(owner, env=env, capture_output=True, text=True).stdout,
                  'the GNOME Shell extension on the bus', 30)
+        x_display = None
+        if xwayland:
+            # mutter names the display it took: "Using public X11 display :0".
+            x_display = wait_for(lambda: (re.search(r'public X11 display (:\d+)', (root / 'shell.log').read_text())
+                                          or [None, None])[1], 'the Xwayland display', 20)
+            # mutter writes the X authority it gives Xwayland's clients into
+            # its runtime directory.
+            x_authority = wait_for(lambda: sorted(runtime.glob('.mutter-Xwaylandauth.*')), 'the Xwayland authority', 20)[0]
         app = subprocess.Popen(['/usr/bin/python3', __file__, '--gtk', str(root)], env=dict(env, GTK_A11Y='none'),
                                stdout=(root / 'app.log').open('w'), stderr=subprocess.STDOUT)
         cleanup.callback(stop, app)
@@ -311,9 +366,18 @@ def run(binary, root, tty):
             presses = pen_presses(since, code, point)
             check(failures, len(presses) == 1,
                   f'{button} click: one pen press with button {code} at {point}: {events(root, since)[:8]}')
-            # libinput's 50 ms proximity timeout is off: the pen still hovers.
-            check(failures, presses and not [e for e in events(root, presses[0]['t']) if e['kind'] == 'proximity-out'],
-                  f'{button} click: the pen still hovers 0.4 s later')
+            # The pen leaves proximity after the action.
+            check(failures, presses and [e for e in events(root, presses[0]['t']) if e['kind'] == 'proximity-out'],
+                  f'{button} click: the pen left proximity after it')
+            if button == 'left':
+                # A second server's pen comes and goes; its reset of the
+                # shared stylus settings must not swap this server's buttons.
+                other = Server(binary, env)
+                theirs = other.call('click', dict(at((px + 40, py + 500)), window_id=wid, delivery='background'))
+                check(failures, theirs.get('ok') and (theirs.get('background') or {}).get('used') is True,
+                      f'a second server clicks through its own pen: {theirs.get("message")}')
+                other.close()
+                time.sleep(.5)
         point = (px + 280, py + 120)
         since = time.monotonic()
         background('click', **at(point), click_count=2)
@@ -338,6 +402,18 @@ def run(binary, root, tty):
         check(failures, any(e['kind'] == 'touch-begin' and e['source'] == 'touch' for e in seen)
               and scrolled and max(scrolled) > 100,
               f'scroll: touch pan moved the list down: {scrolled[-3:]}')
+        # libinput drops touches while a paired pen is in proximity and for
+        # 90 ms after: a scroll right after a pen click must still pan.
+        background('click', **at((px + 200, py + 400)))
+        before = max(scrolled) if scrolled else 0
+        since = time.monotonic()
+        background('scroll', **at(point), direction='down', pages=1)
+        time.sleep(1)
+        seen = events(root, since)
+        scrolled = [e['value'] for e in seen if e['kind'] == 'scrolled']
+        check(failures, any(e['kind'] == 'touch-begin' and e['source'] == 'touch' for e in seen)
+              and scrolled and max(scrolled) > before + 100,
+              f'scroll after a pen click: touch pan moved the list further: {scrolled[-3:]}')
         # The user's pointer never moved: no mouse event after the pen began,
         # and GTK still has it where the normal click left it.
         mouse = [e for e in events(root, pen_start) if e.get('source') == 'mouse']
@@ -360,14 +436,25 @@ def run(binary, root, tty):
         stop(cover)
         time.sleep(.5)
         check(failures, not [e for e in events(root, since) if e['kind'] == 'press'], 'refused click sent no press')
-        # Hover: the pen leaves proximity HOVER seconds after its last action.
+        # The pen leaves proximity right after the release.
         last = time.monotonic()
         background('click', **at((px + 120, py + 300)))
-        press = wait_for(lambda: [e for e in events(root, last) if e['kind'] == 'press'], 'hover click press', 5)[0]['t']
-        out = wait_for(lambda: [e for e in events(root, press) if e['kind'] == 'proximity-out'], 'pen proximity out', HOVER + 6)
-        hover = out[0]['t'] - press
-        print(f'pen hovered {hover:.1f} s', flush=True)
-        check(failures, HOVER - 1 <= hover <= HOVER + 3, f'hover ended after {hover:.1f} s')
+        press = wait_for(lambda: [e for e in events(root, last) if e['kind'] == 'press'], 'click press', 5)[0]['t']
+        out = wait_for(lambda: [e for e in events(root, press) if e['kind'] == 'proximity-out'], 'pen proximity out', 3)
+        print(f'pen left proximity {out[0]["t"] - press:.2f} s after the press', flush=True)
+        check(failures, out[0]['t'] - press < .5, f'pen left proximity {out[0]["t"] - press:.2f} s after the press')
+        chrome = chrome_binary()
+        if chrome:
+            logger = chrome_logger(root)
+            cleanup.callback(logger.shutdown)
+            for platform in ('wayland', 'x11'):
+                if platform == 'x11' and not x_display:
+                    print('SKIP chrome x11: no Xwayland', flush=True)
+                    continue
+                chrome_checks(failures, server, root, dict(env, DISPLAY=x_display, XAUTHORITY=str(x_authority)) if x_display else env,
+                              chrome, platform, logger.server_address[1], cleanup)
+        else:
+            print('SKIP chrome: no chromium or google-chrome', flush=True)
         # An app without tablet support: wev logs every pointer and touch event.
         if shutil.which('wev'):
             wev = subprocess.Popen(['wev'], env=env, stdout=(root / 'wev.log').open('w'), stderr=subprocess.STDOUT)
@@ -389,8 +476,169 @@ def run(binary, root, tty):
         check(failures, not leftover_devices(), f'no virtual device after exit: {leftover_devices()}')
         dump = subprocess.run(['dconf', 'dump', '/org/gnome/desktop/peripherals/'], env=env,
                               capture_output=True, text=True).stdout
-        check(failures, 'tablets' not in dump and 'touchscreens' not in dump, f'no tablet or touch setting left: {dump}')
+        check(failures, 'tablets' not in dump and 'touchscreens' not in dump and 'stylus' not in dump,
+              f'no tablet, stylus or touch setting left: {dump}')
     return failures
+
+CHROME_PAGE = """<!doctype html><title>cul-pen-chrome</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;font:14px sans-serif;user-select:none}
+#pad{position:absolute;left:0;top:0;width:60%;height:100%;background:#ddd}
+#list{position:absolute;right:0;top:0;width:40%;height:100%;overflow-y:scroll}</style>
+<div id=pad></div><div id=list></div>
+<script>
+const list = document.getElementById('list');
+for (let i = 0; i < 300; i++) { const row = document.createElement('div'); row.textContent = 'row ' + i; row.style.height = '24px'; list.appendChild(row); }
+const send = entry => fetch('/log', {method: 'POST', body: JSON.stringify(entry), keepalive: true});
+const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; };
+for (const kind of ['pointerdown', 'pointerup', 'click', 'auxclick', 'contextmenu', 'dblclick', 'pointermove']) {
+  addEventListener(kind, event => {
+    if (kind === 'pointermove' && !event.buttons && event.pointerType !== 'pen') return;
+    send({kind, type: event.pointerType || null, button: event.button, buttons: event.buttons,
+          x: event.clientX, y: event.clientY, target: event.target.id});
+    if (kind === 'contextmenu') event.preventDefault();
+  }, true);
+}
+for (const kind of ['touchstart', 'touchend', 'wheel']) addEventListener(kind, event => send({kind, target: event.target.id}), {capture: true, passive: true});
+list.addEventListener('scroll', () => send({kind: 'scrolled', value: list.scrollTop}));
+addEventListener('load', () => send({kind: 'ready', pad: rect('pad'), list: rect('list')}));
+</script>"""
+
+
+def chrome_binary():
+    return next((path for path in (shutil.which(name) for name in ('chromium', 'chromium-browser', 'google-chrome'))
+                 if path), None)
+
+
+def chrome_logger(root):
+    """Serves the page and appends what it posts to chrome.jsonl."""
+    import http.server
+    import threading
+    log = (root / 'chrome.jsonl').open('a', buffering=1)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = CHROME_PAGE.encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            entry = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            entry['t'] = time.monotonic()
+            log.write(json.dumps(entry) + '\n')
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *_):
+            pass
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def chrome_events(root, since=0.0):
+    path = root / 'chrome.jsonl'
+    if not path.exists():
+        return []
+    return [entry for entry in (json.loads(line) for line in path.read_text().splitlines() if line.strip())
+            if entry['t'] >= since]
+
+
+def chrome_checks(failures, server, root, env, chrome, platform, port, cleanup):
+    """Background clicks, a drag and a scroll on Chromium, native Wayland or
+    under Xwayland: each must reach the page as the pen or touch input it is,
+    with the button the call named."""
+    name = f'chrome {platform}'
+    profile = root / f'chrome-{platform}'
+    chrome_env = dict(env)
+    if platform == 'x11':
+        chrome_env.pop('WAYLAND_DISPLAY', None)
+    process = subprocess.Popen([chrome, f'--user-data-dir={profile}', '--no-first-run', '--no-default-browser-check',
+                                '--password-store=basic', '--disable-gpu', f'--ozone-platform={platform}',
+                                '--window-size=1000,700', f'--app=http://127.0.0.1:{port}/?{platform}'],
+                               env=chrome_env, stdout=(root / f'chrome-{platform}.log').open('w'),
+                               stderr=subprocess.STDOUT)
+    cleanup.callback(stop, process)
+    started = time.monotonic()
+    ready = wait_for(lambda: [e for e in chrome_events(root, started) if e['kind'] == 'ready'], f'{name} page', 40)[-1]
+    window = wait_for(lambda: next((w for w in server.call('list_windows', {})['windows']
+                                    if w.get('title') == 'cul-pen-chrome'), None), f'{name} window', 20)
+    wid = window['window_id']
+    check(failures, server.call('activate_window', dict(window_id=wid)).get('ok'), f'{name}: activate')
+    time.sleep(1.5)
+    bounds = next(w for w in server.call('list_windows', {})['windows'] if w['window_id'] == wid)['bounds']
+    print(f'{name} window {window.get("app_id")} at {bounds}, page {ready}', flush=True)
+    pad, scroller = ready['pad'], ready['list']
+    # The page's client area ends at the window's bottom right, inside any
+    # frame; the first click calibrates the exact offset.
+    guess = (bounds['x'] + bounds['width'] - (pad[2] + scroller[2]), bounds['y'] + bounds['height'] - pad[3])
+
+    def screen(local, offset):
+        return dict(x=int(offset[0] + local[0]), y=int(offset[1] + local[1]))
+
+    def call(tool, **arguments):
+        result = server.call(tool, dict(arguments, window_id=wid, delivery='background'))
+        report = result.get('background') or {}
+        check(failures, result.get('ok') and report.get('used') is True,
+              f'{name} background {tool} {arguments}: {result.get("message")} {report}')
+        return result
+
+    def seen(since, kind, **match):
+        return [e for e in chrome_events(root, since) if e['kind'] == kind
+                and all(e.get(key) == value for key, value in match.items())]
+    since = time.monotonic()
+    point = (pad[0] + 150, pad[1] + 150)
+    result = call('click', **screen(point, guess))
+    check(failures, (result.get('background') or {}).get('route') == 'gnome-pen', f'{name} left route: {result.get("background")}')
+    clicks = wait_for(lambda: seen(since, 'click'), f'{name} left click', 5)
+    downs = seen(since, 'pointerdown')
+    print(f'{name} left click: {downs} {clicks}', flush=True)
+    offset = (guess[0] + point[0] - clicks[0]['x'], guess[1] + point[1] - clicks[0]['y'])
+    check(failures, downs and downs[0]['button'] == 0 and downs[0]['type'] == 'pen',
+          f'{name} left click: a pen pointerdown with button 0: {downs}')
+
+    def near_page(entry, local, slack=3):
+        return abs(entry['x'] - local[0]) <= slack and abs(entry['y'] - local[1]) <= slack
+    for button, dom_button, kind, offset_x in (('right', 2, 'contextmenu', 250), ('middle', 1, 'auxclick', 350)):
+        point = (pad[0] + offset_x, pad[1] + 150)
+        since = time.monotonic()
+        call('click', **screen(point, offset), button=button)
+        time.sleep(.6)
+        downs = seen(since, 'pointerdown')
+        check(failures, len(downs) == 1 and downs[0]['button'] == dom_button and downs[0]['type'] == 'pen'
+              and near_page(downs[0], point) and seen(since, kind),
+              f'{name} {button} click: one pen pointerdown with button {dom_button} at {point} and a {kind}: '
+              f'{chrome_events(root, since)[:6]}')
+        if button == 'right':
+            check(failures, not seen(since, 'auxclick', button=1), f'{name} right click is not a middle click')
+    point = (pad[0] + 150, pad[1] + 300)
+    since = time.monotonic()
+    call('click', **screen(point, offset), click_count=2)
+    time.sleep(.8)
+    check(failures, len(seen(since, 'pointerdown', button=0)) == 2 and seen(since, 'dblclick'),
+          f'{name} double click: two pointerdowns and a dblclick: {chrome_events(root, since)[:8]}')
+    start, end = (pad[0] + 100, pad[1] + 400), (pad[0] + 300, pad[1] + 480)
+    since = time.monotonic()
+    call('drag', start_x=screen(start, offset)['x'], start_y=screen(start, offset)['y'],
+         end_x=screen(end, offset)['x'], end_y=screen(end, offset)['y'])
+    time.sleep(.6)
+    downs, ups = seen(since, 'pointerdown'), seen(since, 'pointerup')
+    moves = [e for e in seen(since, 'pointermove') if e['buttons'] == 1]
+    check(failures, downs and near_page(downs[0], start) and ups and near_page(ups[-1], end) and len(moves) >= 5
+          and all(e['type'] == 'pen' for e in downs + ups + moves),
+          f'{name} drag: pen down at {start}, {len(moves)} moves, up at {end}: {downs[:1]} {ups[-1:]}')
+    point = (scroller[0] + scroller[2] / 2, scroller[1] + scroller[3] / 2)
+    since = time.monotonic()
+    result = call('scroll', **screen(point, offset), direction='down', pages=1)
+    check(failures, (result.get('background') or {}).get('route') == 'gnome-touch', f'{name} scroll route: {result.get("background")}')
+    time.sleep(1.2)
+    scrolled = [e['value'] for e in seen(since, 'scrolled')]
+    check(failures, scrolled and max(scrolled) > 100, f'{name} scroll: the list scrolled down: {scrolled[-3:]}')
+    mouse = [e for e in chrome_events(root, started) if e.get('type') == 'mouse' and e['kind'] != 'pointermove']
+    check(failures, not mouse, f'{name}: no mouse button events: {mouse[:4]}')
+    stop(process)
 
 
 UDEV_RULE = 'SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{ID_PATH}!="platform-vkms", TAG+="mutter-device-ignore"\n'
@@ -436,7 +684,8 @@ def main():
             keep = os.environ.get('CUL_PEN_TEST_KEEP_LOGS')
             if keep:
                 Path(keep).mkdir(parents=True, exist_ok=True)
-                for name in ('shell.log', 'app.log', 'events.jsonl', 'wev.log'):
+                for name in ('shell.log', 'app.log', 'events.jsonl', 'wev.log', 'chrome.jsonl',
+                             'chrome-wayland.log', 'chrome-x11.log'):
                     if (root / name).exists():
                         shutil.copy(root / name, Path(keep) / name)
     if failures:

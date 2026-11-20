@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.59. The
+  crate and the `server.rs` literal are 0.7.59, the standalone version. KDE
+  Plasma Wayland (KWin 6.3 and later) gets the virtual pen and touchscreen for
+  `click`, `drag` and `scroll` with `delivery: "background"`, as routes
+  `kwin-pen` and `kwin-touch`: KWin maps the devices through
+  `org.kde.KWin.InputDevice`, the point is checked against KWin's stacking
+  order on the current desktop and activity, Show Desktop and full-screen
+  effects refuse the call, and the server removes what KWin wrote for these
+  devices into `kcminputrc` once they are gone. On GNOME 48 and later a
+  background right click no longer arrives as a middle click (and the other
+  way round): the server sets the stylus button actions for its own pen. A
+  background scroll right after a background click or drag now pans: the pen
+  leaves proximity at the end of each action instead of hovering for 8 seconds.
 - Synchronize the embedded Computer Use backend to standalone v0.7.58. The
   crate and the `server.rs` literal are 0.7.58, the standalone version. On
   GNOME Wayland, `click`, `drag` and `scroll` with `delivery: "background"`

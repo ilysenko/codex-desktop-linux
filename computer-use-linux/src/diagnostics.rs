@@ -117,7 +117,7 @@ pub struct CapabilityMap {
     /// or the reason it has none.
     pub background_seat: serde_json::Value,
     /// Background click, drag and scroll on GNOME Wayland: a virtual pen
-    /// (gnome-pen) and touchscreen (gnome-touch) that leave the user's mouse
+    /// (gnome-pen or kwin-pen) and touchscreen (gnome-touch or kwin-touch) that leave the user's mouse
     /// pointer where it is, with their limits, or the reason there is none.
     pub background_pointer: serde_json::Value,
     /// The backend the tool will use by default for each selectable layer.
