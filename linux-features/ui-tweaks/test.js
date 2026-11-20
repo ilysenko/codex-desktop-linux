@@ -330,7 +330,6 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:home-suggested-prompts-feature-sync", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-app-page", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-work-page", "webview-asset", "optional"],
-        ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
         ["feature:ui-tweaks:appearance-custom-font-input", "webview-asset", "optional"],
         ["feature:ui-tweaks:selected-text-more-details", "extracted-app:post-webview", "optional"],
@@ -1100,8 +1099,13 @@ test("feature settings override the tracked defaults through features.json", () 
     assert.equal(uiFontSizeDescriptor.enabled({}), true);
     const fontSizeFixture = createUiFontSizeExtractedApp();
     try {
+      for (let index = 0; index < 4; index += 1) {
+        const target = path.join(fontSizeFixture.extractedDir, ".vite", "build", `current-copy-${index}.js`);
+        fs.writeFileSync(target, uiFontSizeMainProcessFixture());
+        fontSizeFixture.targets.push(target);
+      }
       const result = uiFontSizeDescriptor.apply(fontSizeFixture.extractedDir, {});
-      assert.equal(result.changed, EXPECTED_FONT_SIZE_BUNDLE_COUNT);
+      assert.equal(result.changed, 8);
       for (const target of fontSizeFixture.targets) {
         assert.match(fs.readFileSync(target, "utf8"), /(?:max:|=)32\/\*/);
       }

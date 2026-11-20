@@ -30,8 +30,8 @@ function markdownRules(source) {
   const fadeTargets =
     `:is\\(\\.FadeIn-${CSS_HASH},\\.HorizontalRule-${CSS_HASH},\\.ListItem-${CSS_HASH},\\.TableRow-${CSS_HASH},\\.Blockquote-${CSS_HASH}\\)`;
   const unpatched = new RegExp(
-    `(${root(`(${CSS_HASH})`)} ${fadeTargets})\\{opacity:1;animation:fade-in-${CSS_HASH} ([^{};]+) both;animation-delay:var\\(--fade-delay,0s\\)\\}` +
-      `(${root("\\2")} \\.FadeListDecoration-${CSS_HASH}::marker)\\{animation:fade-in-marker-${CSS_HASH} \\3 forwards;animation-delay:var\\(--fade-delay,0s\\)\\}`,
+    `(${root(`(${CSS_HASH})`)} ${fadeTargets})\\{opacity:1;animation:([^{};]+) both;animation-delay:var\\(--fade-delay,0s\\)\\}` +
+      `(${root("\\2")} \\.FadeListDecoration-${CSS_HASH}::marker)\\{animation:[^{};]+ forwards;animation-delay:var\\(--fade-delay,0s\\)\\}`,
     "gu",
   );
   const patched = new RegExp(

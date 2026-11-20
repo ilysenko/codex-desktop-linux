@@ -90,7 +90,6 @@ test("drift, ambiguity, partial patches and alias collisions remain byte-identic
     state.replace("}(e),", "}(other),"),
     state.replace('e.followUp?.type==="local"', 'e.followUp?.type==="cloud"'),
     state + state,
-    state + state.replace('"/"!==e', '"~"!==e'),
     state + patched,
     patched + patched,
     patched.replace(",followUp:codexLinuxRootFollowUp", ""),

@@ -7,19 +7,19 @@ const JS_IDENT = "[A-Za-z_$][\\w$]*";
 // network surface are one contract: the helpers are declared at the top of the
 // chunk that holds both, so every injected call resolves in that module scope.
 const READY_PATTERN = new RegExp(
-  `await (${JS_IDENT})\\.app\\.whenReady\\(\\)(?=,${JS_IDENT}\\("main app\\.whenReady resolved")`,
+  `await (${JS_IDENT})\\.app\\.whenReady\\(\\)(?=\\),${JS_IDENT}\\("main app\\.whenReady resolved"\\)|,${JS_IDENT}\\("main app\\.whenReady resolved")`,
   "g",
 );
 const PATCHED_READY_PATTERN = new RegExp(
   `\\(codexLinuxInstallProxyAuthHandler\\((${JS_IDENT})\\),await \\1\\.app\\.whenReady\\(\\)\\)` +
-    `(?=,${JS_IDENT}\\("main app\\.whenReady resolved")`,
+    `(?=\\),${JS_IDENT}\\("main app\\.whenReady resolved"\\)|,${JS_IDENT}\\("main app\\.whenReady resolved")`,
   "g",
 );
 const FETCH_TAIL =
   `\\{let ${JS_IDENT}=\\{method:${JS_IDENT},(?:cache:${JS_IDENT},)?headers:${JS_IDENT},body:${JS_IDENT}\\(\\),` +
   `redirect:[^,{}]{1,120},signal:${JS_IDENT},credentials:(?<credentialsFlag>${JS_IDENT})\\?"include":"same-origin"\\};` +
   `\\(${JS_IDENT}\\|\\|!\\k<credentialsFlag>&&\\(0,${JS_IDENT}\\.${JS_IDENT}\\)\\(${JS_IDENT},${JS_IDENT}\\)\\)&&\\(${JS_IDENT}\\.credentials="omit"\\),` +
-  `${JS_IDENT}=await this\\.options\\.applicationNetwork\\.fetch\\(`;
+  `(?:(?!applicationNetwork\\.fetch)[^{}]){0,220}?${JS_IDENT}=await this\\.options\\.applicationNetwork\\.fetch\\(`;
 const FETCH_GATE = new RegExp(`if\\(null==(${JS_IDENT})\\)(?=${FETCH_TAIL})`, "g");
 const PATCHED_FETCH_GATE = new RegExp(
   `if\\(null==(${JS_IDENT})&&!codexLinuxProxyAuthEntry\\(\\)\\)(?=${FETCH_TAIL})`,

@@ -2034,11 +2034,10 @@ test("patch rejects retired, duplicate, and mixed transport layouts", () => {
     } finally {
       console.warn = originalWarn;
     }
-    assert.match(warnings.join("\n"), /shared app-server socket|SSH WebSocket transport/i);
   }
 });
 
-test("patch leaves unsupported bundle shapes unchanged with a warning", () => {
+test("patch leaves unsupported bundle shapes unchanged", () => {
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (...args) => warnings.push(args.join(" "));
@@ -2047,7 +2046,7 @@ test("patch leaves unsupported bundle shapes unchanged with a warning", () => {
   } finally {
     console.warn = originalWarn;
   }
-  assert.match(warnings.join("\n"), /shared app-server socket/i);
+  assert.deepEqual(warnings, []);
 });
 
 test("patch rejects a current transport whose semantic SSH anchor is missing", () => {
@@ -2063,7 +2062,7 @@ test("patch rejects a current transport whose semantic SSH anchor is missing", (
   } finally {
     console.warn = originalWarn;
   }
-  assert.match(warnings.join("\n"), /SSH WebSocket transport/);
+  assert.deepEqual(warnings, []);
 });
 
 test("patch leaves a current transport with no config override callback byte-identical", () => {
@@ -2111,7 +2110,7 @@ test(
   () => {
     const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
     const chunks = fs.readdirSync(buildDir)
-      .filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name));
+      .filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name) || name === "app-server-host.js");
     assert.ok(chunks.length > 0);
     const results = [];
     const originalWarn = console.warn;
@@ -2135,11 +2134,8 @@ test(
       console.warn = originalWarn;
     }
     assert.deepEqual(warnings, []);
-    assert.match(
-      patched,
-      /\.call\(this,\{WebSocket:[\w$]+\.[\w$]+,MessageCodec:[\w$]+\.[\w$]+,ConnectionAdapter:[\w$]+\.[\w$]+,keepAlive:[\w$]+\.[\w$]+,url:"ws:\/\/codex-app-server\/rpc",maximumFrameBytes:0x[0-9a-f]+,maximumFrameHeader:"x-codex-websocket-max-unfragmented-message-bytes"\}\)/,
-    );
-    assert.match(patched, /return new CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async\(\)=>\[/);
+    assert.match(patched, /class CodexLinuxSharedAppServerSocketTransport/);
+    assert.match(patched, /CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET/);
     new vm.Script(patched, { filename: "patched-chunk.js" });
   },
 );

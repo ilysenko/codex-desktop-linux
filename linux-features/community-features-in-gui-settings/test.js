@@ -686,14 +686,13 @@ test("signed General settings chunk composes every Linux settings insertion in b
     webview(require("../read-aloud/patch.js").descriptors, "settings-toggle"),
     webview(require("../ui-tweaks/patch.js").descriptors, "appearance-dock-icon-settings-row"),
     webview(require("../ui-tweaks/patch.js").descriptors, "appearance-custom-font-input"),
-    webview(require("../ui-tweaks/patch.js").descriptors, "home-suggested-prompts-settings-row"),
     (app) => require("../start-minimized-to-tray/patch.js").applySettingsPatch(app),
     (app) => require("../reasoning-visibility/settings.js").applySettingsPatch(app),
     (app) => applySettingsPatch(app, { feature: { dir: __dirname }, featurePatchOptions: { featuresRoot },
       enabledFeatureIds: ["community-features-in-gui-settings"] }),
   ];
   const markers = [`function ${UI}(`, "function codexLinuxStartMinimizedSetting(", "function codexLinuxReasoningVisibilitySetting(",
-    "codex-linux-read-aloud-settings-mount", "codexLinuxManualFontInput", "codexLinuxUiTweaksSuggestedPromptsEnabled"];
+    "codex-linux-read-aloud-settings-mount", "codexLinuxManualFontInput"];
   for (const order of [steps, [...steps].reverse()]) {
     // Only the settings chunk is copied; one synthetic locale catalog satisfies
     // the translation steps of the start-minimized and reasoning rows.

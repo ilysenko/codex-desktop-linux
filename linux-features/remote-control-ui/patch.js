@@ -22,6 +22,16 @@ function applyRemoteConnectionsVisibilityPatch(source) {
   if (patched !== source || source.includes(PATCHED_REMOTE_CONNECTIONS_GATE)) {
     return patched;
   }
+  const currentResolver = /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(!0===\2\?\.\["features\.remote_connections"\]\)return!0;let ([A-Za-z_$][\w$]*)=\2\?\.features;return null==\4\|\|"object"!=typeof \4\|\|Array\.isArray\(\4\)\?\3:Object\.getOwnPropertyDescriptor\(\4,"remote_connections"\)\?\.value===!0\|\|\3\}/g;
+  const currentResolvers = [...source.matchAll(currentResolver)];
+  if (currentResolvers.length === 1) {
+    return source.replace(
+      currentResolver,
+      (match) => match.replace("{if(", `{if(${LINUX_GATE})return!0;if(`),
+    );
+  }
+  if (source.includes(`{if(${LINUX_GATE})return!0;if(!0===`) &&
+      source.includes('"features.remote_connections"')) return source;
   warn("Could not find remote connections Statsig gate", "remote control UI remote connections visibility patch");
   return source;
 }
