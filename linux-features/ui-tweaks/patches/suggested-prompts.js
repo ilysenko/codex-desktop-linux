@@ -225,18 +225,21 @@ function currentSettingsRowContract(source) {
       GENERAL_SETTINGS_ASSET_NEEDLES.some((needle) => source.split(needle).length !== 2)) {
     return { state: "drifted" };
   }
-  const label = source.indexOf(GENERAL_SETTINGS_ASSET_NEEDLES[0]);
+  const anchorPositions = GENERAL_SETTINGS_ASSET_NEEDLES.map((needle) => source.indexOf(needle));
   const findMatchingBrace = require("../../../scripts/patches/lib/minified-js.js").findMatchingBrace;
-  const owners = [];
+  const functions = [];
   for (const header of source.matchAll(/function [A-Za-z_$][\w$]*\(\)\{/g)) {
-    if (header.index > label) break;
     const open = header.index + header[0].length - 1;
     const close = findMatchingBrace(source, open);
-    if (close >= label && source.indexOf(GENERAL_SETTINGS_ASSET_NEEDLES[1], label) <= close) {
-      owners.push({ start: header.index, close });
-    }
+    functions.push({ start: header.index, open, close });
   }
-  if (owners.length !== 1) return { state: "drifted" };
+  const owners = anchorPositions.map((position) => functions
+    .filter(({ open, close }) => open < position && position < close)
+    .sort((left, right) => right.start - left.start)[0]);
+  if (owners.some((owner) => owner == null) ||
+      owners.some(({ start, close }) => start !== owners[0].start || close !== owners[0].close)) {
+    return { state: "drifted" };
+  }
   const [{ start, close }] = owners;
   const body = source.slice(start, close + 1);
   const clean = [...body.matchAll(/if\(!([A-Za-z_$][\w$]*)\)return null;/g)];

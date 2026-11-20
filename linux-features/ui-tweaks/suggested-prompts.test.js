@@ -140,6 +140,27 @@ test("settings patch exposes the upstream row while preserving eligibility diagn
   assert.equal(applySuggestedPromptsSettingsPatch(patched), patched);
 });
 
+test("settings patch rejects semantic anchors owned by sibling functions byte-identically", () => {
+  const current = settingsFixture();
+  const sources = [
+    [
+      'function earlier(){return{id:"settings.agent.ambientSuggestions.saveError"}}',
+      current.replace("settings.agent.ambientSuggestions.saveError", "settings.agent.ambientSuggestions.saveFailure"),
+    ].join(""),
+    [
+      current.replace("settings.agent.ambientSuggestions.toggleLabel", "settings.agent.ambientSuggestions.label"),
+      'function later(){return{id:"settings.agent.ambientSuggestions.toggleLabel"}}',
+    ].join(""),
+  ];
+
+  for (const source of sources) {
+    const result = captureWarnings(() => applySuggestedPromptsSettingsPatch(source));
+    assert.equal(result.value, source);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /current Suggested Prompts settings contract/);
+  }
+});
+
 test("feature sync patch enables the renderer gate while preserving the status check", () => {
   const source = featureSyncFixture();
   const patched = applySuggestedPromptsFeatureSyncPatch(source);
