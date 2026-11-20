@@ -42,7 +42,6 @@
     }
   },
   "forbiddenPaths": [
-    "chrome_crashpad_handler",
-    "resources/plugins/openai-bundled/plugins/latex/bin/tectonic"
+    "chrome_crashpad_handler"
   ]
 }
