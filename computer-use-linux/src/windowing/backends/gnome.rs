@@ -101,6 +101,18 @@ pub async fn list_extension_windows() -> Result<Vec<WindowInfo>> {
     Ok(windows)
 }
 
+/// The extension's windows bottom to top, in GNOME Shell's stacking order
+/// (global.get_window_actors), without terminal details.
+pub(crate) async fn extension_windows_stacked() -> Result<Vec<WindowInfo>> {
+    let json = call_extension_json("ListWindows").await?;
+    let mut windows: Vec<WindowInfo> =
+        serde_json::from_str(&json).context("Codex GNOME Shell extension returned invalid JSON")?;
+    for window in &mut windows {
+        window.backend = GNOME_SHELL_EXTENSION_BACKEND.to_string();
+    }
+    Ok(windows)
+}
+
 async fn call_extension_json(method: &str) -> Result<String> {
     hydrate_session_bus_env();
 

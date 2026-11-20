@@ -116,6 +116,10 @@ pub struct CapabilityMap {
     /// sway-transient-seat or hyprland-send-key-state) and pointer support,
     /// or the reason it has none.
     pub background_seat: serde_json::Value,
+    /// Background click, drag and scroll on GNOME Wayland: a virtual pen
+    /// (gnome-pen) and touchscreen (gnome-touch) that leave the user's mouse
+    /// pointer where it is, with their limits, or the reason there is none.
+    pub background_pointer: serde_json::Value,
     /// The backend the tool will use by default for each selectable layer.
     pub preferred: PreferredBackends,
 }
@@ -499,6 +503,7 @@ fn capability_map_with_portal_keyboard(
         isolation,
         background_input,
         background_seat: crate::agent_seat::doctor_summary(),
+        background_pointer: crate::virtual_pen::doctor_summary(),
         preferred,
     }
 }

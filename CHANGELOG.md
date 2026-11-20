@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.58. The
+  crate and the `server.rs` literal are 0.7.58, the standalone version. On
+  GNOME Wayland, `click`, `drag` and `scroll` with `delivery: "background"`
+  and a window target go through a virtual pen and touchscreen, so the user's
+  mouse pointer stays where it is: left, right and middle clicks are a pen tap
+  and the upper and lower barrel buttons, a drag is a pen stroke inside one
+  window, and a scroll is a one-finger touch pan. The point must be on the
+  target window with no window above it, checked through the Codex GNOME Shell
+  extension; a locked screen or an open overview refuses the call. A tap or a
+  touch still focuses the window, apps without tablet support never see the
+  pen, and the pen hovers for 8 seconds. `drag` takes `delivery` and a window
+  target. Results name the route `gnome-pen` or `gnome-touch`, `doctor`
+  reports `capabilities.background_pointer`, and a successful pen or touch
+  action moves the avatar cursor. The devices are named
+  `codex-computer-use-linux virtual pen` and `... virtual touch`.
 - Synchronize the embedded Computer Use backend to standalone v0.7.57. The
   crate and the `server.rs` literal are 0.7.57, the standalone version.
   `type_text` and `press_key` take `delivery: "background"`, which reaches the

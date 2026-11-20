@@ -28,6 +28,7 @@ pub mod terminal;
 mod test_sockets;
 pub(crate) mod tree_encoding;
 pub(crate) mod tree_spill;
+mod virtual_pen;
 pub mod windowing;
 pub mod windows;
 mod wlr_outputs;
