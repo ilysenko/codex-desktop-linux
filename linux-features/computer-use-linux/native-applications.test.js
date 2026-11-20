@@ -15,6 +15,15 @@ test("current signed native Applications factory has a Linux metadata implementa
   assert.equal(patch(patched), patched);
 });
 
+test("native Applications accepts a minified dollar-sign binding", () => {
+  const minified = fixture.replace(/\bG\b/g, () => "$");
+  assert.notEqual(minified, fixture);
+  const patched = patch(minified);
+  assert.notEqual(patched, minified);
+  assert.doesNotThrow(() => new vm.Script(patched));
+  assert.equal(patch(patched), patched);
+});
+
 function metadataService(platform, { windows = [{ app_id: "org.editor", wm_class: "Editor", title: "Document", window_id: 42, focused: true }], backendFailure = false } = {}) {
   const calls = [];
   const desktop = "/xdg/applications/org.editor.desktop";

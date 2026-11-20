@@ -63,8 +63,8 @@ function applyNativeApplicationsPatch(source) {
   }
   if (owners.length !== 1 || downstream.length !== 1) fail();
   const owner = owners[0];
-  const published = [...source.matchAll(new RegExp(`nativeApplications:${owner.groups.binding},workspaceRoots:`, "g"))];
-  if (published.length !== 1) fail();
+  const published = `nativeApplications:${owner.groups.binding},workspaceRoots:`;
+  if (source.split(published).length !== 2) fail();
   const runtime = runtimeSource();
   const markerCount = source.split(MARKER).length - 1;
   const runtimeCount = source.split(runtime).length - 1;
