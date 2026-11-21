@@ -1,6 +1,6 @@
 //! Process liveness checks for the Electron app managed by the updater.
 
-use crate::config::RuntimeConfig;
+use crate::{config::RuntimeConfig, install};
 use anyhow::{Context, Result};
 use std::{
     fs,
@@ -34,8 +34,18 @@ fn scan_proc_for_executable(expected: &Path) -> Result<bool> {
 fn process_matches(pid: u32, expected: &Path) -> bool {
     is_process_alive(pid)
         && read_exe_link(pid)
-            .map(|path| path == expected)
+            .map(|path| exe_link_matches(&path, expected))
             .unwrap_or(false)
+}
+
+/// A package upgrade that replaces the app image while the app is running
+/// leaves `/proc/<pid>/exe` pointing at the unlinked file, which the kernel
+/// reports as "<path> (deleted)". That process is still the managed app.
+fn exe_link_matches(link_target: &Path, expected: &Path) -> bool {
+    install::strip_deleted_path_suffix(link_target)
+        .as_deref()
+        .unwrap_or(link_target)
+        == expected
 }
 
 fn is_process_alive(pid: u32) -> bool {
@@ -51,6 +61,7 @@ fn read_exe_link(pid: u32) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use anyhow::Result;
+    use std::process::Command;
 
     #[test]
     fn current_process_is_not_mistaken_for_electron() -> Result<()> {
@@ -64,5 +75,56 @@ mod tests {
             &config.app_executable_path
         ));
         Ok(())
+    }
+
+    #[test]
+    fn running_app_is_still_detected_after_its_executable_is_replaced() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let app = temp.path().join("ChatGPT");
+        // Copy in a child process so no writable descriptor for the new
+        // executable exists in the parallel test runner, where another
+        // thread's fork could inherit it and make the spawn fail with ETXTBSY.
+        let copied = Command::new("cp").arg("/bin/sleep").arg(&app).status()?;
+        anyhow::ensure!(copied.success(), "cp /bin/sleep failed: {copied}");
+        let mut child = Command::new(&app).arg("30").spawn()?;
+
+        // A package upgrade unlinks the old image while it is still running.
+        // The kernel then reports `/proc/<pid>/exe` as "<path> (deleted)".
+        fs::remove_file(&app)?;
+        let link = read_exe_link(child.id());
+        let still_detected = process_matches(child.id(), &app);
+        child.kill()?;
+        child.wait()?;
+        let link = link?;
+
+        assert!(
+            link.to_string_lossy().ends_with(" (deleted)"),
+            "unexpected exe link {link:?}"
+        );
+        assert!(still_detected);
+        Ok(())
+    }
+
+    #[test]
+    fn replaced_executable_of_another_path_is_not_mistaken_for_the_app() {
+        let expected = Path::new("/opt/codex-desktop/ChatGPT");
+
+        assert!(exe_link_matches(expected, expected));
+        assert!(exe_link_matches(
+            Path::new("/opt/codex-desktop/ChatGPT (deleted)"),
+            expected
+        ));
+        assert!(!exe_link_matches(
+            Path::new("/opt/other/ChatGPT (deleted)"),
+            expected
+        ));
+        assert!(!exe_link_matches(
+            Path::new("/opt/codex-desktop/ChatGPT-helper (deleted)"),
+            expected
+        ));
+        assert!(!exe_link_matches(
+            Path::new("/opt/codex-desktop/ChatGPT (deleted) (deleted)"),
+            expected
+        ));
     }
 }
