@@ -3,17 +3,17 @@
 const APPSHOT_HELPER_MARKER = "codexLinuxAppshotStartCapture";
 const APPSHOT_AVAILABILITY_MARKER = "codexLinuxAppshotsPlatformAvailable";
 const IDENT = "[A-Za-z_$][\\w$]*";
-// rspack/SWC shape of the renderer availability atom:
-// `...requirements?.allowAppshots!==!1}function y(e){return"macOS"===e||"windows"===e}`.
-const CURRENT_APPSHOT_AVAILABILITY = new RegExp(
-  `(requirements\\?\\.allowAppshots!==!1\\}function (${IDENT})\\((${IDENT})\\)\\{return)` +
-    `"macOS"===\\3\\|\\|"windows"===\\3\\}`,
+// The AppShots account atom and exported host check share this platform
+// predicate. Keep their feature flags and requirements checks unchanged.
+const APPSHOT_AVAILABILITY = new RegExp(
+  `if\\(!(?<gate>${IDENT})\\(${IDENT}\\)\\|\\|[^;]{1,300}\\)return!1;` +
+    `let\\{data:(?<data>${IDENT})\\}=[^;]{1,200};return null!=\\k<data>&&\\k<data>\\.requirements\\?\\.allowAppshots!==!1\\}\\),` +
+    `[^;]{1,500};function \\k<gate>\\((?<platform>${IDENT})\\)\\{return(?<predicate>` +
+    `(?<patched>"linux"===\\k<platform>\\/\\*${APPSHOT_AVAILABILITY_MARKER}\\*\\/\\|\\|)?` +
+    `"macOS"===\\k<platform>\\|\\|"windows"===\\k<platform>)\\}` +
+    `(?=${IDENT}\\.d\\(${IDENT},\\{\\},\\{[^{};]{1,100}async function\\(\\{scope:${IDENT},hostId:${IDENT},queryClient:${IDENT}\\}\\)` +
+    `\\{let ${IDENT}=[^;]{1,100};if\\(!\\k<gate>\\(${IDENT}\\)\\|\\|)`,
   "g",
-);
-const PATCHED_APPSHOT_AVAILABILITY = new RegExp(
-  `requirements\\?\\.allowAppshots!==!1\\}function ${IDENT}\\((${IDENT})\\)\\{return` +
-    `"linux"===\\1\\/\\*${APPSHOT_AVAILABILITY_MARKER}\\*\\/\\|\\|` +
-    `"macOS"===\\1\\|\\|"windows"===\\1\\}`,
 );
 
 function warn(message, patchName) {
@@ -21,16 +21,13 @@ function warn(message, patchName) {
 }
 
 function applyLinuxAppshotAvailabilityPatch(currentSource) {
-  if (PATCHED_APPSHOT_AVAILABILITY.test(currentSource)) {
-    return currentSource;
-  }
-  const matches = [...currentSource.matchAll(CURRENT_APPSHOT_AVAILABILITY)];
-  if (matches.length === 1) {
-    return currentSource.replace(
-      CURRENT_APPSHOT_AVAILABILITY,
-      (_match, prefix, _functionName, platformVar) =>
-        `${prefix}"linux"===${platformVar}/*${APPSHOT_AVAILABILITY_MARKER}*/||"macOS"===${platformVar}||"windows"===${platformVar}}`,
-    );
+  const owner = appshotAvailabilityOwner(currentSource);
+  if (owner != null) {
+    if (owner.groups.patched != null) return currentSource;
+    const start = owner.index + owner[0].length - owner.groups.predicate.length - 1;
+    return currentSource.slice(0, start) +
+      `"linux"===${owner.groups.platform}/*${APPSHOT_AVAILABILITY_MARKER}*/||` +
+      currentSource.slice(start);
   }
 
   warn("Could not find AppShots availability gate", "Linux AppShots availability patch");
@@ -38,9 +35,14 @@ function applyLinuxAppshotAvailabilityPatch(currentSource) {
 }
 
 function matchesLinuxAppshotAvailabilityContract(source) {
-  CURRENT_APPSHOT_AVAILABILITY.lastIndex = 0;
-  return [...source.matchAll(CURRENT_APPSHOT_AVAILABILITY)].length === 1 ||
-    PATCHED_APPSHOT_AVAILABILITY.test(source);
+  return appshotAvailabilityOwner(source) != null;
+}
+
+function appshotAvailabilityOwner(source) {
+  const matches = [...source.matchAll(APPSHOT_AVAILABILITY)];
+  if (matches.length !== 1) return null;
+  const markers = source.split(APPSHOT_AVAILABILITY_MARKER).length - 1;
+  return markers === Number(matches[0].groups.patched != null) ? matches[0] : null;
 }
 
 function linuxAppshotWaylandHelperSource() {

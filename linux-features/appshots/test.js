@@ -43,7 +43,7 @@ function captureWarnings(callback) {
 }
 
 function appshotAvailabilityAtomBundleFixture() {
-  return 'let l=["appshot-hotkey-state"];async function _({scope:e,hostId:t,queryClient:n}){let i=await n.ensureQueryData({queryKey:(0,c.UA)({hostId:t}),queryFn:()=>(0,c.Wr)(e,t)});return i.requirements?.allowAppshots!==!1}function y(e){return"macOS"===e||"windows"===e}';
+  return 'let l=["appshot-hotkey-state"],d=atom((e,{get:t})=>{let n=t(platform);if(!f(n)||!t(accountFlag)||"windows"===n&&!t(windowsFlag))return!1;let{data:r}=t(requirements,{hostId:e});return null!=r&&r.requirements?.allowAppshots!==!1}),c=atom((e,{get:t})=>t(d,e));function f(e){return"macOS"===e||"windows"===e}n.d(t,{},{FM:c,MX:async function({scope:e,hostId:t,queryClient:n}){let r=e.get(platform);if(!f(r)||!e.get(accountFlag))return!1;let i=await n.ensureQueryData({hostId:t});return i.requirements?.allowAppshots!==!1}})';
 }
 
 function appshotMainProcessBundleFixture() {
@@ -574,9 +574,23 @@ test("enables AppShots availability atom on Linux", () => {
   );
   assert.equal(matchesLinuxAppshotAvailabilityContract(patched), true);
   assert.doesNotThrow(() => new Function(patched));
-  const legacy = "requirements?.allowAppshots!==!1}function J(e){return e===`macOS`||e===`windows`}";
-  assert.equal(matchesLinuxAppshotAvailabilityContract(legacy), false);
-  assert.equal(applyLinuxAppshotAvailabilityPatch(legacy), legacy);
+  assert.equal(patched.replace('"linux"===e/*codexLinuxAppshotsPlatformAvailable*/||', ""),
+    appshotAvailabilityAtomBundleFixture());
+});
+
+test("AppShots availability fails closed when the shared platform predicate is ambiguous or drifted", () => {
+  const source = appshotAvailabilityAtomBundleFixture();
+  for (const changed of [
+    source + source,
+    source + applyLinuxAppshotAvailabilityPatch(source),
+    source.replace("if(!f(n)", "if(!other(n)"),
+    source.replace("if(!f(r)", "if(!other(r)"),
+    source.replace("r.requirements?.allowAppshots", "r.requirements?.other"),
+    source.replace('return"macOS"===e', 'return"linux"===e||"macOS"===e'),
+  ]) {
+    assert.equal(matchesLinuxAppshotAvailabilityContract(changed), false);
+    captureWarnings(() => assert.equal(applyLinuxAppshotAvailabilityPatch(changed), changed));
+  }
 });
 
 test(

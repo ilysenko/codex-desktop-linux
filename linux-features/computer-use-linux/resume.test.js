@@ -59,7 +59,7 @@ function trustedServicesConstant(chunks, exportName) {
 // external dependencies. No Electron, app-server, profile, or network is used.
 function resumeHarness(source, trustedServicesKey) {
   const builder = only(source, new RegExp(
-    `function (${IDENT})\\(\\{browserBackends:(${IDENT}),deferTools:${IDENT},surfaces:${IDENT},` +
+    `function (${IDENT})\\(\\{browserBackends:(${IDENT}),deferTools:${IDENT},omitCuaConfirmationPolicyBySku:${IDENT},surfaces:${IDENT},` +
     `nodeRepl:${IDENT},accessBootstrapPath:(${IDENT})\\}`,
     "g",
   ));
@@ -105,6 +105,7 @@ function resumeHarness(source, trustedServicesKey) {
   const packageRoot = only(buildSource, new RegExp(
     `(${IDENT})\\(\\)\\.join\\((${IDENT})\\.env\\[(${IDENT})\\.(${IDENT})\\],"@oai/cua-repl"\\)`, "g"));
   const services = only(buildSource, new RegExp(`\\[(${IDENT})\\.(${IDENT})\\]:JSON\\.stringify\\(${IDENT}\\)`, "g"));
+  const policyAllowlist = only(buildSource, new RegExp(`\\[(${IDENT})\\]:\\[${IDENT}\\?\\.env\\[\\1\\],${IDENT}\\]\\.filter\\(Boolean\\)\\.join\\(","\\)`, "g"));
   const backends = only(buildSource, new RegExp(`\\[(${IDENT})\\.(${IDENT})\\]:${builder[2]}\\.join\\(","\\)`, "g"));
   const executable = only(buildSource, new RegExp(`command:${packageRoot[2]}\\.env\\[${packageRoot[3]}\\.(${IDENT})\\]`, "g"));
   const files = [null, oneAlias(buildSource, new RegExp(`\\(0,(${IDENT})\\.readFileSync\\)\\(new URL`, "g"))];
@@ -122,6 +123,7 @@ function resumeHarness(source, trustedServicesKey) {
     [packageRoot[1]]: () => path,
     [packageRoot[3]]: constants,
     [backends[1]]: constants,
+    [policyAllowlist[1]]: "NODE_REPL_UNTRUSTED_ENV_ALLOWLIST",
     [env[1]]: constants,
     [files[1]]: {
       readFileSync: file => {
@@ -189,11 +191,14 @@ test("official per-thread CUA overrides carry the trusted root when resuming cha
   for (const instructions of [true, false]) {
     for (const surfaces of [["computer"], ["browser"], ["browser", "computer"]]) {
       const cua = await resume({
-        browserBackends: ["iab"], desktopFeatureAvailability: { deferCuaTools: false },
+        browserBackends: ["iab"],
+        desktopFeatureAvailability: { deferCuaTools: false, omitCuaConfirmationPolicyBySku: { example: false } },
         cuaReplSurfaces: surfaces, codexLinuxCuaPluginRoot: "/trusted-plugin",
       }, { instructions });
       assert.equal(cua.enabled, true);
       assert.equal(cua.env.CUA_REPL_ENABLED_SURFACES, surfaces.join(","));
+      assert.equal(cua.env.CUA_REPL_OMIT_CONFIRMATION_POLICY, '{"example":false}');
+      assert.ok(cua.env.NODE_REPL_UNTRUSTED_ENV_ALLOWLIST.split(",").includes("CUA_REPL_OMIT_CONFIRMATION_POLICY"));
       assert.equal(cua.env.CODEX_LINUX_CUA_HOST_SOCKET, "/runtime/cua.sock");
       assert.equal(cua.env.NODE_REPL_JS_BANNER,
         'await import("@oai/cua/tinyskyAlt");await(await import("/trusted-plugin/scripts/native-client.mjs")).installLinuxComputerUse(cua);');

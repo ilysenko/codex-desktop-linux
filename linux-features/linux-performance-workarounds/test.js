@@ -20,7 +20,7 @@ const {
   matchesLinuxMarkdownAnimationPerformanceContract,
 } = require("./implementation.js");
 
-// Shapes below follow the signed 26.1103.31037 rspack webview.
+// Shapes below follow the signed 26.1117.31558 rspack webview.
 function currentAppShellTabLayoutFixture() {
   return 'function tabs(){let e8=!0,ez=!0,eN=!1,t$=ew.map((e,t)=>{let n=t===eW,i=e.render({disabled:e.disabled,isActive:n,isClosable:e.isClosable,isPresented:!!e.presentedContent,isRenaming:e.renameState.active,animateLayout:e8,animateExit:ez&&!eN,animatePosition:ez&&eN,animateWidth:tA,closeButtonTabIndex:-1,controller:eF,dragActivator:"tab",shortcutHint:null});return i});return t$}';
 }
@@ -30,7 +30,7 @@ function currentSidebarFixture() {
 }
 
 function currentMarkdownStylesheetFixture() {
-  return ".MarkdownRoot-rZKhxa[data-markdown-animated] :is(.FadeIn-RqQvGR,.HorizontalRule-ByOEk_,.ListItem-ncLgmg,.TableRow-ENsaGm,.Blockquote-EqEEot){opacity:1;animation:fade-in-HYTrVJ var(--duration,var(--transition-duration-basic)) var(--fade-easing,cubic-bezier(.37, .55, .86, .88)) both;animation-delay:var(--fade-delay,0s)}.MarkdownRoot-rZKhxa[data-markdown-animated] .FadeListDecoration-F9SN5z::marker{animation:fade-in-marker-re9IOT var(--duration,var(--transition-duration-basic)) var(--fade-easing,cubic-bezier(.37, .55, .86, .88)) forwards;animation-delay:var(--fade-delay,0s)}.MarkdownRoot-rZKhxa.AdaptiveStreaming-uuYOZc .FadeIn-RqQvGR,.MarkdownRoot-rZKhxa.AdaptiveStreaming-uuYOZc .FadeListDecoration-F9SN5z::marker{--duration:var(--animation-duration-streaming-text)}.MarkdownRoot-rZKhxa[data-markdown-animated] .ImageEnter-TCwnvk{transform-origin:50%;animation:.18s ease-out both image-enter-VfEUgK}";
+  return ".MarkdownRoot-rZKhxa[data-markdown-animated] :is(.FadeIn-RqQvGR,.HorizontalRule-ByOEk_,.ListItem-ncLgmg,.TableRow-ENsaGm,.Blockquote-EqEEot){opacity:1;animation:var(--motion-fade-in) var(--duration,var(--transition-duration-basic)) var(--fade-easing,cubic-bezier(.37, .55, .86, .88)) both;animation-delay:var(--fade-delay,0s)}.MarkdownRoot-rZKhxa[data-markdown-animated] .FadeListDecoration-F9SN5z::marker{animation:fade-in-marker-re9IOT var(--duration,var(--transition-duration-basic)) var(--fade-easing,cubic-bezier(.37, .55, .86, .88)) forwards;animation-delay:var(--fade-delay,0s)}.MarkdownRoot-rZKhxa.AdaptiveStreaming-uuYOZc .FadeIn-RqQvGR,.MarkdownRoot-rZKhxa.AdaptiveStreaming-uuYOZc .FadeListDecoration-F9SN5z::marker{--duration:var(--animation-duration-streaming-text)}.MarkdownRoot-rZKhxa[data-markdown-animated] .ImageEnter-TCwnvk{transform-origin:50%;animation:.18s ease-out both image-enter-VfEUgK}";
 }
 
 function withExtractedApp(files, callback) {
@@ -144,6 +144,7 @@ test("Markdown animation workaround fails closed without the image rule or with 
   const source = currentMarkdownStylesheetFixture();
   for (const drifted of [
     source.replace("both image-enter-VfEUgK", "both image-pop-VfEUgK"),
+    source.replace("--motion-fade-in", "--motion-pop-in"),
     source + source,
     source.replace("fade-in-marker-re9IOT", "fade-in-list-re9IOT"),
   ]) {
