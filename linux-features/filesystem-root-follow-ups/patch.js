@@ -4,14 +4,14 @@ const { escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 
 const identifier = "[A-Za-z_$][\\w$]*";
 const followUpAlias = "codexLinuxRootFollowUp";
-const guardProperty = "isMissingWorkspaceRoots:function({composerMode:";
+const guardProperty = "workspaceRootsForSubmit:";
 
 // Match the complete current guard, which upstream compiles as an inline
 // function called with the composer submission state:
 // `isMissingWorkspaceRoots:function({…}){…}(state)`. Capture minified aliases
 // rather than pinning bundle symbols.
 const guardParts = [
-  String.raw`isMissingWorkspaceRoots:function\(\{composerMode:(?<mode>${identifier}),workspaceRootsLoading:(?<loading>${identifier}),workspaceRootsForSubmit:(?<roots>${identifier}),`,
+  String.raw`(?:isMissingWorkspaceRoots:)?function\(\{composerMode:(?<mode>${identifier}),workspaceRootsLoading:(?<loading>${identifier}),workspaceRootsForSubmit:(?<roots>${identifier}),`,
   String.raw`canUseProjectlessThreads:(?<canProjectless>${identifier}),isProjectlessConversation:(?<projectless>${identifier}),isBrowserEnvironmentSelectionActive:(?<browser>${identifier}),isRemoteProjectExecution:(?<remote>${identifier})(?<followUp>,followUp:${followUpAlias})?\}\)\{`,
   String.raw`let (?<rootless>${identifier})=(?:\(0,${identifier}\.${identifier}\)|${identifier})\(\k<roots>\),(?<rooted>${identifier})=\k<roots>\.some\((?<item>${identifier})=>"/"!==\k<item>\);`,
   String.raw`return"cloud"!==\k<mode>&&!\k<loading>&&!\(\(\k<rooted>\|\|\k<remote>`,
@@ -24,15 +24,14 @@ const guardPattern = new RegExp(guardParts.join(""), "g");
 const STATE_LOOKAHEAD = 4000;
 
 function findGuard(source) {
-  if (source.split(guardProperty).length !== 2) return null;
   const matches = [...source.matchAll(guardPattern)];
   if (matches.length !== 1) return null;
   const [match] = matches;
   const { followUp, addition, state } = match.groups;
   if (Boolean(followUp) !== Boolean(addition)) return null;
   if (!followUp && match[0].includes(followUpAlias)) return null;
-  const following = source.slice(match.index + match[0].length, match.index + match[0].length + STATE_LOOKAHEAD);
-  if (!following.includes(`${state}.followUp?.type==="local"`)) return null;
+  const context = source.slice(Math.max(0, match.index - STATE_LOOKAHEAD), match.index + match[0].length + STATE_LOOKAHEAD);
+  if (!context.includes(`${state}.followUp?.type==="local"`)) return null;
   return match;
 }
 

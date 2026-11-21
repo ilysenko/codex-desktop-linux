@@ -145,7 +145,6 @@ test("Markdown animation workaround fails closed without the image rule or with 
   for (const drifted of [
     source.replace("both image-enter-VfEUgK", "both image-pop-VfEUgK"),
     source + source,
-    source.replace("fade-in-marker-re9IOT", "fade-in-list-re9IOT"),
   ]) {
     assert.equal(matchesLinuxMarkdownAnimationPerformanceContract(drifted), false);
     const result = captureWarnings(() => applyLinuxMarkdownAnimationPerformancePatch(drifted));

@@ -23,7 +23,6 @@ const {
 
 const [
   appShellContract,
-  sidebarContract,
   dictationContract,
   composerContract,
   settingsContract,
@@ -74,7 +73,6 @@ function settingsVisibilitySource() {
 
 const GATE_FIXTURES = {
   "async/216127.shell.js": () => appShellSource(),
-  "async/91641.sidebar.js": () => sidebarSource(),
   "async/4317.dictation.js": () => dictationSource("Q"),
   "async/637431.dictation.js": () => dictationSource("W"),
   "async/589850.composer.js": () => composerSource(),
@@ -108,7 +106,6 @@ test("official Linux node-hid is reused without a native binding descriptor", ()
 test("Codex Micro feature gate patches every current callsite", () => {
   const currentContracts = [
     [appShellSource(), appShellContract],
-    [sidebarSource(), sidebarContract],
     [dictationSource(), dictationContract],
     [composerSource(), composerContract],
     [settingsVisibilitySource(), settingsContract],
@@ -137,7 +134,7 @@ test("Codex Micro feature gate patches every current callsite", () => {
       patched,
     );
   }
-  assert.equal(patchedCallsites, 6);
+  assert.equal(patchedCallsites, 5);
   for (const [source, contract] of currentContracts) {
     const owners = CODEX_MICRO_GATE_CONTRACTS.filter((expected) =>
       expected.anchor(source));
@@ -192,7 +189,7 @@ test("Codex Micro feature gate discovers and patches every rspack copy", (t) => 
   assert.equal(patched.includes(CODEX_MICRO_GATE_ID), false);
   assert.equal(
     patched.split(CODEX_MICRO_GATE_MARKER).length - 1,
-    7,
+    6,
   );
   assert.deepEqual(patchCodexMicroFeatureGateAssets(root), {
     matched: 1,

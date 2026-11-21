@@ -41,6 +41,9 @@ const REGISTRY = `globalThis[Symbol.for(${JSON.stringify(REGISTRY_KEY)})]`;
 const SPAN_START = "/*codex-linux-selected-text-more-details:+*/";
 const SPAN_REPLACE = "/*codex-linux-selected-text-more-details:~";
 const SPAN_END = "/*codex-linux-selected-text-more-details:-*/";
+const NORMALIZE_SPAN_START = "/*codex-linux-selected-text-more-details-normalize:+*/";
+const NORMALIZE_SPAN_REPLACE = "/*codex-linux-selected-text-more-details-normalize:~";
+const NORMALIZE_SPAN_END = "/*codex-linux-selected-text-more-details-normalize:-*/";
 const IDENT = "[A-Za-z_$][\\w$]*";
 const MEMBER = `${IDENT}\\.${IDENT}`;
 const PARENT_CACHE_SIZE = 18;
@@ -69,29 +72,52 @@ function replacementSpan(original, text) {
   return `${SPAN_REPLACE}${original}*/${text}${SPAN_END}`;
 }
 
-// Removes every span this patch inserted and restores replaced upstream text.
-function restoreUpstream(source) {
+function normalizationSpan(text) {
+  return `${NORMALIZE_SPAN_START}${text}${NORMALIZE_SPAN_END}`;
+}
+
+function normalizationReplacementSpan(original, text) {
+  return `${NORMALIZE_SPAN_REPLACE}${Buffer.from(original).toString("base64")}*/${text}${NORMALIZE_SPAN_END}`;
+}
+
+function restoreLayer(source, insertMarker, replaceMarker, endMarker, encoded) {
   let result = "";
   let cursor = 0;
   for (;;) {
-    const insert = source.indexOf(SPAN_START, cursor);
-    const replace = source.indexOf(SPAN_REPLACE, cursor);
-    const start = [insert, replace].filter((index) => index >= 0).sort((a, b) => a - b)[0];
-    if (start == null) return result + source.slice(cursor);
-    const end = source.indexOf(SPAN_END, start);
+    const candidates = [
+      { index: source.indexOf(insertMarker, cursor), replacement: false },
+      { index: source.indexOf(replaceMarker, cursor), replacement: true },
+    ].filter(({ index }) => index >= 0).sort((left, right) => left.index - right.index);
+    if (candidates.length === 0) {
+      if (source.indexOf(endMarker, cursor) >= 0) throw new Error("Orphaned selected-text More details edit");
+      return result + source.slice(cursor);
+    }
+    const [{ index: start, replacement }] = candidates;
+    const end = source.indexOf(endMarker, start);
     if (end < 0) throw new Error("Unterminated selected-text More details edit");
     const inner = source.slice(start, end);
-    if (inner.indexOf(SPAN_START, 1) >= 0 || inner.indexOf(SPAN_REPLACE, 1) >= 0) {
+    if ([insertMarker, replaceMarker].some((marker) => inner.indexOf(marker, 1) >= 0)) {
       throw new Error("Nested selected-text More details edit");
     }
     result += source.slice(cursor, start);
-    if (start === replace) {
-      const close = source.indexOf("*/", start + SPAN_REPLACE.length);
+    if (replacement) {
+      const close = source.indexOf("*/", start + replaceMarker.length);
       if (close < 0 || close > end) throw new Error("Malformed selected-text More details replacement");
-      result += source.slice(start + SPAN_REPLACE.length, close);
+      const original = source.slice(start + replaceMarker.length, close);
+      result += encoded ? Buffer.from(original, "base64").toString() : original;
     }
-    cursor = end + SPAN_END.length;
+    cursor = end + endMarker.length;
   }
+}
+
+// Remove the runtime feature edits before the current-release normalization
+// layer. A feature insertion can intentionally contain a copied constructor
+// with normalization spans; deleting that outer insertion deletes the copy,
+// while the original constructor's independent normalization span is restored
+// by the second pass.
+function restoreUpstream(source) {
+  const withoutFeature = restoreLayer(source, SPAN_START, SPAN_REPLACE, SPAN_END, false);
+  return restoreLayer(withoutFeature, NORMALIZE_SPAN_START, NORMALIZE_SPAN_REPLACE, NORMALIZE_SPAN_END, true);
 }
 
 function hasPatchSpans(source) {
@@ -109,16 +135,23 @@ function chunkModules(source) {
   const modules = [];
   let cursor = first + anchor.length;
   for (;;) {
-    const header = new RegExp(`^,?(?:"([^"]+)"|(${IDENT}))\\(((?:${IDENT}(?:,${IDENT})*)?)\\)\\{`, "u")
-      .exec(source.slice(cursor, cursor + 512));
+    const head = source.slice(cursor, cursor + 512);
+    const ordinary = new RegExp(`^,?(?:"([^"]+)"|(${IDENT}))\\(((?:${IDENT}(?:,${IDENT})*)?)\\)\\{`, "u")
+      .exec(head);
+    const wrapped = ordinary == null
+      ? new RegExp(`^,?(?:"([^"]+)"|(${IDENT})):\\(function\\(((?:${IDENT}(?:,${IDENT})*)?)\\)\\{`, "u")
+        .exec(head)
+      : null;
+    const header = ordinary ?? wrapped;
     if (header == null) break;
     const start = cursor + (header[0].startsWith(",") ? 1 : 0);
     const open = cursor + header[0].length - 1;
     const close = findMatchingBrace(source, open);
     if (close < 0) throw new Error("Unterminated rspack module factory");
+    if (wrapped != null && source[close + 1] !== ")") throw new Error("Unterminated wrapped rspack module factory");
     modules.push({ id: header[1] ?? header[2], params: header[3] ? header[3].split(",") : [],
       start, bodyStart: open + 1, bodyEnd: close, end: close + 1 });
-    cursor = close + 1;
+    cursor = close + (wrapped == null ? 1 : 2);
   }
   if (source[cursor] !== "}" || modules.length === 0) throw new Error("Unrecognized rspack module table");
   return modules;
@@ -290,6 +323,19 @@ function identifierTokens(text) {
   let previous = "";
   for (let cursor = 0; cursor < text.length; cursor += 1) {
     const char = text[cursor];
+    if (char === "/" && text[cursor + 1] === "*") {
+      const close = text.indexOf("*/", cursor + 2);
+      if (close < 0) throw new Error("Unterminated comment in copied Quick Chat code");
+      cursor = close + 1;
+      previous = "value";
+      continue;
+    }
+    if (char === "/" && text[cursor + 1] === "/") {
+      const close = text.indexOf("\n", cursor + 2);
+      cursor = close < 0 ? text.length : close;
+      previous = "value";
+      continue;
+    }
     if (char === "'" || char === '"' || char === "`") {
       if (char === "`") throw new Error("Template literal in copied Quick Chat code");
       for (cursor += 1; cursor < text.length && text[cursor] !== char; cursor += text[cursor] === "\\" ? 2 : 1);
@@ -344,12 +390,16 @@ function quickChatContract(source, modules) {
   const capability = uniqueMatch(factory.source,
     `if\\(!${scope}\\.get\\((${MEMBER}),\\{name:"chatgpt\\.quick-chat"\\}\\)\\.isCapable\\)return;`,
     "Quick Chat capability")[1];
+  const normalizationPrefix = `${escapeRegExp(NORMALIZE_SPAN_REPLACE)}[A-Za-z0-9+/=]+\\*/`;
+  const normalizationEnd = escapeRegExp(NORMALIZE_SPAN_END);
   const constructor = uniqueMatch(factory.source,
-    `\\(function\\((${IDENT}),\\{conversationId:${IDENT}=\\(0,${MEMBER}\\)\\(\\),contextSourceThread:${IDENT}=null,` +
+    `\\((?:${normalizationPrefix})?function\\((${IDENT}),\\{conversationId:${IDENT}=\\(0,${MEMBER}\\)\\(\\),contextSourceThread:${IDENT}=null,` +
       `projectId:${IDENT}=null,projectName:${IDENT}=null,preservePreviousSession:${IDENT}=!1(?:,previewSession:${IDENT})?\\}=\\{\\}\\)\\{`,
     "Quick Chat session constructor");
-  const create = functionAt(source, factory.start + constructor.index + 1);
-  if (!source.startsWith(`)(${factoryHeader[2]},{contextSourceThread:`, create.end)) {
+  const constructorStart = factory.start + constructor.index + constructor[0].indexOf("function");
+  const create = functionAt(source, constructorStart);
+  const afterCreate = source.slice(create.end).replace(new RegExp(`^${normalizationEnd}`, "u"), "");
+  if (!afterCreate.startsWith(`)(${factoryHeader[2]},{contextSourceThread:`)) {
     throw new Error("Quick Chat session constructor call drifted");
   }
   const session = uniqueMatch(create.source,
@@ -859,4 +909,5 @@ const descriptors = [{
 
 module.exports = { RUNTIME_MARKER, OVERLAY_MARKER, BINDINGS_EXPORT, OPEN_EXPORT, AVAILABLE_EXPORT, DIAGNOSTICS_EXPORT,
   ACTION_HELPER, REGISTRY_KEY, NATIVE_TRACE_HELPER_MARKER, enabled, chunkModules, restoreUpstream, runtimeContract,
-  overlayContract, runtimeSource, patchUpstream, patchSources, applySelectedTextMoreDetails, descriptors };
+  overlayContract, runtimeSource, patchUpstream, patchSources, applySelectedTextMoreDetails, descriptors,
+  hasPatchSpans, normalizationSpan, normalizationReplacementSpan };

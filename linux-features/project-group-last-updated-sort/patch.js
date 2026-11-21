@@ -4,7 +4,7 @@ const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/m
 
 const identifier = String.raw`[A-Za-z_$][\w$]*`;
 const order = String.raw`(?:\(0,${identifier}\.${identifier}\)|${identifier})`;
-const groupsArgument = String.raw`groups:${identifier}\(\{groups:${identifier},items:(?<items>${identifier})\}\)`;
+const groupsArgument = String.raw`groups:${order}\(\{groups:${identifier},(?:items|hiddenTaskKeys):(?<items>${identifier})\}\)`;
 const projectOrderArgument = String.raw`projectOrder:${order}\(${identifier},${identifier}\.${identifier}\.PROJECT_ORDER\)`;
 // Upstream compiles the unpinned project-group sorter inline:
 // `groups=function({groups:e,projectOrder:t}){return order(e,t)}({groups:filter({…,items}),projectOrder:read(get,keys.PROJECT_ORDER)})`.
@@ -41,9 +41,9 @@ function callContext(source, match) {
   const close = findMatchingBrace(source, tailStart + start[0].length - 1);
   if (close < 0) return null;
   const resolver = source.slice(close + 1, close + 400).match(new RegExp(
-    String.raw`^\(\{explicitChatThreadKeys:${identifier},getRecencyAt:(${identifier}),items:${escapeRegExp(match.groups.items)},projectGroups:${identifier},projectlessThreadIds:new Set\(${identifier}\?\?\[\]\)\}\)`,
+    String.raw`^\(\{explicitChatThreadKeys:${identifier},getRecencyAt:(${identifier}),items:(${identifier}),projectGroups:${identifier},projectlessThreadIds:new Set\(${identifier}\?\?\[\]\)\}\)`,
   ));
-  return resolver ? { mode: modes[0][1], recency: resolver[1] } : null;
+  return resolver ? { mode: modes[0][1], recency: resolver[1], items: resolver[2] } : null;
 }
 
 function patchedGroupSorter(orderFunction) {

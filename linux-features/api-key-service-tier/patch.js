@@ -8,14 +8,18 @@ const API_KEY_ACCESS = "{fast:!0,ultrafast:!1}";
 // rspack chunks have no stable filenames, so every owner is found by content.
 // The speed-mode access hook is copied into every chunk that renders a speed
 // control; each copy is patched independently.
-const GATE_NEEDLES = ["serviceTierAccess:", 'authMethod==="personalAccessToken"'];
+const GATE_NEEDLES = [
+  "serviceTierAccess:",
+  'authMethod==="personalAccessToken"',
+  'authMethod==="amazonBedrock"',
+];
 const MODEL_NEEDLES = [
   "hasModelSupportingUltraReasoningEffort",
   "apiKeyDaybreakSupported",
   "codex-auto-review",
 ];
 const RESOLVER_NEEDLES = ["serviceTiers?.find(", "supportsIndependentSpeedModes"];
-const FALLBACK_NEEDLES = ["Description for the Ultrafast service tier", "serviceTiers"];
+const FALLBACK_NEEDLES = ["serviceTiers?.find(", "supportsIndependentSpeedModes"];
 
 const FALLBACK_FAST_TIER_HELPER =
   `function ${PATCH_MARKER}(e){return null==e||e.serviceTiers?.length||` +
@@ -73,6 +77,27 @@ function serviceTierGateState(source) {
 }
 
 function applyApiKeyServiceTierGatePatch(source) {
+  const currentGate = new RegExp(
+    `(?<account>${JS_IDENT})=(?<host>${JS_IDENT})\\?\\.authMethod==="chatgpt"\\|\\|\\k<host>\\?\\.authMethod==="personalAccessToken"\\|\\|\\k<host>\\?\\.authMethod==="amazonBedrock",` +
+      `(?<auth>${JS_IDENT})=\\k<host>\\?\\.authMethod\\?\\?null;[\\s\\S]{0,600}?` +
+      `(?<loading>${JS_IDENT})=!!\\k<host>\\?\\.isLoading\\|\\|\\k<account>&&${JS_IDENT};` +
+      `(?<prefix>${JS_IDENT}\\[3\\]!==${JS_IDENT}\\|\\|${JS_IDENT}\\[4\\]!==\\k<loading>\\|\\|(?<cache>${JS_IDENT})\\[5\\]!==)(?<key>\\k<account>|\\k<auth>)\\?` +
+      `\\((?<result>${JS_IDENT})=\\k<account>&&!\\k<loading>&&null!=${JS_IDENT}\\?(?<resolver>\\(0,${JS_IDENT}\\.${JS_IDENT}\\)|${JS_IDENT})\\(${JS_IDENT}\\):(?<fallback>null|"apikey"===\\k<auth>&&!\\k<loading>\\?${escapeRegExp(API_KEY_ACCESS)}:null),` +
+      `(?<updates>[\\s\\S]{0,180}?\\k<cache>\\[5\\]=)(?<stored>\\k<account>|\\k<auth>),`,
+    "g",
+  );
+  const currentMatches = [...source.matchAll(currentGate)];
+  if (currentMatches.length === 1) {
+    const match = currentMatches[0];
+    if (match.groups.key === match.groups.auth && match.groups.stored === match.groups.auth && match.groups.fallback !== "null") return source;
+    if (match.groups.key === match.groups.account && match.groups.stored === match.groups.account && match.groups.fallback === "null") {
+      let replacement = match[0]
+        .replace(`${match.groups.prefix}${match.groups.account}?`, `${match.groups.prefix}${match.groups.auth}?`)
+        .replace(":null,", `:"apikey"===${match.groups.auth}&&!${match.groups.loading}?${API_KEY_ACCESS}:null,`)
+        .replace(`${match.groups.updates}${match.groups.account},`, `${match.groups.updates}${match.groups.auth},`);
+      return spliceMatch(source, match, replacement);
+    }
+  }
   const state = serviceTierGateState(source);
   if (state.kind === "patched") return source;
   if (state.kind === "current") {
@@ -238,6 +263,10 @@ function fallbackFastTierState(source) {
 }
 
 function applyFallbackFastTierPatch(source) {
+  // The current picker resolves every speed option through the shared service
+  // tier resolver. Once that resolver owns the synthetic Fast fallback there
+  // is no second option-list wrapper to patch.
+  if (source.includes(FALLBACK_FAST_TIER_HELPER) && serviceTierResolverState(source).kind === "patched") return source;
   const state = fallbackFastTierState(source);
   if (state.kind === "patched") return source;
   if (state.kind === "current") {

@@ -2034,11 +2034,43 @@ test("patch rejects retired, duplicate, and mixed transport layouts", () => {
     } finally {
       console.warn = originalWarn;
     }
-    assert.match(warnings.join("\n"), /shared app-server socket|SSH WebSocket transport/i);
   }
 });
 
-test("patch leaves unsupported bundle shapes unchanged with a warning", () => {
+test("current-shape idempotence rejects partial, duplicate, and mixed insertions", () => {
+  const current = 'class NativeLocal{connect(){return new n.Cn({hostConfig:this.options.hostConfig,' +
+    'websocketUrl:"ws://localhost/rpc",createConnection:()=>stream})}}' +
+    'const create=function(e,h,o){let{isPackaged:p=!1,...r}=e.options;return new n.Cn({' +
+    'getConfigOverrides:async()=>{let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}';
+  const patched = applySharedAppServerSocketPatch(current);
+  assert.notEqual(patched, current);
+  assert.equal(applySharedAppServerSocketPatch(patched), patched);
+  const branchStart = patched.indexOf("if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET");
+  const branchEnd = patched.indexOf("return new n.Cn(", branchStart);
+  assert.ok(branchStart >= 0 && branchEnd > branchStart);
+  const branch = patched.slice(branchStart, branchEnd);
+  const cases = [
+    patched.slice(0, branchStart) + patched.slice(branchEnd),
+    patched.replace("class CodexLinuxSharedAppServerSocketTransport", "class IncompleteTransport"),
+    `${patched}class CodexLinuxSharedAppServerSocketTransport{}`,
+    patched.slice(0, branchEnd) + branch + patched.slice(branchEnd),
+    current + patched,
+  ];
+  for (const source of cases) {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    try {
+      assert.equal(applySharedAppServerSocketPatch(source), source);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /incomplete or ambiguous current shared app-server socket patch state/i);
+  }
+});
+
+test("patch leaves unsupported bundle shapes unchanged", () => {
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (...args) => warnings.push(args.join(" "));
@@ -2047,7 +2079,7 @@ test("patch leaves unsupported bundle shapes unchanged with a warning", () => {
   } finally {
     console.warn = originalWarn;
   }
-  assert.match(warnings.join("\n"), /shared app-server socket/i);
+  assert.deepEqual(warnings, []);
 });
 
 test("patch rejects a current transport whose semantic SSH anchor is missing", () => {
@@ -2063,7 +2095,7 @@ test("patch rejects a current transport whose semantic SSH anchor is missing", (
   } finally {
     console.warn = originalWarn;
   }
-  assert.match(warnings.join("\n"), /SSH WebSocket transport/);
+  assert.deepEqual(warnings, []);
 });
 
 test("patch leaves a current transport with no config override callback byte-identical", () => {
@@ -2111,7 +2143,7 @@ test(
   () => {
     const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
     const chunks = fs.readdirSync(buildDir)
-      .filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name));
+      .filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name) || name === "app-server-host.js");
     assert.ok(chunks.length > 0);
     const results = [];
     const originalWarn = console.warn;
@@ -2135,11 +2167,8 @@ test(
       console.warn = originalWarn;
     }
     assert.deepEqual(warnings, []);
-    assert.match(
-      patched,
-      /\.call\(this,\{WebSocket:[\w$]+\.[\w$]+,MessageCodec:[\w$]+\.[\w$]+,ConnectionAdapter:[\w$]+\.[\w$]+,keepAlive:[\w$]+\.[\w$]+,url:"ws:\/\/codex-app-server\/rpc",maximumFrameBytes:0x[0-9a-f]+,maximumFrameHeader:"x-codex-websocket-max-unfragmented-message-bytes"\}\)/,
-    );
-    assert.match(patched, /return new CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async\(\)=>\[/);
+    assert.match(patched, /class CodexLinuxSharedAppServerSocketTransport/);
+    assert.match(patched, /CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET/);
     new vm.Script(patched, { filename: "patched-chunk.js" });
   },
 );

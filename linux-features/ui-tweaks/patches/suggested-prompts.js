@@ -7,7 +7,10 @@ const FEATURE_GATE_NEEDLE = `"${FEATURE_GATE_ID}"`;
 const FEATURE_SYNC_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "electron-desktop-features-changed"]);
 const APP_PAGE_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "generatedSuggestionsEnabled:"]);
 const WORK_PAGE_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "generatedSuggestionsEnabled:", "mode:\"work\""]);
-const GENERAL_SETTINGS_ASSET_NEEDLES = Object.freeze([FEATURE_GATE_NEEDLE, "planAtLogin"]);
+const GENERAL_SETTINGS_ASSET_NEEDLES = Object.freeze([
+  'id:"settings.agent.ambientSuggestions.toggleLabel"',
+  'id:"settings.agent.ambientSuggestions.saveError"',
+]);
 const HOME_CONTENT_ASSET_NEEDLES = Object.freeze(["\"curated\"===", "shouldUseCuratedNewChatPageSuggestions:"]);
 const RUNTIME_MARKER = "codexLinuxUiTweaksSuggestedPromptsEnabled";
 const FEATURE_SYNC_MARKER = "codexLinuxUiTweaksSuggestedPromptsFeatureSync";
@@ -217,10 +220,47 @@ function suggestedPromptsWorkPageContract(source) {
   return "drifted";
 }
 
+function currentSettingsRowContract(source) {
+  if (typeof source !== "string" ||
+      GENERAL_SETTINGS_ASSET_NEEDLES.some((needle) => source.split(needle).length !== 2)) {
+    return { state: "drifted" };
+  }
+  const anchorPositions = GENERAL_SETTINGS_ASSET_NEEDLES.map((needle) => source.indexOf(needle));
+  const findMatchingBrace = require("../../../scripts/patches/lib/minified-js.js").findMatchingBrace;
+  const functions = [];
+  for (const header of source.matchAll(/function [A-Za-z_$][\w$]*\(\)\{/g)) {
+    const open = header.index + header[0].length - 1;
+    const close = findMatchingBrace(source, open);
+    functions.push({ start: header.index, open, close });
+  }
+  const owners = anchorPositions.map((position) => functions
+    .filter(({ open, close }) => open < position && position < close)
+    .sort((left, right) => right.start - left.start)[0]);
+  if (owners.some((owner) => owner == null) ||
+      owners.some(({ start, close }) => start !== owners[0].start || close !== owners[0].close)) {
+    return { state: "drifted" };
+  }
+  const [{ start, close }] = owners;
+  const body = source.slice(start, close + 1);
+  const clean = [...body.matchAll(/if\(!([A-Za-z_$][\w$]*)\)return null;/g)];
+  const patched = [...body.matchAll(new RegExp(
+    `if\\(!\\(([A-Za-z_$][\\w$]*)\\|\\|function ${SETTINGS_ELIGIBILITY_MARKER}\\(\\)\\{return!0\\}\\(\\)\\)\\)return null;`,
+    "g",
+  ))];
+  const markerCount = markerOccurrenceCount(source, SETTINGS_ELIGIBILITY_MARKER);
+  if (clean.length === 1 && patched.length === 0 && markerCount === 0) {
+    return { state: "current", match: clean[0], offset: start + clean[0].index };
+  }
+  if (clean.length === 0 && patched.length === 1 && markerCount === 1) return { state: "patched" };
+  return { state: "drifted" };
+}
+
 function suggestedPromptsSettingsContract(source) {
   if (typeof source !== "string") {
     return "drifted";
   }
+  const currentRow = currentSettingsRowContract(source);
+  if (currentRow.state !== "drifted") return currentRow.state;
   const cleanRollouts = [...source.matchAll(gateAssignmentPattern())];
   const cleanEligibility = [...source.matchAll(settingsEligibilityPattern())];
   const patchedRollouts = [...source.matchAll(patchedGateAssignmentPattern(RUNTIME_MARKER))];
@@ -426,6 +466,13 @@ function applySuggestedPromptsHomeContentPatch(source) {
 
 function applySuggestedPromptsSettingsPatch(source) {
   try {
+    const currentRow = currentSettingsRowContract(source);
+    if (currentRow.state === "patched") return source;
+    if (currentRow.state === "current") {
+      const [original, eligible] = currentRow.match;
+      const replacement = `if(!(${eligible}||function ${SETTINGS_ELIGIBILITY_MARKER}(){return!0}()))return null;`;
+      return source.slice(0, currentRow.offset) + replacement + source.slice(currentRow.offset + original.length);
+    }
     const contract = suggestedPromptsSettingsContract(source);
     if (contract === "patched") {
       return source;

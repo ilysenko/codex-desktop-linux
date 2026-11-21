@@ -978,21 +978,11 @@ test(
     const signed = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, "webview", "assets");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "start-minimized-signed-"));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const asyncDir = path.join(root, "webview", "assets", "async");
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const copied = [];
-    for (const name of fs.readdirSync(path.join(signed, "async")).filter(file => file.endsWith(".js"))) {
-      const source = fs.readFileSync(path.join(signed, "async", name), "utf8");
-      if (['"settings.general.macMenuBar.label"', '"../locales/', ".macMenuBarEnabled"].some(needle => source.includes(needle))) {
-        fs.writeFileSync(path.join(asyncDir, name), source);
-        copied.push(name);
-      }
-    }
+    const assets = path.join(root, "webview", "assets");
+    fs.cpSync(signed, assets, { recursive: true });
     assert.deepEqual(applySettingsPatch(root), { changed: true });
-    const changed = copied.filter(name =>
-      fs.readFileSync(path.join(asyncDir, name), "utf8") !== fs.readFileSync(path.join(signed, "async", name), "utf8"));
-    assert.equal(changed.length, Object.keys(LABEL_TRANSLATIONS).length + 1);
-    const settings = changed.map(name => fs.readFileSync(path.join(asyncDir, name), "utf8"))
+    const settings = fs.readdirSync(path.join(assets, "async")).filter(name => name.endsWith(".js"))
+      .map(name => fs.readFileSync(path.join(assets, "async", name), "utf8"))
       .filter(source => source.includes("function codexLinuxStartMinimizedSetting("));
     assert.equal(settings.length, 1);
     const check = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: settings[0], encoding: "utf8" });

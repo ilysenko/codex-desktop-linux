@@ -15,13 +15,20 @@ const PATCHED_APPSHOT_AVAILABILITY = new RegExp(
     `"linux"===\\1\\/\\*${APPSHOT_AVAILABILITY_MARKER}\\*\\/\\|\\|` +
     `"macOS"===\\1\\|\\|"windows"===\\1\\}`,
 );
+const CURRENT_SIMPLE_APPSHOT_AVAILABILITY = new RegExp(
+  `function (${IDENT})\\((${IDENT})\\)\\{return"macOS"===\\2\\|\\|"windows"===\\2\\}`,
+  "g",
+);
+const PATCHED_SIMPLE_APPSHOT_AVAILABILITY = new RegExp(
+  `function ${IDENT}\\((${IDENT})\\)\\{return"linux"===\\1\\/\\*${APPSHOT_AVAILABILITY_MARKER}\\*\\/\\|\\|"macOS"===\\1\\|\\|"windows"===\\1\\}`,
+);
 
 function warn(message, patchName) {
   console.warn(`WARN: ${message} - skipping ${patchName}`);
 }
 
 function applyLinuxAppshotAvailabilityPatch(currentSource) {
-  if (PATCHED_APPSHOT_AVAILABILITY.test(currentSource)) {
+  if (PATCHED_APPSHOT_AVAILABILITY.test(currentSource) || PATCHED_SIMPLE_APPSHOT_AVAILABILITY.test(currentSource)) {
     return currentSource;
   }
   const matches = [...currentSource.matchAll(CURRENT_APPSHOT_AVAILABILITY)];
@@ -32,6 +39,12 @@ function applyLinuxAppshotAvailabilityPatch(currentSource) {
         `${prefix}"linux"===${platformVar}/*${APPSHOT_AVAILABILITY_MARKER}*/||"macOS"===${platformVar}||"windows"===${platformVar}}`,
     );
   }
+  const simple = [...currentSource.matchAll(CURRENT_SIMPLE_APPSHOT_AVAILABILITY)];
+  if (simple.length === 1 && currentSource.includes("requirements?.allowAppshots!==!1")) {
+    const [match] = simple;
+    const replacement = match[0].replace("return", `return"linux"===${match[2]}/*${APPSHOT_AVAILABILITY_MARKER}*/||`);
+    return currentSource.slice(0, match.index) + replacement + currentSource.slice(match.index + match[0].length);
+  }
 
   warn("Could not find AppShots availability gate", "Linux AppShots availability patch");
   return currentSource;
@@ -40,7 +53,9 @@ function applyLinuxAppshotAvailabilityPatch(currentSource) {
 function matchesLinuxAppshotAvailabilityContract(source) {
   CURRENT_APPSHOT_AVAILABILITY.lastIndex = 0;
   return [...source.matchAll(CURRENT_APPSHOT_AVAILABILITY)].length === 1 ||
-    PATCHED_APPSHOT_AVAILABILITY.test(source);
+    PATCHED_APPSHOT_AVAILABILITY.test(source) ||
+    source.includes("requirements?.allowAppshots!==!1") &&
+      ([...source.matchAll(CURRENT_SIMPLE_APPSHOT_AVAILABILITY)].length === 1 || PATCHED_SIMPLE_APPSHOT_AVAILABILITY.test(source));
 }
 
 function linuxAppshotWaylandHelperSource() {

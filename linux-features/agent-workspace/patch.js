@@ -1547,7 +1547,7 @@ const REF = `${IDENT}(?:\\.${IDENT})*`;
 function rspackModules(source) {
   const start = source.indexOf("__webpack_modules__={");
   if (start < 0) return [];
-  const header = new RegExp(`^,?("[^"]+"|${IDENT}|\\d+)\\(((?:${IDENT}(?:,${IDENT}){0,2})?)\\)\\{`, "u");
+  const header = new RegExp(`^,?("[^"]+"|${IDENT}|\\d+)(?:(?:\\(((?:${IDENT}(?:,${IDENT}){0,2})?)\\))|(?::(\\()?function\\(((?:${IDENT}(?:,${IDENT}){0,2})?)\\)))\\{`, "u");
   const modules = [];
   let index = start + "__webpack_modules__={".length;
   while (index < source.length) {
@@ -1557,8 +1557,9 @@ function rspackModules(source) {
     const close = findMatchingBrace(source, open);
     if (close < 0) break;
     const id = match[1].startsWith("\"") ? JSON.parse(match[1]) : match[1];
-    modules.push({ id, params: match[2].split(","), start: open, end: close + 1 });
+    modules.push({ id, params: (match[2] ?? match[4]).split(","), start: open, end: close + 1 });
     index = close + 1;
+    if (match[3] != null && source[index] === ")") index += 1;
   }
   return modules;
 }
@@ -1590,7 +1591,7 @@ const SETTINGS_CONTRACTS = [
     select: (body) => body.includes('"local-environments":{id:"settings.nav.local-environments",'),
     patched: (body) => body.includes(`"${SETTINGS_SLUG}":{id:"settings.nav.${SETTINGS_SLUG}"`),
     apply(body) {
-      const label = uniqueMatch(body, /"local-environments":\{id:"settings\.nav\.local-environments",defaultMessage:"[^"]*",description:"[^"]*"\},/g);
+      const label = uniqueMatch(body, /"local-environments":\{id:"settings\.nav\.local-environments",defaultMessage:"[^"]*"(?:,description:"[^"]*")?\},/g);
       if (label == null) throw new Error("could not uniquely resolve current settings navigation label");
       return body.replace(label[0], () =>
         `${label[0]}"${SETTINGS_SLUG}":{id:"settings.nav.${SETTINGS_SLUG}",defaultMessage:${JSON.stringify(SETTINGS_TITLE)},description:${JSON.stringify(SETTINGS_DESCRIPTION)}},`);
@@ -1698,12 +1699,16 @@ const SETTINGS_CONTRACTS = [
   {
     name: "catalogSlugs",
     copies: "all",
-    needle: '"computer-use","local-environments","',
-    select: (body) => body.includes('"local-environments","worktrees","environments"') ||
-      body.includes(`"local-environments","${SETTINGS_SLUG}","worktrees","environments"`),
-    patched: (body) => body.includes(`"local-environments","${SETTINGS_SLUG}","worktrees","environments"`),
-    apply: (body) => replaceOnce(body, '"local-environments","worktrees","environments"',
-      `"local-environments","${SETTINGS_SLUG}","worktrees","environments"`, "settings slug catalog"),
+    needle: '"local-environments"',
+    select: (body) => /"local-environments","(?:environments",)?worktrees"/.test(body) ||
+      body.includes(`"local-environments","${SETTINGS_SLUG}",`),
+    patched: (body) => body.includes(`"local-environments","${SETTINGS_SLUG}",`),
+    apply(body) {
+      const owner = uniqueMatch(body, /"local-environments","(?:environments",)?worktrees"/g);
+      if (owner == null) throw new Error("could not uniquely resolve current settings slug catalog");
+      return body.replace(owner[0], () => owner[0].replace('"local-environments",',
+        `"local-environments","${SETTINGS_SLUG}",`));
+    },
   },
   {
     name: "catalogItems",
@@ -1734,7 +1739,30 @@ function collectAgentWorkspaceSettingsPatches(extractedDir) {
   if (!fs.existsSync(assetsDir)) {
     throw new Error(`missing webview assets directory ${assetsDir}`);
   }
-  const request = findCodexRequestWebviewAsset(assetsDir);
+  let request;
+  try {
+    request = findCodexRequestWebviewAsset(assetsDir);
+  } catch {
+    // Current rspack may wrap factories as `id:(function(...){...})`, a form
+    // the shared legacy locator does not parse. Resolve the same semantic
+    // request wrapper locally and require unique module/export ownership.
+    const matches = [];
+    for (const assetName of listWebviewScriptAssets(extractedDir)) {
+      const source = fs.readFileSync(path.join(assetsDir, assetName), "utf8");
+      if (!source.includes("vscode://codex/${")) continue;
+      const chunkId = source.match(/(?:^|[;\n])export const __rspack_esm_id(?:s=\[|=)(\d+)\]?;/)?.[1];
+      for (const module of rspackModules(source)) {
+        const body = source.slice(module.start, module.end);
+        if (!body.includes("vscode://codex/${") || module.params.length !== 3) continue;
+        const wrapper = uniqueMatch(body, new RegExp(`async function (${IDENT})\\(\\.\\.\\.${IDENT}\\)\\{[\\s\\S]{0,1200}?vscode://codex/\\$\\{`, "g"));
+        const exportName = wrapper && uniqueMatch(body, new RegExp(
+          `${escapeRegExp(module.params[2])}\\.d\\(${escapeRegExp(module.params[1])},\\{[\\s\\S]{0,300}?(${IDENT}):\\(\\)=>${escapeRegExp(wrapper[1])}(?=[,}])`, "g"));
+        if (chunkId && exportName) matches.push({ assetName, chunkId: Number(chunkId), moduleId: module.id, exportName: exportName[1] });
+      }
+    }
+    if (matches.length !== 1) throw new Error(`Could not find Codex request API asset in ${assetsDir}`);
+    [request] = matches;
+  }
   const needles = [...SETTINGS_CONTRACTS.map(({ needle }) => needle), 'Symbol.for("react.transitional.element")'];
   const assets = [];
   for (const assetName of listWebviewScriptAssets(extractedDir)) {

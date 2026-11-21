@@ -22,7 +22,6 @@ const ASSISTANT_RENDER_SHARED_PROPS = [
   "assistantCopyText",
   "savedContentResponseId",
   "after",
-  "compactAttachment",
   "autoReviewStats",
   "hookStats",
   "completedThreadGoal",
@@ -389,7 +388,7 @@ function inspectGeneralSettingsPage(source) {
     // `(0,n.jsx)(codexLinuxCommunityFeaturesInGuiSettings,{})`.
     const linuxChildren = `(?:\\(0,${escapeRegExp(jsx)}\\.jsx\\)\\(codexLinux[A-Za-z]+,\\{\\}\\),)*`;
     const pageCall = new RegExp(
-      `\\(0,${escapeRegExp(jsx)}\\.jsxs\\)\\([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?,\\{title:[A-Za-z_$][\\w$]*,children:\\[(${linuxChildren})([A-Za-z_$][\\w$]*),(${mount},)?([A-Za-z_$][\\w$]*)\\]\\}\\)`,
+      `\\(0,${escapeRegExp(jsx)}\\.jsxs\\)\\([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)?,\\{(?:overview:[A-Za-z_$][\\w$]*,)?title:[A-Za-z_$][\\w$]*,children:\\[(${linuxChildren})([A-Za-z_$][\\w$]*),(${mount},)?([A-Za-z_$][\\w$]*)\\]\\}\\)`,
       "g",
     );
     for (const call of body.matchAll(pageCall)) {

@@ -693,7 +693,8 @@ test("signed General settings chunk composes every Linux settings insertion in b
       enabledFeatureIds: ["community-features-in-gui-settings"] }),
   ];
   const markers = [`function ${UI}(`, "function codexLinuxStartMinimizedSetting(", "function codexLinuxReasoningVisibilitySetting(",
-    "codex-linux-read-aloud-settings-mount", "codexLinuxManualFontInput", "codexLinuxUiTweaksSuggestedPromptsEnabled"];
+    "codex-linux-read-aloud-settings-mount", "codexLinuxManualFontInput",
+    "codexLinuxUiTweaksSuggestedPromptsSettingsEligible"];
   for (const order of [steps, [...steps].reverse()]) {
     // Only the settings chunk is copied; one synthetic locale catalog satisfies
     // the translation steps of the start-minimized and reasoning rows.
