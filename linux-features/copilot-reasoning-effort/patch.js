@@ -47,7 +47,7 @@ function matchesCopilotModelAndReasoningPersistenceContract(source) {
   if (exportedMatches.length !== 1) return false;
 
   const match = exportedMatches[0];
-  const ownerRegion = source.slice(Math.max(0, match.index - 6_000), match.index + match[0].length);
+  const ownerRegion = source.slice(Math.max(0, match.index - 15_000), match.index + match[0].length);
   const defaultWrites = findAllMatches(
     ownerRegion,
     new RegExp(`\\.setDefaultModelConfig\\(${JS_IDENT},${JS_IDENT},${JS_IDENT}\\.profile\\)`),
@@ -58,7 +58,7 @@ function matchesCopilotModelAndReasoningPersistenceContract(source) {
   );
   const currentWrappers = findAllMatches(
     ownerRegion,
-    new RegExp(`=>(${JS_IDENT})\\(${JS_IDENT},${JS_IDENT},"current",${JS_IDENT}\\)`),
+    new RegExp(`=>(${JS_IDENT})\\(${JS_IDENT},${JS_IDENT},(?:${JS_IDENT}\\?"conversation":)?"current",${JS_IDENT}\\)`),
   );
   return defaultWrites.length === 1 &&
     defaultWrappers.length === 1 &&

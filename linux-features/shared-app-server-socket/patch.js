@@ -158,7 +158,85 @@ function sharedTransportClassSource(symbols) {
   );
 }
 
+function currentSharedTransportClassSource(webSocketTransport) {
+  const legacy = sharedTransportClassSource({
+    webSocketClass: "unusedWebSocket",
+    codecClass: "unusedCodec",
+    adapterClass: "unusedAdapter",
+    keepAlive: "unusedKeepAlive",
+    webSocketUrl: '"ws://localhost/rpc"',
+    maximumFrameBytes: "0x1000000",
+    maximumFrameHeader: '"x-codex-websocket-max-unfragmented-message-bytes"',
+  });
+  const connect = legacy.lastIndexOf("connect(){");
+  if (connect < 0 || !legacy.endsWith("}}")) throw Error("Shared transport template has no connect method");
+  return legacy.slice(0, connect) +
+    `connect(){return this.ensureAuthority().then(()=>new ${webSocketTransport}({` +
+    `hostConfig:{kind:\`local\`,id:\`local\`},websocketUrl:\`ws://localhost/rpc\`,` +
+    `createConnection:()=>this.createProxyStream()}).connect())}}`;
+}
+
+const CURRENT_DAEMON_PATTERN = /new ([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\(\{hostConfig:this\.options\.hostConfig,websocketUrl:"ws:\/\/localhost\/rpc",createConnection:/gu;
+const CURRENT_FACTORY_PATTERN = /function\((?<options>[A-Za-z_$][\w$]*),(?<host>[A-Za-z_$][\w$]*),(?<overrides>[A-Za-z_$][\w$]*)\)\{let\{isPackaged:(?<packaged>[A-Za-z_$][\w$]*)=!1,\.\.\.(?<rest>[A-Za-z_$][\w$]*)\}=\k<options>\.options;/gu;
+const CURRENT_CONFIGURE_PATTERN = /getConfigOverrides:async\(\)=>\{let\{overrides:([A-Za-z_$][\w$]*),windowsFrameworkRoot:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\(\);return\(0,([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\(\2\),\1\}/gu;
+
+function currentSharedAppServerSocketContract(source) {
+  const daemons = [...source.matchAll(CURRENT_DAEMON_PATTERN)];
+  const factories = [...source.matchAll(CURRENT_FACTORY_PATTERN)];
+  const markerCount = source.split("class CodexLinuxSharedAppServerSocketTransport").length - 1;
+  if (daemons.length === 0 && factories.length === 0) return { state: "absent" };
+  if (daemons.length !== 1 || factories.length !== 1) {
+    return { state: "drifted", reason: `found ${daemons.length} local transports and ${factories.length} factories` };
+  }
+  const [daemon] = daemons;
+  const [factory] = factories;
+  const configures = [...source.slice(factory.index).matchAll(CURRENT_CONFIGURE_PATTERN)];
+  if (configures.length !== 1 || configures[0][3] !== factory.groups.overrides) {
+    return { state: "drifted", reason: `config override callback found ${configures.length}` };
+  }
+  const [configure] = configures;
+  const classSource = currentSharedTransportClassSource(daemon[1]);
+  const branch = `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&${factory.groups.host}.kind===\`local\`&&${factory.groups.host}.id===\`local\`)` +
+    `return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async()=>{` +
+    `let{overrides:e,windowsFrameworkRoot:t}=await ${factory.groups.overrides}();return(0,${configure[4]})(t),e});`;
+  const classCount = source.split(classSource).length - 1;
+  const branchCount = source.split(branch).length - 1;
+  const factoryTail = source.slice(factory.index + factory[0].length);
+  if (markerCount === 0 && classCount === 0 && branchCount === 0 && factoryTail.startsWith("return new ")) {
+    return { state: "current", daemon, factory, classSource, branch };
+  }
+  if (markerCount === 1 && classCount === 1 && branchCount === 1 &&
+      factoryTail.startsWith(`${branch}return new `)) {
+    return { state: "patched", daemon, factory, classSource, branch };
+  }
+  return { state: "drifted", reason: `found markers ${markerCount}, complete classes ${classCount}, and branches ${branchCount}` };
+}
+
+function applyCurrentSharedAppServerSocketPatch(source, contract = currentSharedAppServerSocketContract(source)) {
+  if (contract.state === "absent" || contract.state === "patched") return source;
+  if (contract.state !== "current") {
+    console.warn(`WARN: Found incomplete or ambiguous current shared app-server socket patch state: ${contract.reason}`);
+    return source;
+  }
+  const { daemon, factory, classSource, branch } = contract;
+  const classAnchor = source.lastIndexOf("class ", daemon.index);
+  if (classAnchor < 0) {
+    console.warn("WARN: Could not find the current local app-server transport class");
+    return source;
+  }
+  const insertAt = factory.index + factory[0].length;
+  const withBranch = source.slice(0, insertAt) + branch + source.slice(insertAt);
+  return withBranch.slice(0, classAnchor) + classSource + withBranch.slice(classAnchor);
+}
+
 function applySharedAppServerSocketPatch(source) {
+  const currentContract = currentSharedAppServerSocketContract(source);
+  if (currentContract.state !== "absent") {
+    return applyCurrentSharedAppServerSocketPatch(source, currentContract);
+  }
+  if (!source.includes("selected app-server transport") || !source.includes("AppServerTransportSshWebsocket")) {
+    return source;
+  }
   const markerCount = source.split("class CodexLinuxSharedAppServerSocketTransport").length - 1;
   const symbols = findTransportSymbols(source);
   if (markerCount === 1 && symbols != null) return source;

@@ -1119,7 +1119,9 @@ function patchCompositorDragLifecycle(source) {
     return patched;
   }
   if (!startMethod.text.includes("codexPetOverlayBeginCompositorDrag(")) {
-    const windowMatch = startMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/);
+    const windowMatch = startMethod.text.match(
+      /let ([A-Za-z_$][\w$]*)=(?:this\.window|this\.getWindowForRenderer\([^)]*\));/,
+    );
     const eventArg = firstMethodArgument(startMethod.match[0], "startDrag", 1);
     if (windowMatch == null || eventArg == null || !startMethod.text.includes("this.dragState=")) {
       console.warn("WARN: Could not identify current avatar overlay drag start shape - skipping compositor transport hook");
@@ -1138,10 +1140,12 @@ function patchCompositorDragLifecycle(source) {
     return patched;
   }
   if (!moveMethod.text.includes("codexPetOverlayMoveCompositorDrag(")) {
-    const windowMatch = moveMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/);
+    const windowMatch = moveMethod.text.match(
+      /let ([A-Za-z_$][\w$]*)=(?:this\.window|this\.getWindowForRenderer\([^)]*\));/,
+    );
     const eventArg = firstMethodArgument(moveMethod.match[0], "moveDrag", 1);
     const movementIntentMatch = moveMethod.text.match(
-      /([A-Za-z_$][\w$]*)\.recordMovementIntent\(\)/,
+      /([A-Za-z_$][\w$]*)(?:\.recordMovementIntent\(\)|\.hasMovementIntent=!0)/,
     );
     const nativeDragBoundary = ",this.nativeWindowDragActive)return;";
     if (
@@ -1170,17 +1174,22 @@ function patchCompositorDragLifecycle(source) {
   ) {
     return patched;
   }
-  const windowMatch = endMethod.text.match(/let ([A-Za-z_$][\w$]*)=this\.window;/u);
+  const windowMatch = endMethod.text.match(
+    /let ([A-Za-z_$][\w$]*)=(?:this\.window|this\.getWindowForRenderer\([^)]*\));/u,
+  );
   const eventArg = firstMethodArgument(endMethod.match[0], "endDrag", 1);
   const nativeBoundsMatch = endMethod.text.match(
     /let [A-Za-z_$][\w$]*=this\.dragState,([A-Za-z_$][\w$]*)=this\.nativeWindowDragActive,([A-Za-z_$][\w$]*)=\1\?([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\):null,([A-Za-z_$][\w$]*)=\2\?\.bounds,([A-Za-z_$][\w$]*)=\1\?\2\?\.altKey===!0:([A-Za-z_$][\w$]*);/,
   );
   const completionBoundary = "this.nativeWindowDragStart=null,";
   const boundaryIndex = endMethod.text.indexOf(completionBoundary);
-  const completionStart = endMethod.text.lastIndexOf(
+  let completionStart = endMethod.text.lastIndexOf(
     "if(this.suppressNextRendererThrow=",
     boundaryIndex,
   );
+  if (completionStart === -1 && nativeBoundsMatch != null) {
+    completionStart = endMethod.text.indexOf("if(", nativeBoundsMatch.index + nativeBoundsMatch[0].length);
+  }
   if (
     windowMatch == null || eventArg == null || nativeBoundsMatch == null ||
     boundaryIndex === -1 || completionStart === -1
@@ -1399,7 +1408,9 @@ function patchHiddenQuickChatFocus(source) {
 function patchKWinKeyboardFocus(source) {
   const method = findAvatarOverlayMethod(source, /(?<![\w$.])setKeyboardInteraction\([^{}]*\)\{/);
   if (method?.text.includes("this.codexPetOverlayActivateKWin(")) return source;
-  const window = method?.text.match(/\{let ([A-Za-z_$][\w$]*)=this\.window;/)?.[1];
+  const window = method?.text.match(
+    /\{let ([A-Za-z_$][\w$]*)=(?:this\.window|this\.getWindowForRenderer\([^)]*\));/,
+  )?.[1];
   const enabled = method && firstMethodArgument(method.match[0], "setKeyboardInteraction", 1);
   const focus = window && `${window}.focus(),${window}.webContents.focus()`;
   // The disabled path is the false branch of `enabled?(...):...` and runs to

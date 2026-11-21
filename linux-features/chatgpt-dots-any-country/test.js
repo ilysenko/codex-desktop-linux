@@ -18,13 +18,13 @@ const {
   descriptors,
 } = require("./patch.js");
 
-// Reduced rspack chunks shaped like the signed stable Linux 26.1029 webview.
+// Reduced rspack chunks shaped like the current signed stable Linux webview.
 const chunk = (id, body) => `export const __rspack_esm_id=${id};export const __rspack_esm_ids=[${id}];` +
   `export const __webpack_modules__={${body}};`;
 const FIXTURES = {
   "async/221857.4c17f751f6.js": chunk(221857, 'Ab12(e,t,n){function route(){if("error"===$||N?.tbo_config?.tbo_available==null||null==N.structure)return null;if(N.tbo_config.tbo_available){return redirect}}}'),
-  "async/24191.7b05d5cf83.js": chunk(24191, 'Cd34(e,t,n){function capable(){if(e.query.getData(s.sE,t)?.accounts[t]?.account.tbo_config?.tbo_available!==!0)throw Error();let capable="success"===r&&n?.accounts[t]?.account.tbo_config?.tbo_available===!0;return capable||"error"===l&&r?.accounts[n]?.account.tbo_config?.tbo_available===!0}}'),
-  "async/860646.06b6da0005.js": chunk(860646, 'Ef56(e,t,n){first?.accounts[M]?.account.tbo_config?.tbo_available!==!0; second?.accounts[c]?.account.tbo_config?.tbo_available!==!0;}'),
+  "async/24191.7b05d5cf83.js": chunk(24191, 'Cd34(e,t,n){const policy="dot_account_access_policy";function capable(){if(e.query.getData(s.sE,t)?.accounts[t]?.account.tbo_config?.tbo_available!==!0)throw Error();let capable="success"===r&&n.account.tbo_config?.tbo_available===!0;return capable||"error"===l&&r?.account.tbo_config?.tbo_available}}'),
+  "async/860646.06b6da0005.js": chunk(860646, 'Ef56(e,t,n){first?.accounts[M]?.account.tbo_config?.tbo_available!==!0;}'),
 };
 
 
@@ -82,7 +82,7 @@ test("shared Dots capability checks no longer reject a country-gated account", (
 
 test("personalization Dots checks are patched together", () => {
   const patched = applyDotsPersonalizationPatch(FIXTURES["async/860646.06b6da0005.js"]);
-  assert.ok(patched.includes("{!1; !1;}"));
+  assert.ok(patched.includes("{!1;}"));
   assert.doesNotMatch(patched, /\?\.[!01]/);
   assert.equal(applyDotsPersonalizationPatch(patched), patched);
 });

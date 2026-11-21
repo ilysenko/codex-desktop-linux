@@ -291,3 +291,30 @@ test("signed webview chunks satisfy every remote-control UI contract", { skip: !
     }
   }
 });
+
+test("remote connections visibility accepts the resolver already gated by remote-mobile-control", () => {
+  const remoteMobile = require("../remote-mobile-control/patch.js");
+  const loadGate = (remoteMobile.descriptors ?? remoteMobile)
+    .find((patch) => patch.id === "linux-remote-control-load-gate");
+  const remoteConnectionsPatch = featurePatches.find((patch) => patch.id === "remote-connections-visibility");
+  const resolver =
+    'let m="1042620455",p="4114442250";function f(e,t){if(!0===e?.["features.remote_connections"])return!0;' +
+    'let n=e?.features;return null==n||"object"!=typeof n||Array.isArray(n)?t:' +
+    'Object.getOwnPropertyDescriptor(n,"remote_connections")?.value===!0||t}';
+  assert.ok(loadGate.order < remoteConnectionsPatch.order);
+  const { value: mobileGated, warnings: mobileWarnings } = captureWarns(() => loadGate.apply(resolver, {}));
+  assert.deepEqual(mobileWarnings, []);
+  assert.notEqual(mobileGated, resolver);
+  const { value: composed, warnings } = captureWarns(() => remoteConnectionsPatch.apply(mobileGated, {}));
+  assert.deepEqual(warnings, []);
+  assert.equal(composed, mobileGated);
+  const resolve = new Function("navigator", `${composed};return f`);
+  assert.equal(resolve({ userAgent: "X11; Linux x86_64" })({}, false), true);
+  assert.equal(resolve({ userAgent: "Macintosh" })({}, false), false);
+
+  const { value: duplicated, warnings: duplicateWarnings } = captureWarns(() =>
+    remoteConnectionsPatch.apply(mobileGated + mobileGated, {}),
+  );
+  assert.equal(duplicated, mobileGated + mobileGated);
+  assert.match(duplicateWarnings.join("\n"), /Could not find remote connections Statsig gate/);
+});

@@ -40,11 +40,11 @@ function captureWarnings(callback) {
 // calls, double-quoted strings, and literal-first comparisons.
 function settingsFixture() {
   return [
-    'function ki(){let e=(0,Q.c)(31),t=(0,G.Zj)("1372061905"),n=(0,G.Zj)("2425897452"),r=(0,G.Zj)(ft),i;',
-    "return n?(0,$.jsx)(H,{electron:!0,children:(0,$.jsx)(ci,{})}):null}",
-    "function ci(){let e=(0,li.c)(12),t=n(m),r=R(),{authMethod:i,email:a,planAtLogin:o}=(0,tZ.As)(),",
-    '{data:d}=(0,tq.U)(),f=(0,F.iK)(b.enabled);',
-    "if(!(0,f.ML4)({authMethod:i,email:d?.email??a,plan:d?.plan??o}))return null;return row()}",
+    "function ci(){let e=(0,li.c)(12),o=(0,h.Ul)(tS.Fg),c=(0,E.iK)(m.hij.enabled);",
+    "if(!o)return null;let d=!0===c;",
+    'let label=i.formatMessage({id:"settings.agent.ambientSuggestions.toggleLabel",defaultMessage:"Enable ambient suggestions"});',
+    'let save=()=>danger(i.formatMessage({id:"settings.agent.ambientSuggestions.saveError",defaultMessage:"Could not save suggested prompts preference"}));',
+    "return row(d,label,save)}",
   ].join("");
 }
 
@@ -129,14 +129,36 @@ test("settings patch exposes the upstream row while preserving eligibility diagn
   const patched = applySuggestedPromptsSettingsPatch(source);
 
   assert.notEqual(patched, source);
-  assert.equal((patched.match(new RegExp(RUNTIME_MARKER, "g")) || []).length, 1);
+  assert.equal((patched.match(new RegExp(RUNTIME_MARKER, "g")) || []).length, 0);
   assert.equal((patched.match(new RegExp(SETTINGS_ELIGIBILITY_MARKER, "g")) || []).length, 1);
-  assert.match(patched, /n=\(\(0,G\.Zj\)\("2425897452"\),function codexLinuxUiTweaksSuggestedPromptsEnabled\(\)\{return!0\}\(\)\)/);
   assert.match(
     patched,
-    /if\(!\(\(0,f\.ML4\)\(\{authMethod:i,email:d\?\.email\?\?a,plan:d\?\.plan\?\?o\}\)\|\|function codexLinuxUiTweaksSuggestedPromptsSettingsEligible\(\)\{return!0\}\(\)\)\)return null/,
+    /if\(!\(o\|\|function codexLinuxUiTweaksSuggestedPromptsSettingsEligible\(\)\{return!0\}\(\)\)\)return null/,
   );
+  assert.match(patched, /settings\.agent\.ambientSuggestions\.toggleLabel/);
+  assert.match(patched, /settings\.agent\.ambientSuggestions\.saveError/);
   assert.equal(applySuggestedPromptsSettingsPatch(patched), patched);
+});
+
+test("settings patch rejects semantic anchors owned by sibling functions byte-identically", () => {
+  const current = settingsFixture();
+  const sources = [
+    [
+      'function earlier(){return{id:"settings.agent.ambientSuggestions.saveError"}}',
+      current.replace("settings.agent.ambientSuggestions.saveError", "settings.agent.ambientSuggestions.saveFailure"),
+    ].join(""),
+    [
+      current.replace("settings.agent.ambientSuggestions.toggleLabel", "settings.agent.ambientSuggestions.label"),
+      'function later(){return{id:"settings.agent.ambientSuggestions.toggleLabel"}}',
+    ].join(""),
+  ];
+
+  for (const source of sources) {
+    const result = captureWarnings(() => applySuggestedPromptsSettingsPatch(source));
+    assert.equal(result.value, source);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /current Suggested Prompts settings contract/);
+  }
 });
 
 test("feature sync patch enables the renderer gate while preserving the status check", () => {
@@ -316,8 +338,8 @@ test("multi-point patches reject mixed and drifted contracts byte-identically", 
   assert.match(mixedResult.warnings.join("\n"), /current Suggested Prompts app page contract/);
 
   const driftedSettings = settingsFixture().replace(
-    'n=(0,G.Zj)("2425897452")',
-    'n=(0,G.Zj)("replacement-rollout")',
+    "settings.agent.ambientSuggestions.saveError",
+    "settings.agent.ambientSuggestions.saveFailure",
   );
   const settingsResult = captureWarnings(() => applySuggestedPromptsSettingsPatch(driftedSettings));
   assert.equal(settingsResult.value, driftedSettings);

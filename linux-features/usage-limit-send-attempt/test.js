@@ -114,7 +114,8 @@ test(
     for (const name of fs.readdirSync(signed).filter(file => file.endsWith(".js"))) {
       const source = fs.readFileSync(path.join(signed, name), "utf8");
       if (!source.includes("shouldSendPermissionOverrides:") ||
-          !source.includes("submitDisabledReasons:") || !source.includes('&&"usage-limit"')) continue;
+          !source.includes("submitDisabledReasons:")) continue;
+      if (applyUsageLimitSendAttemptPatch(source) === source) continue;
       fs.writeFileSync(path.join(assets, name), source);
       copied.push(name);
     }

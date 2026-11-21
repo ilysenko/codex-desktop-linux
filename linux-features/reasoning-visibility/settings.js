@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const zlib = require("node:zlib");
 const { findMatchingBrace, escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 const { listWebviewScriptAssets } = require("../../scripts/patches/lib/assets.js");
 const { patchBreaksJavaScriptSyntax } = require("../../scripts/patches/lib/javascript-syntax.js");
@@ -27,7 +28,7 @@ function webpackFactory(source, index) {
   const head = "__webpack_modules__={";
   const start = source.indexOf(head);
   if (start < 0) return null;
-  const entry = new RegExp(`(?:[\\w$]+|"(?:[^"\\\\]|\\\\.)*")\\((${ID}(?:,${ID}){0,2})?\\)\\{`, "y");
+  const entry = new RegExp(`(?:[\\w$]+|"(?:[^"\\\\]|\\\\.)*")(?:(?:\\((${ID}(?:,${ID}){0,2})?\\))|(?::(\\()?function\\((${ID}(?:,${ID}){0,2})?\\)))\\{`, "y");
   let cursor = start + head.length;
   for (;;) {
     entry.lastIndex = cursor;
@@ -36,8 +37,9 @@ function webpackFactory(source, index) {
     const open = entry.lastIndex - 1;
     const end = findMatchingBrace(source, open);
     if (end < 0) return null;
-    if (index > open && index < end) return { open, end, params: (match[1] ?? "").split(",") };
+    if (index > open && index < end) return { open, end, params: (match[1] ?? match[3] ?? "").split(",") };
     cursor = end + 1;
+    if (match[2] != null && source[cursor] === ")") cursor += 1;
     if (source[cursor] !== ",") return null;
     cursor += 1;
   }
@@ -53,7 +55,7 @@ function factoryImport(factory, requireName, alias) {
 // namespace. All aliases are captured from the current menu-bar setting and its
 // own module factory, never from chunk or module ids.
 function settingsContract(source) {
-  const owner = unique(source, new RegExp(`function (${ID})\\((${ID})\\)\\{.{0,300}?\\{platform:(${ID})\\}=(${CALLEE})\\(\\),(${ID})=(${CALLEE})\\((${MEMBER})\\.macMenuBarEnabled\\);if\\("macOS"!==\\3\\)return null;`, "g"));
+  const owner = unique(source, new RegExp(`function (${ID})\\((${ID})\\)\\{.{0,600}?\\{platform:(${ID})\\}=(${CALLEE})\\(\\),.{0,200}?(${ID})=(${CALLEE})\\((${MEMBER})\\.macMenuBarEnabled\\);if\\("macOS"!==\\3\\)return null;`, "g"));
   if (!owner || !";{}".includes(source[owner.index - 1])) return null;
   const factory = webpackFactory(source, owner.index);
   const requireName = factory?.params[2];
@@ -62,7 +64,7 @@ function settingsContract(source) {
   const end = findMatchingBrace(source, source.indexOf("{", owner.index));
   if (end < 0 || end > factory.end) return null;
   const body = source.slice(owner.index, end + 1);
-  const row = unique(body, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${MEMBER}),\\{label:${ID},description:${ID},control:${ID}\\}`, "g"));
+  const row = unique(body, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${MEMBER}),\\{(?:label:${ID},|entry:${MEMBER},)description:${ID},control:${ID}\\}`, "g"));
   const toggle = unique(body, new RegExp(`\\(0,${ID}\\.jsx\\)\\((${MEMBER}),\\{checked:${ID},onChange:${ID},ariaLabel:${ID}\\}`, "g"));
   const intlUse = unique(body, new RegExp(`(${ID})\\.formatMessage\\(\\{id:"settings\\.general\\.macMenuBar\\.ariaLabel"`, "g"));
   const intl = intlUse && unique(body, new RegExp(`(?<![\\w$.])${escapeRegExp(intlUse[1])}=(${CALLEE})\\(\\)`, "g"));
@@ -92,7 +94,7 @@ function settingComponent({ row, toggle, react, platformHook, jsx, intlHook }) {
 // locale with its chunk id and module key:
 // `"../locales/pl-PL.json":function(){return r.e(507233).then(r.t.bind(r,"AbCd",19))}`.
 function localeCatalogs(loaderSource) {
-  const entries = [...loaderSource.matchAll(new RegExp(`"\\.\\./locales/([\\w-]+)\\.json":function\\(\\)\\{return (${ID})\\.e\\((\\d+)\\)\\.then\\(\\2\\.t\\.bind\\(\\2,"([^"]+)",\\d+\\)\\)\\}`, "g"))];
+  const entries = [...loaderSource.matchAll(new RegExp(`"\\.\\./locales/([\\w-]+)\\.json":function\\(\\)\\{return (${ID})\\.e\\((\\d+)\\)\\.then\\(\\2\\.(?:t\\.)?bind\\(\\2,"([^"]+)"(?:,\\d+)?\\)\\)\\}`, "g"))];
   return entries.map(([, locale, , chunkId, moduleKey]) => ({ locale, chunkId, moduleKey }));
 }
 
@@ -109,6 +111,7 @@ function singleQuotedEnd(source, open) {
 
 function catalogPatches(assetsDir, assetNames, loaderSource) {
   const patches = [];
+  const compressed = new Map();
   const catalogs = localeCatalogs(loaderSource);
   if (catalogs.length === 0) throw Error("reasoning-visibility: no supported translation catalogs found");
   for (const { locale, chunkId, moduleKey } of catalogs) {
@@ -119,11 +122,48 @@ function catalogPatches(assetsDir, assetNames, loaderSource) {
     }
     const names = assetNames.filter((name) => path.basename(name).startsWith(`${chunkId}.`));
     const source = names.length === 1 ? fs.readFileSync(path.join(assetsDir, names[0]), "utf8") : "";
-    const module = unique(source, new RegExp(`[{,]${escapeRegExp(moduleKey)}\\((${ID})\\)\\{\\1\\.exports=JSON\\.parse\\('`, "g"));
+    const fetched = unique(source, /Promise\.all\(\[\w+\("(assets\/locales\/keys\.[^"\\]+\.json\.codex-gzip)"\),\w+\("(assets\/locales\/[^"\\]+\.json\.codex-gzip)"\)\]\)/g);
+    if (fetched) {
+      const messages = translations[locale];
+      if (!Array.isArray(messages) || messages.length !== MESSAGE_IDS.length || messages.some((text) => typeof text !== "string" || !text.trim())) {
+        throw Error(`reasoning-visibility: missing translations for ${locale}`);
+      }
+      const paths = [fetched[1], fetched[2]].map((name) => path.join(path.dirname(assetsDir), name));
+      let keys;
+      let values;
+      try {
+        keys = JSON.parse(zlib.gunzipSync(fs.readFileSync(paths[0])));
+        values = JSON.parse(zlib.gunzipSync(fs.readFileSync(paths[1])));
+      } catch {
+        throw Error(`reasoning-visibility: ${locale} compressed translation catalog missing or invalid`);
+      }
+      if (!Array.isArray(keys) || !Array.isArray(values) || keys.length !== values.length || !keys.includes("settings.general.macMenuBar.label")) {
+        throw Error(`reasoning-visibility: ${locale} compressed translation catalog missing or ambiguous`);
+      }
+      const present = MESSAGE_IDS.map((id) => keys.indexOf(id));
+      if (present.some((index) => index >= 0) && present.some((index) => index < 0)) {
+        throw Error(`reasoning-visibility: incomplete ${locale} compressed translations`);
+      }
+      if (present.every((index) => index >= 0)) {
+        if (present.some((index, message) => values[index] !== messages[message])) {
+          throw Error(`reasoning-visibility: inconsistent ${locale} compressed translations`);
+        }
+        continue;
+      }
+      const priorKeys = compressed.get(paths[0]);
+      const patchedKeys = priorKeys ?? [...keys, ...MESSAGE_IDS];
+      if (priorKeys && (priorKeys.length !== patchedKeys.length || priorKeys.some((key, index) => key !== patchedKeys[index]))) {
+        throw Error("reasoning-visibility: inconsistent shared compressed translation keys");
+      }
+      compressed.set(paths[0], patchedKeys);
+      compressed.set(paths[1], [...values, ...messages]);
+      continue;
+    }
+    const module = unique(source, new RegExp(`[{,]${escapeRegExp(moduleKey)}(?::\\(function)?\\((${ID})\\)\\{\\1\\.exports=JSON\\.parse\\('`, "g"));
     const open = module ? module.index + module[0].length - 1 : -1;
     const close = open < 0 ? -1 : singleQuotedEnd(source, open);
     const literal = close < 0 ? "" : source.slice(open + 1, close);
-    if (close < 0 || source.slice(close, close + 3) !== "')}" || !literal.startsWith("{") || !literal.endsWith("}") ||
+    if (close < 0 || !source.slice(close).startsWith("')}") || !literal.startsWith("{") || !literal.endsWith("}") ||
         !literal.includes('"settings.general.macMenuBar.label"')) {
       throw Error(`reasoning-visibility: ${locale} translation catalog missing or ambiguous`);
     }
@@ -142,6 +182,9 @@ function catalogPatches(assetsDir, assetNames, loaderSource) {
     }
     const separator = literal === "{}" ? "" : ",";
     patches.push({ target: path.join(assetsDir, names[0]), source: source.slice(0, close - 1) + separator + addition + source.slice(close - 1) });
+  }
+  for (const [target, value] of compressed) {
+    patches.push({ target, source: zlib.gzipSync(Buffer.from(JSON.stringify(value))) });
   }
   return patches;
 }

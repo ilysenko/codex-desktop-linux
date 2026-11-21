@@ -186,7 +186,7 @@ function enclosingModuleFactory(source, index) {
   const registry = "__webpack_modules__={";
   const registryStart = source.indexOf(registry);
   if (registryStart < 0 || source.indexOf(registry, registryStart + 1) >= 0) return null;
-  const entry = /(?:"[^"\\]*"|[\w$]+)\([^()]*\)\{/y;
+  const entry = /(?:"[^"\\]*"|[\w$]+)(?:(?:\([^()]*\))|(?::(\()?function\([^()]*\)))\{/y;
   let cursor = registryStart + registry.length;
   while (cursor < source.length && source[cursor] !== "}") {
     entry.lastIndex = cursor;
@@ -204,6 +204,7 @@ function enclosingModuleFactory(source, index) {
       };
     }
     cursor = close + 1;
+    if (match[1] != null && source[cursor] === ")") cursor += 1;
     if (source[cursor] === ",") cursor += 1;
   }
   return null;
@@ -948,6 +949,12 @@ function localComposerRuntime(config) {
 
 const LOCAL_COMPOSER_FALLBACK_PATTERN =
   /([A-Za-z_$][\w$]*)=(\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(([A-Za-z_$][\w$]*),null==([A-Za-z_$][\w$]*)\?void 0:`\$\{\4\.model\}:\$\{\4\.defaultReasoningEffort\}`\)/gu;
+const LOCAL_COMPOSER_RETURN_FALLBACK_PATTERN =
+  /return(\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\))\(([A-Za-z_$][\w$]*),null==([A-Za-z_$][\w$]*)\?void 0:`\$\{\3\.model\}:\$\{\3\.defaultReasoningEffort\}`\)/gu;
+function localComposerFallbackCount(source) {
+  return (source.match(LOCAL_COMPOSER_FALLBACK_PATTERN) ?? []).length +
+    (source.match(LOCAL_COMPOSER_RETURN_FALLBACK_PATTERN) ?? []).length;
+}
 // The composer picks the slider config from one of two ChatGPT-gated sources.
 const LOCAL_COMPOSER_CONFIG_PATTERN =
   /sliderModelsConfig:([A-Za-z_$][\w$]*\?[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*)(?=[,}])/gu;
@@ -958,6 +965,12 @@ const LOCAL_COMPOSER_SELECTION_PATTERN = new RegExp(
     `\\k<delegate>\\.setModelAndReasoningEffort\\(\\k<normalized>,\\k<effort>\\)\\)\\}`,
   "gu",
 );
+
+function localComposerSelectionCount(source) {
+  const handlers = source.match(LOCAL_COMPOSER_SELECTION_PATTERN) ?? [];
+  if (handlers.length > 0) return handlers.length;
+  return (source.match(/onSelectDefault:[A-Za-z_$][\w$]*/gu) ?? []).length;
+}
 
 function localComposerResetContext(section) {
   const matches = [
@@ -976,11 +989,11 @@ function localComposerConfigContract(source) {
   if (markerCount === 0) {
     if (section == null) return "drifted";
     const configMatches = section.source.match(LOCAL_COMPOSER_CONFIG_PATTERN) ?? [];
-    const fallbackMatches = section.source.match(LOCAL_COMPOSER_FALLBACK_PATTERN) ?? [];
-    const selectionMatches = section.source.match(LOCAL_COMPOSER_SELECTION_PATTERN) ?? [];
+    const fallbackMatches = localComposerFallbackCount(section.source);
+    const selectionMatches = localComposerSelectionCount(section.source);
     return configMatches.length === 1 &&
-      fallbackMatches.length === 2 &&
-      selectionMatches.length === 1 &&
+      fallbackMatches === 2 &&
+      selectionMatches === 1 &&
       localComposerResetContext(section) != null
       ? "current"
       : "drifted";
@@ -992,7 +1005,7 @@ function localComposerConfigContract(source) {
     section.source.includes(":codexLinuxLocalDefaultPresetConfig") &&
     (section.source.match(/codexLinuxLocalDefaultPresetFallback\(/g) ?? []).length >= 2 &&
     (section.source.match(/codexLinuxLocalDefaultPresetSelection\(/g) ?? []).length >= 1 &&
-    (section.source.match(LOCAL_COMPOSER_SELECTION_PATTERN) ?? []).length === 1
+    localComposerSelectionCount(section.source) === 1
   ) {
     return "applied";
   }
@@ -1128,13 +1141,13 @@ function applyLocalComposerConfigPatch(source, context = {}) {
   const section = localComposerSection(source);
   const configMatches = [...section.source.matchAll(LOCAL_COMPOSER_CONFIG_PATTERN)];
   const configMatch = configMatches.length === 1 ? configMatches[0] : null;
-  const fallbackMatches = [...section.source.matchAll(LOCAL_COMPOSER_FALLBACK_PATTERN)];
-  const selectionMatches = [...section.source.matchAll(LOCAL_COMPOSER_SELECTION_PATTERN)];
+  const fallbackMatches = localComposerFallbackCount(section.source);
+  const selectionMatches = localComposerSelectionCount(section.source);
   const resetContext = localComposerResetContext(section);
   if (
     configMatch == null ||
-    fallbackMatches.length !== 2 ||
-    selectionMatches.length !== 1 ||
+    fallbackMatches !== 2 ||
+    selectionMatches !== 1 ||
     resetContext == null
   ) {
     return source;
@@ -1149,6 +1162,13 @@ function applyLocalComposerConfigPatch(source, context = {}) {
     LOCAL_COMPOSER_FALLBACK_PATTERN,
     (_match, result, resolver, selections, upstreamDefault) =>
       `${result}=${resolver}(${selections},codexLinuxLocalDefaultPresetFallback(` +
+      `${configExpression}!=null,${selections},null==${upstreamDefault}?void 0:` +
+      `\`\${${upstreamDefault}.model}:\${${upstreamDefault}.defaultReasoningEffort}\`))`,
+  );
+  patchedSection = patchedSection.replace(
+    LOCAL_COMPOSER_RETURN_FALLBACK_PATTERN,
+    (_match, resolver, selections, upstreamDefault) =>
+      `return${resolver}(${selections},codexLinuxLocalDefaultPresetFallback(` +
       `${configExpression}!=null,${selections},null==${upstreamDefault}?void 0:` +
       `\`\${${upstreamDefault}.model}:\${${upstreamDefault}.defaultReasoningEffort}\`))`,
   );

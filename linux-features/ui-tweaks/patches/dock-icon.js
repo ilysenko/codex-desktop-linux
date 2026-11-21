@@ -121,12 +121,17 @@ function patchedMainContract(source) {
     `var ${dockIconPatchMarker}=1`,
     `function ${dockIconResourceHelper}(`,
     '"linux"===process.platform?codexLinuxDockIconResourcePath(',
-    '"linux"===process.platform)return',
     "globalThis.codexLinuxDockIconImage=",
     'codexLinuxDockIconResourcePath("sync-desktop-icon.sh")',
     '"linux"===process.platform&&globalThis.codexLinuxDockIconImage',
   ];
+  const observer = new RegExp(
+    `\\(async function\\((${id})\\)\\{if\\("linux"===process\\.platform\\)return (${id})\\(\\1\\);` +
+      `if\\(26>Number\\.parseInt\\(process\\.getSystemVersion\\(\\),10\\)\\)return \\2\\(\\1\\);`,
+    "g",
+  );
   return required.every((needle) => source.split(needle).length === 2) &&
+    matches(source, observer).length === 1 &&
     source.split('if("darwin"!==process.platform&&"linux"!==process.platform)return null').length === 2;
 }
 

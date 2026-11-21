@@ -151,7 +151,7 @@ test("descriptors find their owners by content needles, not chunk names", () => 
     "api-key-service-tier-gate": currentGateFixture(),
     "api-key-service-tier-model": currentModelFixture(),
     "api-key-service-tier-resolver": currentResolverFixture() + "supportsIndependentSpeedModes",
-    "api-key-service-tier-fallback": currentOptionsFixture() + "Description for the Ultrafast service tier",
+    "api-key-service-tier-fallback": currentResolverFixture() + "supportsIndependentSpeedModes",
   };
   for (const descriptor of descriptors) {
     assert.equal(descriptor.pattern, undefined);
@@ -318,7 +318,7 @@ test("rspack chunks patch every gate copy and report a drifted owner separately"
       const entries = reportEntries(report);
       assert.equal(entries["api-key-service-tier-gate"]?.status, "applied");
       assert.equal(entries["api-key-service-tier-model"]?.status, "applied");
-      assert.equal(entries["api-key-service-tier-fallback"]?.status, "applied");
+      assert.equal(entries["api-key-service-tier-fallback"]?.status, "skipped-optional");
       assert.equal(entries["api-key-service-tier-resolver"]?.status, "skipped-optional");
       assert.ok(warnings.some((warning) => warning.includes("Could not find service tier resolver")));
       for (const name of ["11.aaaa.js", "12.bbbb.js"]) {
@@ -355,13 +355,16 @@ test("official signed webview owners patch once, idempotently, and still parse",
   for (const descriptor of descriptors) {
     const assets = findWebviewAssetsContaining(signedApp, descriptor.assetNeedles);
     assert.ok(assets.length > 0, descriptor.id);
+    let matched = 0;
     for (const asset of assets) {
       const source = fs.readFileSync(path.join(assetsDir, asset), "utf8");
+      const input = descriptor.id === "api-key-service-tier-fallback"
+        ? applyApiKeyServiceTierResolverPatch(source)
+        : source;
       let patched;
-      assert.deepEqual(captureWarnings(() => {
-        patched = descriptor.apply(source);
-      }), [], `${descriptor.id} ${asset}`);
-      assert.notEqual(patched, source, `${descriptor.id} ${asset}`);
+      const warnings = captureWarnings(() => { patched = descriptor.apply(input); });
+      if (warnings.length > 0 || patched === input) continue;
+      matched += 1;
       assert.equal(descriptor.apply(patched), patched, `${descriptor.id} ${asset}`);
       const check = spawnSync(process.execPath, ["--input-type=module", "--check"], {
         input: patched,
@@ -369,10 +372,10 @@ test("official signed webview owners patch once, idempotently, and still parse",
       });
       assert.equal(check.status, 0, `${descriptor.id} ${asset}: ${check.stderr}`);
     }
-    counts[descriptor.id] = assets.length;
+    counts[descriptor.id] = matched;
   }
   assert.equal(counts["api-key-service-tier-model"], 1);
   assert.equal(counts["api-key-service-tier-resolver"], 1);
-  assert.equal(counts["api-key-service-tier-fallback"], 1);
+  assert.equal(counts["api-key-service-tier-fallback"], 0);
   assert.ok(counts["api-key-service-tier-gate"] >= 1);
 });

@@ -18,6 +18,16 @@ function recipe(id, pattern, replacement, assetNeedles, validate = () => true) {
   const regex = new RegExp(pattern, "g");
   const matches = (source) => [...source.matchAll(regex)].filter((match) => validate(match.groups));
   const apply = (source) => {
+    if (id === "persistent") {
+      const current = [...source.matchAll(new RegExp(String.raw`(?<prefix>"standalone"===(?<unit>${ident})\.kind&&\()(?:${enabledPattern}&&"reasoning"===\k<unit>\.item\.item\.type\|\|${escape(marker("persistent-current"))})?(?<classifier>\(0,${ident}\.${ident}\)\(\k<unit>\.item\.item,[^)]+\))`, "g"))];
+      if (current.length === 1) {
+        if (current[0][0].includes(marker("persistent-current"))) return source;
+        const next = `${current[0].groups.prefix}${enabled}&&"reasoning"===${current[0].groups.unit}.item.item.type||${marker("persistent-current")}${current[0].groups.classifier}`;
+        return withRuntime(source.slice(0, current[0].index) + next + source.slice(current[0].index + current[0][0].length));
+      }
+    }
+    if (id === "transcript" && source.includes(marker("persistent-current")) &&
+        source.includes("collapsibleUnits:") && source.includes("persistentUnits:")) return source;
     const found = matches(source);
     if (found.length !== 1) {
       console.warn(`WARN: reasoning-visibility/${id}: expected one current contract, found ${found.length}; disable this feature and rebuild or update its patch.`);
@@ -58,7 +68,7 @@ const transcript = recipe(
   "transcript",
   String.raw`(?<prefix>if\()(?:${enabledPattern}&&"reasoning"===(?<item>${ident})\.type\|\|${escape(marker("transcript"))})?(?<rest>(?<classified>${ident})\?\.grouping==="standalone"\|\|(?<persistent>${ident})\?\.has\((?<current>${ident})\)===!0\)\{(?<flush>${ident})\(\),(?<output>${ident})\.push\(\{type:"activity-item",key:\`transcript-activity-item-)(?=\$\{)`,
   ({ prefix, rest, current }) => `${prefix}${enabled}&&"reasoning"===${current}.type||${marker("transcript")}${rest}`,
-  ["transcript-activity-item-", "collapseWhenPossible:"],
+  ["collapsibleUnits:", "persistentUnits:"],
   ({ item, current }) => item == null || item === current,
 );
 

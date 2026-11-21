@@ -53,15 +53,26 @@ function classifierShape(source, match) {
 }
 
 function applyAuthoredMessageVisibilityPatch(source) {
+  const current = new RegExp(
+    String.raw`(?<prefix>"standalone"===(${identifier})\.kind&&\(\(0,${identifier}\.${identifier}\)\(\2\.item\.item,[^)]+\)\|\|\((?<item>${identifier})=\2\.item\.item,(?<before>${identifier})=[^,;]+,"assistant-message"===\k<item>\.type\?)(?<assistant>\(0,${identifier}\.${identifier}\)\(\k<item>\))(?<middle>:"user-message"===\k<item>\.type&&\()(?<user>"pending"===\k<item>\.steeringStatus[\s\S]{0,500}?!\k<before>)(?<suffix>\)\)\)\?${identifier}\.push\(\2\):${identifier}\.push\(\2\))`,
+    "g",
+  );
+  const currentMatches = [...source.matchAll(current)];
+  if (currentMatches.length === 1) {
+    const match = currentMatches[0];
+    if (match.groups.assistant.startsWith("!0||") && match.groups.user.startsWith("!0||")) return source;
+    const replacement = `${match.groups.prefix}!0||${match.groups.assistant}${match.groups.middle}!0||${match.groups.user}${match.groups.suffix}`;
+    return source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
+  }
   const shapes = [...source.matchAll(classifierHead)].map((match) => classifierShape(source, match));
-  const current = shapes.filter((shape) => shape?.original);
+  const original = shapes.filter((shape) => shape?.original);
   const patched = shapes.filter((shape) => shape != null && !shape.original);
   if (shapes.length === 1 && patched.length === 1) return source;
-  if (shapes.length !== 1 || current.length !== 1) {
-    console.warn(`WARN: authored-message-visibility: expected one complete activity classifier, found ${current.length} original and ${patched.length} patched of ${shapes.length}. ${recovery}`);
+  if (shapes.length !== 1 || original.length !== 1) {
+    console.warn(`WARN: authored-message-visibility: expected one complete activity classifier, found ${original.length} original and ${patched.length} patched of ${shapes.length}. ${recovery}`);
     return source;
   }
-  const [{ start, body, assistant, user, userPatched }] = current;
+  const [{ start, body, assistant, user, userPatched }] = original;
   const replacement = body
     .slice(0, assistant.index + assistant[0].indexOf("?") + 1) + "!0||" +
     body.slice(assistant.index + assistant[0].indexOf("?") + 1);

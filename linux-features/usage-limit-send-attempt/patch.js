@@ -13,6 +13,10 @@ const LOCAL_USAGE_GATE = new RegExp(
   `(?<flag>${IDENT})=\\(0,${IDENT}\\.${IDENT}\\)\\("local"===${IDENT}&&${IDENT}\\.${IDENT}\\)`,
   "g",
 );
+const CURRENT_LOCAL_USAGE_REASON = new RegExp(
+  `(?<flag>${IDENT})=\\(0,${IDENT}\\.${IDENT}\\)\\(${IDENT}\\.${IDENT},${IDENT}\\)(?=,${IDENT}=\\(0,)`,
+  "g",
+);
 
 function usageLimitReasonContract(source, gate) {
   const after = source.slice(gate.index + gate[0].length, gate.index + gate[0].length + 20000);
@@ -43,6 +47,18 @@ function applyUsageLimitSendAttemptPatch(source) {
   // Match the local Codex composer and the complete semantic path from the
   // account usage gate through its disabled-reason list and rendered prop.
   const rawGates = [...source.matchAll(LOCAL_USAGE_GATE)];
+  if (rawGates.length === 0) {
+    const current = [...source.matchAll(CURRENT_LOCAL_USAGE_REASON)].filter((gate) => {
+      const after = source.slice(gate.index + gate[0].length, gate.index + gate[0].length + 25000);
+      return COMPOSER.test(after) &&
+        new RegExp(`=\\[[^\\]]{0,1500},${escapeRegExp(gate.groups.flag)}\\]\\.filter\\(Boolean\\)`).test(after) &&
+        after.includes("submitDisabledReasons:");
+    });
+    if (current.length !== 1) return source;
+    const gate = current[0];
+    return source.slice(0, gate.index) + `${gate.groups.flag}=!1/*${MARKER}*/` +
+      source.slice(gate.index + gate[0].length);
+  }
   if (rawGates.length !== 1) return source;
   const gates = rawGates.filter((gate) => {
     const before = source.slice(Math.max(0, gate.index - 1200), gate.index);
