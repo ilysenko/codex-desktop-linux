@@ -19,7 +19,7 @@ const storagePattern = new RegExp(
 function chunkModules(source) {
   const start = source.indexOf(MODULES_MARKER);
   if (start < 0) return null;
-  const header = /([A-Za-z0-9_$]+|"[^"\\]*")\(([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*)*)?\)\{/y;
+  const header = /([A-Za-z0-9_$]+|"[^"\\]*")(?:(?:\(([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*)*)?\))|(?::(\()?function\(([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*)*)?\)))\{/y;
   const modules = [];
   let index = start + MODULES_MARKER.length;
   while (source[index] !== "}") {
@@ -30,11 +30,12 @@ function chunkModules(source) {
     if (close < 0) return null;
     modules.push({
       id: match[1].replace(/^"|"$/g, ""),
-      params: match[2]?.split(",") ?? [],
+      params: (match[2] ?? match[4])?.split(",") ?? [],
       start: index,
       end: close + 1,
     });
     index = close + 1;
+    if (match[3] != null && source[index] === ")") index += 1;
     if (source[index] === ",") index += 1;
   }
   return modules;
@@ -56,10 +57,30 @@ function replacement(atom, persist) {
 function contract(source) {
   const selectors = [...source.matchAll(selectorPattern)];
   const storage = [...source.matchAll(storagePattern)];
-  if (selectors.length !== 1 || storage.length !== 1) return null;
+  if (selectors.length > 1 || storage.length !== 1) return null;
   const modules = chunkModules(source);
   if (modules == null) return null;
   const storageModule = moduleAt(modules, storage[0].index);
+  if (storageModule == null) return null;
+  const body = source.slice(storageModule.start, storageModule.end);
+  const { persist } = storage[0].groups;
+  // The current sidebar module owns a single source atom initialized to
+  // "all" next to the persisted organize-mode preferences. It no longer
+  // routes through a separate `"chatgpt" ? atom : "codex"` selector.
+  if (selectors.length === 0) {
+    const initializers = [...body.matchAll(new RegExp(
+      String.raw`(?<![\w$.])(?<atom>${IDENT})=\(0,${IDENT}\.${IDENT}\)\(${IDENT}\.${IDENT},"all"\)`, "g",
+    ))];
+    if (initializers.length !== 1) return null;
+    const { atom } = initializers[0].groups;
+    const patched = replacement(atom, persist);
+    const patchedCount = body.split(patched).length - 1;
+    const keyCount = source.split(STORAGE_KEY).length - 1;
+    if (patchedCount === 1 && keyCount === 1) return { patched: true };
+    if (keyCount !== 0) return null;
+    const start = storageModule.start + initializers[0].index;
+    return { start, end: start + initializers[0][0].length, replacement: patched };
+  }
   const selectorModule = moduleAt(modules, selectors[0].index);
   const requireParam = selectorModule?.params[2];
   if (storageModule == null || requireParam == null) return null;
@@ -69,13 +90,11 @@ function contract(source) {
   );
   if (!binding.test(source.slice(selectorModule.start, selectorModule.end))) return null;
 
-  const body = source.slice(storageModule.start, storageModule.end);
   const exported = [...body.matchAll(new RegExp(
     String.raw`[{,]${escapeRegExp(exportName)}:(?:\(\)=>)?(?<atom>${IDENT})(?=[,}])`, "g",
   ))];
   if (exported.length !== 1) return null;
   const { atom } = exported[0].groups;
-  const { persist } = storage[0].groups;
   const initializers = [...body.matchAll(new RegExp(
     String.raw`(?<![\w$.])${escapeRegExp(atom)}=\(0,${IDENT}\.${IDENT}\)\(${IDENT}\.${IDENT},"all"\)`, "g",
   ))];
@@ -107,7 +126,7 @@ const descriptors = [{
   phase: "webview-asset",
   order: 20_950,
   ciPolicy: "optional",
-  assetNeedles: ["sidebar-organize-mode-v1", ':"codex"'],
+  assetNeedles: ["sidebar-organize-mode-v1", '"all"'],
   assetMatch: matchesSidebarHistoryContract,
   missingDescription: "unique ChatGPT sidebar source preference",
   skipDescription: "separate ChatGPT sidebar history patch",

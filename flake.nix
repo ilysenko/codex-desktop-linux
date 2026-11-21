@@ -510,8 +510,7 @@
             version = codexVersion;
             src = sourceRoot;
             # This derivation's fail-closed audit owns ELF interpreters and
-            # RUNPATHs. Generic fixups would shrink them again and cannot
-            # safely strip the current amd64 Tectonic payload.
+            # RUNPATHs. Generic fixups would shrink them again.
             dontPatchELF = true;
             dontStrip = true;
             dontFixup = true;
@@ -1050,10 +1049,6 @@
             timeout 10 "$app/${officialRuntimePaths.sky}" --help >/dev/null
             timeout 10 "$app/${officialRuntimePaths.extensionHost}" --help >/dev/null
             "$app/resources/rg" --version
-            ${lib.optionalString (system == "x86_64-linux") ''
-            test "$("$app/resources/tectonic/tectonic" --version)" = \
-              'Tectonic 0.17.0'
-            ''}
             ${lib.optionalString verifyWatchbound ''
             WATCHBOUND_ROOT=${watchboundPackage}/lib/node_modules \
               timeout 20 "$app/resources/cua_node/bin/node" --input-type=module <<'NODE'
@@ -1230,10 +1225,6 @@
             --runtime-library-path "${runtimeLibraryPath}" \
             --patchelf ${pkgs.patchelf}/bin/patchelf
           "$CODEX_INSTALL_DIR/start.sh" --diagnose
-          if [ ${officialPackage.architecture} = amd64 ]; then
-            test "$("$CODEX_INSTALL_DIR/resources/tectonic/tectonic" --version)" = \
-              'Tectonic 0.17.0'
-          fi
           first_chatgpt="$(stat -c %i "$CODEX_INSTALL_DIR/ChatGPT")"
           chmod u+w "$runtime_marker"
           printf '%s\n' ${installerPreviousRuntimeClosure} > "$runtime_marker"

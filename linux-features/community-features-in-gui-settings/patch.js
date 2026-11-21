@@ -28,7 +28,7 @@ const rootOf = (reference) => reference.match(/^\(0,([A-Za-z_$][\w$]*)\./)?.[1] 
 function rspackModules(source) {
   const start = source.indexOf("__webpack_modules__={");
   if (start < 0) return [];
-  const header = new RegExp(`^,?("[^"]+"|${ID}|\\d+)\\(((?:${ID}(?:,${ID}){0,2})?)\\)\\{`, "u");
+  const header = new RegExp(`^,?("[^"]+"|${ID}|\\d+)(?:(?:\\(((?:${ID}(?:,${ID}){0,2})?)\\))|(?::(\\()?function\\(((?:${ID}(?:,${ID}){0,2})?)\\)))\\{`, "u");
   const modules = [];
   let index = start + "__webpack_modules__={".length;
   while (index < source.length) {
@@ -37,8 +37,9 @@ function rspackModules(source) {
     const open = index + match[0].length - 1;
     const close = findMatchingBrace(source, open);
     if (close < 0) break;
-    modules.push({ id: match[1], params: match[2].split(","), start: open, end: close + 1 });
+    modules.push({ id: match[1], params: (match[2] ?? match[4]).split(","), start: open, end: close + 1 });
     index = close + 1;
+    if (match[3] != null && source[index] === ")") index += 1;
   }
   return modules;
 }
@@ -76,12 +77,12 @@ function settingsContract(source) {
   if (!module || module.params.length !== 3) return null;
   const body = source.slice(module.start, module.end);
   const bindings = moduleRequireBindings(body, module.params[2]);
-  const owner = unique(body, new RegExp(`function (${ID})\\((${ID})\\)\\{.{0,400}?\\{platform:(${ID})\\}=(${HOOK})\\(\\),(${ID})=(${HOOK})\\((${REF})\\.macMenuBarEnabled\\);if\\("macOS"!==\\3\\)return null;`, "g"));
+  const owner = unique(body, new RegExp(`function (${ID})\\((${ID})\\)\\{.{0,700}?\\{platform:(${ID})\\}=(${HOOK})\\(\\),.{0,200}?(${ID})=(${HOOK})\\((${REF})\\.macMenuBarEnabled\\);if\\("macOS"!==\\3\\)return null;`, "g"));
   if (!owner) return null;
   const ownerFunction = functionAt(body, owner.index);
   if (!ownerFunction) return null;
   const ownerBody = ownerFunction.text;
-  const row = unique(ownerBody, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${REF}),\\{label:${ID},description:${ID},control:${ID}\\}\\)`, "g"));
+  const row = unique(ownerBody, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${REF}),\\{(?:label:${ID},|entry:${REF},)description:${ID},control:${ID}\\}\\)`, "g"));
   const reactNames = new Set([...body.matchAll(new RegExp(`\\(0,(${ID})\\.useState\\)\\(`, "g"))].map((match) => match[1]));
   const react = reactNames.size === 1 ? [...reactNames][0] : null;
   const intlUse = unique(ownerBody, new RegExp(`(${ID})\\.formatMessage\\(\\{id:"settings\\.general\\.macMenuBar\\.ariaLabel"`, "g"));
@@ -121,7 +122,7 @@ function settingsContract(source) {
   const pageMarker = unique(body, /slug:"general-settings"/g);
   const page = pageMarker && containingFunction(body, pageMarker.index);
   if (!page || generals.some(({ name }) => !page.text.includes(`(0,${row[1]}.jsx)(${name},{})`))) return null;
-  const render = unique(page.text, new RegExp(`\\(0,${jsx}\\.jsxs\\)\\(${REF},\\{title:${ID},children:\\[`, "g"));
+  const render = unique(page.text, new RegExp(`\\(0,${jsx}\\.jsxs\\)\\(${REF},\\{(?:overview:${ID},)?title:${ID},children:\\[`, "g"));
   if (!render) return null;
   const references = { row: row[2], button: button[1], section, stack, react, platformHook: owner[4], intlHook: intl[1], jsx: row[1] };
   if (Object.values(references).some((reference) => !bindings.has(rootOf(reference)))) return null;

@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -266,6 +267,10 @@ for (const architecture of ["amd64", "arm64"]) {
         ),
         true,
       );
+      assert.equal(
+        contract.requiredDynamicExecutables.includes("resources/node"),
+        true,
+      );
       const interpreter =
         architecture === "amd64"
           ? "/lib64/ld-linux-x86-64.so.2"
@@ -278,13 +283,6 @@ for (const architecture of ["amd64", "arm64"]) {
         );
       }
       writeFixture(root, "resources/static-helper", staticElf(contract.machine));
-      if (architecture === "amd64") {
-        writeFixture(
-          root,
-          "resources/tectonic/tectonic",
-          staticElf(contract.machine),
-        );
-      }
       writeFixture(
         root,
         "resources/prebuilds/linux-x64-musl/addon.node",
@@ -308,6 +306,11 @@ for (const architecture of ["amd64", "arm64"]) {
         actions.find(({ path: itemPath }) => itemPath === "ChatGPT").strategy,
         "relocate-within-detect-libc-range",
       );
+      assert.equal(
+        actions.find(({ path: itemPath }) => itemPath === "resources/node")
+          .strategy,
+        "patchelf",
+      );
       if (architecture === "amd64") {
         assert.equal(
           actions.find(
@@ -315,10 +318,6 @@ for (const architecture of ["amd64", "arm64"]) {
               itemPath === "resources/cua_node/bin/node",
           ).strategy,
           "patchelf-rpath-first",
-        );
-        assert.equal(
-          actions.some(({ path: itemPath }) => itemPath.endsWith("/tectonic")),
-          false,
         );
       }
     });
@@ -346,27 +345,76 @@ test("rejects missing, unexpected, and obsolete upstream executables", () => {
       /obsolete upstream path/,
     );
     fs.unlinkSync(path.join(root, "chrome_crashpad_handler"));
-    writeFixture(
-      root,
-      "resources/plugins/openai-bundled/plugins/latex/bin/tectonic",
-      staticElf(),
-    );
-    assert.throws(
-      () => validateUpstreamInventory(root, "amd64", manifest),
-      /obsolete upstream path.*plugins\/openai-bundled\/plugins\/latex\/bin\/tectonic/,
-    );
   });
 });
 
-test("Nix runtime probes use the current upstream Tectonic location", () => {
-  const flake = fs.readFileSync(path.resolve(__dirname, "../../flake.nix"), "utf8");
-  assert.equal(
-    (flake.match(/resources\/tectonic\/tectonic/g) || []).length,
-    2,
+const retiredTectonicPaths = [
+  "resources/tectonic/tectonic",
+  "resources/plugins/openai-bundled/plugins/latex/bin/tectonic",
+];
+
+test("Nix runtime manifest does not retain a retired bundled Tectonic binary", () => {
+  const manifest = loadManifest();
+  const manifestPaths = [
+    ...(manifest.forbiddenPaths || []),
+    ...Object.values(manifest.architectures).flatMap((contract) => [
+      ...(contract.requiredDynamicExecutables || []),
+      ...Object.keys(contract.interpreterStrategies || {}),
+    ]),
+  ];
+  for (const retiredPath of retiredTectonicPaths) {
+    assert.ok(
+      !manifestPaths.includes(retiredPath),
+      `ELF runtime manifest retained retired path: ${retiredPath}`,
+    );
+  }
+});
+
+test("signed amd64 payload replaces retired Tectonic binaries with its compiler helper", {
+  skip: process.env.CODEX_SIGNED_AMD64_LINUX_PACKAGE
+    ? false
+    : "CODEX_SIGNED_AMD64_LINUX_PACKAGE is not set",
+}, () => {
+  const packagePath = path.resolve(
+    process.env.CODEX_SIGNED_AMD64_LINUX_PACKAGE,
   );
-  assert.doesNotMatch(
-    flake,
-    /resources\/plugins\/openai-bundled\/plugins\/latex\/bin\/tectonic/,
+  const expectedSha256 = process.env.CODEX_EXPECTED_SIGNED_AMD64_SHA256;
+  assert.match(
+    expectedSha256 || "",
+    /^[0-9a-f]{64}$/,
+    "CODEX_EXPECTED_SIGNED_AMD64_SHA256 must bind the payload to its signed campaign",
+  );
+  const [actualSha256] = execFileSync("sha256sum", [packagePath], {
+    encoding: "utf8",
+  }).split(/\s+/, 1);
+  assert.equal(actualSha256, expectedSha256, "signed campaign package hash drifted");
+  assert.equal(
+    execFileSync("dpkg-deb", ["--field", packagePath, "Architecture"], {
+      encoding: "utf8",
+    }).trim(),
+    "amd64",
+    "Tectonic retirement regression requires the signed amd64 payload",
+  );
+
+  const payloadEntries = execFileSync("dpkg-deb", ["--contents", packagePath], {
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  })
+    .split("\n")
+    .map((line) => line.match(/ \.\/usr\/lib\/chatgpt\/(.+)$/)?.[1])
+    .filter(Boolean);
+  for (const retiredPath of retiredTectonicPaths) {
+    assert.equal(
+      payloadEntries.includes(retiredPath),
+      false,
+      `signed payload retained retired path: ${retiredPath}`,
+    );
+  }
+  assert.ok(
+    payloadEntries.includes(
+      "resources/tectonic/compiler/compile_desktop.py",
+    ),
+    "signed payload is missing the Tectonic compiler helper used by the current ASAR",
   );
 });
 

@@ -594,6 +594,9 @@ function matchesLinuxRemoteControlLoadGateContract(source) {
     [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED_INLINE)].length === 1;
 }
 
+const REMOTE_CONTROL_CONFIG_FALLBACK =
+  /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(!0===\2\?\.\["features\.remote_connections"\]\)return!0;let ([A-Za-z_$][\w$]*)=\2\?\.features;return null==\4\|\|"object"!=typeof \4\|\|Array\.isArray\(\4\)\?\3:Object\.getOwnPropertyDescriptor\(\4,"remote_connections"\)\?\.value===!0\|\|\3\}/gu;
+
 function applyLinuxRemoteControlLoadGatePatch(source) {
   const pristine = [...source.matchAll(REMOTE_CONTROL_LOAD_GATE_NEEDLE)];
   const patched = [
@@ -601,6 +604,18 @@ function applyLinuxRemoteControlLoadGatePatch(source) {
     ...source.matchAll(REMOTE_CONTROL_LOAD_GATE_PATCHED_INLINE),
   ];
   const markers = source.split(REMOTE_CONTROL_LOAD_GATE_MARKER).length - 1;
+  const configFallbacks = [...source.matchAll(REMOTE_CONTROL_CONFIG_FALLBACK)];
+  if (pristine.length === 0 && patched.length === 0 && markers === 0 && configFallbacks.length === 1) {
+    return source.replace(
+      REMOTE_CONTROL_CONFIG_FALLBACK,
+      (match) => match.replace(
+        "{if(",
+        `{if("undefined"!=typeof navigator&&navigator.userAgent.includes("Linux"))return!0;/*${REMOTE_CONTROL_LOAD_GATE_MARKER}*/if(`,
+      ),
+    );
+  }
+  if (pristine.length === 0 && patched.length === 0 && markers === 1 &&
+      source.includes('navigator.userAgent.includes("Linux"))return!0;')) return source;
   if (pristine.length === 0 && patched.length === 1 && markers === 2) return source;
   if (pristine.length !== 1 || patched.length !== 0 || markers !== 0) {
     console.warn("WARN: Could not find unique remote-control loader rollout gate - skipping Linux remote-control load gate patch");
@@ -757,6 +772,17 @@ function applyLinuxRemoteControlOutboundTabGatePatch(source) {
   }
 
   const gates = [...source.matchAll(/([A-Za-z_$][\w$]*)=\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\("782640499"\)/gu)];
+  const currentGate = /(?<state>[A-Za-z_$][\w$]*)&&!?(?<getter>[A-Za-z_$][\w$]*)\((?<gate>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*),(?<id>[A-Za-z_$][\w$]*)\)&&(?<items>[A-Za-z_$][\w$]*)\.push\((?<route>[A-Za-z_$][\w$]*)\("access-other-devices",(?<platform>[A-Za-z_$][\w$]*)\)\)/gu;
+  const current = [...source.matchAll(currentGate)].filter((match) =>
+    source.includes(`let ${match.groups.id}="782640499"`),
+  );
+  if (gates.length === 0 && current.length === 1) {
+    const match = current[0];
+    const g = match.groups;
+    return source.slice(0, match.index) +
+      `${g.state}&&/*${REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER}*/(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)||!${g.getter}(${g.gate},${g.id}))&&${g.items}.push(${g.route}("access-other-devices",${g.platform}))` +
+      source.slice(match.index + match[0].length);
+  }
   if (gates.length !== 1) {
     console.warn("WARN: Could not find unique remote-control outbound tab gate - skipping Linux outbound tab gate patch");
     return source;
@@ -832,7 +858,7 @@ function applyLinuxRemoteConnectionsRefreshPatch(source) {
 function moduleFactoryAt(source, index) {
   const objectStart = source.indexOf("__webpack_modules__={");
   if (objectStart === -1) return null;
-  const header = /([A-Za-z0-9_$]+|"[^"]*")\(([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*){0,2})?\)\{/y;
+  const header = /([A-Za-z0-9_$]+|"[^"]*")(?:(?:\(([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*){0,2})?\))|(?::(\()?function\(([A-Za-z_$][\w$]*(?:,[A-Za-z_$][\w$]*){0,2})?\)))\{/y;
   let cursor = objectStart + "__webpack_modules__={".length;
   while (cursor < source.length) {
     header.lastIndex = cursor;
@@ -842,9 +868,10 @@ function moduleFactoryAt(source, index) {
     const end = findMatchingBrace(source, open);
     if (end === -1) return null;
     if (index > open && index < end) {
-      return { bodyStart: open + 1, end, require: (match[2] ?? "").split(",")[2] ?? null };
+      return { bodyStart: open + 1, end, require: (match[2] ?? match[4] ?? "").split(",")[2] ?? null };
     }
     cursor = end + 1;
+    if (match[3] != null && source[cursor] === ")") cursor += 1;
     if (source[cursor] !== ",") return null;
     cursor += 1;
   }
@@ -1092,12 +1119,21 @@ function applyLinuxRemoteControlEnableForHostParamsPatch(source) {
 
 const REMOTE_MOBILE_ACTIVE_STATUS_PATTERN =
   /function\(\{latestTurnStatus:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),streamRole:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{return null==\3\?"needs_resume"===\2\?"needs-resume":"read-only":"follower"===\3\.role\?"follower":\4\?\.type==="active"\|\|"inProgress"===\1\?"active":"inactive"\}/gu;
+const REMOTE_MOBILE_HISTORY_STATUS_PATTERN =
+  /function\(\{latestTurnStatus:([A-Za-z_$][\w$]*),resumeState:([A-Za-z_$][\w$]*),historyAttached:([A-Za-z_$][\w$]*),threadRuntimeStatus:([A-Za-z_$][\w$]*)\}\)\{return \3\?\4\?\.type==="active"\|\|"inProgress"===\1\?"active":"inactive":"needs_resume"===\2\?"needs-resume":"read-only"\}/gu;
 
 // Mobile-started turns on the local host have no stream role yet; report them
 // as active from the runtime status instead of "needs resume"/"read-only".
 function applyLinuxRemoteMobileActiveStatusPatch(source) {
   const markers = source.split(REMOTE_MOBILE_ACTIVE_STATUS_MARKER).length - 1;
   const matches = [...source.matchAll(REMOTE_MOBILE_ACTIVE_STATUS_PATTERN)];
+  const historyMatches = [...source.matchAll(REMOTE_MOBILE_HISTORY_STATUS_PATTERN)];
+  if (markers === 0 && matches.length === 0 && historyMatches.length === 1) {
+    return source.replace(
+      REMOTE_MOBILE_HISTORY_STATUS_PATTERN,
+      `function({latestTurnStatus:$1,resumeState:$2,historyAttached:$3,threadRuntimeStatus:$4}){/*${REMOTE_MOBILE_ACTIVE_STATUS_MARKER}*/return $4?.type==="active"||"inProgress"===$1?"active":$3?"inactive":"needs_resume"===$2?"needs-resume":"read-only"}`,
+    );
+  }
   if (markers === 1 && matches.length === 0) return source;
   if (markers !== 0 || matches.length !== 1) {
     console.warn("WARN: Could not find unique active-status renderer - skipping remote mobile active-status patch");
@@ -1392,7 +1428,6 @@ module.exports = [
     id: "linux-remote-control-load-gate",
     phase: "webview-asset",
     assetNeedles: ['"1042620455"', '"features.remote_connections"'],
-    assetMatch: matchesLinuxRemoteControlLoadGateContract,
     order: 20_118,
     ciPolicy: "optional",
     missingDescription: "remote-control loader gate bundle",
@@ -1421,7 +1456,7 @@ module.exports = [
     // The remote connections settings page and the mobile setup dialog.
     id: "linux-remote-control-copy",
     phase: "webview-asset",
-    assetNeedles: ['this Mac",description:"'],
+    assetNeedles: ["this Mac"],
     order: 20_130,
     ciPolicy: "optional",
     missingDescription: "remote-control settings or mobile setup bundle",
@@ -1542,7 +1577,7 @@ module.exports = [
   {
     id: "linux-remote-mobile-active-status",
     phase: "webview-asset",
-    assetNeedles: ['"Read-only snapshot"', "streamRole:"],
+    assetNeedles: ['"Read-only snapshot"', "threadRuntimeStatus:"],
     order: 20_160,
     ciPolicy: "optional",
     missingDescription: "app main bundle",

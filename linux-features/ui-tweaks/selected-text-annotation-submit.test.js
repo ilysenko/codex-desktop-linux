@@ -351,17 +351,19 @@ test("current official ASAR exposes a coherent native shortcut owner set and acc
   assert.equal(applied.changed, owners.length);
   assert.deepEqual(applied.targets, owners.map((owner) => path.join("webview", "assets", owner.name)));
   const moreDetails = require("./patches/selected-text-more-details.js");
+  const moreDetailsDescriptor = require("./patch.js").descriptors.find((entry) =>
+    entry.id === "selected-text-more-details");
   const both = { feature: { settings: { tweaks: { selection: {
     annotationSubmit: { enabled: true }, moreDetails: { enabled: true },
   } } } } };
   // More details patches its Quick Chat runtime chunk plus every rspack copy of
   // the selection overlay; none of them is the shortcut owner patched above.
-  const moreDetailsApplied = moreDetails.applySelectedTextMoreDetails(copy, both);
+  const moreDetailsApplied = moreDetailsDescriptor.apply(copy, both);
   assert.ok(moreDetailsApplied.changed >= 2);
   assert.equal(moreDetailsApplied.changed, moreDetailsApplied.targets.length);
   for (const owner of owners) {
     assert.ok(!moreDetailsApplied.targets.includes(path.join("webview", "assets", owner.name)));
   }
   assert.equal(applyAnnotationSubmit(copy, both).changed, 0);
-  assert.equal(moreDetails.applySelectedTextMoreDetails(copy, both).changed, 0);
+  assert.equal(moreDetailsDescriptor.apply(copy, both).changed, 0);
 });

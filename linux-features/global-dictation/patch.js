@@ -85,14 +85,56 @@ function unsupportedPlatformCases(message) {
 }
 
 function hotkeyRegistration(registerFunction, gesture, optionsPattern) {
+  const pressedGesture = gesture === "primary"
+    ? `(?:${literal(gesture)}|this\\.hasSharedHotkey\\(\\)\\?${literal("shared")}:${literal(gesture)})`
+    : literal(gesture);
   return new RegExp(
     `${escapeRegexLiteral(registerFunction)}\\((?<accelerator>${IDENT}),\\{(?<callbacks>(?:(?!\\},\\{(?:ownership:|bareModifierTrigger:))[\\s\\S]){0,1200}?` +
-      `shortcutGestures\\.press\\(${literal(gesture)},[\\s\\S]{0,300}?` +
+      `shortcutGestures\\.press\\(${pressedGesture},[\\s\\S]{0,300}?` +
       `shortcutGestures\\.release\\(${literal(gesture)}\\)[\\s\\S]{0,300}?` +
       `shortcutGestures\\.cancelPress\\(${literal(gesture)}\\)[\\s\\S]{0,120}?)\\},` +
       `\\{${optionsPattern}\\}\\)`,
     "u",
   );
+}
+
+function normalizeCurrentQuitLifecycle(source) {
+  const header = new RegExp(
+    `function\\(\\{(?<before>[^{}]{1,500}?)globalDictationLifecycleManager:(?<dictation>${IDENT}),` +
+      `(?<after>[^{}]{1,500}?)flushAndDisposeContext:${IDENT},(?<tail>[^{}]{1,500}?)disposables:${IDENT}`,
+    "u",
+  ).exec(source);
+  if (header == null || header.groups.before.includes("hotkeyWindowLifecycleManager:")) return source;
+  const call = `globalDictationLifecycleManager:`;
+  const callIndex = source.indexOf(call, header.index + header[0].length);
+  if (callIndex < 0 || source.indexOf(call, callIndex + call.length) >= 0) return source;
+  const disposal = `${header.groups.dictation}.dispose(),Promise.allSettled([`;
+  if (source.split(disposal).length !== 3) return source;
+  let normalized = source.slice(0, callIndex) +
+    `hotkeyWindowLifecycleManager:{dispose(){}},${source.slice(callIndex)}`;
+  normalized = normalized.replace(
+    `globalDictationLifecycleManager:${header.groups.dictation},`,
+    `hotkeyWindowLifecycleManager:codexLinuxNoopHotkeyLifecycle,globalDictationLifecycleManager:${header.groups.dictation},`,
+  );
+  return normalized.replaceAll(
+    disposal,
+    `codexLinuxNoopHotkeyLifecycle.dispose(),${disposal}`,
+  );
+}
+
+function normalizeCurrentCaptureOwner(source) {
+  const pattern = new RegExp(
+    `beginCapture\\(\\)\\{if\\(this\\.origin\\.isDestroyed\\(\\)\\)return null;let (${IDENT})=this\\.getFocusedOwnerWindow\\(\\);` +
+      `return null==\\1\\?null:new (${IDENT})\\(this\\.origin,\\1\\)\\}` +
+      `(?=getFocusedOwnerWindow\\(\\)\\{let ${IDENT}=(${IDENT})\\.BrowserWindow\\.getFocusedWindow\\(\\);)`,
+    "u",
+  );
+  const match = pattern.exec(source);
+  if (match == null) return source;
+  if (pattern.exec(source.slice(match.index + match[0].length)) != null) return source;
+  const replacement = `beginCapture(){if(this.origin.isDestroyed())return null;let ${match[1]}=${match[3]}.BrowserWindow.fromWebContents(this.origin);` +
+    `return null!=${match[1]}&&${match[1]}.isFocused()?new ${match[2]}(this.origin,${match[1]}):null}`;
+  return source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length);
 }
 
 function applyLinuxGlobalDictationMainProcessPatch(source) {
@@ -172,7 +214,7 @@ function applyLinuxGlobalDictationMainProcessPatch(source) {
       'handleLinuxHotkeyUnavailable(e,t){console.warn(`[linux-global-dictation] ${e} hotkey backend became unavailable`,t);if("hold"===e)this.unregisterHotkey();else this.unregisterToggleHotkey()}unregisterHotkey(){',
       "hotkey failure cleanup method",
     );
-    return installPortalBackend(patched);
+    return installPortalBackend(normalizeCurrentCaptureOwner(normalizeCurrentQuitLifecycle(patched)));
   } catch (error) {
     warn(error instanceof Error ? error.message : String(error));
     return source;

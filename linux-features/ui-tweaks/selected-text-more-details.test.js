@@ -283,6 +283,54 @@ test("already-patched validation rejects invalid full-module JavaScript byte-ide
   assert.deepEqual(read(app), before);
 });
 
+test("current adaptation rejects missing, ambiguous, partial, and final-stage failures byte-identically", (t) => {
+  const descriptor = require("./patch.js").descriptors.find((entry) => entry.id === "selected-text-more-details");
+  const currentInput = "function current({startupSignal:a,requireDispatchAcceptance:b,...c}){}";
+
+  {
+    const app = appFixture(t, runtimeFixture() + currentInput);
+    fs.unlinkSync(app.overlay);
+    const before = fs.readFileSync(app.runtime, "utf8");
+    const result = warnings(() => descriptor.apply(app.root, enabledContext));
+    assert.equal(result.result.changed, 0);
+    assert.equal(result.warnings.length, 1);
+    assert.equal(fs.readFileSync(app.runtime, "utf8"), before);
+    assert.equal(fs.existsSync(app.overlay), false);
+  }
+
+  {
+    const app = appFixture(t, runtimeFixture() + currentInput + currentInput.replace("current", "duplicate"));
+    const before = read(app);
+    const result = warnings(() => descriptor.apply(app.root, enabledContext));
+    assert.equal(result.result.changed, 0);
+    assert.equal(result.warnings.length, 1);
+    assert.deepEqual(read(app), before);
+  }
+
+  {
+    const app = appFixture(t);
+    assert.equal(applySelectedTextMoreDetails(app.root, enabledContext).changed, 2);
+    fs.writeFileSync(app.overlay, restoreUpstream(fs.readFileSync(app.overlay, "utf8")));
+    const before = read(app);
+    const result = warnings(() => descriptor.apply(app.root, enabledContext));
+    assert.equal(result.result.changed, 0);
+    assert.equal(result.warnings.length, 1);
+    assert.deepEqual(read(app), before);
+  }
+
+  {
+    const brokenOverlay = overlayFixture().replace(
+      'id:"selectedTextOverlay.moreDetails"', 'id:"selectedTextOverlay.changed"',
+    );
+    const app = appFixture(t, runtimeFixture() + currentInput, brokenOverlay);
+    const before = read(app);
+    const result = warnings(() => descriptor.apply(app.root, enabledContext));
+    assert.equal(result.result.changed, 0);
+    assert.equal(result.warnings.length, 1);
+    assert.deepEqual(read(app), before);
+  }
+});
+
 // Evaluates rspack chunks with a minimal module runtime: n(id) evaluates a
 // registered factory once, and n.d(exports,getters) defines live exports.
 function rspackRuntime(chunks, externals) {
@@ -652,13 +700,14 @@ test("More details matches the complete signed official bundle", {
   const copy = fs.mkdtempSync(path.join(os.tmpdir(), "selected-text-official-test-"));
   t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
   fs.cpSync(path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, "webview"), path.join(copy, "webview"), { recursive: true });
-  const result = warnings(() => applySelectedTextMoreDetails(copy, enabledContext));
+  const descriptor = require("./patch.js").descriptors.find((entry) => entry.id === "selected-text-more-details");
+  const result = warnings(() => descriptor.apply(copy, enabledContext));
   assert.deepEqual(result.warnings, []);
   // The Quick Chat runtime chunk plus every chunk that carries a copy of the
   // selected-text overlay module.
   assert.ok(result.result.matched >= 2);
   assert.equal(result.result.changed, result.result.matched);
-  const again = warnings(() => applySelectedTextMoreDetails(copy, enabledContext));
+  const again = warnings(() => descriptor.apply(copy, enabledContext));
   assert.deepEqual(again.warnings, []);
   assert.equal(again.result.changed, 0);
   for (const target of result.result.targets) {
