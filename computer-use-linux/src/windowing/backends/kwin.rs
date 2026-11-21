@@ -56,6 +56,66 @@ pub async fn list_windows() -> Result<Vec<WindowInfo>> {
     Ok(windows)
 }
 
+/// The windows on the desktop and activity the user sees, bottom to top in
+/// KWin's stacking order, with docks, popups and notifications: whatever can
+/// cover a point. The desktop window and minimized or hidden windows are left
+/// out. workspace is None for a window KWin places on the current desktop and
+/// activity, and Some(-1) where it did not say.
+pub(crate) async fn windows_stacked() -> Result<Vec<WindowInfo>> {
+    parse_kwin_windows_stacked(&call_kwin_window_script().await?)
+}
+
+/// Named logical outputs, in KWin's order.
+pub(crate) async fn named_outputs() -> Result<Vec<(String, LogicalMonitor)>> {
+    let json = call_kwin_window_script().await?;
+    let names = KwinElementClickSnapshot::from_json(&json)?
+        .outputs
+        .into_iter()
+        .map(|output| output.name)
+        .collect::<Vec<_>>();
+    Ok(names.into_iter().zip(kwin_output_layout(&json)?).collect())
+}
+
+fn parse_kwin_windows_stacked(json: &str) -> Result<Vec<WindowInfo>> {
+    let snapshot = parse_kwin_snapshot(json)?;
+    let order = snapshot
+        .stacking
+        .context("KWin did not expose its stacking order")?;
+    let mut raw: std::collections::HashMap<String, KwinRawWindow> = snapshot
+        .windows
+        .into_iter()
+        .filter_map(|window| Some((window.kwin_uuid()?, window)))
+        .collect();
+    let flag = |value: &Option<serde_json::Value>| json_value_as_bool(value.as_ref());
+    let mut windows = Vec::new();
+    for uuid in order
+        .iter()
+        .filter_map(|uuid| normalize_kwin_uuid(uuid.as_deref()?))
+    {
+        let Some(window) = raw.remove(&uuid) else {
+            continue;
+        };
+        if flag(&window.desktop_window) == Some(true)
+            || flag(&window.minimized) == Some(true)
+            || flag(&window.hidden) == Some(true)
+            || flag(&window.on_current_desktop) == Some(false)
+            || flag(&window.on_current_activity) == Some(false)
+        {
+            continue;
+        }
+        // A window whose desktop or activity KWin did not say still covers
+        // what is below it, but is no target.
+        let unknown = flag(&window.on_current_desktop).is_none()
+            || flag(&window.on_current_activity).is_none();
+        let Ok(mut info) = WindowInfo::try_from(window) else {
+            continue;
+        };
+        info.workspace = unknown.then_some(-1);
+        windows.push(info);
+    }
+    Ok(windows)
+}
+
 pub(crate) async fn logical_desktop_rect() -> Result<(i32, i32, i32, i32)> {
     let json = call_kwin_window_script().await?;
     parse_kwin_logical_desktop_rect(&json)
@@ -711,6 +771,26 @@ fn kwin_window_script_source(
         return [];
     }}
 
+    function onCurrentActivity(window) {{
+        try {{
+            var activities = window.activities;
+            if (activities === null || activities === undefined) {{
+                return null;
+            }}
+            if (activities.length === 0) {{
+                return true;
+            }}
+            var current = workspace.currentActivity;
+            // "" when no activity manager runs.
+            if (typeof current !== "string" || current === "") {{
+                return null;
+            }}
+            return Array.prototype.indexOf.call(activities, current) >= 0;
+        }} catch (error) {{
+            return null;
+        }}
+    }}
+
     var activeWindow = null;
     try {{
         activeWindow = "activeWindow" in workspace ? workspace.activeWindow : workspace.activeClient;
@@ -736,6 +816,8 @@ fn kwin_window_script_source(
             workspace: firstDesktop(window),
             minimized: read(window, "minimized"),
             onCurrentDesktop: onCurrentDesktop(window),
+            onCurrentActivity: onCurrentActivity(window),
+            hidden: read(window, "hidden"),
             active: read(window, "active") || window === activeWindow,
             clientType: clientType(window),
             normalWindow: read(window, "normalWindow"),
@@ -753,12 +835,25 @@ fn kwin_window_script_source(
         }};
     }});
 
+    function stackingOrder() {{
+        try {{
+            var order = workspace.stackingOrder;
+            if (order && typeof order.length === "number") {{
+                return Array.prototype.map.call(order, function(window) {{
+                    return read(window, "uuid") || read(window, "internalId");
+                }});
+            }}
+        }} catch (error) {{}}
+        return null;
+    }}
+
     callDBus(serviceName, objectPath, iface, "ReceiveWindows", JSON.stringify({{
         backend: "kwin",
         pluginName: pluginName,
         desktopGeometry: workspaceGeometry(),
         outputs: activeOutputs(),
-        windows: windows
+        windows: windows,
+        stacking: stackingOrder()
     }}));
 }})();
 "#
@@ -1008,6 +1103,9 @@ struct KwinWindowSnapshot {
     #[serde(default)]
     outputs: Vec<KwinRawOutput>,
     windows: Vec<KwinRawWindow>,
+    /// Window uuids bottom to top.
+    #[serde(default)]
+    stacking: Option<Vec<Option<String>>>,
 }
 
 impl KwinWindowSnapshot {
@@ -1067,6 +1165,10 @@ struct KwinRawWindow {
     workspace: Option<serde_json::Value>,
     minimized: Option<serde_json::Value>,
     on_current_desktop: Option<serde_json::Value>,
+    #[serde(default)]
+    on_current_activity: Option<serde_json::Value>,
+    #[serde(default)]
+    hidden: Option<serde_json::Value>,
     active: Option<serde_json::Value>,
     client_type: Option<String>,
     normal_window: Option<serde_json::Value>,
@@ -2774,5 +2876,75 @@ mod transaction_tests {
         drop(service_connection);
         drop(client_connection);
         drop(bus);
+    }
+}
+
+#[cfg(test)]
+mod pen_stacking_tests {
+    use super::parse_kwin_windows_stacked;
+
+    fn window(uuid: &str, extra: &str) -> String {
+        let mut window = serde_json::json!({
+            "uuid": format!("{{{uuid}}}"), "caption": uuid, "x": 0, "y": 0, "width": 100,
+            "height": 100, "minimized": false, "onCurrentDesktop": true,
+            "onCurrentActivity": true, "hidden": false,
+        });
+        if !extra.is_empty() {
+            let more: serde_json::Value =
+                serde_json::from_str(&format!("{{{}}}", &extra[1..])).unwrap();
+            for (key, value) in more.as_object().unwrap() {
+                window[key] = value.clone();
+            }
+        }
+        window.to_string()
+    }
+
+    #[test]
+    fn the_stacked_list_holds_only_visible_windows_bottom_to_top() {
+        let windows = [
+            window("00000000-0000-0000-0000-000000000001", ""),
+            window("00000000-0000-0000-0000-000000000002", r#","hidden":true"#),
+            window(
+                "00000000-0000-0000-0000-000000000003",
+                r#","onCurrentActivity":false"#,
+            ),
+            window(
+                "00000000-0000-0000-0000-000000000004",
+                r#","onCurrentDesktop":false"#,
+            ),
+            window(
+                "00000000-0000-0000-0000-000000000005",
+                r#","minimized":true"#,
+            ),
+            window(
+                "00000000-0000-0000-0000-000000000006",
+                r#","onCurrentActivity":null"#,
+            ),
+            window(
+                "00000000-0000-0000-0000-000000000007",
+                r#","desktopWindow":true"#,
+            ),
+        ];
+        // Listed in reverse, stacked in order: the stacking order wins.
+        let stacking = (1..=7)
+            .map(|n| format!(r#""{{00000000-0000-0000-0000-00000000000{n}}}""#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let json = format!(
+            r#"{{"windows":[{}],"stacking":[{stacking}]}}"#,
+            windows.iter().rev().cloned().collect::<Vec<_>>().join(",")
+        );
+        let stacked = parse_kwin_windows_stacked(&json).unwrap();
+        let titles: Vec<_> = stacked
+            .iter()
+            .map(|window| (window.title.clone().unwrap(), window.workspace))
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                ("00000000-0000-0000-0000-000000000001".to_string(), None),
+                ("00000000-0000-0000-0000-000000000006".to_string(), Some(-1)),
+            ]
+        );
     }
 }

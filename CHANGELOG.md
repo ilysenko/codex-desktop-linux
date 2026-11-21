@@ -7,6 +7,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.59. The
+  crate and the `server.rs` literal are 0.7.59, the standalone version. KDE
+  Plasma Wayland (KWin 6.3 and later) gets the virtual pen and touchscreen for
+  `click`, `drag` and `scroll` with `delivery: "background"`, as routes
+  `kwin-pen` and `kwin-touch`: KWin maps the devices through
+  `org.kde.KWin.InputDevice`, the point is checked against KWin's stacking
+  order on the current desktop and activity, Show Desktop and full-screen
+  effects refuse the call, and the server removes what KWin wrote for these
+  devices into `kcminputrc` once they are gone. On GNOME 48 and later a
+  background right click no longer arrives as a middle click (and the other
+  way round): the server sets the stylus button actions for its own pen. A
+  background scroll right after a background click or drag now pans: the pen
+  leaves proximity at the end of each action instead of hovering for 8 seconds.
+- Synchronize the embedded Computer Use backend to standalone v0.7.58. The
+  crate and the `server.rs` literal are 0.7.58, the standalone version. On
+  GNOME Wayland, `click`, `drag` and `scroll` with `delivery: "background"`
+  and a window target go through a virtual pen and touchscreen, so the user's
+  mouse pointer stays where it is: left, right and middle clicks are a pen tap
+  and the upper and lower barrel buttons, a drag is a pen stroke inside one
+  window, and a scroll is a one-finger touch pan. The point must be on the
+  target window with no window above it, checked through the Codex GNOME Shell
+  extension; a locked screen or an open overview refuses the call. A tap or a
+  touch still focuses the window, apps without tablet support never see the
+  pen, and the pen hovers for 8 seconds. `drag` takes `delivery` and a window
+  target. Results name the route `gnome-pen` or `gnome-touch`, `doctor`
+  reports `capabilities.background_pointer`, and a successful pen or touch
+  action moves the avatar cursor. The devices are named
+  `codex-computer-use-linux virtual pen` and `... virtual touch`.
+- Synchronize the embedded Computer Use backend to standalone v0.7.57. The
+  crate and the `server.rs` literal are 0.7.57, the standalone version.
+  `type_text` and `press_key` take `delivery: "background"`, which reaches the
+  target without moving the user's keyboard focus: an element from
+  `get_app_state` through AT-SPI EditableText or its action, a browser tab over
+  DevTools when `CODEX_COMPUTER_USE_DEVTOOLS` (or the standalone
+  `COMPUTER_USE_LINUX_DEVTOOLS`) names a loopback port or a
+  `DevToolsActivePort` file, and a terminal by tty through kitty remote control,
+  `wezterm cli`, tmux, GNU screen, TIOCSTI or the pty master. Where the desktop
+  ships a second seat (an XInput 2 master on X11, an `ext-transient-seat-v1`
+  seat on sway 1.10 and later, `sendkeystate` on Hyprland), a whole window
+  takes keys through the agent's own seat, and `click` and `scroll` take
+  `delivery: "background"` for the agent pointer on sway and on X11 without a
+  window manager; a successful agent-seat click or scroll moves the avatar
+  cursor. The X11 agent master is named `codex-computer-use-linux agent <id>`.
+  The first background call in a session that no route can serve sends nothing
+  and explains why; repeating it goes through normal focused input. `doctor`
+  reports `capabilities.background_input` and `capabilities.background_seat`.
+  `press_key` accepts `KP_Enter`.
 - Synchronize the embedded Computer Use backend to standalone v0.7.56. The
   crate and the `server.rs` literal are 0.7.56, the standalone version. On
   Umbriel, screenshots capture every output with `dms screenshot all` when the
