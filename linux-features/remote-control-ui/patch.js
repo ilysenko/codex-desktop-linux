@@ -13,6 +13,10 @@ function warn(message, patchName) {
 const REMOTE_CONNECTIONS_GATE_PATTERN =
   /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?),"4114442250"\)(?!\|\|navigator\.userAgent\.includes\(`Linux`\))/g;
 const PATCHED_REMOTE_CONNECTIONS_GATE = `"4114442250")||${LINUX_GATE})`;
+// remote-mobile-control (order 20118) gates the same config resolver on Linux
+// first; that early return already satisfies this patch.
+const REMOTE_MOBILE_GATED_RESOLVER =
+  /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),[A-Za-z_$][\w$]*\)\{if\("undefined"!=typeof navigator&&navigator\.userAgent\.includes\("Linux"\)\)return!0;\/\*codexLinuxRemoteControlLoadGateEnabled\*\/if\(!0===\1\?\.\["features\.remote_connections"\]\)return!0;/g;
 
 function applyRemoteConnectionsVisibilityPatch(source) {
   const patched = source.replace(
@@ -32,6 +36,7 @@ function applyRemoteConnectionsVisibilityPatch(source) {
   }
   if (source.includes(`{if(${LINUX_GATE})return!0;if(!0===`) &&
       source.includes('"features.remote_connections"')) return source;
+  if ([...source.matchAll(REMOTE_MOBILE_GATED_RESOLVER)].length === 1) return source;
   warn("Could not find remote connections Statsig gate", "remote control UI remote connections visibility patch");
   return source;
 }
