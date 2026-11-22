@@ -89,21 +89,6 @@ mkdir -p "$test_tmp"
 TMPDIR="$test_tmp" node --test linux-features/account-switcher/test.js
 ```
 
-Set `CODEX_ACCOUNT_SWITCHER_NATIVE_APP` to an extracted official application
-root and `CODEX_ACCOUNT_SWITCHER_ASAR_CLI` to `@electron/asar/bin/asar.mjs` to also
-run the native Owl regression test. This requires a graphical session and an
-unlocked Secret Service provider. It generates a disposable probe, uses synthetic
-credentials, verifies key persistence and vault decryption in fresh switcher
-instances, and exercises **Add account** with the official connection class's
-request/subscription methods. An initially disconnected hosted connection must
-remain untouched, and the probe rejects any attempts to query global cloud work.
-The probe uses a synthetic transport and intercepts the browser launch, then
-cancels OAuth; it does not log in to real accounts. It exits only its own process
-and clears only its own test key.
-Do not set a long build `TMPDIR` when launching a desktop app: Chromium's socket
-path must fit the Unix-domain socket limit. Use `TMPDIR="$XDG_RUNTIME_DIR"` for
-interactive launches instead.
-
 Set `CODEX_ACCOUNT_SWITCHER_CLI` to the extracted official `resources/codex` to
 also check credential-file decoding and the idle-check protocol in a disposable,
 unauthenticated app server. This does not test OAuth with real accounts.
