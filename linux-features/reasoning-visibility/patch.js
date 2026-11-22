@@ -97,10 +97,22 @@ function reasoningComponent(source) {
   if (states.length !== 1) return null;
   const state = states[0];
   const { stream, body, state: expanded, setter } = state.groups;
+  // The upstream completed body strips a leading heading. For a summary
+  // consisting only of that heading this leaves nothing to display.
+  const contentPattern = new RegExp(
+    String.raw`(?<target>${ident})=${escape(stream)}\?"":(?:${enabledPattern}\?(?<patchedItem>${ident})\.content:${escape(marker("completed-content"))})?\(0,(?<module>${ident})\.(?<method>${ident})\)\((?<item>${ident})\.content\)`, "g",
+  );
+  const contents = [...text.matchAll(contentPattern)];
+  if (contents.length !== 1) return null;
+  const content = contents[0];
+  const { target, item, patchedItem } = content.groups;
+  if ((patchedItem != null && patchedItem !== item) ||
+      !text.includes(`{item:${item},`) || !text.includes(`let ${body}=${target},[`)) return null;
   if (!text.includes(`:${expanded},`) || !text.includes(`expanded:${expanded},onToggle:()=>{${setter}(`) ||
       !text.includes(`autoScrollToBottom:${stream},`) ||
       (!text.includes(`?${body}`) && !text.includes(`:${body},`) && !text.includes(`:${body};`))) return null;
-  return { start: header.index, text, state };
+  if (state[0].includes(marker("expanded")) !== content[0].includes(marker("completed-content"))) return null;
+  return { start: header.index, text, state, content };
 }
 
 function applyExpandedPatch(source) {
@@ -109,9 +121,14 @@ function applyExpandedPatch(source) {
     console.warn("WARN: reasoning-visibility/expanded: current reasoning disclosure contract missing or ambiguous; disable this feature and rebuild or update its patch.");
     return source;
   }
-  const { state, text, start } = component;
+  const { state, content, text, start } = component;
   const replacement = state[0].replace(new RegExp(String.raw`\(!1\)|\(${enabledPattern}${escape(marker("expanded"))}\)`), `(${enabled}${marker("expanded")})`);
-  const next = text.slice(0, state.index) + replacement + text.slice(state.index + state[0].length);
+  const { target, item, module, method } = content.groups;
+  const contentReplacement = `${target}=${component.state.groups.stream}?"":${enabled}?${item}.content:${marker("completed-content")}(0,${module}.${method})(${item}.content)`;
+  const edits = [{ index: state.index, length: state[0].length, replacement },
+    { index: content.index, length: content[0].length, replacement: contentReplacement }].sort((a, b) => b.index - a.index);
+  let next = text;
+  for (const edit of edits) next = next.slice(0, edit.index) + edit.replacement + next.slice(edit.index + edit.length);
   return withRuntime(source.slice(0, start) + next + source.slice(start + text.length));
 }
 

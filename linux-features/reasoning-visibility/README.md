@@ -10,6 +10,8 @@ activity items in Codex local conversations. They stay visible when completed
 tool activity collapses and start expanded, including when reopening history.
 The native Thinking / Thought disclosure still supports manual folding.
 The transcript projection also keeps reasoning separate from tool groups.
+Completed summaries keep their full text, including a heading when that is the
+only content returned by the backend.
 
 When active, the feature requests `detailed` reasoning summaries through the existing
 turn-start option. Explicit `model_reasoning_summary` configuration and explicit
