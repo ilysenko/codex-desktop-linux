@@ -348,6 +348,32 @@ for (const action of ["add", "switch"]) {
   }
 }
 
+test("utility-process proxy with async getPendingRequestCount, missing clearAuthTokenCache, and disconnected durable host", async t => {
+  for (const [action, pending] of [["switch", 0], ["switch", 1], ["add", 0]]) {
+    const f = fixture(t, action === "add" ? { login: "second" } : {});
+    delete f.client.clearAuthTokenCache;
+    f.client.getConnectionState = () => "connected";
+    f.client.getPendingRequestCount = async () => pending;
+    let durableOpened = false;
+    f.clients.push({
+      hostConfig: { id: "durable", kind: "local" },
+      getConnectionState: () => "disconnected",
+      getPendingRequestCount: async () => { durableOpened = true; return 0; },
+    });
+    if (action === "switch") { await f.open(3); f.seedSecond(); }
+    await f.open(1);
+    assert.equal(durableOpened, false, `disconnected durable host must not be opened during ${action}`);
+    if (pending === 0) {
+      assert.equal(f.dialogs.filter(dialog => dialog.type === "error").length, 0);
+      assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
+    } else {
+      assert.equal(f.calls.includes("restart"), false);
+      assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
+      assert.match(f.dialogs.at(-1).detail, /pending requests/);
+    }
+  }
+});
+
 test("login setup errors name the phase without exposing upstream error details", async t => {
   const f = fixture(t);
   f.client.registerInternalNotificationHandler = () => { throw new Error("private-error-token"); };
