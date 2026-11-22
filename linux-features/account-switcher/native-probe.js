@@ -34,13 +34,14 @@ electron.app.whenReady().then(async () => {
     Object.assign(client, {
       options: { hostId: id, hostConfig: { id, kind: "local" }, transport: { kind: id === "local" ? "stdio" : "websocket" } },
       connection: id === "local" ? {} : null,
+      connectionState: id === "local" ? "connected" : "disconnected",
       internalNotificationHandlers: new Set(), internalResponseHandlers: new Map(),
       clientRequestQueue: { size: 0, updatePeakPendingRequestCount() {} },
       backendAuth: { beginAccountChange() {}, finishAccountChange() {} },
       configuration: { handleSuccessfulRequest() {} },
       getAuthenticatedPrincipal: async () => ({ accountId: "native-probe", userId: "native-probe" }),
       ensureReady: async () => { readyChecks++; client.connection = {}; },
-      clearAuthTokenCache() {}, restart: async () => {},
+      restart: async () => {},
       messageDelivery: { sendMessage: request => {
         if (!client.connection) throw Error("Codex app-server is not available");
         // Global cloud work must not be read, cancelled or reconnected by a

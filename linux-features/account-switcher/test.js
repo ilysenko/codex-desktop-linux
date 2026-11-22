@@ -60,9 +60,9 @@ function fixture(t, options = {}) {
   const client = {
     hostConfig: { id: "local", kind: "local" },
     ensureReady: async () => { ready = true; calls.push("ensureReady"); },
-    getPendingRequestCount: () => options.pending ?? 0,
+    getConnectionState: () => ready ? "connected" : "disconnected",
+    getPendingRequestCount: async () => options.pending ?? 0,
     getAuthenticatedPrincipal: async () => ({ accountId: `account-${active}`, userId: `user-${active}` }),
-    clearAuthTokenCache: () => calls.push("clearCache"),
     restart: async () => {
       calls.push("restart");
       const name = JSON.parse(fs.readFileSync(authPath)).tokens.account_id.slice(8);
@@ -322,7 +322,9 @@ for (const action of ["add", "switch"]) {
       const f = fixture(t);
       const reads = [];
       f.clients.push({
-        hostConfig: { id: "durable", kind: "local" }, getPendingRequestCount: () => pending,
+        hostConfig: { id: "durable", kind: "local" },
+        getConnectionState: () => "connected",
+        getPendingRequestCount: async () => pending,
         sendAppServerRequest: async method => {
           reads.push(method);
           // A catalog would contain a permanently active task from another
@@ -348,12 +350,9 @@ for (const action of ["add", "switch"]) {
   }
 }
 
-test("utility-process proxy with async getPendingRequestCount, missing clearAuthTokenCache, and disconnected durable host", async t => {
-  for (const [action, pending] of [["switch", 0], ["switch", 1], ["add", 0]]) {
+test("disconnected durable host is not opened during idle checks", async t => {
+  for (const action of ["switch", "add"]) {
     const f = fixture(t, action === "add" ? { login: "second" } : {});
-    delete f.client.clearAuthTokenCache;
-    f.client.getConnectionState = () => "connected";
-    f.client.getPendingRequestCount = async () => pending;
     let durableOpened = false;
     f.clients.push({
       hostConfig: { id: "durable", kind: "local" },
@@ -363,14 +362,8 @@ test("utility-process proxy with async getPendingRequestCount, missing clearAuth
     if (action === "switch") { await f.open(3); f.seedSecond(); }
     await f.open(1);
     assert.equal(durableOpened, false, `disconnected durable host must not be opened during ${action}`);
-    if (pending === 0) {
-      assert.equal(f.dialogs.filter(dialog => dialog.type === "error").length, 0);
-      assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
-    } else {
-      assert.equal(f.calls.includes("restart"), false);
-      assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("first"));
-      assert.match(f.dialogs.at(-1).detail, /pending requests/);
-    }
+    assert.equal(f.dialogs.filter(dialog => dialog.type === "error").length, 0);
+    assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
   }
 });
 
