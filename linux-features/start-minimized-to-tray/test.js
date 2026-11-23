@@ -608,12 +608,17 @@ function settingsFixture() {
     'G3wX(e,t,a){let s;a.d(t,{GeneralSettings:()=>aR});var n=a("ABep"),r=a("QosV"),m=a("zd8w"),x=a("oyxz"),b=a("Wf1j"),ed=a("iRMi"),F=a("RxZZ"),f=a("DBCl"),N=a("F0xz"),P=a("AWNZ");' +
     'function aJ(e){let t,a,s,i,o,l,c=(0,r.c)(15),{appName:d}=e,h=(0,b.A)(),{platform:p}=(0,ed.V)(),m=(0,F.iK)(f.U6S.macMenuBarEnabled);if("macOS"!==p)return null;' +
     't=(0,n.jsx)(x.A,{id:"settings.general.macMenuBar.label"}),a=(0,n.jsx)(x.A,{id:"settings.general.macMenuBar.description",values:{appName:d}});let y=!1!==m;' +
-    'i=h.formatMessage({id:"settings.general.macMenuBar.ariaLabel",defaultMessage:"Show {appName} in the menu bar"},{appName:d}),o=(0,n.jsx)(N.l,{checked:y,onChange:s,ariaLabel:i}),l=(0,n.jsx)(P.ic,{label:t,description:a,control:o});return l}' +
+    'i=h.formatMessage({id:"settings.general.macMenuBar.ariaLabel",defaultMessage:"Show {appName} in the menu bar"},{appName:d}),o=(0,n.jsx)(N.l,{checked:y,onChange:s,ariaLabel:i}),l=(0,n.jsx)(P.ic,{entry:f.setting,description:a,control:o});return l}' +
     'function a1(){let[e,t]=(0,m.useState)(!1);return e}' +
     'function aR(){return(0,n.jsxs)(n.Fragment,{children:[(0,n.jsx)(aJ,{appName:v.C}),(0,n.jsx)(t6,{})]})}' +
     'function az(){return(0,n.jsxs)(n.Fragment,{children:[(0,n.jsx)(aJ,{appName:"ChatGPT"}),(0,n.jsx)(aK,{})]})}' +
     '},Other(e,t,a){var q=a("zzzz")}};\n//# sourceMappingURL=572868.36a6c86221.js.map';
 }
+
+test("settings contract rejects the retired label-based row", () => {
+  const { settingsContract } = require("./patch.js");
+  assert.equal(settingsContract(settingsFixture().replace("entry:f.setting", "label:t")), null);
+});
 
 function localeLoaderFixture(locales) {
   const entries = locales.map((locale, index) =>
@@ -660,7 +665,7 @@ test("settings patch injects both toggles into the owning module factory, is ide
   assert.match(patched, /return l\}function codexLinuxStartMinimizedPost\(/);
   assert.match(patched, /\(0,ed\.V\)\(\),\[codexLinuxEnabled,codexLinuxSetEnabled\]=\(0,m\.useState\)\(!1\)/);
   assert.match(patched, /codexLinuxIntl=\(0,b\.A\)\(\)/);
-  assert.match(patched, /\(0,n\.jsx\)\(P\.ic,\{label:codexLinuxLabel,/);
+  assert.match(patched, /\(0,n\.jsx\)\(P\.ic,\{entry:\{id:/);
   assert.match(patched, /\(0,n\.jsx\)\(N\.l,\{checked:codexLinuxEnabled,/);
   for (const appName of ["v.C", '"ChatGPT"']) {
     assert.ok(patched.includes(`(0,n.jsx)(aJ,{appName:${appName}}),(0,n.jsx)(codexLinuxStartMinimizedSetting,{}),(0,n.jsx)(codexLinuxStartMinimizedBootOnlySetting,{})`), appName);
@@ -777,7 +782,7 @@ function componentHarness(post, bootOnly = false, platform = "linux", messages =
   };
   const context = { React, platformHook: () => ({ platform }),
     intlHook: () => ({ formatMessage: ({ id, defaultMessage }) => messages[id] ?? defaultMessage }),
-    j: { jsx: (type, props) => ({ type, props }) }, Row: "row", Toggle: "toggle", codexLinuxStartMinimizedPost: post };
+    j: { jsx: (type, props) => { if (type === "row") { assert.equal(typeof props.entry.title.localizedText, "string"); assert.equal(props.anchored, false); } return { type, props }; } }, Row: "row", Toggle: "toggle", codexLinuxStartMinimizedPost: post };
   const renderFn = vm.runInNewContext(`${settingComponent({row:"Row",toggle:"Toggle",react:"React",platformHook:"platformHook",jsx:"j",intlHook:"intlHook"}, bootOnly)};${bootOnly ? "codexLinuxStartMinimizedBootOnlySetting" : "codexLinuxStartMinimizedSetting"}`, context);
   const render = () => { cursor = 0; const result = renderFn(); mounted = true; return result; };
   return { render, load: async () => { effects.forEach(callback => callback()); await new Promise(resolve => setImmediate(resolve)); } };
@@ -812,7 +817,7 @@ test("both toggle names, descriptions and accessibility labels use the active lo
     const messages = {};
     const harness = componentHarness(async () => ({ value: false }), bootOnly, "linux", messages);
     const english = harness.render();
-    assert.equal(english.props.label, bootOnly ? "Start minimized to tray only on boot" : "Start minimized to tray");
+    assert.equal(english.props.entry.title.localizedText, bootOnly ? "Start minimized to tray only on boot" : "Start minimized to tray");
     assert.equal(english.props.description, bootOnly
       ? "Hide the main window only when started automatically at login. Manual launches open normally. Takes priority over Start minimized to tray; does not enable autostart."
       : "Start with the main window hidden in the system tray. Applies after quitting and restarting the app, unless the boot-only option is enabled.");
@@ -825,14 +830,14 @@ test("both toggle names, descriptions and accessibility labels use the active lo
       LABEL_IDS.forEach((id, index) => { messages[id] = labels[index]; });
       DESCRIPTION_IDS.forEach((id, index) => { messages[id] = descriptions[index]; });
       const translated = harness.render();
-      assert.equal(translated.props.label, labels[Number(bootOnly)], locale);
-      assert.equal(translated.props.control.props.ariaLabel, translated.props.label, locale);
+      assert.equal(translated.props.entry.title.localizedText, labels[Number(bootOnly)], locale);
+      assert.equal(translated.props.control.props.ariaLabel, translated.props.entry.title.localizedText, locale);
       assert.equal(translated.props.description, descriptions[Number(bootOnly)], locale);
       assert.equal(translated.props.control.props.disabled, english.props.control.props.disabled, locale);
     }
     LABEL_IDS.forEach(id => { delete messages[id]; });
     DESCRIPTION_IDS.forEach(id => { delete messages[id]; });
-    assert.equal(harness.render().props.label, english.props.label);
+    assert.equal(harness.render().props.entry.title.localizedText, english.props.entry.title.localizedText);
     assert.equal(harness.render().props.description, english.props.description);
   }
 });

@@ -19,7 +19,7 @@ const standaloneSource = 'function classify(e,{includeGeneratedImages:n=!1}={}){
 const persistentSource = 'function persistent({unit:e,hasFollowingFinalAnswer:t}){if("standalone"!==e.kind)return!1;let a=e.item.item;return"user-input-response"===a.type?!a.completed:"assistant-message"===a.type&&a.important?!0:"user-message"===a.type&&!t}const partition={collapsibleUnits:[],persistentUnits:[]};';
 const transcriptSource = 'const partition={collapsibleUnits:[],persistentUnits:[]};function transcript(items,n){let i=[],a=[],s=()=>{a.length&&(i.push({type:"agent-activity",items:a,collapseWhenPossible:!0}),a=[])};for(let o of items){let l="reasoning"===o.type?null:{grouping:o.grouping};if(l?.grouping==="standalone"||n?.has(o)===!0){s(),i.push({type:"activity-item",key:`transcript-activity-item-${o.id}`,item:o});continue}a.push(o)}s();return i}';
 const summariesSource = 'function options(client,mode){return{reasoningSummaryOverride:!0===client.getDefaultFeatureOverride("concurrent_reasoning_summaries")||mode?"detailed":null,getRequestModel:e=>e,getRequestCollaborationMode(e){return e}}}function resolve(options,config,turn){let summary="none";null!=options.reasoningSummaryOverride&&(summary=options.reasoningSummaryOverride);summary=config.model_reasoning_summary??summary;void 0!==turn.summary&&(summary=turn.summary);return summary}';
-const expandedSource = 'function reasoning(e){let{item:n}=e,l=!n.completed,f=n.content,[h,g]=(0,React.useState)(!1),_=!l&&!!f;let v=n.content;let y=v,b=l?!!y:h,x=l?y:f,disclosure={expanded:h,onToggle:()=>{g(toggle)}},scroll={items:[{key:"reasoning-markdown",node:x}],autoScrollToBottom:l,viewState:"expanded"};return{visible:b,disclosure,scroll}}function toggle(e){return!e}';
+const expandedSource = 'function reasoning(e){let{item:n,conversationId:c}=e,l=!n.completed,r=l?"":(0,formatter.k2)(n.content);let f=r,[h,g]=(0,React.useState)(!1),_=!l&&!!f;let v=n.content;let y=v,b=l?!!y:h,x=l?y:f,disclosure={expanded:h,onToggle:()=>{g(toggle)}},scroll={items:[{key:"reasoning-markdown",node:x}],autoScrollToBottom:l,viewState:"expanded"};return{visible:b,disclosure,scroll}}function toggle(e){return!e}';
 const sources = [standaloneSource, persistentSource, transcriptSource, summariesSource, expandedSource];
 const preference = (enabled = true) => ({ localStorage: { getItem: () => enabled ? "1" : null } });
 
@@ -118,7 +118,7 @@ test("reasoning starts expanded, survives completion and supports manual collaps
     state ??= initial;
     return [state, (next) => { state = typeof next === "function" ? next(state) : next; }];
   } };
-  const render = vm.runInNewContext(patched(4) + ';reasoning', { React, ...preference() });
+  const render = vm.runInNewContext(patched(4) + ';reasoning', { React, formatter: { k2: (text) => text.replace(/^\*\*[^\n]*?\*\*\s*/, "") }, ...preference() });
   const item = { completed: false, content: "Available reasoning summary" };
   assert.equal(render({ item }).visible, true);
   item.completed = true;
@@ -130,6 +130,17 @@ test("reasoning starts expanded, survives completion and supports manual collaps
   assert.equal(result.visible, false);
   result.disclosure.onToggle();
   assert.equal(render({ item }).visible, true);
+});
+
+test("completed heading-only summaries remain visible and upstream behavior remains intact when disabled", () => {
+  const source = patched(4), formatter = { k2: (text) => text.replace(/^\*\*[^\n]*?\*\*\s*/, "") };
+  const render = (enabled, content) => vm.runInNewContext(source + ';reasoning', {
+    React: { useState: (value) => [value, () => {}] }, formatter, ...preference(enabled),
+  })({ item: { completed: true, content } });
+  assert.equal(render(true, '**Checking the result**').scroll.items[0].node, '**Checking the result**');
+  assert.equal(render(true, '**Checking**\nDetailed explanation').scroll.items[0].node, '**Checking**\nDetailed explanation');
+  assert.equal(render(false, '**Checking the result**').scroll.items[0].node, '');
+  assert.equal(render(false, '**Checking**\nDetailed explanation').scroll.items[0].node, 'Detailed explanation');
 });
 
 test("all contracts tolerate fresh minified identifiers and fail closed on missing or duplicate targets", () => {
@@ -146,11 +157,19 @@ test("all contracts tolerate fresh minified identifiers and fail closed on missi
 
 test("incomplete native disclosure is preserved instead of patching a neighboring state hook", () => {
   for (const source of [expandedSource.replace("autoScrollToBottom:l", "autoScrollToBottom:!1"),
-    expandedSource.replace("onToggle:()=>{g(toggle)}", "onToggle:handleToggle")]) {
+    expandedSource.replace("onToggle:()=>{g(toggle)}", "onToggle:handleToggle"),
+    expandedSource.replace('(0,formatter.k2)(n.content)', '(0,formatter.k2)(other.content)')]) {
     const result = warnings(() => descriptors[4].apply(source));
     assert.equal(result.value, source);
     assert.equal(result.messages.length, 1);
   }
+});
+
+test("partial completed-content patch is rejected without writing", () => {
+  const source = patched(4).replace('codexLinuxReasoningVisibilityEnabled()?n.content:/*community-reasoning-visibility-completed-content*/', '');
+  const result = warnings(() => descriptors[4].apply(source));
+  assert.equal(result.value, source);
+  assert.equal(result.messages.length, 1);
 });
 
 test("a marker with an inconsistent transcript item is not accepted as patched", () => {
@@ -234,10 +253,14 @@ function settingsFixture() {
     'var n=a("ABep"),r=a("QosV"),m=a("zd8w"),P=a("AWNZ"),N=a("F0xz"),ed=a("ed00"),b=a("bb00"),F=a("RxZZ"),f=a("ff00");' +
     'function menu(e){let c=(0,r.c)(15),{appName:d}=e,h=(0,b.A)(),{platform:p}=(0,ed.V)(),v=(0,F.iK)(f.U6S.macMenuBarEnabled);if("macOS"!==p)return null;' +
     'let label=h.formatMessage({id:"settings.general.macMenuBar.ariaLabel"},{appName:d});let o=(0,n.jsx)(N.l,{checked:v,onChange:change,ariaLabel:label});' +
-    'return(0,n.jsx)(P.ic,{label:label,description:d,control:o})}function change(){}function another(){let[e,t]=(0,m.useState)(!1)}' +
+    'return(0,n.jsx)(P.ic,{entry:f.setting,description:d,control:o})}function change(){}function another(){let[e,t]=(0,m.useState)(!1)}' +
     'function page(){return(0,n.jsxs)(n.Fragment,{children:[(0,n.jsx)(menu,{appName:"ChatGPT"}),(0,n.jsx)(N.l,{}),(0,n.jsx)(menu,{appName:f.C})]})}' +
     '/*settings.general.macMenuBar.description*/},ABep(e,t,a){e.exports={}}};';
 }
+
+test("settings contract rejects the retired label-based row", () => {
+  assert.equal(settingsContract(settingsFixture().replace("entry:f.setting", "label:label")), null);
+});
 
 const catalogKey = (locale) => `K${locale.replace(/-/g, "_")}`;
 const catalogChunk = (locale) => 100000 + Object.keys(translations).indexOf(locale);
@@ -269,7 +292,7 @@ function settingsHarness({ locale = "en", localStorage = storage(), platform = "
   const context = {
     localStorage, m: React, ed: { V: () => ({ platform }) },
     b: { A: () => ({ formatMessage: ({ id, defaultMessage }) => translations[locale]?.[MESSAGE_IDS.indexOf(id)] ?? defaultMessage }) },
-    P: { ic: "row" }, N: { l: "toggle" }, n: { jsx: (type, props) => ({ type, props }) },
+    P: { ic: "row" }, N: { l: "toggle" }, n: { jsx: (type, props) => { if (type === "row") { assert.equal(typeof props.entry.title.localizedText, "string"); assert.equal(props.anchored, false); } return { type, props }; } },
     window: { addEventListener: (name, callback) => events.set(name, callback), removeEventListener: (name) => events.delete(name) },
   };
   const render = vm.runInNewContext(settingComponent(settingsContract(settingsFixture())) + ';codexLinuxReasoningVisibilitySetting', context);
@@ -299,7 +322,7 @@ test("all setting labels, descriptions, accessible labels and save errors use th
       getItem: () => null, setItem: () => { throw Error("private browser error"); },
     } });
     const row = harness.render();
-    assert.equal(row.props.label, messages[0], locale);
+    assert.equal(row.props.entry.title.localizedText, messages[0], locale);
     assert.equal(row.props.control.props.ariaLabel, messages[0], locale);
     assert.equal(row.props.description, messages[1], locale);
     row.props.control.props.onChange(true);
@@ -336,7 +359,7 @@ test("native row and all 64 locale catalogs patch idempotently while existing me
   assert.deepEqual(applySettingsPatch(root), { changed: false });
   const settings = fs.readFileSync(settingsPath, "utf8");
   assert.equal(settings.split("(0,n.jsx)(codexLinuxReasoningVisibilitySetting,{}),(0,n.jsx)(menu,{appName:").length, 3);
-  assert.match(settings, /return\(0,n\.jsx\)\(P\.ic,\{label:label,description:d,control:o\}\)\}function codexLinuxReasoningVisibilitySetting\(\)\{let React=m,\{platform\}=\(0,ed\.V\)\(\)/);
+  assert.match(settings, /return\(0,n\.jsx\)\(P\.ic,\{entry:f\.setting,description:d,control:o\}\)\}function codexLinuxReasoningVisibilitySetting\(\)\{let React=m,\{platform\}=\(0,ed\.V\)\(\)/);
   await import(`data:text/javascript,${encodeURIComponent(settings)}`);
   for (const locale of locales) {
     const messages = await catalogMessages(fs.readFileSync(catalog(locale), "utf8"), locale);

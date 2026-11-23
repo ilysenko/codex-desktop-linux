@@ -64,7 +64,7 @@ function settingsContract(source) {
   const end = findMatchingBrace(source, source.indexOf("{", owner.index));
   if (end < 0 || end > factory.end) return null;
   const body = source.slice(owner.index, end + 1);
-  const row = unique(body, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${MEMBER}),\\{(?:label:${ID},|entry:${MEMBER},)description:${ID},control:${ID}\\}`, "g"));
+  const row = unique(body, new RegExp(`\\(0,(${ID})\\.jsx\\)\\((${MEMBER}),\\{entry:${MEMBER},description:${ID},control:${ID}\\}`, "g"));
   const toggle = unique(body, new RegExp(`\\(0,${ID}\\.jsx\\)\\((${MEMBER}),\\{checked:${ID},onChange:${ID},ariaLabel:${ID}\\}`, "g"));
   const intlUse = unique(body, new RegExp(`(${ID})\\.formatMessage\\(\\{id:"settings\\.general\\.macMenuBar\\.ariaLabel"`, "g"));
   const intl = intlUse && unique(body, new RegExp(`(?<![\\w$.])${escapeRegExp(intlUse[1])}=(${CALLEE})\\(\\)`, "g"));
@@ -87,7 +87,7 @@ function settingsContract(source) {
 function settingComponent({ row, toggle, react, platformHook, jsx, intlHook }) {
   const key = JSON.stringify(STORAGE_KEY);
   const message = (index) => `intl.formatMessage({id:${JSON.stringify(MESSAGE_IDS[index])},defaultMessage:${JSON.stringify(translations.en[index])}})`;
-  return `function ${UI}(){let React=${react},{platform}=${platformHook}(),[enabled,setEnabled]=React.useState(()=>{try{return localStorage.getItem(${key})==="1"}catch{return!1}}),[error,setError]=React.useState(null),intl=${intlHook}(),label=${message(0)},description=${message(1)};React.useEffect(()=>{let update=e=>{if(e.key===${key}||e.key===null){try{setEnabled(localStorage.getItem(${key})==="1")}catch{}}};window.addEventListener("storage",update);return()=>window.removeEventListener("storage",update)},[]);if(platform!=="linux")return null;let change=value=>{try{localStorage.setItem(${key},value===!0?"1":"0");setEnabled(value===!0);setError(null)}catch{setError(${message(2)})}};return(0,${jsx}.jsx)(${row},{label,description:error??description,control:(0,${jsx}.jsx)(${toggle},{checked:enabled,onChange:change,ariaLabel:label})})}`;
+  return `function ${UI}(){let React=${react},{platform}=${platformHook}(),[enabled,setEnabled]=React.useState(()=>{try{return localStorage.getItem(${key})==="1"}catch{return!1}}),[error,setError]=React.useState(null),intl=${intlHook}(),label=${message(0)},description=${message(1)};React.useEffect(()=>{let update=e=>{if(e.key===${key}||e.key===null){try{setEnabled(localStorage.getItem(${key})==="1")}catch{}}};window.addEventListener("storage",update);return()=>window.removeEventListener("storage",update)},[]);if(platform!=="linux")return null;let change=value=>{try{localStorage.setItem(${key},value===!0?"1":"0");setEnabled(value===!0);setError(null)}catch{setError(${message(2)})}};return(0,${jsx}.jsx)(${row},{entry:{id:${key},title:{localizedText:label}},anchored:!1,description:error??description,control:(0,${jsx}.jsx)(${toggle},{checked:enabled,onChange:change,ariaLabel:label})})}`;
 }
 
 // Locale catalogs are lazily loaded JSON modules. The loader map names each
