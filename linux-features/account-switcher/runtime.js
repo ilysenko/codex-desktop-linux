@@ -214,7 +214,8 @@ function createAccountSwitcher({ electron, clients, home, runSecretTool }) {
   async function assertIdle() {
     stage = "checking backend connections";
     for (const client of clients()) {
-      if (client.getPendingRequestCount() !== 0) throw new SwitcherError("Wait for pending requests and active tasks to finish before switching accounts.");
+      if (client.hostConfig.id === "durable" && client.getConnectionState() === "disconnected") continue;
+      if (await client.getPendingRequestCount() !== 0) throw new SwitcherError("Wait for pending requests and active tasks to finish before switching accounts.");
       // Durable tasks run independently of this desktop connection. An
       // account-wide catalog includes work in other apps/profiles, which a
       // local credential change neither restarts nor cancels. Only in-flight
@@ -261,7 +262,6 @@ function createAccountSwitcher({ electron, clients, home, runSecretTool }) {
     stage = "reconnecting the account";
     const info = identity(text);
     writePrivate(authPath, text);
-    client.clearAuthTokenCache();
     await client.restart({ intent: "reconnect" });
     await rpc(client, "account/read", { refreshToken: false });
     if (!await principalMatches(client, info, PRINCIPAL_SETTLE_ATTEMPTS)) {
@@ -295,7 +295,7 @@ function createAccountSwitcher({ electron, clients, home, runSecretTool }) {
       if (message.method !== "account/login/completed") return;
       if (loginId == null) { early = message.params; return; }
       if (message.params?.loginId === loginId) resolveLogin(message.params);
-    });
+    }, { methods: ["account/login/completed"] });
     const controller = new AbortController();
     try {
       const login = await rpc(client, "account/login/start", { type: "chatgpt", appBrand: "chatgpt", useHostedLoginSuccessPage: true });
@@ -311,7 +311,6 @@ function createAccountSwitcher({ electron, clients, home, runSecretTool }) {
         dialog.showMessageBox({ type: "info", title: "ChatGPT Community", message: "Sign in to another ChatGPT account in your browser.", detail: "Your current login is remembered. Cancel returns to it.", buttons: ["Cancel"], cancelId: 0, signal: controller.signal }).then(() => null),
       ]);
       if (!result?.success) return;
-      client.clearAuthTokenCache();
       remember(accounts, await readCurrent(client, PRINCIPAL_SETTLE_ATTEMPTS));
       completed = true;
     } catch (error) {

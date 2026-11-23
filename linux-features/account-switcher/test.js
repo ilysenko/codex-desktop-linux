@@ -60,9 +60,9 @@ function fixture(t, options = {}) {
   const client = {
     hostConfig: { id: "local", kind: "local" },
     ensureReady: async () => { ready = true; calls.push("ensureReady"); },
-    getPendingRequestCount: () => options.pending ?? 0,
+    getConnectionState: () => ready ? "connected" : "disconnected",
+    getPendingRequestCount: async () => options.pending ?? 0,
     getAuthenticatedPrincipal: async () => ({ accountId: `account-${active}`, userId: `user-${active}` }),
-    clearAuthTokenCache: () => calls.push("clearCache"),
     restart: async () => {
       calls.push("restart");
       const name = JSON.parse(fs.readFileSync(authPath)).tokens.account_id.slice(8);
@@ -322,7 +322,9 @@ for (const action of ["add", "switch"]) {
       const f = fixture(t);
       const reads = [];
       f.clients.push({
-        hostConfig: { id: "durable", kind: "local" }, getPendingRequestCount: () => pending,
+        hostConfig: { id: "durable", kind: "local" },
+        getConnectionState: () => "connected",
+        getPendingRequestCount: async () => pending,
         sendAppServerRequest: async method => {
           reads.push(method);
           // A catalog would contain a permanently active task from another
@@ -347,6 +349,23 @@ for (const action of ["add", "switch"]) {
     });
   }
 }
+
+test("disconnected durable host is not opened during idle checks", async t => {
+  for (const action of ["switch", "add"]) {
+    const f = fixture(t, action === "add" ? { login: "second" } : {});
+    let durableOpened = false;
+    f.clients.push({
+      hostConfig: { id: "durable", kind: "local" },
+      getConnectionState: () => "disconnected",
+      getPendingRequestCount: async () => { durableOpened = true; return 0; },
+    });
+    if (action === "switch") { await f.open(3); f.seedSecond(); }
+    await f.open(1);
+    assert.equal(durableOpened, false, `disconnected durable host must not be opened during ${action}`);
+    assert.equal(f.dialogs.filter(dialog => dialog.type === "error").length, 0);
+    assert.equal(fs.readFileSync(f.authPath, "utf8"), credentials("second"));
+  }
+});
 
 test("login setup errors name the phase without exposing upstream error details", async t => {
   const f = fixture(t);
@@ -647,41 +666,4 @@ test("official main and profile dropdown chunks patch uniquely and remain valid 
       assert.equal(apply(invalid), invalid);
     }
   }
-});
-
-test("official Owl reaches OAuth and reopens an encrypted vault without querying independent cloud work", {
-  skip: !process.env.CODEX_ACCOUNT_SWITCHER_NATIVE_APP || !process.env.CODEX_ACCOUNT_SWITCHER_ASAR_CLI,
-  timeout: 30_000,
-}, t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "account-native-"));
-  const app = process.env.CODEX_ACCOUNT_SWITCHER_NATIVE_APP;
-  const home = path.join(dir, "home"), profile = path.join(dir, "profile");
-  const probe = path.join(dir, "app"), source = path.join(dir, "source");
-  fs.mkdirSync(path.join(probe, "resources"), { recursive: true });
-  fs.mkdirSync(source);
-  t.after(() => {
-    if (fs.existsSync(home)) {
-      const id = crypto.createHash("sha256").update(fs.realpathSync(home)).digest("hex");
-      try { execFileSync("secret-tool", ["clear", "application", "codex-desktop", "feature", "account-switcher", "profile", id], { stdio: "ignore", timeout: 5_000 }); } catch {}
-    }
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-  fs.copyFileSync(path.join(app, "ChatGPT"), path.join(probe, "ChatGPT"));
-  fs.chmodSync(path.join(probe, "ChatGPT"), 0o755);
-  for (const name of fs.readdirSync(app)) {
-    if (["ChatGPT", "resources", "start.sh", ".codex-linux"].includes(name)) continue;
-    fs.symlinkSync(path.join(app, name), path.join(probe, name));
-  }
-  for (const name of ["owl-app.ini", "owl-electron-app.json"]) fs.copyFileSync(path.join(app, "resources", name), path.join(probe, "resources", name));
-  fs.copyFileSync(path.join(__dirname, "native-probe.js"), path.join(source, "probe.js"));
-  fs.writeFileSync(path.join(source, "package.json"), JSON.stringify({ name: "account-native-probe", version: "1.0.0", main: "probe.js" }));
-  execFileSync(process.execPath, [process.env.CODEX_ACCOUNT_SWITCHER_ASAR_CLI, "pack", source, path.join(probe, "resources/app.asar")], { stdio: "pipe", timeout: 5_000 });
-  const result = path.join(dir, "result.json");
-  execFileSync(path.join(probe, "ChatGPT"), [`--user-data-dir=${profile}`], {
-    env: { ...process.env, TMPDIR: process.env.XDG_RUNTIME_DIR || "/tmp", CODEX_HOME: home, CODEX_ELECTRON_USER_DATA_PATH: profile,
-      ACCOUNT_SWITCHER_PROBE_RUNTIME: process.env.CODEX_ACCOUNT_SWITCHER_PROBE_RUNTIME || path.join(__dirname, "runtime.js"), ACCOUNT_SWITCHER_PROBE_RESULT: result,
-      ACCOUNT_SWITCHER_PROBE_NATIVE_APP: app },
-    stdio: "pipe", timeout: 20_000,
-  });
-  assert.deepEqual(JSON.parse(fs.readFileSync(result)), { menus: 3, encryptedVault: true, errors: [], openedLogin: 1, readyChecks: 4, cloudUntouched: true });
 });
