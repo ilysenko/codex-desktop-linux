@@ -139,6 +139,11 @@ export function installLinuxComputerUse(cua) {
       if (!Array.isArray(target) || target.length !== 2 || !target.every(Number.isInteger)) throw new Error('Linux native input requires integer window-relative coordinates');
       return { x: target[0], y: target[1] };
     };
+    // Background by default; background:false asks for normal focused input.
+    const delivery = options => {
+      if (options?.background !== undefined && typeof options.background !== 'boolean') throw new Error('background must be a boolean');
+      return options?.background === false ? {} : { delivery: 'background' };
+    };
     const target = {
       getAXState: async (options = {}) => emit(axText(await state(options), options), options),
       getScreenshot: async (options = {}) => screenshot(await call('screenshot', app, screenshotBackendOptions(options)), options),
@@ -151,17 +156,17 @@ export function installLinuxComputerUse(cua) {
         const result = { ...await state(options), ...capture };
         return { state: emit(axText(result, options), options), ...(result.screenshot ? { screenshot: await screenshot(result, options) } : {}) };
       },
-      click: (location, options = {}) => call('click', app, { ...point(location), button: options.mouseButton ?? 'left', click_count: options.clickCount ?? 1, relative: true, delivery: 'background' }),
+      click: (location, options = {}) => call('click', app, { ...point(location), button: options.mouseButton ?? 'left', click_count: options.clickCount ?? 1, relative: true, ...delivery(options) }),
       pressKey: key => call('press_key', app, { key }),
       typeText: text => call('type_text', app, { text }),
-      scroll: (location, direction, pages = 1) => call('scroll', app, { ...point(location), direction, pages, relative: true, delivery: 'background' }),
+      scroll: (location, direction, pages = 1, options = {}) => call('scroll', app, { ...point(location), direction, pages, relative: true, ...delivery(options) }),
       paste: async (text, options = {}) => {
         if (options.format && options.format !== 'text') return unsupported();
         return call('type_text', app, { text });
       },
       drag: unsupported, selectText: unsupported, setValue: unsupported, performSecondaryAction: unsupported,
     };
-    emit('Linux native app APIs: getAXState({disableDiffing?,compact?,maxNodes?,maxDepth?}), getScreenshot({maxWidth?,maxHeight?,maxBytes?,scale?,format?,quality?}), getAXStateAndScreenshot() with both option sets, click([x,y], {mouseButton?,clickCount?}), pressKey(key), typeText(text), scroll([x,y], direction, pages?), paste(text). AX state is compact and unchanged compact projections are suppressed by default; pass disableDiffing:true for a fresh compact tree or compact:false for full backend node metadata. Screenshot APIs bring the selected window forward and emit images themselves; getAXState() remains passive. Click/scroll coordinates are window-relative in the reported screenshot coordinate_width/coordinate_height space; screenshots may be downscaled. Accessibility bounds are screen coordinates and must not be passed directly to click/scroll; display scaling can differ. Native window_context is retained for geometry inspection. Click and scroll are delivered in the background through a pointer of the backend\'s own where the desktop has one (a virtual pen or touchscreen on GNOME and KDE Plasma Wayland, an agent seat on X11 and Sway), so the user\'s pointer stays where it is; the point must be on the window with no other window above it, and getScreenshot() brings the window forward. Where no background route exists, the first click or scroll in a session sends nothing and throws a notice: repeat the same call to continue with normal input, which raises the window and moves the user\'s pointer. Element-index actions, drag, rich paste, selectText, setValue, and secondary actions are unsupported. Input uses the Linux backend and may require OS permissions.');
+    emit('Linux native app APIs: getAXState({disableDiffing?,compact?,maxNodes?,maxDepth?}), getScreenshot({maxWidth?,maxHeight?,maxBytes?,scale?,format?,quality?}), getAXStateAndScreenshot() with both option sets, click([x,y], {mouseButton?,clickCount?,background?}), pressKey(key), typeText(text), scroll([x,y], direction, pages?, {background?}), paste(text). AX state is compact and unchanged compact projections are suppressed by default; pass disableDiffing:true for a fresh compact tree or compact:false for full backend node metadata. Screenshot APIs bring the selected window forward and emit images themselves; getAXState() remains passive. Click/scroll coordinates are window-relative in the reported screenshot coordinate_width/coordinate_height space; screenshots may be downscaled. Accessibility bounds are screen coordinates and must not be passed directly to click/scroll; display scaling can differ. Native window_context is retained for geometry inspection. Click and scroll are delivered in the background through a pointer of the backend\'s own where the desktop has one (a virtual pen or touchscreen on GNOME and KDE Plasma Wayland, an agent seat on X11 and Sway), so the user\'s pointer stays where it is; the point must be on the window with no other window above it, and getScreenshot() brings the window forward. Where no background route exists, the first click or scroll in a session sends nothing and throws a notice: repeat the same call to continue with normal input, which raises the window and moves the user\'s pointer. When a background click or scroll is refused, or had no effect because the app ignores pen or touch input, pass background:false to send it through normal focused input, which also moves the user\'s pointer. Element-index actions, drag, rich paste, selectText, setValue, and secondary actions are unsupported. Input uses the Linux backend and may require OS permissions.');
     await target.getAXState();
     return target;
   };

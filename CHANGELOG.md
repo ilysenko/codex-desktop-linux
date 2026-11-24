@@ -27,8 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   and touchscreen) and on X11 and sway (agent seat) they no longer move the
   user's pointer. Where no background route exists, the backend's one-time
   notice reaches the agent as an error and nothing is sent or replayed;
-  repeating the call uses normal focused input. The host validator accepts
-  `delivery: "background"` only.
+  repeating the call uses normal focused input. A background refusal says to
+  pass `background: false`, which sends that call through focused input. The
+  host validator accepts `delivery: "background"` only.
 - Synchronize the embedded Computer Use backend to standalone v0.7.59. The
   crate and the `server.rs` literal are 0.7.59, the standalone version. KDE
   Plasma Wayland (KWin 6.3 and later) gets the virtual pen and touchscreen for

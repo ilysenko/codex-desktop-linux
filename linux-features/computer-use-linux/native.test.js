@@ -72,6 +72,14 @@ test('native client preserves browser inventory and binds native actions to sele
     assert.deepEqual(calls.at(-1), ['sky', { method: 'click', app: 'org.example.Editor', params: { x: 2, y: 3, button: 'left', click_count: 1, relative: true, delivery: 'background' } }]);
     await app.scroll([4, 5], 'down', 2);
     assert.deepEqual(calls.at(-1), ['sky', { method: 'scroll', app: 'org.example.Editor', params: { x: 4, y: 5, direction: 'down', pages: 2, relative: true, delivery: 'background' } }]);
+    // background:false asks for normal focused input: no delivery parameter.
+    await app.click([2, 3], { background: false });
+    assert.deepEqual(calls.at(-1)[1].params, { x: 2, y: 3, button: 'left', click_count: 1, relative: true });
+    await app.scroll([4, 5], 'up', 1, { background: false });
+    assert.deepEqual(calls.at(-1)[1].params, { x: 4, y: 5, direction: 'up', pages: 1, relative: true });
+    const sent = calls.length;
+    await assert.rejects(async () => app.click([2, 3], { background: 'no' }), /background must be a boolean/);
+    assert.equal(calls.length, sent);
     const before = calls.length;
     await assert.rejects(app.drag({ x: 1, y: 2 }, { x: 3, y: 4 }), /not supported/);
     await assert.rejects(app.paste('x', { format: 'html' }), /not supported/);
@@ -178,6 +186,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   }
   // Like the backend: the first background pointer call with no route sends nothing
   // and returns the one-time notice (not an MCP error); later calls use focused input.
+  // A pen refusal: nothing sent, no notice, the same answer on every call.
+  if(name === 'click' && a.x === 99 && a.delivery === 'background') return reply({structuredContent:{ok:false,implemented:true,action:name,message:'Nothing was sent: another window covers the point.'},content:[]});
   if(${notice} && (name === 'click' || name === 'scroll') && a.delivery === 'background') {
     if(!noticeShown) {
       noticeShown = true;
@@ -245,7 +255,7 @@ test('the one-time no-route notice reaches the agent unreplayed; repeating the c
   try {
     const app = await installLinuxComputerUse({}).getApp('linux-window:22');
     await assert.rejects(app.click([2, 3]), error => {
-      assert.match(error.message, /^Not sent: background click is not available on this desktop \(no virtual pen on this desktop\)\./);
+      assert.match(error.message, /^Not sent: background click is not available for this call \(no virtual pen on this desktop\)\./);
       assert.match(error.message, /Repeat the same click call to continue with normal input/);
       return true;
     });
@@ -260,6 +270,31 @@ test('the one-time no-route notice reaches the agent unreplayed; repeating the c
     assert.deepEqual(calls.map(call => call.name), ['click', 'click', 'scroll']);
     assert.ok(calls.every(call => call.arguments.delivery === 'background' && call.arguments.relative === true && call.arguments.window_id === '22'));
   } finally { globalThis.nodeRepl = original; }
+});
+
+test('a refused background click says how to choose focused input, which then goes through', async t => {
+  const service = await fixture(t);
+  const { installLinuxComputerUse } = await import('./native-client.mjs');
+  const original = globalThis.nodeRepl;
+  globalThis.nodeRepl = { write(){}, rpc: (_, request) => request.method === 'get_app_state' ? {accessibility_tree:[]} : service.handleRpc(request) };
+  try {
+    const app = await installLinuxComputerUse({}).getApp('linux-window:22');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(app.click([99, 3]), /^Error: Nothing was sent: another window covers the point\. To send it through normal focused input instead, .* repeat the call with background: false\.$/);
+    }
+    const focused = await app.click([99, 3], {background:false});
+    assert.equal(focused.ok, true);
+    const calls = await service.readCalls();
+    assert.deepEqual(calls.map(call => call.arguments.delivery ?? 'focused'), ['background', 'background', 'focused']);
+  } finally { globalThis.nodeRepl = original; }
+});
+
+test('the no-route notice also comes first for scroll', async t => {
+  const service = await fixture(t, {notice:true});
+  await assert.rejects(service.handleRpc({method:'scroll', app:'linux-window:22', params:{x:2, y:3, direction:'down', pages:1, relative:true, delivery:'background'}}),
+    /^Error: Not sent: background scroll is not available for this call \(no virtual pen on this desktop\)\. Repeat the same scroll call/);
+  const repeated = await service.handleRpc({method:'scroll', app:'linux-window:22', params:{x:2, y:3, direction:'down', pages:1, relative:true, delivery:'background'}});
+  assert.equal(repeated.ok, true);
 });
 
 test('trusted service forwards bounded observation options exactly', async t => {

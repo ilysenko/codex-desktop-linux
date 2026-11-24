@@ -138,9 +138,15 @@ export function createNativeBackendService({
     if (data.ok === false && data.background?.retry_to_continue === true) {
       const reason = typeof data.background.reason === 'string' && data.background.reason.trim()
         ? ` (${data.background.reason.trim().replace(/\.$/, '')})` : '';
-      throw new Error(`Not sent: background ${method} is not available on this desktop${reason}. Repeat the same ${method} call to continue with normal input, which raises the window and moves the user's pointer. This notice is shown once per session.`);
+      throw new Error(`Not sent: background ${method} is not available for this call${reason}. Repeat the same ${method} call to continue with normal input, which raises the window and moves the user's pointer. This notice is shown once per session.`);
     }
-    if (data.ok === false) throw new Error(data.message || 'Linux Computer Use action failed');
+    if (data.ok === false) {
+      const message = data.message || 'Linux Computer Use action failed';
+      // A background refusal (covered point, locked screen, a compositor state the
+      // pen cannot serve) repeats on every call; say how to choose focused input.
+      if (params.delivery === 'background' && data.background === undefined) throw new Error(`${message} To send it through normal focused input instead, which raises the window and moves the user's pointer, repeat the call with background: false.`);
+      throw new Error(message);
+    }
     if (method === 'screenshot') {
       const images = result?.content?.filter(item => item.type === 'image') ?? [];
       if (data.cropped_to_window !== true || images.length !== 1 || !images[0].data || !/^image\//.test(images[0].mimeType)) {
