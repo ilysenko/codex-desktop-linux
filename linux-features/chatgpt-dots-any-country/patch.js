@@ -16,23 +16,21 @@ const CONTRACTS = Object.freeze({
     replacement: "!1",
     expected: 1,
   }, {
-    pattern: new RegExp(
-      `${IDENT}\\.account\\.tbo_config\\?\\.tbo_available===!0`,
-      "gu",
-    ),
-    replacement: "!0",
-    expected: 1,
-  }, {
     pattern: new RegExp(`${IDENT}\\?\\.account\\.tbo_config\\?\\.tbo_available(?=,|\\})`, "gu"),
     replacement: "!0",
     expected: 1,
   }],
   personalization: [{
     pattern: new RegExp(
-      `${IDENT}\\?\\.accounts\\[${IDENT}\\]\\?\\.account\\.tbo_config\\?\\.tbo_available!==!0`,
+      `function (?<fn>${IDENT})\\((?<account>${IDENT}),(?<status>${IDENT})\\)\\{return ` +
+        `\\k<account>\\?\\.features\\?\\.includes\\("dot_account_access_policy"\\)\\?` +
+        `"success"===\\k<status>&&\\k<account>\\.account\\.tbo_config\\?\\.tbo_available===!0:null\\}`,
       "gu",
     ),
-    replacement: "!1",
+    replacement: (...args) => {
+      const { fn, account, status } = args.at(-1);
+      return `function ${fn}(${account},${status}){return ${account}?.features?.includes("dot_account_access_policy")?"success"===${status}:null}`;
+    },
     expected: 1,
   }],
 });
@@ -104,7 +102,7 @@ const descriptors = [
     phase: "webview-asset",
     order: 20_902,
     ciPolicy: "optional",
-    assetNeedles: ["tbo_available!==!0"],
+    assetNeedles: ["dot_account_access_policy", '"success"', "tbo_available===!0"],
     assetMatch: (source) => matchesContract(source, CONTRACTS.personalization),
     missingDescription: "ChatGPT Dots personalization bundle",
     skipDescription: "ChatGPT Dots personalization patch",

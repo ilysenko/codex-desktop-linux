@@ -33,7 +33,7 @@ for (const dictation of [false, true]) {
 }
 
 test("app shortcut drift leaves its input unchanged", () => {
-  const source = mainBundleFixture().replace("this.handleHotkeyWindowHotkeyPressed()", "this.unknownPopoutHandler()");
+  const source = mainBundleFixture().replace("this.toggle()", "this.unknownSpotlightHandler()");
   assert.equal(applyFeatures(source, { dictation: false, shortcuts: true }), source);
 });
 
