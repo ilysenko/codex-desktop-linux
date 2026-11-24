@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.62. The
+  crate is 0.7.62. Background `scroll` works on a rotated or flipped monitor:
+  the touch pan's device values undo the turn the compositor gives the
+  virtual touchscreen (mutter by the whole output transform, KWin by the
+  rotation without the flip). On KDE an output rotation `kscreen-doctor -j`
+  cannot give is no route (the notice, then focused input) instead of an
+  error on every call.
 - Synchronize the embedded Computer Use backend to standalone v0.7.61 (and
   the v0.7.60 fix). The crate is 0.7.61, the standalone version; the server
   version now comes from the crate, so `server.rs` has no literal to bump.

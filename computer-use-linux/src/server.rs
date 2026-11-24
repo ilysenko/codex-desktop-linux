@@ -12208,13 +12208,14 @@ impl ComputerUseLinux {
                 let Some(monitor) = layout.monitor_at(point) else {
                     return fail("Nothing was sent: no monitor holds the point.".to_string());
                 };
-                // A touchscreen maps to one monitor, through that monitor's
-                // rotation, which the device values here do not apply.
-                if monitor.transform == u32::MAX {
-                    return fail("Nothing was sent: a background scroll pans with a virtual touchscreen, and this monitor's rotation could not be read (kscreen-doctor -j).".to_string());
-                }
-                if monitor.transform != 0 {
-                    return fail("Nothing was sent: a background scroll pans with a virtual touchscreen, and this monitor is rotated or flipped.".to_string());
+                // A touchscreen maps to one monitor and the compositor turns
+                // it by that monitor's transform; the pan's device values
+                // undo the turn, so it must be known.
+                if desktop.touch_turn(monitor.transform).is_none() {
+                    return unavailable(match desktop {
+                        pen::Desktop::Kwin => "a background scroll pans with a virtual touchscreen, and the rotation of the output under the point could not be read (kscreen-doctor -j)".to_string(),
+                        pen::Desktop::Gnome => "a background scroll pans with a virtual touchscreen, and the rotation of the monitor under the point is not one mutter reports".to_string(),
+                    });
                 }
                 // Scrolling down moves the content up: the finger moves up.
                 let motion = (

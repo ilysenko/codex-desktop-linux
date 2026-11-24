@@ -21,7 +21,7 @@ desktops, dependencies, permissions, and troubleshooting.
 
 ## Supported operations
 
-The embedded backend tracks standalone computer-use-linux v0.7.61. GNOME
+The embedded backend tracks standalone computer-use-linux v0.7.62. GNOME
 scaled pointer sessions use portal EIS regions when available and retain the
 legacy route when negotiation fails. Selkies containers can set `PIXELFLUX_CU`
 and `PIXELFLUX_CU_TOKEN` to use their loopback computer-use API for capture and
@@ -67,7 +67,7 @@ other platforms, so they do not take the user's pointer:
 
 A background route can also refuse a call outright, with nothing sent, on
 every attempt: a covered point, a locked screen, KWin showing the desktop or a
-full-screen effect, a scroll on a rotated output, or a pan that would leave the
+full-screen effect, or a pan that would leave the
 window. The error
 then says to repeat the call with `background: false`
 (`click([x, y], {background: false})`, `scroll([x, y], direction, pages,

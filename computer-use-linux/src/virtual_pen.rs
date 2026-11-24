@@ -34,7 +34,8 @@
 //! from what a point needs, the device's output setting is written, mutter's
 //! org.gnome.Mutter.InputMapping.GetDeviceMapping confirms where the device
 //! now maps before any event goes out, and the setting is reset when the
-//! device goes away. Those settings paths belong to this server's own
+//! device goes away. A touchscreen mapped to a rotated or flipped monitor
+//! is turned with it, which [touch_value] undoes. Those settings paths belong to this server's own
 //! vendor and product ids; no other device's setting is touched.
 //!
 //! Buttons: mutter rewrites a stylus button by the tool's button-action
@@ -98,6 +99,20 @@ impl Desktop {
         match self {
             Desktop::Gnome => "gnome-touch",
             Desktop::Kwin => "kwin-touch",
+        }
+    }
+
+    /// The turn this compositor gives a touchscreen's position on a
+    /// monitor with output transform (wl_output order), as [touch_value]
+    /// takes it; None when the transform is unknown. mutter turns by the
+    /// whole transform. KWin turns by the rotation and leaves out the flip:
+    /// its devicePointToGlobalPosition handles FlipX as Normal, FlipX90 as
+    /// Rotate90, and so on.
+    pub(crate) fn touch_turn(self, transform: u32) -> Option<u32> {
+        match (self, transform) {
+            (_, 0..=3) | (Desktop::Gnome, 4..=7) => Some(transform),
+            (Desktop::Kwin, 4..=7) => Some(transform - 4),
+            _ => None,
         }
     }
 }
@@ -323,8 +338,10 @@ pub(crate) struct MonitorSpec {
     pub serial: String,
 }
 
-/// A logical monitor: its rectangle, the monitor it shows, and its
-/// rotation (DisplayConfig's transform, 0 for none).
+/// A logical monitor: its rectangle, the monitor it shows, and its output
+/// transform in wl_output order (DisplayConfig's transform): 0 for none, 1
+/// to 3 for a turn of 90, 180 or 270 degrees counterclockwise, 4 to 7 for
+/// the same after a horizontal flip, and u32::MAX when it is unknown.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Monitor {
     pub rect: Rect,
@@ -457,6 +474,49 @@ pub(crate) fn device_value(point: (f64, f64), area: &Rect) -> (i32, i32) {
     (
         axis(point.0, area.x, area.width),
         axis(point.1, area.y, area.height),
+    )
+}
+
+/// The device value for a logical point on a touchscreen mapped to a
+/// monitor (area) that the compositor turns by turn (wl_output order, from
+/// [Desktop::touch_turn]).
+///
+/// A touchscreen reports positions on its panel as the panel is built, and
+/// the compositor turns them into the monitor's orientation. mutter maps a
+/// device's normalized position through `transform_matrices[transform]` and
+/// then the monitor's viewport (meta-monitor-manager.c,
+/// meta_monitor_manager_get_monitor_matrix; applied in
+/// meta-input-device-native.c,
+/// meta_input_device_native_translate_coordinates_in_impl). KWin turns the
+/// position in the output's mode pixels (src/backends/libinput/connection.cpp,
+/// devicePointToGlobalPosition). Both give, for a position (u, v) on the
+/// panel and (s, t) on the monitor, both from 0 to 1:
+/// 90: s = 1 - v, t = u; 180: s = 1 - u, t = 1 - v; 270: s = v, t = 1 - u;
+/// and mutter's flipped ones: s = 1 - u, t = v; s = v, t = u;
+/// s = u, t = 1 - v; s = 1 - v, t = 1 - u. The value here is the inverse.
+/// mutter also turns by a built-in panel's mounting (its panel orientation
+/// quirk), which DisplayConfig does not report.
+pub(crate) fn touch_value(point: (f64, f64), area: &Rect, turn: u32) -> (i32, i32) {
+    let s = (point.0 - area.x) / area.width;
+    let t = (point.1 - area.y) / area.height;
+    let (u, v) = match turn {
+        1 => (t, 1.0 - s),
+        2 => (1.0 - s, 1.0 - t),
+        3 => (1.0 - t, s),
+        4 => (1.0 - s, t),
+        5 => (t, s),
+        6 => (s, 1.0 - t),
+        7 => (1.0 - t, 1.0 - s),
+        _ => (s, t),
+    };
+    device_value(
+        (u, v),
+        &Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        },
     )
 }
 
@@ -1273,9 +1333,10 @@ fn process_lock(wait: Duration) -> std::result::Result<ProcessLock, PenError> {
     }
 }
 
-/// The area a device covers for point, writing its output setting when
-/// mutter maps it elsewhere. touch_monitor is the monitor a touch must map
-/// to when it cannot cover the whole layout.
+/// The area a device covers for point, and the output transform of the
+/// monitor it is mapped to (0 for the whole layout, where the compositor
+/// turns nothing), writing its output setting when mutter maps it
+/// elsewhere.
 fn covering_area(
     connection: &zbus::blocking::Connection,
     kind: Kind,
@@ -1283,17 +1344,19 @@ fn covering_area(
     settings: &mut Settings,
     point: (f64, f64),
     layout: &Layout,
-) -> Result<Rect> {
+) -> Result<(Rect, u32)> {
     if settings.desktop == Desktop::Kwin {
         return kwin_covering_area(connection, kind, node, point, layout);
     }
     let wrote_output = &mut settings.wrote_output;
     let current = wait_mapping(connection, node, |mapping| mapping != Mapping::Unknown)?;
     match (kind, current) {
-        (_, Mapping::Layout) => return Ok(layout.bounds),
+        (_, Mapping::Layout) => return Ok((layout.bounds, 0)),
         // The pen covers the whole layout, where mutter's matrix is plain;
-        // a monitor's would carry that monitor's rotation.
-        (Kind::Touch, Mapping::Monitor(rect)) if rect.contains(point) => return Ok(rect),
+        // a monitor's carries that monitor's transform.
+        (Kind::Touch, Mapping::Monitor(rect)) if rect.contains(point) => {
+            return Ok((rect, monitor_transform(layout, &rect)?))
+        }
         _ => {}
     }
     match kind {
@@ -1303,7 +1366,7 @@ fn covering_area(
             set_output(kind, ["", "", "", ""])?;
             *wrote_output = true;
             wait_mapping(connection, node, |mapping| mapping == Mapping::Layout)?;
-            Ok(layout.bounds)
+            Ok((layout.bounds, 0))
         }
         // A touchscreen maps to one monitor (the builtin panel when nothing
         // else matches): name the one under the point.
@@ -1322,11 +1385,36 @@ fn covering_area(
                 Mapping::Layout => true,
                 Mapping::Unknown => false,
             })? {
-                Mapping::Monitor(rect) => Ok(rect),
-                _ => Ok(layout.bounds),
+                Mapping::Monitor(rect) => Ok((rect, monitor_transform(layout, &rect)?)),
+                _ => Ok((layout.bounds, 0)),
             }
         }
     }
+}
+
+/// The transform of the layout's monitor at rect, where mutter says a
+/// device maps.
+fn monitor_transform(layout: &Layout, rect: &Rect) -> Result<u32> {
+    let close = |a: f64, b: f64| (a - b).abs() <= 1.0;
+    layout
+        .monitors
+        .iter()
+        .find(|monitor| {
+            close(monitor.rect.x, rect.x)
+                && close(monitor.rect.y, rect.y)
+                && close(monitor.rect.width, rect.width)
+                && close(monitor.rect.height, rect.height)
+        })
+        .map(|monitor| monitor.transform)
+        .ok_or_else(|| {
+            anyhow!(
+                "mutter maps the touchscreen to {}x{} at ({}, {}), which is no monitor of the layout",
+                rect.width,
+                rect.height,
+                rect.x,
+                rect.y
+            )
+        })
 }
 
 fn kwin_path(node: &Path) -> Result<zbus::zvariant::OwnedObjectPath> {
@@ -1410,16 +1498,16 @@ fn wait_kwin(what: &str, mut accept: impl FnMut() -> Result<bool>) -> Result<()>
     }
 }
 
-/// The area a device covers on KWin: the pen maps to the whole workspace,
-/// the touchscreen to the output under point. Both are set on the device
-/// and read back before any event.
+/// The area a device covers on KWin and the transform it maps through: the
+/// pen maps to the whole workspace, the touchscreen to the output under
+/// point. Both are set on the device and read back before any event.
 fn kwin_covering_area(
     connection: &zbus::blocking::Connection,
     kind: Kind,
     node: &Path,
     point: (f64, f64),
     layout: &Layout,
-) -> Result<Rect> {
+) -> Result<(Rect, u32)> {
     let path = kwin_path(node)?;
     let name = path
         .as_str()
@@ -1468,7 +1556,7 @@ fn kwin_covering_area(
                 kwin_device_set(connection, path.as_str(), "mapToWorkspace", true.into())?;
                 wait_kwin("map the pen to the whole workspace", mapped)?;
             }
-            Ok(layout.bounds)
+            Ok((layout.bounds, 0))
         }
         Kind::Touch => {
             let monitor = layout
@@ -1490,7 +1578,7 @@ fn kwin_covering_area(
                     Ok(output()? == connector)
                 })?;
             }
-            Ok(monitor.rect)
+            Ok((monitor.rect, monitor.transform))
         }
     }
 }
@@ -1570,7 +1658,7 @@ fn run_pen(
         });
     }
     let pen = devices.pen.as_mut().expect("pen was just made");
-    let area = covering_area(
+    let (area, _) = covering_area(
         connection,
         Kind::Pen,
         &pen.node.clone(),
@@ -1690,7 +1778,7 @@ fn run_touch(
         }
     }
     let touch = devices.touch.as_mut().expect("touch was just made");
-    let area = covering_area(
+    let (area, transform) = covering_area(
         connection,
         Kind::Touch,
         &touch.node.clone(),
@@ -1699,6 +1787,15 @@ fn run_touch(
         layout,
     )
     .map_err(|error| PenError::NotSent(format!("{error:#}")))?;
+    let turn = touch
+        .settings
+        .desktop
+        .touch_turn(transform)
+        .ok_or_else(|| {
+            PenError::NoRoute(
+                "the rotation of the monitor the touchscreen covers is unknown".to_string(),
+            )
+        })?;
     if let Some((outside, _)) = strokes
         .iter()
         .flat_map(|(a, b)| [(*a, ()), (*b, ())])
@@ -1718,7 +1815,7 @@ fn run_touch(
                 PenError::Partial(format!("{error:#}"))
             }
         };
-        events.down(device_value(*from, &area)).map_err(fail)?;
+        events.down(touch_value(*from, &area, turn)).map_err(fail)?;
         let started = |error: anyhow::Error| PenError::Partial(format!("{error:#}"));
         let length = ((to.0 - from.0).powi(2) + (to.1 - from.1).powi(2)).sqrt();
         let steps = ((length / 12.0).ceil() as usize).clamp(4, 60);
@@ -1726,12 +1823,16 @@ fn run_touch(
             let t = step as f64 / steps as f64;
             let point = (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t);
             std::thread::sleep(STEP);
-            events.motion(device_value(point, &area)).map_err(started)?;
+            events
+                .motion(touch_value(point, &area, turn))
+                .map_err(started)?;
         }
         // Rest before lifting, so the release carries no velocity and the
         // app does not fling past the distance.
         std::thread::sleep(Duration::from_millis(180));
-        events.motion(device_value(*to, &area)).map_err(started)?;
+        events
+            .motion(touch_value(*to, &area, turn))
+            .map_err(started)?;
         events.up().map_err(started)?;
         std::thread::sleep(Duration::from_millis(80));
     }
@@ -2389,7 +2490,7 @@ async fn kwin_systemd_service_emulates_tablet(
 
 /// The logical layout from KWin's outputs. KWin's scripting gives no
 /// rotation, so kscreen-doctor supplies it; a monitor whose rotation is
-/// unknown gets transform u32::MAX, which a touch pan refuses.
+/// unknown gets transform u32::MAX, which leaves a touch pan no route.
 pub(crate) async fn kwin_monitors() -> Result<Vec<Monitor>> {
     let outputs = crate::windowing::backends::kwin::named_outputs().await?;
     let rotations = kscreen_rotations().await.unwrap_or_default();
@@ -2402,12 +2503,10 @@ pub(crate) async fn kwin_monitors() -> Result<Vec<Monitor>> {
                 width: f64::from(monitor.width),
                 height: f64::from(monitor.height),
             },
-            // kscreen's rotation 1 is none.
-            transform: match rotations.get(&name) {
-                Some(1) => 0,
-                Some(other) => *other,
-                None => u32::MAX,
-            },
+            transform: rotations
+                .get(&name)
+                .and_then(|rotation| kscreen_transform(*rotation))
+                .unwrap_or(u32::MAX),
             spec: MonitorSpec {
                 connector: name,
                 vendor: String::new(),
@@ -2416,6 +2515,26 @@ pub(crate) async fn kwin_monitors() -> Result<Vec<Monitor>> {
             },
         })
         .collect())
+}
+
+/// The wl_output transform of a kscreen rotation, the
+/// KScreen::Output::Rotation flag `kscreen-doctor -j` prints (libkscreen
+/// backends/kwayland/waylandoutputdevice.cpp, toKScreenRotation: None,
+/// Left, Inverted, Right, Flipped, Flipped90, Flipped180, Flipped270 are
+/// transforms 0 to 7). KWin reports its output transform there unchanged
+/// (outputdevice_v2.cpp, kwinTransformToOutputDeviceTransform).
+fn kscreen_transform(rotation: u32) -> Option<u32> {
+    match rotation {
+        1 => Some(0),
+        2 => Some(1),
+        4 => Some(2),
+        8 => Some(3),
+        16 => Some(4),
+        32 => Some(5),
+        64 => Some(6),
+        128 => Some(7),
+        _ => None,
+    }
 }
 
 async fn kscreen_rotations() -> Option<std::collections::HashMap<String, u32>> {
@@ -2665,6 +2784,122 @@ mod tests {
             backend: "gnome-shell-extension".to_string(),
             terminal: None,
         }
+    }
+
+    /// Where mutter puts a touch with device value (x, y) on a touchscreen
+    /// mapped to monitor with transform: libinput's scaling, then
+    /// transform_matrices[transform] (copied from meta-monitor-manager.c)
+    /// and the monitor's viewport.
+    fn mutter_touch(value: (i32, i32), monitor: &Rect, transform: u32) -> (f64, f64) {
+        const MATRICES: [[f64; 6]; 8] = [
+            [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, -1.0, 1.0, 1.0, 0.0, 0.0],
+            [-1.0, 0.0, 1.0, 0.0, -1.0, 1.0],
+            [0.0, 1.0, 0.0, -1.0, 0.0, 1.0],
+            [-1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, -1.0, 1.0],
+            [0.0, -1.0, 1.0, -1.0, 0.0, 1.0],
+        ];
+        let span = f64::from(AXIS_MAX) + 1.0;
+        let (u, v) = (f64::from(value.0) / span, f64::from(value.1) / span);
+        let m = MATRICES[transform as usize];
+        let (s, t) = (m[0] * u + m[1] * v + m[2], m[3] * u + m[4] * v + m[5]);
+        (
+            monitor.x + s * monitor.width,
+            monitor.y + t * monitor.height,
+        )
+    }
+
+    /// Where KWin puts the same touch: devicePointToGlobalPosition in
+    /// src/backends/libinput/connection.cpp, on an output whose mode is
+    /// mode (before the transform) at scale.
+    fn kwin_touch(
+        value: (i32, i32),
+        monitor: &Rect,
+        transform: u32,
+        mode: (f64, f64),
+        scale: f64,
+    ) -> (f64, f64) {
+        let span = f64::from(AXIS_MAX) + 1.0;
+        let (x, y) = (
+            f64::from(value.0) * mode.0 / span,
+            f64::from(value.1) * mode.1 / span,
+        );
+        let (w, h) = mode;
+        let pos = match transform {
+            0 | 4 => (x, y),
+            1 | 5 => (h - y, x),
+            2 | 6 => (w - x, h - y),
+            _ => (y, w - x),
+        };
+        (monitor.x + pos.0 / scale, monitor.y + pos.1 / scale)
+    }
+
+    #[test]
+    fn touch_values_land_on_the_point_through_every_output_transform() {
+        // A 2560x1440 mode at scale 2 right of a 1920 px monitor: 1280x720
+        // logical, or 720x1280 turned by 90 or 270 degrees.
+        let points = |rect: &Rect| {
+            [
+                (rect.x + 100.25, rect.y + 60.75),
+                (rect.x + rect.width - 70.5, rect.y + 90.0),
+                (rect.x + 200.0, rect.y + rect.height - 50.5),
+                (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0),
+            ]
+        };
+        for transform in 0..8u32 {
+            let rect = if transform % 2 == 1 {
+                Rect {
+                    x: 1920.0,
+                    y: 0.0,
+                    width: 720.0,
+                    height: 1280.0,
+                }
+            } else {
+                Rect {
+                    x: 1920.0,
+                    y: 0.0,
+                    width: 1280.0,
+                    height: 720.0,
+                }
+            };
+            for point in points(&rect) {
+                let turn = Desktop::Gnome.touch_turn(transform).unwrap();
+                let landed = mutter_touch(touch_value(point, &rect, turn), &rect, transform);
+                assert!(
+                    (landed.0 - point.0).abs() < 0.1 && (landed.1 - point.1).abs() < 0.1,
+                    "mutter, transform {transform}: {point:?} landed at {landed:?}"
+                );
+                let turn = Desktop::Kwin.touch_turn(transform).unwrap();
+                let landed = kwin_touch(
+                    touch_value(point, &rect, turn),
+                    &rect,
+                    transform,
+                    (2560.0, 1440.0),
+                    2.0,
+                );
+                assert!(
+                    (landed.0 - point.0).abs() < 0.1 && (landed.1 - point.1).abs() < 0.1,
+                    "KWin, transform {transform}: {point:?} landed at {landed:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn kscreen_rotations_are_output_transforms_and_unknown_ones_have_no_turn() {
+        let flags = [1, 2, 4, 8, 16, 32, 64, 128];
+        for (transform, flag) in flags.into_iter().enumerate() {
+            assert_eq!(kscreen_transform(flag), Some(transform as u32));
+        }
+        for flag in [0, 3, 256] {
+            assert_eq!(kscreen_transform(flag), None);
+        }
+        assert_eq!(Desktop::Kwin.touch_turn(6), Some(2));
+        assert_eq!(Desktop::Gnome.touch_turn(6), Some(6));
+        assert_eq!(Desktop::Kwin.touch_turn(u32::MAX), None);
+        assert_eq!(Desktop::Gnome.touch_turn(8), None);
     }
 
     #[test]
