@@ -5,7 +5,12 @@ const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/m
 const ID = "[A-Za-z_$][\\w$]*";
 const ROOT_KEY = "codexLinuxCuaPluginRoot";
 const CONTEXT_KEY = "codexLinuxCuaContext";
-const MARKERS = ["codexLinuxUnifiedCuaBuilder", "codexLinuxUnifiedCuaRoot", "codexLinuxUnifiedCuaThread"];
+const MARKERS = [
+  "codexLinuxUnifiedCuaBuilder",
+  "codexLinuxUnifiedCuaRoot",
+  "codexLinuxUnifiedCuaThread",
+  "codexLinuxUnifiedCuaStartup",
+];
 const MODULE_HEADER = /(?:modules=\{|\},)\d+\([\w$]+(?:,[\w$]+){0,2}\)\{/g;
 
 function drift(description) {
@@ -27,6 +32,80 @@ function enclosingFunction(source, index) {
     if (close >= index) owner = { start: match.index, end: close + 1 };
   }
   return owner;
+}
+
+function callableScopes(source) {
+  const scopes = [];
+  const header = new RegExp(`(?:async )?function(?: ${ID})?\\([^)]*\\)\\{`, "gu");
+  for (const match of source.matchAll(header)) {
+    const open = match.index + match[0].length - 1;
+    const close = findMatchingBrace(source, open);
+    if (close < 0) throw drift("unterminated function owner");
+    scopes.push({ start: match.index, open, end: close + 1, header: match[0] });
+  }
+  return scopes;
+}
+
+function innermostScope(scopes, index) {
+  return scopes.filter(scope => scope.start < index && scope.end > index)
+    .sort((a, b) => b.start - a.start)[0] ?? null;
+}
+
+function bindingAccessibleAt(source, scopes, name, index) {
+  const escaped = escapeRegExp(name);
+  const containsUse = scope => scope == null || (scope.start < index && scope.end > index);
+
+  for (const match of source.matchAll(new RegExp(`(?:async )?function ${escaped}\\(`, "gu"))) {
+    if (containsUse(innermostScope(scopes, match.index))) return true;
+  }
+  for (const scope of scopes) {
+    if (!containsUse(scope)) continue;
+    const parameters = scope.header.slice(scope.header.indexOf("(") + 1, scope.header.lastIndexOf(")"));
+    if (new RegExp(`(?:^|[,({])\\s*${escaped}\\s*(?=[,)=}]|=)`, "u").test(parameters) ||
+        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(parameters)) return true;
+  }
+  for (const match of source.matchAll(/\b(?:let|const|var)\s+([^;]{1,2000});/gu)) {
+    if (match.index >= index || !containsUse(innermostScope(scopes, match.index))) continue;
+    const declaration = match[1];
+    if (new RegExp(`(?:^|,)\\s*${escaped}\\s*(?==|,|$)`, "u").test(declaration) ||
+        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(declaration)) return true;
+  }
+  return false;
+}
+
+function requireAccessibleBindings(source, index, bindings) {
+  const scopes = callableScopes(source);
+  for (const [description, name] of Object.entries(bindings)) {
+    if (!bindingAccessibleAt(source, scopes, name, index)) {
+      throw drift(`${description} binding ${name} is not accessible from startup owner`);
+    }
+  }
+}
+
+function startupPattern() {
+  return new RegExp(
+    `/\\*${MARKERS[3]}\\*/\\("linux"===(?<selection>${ID})\\.runtimePaths\\.platform&&\\k<selection>\\.computerUse&&\\(\\(\\)=>\\{` +
+    `let codexLinuxCuaPlugin=(?<lookup>${ID})\\(\\{marketplaceName:(?<marketplaceName>${ID}),` +
+    `marketplaces:(?<marketplaces>${ID}),pluginName:(?<pluginModule>${ID})\\.(?<pluginName>${ID})\\}\\);` +
+    `if\\(!codexLinuxCuaPlugin\\?\\.plugin\\.installed\\)throw Error\\(\\x60Linux Computer Use trusted plugin root is unavailable\\x60\\);` +
+    `\\k<selection>\\.${ROOT_KEY}=\\(0,(?<rootModule>${ID})\\.(?<rootHelper>${ID})\\)\\(\\{` +
+    `codexHome:(?<codexHome>${ID}),localVersion:codexLinuxCuaPlugin\\.plugin\\.localVersion,` +
+    `marketplaceName:codexLinuxCuaPlugin\\.marketplace\\.name,pluginName:codexLinuxCuaPlugin\\.plugin\\.name\\}\\)` +
+    `\\}\\)\\(\\),(?<thread>${ID})\\(\\{appServerConnection:${ID},appVersion:${ID},selection:\\k<selection>,` +
+    `hostServicesPipePath:null,includePrivateProcessEnv:!1\\}\\)\\)`, "gu");
+}
+
+function validateStartupContract(source) {
+  const startup = unique(source, startupPattern(), "startup verified-root publication");
+  requireAccessibleBindings(source, startup.index, {
+    selection: startup.groups.selection,
+    "plugin lookup": startup.groups.lookup,
+    "plugin constants": startup.groups.pluginModule,
+    "plugin root helper": startup.groups.rootModule,
+    "codex home": startup.groups.codexHome,
+    "marketplace name": startup.groups.marketplaceName,
+    marketplaces: startup.groups.marketplaces,
+  });
 }
 
 function moduleBounds(source, index) {
@@ -74,6 +153,7 @@ function applyModule(source) {
   if (Boolean(g.linux) !== Boolean(g.modeLinux)) throw drift("partial native selector patch");
   if (markerCounts.every(count => count === 1)) {
     if (!g.linux) throw drift("markers exist without Linux selector");
+    validateStartupContract(source);
     return source;
   }
   if (g.linux || markerCounts.some(count => count !== 0)) throw drift("partial unified Computer Use patch");
@@ -142,6 +222,15 @@ function applyModule(source) {
     `${escapeRegExp(aqHeader.groups.aq)}\\(\\{appServerConnection:${ID},appVersion:${ID},` +
     `selection:${escapeRegExp(selection)},hostServicesPipePath:null,includePrivateProcessEnv:!1\\}\\)`, "gu"),
   "initial thread config");
+  requireAccessibleBindings(source, initialThread.index, {
+    selection,
+    "plugin lookup": root.groups.lookup,
+    "plugin constants": root.groups.pluginModule,
+    "plugin root helper": root.groups.rootModule,
+    "codex home": invocation.groups.codexHome,
+    "marketplace name": invocation.groups.marketplaceName,
+    marketplaces: invocation.groups.marketplaces,
+  });
 
   const builderHeader = builder[0].slice(0, -3) + `,${ROOT_KEY}}){/*${MARKERS[0]}*/` +
     `if("linux"===process.platform&&${surfaces}.includes("computer")){${guard(ROOT_KEY)}}`;
@@ -157,7 +246,7 @@ function applyModule(source) {
       `return await ${root.groups.sync}(${root.groups.root},${root.groups.argument})`,
   );
   const invocationWithContext = invocation[0].slice(0, -2) + `,${CONTEXT_KEY}:${selection}})`;
-  const initialRoot = `("linux"===${selection}.runtimePaths.platform&&${selection}.computerUse&&(()=>{` +
+  const initialRoot = `/*${MARKERS[3]}*/("linux"===${selection}.runtimePaths.platform&&${selection}.computerUse&&(()=>{` +
     `let codexLinuxCuaPlugin=${root.groups.lookup}({marketplaceName:${invocation.groups.marketplaceName},` +
     `marketplaces:${invocation.groups.marketplaces},pluginName:${root.groups.pluginModule}.${root.groups.pluginName}});` +
     `if(!codexLinuxCuaPlugin?.plugin.installed)throw Error(\`Linux Computer Use trusted plugin root is unavailable\`);` +

@@ -50,6 +50,7 @@ test("current unified contract enables Linux and propagates the verified plugin 
   assert.equal(patched.split("codexLinuxUnifiedCuaBuilder").length, 2);
   assert.equal(patched.split("codexLinuxUnifiedCuaRoot").length, 2);
   assert.equal(patched.split("codexLinuxUnifiedCuaThread").length, 2);
+  assert.equal(patched.split("codexLinuxUnifiedCuaStartup").length, 2);
   assert.match(patched, /require\("node:path"\)\.join\(codexLinuxCuaPluginRoot,"scripts","native-service\.mjs"\)/u);
   assert.match(patched, /codexLinuxCuaContext:f/u);
   assert.match(patched, /codexLinuxCuaPluginRoot:o\.codexLinuxCuaPluginRoot/u);
@@ -103,6 +104,34 @@ test("changed or ambiguous semantic owners fail closed", () => {
   ]) {
     assert.throws(() => applyUnifiedComputerUsePatch(changed), /unified Computer Use contract drift/u);
   }
+});
+
+test("a previous-head patch without startup root publication fails closed", () => {
+  const patched = applyUnifiedComputerUsePatch(fixture);
+  const previousHead = patched.replace(
+    /\/\*codexLinuxUnifiedCuaStartup\*\/\("linux"===f\.runtimePaths\.platform&&f\.computerUse&&\(\(\)=>\{[\s\S]*?\}\)\(\),thread\(\{appServerConnection:e,appVersion:z,selection:f,hostServicesPipePath:null,includePrivateProcessEnv:!1\}\)\)/u,
+    "thread({appServerConnection:e,appVersion:z,selection:f,hostServicesPipePath:null,includePrivateProcessEnv:!1})",
+  );
+  assert.notEqual(previousHead, patched);
+  assert.doesNotMatch(previousHead, /codexLinuxUnifiedCuaStartup/u);
+  assert.throws(() => applyUnifiedComputerUsePatch(previousHead), /partial unified Computer Use patch/u);
+
+  const damagedStartup = patched.replace("f.codexLinuxCuaPluginRoot=(0,plugins.root)",
+    "f.changedRoot=(0,plugins.root)");
+  assert.notEqual(damagedStartup, patched);
+  assert.throws(() => applyUnifiedComputerUsePatch(damagedStartup),
+    /startup verified-root publication matched 0 times/u);
+});
+
+test("startup injection rejects a synchronization-local plugin lookup", () => {
+  const scopedLookup = fixture
+    .replace('function lookup({marketplaces:e,pluginName:t}){return e.find(e=>e.plugin.name===t)}', "")
+    .replace(
+      "async function synchronize(root,e){return root}",
+      'async function synchronize(root,e){function lookup({marketplaces:e,pluginName:t}){return e.find(e=>e.plugin.name===t)}return root}',
+    );
+  assert.throws(() => applyUnifiedComputerUsePatch(scopedLookup),
+    /plugin lookup binding lookup is not accessible from startup owner/u);
 });
 
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
