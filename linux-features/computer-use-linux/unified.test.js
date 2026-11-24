@@ -134,6 +134,28 @@ test("startup injection rejects a synchronization-local plugin lookup", () => {
     /plugin lookup binding lookup is not accessible from startup owner/u);
 });
 
+test("startup injection rejects a plugin lookup scoped to a later block", () => {
+  for (const declaration of [
+    "function lookup({marketplaces:e,pluginName:t}){return e.find(e=>e.plugin.name===t)}",
+    "let lookup=({marketplaces:e,pluginName:t})=>e.find(e=>e.plugin.name===t);",
+    "const lookup=({marketplaces:e,pluginName:t})=>e.find(e=>e.plugin.name===t);",
+  ]) {
+    const blockScopedLookup = fixture
+      .replace('function lookup({marketplaces:e,pluginName:t}){return e.find(e=>e.plugin.name===t)}', "")
+      .replace(
+        "let x=await async function(e){let p=lookup",
+        `let x;{${declaration}x=await async function(e){let p=lookup`,
+      )
+      .replace(
+        "marketplaces:g});let C=true",
+        "marketplaces:g})};let C=true",
+      );
+    assert.doesNotThrow(() => new vm.Script(blockScopedLookup));
+    assert.throws(() => applyUnifiedComputerUsePatch(blockScopedLookup),
+      /plugin lookup binding lookup is not accessible from startup owner/u);
+  }
+});
+
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
 test("signed unified owner patches idempotently with valid JavaScript", { skip: !signedApp }, () => {
   const directory = path.join(signedApp, ".vite", "build");

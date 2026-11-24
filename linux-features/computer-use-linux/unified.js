@@ -51,21 +51,44 @@ function innermostScope(scopes, index) {
     .sort((a, b) => b.start - a.start)[0] ?? null;
 }
 
-function bindingAccessibleAt(source, scopes, name, index) {
+function braceScopes(source) {
+  const byEnd = new Map();
+  for (const match of source.matchAll(/\{/gu)) {
+    const end = findMatchingBrace(source, match.index);
+    if (end < 0) continue;
+    const existing = byEnd.get(end);
+    if (existing == null || match.index < existing.start) {
+      byEnd.set(end, { start: match.index, end: end + 1 });
+    }
+  }
+  return [...byEnd.values()];
+}
+
+function lexicalOwner(scopes, index) {
+  return innermostScope(scopes, index);
+}
+
+function bindingAccessibleAt(source, callable, lexical, name, index) {
   const escaped = escapeRegExp(name);
   const containsUse = scope => scope == null || (scope.start < index && scope.end > index);
 
   for (const match of source.matchAll(new RegExp(`(?:async )?function ${escaped}\\(`, "gu"))) {
-    if (containsUse(innermostScope(scopes, match.index))) return true;
+    if (containsUse(lexicalOwner(lexical, match.index))) return true;
   }
-  for (const scope of scopes) {
+  for (const scope of callable) {
     if (!containsUse(scope)) continue;
     const parameters = scope.header.slice(scope.header.indexOf("(") + 1, scope.header.lastIndexOf(")"));
     if (new RegExp(`(?:^|[,({])\\s*${escaped}\\s*(?=[,)=}]|=)`, "u").test(parameters) ||
         new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(parameters)) return true;
   }
-  for (const match of source.matchAll(/\b(?:let|const|var)\s+([^;]{1,2000});/gu)) {
-    if (match.index >= index || !containsUse(innermostScope(scopes, match.index))) continue;
+  for (const match of source.matchAll(/\b(?:let|const)\s+([^;]{1,2000});/gu)) {
+    if (match.index >= index || !containsUse(lexicalOwner(lexical, match.index))) continue;
+    const declaration = match[1];
+    if (new RegExp(`(?:^|,)\\s*${escaped}\\s*(?==|,|$)`, "u").test(declaration) ||
+        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(declaration)) return true;
+  }
+  for (const match of source.matchAll(/\bvar\s+([^;]{1,2000});/gu)) {
+    if (match.index >= index || !containsUse(innermostScope(callable, match.index))) continue;
     const declaration = match[1];
     if (new RegExp(`(?:^|,)\\s*${escaped}\\s*(?==|,|$)`, "u").test(declaration) ||
         new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(declaration)) return true;
@@ -74,9 +97,10 @@ function bindingAccessibleAt(source, scopes, name, index) {
 }
 
 function requireAccessibleBindings(source, index, bindings) {
-  const scopes = callableScopes(source);
+  const callable = callableScopes(source);
+  const lexical = braceScopes(source);
   for (const [description, name] of Object.entries(bindings)) {
-    if (!bindingAccessibleAt(source, scopes, name, index)) {
+    if (!bindingAccessibleAt(source, callable, lexical, name, index)) {
       throw drift(`${description} binding ${name} is not accessible from startup owner`);
     }
   }
