@@ -36,20 +36,23 @@ function applyUsageLimitSendAttemptPatch(source) {
 function applyUsageLimitSendAttemptAppPatch(extractedDir) {
   const assets = path.join(extractedDir, "webview", "assets", "async");
   if (!fs.existsSync(assets)) return { changed: 0, reason: "webview usage-reason assets missing" };
-  const candidates = [];
+  const relevant = [];
   for (const name of fs.readdirSync(assets)) {
     if (!name.endsWith(".js")) continue;
     const file = path.join(assets, name);
     const source = fs.readFileSync(file, "utf8");
     if (!source.includes('"reserve-limit"') || !source.includes('"usage-limit"')) continue;
-    const patched = applyUsageLimitSendAttemptPatch(source);
-    if (patched !== source) candidates.push({ file, patched });
+    relevant.push({ file, source });
   }
-  if (candidates.length !== 1) {
+  if (relevant.length !== 1 || pristineContracts(relevant[0].source).length !== 1) {
     return { changed: 0, reason: "shared local usage-reason selector changed or is ambiguous" };
   }
-  fs.writeFileSync(candidates[0].file, candidates[0].patched);
-  return { changed: 1, targets: [path.relative(extractedDir, candidates[0].file)] };
+  const patched = applyUsageLimitSendAttemptPatch(relevant[0].source);
+  if (patched === relevant[0].source) {
+    return { changed: 0, reason: "shared local usage-reason selector changed or is ambiguous" };
+  }
+  fs.writeFileSync(relevant[0].file, patched);
+  return { changed: 1, targets: [path.relative(extractedDir, relevant[0].file)] };
 }
 
 const descriptors = [{

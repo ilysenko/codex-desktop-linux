@@ -104,12 +104,16 @@ function applyModule(source) {
   "synchronized selection cache");
   const selection = cache.groups.selection;
   const root = unique(source, new RegExp(
-    `let (?<root>${ID})=\\(0,${ID}\\.${ID}\\)\\(\\{codexHome:(?<argument>${ID})\\.codexHome,` +
-    `localVersion:(?<plugin>${ID})\\.plugin\\.localVersion,marketplaceName:\\k<plugin>\\.marketplace\\.name,` +
+    `let (?<plugin>${ID})=(?<lookup>${ID})\\(\\{marketplaceName:(?<argument>${ID})\\.marketplaceName,` +
+    `marketplaces:\\k<argument>\\.marketplaces,pluginName:(?<pluginModule>${ID})\\.(?<pluginName>${ID})\\}\\);` +
+    `if\\(!\\k<plugin>\\?\\.plugin\\.installed\\)return!1;` +
+    `let (?<root>${ID})=\\(0,(?<rootModule>${ID})\\.(?<rootHelper>${ID})\\)\\(\\{codexHome:\\k<argument>\\.codexHome,` +
+    `localVersion:\\k<plugin>\\.plugin\\.localVersion,marketplaceName:\\k<plugin>\\.marketplace\\.name,` +
     `pluginName:\\k<plugin>\\.plugin\\.name\\}\\);return await (?<sync>${ID})\\(\\k<root>,\\k<argument>\\)`, "gu"),
   "verified plugin root");
   const invocation = unique(source, new RegExp(
-    `\\}\\(\\{\\.\\.\\.(?<config>${ID}),codexHome:${ID},marketplaceName:${ID},marketplaces:${ID}\\}\\)`, "gu"),
+    `\\}\\(\\{\\.\\.\\.(?<config>${ID}),codexHome:(?<codexHome>${ID}),marketplaceName:(?<marketplaceName>${ID}),` +
+    `marketplaces:(?<marketplaces>${ID})\\}\\)`, "gu"),
   "plugin synchronization invocation");
   const daemon = unique(source, new RegExp(
     `${escapeRegExp(builder.groups.builder)}\\(\\{browserBackends:(?<daemonSelection>${ID})\\.browserBackends,` +
@@ -134,6 +138,10 @@ function applyModule(source) {
   const trustedKey = unique(aqSource, new RegExp(
     `\\[(?<constants>${ID})\\.(?<constant>${ID})\\]:null!=${ID}\\|\\|${ID}\\?JSON\\.stringify\\(` +
     `\\{[\\s\\S]{0,500}?sky:"@oai/sky/service"`, "gu"), "thread trusted-services key");
+  const initialThread = unique(source, new RegExp(
+    `${escapeRegExp(aqHeader.groups.aq)}\\(\\{appServerConnection:${ID},appVersion:${ID},` +
+    `selection:${escapeRegExp(selection)},hostServicesPipePath:null,includePrivateProcessEnv:!1\\}\\)`, "gu"),
+  "initial thread config");
 
   const builderHeader = builder[0].slice(0, -3) + `,${ROOT_KEY}}){/*${MARKERS[0]}*/` +
     `if("linux"===process.platform&&${surfaces}.includes("computer")){${guard(ROOT_KEY)}}`;
@@ -149,6 +157,14 @@ function applyModule(source) {
       `return await ${root.groups.sync}(${root.groups.root},${root.groups.argument})`,
   );
   const invocationWithContext = invocation[0].slice(0, -2) + `,${CONTEXT_KEY}:${selection}})`;
+  const initialRoot = `("linux"===${selection}.runtimePaths.platform&&${selection}.computerUse&&(()=>{` +
+    `let codexLinuxCuaPlugin=${root.groups.lookup}({marketplaceName:${invocation.groups.marketplaceName},` +
+    `marketplaces:${invocation.groups.marketplaces},pluginName:${root.groups.pluginModule}.${root.groups.pluginName}});` +
+    `if(!codexLinuxCuaPlugin?.plugin.installed)throw Error(\`Linux Computer Use trusted plugin root is unavailable\`);` +
+    `${selection}.${ROOT_KEY}=(0,${root.groups.rootModule}.${root.groups.rootHelper})({` +
+    `codexHome:${invocation.groups.codexHome},localVersion:codexLinuxCuaPlugin.plugin.localVersion,` +
+    `marketplaceName:codexLinuxCuaPlugin.marketplace.name,pluginName:codexLinuxCuaPlugin.plugin.name})})(),` +
+    `${initialThread[0]})`;
   const daemonWithRoot = daemon[0].slice(0, -2) +
     `,${ROOT_KEY}:${daemon.groups.daemonSelection}.${ROOT_KEY}})`;
   const aqRoot = `${aqHeader.groups.selection}.${ROOT_KEY}`;
@@ -171,6 +187,7 @@ function applyModule(source) {
     { index: builderOwner.start + environment.index, length: environment[0].length, replacement: builderEnvironment },
     { index: root.index, length: root[0].length, replacement: rootPublish },
     { index: invocation.index, length: invocation[0].length, replacement: invocationWithContext },
+    { index: initialThread.index, length: initialThread[0].length, replacement: initialRoot },
     { index: daemon.index, length: daemon[0].length, replacement: daemonWithRoot },
     { index: aqOwner.start + configReady.index + configReady[0].length, length: 0, replacement: aqInjection },
   ];

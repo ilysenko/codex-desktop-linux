@@ -65,13 +65,13 @@ test("patches the unique shared reason selector without relying on chunk or modu
   }
 });
 
-test("an ambiguous shared selector prevents partial writes", () => {
+test("a pristine owner plus a drifted relevant owner prevents every write", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "usage-limit-send-attempt-drift-"));
   const assets = path.join(directory, "webview", "assets", "async");
   try {
     fs.mkdirSync(assets, { recursive: true });
     fs.writeFileSync(path.join(assets, "first.js"), composer);
-    const drifted = composer;
+    const drifted = composer.replace("t(c)&&\"usage-limit\"", "blocked(c)&&\"usage-limit\"");
     fs.writeFileSync(path.join(assets, "second.js"), drifted);
     assert.equal(applyUsageLimitSendAttemptAppPatch(directory).changed, 0);
     assert.equal(fs.readFileSync(path.join(assets, "first.js"), "utf8"), composer);
@@ -100,18 +100,17 @@ test(
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     const assets = path.join(directory, "webview", "assets", "async");
     fs.mkdirSync(assets, { recursive: true });
-    const copied = [];
+    const relevant = [];
     for (const name of fs.readdirSync(signed).filter(file => file.endsWith(".js"))) {
       const source = fs.readFileSync(path.join(signed, name), "utf8");
       if (!source.includes('"reserve-limit"') || !source.includes('"usage-limit"')) continue;
-      if (applyUsageLimitSendAttemptPatch(source) === source) continue;
       fs.writeFileSync(path.join(assets, name), source);
-      copied.push(name);
+      relevant.push(name);
     }
     const result = applyUsageLimitSendAttemptAppPatch(directory);
-    assert.equal(result.changed, copied.length);
+    assert.equal(relevant.length, 1);
     assert.equal(result.changed, 1);
-    for (const name of copied) {
+    for (const name of relevant) {
       const patched = fs.readFileSync(path.join(assets, name), "utf8");
       assert.equal(patched.split("codexLinuxUsageLimitSendAttempt").length, 2);
       const check = spawnSync(process.execPath, ["--input-type=module", "--check"], {
