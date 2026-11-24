@@ -69,7 +69,9 @@ test('native client preserves browser inventory and binds native actions to sele
     assert.deepEqual(await cua.initialize({ emit: false }), expected);
     const app = await cua.getApp('org.example.Editor');
     await app.click([2, 3]);
-    assert.deepEqual(calls.at(-1), ['sky', { method: 'click', app: 'org.example.Editor', params: { x: 2, y: 3, button: 'left', click_count: 1, relative: true } }]);
+    assert.deepEqual(calls.at(-1), ['sky', { method: 'click', app: 'org.example.Editor', params: { x: 2, y: 3, button: 'left', click_count: 1, relative: true, delivery: 'background' } }]);
+    await app.scroll([4, 5], 'down', 2);
+    assert.deepEqual(calls.at(-1), ['sky', { method: 'scroll', app: 'org.example.Editor', params: { x: 4, y: 5, direction: 'down', pages: 2, relative: true, delivery: 'background' } }]);
     const before = calls.length;
     await assert.rejects(app.drag({ x: 1, y: 2 }, { x: 3, y: 4 }), /not supported/);
     await assert.rejects(app.paste('x', { format: 'html' }), /not supported/);
@@ -148,13 +150,13 @@ test('default trusted service reads only the privileged NodeREPL socket context'
 const { mkdtemp, writeFile, readFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-async function fixture(t, { windowId, structured = false, capture = false, captureError = false, captureMalformed } = {}) {
+async function fixture(t, { windowId, structured = false, capture = false, captureError = false, captureMalformed, notice = false } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'native-mcp-'));
   const script = join(dir, 'backend.cjs');
   const log = join(dir, 'requests.jsonl');
   await writeFile(script, `
 const readline = require('node:readline');
-let initialized = false, focused = false;
+let initialized = false, focused = false, noticeShown = false;
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const r = JSON.parse(line);
   const reply = result => process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n');
@@ -173,6 +175,15 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       return reply({content:[{type:'image',mimeType:'image/png',data:'AQID'},{type:'text',text:JSON.stringify({width:100,height:50,coordinate_width:200,coordinate_height:100,cropped_to_window:${captureMalformed !== 'uncropped'},scale:0.5})}].filter(item => !(${captureMalformed === 'missing-image'} && item.type === 'image'))});
     }
     return reply({isError:true,content:[{type:'text',text:'unexpected operation'}]});
+  }
+  // Like the backend: the first background pointer call with no route sends nothing
+  // and returns the one-time notice (not an MCP error); later calls use focused input.
+  if(${notice} && (name === 'click' || name === 'scroll') && a.delivery === 'background') {
+    if(!noticeShown) {
+      noticeShown = true;
+      return reply({isError:false,structuredContent:{ok:false,implemented:true,action:name,message:'Not sent: background delivery is not available here: no virtual pen on this desktop. To continue with normal input, repeat the call.',background:{requested:true,used:false,delivered:false,reason:'no virtual pen on this desktop.',retry_to_continue:true}},content:[]});
+    }
+    return reply({structuredContent:{ok:true,implemented:true,action:name,message:'Clicked',background:{requested:true,used:false}},content:[]});
   }
   if(a.text === 'exit') process.exit(7);
   if(a.text === 'tool-error') return reply({isError:true,content:[{type:'text',text:'denied by backend'}]});
@@ -208,6 +219,47 @@ test('MCP initialization, exact window IDs, targeted inputs and desktop inputs',
   assert.equal(zero.arguments.window_id, 0);
   const desktop = await service.handleRpc({method:'press_key',params:{key:'ESC'}});
   assert.deepEqual(desktop.arguments, {key:'ESC'});
+});
+
+test('background pointer delivery passes the validator and reaches the backend', async t => {
+  const { validateNativeRequest } = await import('./native-protocol.mjs');
+  for (const method of ['click', 'scroll']) {
+    assert.doesNotThrow(() => validateNativeRequest({method, app:'editor', params:{x:1, y:2, relative:true, delivery:'background'}}));
+    for (const delivery of ['focused', 'foreground', '', true, null]) {
+      assert.throws(() => validateNativeRequest({method, app:'editor', params:{x:1, y:2, delivery}}), /Invalid native delivery/);
+    }
+  }
+  for (const method of ['press_key', 'type_text', 'screenshot']) {
+    assert.throws(() => validateNativeRequest({method, app:'editor', params:{delivery:'background'}}), /Unsupported native operation parameter/);
+  }
+  const service = await fixture(t);
+  const result = await service.handleRpc({method:'scroll', app:'linux-window:22', params:{x:2, y:3, direction:'down', pages:1, relative:true, delivery:'background'}});
+  assert.deepEqual(result.arguments, {x:2, y:3, direction:'down', pages:1, relative:true, delivery:'background', window_id:22});
+});
+
+test('the one-time no-route notice reaches the agent unreplayed; repeating the call goes through', async t => {
+  const service = await fixture(t, {notice:true});
+  const { installLinuxComputerUse } = await import('./native-client.mjs');
+  const original = globalThis.nodeRepl;
+  globalThis.nodeRepl = { write(){}, rpc: (_, request) => request.method === 'get_app_state' ? {accessibility_tree:[]} : service.handleRpc(request) };
+  try {
+    const app = await installLinuxComputerUse({}).getApp('linux-window:22');
+    await assert.rejects(app.click([2, 3]), error => {
+      assert.match(error.message, /^Not sent: background click is not available on this desktop \(no virtual pen on this desktop\)\./);
+      assert.match(error.message, /Repeat the same click call to continue with normal input/);
+      return true;
+    });
+    let calls = await service.readCalls();
+    assert.equal(calls.filter(call => call.name === 'click').length, 1);
+    const repeated = await app.click([2, 3]);
+    assert.equal(repeated.ok, true);
+    assert.deepEqual(repeated.background, {requested:true, used:false});
+    const scrolled = await app.scroll([2, 3], 'down');
+    assert.equal(scrolled.ok, true);
+    calls = await service.readCalls();
+    assert.deepEqual(calls.map(call => call.name), ['click', 'click', 'scroll']);
+    assert.ok(calls.every(call => call.arguments.delivery === 'background' && call.arguments.relative === true && call.arguments.window_id === '22'));
+  } finally { globalThis.nodeRepl = original; }
 });
 
 test('trusted service forwards bounded observation options exactly', async t => {

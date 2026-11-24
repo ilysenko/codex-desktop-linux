@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   names apply only when the Codex name is unset) and never over HTTP. On KDE
   Plasma the KWin tablet check reads KWin's wrapper, Xwayland child or systemd
   unit when KWin's own environment is unreadable.
+- The in-app Computer Use adapter sends `click` and `scroll` with
+  `delivery: "background"`, so on GNOME and KDE Plasma Wayland (virtual pen
+  and touchscreen) and on X11 and sway (agent seat) they no longer move the
+  user's pointer. Where no background route exists, the backend's one-time
+  notice reaches the agent as an error and nothing is sent or replayed;
+  repeating the call uses normal focused input. The host validator accepts
+  `delivery: "background"` only.
 - Synchronize the embedded Computer Use backend to standalone v0.7.59. The
   crate and the `server.rs` literal are 0.7.59, the standalone version. KDE
   Plasma Wayland (KWin 6.3 and later) gets the virtual pen and touchscreen for

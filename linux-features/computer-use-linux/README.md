@@ -47,6 +47,26 @@ Accessibility observations retain `window_context` for geometry inspection.
 Element-index actions, drag, rich-text paste, selection editing, and secondary
 accessibility actions are not exposed by the in-app API.
 
+Click and scroll ask the backend for background delivery
+(`delivery: "background"` with `relative: true`), as upstream Codex does on
+other platforms, so they do not take the user's pointer:
+
+- GNOME Wayland and KDE Plasma Wayland (KWin 6.3 and later): a virtual pen
+  clicks and a virtual touchscreen scrolls inside the target window. The point
+  must be on that window with no other window above it; otherwise nothing is
+  sent and the call fails. `getScreenshot()` brings the window forward first.
+  A locked screen refuses the call.
+- X11 and sway 1.10 and later: the agent seat's own pointer clicks and scrolls.
+- Everywhere else (no route, or a desktop whose route is not set up, such as
+  GNOME without the window-targeting extension): the backend's one-time notice
+  arrives as an error that names the reason and sends nothing. The adapter
+  never replays it. Repeating the same call, and every later click or scroll
+  in that backend session, goes through normal focused input, which raises the
+  window and moves the user's pointer.
+
+Successful results carry the backend's `background` report (`used`, and the
+`route` when one delivered the input).
+
 `getApp()` emits one compact accessibility observation. Select a window through
 `getApp({windowId: window.id})` after
 `listWindows()`, or retain the string app ID API. Window IDs exceeding JavaScript's
