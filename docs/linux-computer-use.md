@@ -45,7 +45,7 @@ keyboard input without a focus event. It follows the same single-dispatch path
 with an explicit monitoring warning. A no-fixed-focus session can still dispatch
 without that PointerRoot warning.
 
-The embedded backend tracks Computer Use 0.7.59. On GNOME Wayland and KDE Plasma Wayland (KWin 6.3 and later), background `click`, `drag` and `scroll` go through a virtual pen and touchscreen, so the user's mouse pointer does not move; a tap still focuses the window, and apps without tablet support never see the pen. `type_text` and `press_key` with `delivery: "background"` reach an AT-SPI element, a DevTools browser tab (`CODEX_COMPUTER_USE_DEVTOOLS`, standalone alias `COMPUTER_USE_LINUX_DEVTOOLS`, a loopback port or a `DevToolsActivePort` path) or a terminal by tty without moving the user's keyboard focus. On X11 and sway 1.10 and later the agent gets its own seat for whole-window keys, and `click` and `scroll` with `delivery: "background"` use its pointer; Hyprland uses `sendkeystate`. GNOME, KDE Plasma, COSMIC, niri, labwc and river run one seat and have no agent-seat route. The first background call per session that no route can serve sends nothing and explains why; a retry uses normal focused input. On Umbriel, screenshots capture every output through `dms screenshot all` when DMS is installed, and the uinput pointer covers the whole output layout when a capture is one output of several. A `screenshot` with `monitor` (a 0-based index in reading order) captures one monitor at its own resolution and reports its origin as `monitor_x`/`monitor_y`. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
+The embedded backend tracks Computer Use 0.7.61. On GNOME Wayland and KDE Plasma Wayland (KWin 6.3 and later), background `click`, `drag` and `scroll` go through a virtual pen and touchscreen, so the user's mouse pointer does not move; a tap still focuses the window, and apps without tablet support never see the pen. Background `click` and `scroll` take `relative: true` with a window target: the point is measured from the window screenshot and checked like any background point. The KWin tablet check also reads the environment of KWin's wrapper, its Xwayland child or its systemd unit when KWin's own is unreadable, as on distributions that give `kwin_wayland` file capabilities. `type_text` and `press_key` with `delivery: "background"` reach an AT-SPI element, a DevTools browser tab (`CODEX_COMPUTER_USE_DEVTOOLS`, standalone alias `COMPUTER_USE_LINUX_DEVTOOLS`, a loopback port or a `DevToolsActivePort` path) or a terminal by tty without moving the user's keyboard focus. On X11 and sway 1.10 and later the agent gets its own seat for whole-window keys, and `click` and `scroll` with `delivery: "background"` use its pointer; Hyprland uses `sendkeystate`. GNOME, KDE Plasma, COSMIC, niri, labwc and river run one seat and have no agent-seat route. The first background call per session that no route can serve sends nothing and explains why; a retry uses normal focused input. On Umbriel, screenshots capture every output through `dms screenshot all` when DMS is installed, and the uinput pointer covers the whole output layout when a capture is one output of several. A `screenshot` with `monitor` (a 0-based index in reading order) captures one monitor at its own resolution and reports its origin as `monitor_x`/`monitor_y`. WebKitGTK AT-SPI socket children are resolved through their well-known bus names, and bounded indexed action reads avoid stalled `GetActions` calls. Native action matching uses stable machine-readable `GetName` values, including for Qt controls. Failed desktop actions and intentional refusals map to MCP `isError: true`; a successful action remains successful when only its post-action observation fails.
 
 Explicit `x/y` clicks use screenshot capture pixels by default. On KWin Wayland, `coordinate_space: "atspi"` accepts a global AT-SPI screen point together with `element_index` or a semantic selector. Unsupported backends and ambiguous window ownership return an error before pointer input. An already-running desktop portal does not need an activation service file.
 
@@ -467,6 +467,22 @@ the requested command. Ambient credentials and agent sockets are removed from
 the environment; additional variables must be supplied explicitly. Execution
 defaults to 30 seconds (maximum 120), and returned output is bounded. An audit
 digest is written to backend stderr without logging command text.
+
+Since the v0.7.61 sync, the direct MCP server has `run_batch`, which runs 1 to
+100 desktop tool calls in order in one call (never `run_shell`, `js` or
+itself). `js` and `js_reset`, a persistent Node.js REPL with a `desktop` API,
+appear only on stdio with `CODEX_COMPUTER_USE_ENABLE_REPL=1`, or
+`CODEX_COMPUTER_USE_REPL_ONLY=1` for only those two tools; the standalone
+`COMPUTER_USE_LINUX_*` names are used only when the Codex variable is unset, and
+`CODEX_COMPUTER_USE_NODE_BIN` picks the Node.js binary. Enabling it lets the
+model run code as the user, like `run_shell`; the worker's empty environment
+and Node permission flag are defence in depth, not a sandbox. It is never
+registered over HTTP, and the in-app adapter does not use it.
+`get_app_state`, `get_tree_page` and post-action `include_tree` take
+`tree_detail` (`minimal`, `compact` or `full`), `max_tree_bytes` caps the
+inline tree, `get_tree_page` searches the cached snapshot by `query`, `role` and
+`within`, and `accessibility_tree_partial: true` marks a result that holds only
+the leading nodes.
 
 Since the v0.7.51 sync, `codex-computer-use-linux mcp --listen ADDR:PORT`
 serves the direct MCP server over streamable HTTP at `/mcp`. The app and its

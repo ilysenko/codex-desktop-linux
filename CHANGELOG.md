@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.61 (and
+  the v0.7.60 fix). The crate is 0.7.61, the standalone version; the server
+  version now comes from the crate, so `server.rs` has no literal to bump.
+  `get_app_state`, `get_tree_page` and post-action `include_tree` take
+  `tree_detail` (`minimal`, `compact` or `full`) and `max_tree_bytes`,
+  `get_tree_page` searches the cached snapshot (`query`, `role`, `within`),
+  and `accessibility_tree_partial: true` marks a result that holds only the
+  leading nodes. Background `click` and `scroll` take `relative: true` with a
+  window target. `run_batch` runs up to 100 desktop calls in one. `js` and
+  `js_reset`, a persistent Node.js REPL, are opt-in on stdio with
+  `CODEX_COMPUTER_USE_ENABLE_REPL=1` or `CODEX_COMPUTER_USE_REPL_ONLY=1`
+  (`CODEX_COMPUTER_USE_NODE_BIN` picks Node; standalone `COMPUTER_USE_LINUX_*`
+  names apply only when the Codex name is unset) and never over HTTP. On KDE
+  Plasma the KWin tablet check reads KWin's wrapper, Xwayland child or systemd
+  unit when KWin's own environment is unreadable.
 - Synchronize the embedded Computer Use backend to standalone v0.7.59. The
   crate and the `server.rs` literal are 0.7.59, the standalone version. KDE
   Plasma Wayland (KWin 6.3 and later) gets the virtual pen and touchscreen for

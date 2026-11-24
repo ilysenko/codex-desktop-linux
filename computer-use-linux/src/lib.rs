@@ -20,6 +20,7 @@ pub mod diagnostics;
 pub mod gnome_extension;
 pub mod identity;
 pub mod remote_desktop;
+mod repl;
 pub mod screenshot;
 mod screenshot_file;
 pub mod server;

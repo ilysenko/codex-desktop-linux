@@ -1759,9 +1759,9 @@ pub(crate) async fn screen_locked(desktop: Desktop) -> bool {
 
 /// Why KWin's state rules out pen input now, checked before every call:
 /// Show Desktop hides windows without minimizing them, a full-screen effect
-/// such as the Overview takes the input, and KWIN_WAYLAND_EMULATE_TABLET
+/// such as the Overview takes the input, and `KWIN_WAYLAND_EMULATE_TABLET`
 /// in KWin's environment sends pen input over clients without tablet
-/// support through the user's pointer. Some(reason) is a refusal; None
+/// support through the user's pointer. `Some(reason)` is a refusal; `None`
 /// means nothing stands in the way.
 pub(crate) async fn kwin_blocker() -> Option<String> {
     const FULL_SCREEN: [&str; 6] = [
@@ -1775,29 +1775,15 @@ pub(crate) async fn kwin_blocker() -> Option<String> {
     let Ok(connection) = zbus::Connection::session().await else {
         return Some("no session bus to reach KWin".to_string());
     };
-    let get = |path: &'static str, interface: &'static str, property: &'static str| {
-        let connection = connection.clone();
-        async move {
-            let reply = tokio::time::timeout(
-                Duration::from_secs(2),
-                connection.call_method(
-                    Some("org.kde.KWin"),
-                    path,
-                    Some("org.freedesktop.DBus.Properties"),
-                    "Get",
-                    &(interface, property),
-                ),
-            )
-            .await
-            .ok()?
-            .ok()?;
-            reply
-                .body()
-                .deserialize::<zbus::zvariant::OwnedValue>()
-                .ok()
-        }
-    };
-    match get("/KWin", "org.kde.KWin", "showingDesktop").await {
+    match dbus_get_property(
+        &connection,
+        "org.kde.KWin",
+        "/KWin",
+        "org.kde.KWin",
+        "showingDesktop",
+    )
+    .await
+    {
         Some(value) if bool::try_from(&value).unwrap_or(false) => {
             return Some(
                 "KWin is showing the desktop, which hides windows without minimizing them"
@@ -1807,9 +1793,15 @@ pub(crate) async fn kwin_blocker() -> Option<String> {
         Some(_) => {}
         None => return Some("KWin's showingDesktop did not answer".to_string()),
     }
-    let active = get("/Effects", "org.kde.kwin.Effects", "activeEffects")
-        .await
-        .and_then(|value| Vec::<String>::try_from(value).ok());
+    let active = dbus_get_property(
+        &connection,
+        "org.kde.KWin",
+        "/Effects",
+        "org.kde.kwin.Effects",
+        "activeEffects",
+    )
+    .await
+    .and_then(|value| Vec::<String>::try_from(value).ok());
     match active {
         Some(effects) => {
             if let Some(effect) = effects
@@ -1823,38 +1815,576 @@ pub(crate) async fn kwin_blocker() -> Option<String> {
         }
         None => return Some("KWin's activeEffects did not answer".to_string()),
     }
-    let pid = async {
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            connection.call_method(
-                Some("org.freedesktop.DBus"),
-                "/org/freedesktop/DBus",
-                Some("org.freedesktop.DBus"),
-                "GetConnectionUnixProcessID",
-                &("org.kde.KWin",),
-            ),
-        )
-        .await
-        .ok()?
-        .ok()?
+    kwin_emulate_tablet_blocker(&connection, Path::new("/proc")).await
+}
+
+const KWIN_EMULATE_TABLET_VAR: &str = "KWIN_WAYLAND_EMULATE_TABLET";
+const KWIN_EMULATE_TABLET_PREFIX: &[u8] = b"KWIN_WAYLAND_EMULATE_TABLET=";
+const KWIN_EMULATE_TABLET_MESSAGE: &str = "KWin runs with KWIN_WAYLAND_EMULATE_TABLET, which sends pen input over clients without tablet support through the user's pointer";
+const KWIN_ENVIRON_UNREADABLE_MESSAGE: &str =
+    "KWin's environment could not be read to rule out KWIN_WAYLAND_EMULATE_TABLET";
+
+async fn dbus_get_property(
+    connection: &zbus::Connection,
+    destination: &str,
+    path: &str,
+    interface: &str,
+    property: &str,
+) -> Option<zbus::zvariant::OwnedValue> {
+    let reply = tokio::time::timeout(
+        Duration::from_secs(2),
+        connection.call_method(
+            Some(destination),
+            path,
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &(interface, property),
+        ),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    reply
         .body()
-        .deserialize::<u32>()
+        .deserialize::<zbus::zvariant::OwnedValue>()
         .ok()
-    }
-    .await;
-    let Some(environ) = pid.and_then(|pid| std::fs::read(format!("/proc/{pid}/environ")).ok())
-    else {
-        return Some(
-            "KWin's environment could not be read to rule out KWIN_WAYLAND_EMULATE_TABLET"
-                .to_string(),
-        );
-    };
-    let emulated = environ.split(|byte| *byte == 0).any(|entry| {
+}
+
+async fn dbus_connection_pid(connection: &zbus::Connection, bus_name: &str) -> Option<u32> {
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        connection.call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "GetConnectionUnixProcessID",
+            &(bus_name,),
+        ),
+    )
+    .await
+    .ok()?
+    .ok()?
+    .body()
+    .deserialize::<u32>()
+    .ok()
+}
+
+fn emulate_tablet_value_enabled(value: &[u8]) -> bool {
+    !value.is_empty() && value != b"0"
+}
+
+async fn dbus_get_all_properties(
+    connection: &zbus::Connection,
+    destination: &str,
+    path: &str,
+    interface: &str,
+) -> Option<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> {
+    let reply = tokio::time::timeout(
+        Duration::from_secs(2),
+        connection.call_method(
+            Some(destination),
+            path,
+            Some("org.freedesktop.DBus.Properties"),
+            "GetAll",
+            &(interface,),
+        ),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    reply
+        .body()
+        .deserialize::<std::collections::HashMap<String, zbus::zvariant::OwnedValue>>()
+        .ok()
+}
+
+fn environ_enables_emulate_tablet(environ: &[u8]) -> bool {
+    environ.split(|byte| *byte == 0).any(|entry| {
         entry
-            .strip_prefix(b"KWIN_WAYLAND_EMULATE_TABLET=")
-            .is_some_and(|value| !value.is_empty() && value != b"0")
-    });
-    emulated.then(|| "KWin runs with KWIN_WAYLAND_EMULATE_TABLET, which sends pen input over clients without tablet support through the user's pointer".to_string())
+            .strip_prefix(KWIN_EMULATE_TABLET_PREFIX)
+            .is_some_and(emulate_tablet_value_enabled)
+    })
+}
+
+fn read_proc_environ(proc_root: &Path, pid: u32) -> std::io::Result<Vec<u8>> {
+    std::fs::read(proc_root.join(pid.to_string()).join("environ"))
+}
+
+fn read_proc_ppid(proc_root: &Path, pid: u32) -> Option<u32> {
+    let status = std::fs::read_to_string(proc_root.join(pid.to_string()).join("status")).ok()?;
+    status.lines().find_map(|line| {
+        line.strip_prefix("PPid:")
+            .and_then(|value| value.trim().parse::<u32>().ok())
+    })
+}
+
+fn proc_argv0_name(proc_root: &Path, pid: u32) -> Option<String> {
+    use std::os::unix::ffi::OsStrExt;
+    let cmdline = std::fs::read(proc_root.join(pid.to_string()).join("cmdline")).ok()?;
+    let arg0 = cmdline.split(|byte| *byte == 0).next()?;
+    if arg0.is_empty() {
+        return None;
+    }
+    Path::new(std::ffi::OsStr::from_bytes(arg0))
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+}
+
+fn is_kwin_wrapper_name(name: &str) -> bool {
+    matches!(
+        name,
+        "kwin_wayland_wrapper" | ".kwin_wayland_wrapper-wrapped"
+    )
+}
+
+fn is_xwayland_name(name: &str) -> bool {
+    matches!(name, "Xwayland" | ".Xwayland-wrapped")
+}
+
+fn is_kwin_or_wrapper_name(name: &str) -> bool {
+    matches!(
+        name,
+        "kwin_wayland"
+            | ".kwin_wayland-wrapped"
+            | "kwin_wayland_wrapper"
+            | ".kwin_wayland_wrapper-wrapped"
+    )
+}
+
+/// Direct child PIDs of `pid` from `/proc/<pid>/task/*/children`, or `None` if
+/// no `children` file could be read (e.g. kernel without `CONFIG_PROC_CHILDREN`
+/// or hidden `/proc/<pid>`).
+fn proc_children_checked(proc_root: &Path, pid: u32) -> Option<Vec<u32>> {
+    let task_dir = proc_root.join(pid.to_string()).join("task");
+    let entries = std::fs::read_dir(task_dir).ok()?;
+    let mut children = Vec::new();
+    let mut saw_children_file = false;
+    for entry in entries.flatten() {
+        let Ok(text) = std::fs::read_to_string(entry.path().join("children")) else {
+            continue;
+        };
+        saw_children_file = true;
+        for token in text.split_whitespace() {
+            if let Ok(child_pid) = token.parse::<u32>() {
+                if !children.contains(&child_pid) {
+                    children.push(child_pid);
+                }
+            }
+        }
+    }
+    saw_children_file.then_some(children)
+}
+
+/// Checks whether the running KWin compositor has `KWIN_WAYLAND_EMULATE_TABLET`
+/// enabled, failing closed when none of the verified sources can read KWin's
+/// environment.
+///
+/// Distros such as Fedora ship `kwin_wayland` with file capabilities
+/// (`cap_sys_nice=ep`), which makes the process non-dumpable and leaves
+/// `/proc/<pid>/environ` root-only (`EACCES`, or `ENOENT` under `hidepid=2`).
+/// When KWin's own environ is unreadable, the check falls back to:
+/// 1. KWin's `kwin_wayland_wrapper` parent (or `org.kde.KWinWrapper` when
+///    `/proc/<kwin_pid>` is hidden, verifying `kwin_pid` in the wrapper's
+///    `task/*/children` when available), which carries no file capabilities
+///    and launches `kwin_wayland` with its environment verbatim;
+/// 2. A direct `Xwayland` child of KWin, which inherits KWin's
+///    `QProcessEnvironment::systemEnvironment()` without `cap_sys_nice`;
+/// 3. KWin's systemd user `.service` unit when systemd launched `kwin_wayland`
+///    or `kwin_wayland_wrapper` directly. Note that unlike `/proc` snapshots,
+///    systemd reports its current loaded manager/unit/file state rather than
+///    a frozen launch-time snapshot.
+async fn kwin_emulate_tablet_blocker(
+    connection: &zbus::Connection,
+    proc_root: &Path,
+) -> Option<String> {
+    let Some(kwin_pid) = dbus_connection_pid(connection, "org.kde.KWin").await else {
+        return Some(KWIN_ENVIRON_UNREADABLE_MESSAGE.to_string());
+    };
+    if let Some(environ) = read_kwin_environ_from_proc(connection, proc_root, kwin_pid).await {
+        return environ_enables_emulate_tablet(&environ)
+            .then(|| KWIN_EMULATE_TABLET_MESSAGE.to_string());
+    }
+    if let Some(emulated) = kwin_systemd_service_emulates_tablet(connection, kwin_pid).await {
+        return emulated.then(|| KWIN_EMULATE_TABLET_MESSAGE.to_string());
+    }
+    Some(KWIN_ENVIRON_UNREADABLE_MESSAGE.to_string())
+}
+
+async fn read_kwin_environ_from_proc(
+    connection: &zbus::Connection,
+    proc_root: &Path,
+    kwin_pid: u32,
+) -> Option<Vec<u8>> {
+    match read_proc_environ(proc_root, kwin_pid) {
+        Ok(environ) => return Some(environ),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound
+            ) => {}
+        Err(_) => return None,
+    }
+
+    let kwin_ppid = read_proc_ppid(proc_root, kwin_pid);
+    if let Some(ppid) = kwin_ppid {
+        let verified_wrapper = proc_argv0_name(proc_root, ppid)
+            .as_deref()
+            .is_some_and(is_kwin_wrapper_name)
+            || dbus_connection_pid(connection, "org.kde.KWinWrapper").await == Some(ppid);
+        if verified_wrapper {
+            if let Ok(environ) = read_proc_environ(proc_root, ppid) {
+                return Some(environ);
+            }
+        }
+    } else if let Some(wpid) = dbus_connection_pid(connection, "org.kde.KWinWrapper").await {
+        let is_wrapper = proc_argv0_name(proc_root, wpid)
+            .as_deref()
+            .is_some_and(is_kwin_wrapper_name);
+        let owns_kwin = proc_children_checked(proc_root, wpid)
+            .is_none_or(|children| children.contains(&kwin_pid));
+        if is_wrapper && owns_kwin {
+            if let Ok(environ) = read_proc_environ(proc_root, wpid) {
+                return Some(environ);
+            }
+        }
+    }
+
+    for child_pid in proc_children_checked(proc_root, kwin_pid).unwrap_or_default() {
+        if read_proc_ppid(proc_root, child_pid) != Some(kwin_pid) {
+            continue;
+        }
+        if !proc_argv0_name(proc_root, child_pid)
+            .as_deref()
+            .is_some_and(is_xwayland_name)
+        {
+            continue;
+        }
+        if let Ok(environ) = read_proc_environ(proc_root, child_pid) {
+            return Some(environ);
+        }
+    }
+
+    None
+}
+
+fn systemd_exec_start_paths(value: &zbus::zvariant::OwnedValue) -> Option<Vec<String>> {
+    let zbus::zvariant::Value::Array(entries) = &**value else {
+        return None;
+    };
+    let mut paths = Vec::with_capacity(entries.len());
+    for entry in entries.iter() {
+        let zbus::zvariant::Value::Structure(fields) = entry else {
+            return None;
+        };
+        let zbus::zvariant::Value::Str(path) = fields.fields().first()? else {
+            return None;
+        };
+        paths.push(path.as_str().to_string());
+    }
+    Some(paths)
+}
+
+fn systemd_environment_files(value: &zbus::zvariant::OwnedValue) -> Option<Vec<(String, bool)>> {
+    let zbus::zvariant::Value::Array(entries) = &**value else {
+        return None;
+    };
+    let mut files = Vec::with_capacity(entries.len());
+    for entry in entries.iter() {
+        let zbus::zvariant::Value::Structure(fields) = entry else {
+            return None;
+        };
+        let [zbus::zvariant::Value::Str(path), zbus::zvariant::Value::Bool(ignore_missing)] =
+            fields.fields()
+        else {
+            return None;
+        };
+        files.push((path.as_str().to_string(), *ignore_missing));
+    }
+    Some(files)
+}
+
+fn apply_env_assignments(entries: &[String], target_key: &str, current: &mut Option<String>) {
+    for entry in entries {
+        if let Some((key, value)) = entry.split_once('=') {
+            if key == target_key {
+                *current = Some(value.to_string());
+            }
+        }
+    }
+}
+
+/// Parses a systemd `EnvironmentFile` following `systemd.exec(5)` quoting,
+/// comment, and line-continuation rules, updating `current` whenever
+/// `target_key` is assigned. Returns `Err(())` on malformed quoting so callers
+/// fail closed.
+fn apply_systemd_env_file(
+    text: &str,
+    target_key: &str,
+    current: &mut Option<String>,
+) -> std::result::Result<(), ()> {
+    let mut chars = text.chars().peekable();
+    loop {
+        while matches!(chars.peek(), Some(' ' | '\t' | '\r')) {
+            chars.next();
+        }
+        let Some(&first) = chars.peek() else {
+            return Ok(());
+        };
+        if first == '\n' {
+            chars.next();
+            continue;
+        }
+        if first == '#' || first == ';' {
+            for ch in chars.by_ref() {
+                if ch == '\n' {
+                    break;
+                }
+            }
+            continue;
+        }
+        let mut key = String::new();
+        let mut found_eq = false;
+        for ch in chars.by_ref() {
+            if ch == '=' {
+                found_eq = true;
+                break;
+            }
+            if ch == '\n' {
+                break;
+            }
+            key.push(ch);
+        }
+        if !found_eq {
+            continue;
+        }
+        loop {
+            match chars.peek().copied() {
+                Some(' ' | '\t' | '\r') => {
+                    chars.next();
+                }
+                Some('\\') => {
+                    let mut lookahead = chars.clone();
+                    lookahead.next();
+                    match lookahead.next() {
+                        Some('\n') => {
+                            chars = lookahead;
+                        }
+                        Some('\r') if lookahead.peek() == Some(&'\n') => {
+                            lookahead.next();
+                            chars = lookahead;
+                        }
+                        _ => break,
+                    }
+                }
+                _ => break,
+            }
+        }
+        let mut value = String::new();
+        match chars.peek().copied() {
+            Some('\'') => {
+                chars.next();
+                let mut closed = false;
+                for ch in chars.by_ref() {
+                    if ch == '\'' {
+                        closed = true;
+                        break;
+                    }
+                    value.push(ch);
+                }
+                if !closed {
+                    return Err(());
+                }
+                for ch in chars.by_ref() {
+                    if ch == '\n' {
+                        break;
+                    }
+                    if !matches!(ch, ' ' | '\t' | '\r') {
+                        return Err(());
+                    }
+                }
+            }
+            Some('"') => {
+                chars.next();
+                let mut closed = false;
+                while let Some(ch) = chars.next() {
+                    if ch == '"' {
+                        closed = true;
+                        break;
+                    }
+                    if ch == '\\' {
+                        match chars.next() {
+                            Some('\n') => {}
+                            Some('\r') if chars.peek() == Some(&'\n') => {
+                                chars.next();
+                            }
+                            Some(escaped @ ('"' | '\\' | '`' | '$')) => value.push(escaped),
+                            Some(other) => {
+                                value.push('\\');
+                                value.push(other);
+                            }
+                            None => return Err(()),
+                        }
+                    } else {
+                        value.push(ch);
+                    }
+                }
+                if !closed {
+                    return Err(());
+                }
+                for ch in chars.by_ref() {
+                    if ch == '\n' {
+                        break;
+                    }
+                    if !matches!(ch, ' ' | '\t' | '\r') {
+                        return Err(());
+                    }
+                }
+            }
+            _ => {
+                let mut trimmed_len = 0;
+                while let Some(ch) = chars.next() {
+                    if ch == '\n' {
+                        break;
+                    }
+                    if ch == '\\' {
+                        match chars.next() {
+                            Some('\n') => {}
+                            Some('\r') if chars.peek() == Some(&'\n') => {
+                                chars.next();
+                            }
+                            Some(escaped) => {
+                                value.push(escaped);
+                                trimmed_len = value.len();
+                            }
+                            None => break,
+                        }
+                    } else {
+                        value.push(ch);
+                        if !matches!(ch, ' ' | '\t' | '\r') {
+                            trimmed_len = value.len();
+                        }
+                    }
+                }
+                value.truncate(trimmed_len);
+            }
+        }
+        if key.trim_end_matches([' ', '\t', '\r']) == target_key {
+            *current = Some(value);
+        }
+    }
+}
+
+/// Evaluates `KWIN_WAYLAND_EMULATE_TABLET` for a systemd user `.service` unit
+/// using the precedence order from `systemd.exec(5)`:
+/// manager environment -> `Environment=` -> `EnvironmentFile=` ->
+/// `UnsetEnvironment=`. (`PassEnvironment=` has no effect on the user service
+/// manager because user units inherit the full manager environment.)
+fn evaluate_systemd_emulate_tablet(
+    exec_start_paths: &[String],
+    pam_name: &str,
+    manager_env: &[String],
+    service_env: &[String],
+    env_files: &[(String, bool)],
+    unset_env: &[String],
+) -> Option<bool> {
+    if exec_start_paths.is_empty()
+        || !exec_start_paths.iter().all(|path| {
+            Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_kwin_or_wrapper_name)
+        })
+    {
+        return None;
+    }
+    if !pam_name.is_empty() {
+        return None;
+    }
+    let mut current = None;
+    apply_env_assignments(manager_env, KWIN_EMULATE_TABLET_VAR, &mut current);
+    apply_env_assignments(service_env, KWIN_EMULATE_TABLET_VAR, &mut current);
+    for (path, ignore_missing) in env_files {
+        if path.contains(['*', '?', '[']) {
+            return None;
+        }
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                apply_systemd_env_file(&content, KWIN_EMULATE_TABLET_VAR, &mut current).ok()?;
+            }
+            Err(error) if *ignore_missing && error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
+    }
+    for entry in unset_env {
+        if entry == KWIN_EMULATE_TABLET_VAR {
+            current = None;
+        } else if let Some((key, expected)) = entry.split_once('=') {
+            if key == KWIN_EMULATE_TABLET_VAR && current.as_deref() == Some(expected) {
+                current = None;
+            }
+        }
+    }
+    Some(
+        current
+            .as_deref()
+            .is_some_and(|value| emulate_tablet_value_enabled(value.as_bytes())),
+    )
+}
+
+async fn kwin_systemd_service_emulates_tablet(
+    connection: &zbus::Connection,
+    kwin_pid: u32,
+) -> Option<bool> {
+    let unit_path = tokio::time::timeout(
+        Duration::from_secs(2),
+        connection.call_method(
+            Some("org.freedesktop.systemd1"),
+            "/org/freedesktop/systemd1",
+            Some("org.freedesktop.systemd1.Manager"),
+            "GetUnitByPID",
+            &(kwin_pid,),
+        ),
+    )
+    .await
+    .ok()?
+    .ok()?
+    .body()
+    .deserialize::<zbus::zvariant::OwnedObjectPath>()
+    .ok()?;
+    if !unit_path.as_str().ends_with("_2eservice") {
+        return None;
+    }
+    let (manager_env_val, mut service_props) = tokio::join!(
+        dbus_get_property(
+            connection,
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "Environment",
+        ),
+        dbus_get_all_properties(
+            connection,
+            "org.freedesktop.systemd1",
+            unit_path.as_str(),
+            "org.freedesktop.systemd1.Service",
+        ),
+    );
+    let manager_env = Vec::<String>::try_from(manager_env_val?).ok()?;
+    let service_props = service_props.as_mut()?;
+    let exec_start_paths = systemd_exec_start_paths(service_props.get("ExecStart")?)?;
+    let pam_name = String::try_from(service_props.remove("PAMName")?).ok()?;
+    let service_env = Vec::<String>::try_from(service_props.remove("Environment")?).ok()?;
+    let env_files = systemd_environment_files(service_props.get("EnvironmentFiles")?)?;
+    let unset_env = Vec::<String>::try_from(service_props.remove("UnsetEnvironment")?).ok()?;
+    evaluate_systemd_emulate_tablet(
+        &exec_start_paths,
+        &pam_name,
+        &manager_env,
+        &service_env,
+        &env_files,
+        &unset_env,
+    )
 }
 
 /// The logical layout from KWin's outputs. KWin's scripting gives no
@@ -2281,5 +2811,767 @@ mod tests {
         assert!(!keys
             .iter()
             .any(|(code, value)| *code == KeyCode::BTN_TOUCH.0 && *value == 1));
+    }
+
+    struct TempDirGuard(PathBuf);
+
+    impl TempDirGuard {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "cul-vpen-{label}-{}-{:016x}",
+                std::process::id(),
+                getrandom::u64().unwrap()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            fn make_writable(dir: &Path) {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            let _ = std::fs::set_permissions(
+                                &path,
+                                std::fs::Permissions::from_mode(0o700),
+                            );
+                            make_writable(&path);
+                        } else {
+                            let _ = std::fs::set_permissions(
+                                &path,
+                                std::fs::Permissions::from_mode(0o600),
+                            );
+                        }
+                    }
+                }
+            }
+            make_writable(&self.0);
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct ChildGuard(std::process::Child);
+
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[tokio::test]
+    async fn kwin_environ_reads_wrapper_parent_when_kwin_is_non_dumpable() {
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::process::CommandExt;
+
+        // SAFETY: geteuid has no preconditions or memory effects.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let bus = crate::test_sockets::PrivateBus::start("cul-kwin-wrap");
+        let conn = zbus::connection::Builder::address(bus.address())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        // Spawn a parent with argv[0]="kwin_wayland_wrapper" that spawns a
+        // non-dumpable child (PR_SET_DUMPABLE=0), reproducing the Linux kernel's
+        // root-only /proc/<pid>/environ behavior for binaries with cap_sys_nice.
+        let script = r#"
+import os, subprocess, time
+child = subprocess.Popen([
+    os.path.realpath("/proc/self/exe"), "-c",
+    "import ctypes, os, signal, time; libc = ctypes.CDLL(None); libc.prctl(1, signal.SIGTERM, 0, 0, 0); libc.prctl(4, 0, 0, 0, 0); print('ready', flush=True); time.sleep(30)"
+], stdout=subprocess.PIPE, text=True)
+assert child.stdout.readline().strip() == "ready"
+print(child.pid, flush=True)
+time.sleep(30)
+"#;
+
+        for (env_val, expected_emulated) in [(None, false), (Some("0"), false), (Some("1"), true)] {
+            let mut command = std::process::Command::new("python3");
+            command
+                .arg0("kwin_wayland_wrapper")
+                .args(["-c", script])
+                .env_remove("KWIN_WAYLAND_EMULATE_TABLET")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::inherit());
+            if let Some(val) = env_val {
+                command.env("KWIN_WAYLAND_EMULATE_TABLET", val);
+            }
+            let mut wrapper = ChildGuard(command.spawn().expect("spawn wrapper fixture"));
+            let mut line = String::new();
+            BufReader::new(wrapper.0.stdout.take().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let kwin_pid: u32 = line.trim().parse().expect("child pid");
+
+            let direct = read_proc_environ(Path::new("/proc"), kwin_pid);
+            assert_eq!(
+                direct.as_ref().map_err(std::io::Error::kind),
+                Err(std::io::ErrorKind::PermissionDenied),
+                "non-dumpable child's /proc/<pid>/environ must be EACCES (got {direct:?})"
+            );
+
+            let environ = read_kwin_environ_from_proc(&conn, Path::new("/proc"), kwin_pid)
+                .await
+                .expect("should read environ from kwin_wayland_wrapper parent");
+            assert_eq!(
+                environ_enables_emulate_tablet(&environ),
+                expected_emulated,
+                "env_val={env_val:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn kwin_environ_refuses_non_wrapper_parent_and_reads_xwayland_child() {
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::process::CommandExt;
+
+        // SAFETY: geteuid has no preconditions or memory effects.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let bus = crate::test_sockets::PrivateBus::start("cul-kwin-xwl");
+        let conn = zbus::connection::Builder::address(bus.address())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+
+        // Case 1: parent has argv[0]="sh" (not kwin_wayland_wrapper), and the
+        // non-dumpable child has no Xwayland child. Must fail closed rather
+        // than reading the shell parent's environment.
+        let sh_parent_script = r#"
+import os, subprocess, time
+child = subprocess.Popen([
+    os.path.realpath("/proc/self/exe"), "-c",
+    "import ctypes, signal, time; libc = ctypes.CDLL(None); libc.prctl(1, signal.SIGTERM, 0, 0, 0); libc.prctl(4, 0, 0, 0, 0); print('ready', flush=True); time.sleep(30)"
+], stdout=subprocess.PIPE, text=True)
+assert child.stdout.readline().strip() == "ready"
+print(child.pid, flush=True)
+time.sleep(30)
+"#;
+        let mut sh_parent = ChildGuard(
+            std::process::Command::new("python3")
+                .arg0("sh")
+                .args(["-c", sh_parent_script])
+                .env("KWIN_WAYLAND_EMULATE_TABLET", "1")
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let mut line = String::new();
+        BufReader::new(sh_parent.0.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let kwin_pid: u32 = line.trim().parse().expect("child pid");
+        assert_eq!(
+            read_proc_environ(Path::new("/proc"), kwin_pid)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert!(
+            read_kwin_environ_from_proc(&conn, Path::new("/proc"), kwin_pid)
+                .await
+                .is_none(),
+            "must not read an arbitrary non-wrapper parent's environment"
+        );
+        drop(sh_parent);
+
+        // Case 2: non-dumpable KWin with non-wrapper parent, but with a direct
+        // dumpable Xwayland child carrying KWin's environment.
+        let with_xwayland_script = r#"
+import ctypes, os, signal, subprocess, time
+libc = ctypes.CDLL(None)
+libc.prctl(1, signal.SIGTERM, 0, 0, 0)
+libc.prctl(4, 0, 0, 0, 0)
+xwl = subprocess.Popen(
+    ["Xwayland", "-c", "import ctypes, signal, time; ctypes.CDLL(None).prctl(1, signal.SIGTERM, 0, 0, 0); print('xwl', flush=True); time.sleep(30)"],
+    executable=os.path.realpath("/proc/self/exe"),
+    stdout=subprocess.PIPE,
+    text=True,
+)
+assert xwl.stdout.readline().strip() == "xwl"
+print('ready', flush=True)
+time.sleep(30)
+"#;
+        for (env_val, expected_emulated) in [(None, false), (Some("1"), true)] {
+            let mut command = std::process::Command::new("python3");
+            command
+                .args(["-c", with_xwayland_script])
+                .env_remove("KWIN_WAYLAND_EMULATE_TABLET")
+                .stdout(std::process::Stdio::piped());
+            if let Some(val) = env_val {
+                command.env("KWIN_WAYLAND_EMULATE_TABLET", val);
+            }
+            let mut kwin = ChildGuard(command.spawn().unwrap());
+            let mut ready = String::new();
+            BufReader::new(kwin.0.stdout.take().unwrap())
+                .read_line(&mut ready)
+                .unwrap();
+            assert_eq!(ready.trim(), "ready");
+            let kwin_pid = kwin.0.id();
+            assert_eq!(
+                read_proc_environ(Path::new("/proc"), kwin_pid)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+            let environ = read_kwin_environ_from_proc(&conn, Path::new("/proc"), kwin_pid)
+                .await
+                .expect("should read environ from direct Xwayland child");
+            assert_eq!(
+                environ_enables_emulate_tablet(&environ),
+                expected_emulated,
+                "env_val={env_val:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn kwin_environ_proc_fixture_covers_hidepid_nixos_and_ppid_mismatch() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // SAFETY: geteuid has no preconditions or memory effects.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let bus = crate::test_sockets::PrivateBus::start("cul-kwin-proc");
+        let wrapper_conn = zbus::connection::Builder::address(bus.address())
+            .unwrap()
+            .name("org.kde.KWinWrapper")
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client_conn = zbus::connection::Builder::address(bus.address())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let my_pid = std::process::id();
+
+        let write_proc =
+            |root: &Path, pid: u32, ppid: u32, cmdline: &[u8], environ: Option<&[u8]>| {
+                let dir = root.join(pid.to_string());
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(dir.join("status"), format!("Name:\tproc\nPPid:\t{ppid}\n"))
+                    .unwrap();
+                std::fs::write(dir.join("cmdline"), cmdline).unwrap();
+                let env_path = dir.join("environ");
+                match environ {
+                    Some(bytes) => std::fs::write(&env_path, bytes).unwrap(),
+                    None => {
+                        std::fs::write(&env_path, b"SECRET=1\0").unwrap();
+                        std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o000))
+                            .unwrap();
+                    }
+                }
+            };
+
+        // 1a. hidepid=2: /proc/<kwin_pid> does not exist at all, and
+        // org.kde.KWinWrapper's task/<pid>/children lists kwin_pid.
+        let hidepid_dir = TempDirGuard::new("hidepid");
+        write_proc(
+            hidepid_dir.path(),
+            my_pid,
+            1,
+            b"/nix/store/abc/bin/.kwin_wayland_wrapper-wrapped\0--xwayland\0",
+            Some(b"FOO=bar\0KWIN_WAYLAND_EMULATE_TABLET=1\0"),
+        );
+        let task_dir = hidepid_dir
+            .path()
+            .join(my_pid.to_string())
+            .join("task")
+            .join(my_pid.to_string());
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(task_dir.join("children"), "999999 ").unwrap();
+        let env = read_kwin_environ_from_proc(&client_conn, hidepid_dir.path(), 999_999)
+            .await
+            .expect("hidepid should fall back to org.kde.KWinWrapper when children lists kwin");
+        assert!(environ_enables_emulate_tablet(&env));
+
+        // 1b. hidepid=2 when wrapper's task/*/children is readable and does NOT
+        // list kwin_pid -> must refuse.
+        std::fs::write(task_dir.join("children"), "123456 ").unwrap();
+        assert!(
+            read_kwin_environ_from_proc(&client_conn, hidepid_dir.path(), 999_999)
+                .await
+                .is_none(),
+            "must refuse org.kde.KWinWrapper when its children list excludes kwin_pid"
+        );
+
+        // 2. ppid mismatch: /proc/<kwin_pid>/status is readable and names a
+        // shell parent (500), NOT org.kde.KWinWrapper (my_pid). Must refuse.
+        let mismatch_dir = TempDirGuard::new("mismatch");
+        write_proc(
+            mismatch_dir.path(),
+            999_999,
+            500,
+            b"/usr/bin/kwin_wayland\0",
+            None,
+        );
+        write_proc(
+            mismatch_dir.path(),
+            500,
+            1,
+            b"/bin/bash\0",
+            Some(b"FOO=bar\0"),
+        );
+        write_proc(
+            mismatch_dir.path(),
+            my_pid,
+            1,
+            b"/usr/bin/kwin_wayland_wrapper\0",
+            Some(b"FOO=bar\0"),
+        );
+        assert!(
+            read_kwin_environ_from_proc(&client_conn, mismatch_dir.path(), 999_999)
+                .await
+                .is_none(),
+            "must not jump to org.kde.KWinWrapper when KWin's actual PPid differs"
+        );
+
+        // 3. Direct PPid matches org.kde.KWinWrapper even under a renamed binary.
+        let renamed_dir = TempDirGuard::new("renamed");
+        write_proc(
+            renamed_dir.path(),
+            999_999,
+            my_pid,
+            b"/usr/bin/kwin_wayland\0",
+            None,
+        );
+        write_proc(
+            renamed_dir.path(),
+            my_pid,
+            1,
+            b"/usr/bin/custom_wrapper_bin\0",
+            Some(b"FOO=bar\0"),
+        );
+        let env = read_kwin_environ_from_proc(&client_conn, renamed_dir.path(), 999_999)
+            .await
+            .expect("PPid matching org.kde.KWinWrapper should succeed");
+        assert!(!environ_enables_emulate_tablet(&env));
+
+        // 4. Direct /proc/<kwin_pid>/environ wins when readable.
+        let direct_dir = TempDirGuard::new("direct");
+        write_proc(
+            direct_dir.path(),
+            999_999,
+            my_pid,
+            b"/usr/bin/kwin_wayland\0",
+            Some(b"KWIN_WAYLAND_EMULATE_TABLET=1\0"),
+        );
+        write_proc(
+            direct_dir.path(),
+            my_pid,
+            1,
+            b"/usr/bin/kwin_wayland_wrapper\0",
+            Some(b"KWIN_WAYLAND_EMULATE_TABLET=0\0"),
+        );
+        let env = read_kwin_environ_from_proc(&client_conn, direct_dir.path(), 999_999)
+            .await
+            .expect("direct environ should be used first");
+        assert!(environ_enables_emulate_tablet(&env));
+
+        drop(wrapper_conn);
+    }
+
+    #[test]
+    fn systemd_env_file_parser_follows_systemd_exec_rules() {
+        let parse = |text: &str| {
+            let mut value = None;
+            apply_systemd_env_file(text, KWIN_EMULATE_TABLET_VAR, &mut value).map(|()| value)
+        };
+
+        assert_eq!(
+            parse("# KWIN_WAYLAND_EMULATE_TABLET=1\n;KWIN_WAYLAND_EMULATE_TABLET=1\n"),
+            Ok(None)
+        );
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=1\n"),
+            Ok(Some("1".to_string()))
+        );
+        assert_eq!(
+            parse("  KWIN_WAYLAND_EMULATE_TABLET=  \"1\"  \n"),
+            Ok(Some("1".to_string()))
+        );
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET='0'\n"),
+            Ok(Some("0".to_string()))
+        );
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=1  \t\n"),
+            Ok(Some("1".to_string()))
+        );
+        // Multi-line quoted value for another variable must not look like an assignment.
+        assert_eq!(
+            parse("OTHER=\"line1\nKWIN_WAYLAND_EMULATE_TABLET=1\"\n"),
+            Ok(None)
+        );
+        assert_eq!(
+            parse("OTHER='line1\nKWIN_WAYLAND_EMULATE_TABLET=1'\n"),
+            Ok(None)
+        );
+        // Line continuation right after `=` before quotes or leading spaces.
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=\\\n1\n"),
+            Ok(Some("1".to_string()))
+        );
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=\\\n\"0\"\n"),
+            Ok(Some("0".to_string()))
+        );
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=\\\n  0\n"),
+            Ok(Some("0".to_string()))
+        );
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=1\nOTHER=\\\n\"line1\nKWIN_WAYLAND_EMULATE_TABLET=0\n\"\n"),
+            Ok(Some("1".to_string()))
+        );
+        // Double-quote escapes and unquoted escapes.
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=\"\\\"\\\\\\$\\x\\\n1\"\n"),
+            Ok(Some("\"\\$\\x1".to_string()))
+        );
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=1\\ \\\\\n"),
+            Ok(Some("1 \\".to_string()))
+        );
+        // Later assignment overrides earlier.
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=1\nKWIN_WAYLAND_EMULATE_TABLET=0\n"),
+            Ok(Some("0".to_string()))
+        );
+        // Malformed quoting fails closed.
+        assert_eq!(parse("KWIN_WAYLAND_EMULATE_TABLET=\"1\n"), Err(()));
+        assert_eq!(parse("KWIN_WAYLAND_EMULATE_TABLET='1\n"), Err(()));
+        assert_eq!(
+            parse("KWIN_WAYLAND_EMULATE_TABLET=\"1\" trailing\n"),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn systemd_service_evaluation_applies_precedence_and_fails_closed() {
+        let dir = TempDirGuard::new("systemd-eval");
+        let file_one = dir.path().join("one.env");
+        let file_zero = dir.path().join("zero.env");
+        std::fs::write(&file_one, "KWIN_WAYLAND_EMULATE_TABLET=1\n").unwrap();
+        std::fs::write(&file_zero, "KWIN_WAYLAND_EMULATE_TABLET=0\n").unwrap();
+        let kwin_exec = vec!["/usr/bin/kwin_wayland".to_string()];
+
+        // Manager env=1 overridden by Service env=0.
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(
+                &kwin_exec,
+                "",
+                &["KWIN_WAYLAND_EMULATE_TABLET=1".to_string()],
+                &["KWIN_WAYLAND_EMULATE_TABLET=0".to_string()],
+                &[],
+                &[],
+            ),
+            Some(false)
+        );
+        // Service env=0 overridden by EnvironmentFile=1 (EnvironmentFile wins over Environment).
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(
+                &kwin_exec,
+                "",
+                &[],
+                &["KWIN_WAYLAND_EMULATE_TABLET=0".to_string()],
+                &[(file_one.display().to_string(), false)],
+                &[],
+            ),
+            Some(true)
+        );
+        // UnsetEnvironment removes matching key or matching KEY=VALUE, not mismatched KEY=VALUE.
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(
+                &kwin_exec,
+                "",
+                &[],
+                &[],
+                &[(file_one.display().to_string(), false)],
+                &["KWIN_WAYLAND_EMULATE_TABLET=0".to_string()],
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(
+                &kwin_exec,
+                "",
+                &[],
+                &[],
+                &[(file_one.display().to_string(), false)],
+                &["KWIN_WAYLAND_EMULATE_TABLET=1".to_string()],
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(
+                &kwin_exec,
+                "",
+                &["KWIN_WAYLAND_EMULATE_TABLET=1".to_string()],
+                &[],
+                &[],
+                &["KWIN_WAYLAND_EMULATE_TABLET".to_string()],
+            ),
+            Some(false)
+        );
+        // Optional missing file is skipped; required missing file or glob fails closed.
+        let missing = dir.path().join("missing.env").display().to_string();
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(
+                &kwin_exec,
+                "",
+                &[],
+                &[],
+                &[
+                    (missing.clone(), true),
+                    (file_zero.display().to_string(), false)
+                ],
+                &[],
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(&kwin_exec, "", &[], &[], &[(missing, false)], &[]),
+            None
+        );
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(
+                &kwin_exec,
+                "",
+                &[],
+                &[],
+                &[(format!("{}/*.env", dir.path().display()), false)],
+                &[],
+            ),
+            None
+        );
+        // Shell/env ExecStart or non-empty PAMName fails closed.
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(&["/bin/sh".to_string()], "", &[], &[], &[], &[]),
+            None
+        );
+        assert_eq!(
+            evaluate_systemd_emulate_tablet(&kwin_exec, "login", &[], &[], &[], &[]),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn kwin_emulate_tablet_blocker_reads_systemd_service_over_dbus() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // SAFETY: geteuid has no preconditions or memory effects.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        struct FakeSystemdManager {
+            unit_path: String,
+            environment: Vec<String>,
+        }
+
+        #[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
+        impl FakeSystemdManager {
+            #[zbus(name = "GetUnitByPID")]
+            fn get_unit_by_pid(&self, _pid: u32) -> zbus::zvariant::OwnedObjectPath {
+                zbus::zvariant::OwnedObjectPath::try_from(self.unit_path.as_str()).unwrap()
+            }
+
+            #[zbus(property)]
+            fn environment(&self) -> Vec<String> {
+                self.environment.clone()
+            }
+        }
+
+        type FakeExecStart = (String, Vec<String>, bool, u64, u64, u64, u64, u32, i32, i32);
+
+        struct FakeSystemdService {
+            exec_start: Vec<FakeExecStart>,
+            environment: Vec<String>,
+            environment_files: Vec<(String, bool)>,
+            unset_environment: Vec<String>,
+        }
+
+        #[zbus::interface(name = "org.freedesktop.systemd1.Service")]
+        impl FakeSystemdService {
+            #[zbus(property)]
+            fn exec_start(&self) -> Vec<FakeExecStart> {
+                self.exec_start.clone()
+            }
+
+            #[zbus(property, name = "PAMName")]
+            fn pam_name(&self) -> String {
+                String::new()
+            }
+
+            #[zbus(property)]
+            fn environment(&self) -> Vec<String> {
+                self.environment.clone()
+            }
+
+            #[zbus(property)]
+            fn environment_files(&self) -> Vec<(String, bool)> {
+                self.environment_files.clone()
+            }
+
+            #[zbus(property)]
+            fn unset_environment(&self) -> Vec<String> {
+                self.unset_environment.clone()
+            }
+        }
+
+        let proc_dir = TempDirGuard::new("dbus-systemd");
+        let my_pid = std::process::id();
+        let pid_dir = proc_dir.path().join(my_pid.to_string());
+        std::fs::create_dir_all(&pid_dir).unwrap();
+        let env_path = pid_dir.join("environ");
+        std::fs::write(&env_path, b"X=1\0").unwrap();
+        std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::write(pid_dir.join("status"), "Name:\tkwin_wayland\nPPid:\t1\n").unwrap();
+
+        let env_file = proc_dir.path().join("kwin.env");
+        std::fs::write(&env_file, "KWIN_WAYLAND_EMULATE_TABLET=1\n").unwrap();
+
+        let exec_start = vec![(
+            "/usr/bin/kwin_wayland".to_string(),
+            vec!["/usr/bin/kwin_wayland".to_string(), "--drm".to_string()],
+            false,
+            0,
+            0,
+            0,
+            0,
+            my_pid,
+            0,
+            0,
+        )];
+
+        // Case 1: service unit sets KWIN_WAYLAND_EMULATE_TABLET=1 via EnvironmentFile -> refused.
+        let bus = crate::test_sockets::PrivateBus::start("cul-kwin-sd1");
+        let unit = "/org/freedesktop/systemd1/unit/plasma_2dkwin_5fwayland_2eservice";
+        let _server = zbus::connection::Builder::address(bus.address())
+            .unwrap()
+            .name("org.kde.KWin")
+            .unwrap()
+            .name("org.freedesktop.systemd1")
+            .unwrap()
+            .serve_at(
+                "/org/freedesktop/systemd1",
+                FakeSystemdManager {
+                    unit_path: unit.to_string(),
+                    environment: vec!["DISPLAY=:0".to_string()],
+                },
+            )
+            .unwrap()
+            .serve_at(
+                unit,
+                FakeSystemdService {
+                    exec_start: exec_start.clone(),
+                    environment: vec!["KWIN_WAYLAND_EMULATE_TABLET=0".to_string()],
+                    environment_files: vec![(env_file.display().to_string(), false)],
+                    unset_environment: Vec::new(),
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client = zbus::connection::Builder::address(bus.address())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let blocked = kwin_emulate_tablet_blocker(&client, proc_dir.path()).await;
+        assert_eq!(blocked.as_deref(), Some(KWIN_EMULATE_TABLET_MESSAGE));
+
+        // Case 2: clean service unit with no KWIN_WAYLAND_EMULATE_TABLET -> allowed.
+        let bus2 = crate::test_sockets::PrivateBus::start("cul-kwin-sd2");
+        let _server2 = zbus::connection::Builder::address(bus2.address())
+            .unwrap()
+            .name("org.kde.KWin")
+            .unwrap()
+            .name("org.freedesktop.systemd1")
+            .unwrap()
+            .serve_at(
+                "/org/freedesktop/systemd1",
+                FakeSystemdManager {
+                    unit_path: unit.to_string(),
+                    environment: vec!["XDG_CURRENT_DESKTOP=KDE".to_string()],
+                },
+            )
+            .unwrap()
+            .serve_at(
+                unit,
+                FakeSystemdService {
+                    exec_start: exec_start.clone(),
+                    environment: Vec::new(),
+                    environment_files: Vec::new(),
+                    unset_environment: Vec::new(),
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client2 = zbus::connection::Builder::address(bus2.address())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        assert_eq!(
+            kwin_emulate_tablet_blocker(&client2, proc_dir.path()).await,
+            None
+        );
+
+        // Case 3: scope unit (not a .service) -> fails closed as unreadable.
+        let bus3 = crate::test_sockets::PrivateBus::start("cul-kwin-sd3");
+        let _server3 = zbus::connection::Builder::address(bus3.address())
+            .unwrap()
+            .name("org.kde.KWin")
+            .unwrap()
+            .name("org.freedesktop.systemd1")
+            .unwrap()
+            .serve_at(
+                "/org/freedesktop/systemd1",
+                FakeSystemdManager {
+                    unit_path: "/org/freedesktop/systemd1/unit/app_2dkonsole_2escope".to_string(),
+                    environment: vec!["XDG_CURRENT_DESKTOP=KDE".to_string()],
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client3 = zbus::connection::Builder::address(bus3.address())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        assert_eq!(
+            kwin_emulate_tablet_blocker(&client3, proc_dir.path())
+                .await
+                .as_deref(),
+            Some(KWIN_ENVIRON_UNREADABLE_MESSAGE)
+        );
     }
 }
