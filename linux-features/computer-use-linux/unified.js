@@ -68,40 +68,60 @@ function lexicalOwner(scopes, index) {
   return innermostScope(scopes, index);
 }
 
-function bindingAccessibleAt(source, callable, lexical, name, index) {
+function accessibleBindingAt(source, callable, lexical, name, index) {
   const escaped = escapeRegExp(name);
   const containsUse = scope => scope == null || (scope.start < index && scope.end > index);
+  const candidates = [];
+  const add = (kind, declaration, scope) => {
+    if (containsUse(scope)) candidates.push({
+      key: `${kind}:${declaration}`,
+      scopeStart: scope?.start ?? -1,
+    });
+  };
 
   for (const match of source.matchAll(new RegExp(`(?:async )?function ${escaped}\\(`, "gu"))) {
-    if (containsUse(lexicalOwner(lexical, match.index))) return true;
+    add("function", match.index, lexicalOwner(lexical, match.index));
   }
   for (const scope of callable) {
     if (!containsUse(scope)) continue;
     const parameters = scope.header.slice(scope.header.indexOf("(") + 1, scope.header.lastIndexOf(")"));
     if (new RegExp(`(?:^|[,({])\\s*${escaped}\\s*(?=[,)=}]|=)`, "u").test(parameters) ||
-        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(parameters)) return true;
+        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(parameters)) {
+      add("parameter", scope.start, scope);
+    }
   }
   for (const match of source.matchAll(/\b(?:let|const)\s+([^;]{1,2000});/gu)) {
     if (match.index >= index || !containsUse(lexicalOwner(lexical, match.index))) continue;
     const declaration = match[1];
     if (new RegExp(`(?:^|,)\\s*${escaped}\\s*(?==|,|$)`, "u").test(declaration) ||
-        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(declaration)) return true;
+        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(declaration)) {
+      add("lexical", match.index, lexicalOwner(lexical, match.index));
+    }
   }
   for (const match of source.matchAll(/\bvar\s+([^;]{1,2000});/gu)) {
     if (match.index >= index || !containsUse(innermostScope(callable, match.index))) continue;
     const declaration = match[1];
     if (new RegExp(`(?:^|,)\\s*${escaped}\\s*(?==|,|$)`, "u").test(declaration) ||
-        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(declaration)) return true;
+        new RegExp(`:\\s*${escaped}\\s*(?=[,}])`, "u").test(declaration)) {
+      add("var", match.index, innermostScope(callable, match.index));
+    }
   }
-  return false;
+  return candidates.sort((a, b) => b.scopeStart - a.scopeStart)[0] ?? null;
 }
 
-function requireAccessibleBindings(source, index, bindings) {
+function requireAccessibleBindings(source, index, bindings, semanticUses = {}) {
   const callable = callableScopes(source);
   const lexical = braceScopes(source);
   for (const [description, name] of Object.entries(bindings)) {
-    if (!bindingAccessibleAt(source, callable, lexical, name, index)) {
+    const binding = accessibleBindingAt(source, callable, lexical, name, index);
+    if (binding == null) {
       throw drift(`${description} binding ${name} is not accessible from startup owner`);
+    }
+    if (semanticUses[description] != null) {
+      const semanticBinding = accessibleBindingAt(source, callable, lexical, name, semanticUses[description]);
+      if (semanticBinding == null || semanticBinding.key !== binding.key) {
+        throw drift(`${description} binding ${name} does not resolve to the semantic declaration`);
+      }
     }
   }
 }
@@ -121,6 +141,11 @@ function startupPattern() {
 
 function validateStartupContract(source) {
   const startup = unique(source, startupPattern(), "startup verified-root publication");
+  const semanticLookup = unique(source, new RegExp(
+    `let (?<plugin>${ID})=${escapeRegExp(startup.groups.lookup)}\\(\\{` +
+    `marketplaceName:(?<argument>${ID})\\.marketplaceName,marketplaces:\\k<argument>\\.marketplaces,` +
+    `pluginName:${ID}\\.${ID}\\}\\);if\\(!\\k<plugin>\\?\\.plugin\\.installed\\)return!1;`, "gu"),
+  "semantic plugin lookup");
   requireAccessibleBindings(source, startup.index, {
     selection: startup.groups.selection,
     "plugin lookup": startup.groups.lookup,
@@ -129,7 +154,7 @@ function validateStartupContract(source) {
     "codex home": startup.groups.codexHome,
     "marketplace name": startup.groups.marketplaceName,
     marketplaces: startup.groups.marketplaces,
-  });
+  }, { "plugin lookup": semanticLookup.index });
 }
 
 function moduleBounds(source, index) {
@@ -254,7 +279,7 @@ function applyModule(source) {
     "codex home": invocation.groups.codexHome,
     "marketplace name": invocation.groups.marketplaceName,
     marketplaces: invocation.groups.marketplaces,
-  });
+  }, { "plugin lookup": root.index });
 
   const builderHeader = builder[0].slice(0, -3) + `,${ROOT_KEY}}){/*${MARKERS[0]}*/` +
     `if("linux"===process.platform&&${surfaces}.includes("computer")){${guard(ROOT_KEY)}}`;

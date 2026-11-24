@@ -156,6 +156,28 @@ test("startup injection rejects a plugin lookup scoped to a later block", () => 
   }
 });
 
+test("startup injection rejects an unrelated accessible lookup shadowed by the semantic lookup", () => {
+  const shadowedLookup = fixture
+    .replace(
+      'function lookup({marketplaces:e,pluginName:t}){return e.find(e=>e.plugin.name===t)}',
+      "function lookup(){return null}",
+    )
+    .replace(
+      "let x=await async function(e){let p=lookup",
+      "let x;{const lookup=({marketplaces:e,pluginName:t})=>e.find(e=>e.plugin.name===t);" +
+        "x=await async function(e){let p=lookup",
+    )
+    .replace(
+      "marketplaces:g});let C=true",
+      "marketplaces:g})};let C=true",
+    );
+  assert.doesNotThrow(() => new vm.Script(shadowedLookup));
+  let unchanged = shadowedLookup;
+  assert.throws(() => { unchanged = applyUnifiedComputerUsePatch(shadowedLookup); },
+    /plugin lookup binding lookup does not resolve to the semantic declaration/u);
+  assert.equal(unchanged, shadowedLookup);
+});
+
 const signedApp = process.env.CODEX_SIGNED_EXTRACTED_APP;
 test("signed unified owner patches idempotently with valid JavaScript", { skip: !signedApp }, () => {
   const directory = path.join(signedApp, ".vite", "build");
