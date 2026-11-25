@@ -4,8 +4,8 @@ const parameters = {
   list_apps: [],
   get_app_state: ['include_screenshot', 'verbose', 'max_nodes', 'max_depth', 'max_width', 'max_height', 'max_bytes', 'scale', 'format', 'quality'],
   screenshot: ['max_width', 'max_height', 'max_bytes', 'scale', 'format', 'quality'],
-  click: ['x', 'y', 'button', 'click_count', 'relative'],
-  scroll: ['x', 'y', 'direction', 'pages', 'relative'],
+  click: ['x', 'y', 'button', 'click_count', 'relative', 'delivery'],
+  scroll: ['x', 'y', 'direction', 'pages', 'relative', 'delivery'],
   press_key: ['key'],
   type_text: ['text'],
 };
@@ -26,6 +26,8 @@ function validateParameters(params) {
   integer('quality', 1, 95);
   if (params.scale !== undefined && (typeof params.scale !== 'number' || !Number.isFinite(params.scale) || params.scale <= 0 || params.scale > 1)) throw new Error('Invalid native scale parameter');
   if (params.format !== undefined && !['png', 'jpeg'].includes(params.format)) throw new Error('Invalid native format parameter');
+  // Pointer input asks only for background delivery; leaving it out is focused input.
+  if (params.delivery !== undefined && params.delivery !== 'background') throw new Error('Invalid native delivery parameter');
 }
 
 export function validateNativeRequest(input) {

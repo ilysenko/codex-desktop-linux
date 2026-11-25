@@ -21,7 +21,7 @@ desktops, dependencies, permissions, and troubleshooting.
 
 ## Supported operations
 
-The embedded backend tracks standalone computer-use-linux v0.7.59. GNOME
+The embedded backend tracks standalone computer-use-linux v0.7.62. GNOME
 scaled pointer sessions use portal EIS regions when available and retain the
 legacy route when negotiation fails. Selkies containers can set `PIXELFLUX_CU`
 and `PIXELFLUX_CU_TOKEN` to use their loopback computer-use API for capture and
@@ -46,6 +46,35 @@ not be passed directly to input methods because display scaling can differ.
 Accessibility observations retain `window_context` for geometry inspection.
 Element-index actions, drag, rich-text paste, selection editing, and secondary
 accessibility actions are not exposed by the in-app API.
+
+Click and scroll ask the backend for background delivery
+(`delivery: "background"` with `relative: true`), as upstream Codex does on
+other platforms, so they do not take the user's pointer:
+
+- GNOME Wayland and KDE Plasma Wayland (KWin 6.3 and later): a virtual pen
+  clicks and a virtual touchscreen scrolls inside the target window. The point
+  must be on that window with no other window above it, and
+  `getScreenshot()` brings the window forward. Apps without tablet or touch
+  support can ignore the input while the call still reports success.
+- X11 and sway 1.10 and later: the agent seat's own pointer clicks and scrolls
+  on the target's top-level window.
+- Elsewhere (no route, or a route that is not set up, such as GNOME without the
+  window-targeting extension): the backend's one-time notice arrives as an
+  error that names the reason, and nothing is sent. The adapter never replays
+  it. Repeating the same call, and every later click or scroll in that backend
+  session that has no route, goes through normal focused input, which raises
+  the window and moves the user's pointer.
+
+A background route can also refuse a call outright, with nothing sent, on
+every attempt: a covered point, a locked screen, KWin showing the desktop or a
+full-screen effect, or a pan that would leave the
+window. The error
+then says to repeat the call with `background: false`
+(`click([x, y], {background: false})`, `scroll([x, y], direction, pages,
+{background: false})`), which sends it through normal focused input; use the
+same option when a background click had no effect. Successful results carry
+the backend's `background` report (`used`, and the `route` when one
+delivered the input).
 
 `getApp()` emits one compact accessibility observation. Select a window through
 `getApp({windowId: window.id})` after

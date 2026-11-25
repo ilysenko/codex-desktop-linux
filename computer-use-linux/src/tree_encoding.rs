@@ -11,7 +11,7 @@
 use std::ops::{Deref, DerefMut};
 
 use schemars::JsonSchema;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::atspi_tree::{
     AccessibilityNode, AccessibilityTextSelection, AccessibilityValue, Bounds,
@@ -21,8 +21,13 @@ use crate::atspi_tree::{
 pub(crate) const OBJECT_REPLACEMENT: char = '\u{fffc}';
 
 /// How much of each node a result carries.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum NodeDetail {
+    /// index, role, name, text that differs from the name, a value, and only
+    /// the states that tell nodes apart (focused, checked, expanded, ...).
+    /// The smallest encoding; element_index actions work on it unchanged.
+    Minimal,
     /// Empty and default fields left out; actions by name.
     #[default]
     Compact,
@@ -151,11 +156,83 @@ impl From<&AccessibilityNode> for CompactNode {
     }
 }
 
-/// A node as either encoding, for the output schema.
+/// States that hold on nearly every node a tree reports. The minimal encoding
+/// leaves them out and keeps the ones that tell nodes apart.
+const ROUTINE_STATES: &[&str] = &[
+    "enabled",
+    "sensitive",
+    "showing",
+    "visible",
+    "focusable",
+    "selectable",
+    "selectable-text",
+    "single-line",
+    "multi-line",
+    "supports-autocompletion",
+    "opaque",
+    "horizontal",
+    "vertical",
+];
+
+/// One node in the minimal encoding: enough to choose an element and act on
+/// it by element_index, and to read what it says.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct MinimalNode {
+    /// Pass as element_index to click, perform_action, set_value and scroll.
+    pub index: u32,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The node's text, when it says more than its name. U+FFFC child
+    /// placeholders are removed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Current value of a slider, spin button or progress bar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// States other than the routine ones (enabled, visible, showing, ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<String>,
+}
+
+impl From<&AccessibilityNode> for MinimalNode {
+    fn from(node: &AccessibilityNode) -> Self {
+        let name = non_empty(&node.name);
+        let text = node
+            .text
+            .as_ref()
+            .and_then(|text| text.content.as_deref())
+            .map(|content| {
+                content
+                    .chars()
+                    .filter(|&ch| ch != OBJECT_REPLACEMENT)
+                    .collect::<String>()
+                    .trim()
+                    .to_string()
+            })
+            .filter(|text| !text.is_empty() && Some(text) != name.as_ref());
+        Self {
+            index: node.index,
+            role: node.role.clone(),
+            name,
+            text,
+            value: node.value.as_ref().map(|value| value.current),
+            states: node
+                .states
+                .iter()
+                .filter(|state| !ROUTINE_STATES.contains(&state.as_str()))
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
+/// A node as any encoding, for the output schema.
 #[derive(JsonSchema)]
 #[serde(untagged)]
 #[allow(dead_code)]
 pub(crate) enum WireNode {
+    Minimal(MinimalNode),
     Compact(CompactNode),
     Full(AccessibilityNode),
 }
@@ -167,6 +244,7 @@ pub(crate) fn serialize_node<S: Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     match detail {
+        NodeDetail::Minimal => MinimalNode::from(node).serialize(serializer),
         NodeDetail::Compact => CompactNode::from(node).serialize(serializer),
         NodeDetail::Full => node.serialize(serializer),
     }
@@ -304,6 +382,98 @@ mod tests {
             detail: NodeDetail::Compact,
         })
         .unwrap()
+    }
+
+    fn minimal_json(node: &AccessibilityNode) -> serde_json::Value {
+        serde_json::to_value(EncodedNode {
+            node,
+            detail: NodeDetail::Minimal,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn minimal_nodes_keep_identity_text_and_distinguishing_states() {
+        // A Chromium container: placeholder text and routine states only.
+        assert_eq!(
+            minimal_json(&chromium_section()),
+            serde_json::json!({"index": 4, "role": "section"})
+        );
+
+        let mut entry = chromium_section();
+        entry.role = "entry".to_string();
+        entry.name = Some("Search for anything".to_string());
+        entry.states = vec![
+            "enabled".into(),
+            "focusable".into(),
+            "focused".into(),
+            "editable".into(),
+            "visible".into(),
+            "single-line".into(),
+        ];
+        entry.text = Some(AccessibilityText {
+            character_count: 19,
+            caret_offset: Some(19),
+            content: Some("handmade biscuits \u{fffc}".to_string()),
+            truncated: false,
+            selections: Vec::new(),
+        });
+        assert_eq!(
+            minimal_json(&entry),
+            serde_json::json!({
+                "index": 4,
+                "role": "entry",
+                "name": "Search for anything",
+                "text": "handmade biscuits",
+                "states": ["focused", "editable"],
+            })
+        );
+    }
+
+    #[test]
+    fn minimal_text_that_repeats_the_name_is_left_out() {
+        let mut button = chromium_section();
+        button.role = "push button".to_string();
+        button.name = Some("Search".to_string());
+        button.text = Some(AccessibilityText {
+            character_count: 6,
+            caret_offset: None,
+            content: Some("Search".to_string()),
+            truncated: false,
+            selections: Vec::new(),
+        });
+        let json = minimal_json(&button);
+        assert_eq!(json["name"], "Search");
+        assert!(json.get("text").is_none());
+    }
+
+    #[test]
+    fn minimal_nodes_report_a_value() {
+        let mut slider = chromium_section();
+        slider.role = "slider".to_string();
+        slider.value = Some(AccessibilityValue {
+            current: 40.0,
+            minimum: 0.0,
+            maximum: 100.0,
+            minimum_increment: 1.0,
+            text: None,
+        });
+        assert_eq!(minimal_json(&slider)["value"], 40.0);
+    }
+
+    #[test]
+    fn tree_detail_parses_lowercase_names() {
+        for (name, detail) in [
+            ("minimal", NodeDetail::Minimal),
+            ("compact", NodeDetail::Compact),
+            ("full", NodeDetail::Full),
+        ] {
+            assert_eq!(
+                serde_json::from_value::<NodeDetail>(serde_json::json!(name)).unwrap(),
+                detail
+            );
+        }
+        assert!(serde_json::from_value::<NodeDetail>(serde_json::json!("tiny")).is_err());
     }
 
     #[test]
