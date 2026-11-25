@@ -4,211 +4,190 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const url = require("node:url");
 const vm = require("node:vm");
+const { URL, pathToFileURL } = require("node:url");
 const { findMainProcessChunks } = require("../../scripts/patches/lib/assets.js");
 const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 const { applyUnifiedComputerUsePatch } = require("./unified.js");
 
-const IDENT = "[A-Za-z_$][\\w$]*";
+const ID = "[A-Za-z_$][\\w$]*";
 
-function only(source, pattern) {
+function extractBuilder(source) {
+  const matches = [...source.matchAll(new RegExp(
+    `function ${ID}\\(\\{browserBackends:[\\s\\S]{0,500}?,codexLinuxCuaPluginRoot\\}\\)` +
+    `\\{/\\*codexLinuxUnifiedCuaBuilder\\*/`, "gu"))];
+  assert.equal(matches.length, 1, "Expected one patched native config builder");
+  const open = matches[0].index + matches[0][0].lastIndexOf("{/*");
+  const close = findMatchingBrace(source, open);
+  assert.notEqual(close, -1, "Expected a complete patched native config builder");
+  return source.slice(matches[0].index, close + 1);
+}
+
+function semanticMatch(source, pattern, description) {
   const matches = [...source.matchAll(pattern)];
-  assert.equal(matches.length, 1, `Expected one official contract: ${pattern}`);
-  return matches[0];
+  assert.equal(matches.length, 1, `Expected one ${description}; found ${matches.length}`);
+  return matches[0].groups;
 }
 
-function oneAlias(source, pattern) {
-  const aliases = new Set([...source.matchAll(pattern)].map(match => match[1]));
-  assert.equal(aliases.size, 1, `Expected one official module alias: ${pattern}`);
-  return [...aliases][0];
+function deriveBuilderBindings(builderSource) {
+  const header = semanticMatch(builderSource, new RegExp(
+    `function ${ID}\\(\\{browserBackends:(?<backends>${ID}),[\\s\\S]{0,500}?` +
+    `surfaces:${ID},nodeRepl:(?<nodeRepl>${ID}),[\\s\\S]{0,200}?codexLinuxCuaPluginRoot\\}\\)` , "gu"),
+  "patched builder parameter contract");
+  const service = semanticMatch(builderSource, new RegExp(
+    `(?<services>${ID})\\.sky="linux"===process\\.platform\\?require\\("node:path"\\)\\.join\\(` +
+    `codexLinuxCuaPluginRoot,"scripts","native-service\\.mjs"\\):"@oai/sky/service"`, "gu"),
+  "Linux native service relationship");
+  const allowlist = semanticMatch(builderSource, new RegExp(
+    `\\[(?<binding>${ID})\\]:\\[${escapeRegExp(header.nodeRepl)}\\?\\.env\\[\\k<binding>\\],${ID},` +
+    `"CUA_REPL_CONFIRMATION_POLICY_CONFIG"\\]\\.filter\\(Boolean\\)\\.join\\(","\\)`, "gu"),
+  "untrusted environment allowlist relationship");
+  const trusted = semanticMatch(builderSource, new RegExp(
+    `\\[(?<object>${ID})\\.(?<property>${ID})\\]:JSON\\.stringify\\(${escapeRegExp(service.services)}\\)`, "gu"),
+  "trusted services relationship");
+  const backends = semanticMatch(builderSource, new RegExp(
+    `\\[(?<object>${ID})\\.(?<property>${ID})\\]:${escapeRegExp(header.backends)}\\.join\\(","\\)`, "gu"),
+  "browser backends relationship");
+  const modules = semanticMatch(builderSource, new RegExp(
+    `let (?<root>${ID})=(?<path>${ID})\\(\\)\\.join\\(${escapeRegExp(header.nodeRepl)}\\.env` +
+    `\\[(?<object>${ID})\\.(?<property>${ID})\\],"@oai/cua-repl"\\)`, "gu"),
+  "Cua Repl module path relationship");
+  const nodePath = semanticMatch(builderSource, new RegExp(
+    `command:${escapeRegExp(header.nodeRepl)}\\.env\\[(?<object>${ID})\\.(?<property>${ID})\\],` +
+    `args:\\[${escapeRegExp(modules.path)}\\(\\)\\.join\\(${escapeRegExp(modules.root)},"bin/cua-repl\\.mjs"\\)\\]`, "gu"),
+  "ENOENT fallback command relationship");
+  const file = semanticMatch(builderSource, new RegExp(
+    `NODE_REPL_JS_BANNER:${ID}\\.NODE_REPL_JS_BANNER\\?\\?\\(0,(?<object>${ID})\\.(?<property>${ID})\\)` +
+    `\\(new URL\\("banner\\.js",${ID}\\),"utf8"\\)`, "gu"),
+  "packaged instruction reader relationship");
+  const url = semanticMatch(builderSource, new RegExp(
+    `instructions_directory:\\(0,(?<object>${ID})\\.(?<property>${ID})\\)` +
+    `\\(${escapeRegExp(modules.path)}\\(\\)\\.join\\(${escapeRegExp(modules.root)},"instructions"\\)` +
+    `\\+${escapeRegExp(modules.path)}\\(\\)\\.sep\\)`, "gu"),
+  "instruction URL relationship");
+  const platforms = semanticMatch(builderSource, new RegExp(
+    `(?<value>${ID})=(?<object>${ID})\\[(?<platform>${ID})\\];if\\(!\\k<value>\\)throw Error` +
+    `\\(\\x60unsupported cua_repl platform=\\$\\{\\k<platform>\\}\\x60\\)`, "gu"),
+  "instruction platform relationship");
+  return { allowlist: allowlist.binding, trusted, backends, modules, nodePath, file, url, platforms };
 }
 
-function owner(source, index) {
-  let found;
-  for (const match of source.matchAll(/(?:async )?function [A-Za-z_$][\w$]*\([^)]*\)\{/g)) {
-    if (match.index > index) break;
-    const end = findMatchingBrace(source, match.index + match[0].length - 1) + 1;
-    if (end > index) found = source.slice(match.index, end);
-  }
-  assert(found, "Expected a function owning the official contract");
-  return found;
+function installObjectProperty(context, binding, value, description) {
+  if (!Object.hasOwn(context, binding.object)) context[binding.object] = {};
+  assert.equal(typeof context[binding.object], "object", `${description} owner must be an object`);
+  assert.equal(Object.hasOwn(context[binding.object], binding.property), false,
+    `${description} property must be unique`);
+  context[binding.object][binding.property] = value;
 }
 
-// The rspack main process spreads code over CommonJS chunks; exactly one owns
-// the unified Computer Use setup.
-function signedChunks() {
-  const mainProcess = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
-  assert(mainProcess, "Expected the official main-process chunks");
-  return mainProcess.chunks.map(name => ({
-    name, source: fs.readFileSync(path.join(mainProcess.buildDir, name), "utf8"),
-  }));
-}
-
-function trustedServicesConstant(chunks, exportName) {
-  // Resolve the cross-chunk constant export used as the trusted-services key.
-  const entry = only(chunks.find(({ name }) => name === "early-bootstrap.js").source,
-    new RegExp(`[,{]${escapeRegExp(exportName)}:\\(\\)=>${IDENT}\\.(${IDENT})[,}]`, "g"));
-  const values = chunks.flatMap(({ source }) => [...source.matchAll(
-    new RegExp(`[,{]${escapeRegExp(entry[1])}:"(NODE_REPL_[A-Z_]+)"[,}]`, "g"))]);
-  assert.equal(values.length, 1);
-  return values[0][1];
-}
-
-// Run the actual packaged helper and per-thread override function with inert
-// external dependencies. No Electron, app-server, profile, or network is used.
-function resumeHarness(source, trustedServicesKey) {
-  const builder = only(source, new RegExp(
-    `function (${IDENT})\\(\\{browserBackends:(${IDENT}),deferTools:${IDENT},` +
-    `(?:omitCuaConfirmationPolicyBySku:${IDENT},)?surfaces:${IDENT},` +
-    `nodeRepl:${IDENT},accessBootstrapPath:(${IDENT})\\}`,
-    "g",
-  ));
-  const call = only(source, new RegExp(
-    `(${IDENT})\\[\`mcp_servers\\.\\$\\{(${IDENT})\\.(${IDENT})\\}\`\\]=${escapeRegExp(builder[1])}\\(\\{browserBackends:(${IDENT})\\.browserBackends,`, "g"));
-  const buildSource = owner(source, builder.index);
-  const resumeSource = owner(source, call.index);
-  const selection = call[4];
-  const local = only(resumeSource, new RegExp(
-    `(${IDENT})="local"===(${IDENT})\\.hostConfig\\.kind`,
-    "g",
-  ));
-  const cache = only(resumeSource, new RegExp(
-    `(${IDENT})=${local[1]}\\?await (${IDENT})\\(${local[2]},\\{waitForReconcile:!1\\}\\):null`,
-    "g",
-  ));
-  const features = only(resumeSource, new RegExp(
-    `(${IDENT})=${local[1]}\\?(${IDENT})\\(\\):${IDENT}\\.desktopFeatureAvailability`,
-    "g",
-  ));
-  const posture = only(resumeSource, new RegExp(
-    `(${IDENT})=${features[1]}\\.browserUseTinysky\\?${cache[1]}:null`,
-    "g",
-  ));
-  const select = only(resumeSource, new RegExp(
-    `${posture[1]}\\?\\.selection\\?\\?await (${IDENT})\\(`,
-    "g",
-  ));
-  const config = only(resumeSource, new RegExp(
-    `let ${IDENT}=await (${IDENT})\\(\\{\\.\\.\\.(${IDENT}),selection:${selection},` +
-    `verifyBrowserService:${local[1]}&&null==${cache[1]}\\}\\)`,
-    "g",
-  ));
-  const principal = only(resumeSource, new RegExp(
-    `(${IDENT})=${local[1]}\\?await ${local[2]}\\.getAuthenticatedPrincipal\\(\\)\\.catch\\(\\(\\)=>null\\):null`,
-    "g",
-  ));
-  const identity = only(resumeSource, new RegExp(`=${local[1]}\\?(${IDENT})\\(${principal[1]}\\)\\?\\?(${IDENT}):null`, "g"));
-  const env = only(resumeSource, new RegExp(
-    `Object\\.assign\\(${IDENT}\\.env,\\{\\[(${IDENT})\\.${IDENT}\\]:${IDENT},\\[\\1\\.${IDENT}\\]:(${IDENT})\\(\\)\\.env\\[(${IDENT})\\]\\?\\?"",`, "g"));
-  const fallback = only(resumeSource, new RegExp(`:\\{\\.\\.\\.${IDENT},\\.\\.\\.(${IDENT})\\}\\}$`, "g"));
-  const cleanup = only(resumeSource, new RegExp(`\\)\\),(${IDENT})\\(${IDENT}\\["mcp_servers\\.node_repl"\\],${selection}\\.cuaReplSurfaces\\)`, "g"));
-  const packageRoot = only(buildSource, new RegExp(
-    `(${IDENT})\\(\\)\\.join\\((${IDENT})\\.env\\[(${IDENT})\\.(${IDENT})\\],"@oai/cua-repl"\\)`, "g"));
-  const services = only(buildSource, new RegExp(`\\[(${IDENT})\\.(${IDENT})\\]:JSON\\.stringify\\(${IDENT}\\)`, "g"));
-  const backends = only(buildSource, new RegExp(`\\[(${IDENT})\\.(${IDENT})\\]:${builder[2]}\\.join\\(","\\)`, "g"));
-  const executable = only(buildSource, new RegExp(`command:${packageRoot[2]}\\.env\\[${packageRoot[3]}\\.(${IDENT})\\]`, "g"));
-  const files = [null, oneAlias(buildSource, new RegExp(`\\(0,(${IDENT})\\.readFileSync\\)\\(new URL`, "g"))];
-  const fileUrls = [null, oneAlias(buildSource, new RegExp(`\\(0,(${IDENT})\\.pathToFileURL\\)`, "g"))];
-  const platforms = only(buildSource, new RegExp(`(${IDENT})\\[${IDENT}\\];if\\(!${IDENT}\\)throw Error\\(\`unsupported cua_repl platform`, "g"));
-  assert.equal(services[1], packageRoot[3]);
-  assert.equal(services[1], call[2]);
-
-  let cached;
-  let instructionsAvailable = true;
-  const constants = new Proxy({}, {
-    get: (_, key) => key === services[2] ? trustedServicesKey : String(key),
-  });
-  const globals = {
-    [packageRoot[1]]: () => path,
-    [packageRoot[3]]: constants,
-    [backends[1]]: constants,
-    [env[1]]: constants,
-    [files[1]]: {
-      readFileSync: file => {
-        // The packaged fallback checks `instanceof Error` in its own realm.
-        if (!instructionsAvailable) throw Object.assign(new (vm.runInContext("Error", globals))(`missing ${file}`), { code: "ENOENT" });
-        return file.pathname.endsWith("banner.js") ? 'await import("@oai/cua/tinyskyAlt");' : "instructions";
-      },
-    },
-    [fileUrls[1]]: { pathToFileURL: url.pathToFileURL },
-    [platforms[1]]: { linux: "linux" },
-    [cache[2]]: async () => cached,
-    [features[2]]: () => ({ browserUseTinysky: true }),
-    [select[1]]: () => { throw Error("Unexpected fallback instead of cached selection"); },
-    [config[1]]: async () => ({
-      "mcp_servers.node_repl": {
-        command: "/node", args: [], env: { [packageRoot[4]]: "/bundled", [executable[1]]: "/node" },
-      },
-    }),
-    [identity[1]]: () => "test-identity",
-    [identity[2]]: "api-key",
-    [env[2]]: () => ({ env: { CODEX_APP_SERVER_USE_LOCAL_DAEMON: "1" } }),
-    [env[3]]: "browserIdentity",
-    [fallback[1]]: { "mcp_servers.cua_repl": { enabled: false } },
-    [cleanup[1]]: () => {},
-    r8: "NODE_REPL_ENV_DELETE",
-    URL,
-    require: name => {
-      assert.equal(name, "node:path");
+function executeBuilder(builderSource, instructionsAvailable) {
+  const readFileSync = location => {
+    if (!instructionsAvailable) {
+      const error = new Error("instructions unavailable");
+      error.code = "ENOENT";
+      throw error;
+    }
+    return `signed instruction ${path.basename(String(location))}`;
+  };
+  const context = {
+    require(specifier) {
+      assert.equal(specifier, "node:path");
       return path;
     },
-    process: { platform: "linux", execPath: "/electron", env: { CODEX_LINUX_CUA_HOST_SOCKET: "/runtime/cua.sock" } },
+    process: {
+      platform: "linux",
+      execPath: "/upstream/ChatGPT",
+      env: { CODEX_LINUX_CUA_HOST_SOCKET: "/run/codex-desktop/cua.sock" },
+    },
+    Error,
+    URL,
   };
-  // Function declarations need a shared lexical scope for the builder call.
-  vm.createContext(globals);
-  const sharedResume = vm.runInContext(`${buildSource}\n(${resumeSource})`, globals);
-  return async (selectionValue, { enabled = true, instructions = true } = {}) => {
-    cached = { selection: selectionValue, cuaReplEnabled: enabled };
-    instructionsAvailable = instructions;
-    const result = await sharedResume({
-      appServerConnection: {
-        hostConfig: { kind: "local" },
-        getAuthenticatedPrincipal: async () => ({}),
-      },
-    });
-    return result[`mcp_servers.${call[3]}`];
-  };
+  const bindings = deriveBuilderBindings(builderSource);
+  assert.equal(Object.hasOwn(context, bindings.allowlist), false,
+    "allowlist binding must be unique");
+  context[bindings.allowlist] = "NODE_REPL_UNTRUSTED_ENV_ALLOWLIST";
+  installObjectProperty(context, bindings.trusted, "NODE_REPL_TRUSTED_SERVICES", "trusted services");
+  installObjectProperty(context, bindings.backends, "CUA_REPL_BROWSER_BACKENDS", "browser backends");
+  installObjectProperty(context, bindings.modules, "NODE_REPL_NODE_MODULES_PATH", "module path");
+  installObjectProperty(context, bindings.nodePath, "NODE_REPL_NODE_PATH", "fallback node path");
+  installObjectProperty(context, bindings.file, readFileSync, "instruction reader");
+  installObjectProperty(context, bindings.url, pathToFileURL, "instruction URL");
+  assert.equal(Object.hasOwn(context, bindings.modules.path), false, "path binding must be unique");
+  context[bindings.modules.path] = () => path;
+  assert.equal(Object.hasOwn(context, bindings.platforms.object), false,
+    "platform binding must be unique");
+  context[bindings.platforms.object] = { linux: "linux" };
+  return new vm.Script(`(${builderSource})`).runInNewContext(context);
 }
 
-test("official per-thread CUA overrides carry the trusted root when resuming chats", {
+function runResumeBranch(builderSource, instructionsAvailable) {
+  const build = executeBuilder(builderSource, instructionsAvailable);
+  return build({
+    browserBackends: [],
+    deferTools: false,
+    confirmationPolicyConfig: "{}",
+    omitCuaConfirmationPolicyBySku: false,
+    surfaces: ["computer"],
+    nodeRepl: {
+      command: "/runtime/node-repl",
+      args: ["/runtime/node-repl.mjs"],
+      env: {
+        NODE_REPL_NODE_MODULES_PATH: "/runtime/node_modules",
+        NODE_REPL_NODE_PATH: "/runtime/node",
+      },
+    },
+    codexLinuxCuaPluginRoot: "/verified/unified-computer-use",
+  });
+}
+
+test("official resume executes packaged-instructions and missing-instructions branches", {
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
-}, async () => {
-  const chunks = signedChunks();
-  const owners = chunks.filter(({ source }) => source.includes("cuaReplSurfaces:"));
-  assert.equal(owners.length, 1, "Expected one chunk owning unified Computer Use");
-  const source = owners[0].source;
-  const patched = applyUnifiedComputerUsePatch(source);
-  assert.notEqual(patched, source);
-  assert.equal(applyUnifiedComputerUsePatch(patched), patched);
+}, () => {
+  const main = findMainProcessChunks(process.env.CODEX_SIGNED_EXTRACTED_APP);
+  assert(main);
+  const owners = main.chunks.map(name =>
+    fs.readFileSync(path.join(main.buildDir, name), "utf8")
+  ).filter(source => source.includes("cuaReplSurfaces:"));
+  assert.equal(owners.length, 1);
+  const patched = applyUnifiedComputerUsePatch(owners[0]);
   assert.doesNotThrow(() => new vm.Script(patched));
-  const builderStart = patched.search(new RegExp(
-    `function ${IDENT}\\(\\{browserBackends:${IDENT},deferTools:${IDENT},` +
-    `(?:omitCuaConfirmationPolicyBySku:${IDENT},)?surfaces:`,
-  ));
-  const builderServices = only(owner(patched, builderStart),
-    new RegExp(`\\[${IDENT}\\.(${IDENT})\\]:JSON\\.stringify\\(${IDENT}\\)`, "g"));
-  const trustedServicesKey = trustedServicesConstant(chunks, builderServices[1]);
-  assert.equal(trustedServicesKey, "NODE_REPL_TRUSTED_SERVICES");
-  const resume = resumeHarness(patched, trustedServicesKey);
-  for (const instructions of [true, false]) {
-    for (const surfaces of [["computer"], ["browser"], ["browser", "computer"]]) {
-      const cua = await resume({
-        browserBackends: ["iab"], desktopFeatureAvailability: { deferCuaTools: false },
-        cuaReplSurfaces: surfaces, codexLinuxCuaPluginRoot: "/trusted-plugin",
-      }, { instructions });
-      assert.equal(cua.enabled, true);
-      assert.equal(cua.env.CUA_REPL_ENABLED_SURFACES, surfaces.join(","));
-      assert.equal(cua.env.CODEX_LINUX_CUA_HOST_SOCKET, "/runtime/cua.sock");
-      assert.equal(cua.env.NODE_REPL_JS_BANNER,
-        'await import("@oai/cua/tinyskyAlt");await(await import("/trusted-plugin/scripts/native-client.mjs")).installLinuxComputerUse(cua);');
-      assert.equal(JSON.parse(cua.env.NODE_REPL_TRUSTED_SERVICES).sky,
-        surfaces.includes("computer") ? "/trusted-plugin/scripts/native-service.mjs" : undefined);
-      // Both the packaged instructions path and its ENOENT fallback keep the bridge.
-      assert.equal(cua.env.NODE_REPL_TOOL_OVERRIDES != null, instructions);
-    }
+  assert.match(patched, /codexLinuxCuaContext:[A-Za-z_$][\w$]*/u);
+  assert.match(patched, /codexLinuxUnifiedCuaRoot/u);
+  assert.match(patched,
+    /codexLinuxCuaPluginRoot:[A-Za-z_$][\w$]*\.codexLinuxCuaPluginRoot/u);
+  assert.match(patched,
+    /codexLinuxUnifiedCuaThread[\s\S]*?NODE_REPL_JS_BANNER=/u);
+  assert.equal(
+    patched.split('require("node:path").join(codexLinuxCuaPluginRoot,"scripts","native-service.mjs")').length - 1,
+    2,
+  );
+  assert.equal(applyUnifiedComputerUsePatch(patched), patched);
+
+  const builder = extractBuilder(patched);
+  assert.throws(() => deriveBuilderBindings(builder.replace("native-service.mjs", "changed-service.mjs")),
+    /Expected one Linux native service relationship; found 0/u);
+  assert.throws(() => deriveBuilderBindings(builder + builder),
+    /Expected one patched builder parameter contract; found 2/u);
+  const packaged = runResumeBranch(builder, true);
+  const fallback = runResumeBranch(builder, false);
+  for (const result of [packaged, fallback]) {
+    assert.deepEqual(JSON.parse(result.env.NODE_REPL_TRUSTED_SERVICES), {
+      sky: "/verified/unified-computer-use/scripts/native-service.mjs",
+    });
+    assert.match(result.env.NODE_REPL_JS_BANNER,
+      /\/verified\/unified-computer-use\/scripts\/native-client\.mjs/u);
+    assert.match(result.env.NODE_REPL_JS_BANNER, /installLinuxComputerUse\(cua\)/u);
+    assert.equal(result.env.CODEX_LINUX_CUA_HOST_SOCKET, "/run/codex-desktop/cua.sock");
   }
-  await assert.rejects(resume({
-    browserBackends: ["iab"], desktopFeatureAvailability: { deferCuaTools: false }, cuaReplSurfaces: ["computer"],
-  }), /Linux Computer Use trusted plugin root is unavailable/);
+
+  assert.equal(packaged.command, "/runtime/node-repl");
+  assert.deepEqual(Array.from(packaged.args), ["/runtime/node-repl.mjs"]);
+  const overrides = JSON.parse(packaged.env.NODE_REPL_TOOL_OVERRIDES);
+  assert.match(overrides.server_instructions, /signed instruction server\.md/u);
+  assert.match(overrides.tools.js.description, /signed instruction description\.md/u);
+
+  assert.equal(fallback.command, "/runtime/node");
+  assert.deepEqual(Array.from(fallback.args), ["/runtime/node_modules/@oai/cua-repl/bin/cua-repl.mjs"]);
+  assert.equal(fallback.env.CUA_REPL_NODE_REPL_PATH, "/runtime/node-repl");
+  assert.equal(Object.hasOwn(fallback.env, "NODE_REPL_TOOL_OVERRIDES"), false);
 });

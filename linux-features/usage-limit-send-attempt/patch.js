@@ -2,98 +2,57 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { escapeRegExp } = require("../../scripts/patches/lib/minified-js.js");
 
 const IDENT = "[A-Za-z_$][\\w$]*";
 const MARKER = "codexLinuxUsageLimitSendAttempt";
-const COMPOSER = new RegExp(
-  `let\\{agentMode:${IDENT},permissionProfileId:${IDENT},shouldSendPermissionOverrides:${IDENT}\\}`,
-);
-const LOCAL_USAGE_GATE = new RegExp(
-  `(?<flag>${IDENT})=\\(0,${IDENT}\\.${IDENT}\\)\\("local"===${IDENT}&&${IDENT}\\.${IDENT}\\)`,
-  "g",
-);
-const CURRENT_LOCAL_USAGE_REASON = new RegExp(
-  `(?<flag>${IDENT})=\\(0,${IDENT}\\.${IDENT}\\)\\(${IDENT}\\.${IDENT},${IDENT}\\)(?=,${IDENT}=\\(0,)`,
-  "g",
+const CURRENT_REASON_SELECTOR = new RegExp(
+  `(?<selector>${IDENT})=\\(0,${IDENT}\\.${IDENT}\\)\\(${IDENT}\\.${IDENT},` +
+    `\\((?<host>${IDENT}),\\{get:(?<get>${IDENT})\\}\\)=>` +
+    `\\[\\k<get>\\(${IDENT}\\.${IDENT},\\k<host>\\)&&"reserve-limit",` +
+    `"local"===\\k<host>&&\\k<get>\\((?<usage>${IDENT})\\)&&"usage-limit"\\]` +
+    `\\.filter\\(Boolean\\)\\.join\\(","\\)\\)`,
+  "gu",
 );
 
-function usageLimitReasonContract(source, gate) {
-  const after = source.slice(gate.index + gate[0].length, gate.index + gate[0].length + 20000);
-  const flag = escapeRegExp(gate.groups.flag);
-  const reason = [...after.matchAll(new RegExp(
-    `(?<name>${IDENT})=${flag}&&"usage-limit";`,
-    "g",
-  ))];
-  if (reason.length !== 1) return false;
-  const reasonName = escapeRegExp(reason[0].groups.name);
-  const reasons = [...after.matchAll(new RegExp(
-    `(?<name>${IDENT})=\\[[^\\]]{0,1500}(?:^|,)${reasonName}\\]\\.filter\\(Boolean\\)`,
-    "g",
-  ))];
-  if (reasons.length !== 1) return false;
-  const reasonsName = escapeRegExp(reasons[0].groups.name);
-  const joined = [...after.matchAll(new RegExp(
-    `let (?<name>${IDENT})=${reasonsName}\\.join\\(","\\);`,
-    "g",
-  ))];
-  return joined.length === 1 &&
-    after.split(`submitDisabledReasons:${joined[0].groups.name}`).length === 2;
+function pristineContracts(source) {
+  CURRENT_REASON_SELECTOR.lastIndex = 0;
+  return [...source.matchAll(CURRENT_REASON_SELECTOR)];
 }
 
 function applyUsageLimitSendAttemptPatch(source) {
-  if (source.includes(MARKER)) return source;
-
-  // Match the local Codex composer and the complete semantic path from the
-  // account usage gate through its disabled-reason list and rendered prop.
-  const rawGates = [...source.matchAll(LOCAL_USAGE_GATE)];
-  if (rawGates.length === 0) {
-    const current = [...source.matchAll(CURRENT_LOCAL_USAGE_REASON)].filter((gate) => {
-      const after = source.slice(gate.index + gate[0].length, gate.index + gate[0].length + 25000);
-      return COMPOSER.test(after) &&
-        new RegExp(`=\\[[^\\]]{0,1500},${escapeRegExp(gate.groups.flag)}\\]\\.filter\\(Boolean\\)`).test(after) &&
-        after.includes("submitDisabledReasons:");
-    });
-    if (current.length !== 1) return source;
-    const gate = current[0];
-    return source.slice(0, gate.index) + `${gate.groups.flag}=!1/*${MARKER}*/` +
-      source.slice(gate.index + gate[0].length);
-  }
-  if (rawGates.length !== 1) return source;
-  const gates = rawGates.filter((gate) => {
-    const before = source.slice(Math.max(0, gate.index - 1200), gate.index);
-    if (!COMPOSER.test(before)) return false;
-
-    return usageLimitReasonContract(source, gate);
-  });
-  if (gates.length !== 1) return source;
-
-  const gate = gates[0];
-  return source.slice(0, gate.index) + `${gate.groups.flag}=!1/*${MARKER}*/` +
-    source.slice(gate.index + gate[0].length);
+  const markerCount = source.split(MARKER).length - 1;
+  const contracts = pristineContracts(source);
+  if (markerCount === 1 && contracts.length === 0) return source;
+  if (markerCount !== 0 || contracts.length !== 1) return source;
+  const contract = contracts[0];
+  const { host, get: getter, usage } = contract.groups;
+  const gate = `"local"===${host}&&${getter}(${usage})&&"usage-limit"`;
+  const gateIndex = contract.index + contract[0].indexOf(gate);
+  if (gateIndex < contract.index) return source;
+  return source.slice(0, gateIndex) + `!1/*${MARKER}*/` +
+    source.slice(gateIndex + gate.length);
 }
 
 function applyUsageLimitSendAttemptAppPatch(extractedDir) {
   const assets = path.join(extractedDir, "webview", "assets", "async");
-  if (!fs.existsSync(assets)) return { changed: 0, reason: "webview composer assets missing" };
-  const candidates = [];
+  if (!fs.existsSync(assets)) return { changed: 0, reason: "webview usage-reason assets missing" };
+  const relevant = [];
   for (const name of fs.readdirSync(assets)) {
     if (!name.endsWith(".js")) continue;
     const file = path.join(assets, name);
     const source = fs.readFileSync(file, "utf8");
-    if (!COMPOSER.test(source) || !source.includes("submitDisabledReasons:")) continue;
-    const patched = applyUsageLimitSendAttemptPatch(source);
-    if (patched === source) {
-      return { changed: 0, reason: "local Codex composer usage gate changed" };
-    }
-    candidates.push({ file, patched });
+    if (!source.includes('"reserve-limit"') || !source.includes('"usage-limit"')) continue;
+    relevant.push({ file, source });
   }
-  if (candidates.length === 0) return { changed: 0, reason: "local Codex composer usage gate changed" };
-  for (const { file, patched } of candidates) fs.writeFileSync(file, patched);
-  return {
-    changed: candidates.length,
-    targets: candidates.map(({ file }) => path.relative(extractedDir, file)),
-  };
+  if (relevant.length !== 1 || pristineContracts(relevant[0].source).length !== 1) {
+    return { changed: 0, reason: "shared local usage-reason selector changed or is ambiguous" };
+  }
+  const patched = applyUsageLimitSendAttemptPatch(relevant[0].source);
+  if (patched === relevant[0].source) {
+    return { changed: 0, reason: "shared local usage-reason selector changed or is ambiguous" };
+  }
+  fs.writeFileSync(relevant[0].file, patched);
+  return { changed: 1, targets: [path.relative(extractedDir, relevant[0].file)] };
 }
 
 const descriptors = [{

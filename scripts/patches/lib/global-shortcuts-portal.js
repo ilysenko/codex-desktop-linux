@@ -52,7 +52,7 @@ function assertSameModule(source, anchorIndex, index, description) {
 function registrationContract(source) {
   const pattern = new RegExp(
     `function (?<name>${IDENT})\\((?<accelerator>${IDENT}),(?<callbacks>${IDENT}),(?<options>${IDENT})\\)\\{[\\s\\S]{0,500}?;` +
-    `if\\(${platformIs("win32")}&&${IDENT}\\(\\k<accelerator>\\)\\)return [\\s\\S]{0,1500}?;` +
+    `if\\(${platformIs("win32")}&&${IDENT}\\(\\k<accelerator>\\)\\)return [\\s\\S]{0,6000}?;` +
     `if\\((?<bareModifier>${IDENT})\\(\\k<accelerator>\\)\\|\\|(?<special>${IDENT})\\(\\k<accelerator>\\)\\)return ` +
     `${IDENT}\\(\\k<accelerator>\\)\\|\\|\\k<special>\\(\\k<accelerator>\\)\\?[\\s\\S]{0,4000}?` +
     `\\(\\k<accelerator>,${IDENT},\\k<options>\\?\\.bareModifierTrigger\\):null;`, "gu");

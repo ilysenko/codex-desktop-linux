@@ -175,9 +175,10 @@ test("current signed official fork placement advances only after the sidebar fal
   skip: !process.env.CODEX_SIGNED_EXTRACTED_APP,
 }, () => {
   const dir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
-  const owners = fs.readdirSync(dir).filter((name) => name.endsWith(".js"))
-    .map((name) => ({ name, source: fs.readFileSync(path.join(dir, name), "utf8") }))
-    .filter(({ source }) => source.includes('"codex-app-server-custom-sections"'));
+  const sources = fs.readdirSync(dir).filter((name) => name.endsWith(".js"))
+    .map((name) => ({ name, source: fs.readFileSync(path.join(dir, name), "utf8") }));
+  const owners = sources.filter(({ source }) =>
+    source.includes('"codex-app-server-custom-sections"'));
   assert.equal(owners.length, 1);
   const [{ source }] = owners;
   const { value: patched, warnings } = captureWarnings(() => applyForkSidebarFallback(source));
@@ -196,10 +197,14 @@ test("current signed official fork placement advances only after the sidebar fal
       String.raw`\?\.checkGate\("codex-app-server-custom-sections"\)(?:\?\?!1)?`,
     "g",
   );
-  const placementMatches = [...source.matchAll(new RegExp(
+  // The settings reader and placement owner may live in different main-process
+  // assets. Discover both by their unique contracts instead of co-location.
+  const placementPattern = new RegExp(
     String.raw`readPlacement:${ident}=>\((?<placement>function\([^)]*\)\{.*?)\)\(${ident},${ident}\),prependProjectThread:`,
     "gs",
-  ))];
+  );
+  const placementMatches = sources.flatMap(({ source: candidate }) =>
+    [...candidate.matchAll(placementPattern)]);
   assert.equal(placementMatches.length, 1);
   const placementSource = placementMatches[0].groups.placement;
   const schemaNames = [...new Set([

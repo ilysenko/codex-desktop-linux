@@ -135,7 +135,7 @@ const CURRENT_PARCEL_HELPER =
   "async function oye(e,t){return new sye(await Promise.resolve().then(" +
   "r.t.bind(r,93861,23)),e,t).start()}";
 const CURRENT_GIT_ROUTE_PREFIX =
-  'case"git":{let s=getIgnoreSource(),e=new Que(s,e=>{let t=e.getPid();if(null==t)return;notify(e)});' +
+  'case"git":{let s=getIgnoreSource(),e=new t0.Que(s,e=>{let t=e.getPid();if(null==t)return;notify(e)});' +
   "return{git:{getWatchIgnoreSources:s?void 0:" +
   "()=>({getEnvironment:async()=>(function(){let e=process.env.HOME;" +
   'return{defaultExcludesFile:null==e?null:`${e}/.config/git/ignore`,globalConfigFiles:[]}})(),' +
@@ -654,8 +654,8 @@ test("rejects dual ownership, unrelated lookalikes, and unproven minified aliase
     {
       name: "a routed local host with a different class",
       worker: currentWorkerSource().replace(
-        'case"git":{let s=getIgnoreSource(),e=new Que',
-        'case"git":{let s=getIgnoreSource(),e=new OtherHost',
+        'case"git":{let s=getIgnoreSource(),e=new t0.Que',
+        'case"git":{let s=getIgnoreSource(),e=new t0.OtherHost',
       ),
     },
     {
@@ -799,8 +799,8 @@ test("rejects missing, duplicate, and partial current contracts", (t) => {
       name: "completed route retargeted to a different local class",
       overrides: {
         worker: completedWorker.replace(
-          'case"git":{let s=getIgnoreSource(),e=new Que',
-          'case"git":{let s=getIgnoreSource(),e=new OtherHost',
+          'case"git":{let s=getIgnoreSource(),e=new t0.Que',
+          'case"git":{let s=getIgnoreSource(),e=new t0.OtherHost',
         ),
         bootstrap: completedBootstrap,
       },
