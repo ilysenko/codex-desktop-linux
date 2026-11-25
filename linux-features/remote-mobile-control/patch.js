@@ -1151,23 +1151,20 @@ function applyLinuxRemoteMobileActiveStatusPatch(source) {
 // item/completed notifications until the thread is hydrated.
 function remoteMobileConversationHydrationGuardPattern({ patched = false, flags = "u" } = {}) {
   const I = DEVICE_KEY_IDENT;
-  const marker = patched
-    ? `/\\*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}\\*/`
-    : "";
-  const hostGuard = patched
-    ? '!this\\.manager\\.isCloudHost&&"local"!==this\\.manager\\.getHostId\\(\\)\\|\\|'
-    : "!this\\.manager\\.isCloudHost\\|\\|";
-  const methodGuard = patched
-    ? `"turn/started"!==(?<notification>${I})\\.method&&"turn/completed"!==\\k<notification>\\.method&&` +
-      `\\("local"!==this\\.manager\\.getHostId\\(\\)\\|\\|` +
-      `"item/started"!==\\k<notification>\\.method&&"item/completed"!==\\k<notification>\\.method\\)`
-    : `"turn/started"!==(?<notification>${I})\\.method&&"turn/completed"!==\\k<notification>\\.method`;
+  const methods = patched
+    ? `(?:/\\*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}\\*/)?` +
+      `\\("turn/started"===(?<notification>${I})\\.method\\|\\|"turn/completed"===\\k<notification>\\.method\\|\\|` +
+      `"local"===this\\.manager\\.getHostId\\(\\)&&\\("item/started"===\\k<notification>\\.method\\|\\|` +
+      `"item/completed"===\\k<notification>\\.method\\)\\)`
+    : `\\("turn/started"===(?<notification>${I})\\.method\\|\\|"turn/completed"===\\k<notification>\\.method\\)`;
+  const hosts = patched
+    ? `\\(!!this\\.manager\\.isCloudHost\\|\\|!!\\(0,(?<hostNamespace>${I})\\.(?<hostPredicate>${I})\\)\\(this\\.manager\\.getHostId\\(\\)\\)\\|\\|` +
+      `"local"===this\\.manager\\.getHostId\\(\\)\\)`
+    : `\\(!!this\\.manager\\.isCloudHost\\|\\|!!\\(0,(?<hostNamespace>${I})\\.(?<hostPredicate>${I})\\)\\(this\\.manager\\.getHostId\\(\\)\\)\\)`;
   return new RegExp(
     `return null!=(?<pending>${I})\\?\\(\\k<pending>\\.ignored\\.add\\((?<ignore>${I})\\),this\\.buffer\\.buffer\\((?<delivery>${I}),\\k<ignore>\\)\\):` +
-      `!\\(${marker}${hostGuard}${methodGuard}\\|\\|` +
-      `this\\.context\\.threadStore\\.conversations\\.has\\((?<conversation>${I})\\)\\|\\|` +
-      `this\\.context\\.threadStore\\.isConversationSuppressed\\(\\k<conversation>\\)\\)&&` +
-      `\\(this\\.beginDiscovery\\(\\k<conversation>,\\k<ignore>\\),this\\.buffer\\.buffer\\(\\k<delivery>,\\k<ignore>\\)\\)\\}`,
+      `${methods}&&${hosts}&&` +
+      `\\(this\\.beginDiscovery\\((?<conversation>${I}),\\k<ignore>\\),this\\.buffer\\.buffer\\(\\k<delivery>,\\k<ignore>\\)\\)\\}`,
     flags,
   );
 }
@@ -1218,15 +1215,13 @@ function applyLinuxRemoteMobileConversationHydrationPatch(source) {
   }
   if (contract.state === "patched") return source;
 
-  const { conversation, notification, pending, ignore, delivery } = contract.match.groups;
+  const { conversation, notification, pending, ignore, delivery, hostNamespace, hostPredicate } = contract.match.groups;
   const replacement =
     `return null!=${pending}?(${pending}.ignored.add(${ignore}),this.buffer.buffer(${delivery},${ignore})):` +
-    `!(/*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}*/` +
-    '!this.manager.isCloudHost&&"local"!==this.manager.getHostId()||' +
-    `"turn/started"!==${notification}.method&&"turn/completed"!==${notification}.method&&` +
-    `("local"!==this.manager.getHostId()||"item/started"!==${notification}.method&&"item/completed"!==${notification}.method)||` +
-    `this.context.threadStore.conversations.has(${conversation})||` +
-    `this.context.threadStore.isConversationSuppressed(${conversation}))&&` +
+    `/*${REMOTE_MOBILE_CONVERSATION_HYDRATION_MARKER}*/` +
+    `("turn/started"===${notification}.method||"turn/completed"===${notification}.method||` +
+    `"local"===this.manager.getHostId()&&("item/started"===${notification}.method||"item/completed"===${notification}.method))&&` +
+    `(!!this.manager.isCloudHost||!!(0,${hostNamespace}.${hostPredicate})(this.manager.getHostId())||"local"===this.manager.getHostId())&&` +
     `(this.beginDiscovery(${conversation},${ignore}),this.buffer.buffer(${delivery},${ignore}))}`;
   return source.slice(0, contract.match.index) + replacement +
     source.slice(contract.match.index + contract.match[0].length);

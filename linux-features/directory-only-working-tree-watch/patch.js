@@ -124,8 +124,8 @@ const LOCAL_FILE_WATCH_METHOD =
 // rspack. Its minifier emits class declarations, double-quoted strings,
 // literal-first comparisons, and rspack interop getters such as `c1().join`.
 const CURRENT_LOCAL_HOST_CLASS = new RegExp(
-  `class (?<localHostClass>${IDENTIFIER_PATTERN})\\{` +
-    `runsInsideWsl;processOwner;workspaceRoot=new ${IDENTIFIER_PATTERN}\\(this\\);` +
+  `(?:class (?<localHostClass>${IDENTIFIER_PATTERN})|(?<localHostExport>${IDENTIFIER_PATTERN}):class)\\{` +
+    `runsInsideWsl;processOwner;workspaceRoot=new (?:${IDENTIFIER_PATTERN}\\.)?${IDENTIFIER_PATTERN}\\(this\\);` +
     'hostConfig=\\{id:"local",display_name:"Local",kind:"local"\\};' +
     'id="local";isLocal=!0;',
   "gu",
@@ -153,17 +153,17 @@ const CURRENT_PARCEL_EXTERNAL = new RegExp(
 );
 const CURRENT_GIT_ROUTE_PREFIX_PATTERN =
   'case"git":\\{let ' +
-  `(?<ignoreSource>${IDENTIFIER_PATTERN})=${IDENTIFIER_PATTERN}\\(\\),` +
+  `(?<ignoreSource>${IDENTIFIER_PATTERN})=(?:${IDENTIFIER_PATTERN}|\\(0,${IDENTIFIER_PATTERN}\\.${IDENTIFIER_PATTERN}\\))\\(\\),` +
   `(?<localHost>${IDENTIFIER_PATTERN})=new ` +
-  `(?<localHostClass>${IDENTIFIER_PATTERN})\\(\\k<ignoreSource>,[\\s\\S]{0,600}?\\);` +
+  `(?:(?<localHostNamespace>${IDENTIFIER_PATTERN})\\.)?(?<localHostClass>${IDENTIFIER_PATTERN})\\(\\k<ignoreSource>,[\\s\\S]{0,600}?\\);` +
   // The current package exposes the ignore sources lazily and opts the repo
   // watcher into ignored-directory pruning; the Git ignore environment reader
   // is inlined by the current minifier.
   "return\\{git:\\{getWatchIgnoreSources:\\k<ignoreSource>\\?void 0:\\(\\)=>\\(\\{" +
-  `getEnvironment:async\\(\\)=>[\\s\\S]{1,2000}?,getWatchTargets:${IDENTIFIER_PATTERN},` +
+  `getEnvironment:async\\(\\)=>[\\s\\S]{1,2000}?,getWatchTargets:(?:${IDENTIFIER_PATTERN}\\.)?${IDENTIFIER_PATTERN},` +
   'pruneIgnoredDirectories:"darwin"===process\\.platform\\?"observed":"all"\\}\\),' +
   `createExecutionHost:(?<executionConfig>${IDENTIFIER_PATTERN})=>\\{` +
-  `if\\(\\k<executionConfig>\\.id===\\k<localHost>\\.id&&!${IDENTIFIER_PATTERN}\\(\\k<executionConfig>\\)\\)` +
+  `if\\(\\k<executionConfig>\\.id===\\k<localHost>\\.id&&!(?:${IDENTIFIER_PATTERN}|\\(0,${IDENTIFIER_PATTERN}\\.${IDENTIFIER_PATTERN}\\))\\(\\k<executionConfig>\\)\\)` +
   "return \\k<localHost>;if\\(null==" +
   `(?<mainConnection>${IDENTIFIER_PATTERN})\\)throw Error\\(` +
   '"Git hosts require a main RPC connection"' +
@@ -1571,14 +1571,14 @@ function currentLocalHostClassForMethod(source, classMatches, methodMatches) {
   if (classMatches.length !== 1 || methodMatches.length !== 1) return null;
   const [classMatch] = classMatches;
   const [methodMatch] = methodMatches;
-  const classOpen =
-    classMatch.index + `class ${classMatch.groups?.localHostClass ?? ""}`.length;
+  const localHostClass = classMatch.groups?.localHostClass ?? classMatch.groups?.localHostExport ?? null;
+  const classOpen = source.indexOf("{", classMatch.index);
   if (source[classOpen] !== "{") return null;
   const classClose = findMatchingBrace(source, classOpen);
   return classClose >= 0 &&
     methodMatch.index > classOpen &&
     methodMatch.index < classClose
-    ? classMatch.groups?.localHostClass ?? null
+    ? localHostClass
     : null;
 }
 
