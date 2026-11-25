@@ -97,6 +97,9 @@ for (const location of ["installed", "cache", "retired only"]) {
     fs.writeFileSync(path.join(plugin, ".mcp.json"), JSON.stringify({
       mcpServers: { cua_repl: { command: "node", args: [], enabled: false } },
     }));
+    const banner = path.join(resources, "cua_node/lib/node_modules/@oai/cua-repl/instructions/banner.js");
+    fs.mkdirSync(path.dirname(banner), { recursive: true });
+    fs.writeFileSync(banner, 'await import("@oai/cua/tinyskyAlt");\n');
     const backend = path.join(workspace, "backend");
     fs.writeFileSync(backend, '#!/bin/sh\n[ "$1" = windows ] || exit 1\nprintf \'%s\\n\' \'{"backend":"staged-unified","windows":[]}\'\n', { mode: 0o755 });
     execFileSync("bash", [path.join(__dirname, "../computer-use-linux/stage.sh")], {
