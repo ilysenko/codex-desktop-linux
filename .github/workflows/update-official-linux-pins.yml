@@ -112,8 +112,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git diff --name-only | sort)" = "nix/upstream-linux-packages.json"
-          ./scripts/nix-local.sh flake check --no-build
-          ./scripts/nix-local.sh build .#checks.x86_64-linux.nix-runtime --no-link
+          nix flake check --no-build
+          nix build .#checks.x86_64-linux.nix-runtime --no-link
 
       - name: Open or update campaign pin pull request
         if: steps.pins.outputs.changed == 'true'
@@ -163,8 +163,8 @@ jobs:
             echo "- bind the refresh to accepted main \`$EXPECTED_MAIN_SHA\`"
             echo
             echo "## Checks"
-            echo "- ./scripts/nix-local.sh flake check --no-build"
-            echo "- ./scripts/nix-local.sh build .#checks.x86_64-linux.nix-runtime --no-link"
+            echo "- nix flake check --no-build"
+            echo "- nix build .#checks.x86_64-linux.nix-runtime --no-link"
           } > "$body_file"
           pr="$(gh pr list --head "$GITHUB_REPOSITORY_OWNER:$branch" --base main --state open \
             --json url,author,headRepositoryOwner,headRefOid,baseRefName \

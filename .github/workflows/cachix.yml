@@ -50,7 +50,7 @@ jobs:
             .#checks.${{ matrix.system }}.nix-runtime-maximal-directory-watch \
             .#checks.${{ matrix.system }}.nix-runtime-maximal-shallow-watch \
             .#checks.${{ matrix.system }}.nix-installer; do
-            paths="$(./scripts/nix-local.sh build "$output" --no-link --print-out-paths)"
+            paths="$(nix build "$output" --no-link --print-out-paths)"
             test -n "$paths"
             printf '%s\n' "$paths" | cachix push "$CACHIX_CACHE_NAME"
           done

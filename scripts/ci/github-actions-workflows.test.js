@@ -56,7 +56,6 @@ test("CI runs the complete workflow regression suite", () => {
   assert.match(nixBuild, /system: x86_64-linux/);
   assert.match(nixBuild, /system: aarch64-linux/);
   assert.match(nixBuild, /runner: ubuntu-24\.04-arm/);
-  assert.match(nixBuild, /run: node --test scripts\/ci\/nix-local\.test\.js/);
   assert.match(nixBuild, /checks\.\$\{\{ matrix\.system \}\}\.modules/);
   assert.match(nixBuild, /nix-runtime-chronicle-skysight/);
   assert.match(nixBuild, /nix-runtime-computer-use/);
@@ -401,7 +400,7 @@ test("Nix pin refresh is watchdog-dispatched and campaign-bound", () => {
   assert.match(workflow, /dispatch_if_missing ci\.yml/);
   assert.match(workflow, /dispatch_if_missing upstream-build-app\.yml/);
   assert.match(workflow, /Official-Linux-Release-ID:/);
-  assert.match(workflow, /\.\/scripts\/nix-local\.sh build \.#checks\.x86_64-linux\.nix-runtime --no-link/);
+  assert.match(workflow, /nix build \.#checks\.x86_64-linux\.nix-runtime --no-link/);
   assert.match(workflow, /--force-with-lease=refs\/heads\/\$branch:\$remote_head/);
   assert.match(workflow, /git rev-parse 'FETCH_HEAD\^\{tree\}'/);
   assert.match(workflow, /--head "\$GITHUB_REPOSITORY_OWNER:\$branch"/);

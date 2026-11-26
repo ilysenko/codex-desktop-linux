@@ -57,10 +57,6 @@ cd codex-desktop-linux
 | NixOS 或其他 Nix 系统 | `nix run github:ilysenko/codex-desktop-linux` | 构建并运行 flake；参阅 [Nix](docs/nix.md) |
 | Atomic 桌面或其他发行版 | `make build-app && make appimage` | 生成不含原生更新器的本地 AppImage |
 
-本地 Nix 构建请使用 `./scripts/nix-local.sh build '#codex-desktop'`。
-该入口在 Nix 导入源码之前明确选择 Git 输入，排除 `.git/`、未跟踪文件和已忽略的
-构建产物；详见[本地 flake 输入](docs/nix.md#local-checkout-inputs)。
-
 Gentoo 的应用合并会忽略 `EMERGE_DEFAULT_OPTS`，从生成的 ebuild 安装载荷，而非复用
 二进制包缓存；不会修改全局 Portage 配置。
 Gentoo 已提供分阶段依赖和包资源框架；现已支持 `ui-tweaks`、

@@ -49,8 +49,7 @@ manager that rebuilds from the signed stable APT repository.
   `stage_update_builder_bundle()` in `scripts/lib/package-common.sh`.
 - Signed-release automation:
   `scripts/automation/upstream-linux-package-watchdog/`.
-- Nix: `scripts/nix-local.sh`, `flake.nix`,
-  `nix/upstream-linux-packages.json`, `nix/*.nix`.
+- Nix: `flake.nix`, `nix/upstream-linux-packages.json`, `nix/*.nix`.
 
 Every repository feature and local feature must contain both `feature.json` and
 `README.md`. Prefer declarative resources and runtime/package hooks over a
@@ -112,9 +111,6 @@ exhausted memory and triggered OOM kills.
   first) so their `mktemp -d` work directories land on disk.
 - Delete your scratch directories when the task finishes; do not leave
   extracted apps, backups, or targets behind.
-- Run local flake commands through `scripts/nix-local.sh`. It selects an
-  explicit Git input before importing source; `path:` inputs copy ignored
-  outputs into the store before any filter in `flake.nix` can run.
 
 ## Commands and validation
 
@@ -150,7 +146,7 @@ node --test scripts/patch-linux-window-ui.test.js scripts/lib/linux-features.tes
 bash scripts/ci/run-node-checks.sh all  # every Node test in a fresh TMPDIR, as CI runs them
 cargo test -p codex-update-manager
 cargo clippy -p codex-update-manager --all-targets -- -D warnings
-./scripts/nix-local.sh flake check
+nix flake check
 ```
 
 Package/update/launcher/framework changes are cross-format unless explicitly

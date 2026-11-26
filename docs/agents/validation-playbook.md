@@ -65,8 +65,8 @@ migration without losing installed/rollback artifacts.
 ```bash
 ./scripts/ci-local.sh pr
 ./scripts/ci-local.sh all
-./scripts/nix-local.sh flake check
-./scripts/nix-local.sh build '#codex-desktop'
+nix flake check
+nix build .#codex-desktop
 ```
 
 Finish with a repository search for retired active architecture references and

@@ -88,23 +88,21 @@ jobs:
         with:
           node-version: 24
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
-      - name: Test local Git flake imports
-        run: node --test scripts/ci/nix-local.test.js
       - run: scripts/ci/validate-nix-pins.sh
       - name: Evaluate NixOS and Home Manager module contracts
-        run: ./scripts/nix-local.sh build ".#checks.${{ matrix.system }}.modules" --no-link
+        run: nix build ".#checks.${{ matrix.system }}.modules" --no-link
       - name: Build audited default runtime
-        run: ./scripts/nix-local.sh build ".#checks.${{ matrix.system }}.nix-runtime" --no-link
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime" --no-link
       - name: Build audited Chronicle-only runtime
-        run: ./scripts/nix-local.sh build ".#checks.${{ matrix.system }}.nix-runtime-chronicle-skysight" --no-link
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime-chronicle-skysight" --no-link
       - name: Build audited Computer Use runtime
-        run: ./scripts/nix-local.sh build ".#checks.${{ matrix.system }}.nix-runtime-computer-use" --no-link
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime-computer-use" --no-link
       - name: Build audited directory-watch feature profile
-        run: ./scripts/nix-local.sh build ".#checks.${{ matrix.system }}.nix-runtime-maximal-directory-watch" --no-link
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime-maximal-directory-watch" --no-link
       - name: Build audited shallow-watch feature profile
-        run: ./scripts/nix-local.sh build ".#checks.${{ matrix.system }}.nix-runtime-maximal-shallow-watch" --no-link
+        run: nix build ".#checks.${{ matrix.system }}.nix-runtime-maximal-shallow-watch" --no-link
       - name: Build and audit the public installer
-        run: ./scripts/nix-local.sh build ".#checks.${{ matrix.system }}.nix-installer" --no-link
+        run: nix build ".#checks.${{ matrix.system }}.nix-installer" --no-link
 
   nix-vm:
     runs-on: ubuntu-latest
@@ -113,7 +111,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
       - name: Run the NixOS runtime VM
-        run: ./scripts/nix-local.sh build .#checks.x86_64-linux.nixos-vm --no-link
+        run: nix build .#checks.x86_64-linux.nixos-vm --no-link
 
   # Keep this stable context: the main branch ruleset requires a job named
   # "nix", while the architecture matrix above is free to grow.
