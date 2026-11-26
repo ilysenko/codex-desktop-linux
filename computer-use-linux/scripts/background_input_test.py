@@ -460,7 +460,7 @@ def devtools():
         page = Path(tmp, 'page.html')
         page.write_text(PAGE)
         browser = subprocess.Popen([chrome, '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run',
-                                    '--no-default-browser-check', f'--user-data-dir={tmp}/profile',
+                                    '--no-default-browser-check', '--password-store=basic', f'--user-data-dir={tmp}/profile',
                                     '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1',
                                     page.as_uri()], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                    start_new_session=True)

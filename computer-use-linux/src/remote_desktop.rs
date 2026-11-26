@@ -27,6 +27,12 @@ use zbus::{
     Connection, Proxy,
 };
 
+mod clipboard;
+pub(crate) use clipboard::is_non_fatal_clipboard_error;
+pub use clipboard::{
+    start_portal_keyboard_clipboard_session, ClipboardSelection, PortalClipboardSession,
+};
+
 const PORTAL_DESKTOP_SERVICE: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_DESKTOP_PATH: &str = "/org/freedesktop/portal/desktop";
 const PORTAL_REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
@@ -82,6 +88,12 @@ pub struct PortalKeyboardSession {
     session_handle: OwnedObjectPath,
     input_lock: Arc<AsyncMutex<()>>,
     valid: Arc<AtomicBool>,
+    /// Standalone keyboard sessions always close on key-release cleanup.
+    /// Shared keyboard+clipboard sessions only close there if a key release
+    /// fails or times out, so clean release recovery keeps the clipboard owner
+    /// alive for restoration.
+    always_close_on_cleanup: bool,
+    closed_by_release_cleanup: Arc<AtomicBool>,
 }
 
 /// The server's cross-backend input lock, held by a portal release guard so
@@ -145,6 +157,8 @@ struct KeyboardReleaseGuard {
     input_guard: Option<OwnedMutexGuard<()>>,
     operation_guard: Option<InputOperationGuard>,
     valid: Arc<AtomicBool>,
+    always_close_on_cleanup: bool,
+    closed_by_release_cleanup: Arc<AtomicBool>,
 }
 
 struct PortalSessionCleanup {
@@ -203,7 +217,7 @@ async fn start_portal_pointer_session_inner(try_gnome_eis: bool) -> Result<Porta
     let mut cleanup = PortalSessionCleanup::new(connection.clone(), session_handle.clone());
     select_pointer_devices(&connection, &session_handle, permit.as_ref()).await?;
     select_monitor_sources(&connection, &session_handle).await?;
-    let (devices, streams, restore_token) =
+    let (devices, streams, restore_token, _) =
         start_remote_desktop_session(&connection, &session_handle).await?;
     // A grant with no pointer or no monitors must not be restored. The next
     // process would skip the dialog and fail the same way.
@@ -309,7 +323,7 @@ pub async fn start_portal_keyboard_session() -> Result<PortalKeyboardSession> {
     let session_handle = create_remote_desktop_session(&connection).await?;
     let mut cleanup = PortalSessionCleanup::new(connection.clone(), session_handle.clone());
     select_keyboard_devices(&connection, &session_handle, permit.as_ref()).await?;
-    let (devices, _, restore_token) =
+    let (devices, _, restore_token, _) =
         start_remote_desktop_session(&connection, &session_handle).await?;
     let restore_token = restore_token_to_keep(devices & DEVICE_KEYBOARD != 0, restore_token);
     commit_restore_permit(permit, restore_token).await;
@@ -326,6 +340,8 @@ pub async fn start_portal_keyboard_session() -> Result<PortalKeyboardSession> {
         session_handle,
         input_lock: portal_input_lock(),
         valid: Arc::new(AtomicBool::new(true)),
+        always_close_on_cleanup: true,
+        closed_by_release_cleanup: Arc::new(AtomicBool::new(false)),
     })
 }
 
@@ -1007,6 +1023,8 @@ impl KeyboardReleaseGuard {
             input_guard: Some(input_guard),
             operation_guard: Some(operation_guard),
             valid: Arc::clone(&session.valid),
+            always_close_on_cleanup: session.always_close_on_cleanup,
+            closed_by_release_cleanup: Arc::clone(&session.closed_by_release_cleanup),
         }
     }
 
@@ -1064,21 +1082,34 @@ impl Drop for KeyboardReleaseGuard {
         let ei = self.ei.clone();
         let session_handle = self.session_handle.clone();
         let pressed = std::mem::take(&mut self.pressed);
+        let always_close_on_cleanup = self.always_close_on_cleanup;
+        let closed_by_release_cleanup = Arc::clone(&self.closed_by_release_cleanup);
         spawn_release_cleanup(input_guard, operation_guard, async move {
-            let _ = tokio::time::timeout(RELEASE_TIMEOUT, async {
-                if let Ok(proxy) = input_proxy(&connection, ei, Vec::new()).await {
-                    for key in pressed.into_iter().rev() {
-                        let _ =
-                            notify_keyboard_key(&proxy, &session_handle, key, KEY_RELEASED).await;
+            let released_all = tokio::time::timeout(RELEASE_TIMEOUT, async {
+                let Ok(proxy) = input_proxy(&connection, ei, Vec::new()).await else {
+                    return false;
+                };
+                let mut all_ok = true;
+                for key in pressed.into_iter().rev() {
+                    if notify_keyboard_key(&proxy, &session_handle, key, KEY_RELEASED)
+                        .await
+                        .is_err()
+                    {
+                        all_ok = false;
                     }
                 }
+                all_ok
             })
-            .await;
-            let _ = tokio::time::timeout(
-                RELEASE_TIMEOUT,
-                close_portal_session(&connection, &session_handle),
-            )
-            .await;
+            .await
+            .unwrap_or_default();
+            if always_close_on_cleanup || !released_all {
+                closed_by_release_cleanup.store(true, Ordering::Release);
+                let _ = tokio::time::timeout(
+                    RELEASE_TIMEOUT,
+                    close_portal_session(&connection, &session_handle),
+                )
+                .await;
+            }
         });
     }
 }
@@ -1184,6 +1215,14 @@ impl PortalKeyboardSession {
 
     pub(crate) fn same_session(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.valid, &other.valid)
+    }
+
+    pub(crate) async fn wait_for_release_cleanup(&self) {
+        let _guard = self.input_lock.lock().await;
+    }
+
+    pub(crate) fn was_closed_by_release_cleanup(&self) -> bool {
+        self.closed_by_release_cleanup.load(Ordering::Acquire)
     }
 
     fn ensure_valid(&self) -> Result<()> {
@@ -1412,6 +1451,7 @@ const RESTORE_LOCK_POLL: Duration = Duration::from_millis(20);
 enum PortalDeviceKind {
     Pointer,
     Keyboard,
+    KeyboardClipboard,
 }
 
 impl PortalDeviceKind {
@@ -1419,6 +1459,7 @@ impl PortalDeviceKind {
         match self {
             Self::Pointer => "remote-desktop-pointer.token",
             Self::Keyboard => "remote-desktop-keyboard.token",
+            Self::KeyboardClipboard => "remote-desktop-keyboard-clipboard.token",
         }
     }
 
@@ -1426,6 +1467,7 @@ impl PortalDeviceKind {
         match self {
             Self::Pointer => "remote-desktop-pointer.lock",
             Self::Keyboard => "remote-desktop-keyboard.lock",
+            Self::KeyboardClipboard => "remote-desktop-keyboard-clipboard.lock",
         }
     }
 }
@@ -2072,7 +2114,7 @@ async fn select_monitor_sources(connection: &Connection, session: &OwnedObjectPa
 async fn start_remote_desktop_session(
     connection: &Connection,
     session: &OwnedObjectPath,
-) -> Result<(u32, Vec<PortalStream>, ParsedRestoreToken)> {
+) -> Result<(u32, Vec<PortalStream>, ParsedRestoreToken, bool)> {
     let remote_proxy = remote_desktop_proxy(connection).await?;
     let (request_path, mut response_stream) = portal_request_stream(connection, "rd_start").await?;
     let mut options: HashMap<&str, Value<'_>> = HashMap::new();
@@ -2103,7 +2145,16 @@ async fn start_remote_desktop_session(
         .map(parse_streams)
         .transpose()?
         .unwrap_or_default();
-    Ok((devices, streams, parse_restore_token(&results)))
+    let clipboard_enabled = results
+        .get("clipboard_enabled")
+        .and_then(|value| bool::try_from(value).ok())
+        .unwrap_or_default();
+    Ok((
+        devices,
+        streams,
+        parse_restore_token(&results),
+        clipboard_enabled,
+    ))
 }
 
 struct InputProxy<'a> {
@@ -3437,8 +3488,11 @@ mod tests {
         let dir = TempState::new();
         let pointer = RestorePermit::acquire_in(&dir.path, PortalDeviceKind::Pointer).unwrap();
         let keyboard = RestorePermit::acquire_in(&dir.path, PortalDeviceKind::Keyboard).unwrap();
+        let keyboard_clipboard =
+            RestorePermit::acquire_in(&dir.path, PortalDeviceKind::KeyboardClipboard).unwrap();
         assert_eq!(pointer.token(), None);
         assert_eq!(keyboard.token(), None);
+        assert_eq!(keyboard_clipboard.token(), None);
         let dir_mode = std::fs::metadata(&dir.path).unwrap().permissions().mode() & 0o777;
         assert_eq!(dir_mode, 0o700);
 
@@ -3448,9 +3502,15 @@ mod tests {
         keyboard
             .commit(ParsedRestoreToken::Usable("keyboard-token".to_string()))
             .unwrap();
+        keyboard_clipboard
+            .commit(ParsedRestoreToken::Usable(
+                "keyboard-clipboard-token".to_string(),
+            ))
+            .unwrap();
 
         let pointer_path = dir.path.join("remote-desktop-pointer.token");
         let keyboard_path = dir.path.join("remote-desktop-keyboard.token");
+        let keyboard_clipboard_path = dir.path.join("remote-desktop-keyboard-clipboard.token");
         assert_eq!(
             std::fs::metadata(&pointer_path)
                 .unwrap()
@@ -3467,6 +3527,10 @@ mod tests {
             std::fs::read_to_string(&keyboard_path).unwrap(),
             "keyboard-token"
         );
+        assert_eq!(
+            std::fs::read_to_string(&keyboard_clipboard_path).unwrap(),
+            "keyboard-clipboard-token"
+        );
 
         let pointer = RestorePermit::acquire_in(&dir.path, PortalDeviceKind::Pointer).unwrap();
         assert_eq!(pointer.token(), Some("pointer-token"));
@@ -3477,6 +3541,14 @@ mod tests {
         assert_eq!(keyboard.token(), Some("keyboard-token"));
         keyboard.commit(ParsedRestoreToken::Rejected).unwrap();
         assert!(!keyboard_path.exists());
+
+        let keyboard_clipboard =
+            RestorePermit::acquire_in(&dir.path, PortalDeviceKind::KeyboardClipboard).unwrap();
+        assert_eq!(keyboard_clipboard.token(), Some("keyboard-clipboard-token"));
+        keyboard_clipboard
+            .commit(ParsedRestoreToken::Absent)
+            .unwrap();
+        assert!(!keyboard_clipboard_path.exists());
     }
 
     #[test]

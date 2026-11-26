@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Synchronize the embedded Computer Use backend to standalone v0.7.64 (including
+  the v0.7.63 test fixture fix). The crate is 0.7.64. `type_text` takes an
+  opt-in `paste_fallback` on GNOME Wayland: it tries verified AT-SPI insertion
+  first, then uses the Remote Desktop portal clipboard when no AT-SPI edit is
+  possible, restoring every offered clipboard MIME type and leaving a newer
+  owner unchanged. The DevTools background-input fixture also launches Chromium
+  with `--password-store=basic` to avoid a GNOME keyring unlock prompt.
+
 ### Added
 
 - Synchronize the embedded Computer Use backend to standalone v0.7.62. The
