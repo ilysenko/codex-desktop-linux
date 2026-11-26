@@ -2193,6 +2193,28 @@ test("Linux remote-control settings UX patch bypasses outbound tab hide gate on 
   assert.equal(context.__visible, true);
 });
 
+test("Linux remote-control settings page keeps its outbound tab and panels reachable", () => {
+  const source = 'function settings(loader,enabled,tab,authorized){let tabs=[],gate=!loader,visible=gate&&(enabled||!1);visible&&tabs.push("access-other-devices");return [tabs,gate&&"access-other-devices"===tab&&authorized?"devices":null,gate&&"access-other-devices"===tab&&!authorized?"authorize":null]}';
+  const { result: patched } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  assert.notEqual(patched, source);
+  assert.equal(captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(patched)).result, patched);
+
+  function render(platform, loader, enabled, authorized) {
+    const context = vm.createContext({ navigator: { userAgent: platform } });
+    const result = vm.runInContext(
+      `${patched};JSON.stringify(settings(${loader},${enabled},"access-other-devices",${authorized}))`,
+      context,
+    );
+    return JSON.parse(result);
+  }
+
+  assert.deepEqual(render("Linux", true, true, true), [["access-other-devices"], "devices", null]);
+  assert.deepEqual(render("Linux", true, true, false), [["access-other-devices"], null, "authorize"]);
+  assert.deepEqual(render("Linux", true, false, true)[0], []);
+  assert.deepEqual(render("Windows", true, true, true), [[], null, null]);
+  assert.deepEqual(render("Windows", false, true, true), [["access-other-devices"], "devices", null]);
+});
+
 test("Linux remote-control settings UX patch warns when outbound tab gate consumer drifts", () => {
   const source = 'function Uo(){let l=(0,G.Zj)("782640499"),u=(0,G.Zj)(on),z=Ge(),B=l,Se=null==f;return B&&z}';
   const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));

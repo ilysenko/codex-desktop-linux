@@ -762,8 +762,43 @@ function applyLinuxRemoteControlCopyPatch(source) {
 function applyLinuxRemoteControlSettingsUxPatch(source) {
   let patched = replaceLinuxRemoteControlCopy(source).patched;
   patched = applyLinuxRemoteControlOutboundTabGatePatch(patched);
+  patched = applyLinuxRemoteControlOutboundSettingsPagePatch(patched);
 
   return patched;
+}
+
+// Settings renders its own tab list and uses the same outbound condition
+// for the tab and its panels. The loader opt-in makes the negated gate false.
+function applyLinuxRemoteControlOutboundSettingsPagePatch(source) {
+  const panels = [...source.matchAll(
+    /(?<gate>[A-Za-z_$][\w$]*)&&"access-other-devices"===[A-Za-z_$][\w$]*&&!?[A-Za-z_$][\w$]*\?/gu,
+  )];
+  const gates = new Set(panels.map((match) => match.groups.gate));
+  if (gates.size !== 1) return source;
+
+  const [gate] = gates;
+  const tab = new RegExp(
+    `\\b[A-Za-z_$][\\w$]*=${escapeRegExp(gate)}&&\\([A-Za-z_$][\\w$]*\\|\\|!1\\)`,
+    "u",
+  );
+  const tabMatch = tab.exec(source);
+  if (!tabMatch) return source;
+  const tabVisibility = tabMatch[0].split("=")[0];
+  const tabPush = new RegExp(
+    `\\b${escapeRegExp(tabVisibility)}&&[A-Za-z_$][\\w$]*\\.push\\("access-other-devices"\\)`,
+    "u",
+  );
+  if (!tabPush.test(source)) return source;
+
+  const declaration = new RegExp(
+    `([,;]${escapeRegExp(gate)}=)!([A-Za-z_$][\\w$]*)(?=[,;])`,
+    "gu",
+  );
+  if ([...source.matchAll(declaration)].length !== 1) return source;
+  return source.replace(
+    declaration,
+    '$1(navigator.userAgent.includes("Linux")||!$2)',
+  );
 }
 
 function applyLinuxRemoteControlOutboundTabGatePatch(source) {
