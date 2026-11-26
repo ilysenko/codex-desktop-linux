@@ -4,8 +4,11 @@
 const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const http = require("node:http");
+const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
+const { pipeline } = require("node:stream/promises");
 
 const DEFAULT_REPOSITORY = "https://persistent.oaistatic.com/codex-app-prod/linux/deb";
 const EXPECTED_FINGERPRINT = "3BFA0E4AE8B8CC16A2D9BA684A3B4A566C4660E4";
@@ -127,42 +130,51 @@ function verifyPackageControl(filePath, expected) {
   }
 }
 
-async function download(url, destination) {
-  const response = await fetch(url, { redirect: "follow" });
-  if (!response.ok) throw new Error(`Download failed (${response.status}) for ${url}`);
-  const directory = path.dirname(destination);
-  fs.mkdirSync(directory, { recursive: true });
-  const output = fs.createWriteStream(destination, { mode: 0o600 });
-  try {
-    if (response.body != null) {
-      for await (const chunk of response.body) {
-        if (!output.write(chunk)) {
-          await new Promise((resolve, reject) => {
-            const onDrain = () => {
-              output.removeListener("drain", onDrain);
-              output.removeListener("error", onError);
-              resolve();
-            };
-            const onError = (error) => {
-              output.removeListener("drain", onDrain);
-              output.removeListener("error", onError);
-              reject(error);
-            };
-            output.once("drain", onDrain);
-            output.once("error", onError);
-          });
-        }
-      }
+const MAX_DOWNLOAD_REDIRECTS = 20;
+const DOWNLOAD_IDLE_TIMEOUT_MS = 300_000;
+
+// Download over node:http(s) (HTTP/1.1), not fetch(): since Node 26, fetch()
+// negotiates HTTP/2, whose small flow-control window throttles the ~500 MB
+// package to ~1 MB/s on higher-latency links (#1717).
+function openDownload(url, redirectsLeft = MAX_DOWNLOAD_REDIRECTS) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const client = { "http:": http, "https:": https }[target.protocol];
+    if (client == null) {
+      reject(new Error(`Unsupported download protocol for ${url}`));
+      return;
     }
-    await new Promise((resolve, reject) => {
-      output.end((error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-      output.once("error", reject);
+    const request = client.get(target, (response) => {
+      const status = response.statusCode;
+      if (status >= 300 && status < 400 && response.headers.location != null) {
+        response.resume();
+        if (redirectsLeft <= 0) {
+          reject(new Error(`Too many redirects for ${url}`));
+          return;
+        }
+        openDownload(new URL(response.headers.location, target).href, redirectsLeft - 1).then(resolve, reject);
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        response.resume();
+        reject(new Error(`Download failed (${status}) for ${url}`));
+        return;
+      }
+      resolve(response);
     });
+    request.setTimeout(DOWNLOAD_IDLE_TIMEOUT_MS, () => {
+      request.destroy(new Error(`Download stalled for ${DOWNLOAD_IDLE_TIMEOUT_MS / 1000}s: ${url}`));
+    });
+    request.on("error", reject);
+  });
+}
+
+async function download(url, destination) {
+  const response = await openDownload(url);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  try {
+    await pipeline(response, fs.createWriteStream(destination, { mode: 0o600 }));
   } catch (error) {
-    output.destroy();
     try {
       fs.unlinkSync(destination);
     } catch {}

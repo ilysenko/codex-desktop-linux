@@ -115,10 +115,22 @@ test("signed resolution verifies local packages without downloading their bodies
   const wrong = createSigningFixture(root, "Other Package Signer");
   const keyBase64Path = path.join(root, "key.base64");
   fs.writeFileSync(keyBase64Path, fs.readFileSync(signer.keyPath).toString("base64"));
+  let handleRequest = null;
+  const server = http.createServer((request, response) => handleRequest(request, response));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const repository = `http://127.0.0.1:${server.address().port}`;
+  // Downloads must not go through fetch(): Node 26 negotiates HTTP/2 there,
+  // which throttles the large package body (#1717).
+  t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("download() must not use fetch()");
+  });
   const cases = [
     { name: "local amd64" },
     { name: "local arm64", architecture: "arm64" },
     { name: "downloaded amd64", download: true },
+    { name: "downloaded through redirect", download: true, redirect: true },
     { name: "tampered signature", tamperSignature: true, error: /signature verification failed/ },
     { name: "wrong signer", wrongSigner: true, error: /signature verification failed/ },
     { name: "wrong pinned key", wrongKey: true, error: /expected fingerprint/ },
@@ -132,8 +144,10 @@ test("signed resolution verifies local packages without downloading their bodies
     { name: "missing index architecture", missingArchitecture: true, error: /does not index/ },
     { name: "unsupported architecture", architecture: "armv7l", error: /Unsupported architecture/ },
     { name: "unavailable signed index", unavailable: true, error: /Download failed \(503\)/ },
-    { name: "index network failure", networkFailure: true, error: /fixture network failure/ },
+    { name: "index network failure", networkFailure: true, error: /socket hang up|ECONNRESET/ },
     { name: "remote package hash mismatch", download: true, tamperDownload: true, error: /SHA256 mismatch/ },
+    { name: "truncated package download", download: true, truncateDownload: true, error: /aborted|ECONNRESET|Premature close/ },
+    { name: "redirect loop", download: true, redirectLoop: true, error: /Too many redirects/ },
   ];
   for (const scenario of cases) {
     await t.test(scenario.name, async (t) => {
@@ -172,24 +186,36 @@ test("signed resolution verifies local packages without downloading their bodies
       const fixtureKey = scenario.wrongKey ? path.join(current, "wrong.base64") : keyBase64Path;
       if (scenario.wrongKey) fs.writeFileSync(fixtureKey, fs.readFileSync(wrong.keyPath).toString("base64"));
       const requested = [];
-      const repository = "https://fixture.invalid";
-      t.mock.method(globalThis, "fetch", async (url) => {
+      const unexpected = [];
+      handleRequest = (request, response) => {
+        const url = request.url;
         requested.push(url);
-        if (scenario.unavailable) return new Response("unavailable", { status: 503 });
-        if (scenario.networkFailure) throw new TypeError("fixture network failure");
-        if (url === `${repository}/dists/stable/InRelease`) return new Response(inRelease);
-        if (url === `${repository}/dists/stable/${packagesRelative}`) {
-          return new Response(scenario.tamperIndex ? packages.toString().replace("26.1021", "26.1022") : packages);
-        }
-        if (url === `${repository}/${packageRelative}`) {
+        if (scenario.unavailable) {
+          response.writeHead(503); response.end("unavailable");
+        } else if (scenario.networkFailure) {
+          request.socket.destroy();
+        } else if (url === "/dists/stable/InRelease") {
+          response.end(inRelease);
+        } else if (url === `/dists/stable/${packagesRelative}`) {
+          response.end(scenario.tamperIndex ? packages.toString().replace("26.1021", "26.1022") : packages);
+        } else if (url === `/${packageRelative}` && (scenario.redirect || scenario.redirectLoop)) {
+          response.writeHead(302, { location: scenario.redirectLoop ? url : "/pool/redirected/input.deb" });
+          response.end();
+        } else if (url === `/${packageRelative}` || url === "/pool/redirected/input.deb") {
           if (scenario.tamperDownload) {
             const changed = Buffer.from(body); changed[changed.length - 1] ^= 1;
-            return new Response(changed);
+            response.end(changed);
+          } else if (scenario.truncateDownload) {
+            response.writeHead(200, { "content-length": body.length });
+            response.write(body.subarray(0, body.length >> 1), () => request.socket.destroy());
+          } else {
+            response.end(body);
           }
-          return new Response(body);
+        } else {
+          unexpected.push(url);
+          response.writeHead(404); response.end();
         }
-        throw Error(`Unexpected request: ${url}`);
-      });
+      };
       const options = {
         architecture, repository, keyBase64Path: fixtureKey,
         outputDir: path.join(current, "verified"), metadataPath: path.join(current, "metadata.json"),
@@ -224,6 +250,11 @@ test("signed resolution verifies local packages without downloading their bodies
         }
       }
       assert.equal(requested.some(url => url.includes("/pool/")), scenario.download === true);
+      assert.deepEqual(unexpected, []);
+      if (scenario.redirect) assert.ok(requested.includes("/pool/redirected/input.deb"));
+      if (scenario.truncateDownload || scenario.redirectLoop) {
+        assert.deepEqual(fs.readdirSync(options.outputDir).filter(name => name.endsWith(".deb")), []);
+      }
     });
   }
 });
