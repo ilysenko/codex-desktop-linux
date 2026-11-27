@@ -2261,6 +2261,7 @@ test("Linux remote-control settings UX handles division around the settings code
     "let first=class{}/2,r=/}/;",
     "let first=1>{}/2,r=/}/;",
     "switch(x){case {}/2:break;case /}/:break;}",
+    'let of=0;of\n{}/}/.test("}");',
     'let first=function(){label:{}/}/.test("}");};',
   ]) {
     const source = prefix + syntheticCurrentOutboundConnectionsBundle() + "let last=1/3;";

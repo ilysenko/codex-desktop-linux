@@ -151,10 +151,11 @@ function regexLiteralEnd(source, openIndex) {
   return -1;
 }
 
-function startsExpression(previous, source, next) {
+function startsExpression(previous, source, next, insideFor) {
   if (previous.kind === "punct") return OBJECT_EXPRESSION_PREFIXES.has(previous.value);
   if (previous.kind !== "word" || previous.property || !REGEX_PREFIX_KEYWORDS.has(previous.value)) return false;
-  if (["return", "throw", "yield"].includes(previous.value)) {
+  if (previous.value === "of") return insideFor;
+  if (["return", "throw", "yield", "await"].includes(previous.value)) {
     return !/[\r\n\u2028\u2029]/u.test(source.slice(previous.end, next));
   }
   return !["do", "else"].includes(previous.value);
@@ -189,8 +190,8 @@ function findMatchingBrace(source, openIndex, visitToken) {
   let pendingFunctionExpression = false;
   let pendingClassExpression;
   const ternaryConditions = [];
-  // One entry per open parenthesis: whether it holds an if/while/for/with
-  // condition, after which a slash starts a regex rather than a division.
+  // One entry per open parenthesis. A condition's keyword distinguishes
+  // statement conditions from calls and identifies the scope of for…of.
   const parenthesesAreConditions = [];
   let bracketDepth = 0;
   let previous = { kind: "punct", value: "{" };
@@ -232,7 +233,7 @@ function findMatchingBrace(source, openIndex, visitToken) {
       depth += 1;
       // A slash after an object literal divides its value. A slash after a
       // statement block can begin the next statement's regex literal.
-      if (startsExpression(previous, source, i)) {
+      if (startsExpression(previous, source, i, parenthesesAreConditions.at(-1) === "for")) {
         objectLiteralDepths.add(depth);
         expressionBraceDepths.add(depth);
       }
@@ -290,7 +291,7 @@ function findMatchingBrace(source, openIndex, visitToken) {
       const property = previous.kind === "punct" && previous.value === "." &&
         source[start - 2] !== ".";
       const value = source.slice(start, i + 1);
-      const expressionContext = startsExpression(previous, source, start);
+      const expressionContext = startsExpression(previous, source, start, parenthesesAreConditions.at(-1) === "for");
       const followsAsync = previous.asyncExpression &&
         !/[\r\n\u2028\u2029]/u.test(source.slice(previous.end, start));
       if (value === "function" && !property && (expressionContext || followsAsync)) {
@@ -302,7 +303,8 @@ function findMatchingBrace(source, openIndex, visitToken) {
       previous = { kind: "word", value, property, end: i + 1, asyncExpression: value === "async" && expressionContext };
     } else if (char === "(") {
       parenthesesAreConditions.push(
-        previous.kind === "word" && !previous.property && CONDITION_KEYWORDS.has(previous.value),
+        previous.kind === "word" && !previous.property && CONDITION_KEYWORDS.has(previous.value)
+          ? previous.value : null,
       );
       if (pendingFunctionExpression) {
         functionExpressions.add(parenthesesAreConditions.length);
