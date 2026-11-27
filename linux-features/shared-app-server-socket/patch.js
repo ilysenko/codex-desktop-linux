@@ -42,6 +42,14 @@ const CURRENT_CONFIGURE_PATTERN = /getConfigOverrides:async\(\)=>\{let\{override
 const TRANSPORT_MARKER = "class CodexLinuxSharedAppServerSocketTransport";
 const FACTORY_METHOD = "createLinuxSharedSocket";
 const IDENTIFIER = "[A-Za-z_$][\\w$]*";
+const LOCAL_CONSTRUCTOR = new RegExp(
+  `^return (?<native>new )?(?<constructorRef>${IDENTIFIER}\\.${IDENTIFIER})(?<shared>\\.${FACTORY_METHOD})?\\(\\{`,
+);
+const FACTORY_METHOD_SOURCE = `static ${FACTORY_METHOD}(options){` +
+  "const socketPath=process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,host=options.hostConfig;" +
+  "if(socketPath&&host?.kind===`local`&&host.id===`local`)" +
+  "return new CodexLinuxSharedAppServerSocketTransport(socketPath,options.getConfigOverrides);" +
+  "return new this(options)}";
 const MODULE_TABLE_HEADER = new RegExp(
   `^\\(\\(\\)=>\\{var (?:${IDENTIFIER},)*${IDENTIFIER}=\\{`,
 );
@@ -166,6 +174,23 @@ function factoryImportsNativeClass(source, factoryOffset, constructorRef, native
     bareBindingOffsets(source, nativeClass.start, nativeClass.end, webSocketBinding).length === 0;
 }
 
+function hasCurrentFactoryOptions(options, { rest, host, overrides }) {
+  if (!options.startsWith(`{...${rest},hostConfig:${host},`) || !options.endsWith("})") ||
+      findMatchingBrace(options, 0) !== options.length - 2) {
+    return false;
+  }
+  const callbacks = [...options.matchAll(CURRENT_CONFIGURE_PATTERN)];
+  if (callbacks.length !== 1) return false;
+  const [callback] = callbacks;
+  if (callback[3] !== overrides || callback.index + callback[0].length !== options.length - 2 ||
+      options[callback.index - 1] !== ",") {
+    return false;
+  }
+  // The callback must be a property of the constructor options.
+  const prefix = options.slice(0, callback.index) + "}";
+  return findMatchingBrace(prefix, 0) === prefix.length - 1;
+}
+
 function sharedAppServerSocketContract(source) {
   const daemons = [...source.matchAll(CURRENT_DAEMON_PATTERN)];
   const factories = [...source.matchAll(CURRENT_FACTORY_PATTERN)];
@@ -175,6 +200,11 @@ function sharedAppServerSocketContract(source) {
   }
   const [daemon] = daemons;
   const [factory] = factories;
+  const adapterOptions = source.indexOf("{", daemon.index);
+  const adapterOptionsEnd = findMatchingBrace(source, adapterOptions);
+  if (adapterOptionsEnd < 0 || !source.startsWith(").connect();", adapterOptionsEnd + 1)) {
+    return { state: "drifted", reason: "native WebSocket adapter does not use the expected connect call" };
+  }
   const classAnchor = source.lastIndexOf("class ", daemon.index);
   const classHeader = classAnchor < 0 ? null : source.slice(classAnchor).match(/^class ([A-Za-z_$][\w$]*)\{/);
   const classBody = classAnchor + (classHeader?.[0].length ?? 0);
@@ -189,49 +219,48 @@ function sharedAppServerSocketContract(source) {
     return { state: "drifted", reason: "local transport factory body not found" };
   }
   const factoryTail = source.slice(factoryBody, factoryEnd);
-  const nativeConstructor = factoryTail.match(/return new ([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\(\{/);
-  if (nativeConstructor == null) {
+  const construction = LOCAL_CONSTRUCTOR.exec(factoryTail);
+  if (construction == null) {
     return { state: "drifted", reason: "local transport constructor not found" };
   }
+  const { native, constructorRef, shared } = construction.groups;
+  if ((native == null) === (shared == null)) {
+    return { state: "drifted", reason: "invalid local transport constructor call" };
+  }
+  const options = factoryTail.slice(construction[0].length - 1);
+  if (!hasCurrentFactoryOptions(options, factory.groups)) {
+    return { state: "drifted", reason: "local transport options do not match the current factory" };
+  }
   const nativeClass = { start: classAnchor, end: classEnd, name: classHeader[1] };
-  if (!factoryImportsNativeClass(source, factory.index, nativeConstructor[1], nativeClass, daemon[1])) {
+  if (!factoryImportsNativeClass(source, factory.index, constructorRef, nativeClass, daemon[1])) {
     return { state: "drifted", reason: "local transport or WebSocket adapter is outside its expected module scope" };
   }
-  const configures = [...factoryTail.matchAll(CURRENT_CONFIGURE_PATTERN)];
-  if (configures.length !== 1 || configures[0][3] !== factory.groups.overrides) {
-    return { state: "drifted", reason: `config override callback found ${configures.length}` };
-  }
-  const [configure] = configures;
-  const configCallback = configure[0].slice("getConfigOverrides:".length);
   const classSource = sharedTransportClassSource(daemon[1]);
-  // The factory and native class can live in separate bundled modules.
-  const method = `static ${FACTORY_METHOD}(e,t){return new CodexLinuxSharedAppServerSocketTransport(e,t)}`;
-  const branch = `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&${factory.groups.host}.kind===\`local\`&&${factory.groups.host}.id===\`local\`)` +
-    `return ${nativeConstructor[1]}.${FACTORY_METHOD}(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${configCallback});`;
   const classCount = source.split(classSource).length - 1;
   const methodCount = source.split(FACTORY_METHOD).length - 1;
-  const branchCount = source.split(branch).length - 1;
-  if (markerCount === 0 && methodCount === 0 && branchCount === 0 && nativeConstructor.index === 0) {
-    return { state: "current", classAnchor, classBody, factoryBody, classSource, method, branch };
+  if (markerCount === 0 && methodCount === 0 && native != null) {
+    const callEnd = factoryBody + construction[0].length - 2;
+    const patchedCall = `return ${constructorRef}.${FACTORY_METHOD}`;
+    return { state: "current", classAnchor, classBody, factoryBody, callEnd, classSource, patchedCall };
   }
-  if (markerCount === 1 && classCount === 1 && methodCount === 2 && branchCount === 1 &&
+  if (markerCount === 1 && classCount === 1 && methodCount === 2 && shared != null &&
       source.slice(classAnchor - classSource.length, classAnchor) === classSource &&
-      source.startsWith(method, classBody) &&
-      nativeConstructor.index === branch.length && factoryTail.startsWith(branch)) {
+      source.startsWith(FACTORY_METHOD_SOURCE, classBody)) {
     return { state: "patched" };
   }
-  return { state: "drifted", reason: `found markers ${markerCount}, complete classes ${classCount}, factory method references ${methodCount}, and branches ${branchCount}` };
+  return { state: "drifted", reason: `found markers ${markerCount}, complete classes ${classCount}, and factory method references ${methodCount}` };
 }
 
 function insertSharedTransport(source, contract) {
-  const { classAnchor, classBody, factoryBody, classSource, method, branch } = contract;
-  const insertions = [
-    [classAnchor, classSource],
-    [classBody, method],
-    [factoryBody, branch],
+  const { classAnchor, classBody, factoryBody, callEnd, classSource, patchedCall } = contract;
+  // Both transports consume the options evaluated by the native factory.
+  const edits = [
+    [classAnchor, classAnchor, classSource],
+    [classBody, classBody, FACTORY_METHOD_SOURCE],
+    [factoryBody, callEnd, patchedCall],
   ];
-  for (const [index, insertion] of insertions.sort(([a], [b]) => b - a)) {
-    source = source.slice(0, index) + insertion + source.slice(index);
+  for (const [start, end, replacement] of edits.sort(([a], [b]) => b - a)) {
+    source = source.slice(0, start) + replacement + source.slice(end);
   }
   return source;
 }

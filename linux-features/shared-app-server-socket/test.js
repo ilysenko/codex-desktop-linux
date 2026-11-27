@@ -1721,11 +1721,13 @@ function syntheticCurrentBundle() {
   return [
     '(()=>{var modules={',
     '1(e,t,r){"use strict";r.d(t,{Local:()=>NativeLocal});var n=r(4);',
-    'class NativeLocal{connect(){return new n.Cn({hostConfig:this.options.hostConfig,',
-    'websocketUrl:"ws://localhost/rpc",createConnection:()=>null})}}},',
+    'class NativeLocal{connect(){',
+    'return new n.Cn({hostConfig:this.options.hostConfig,',
+    'websocketUrl:"ws://localhost/rpc",createConnection:()=>null}).connect();}',
+    'constructor(options){this.options=options}}},',
     '2(e,t,r){"use strict";r.d(t,{Ctor:()=>native.Local});var native=r(1);},',
     '3(e,t,r){var local=r(2);globalThis.create=function(e,h,o){let{isPackaged:p=!1,...rest}=e.options;',
-    'return new local.Ctor({getConfigOverrides:async()=>{',
+    'return new local.Ctor({...rest,hostConfig:h,getConfigOverrides:async()=>{',
     'let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}},',
     '4(e,t){t.Cn=FakeWebSocketTransport}',
     '};function load(id){const exports={};modules[id]({},exports,load);return exports}',
@@ -1782,7 +1784,7 @@ test("descriptor patches a renamed host bundle and reuses the native transport a
   };
   vm.runInNewContext(patched, context);
 
-  const options = { options: {} };
+  const options = { options: { extraOption: 42 } };
   const configure = async () => ({ overrides, windowsFrameworkRoot: "/test/framework" });
   const shared = context.create(options, { kind: "local", id: "local" }, configure);
   assert.equal(shared.kind, "websocket");
@@ -1791,10 +1793,19 @@ test("descriptor patches a renamed host bundle and reuses the native transport a
   shared.ensureAuthority = async () => {};
   shared.createProxyStream = () => connection;
   assert.equal(await shared.connect(), connection);
-  assert.equal(context.create(options, { kind: "local", id: "durable" }, configure).constructor.name, "NativeLocal");
+  const durableHost = { kind: "local", id: "durable" };
+  const durable = context.create(options, durableHost, configure);
+  assert.equal(durable.constructor.name, "NativeLocal");
+  assert.equal(durable.options.extraOption, 42);
+  assert.equal(durable.options.hostConfig, durableHost);
+  assert.equal(await durable.options.getConfigOverrides(), overrides);
 
   delete context.process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET;
-  assert.equal(context.create(options, { kind: "local", id: "local" }, configure).constructor.name, "NativeLocal");
+  const hostConfig = { kind: "local", id: "local" };
+  const native = context.create(options, hostConfig, configure);
+  assert.equal(native.constructor.name, "NativeLocal");
+  assert.equal(native.options.hostConfig, hostConfig);
+  assert.equal(await native.options.getConfigOverrides(), overrides);
 });
 
 test("descriptor rejects missing and ambiguous host bundles without changing them", (t) => {
@@ -1826,21 +1837,19 @@ test("descriptor rejects incomplete or drifted insertions without changing the h
   const host = path.join(buildDir, "host.js");
   apply(root);
   const patched = fs.readFileSync(host, "utf8");
-  const branchStart = patched.indexOf("if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET");
-  const branchEnd = patched.indexOf("return new local.Ctor(", branchStart);
-  assert.ok(branchStart >= 0 && branchEnd > branchStart);
-  const branch = patched.slice(branchStart, branchEnd);
+  const patchedCall = "return local.Ctor.createLinuxSharedSocket(";
+  assert.ok(patched.includes(patchedCall));
   const cases = [
     current + current,
     current.replace("getConfigOverrides:", "renamedField:"),
     current.replace('websocketUrl:"ws://localhost/rpc"', 'websocketUrl:"ws://different/rpc"'),
     current.replace("Ctor:()=>native.Local", "Ctor:()=>function(options){return new native.Local(options)}"),
     current.replace("Local:()=>NativeLocal", "Local:()=>function(options){return new NativeLocal(options)}"),
-    patched.slice(0, branchStart) + patched.slice(branchEnd),
+    patched.replace(patchedCall, "return new local.Ctor("),
     patched.replace("class CodexLinuxSharedAppServerSocketTransport", "class IncompleteTransport"),
     patched.replace("static createLinuxSharedSocket", "static incompleteMethod"),
     `${patched}class CodexLinuxSharedAppServerSocketTransport{}`,
-    patched.slice(0, branchEnd) + branch + patched.slice(branchEnd),
+    patched.replace(patchedCall, `${patchedCall}${patchedCall}`),
     current + patched,
   ];
   for (const source of cases) {
@@ -1849,6 +1858,33 @@ test("descriptor rejects incomplete or drifted insertions without changing the h
       name: "Error",
       message: /Could not patch host\.js:/,
     });
+    assert.equal(fs.readFileSync(host, "utf8"), source);
+  }
+});
+
+test("descriptor leaves factory options and WebSocket connection drift unchanged", (t) => {
+  const current = syntheticCurrentBundle();
+  const wrapperHost = current.replace("hostConfig:h,", "hostConfig:h.hostConfig,");
+  const nestedCallback = current
+    .replace("getConfigOverrides:async", "...function(o){return{getConfigOverrides:async")
+    .replace("return(0,x.y)(b),a}})}},",
+      'return(0,x.y)(b),a}}}(async()=>{const v=await o();return{...v,overrides:[...v.overrides,"native-extra"]}})})}},');
+  const adapterContext = current
+    .replace("connect(){return new n.Cn", "connect(context){return new n.Cn")
+    .replace("}).connect();", "}).connect(context);");
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, {});
+  const host = path.join(buildDir, "host.js");
+  const cases = [
+    [wrapperHost, /local transport options do not match the current factory/],
+    [nestedCallback, /local transport options do not match the current factory/],
+    [adapterContext, /native WebSocket adapter does not use the expected connect call/],
+  ];
+  for (const [source, message] of cases) {
+    assert.notEqual(source, current);
+    assert.doesNotThrow(() => new vm.Script(source));
+    fs.writeFileSync(host, source);
+    assert.throws(() => apply(root), { name: "Error", message });
     assert.equal(fs.readFileSync(host, "utf8"), source);
   }
 });
