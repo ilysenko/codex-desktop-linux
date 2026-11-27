@@ -18,7 +18,12 @@ const {
   stageEnabledLinuxFeatureInstall,
 } = require("../../scripts/lib/linux-features.js");
 const {
-  applySharedAppServerSocketPatch,
+  createPatchReport,
+  criticalFailuresFromReport,
+  enabledFeatureFailuresFromReport,
+} = require("../../scripts/lib/patch-report.js");
+const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+const {
   descriptors,
   sharedTransportClassSource,
 } = require("./patch.js");
@@ -654,39 +659,18 @@ function fakeChild() {
   return child;
 }
 
-function loadInjectedTransport({ spawnImpl, WebSocketImpl = null, fsImpl = fs, timeoutCapMs = null } = {}) {
-  class DefaultWebSocket extends EventEmitter {
-    constructor(_url, options) {
-      super();
-      this.stream = options.createConnection();
-      queueMicrotask(() => this.emit("open"));
+function loadInjectedTransport({ spawnImpl, fsImpl = fs, timeoutCapMs = null } = {}) {
+  class WebSocketTransport {
+    constructor(options) {
+      this.options = options;
     }
 
-    terminate() {
-      this.terminated = true;
-      this.stream?.destroy();
+    async connect() {
+      return { stream: this.options.createConnection() };
     }
   }
-  class Adapter {
-    constructor(socket) {
-      this.socket = socket;
-    }
-  }
-  const namespace = {
-    WS: WebSocketImpl ?? DefaultWebSocket,
-    keepAlive() {},
-    Codec: class {},
-    Adapter,
-  };
-  const source = sharedTransportClassSource({
-    webSocketClass: "n.WS",
-    webSocketUrl: '"ws://localhost/rpc"',
-    keepAlive: "n.keepAlive",
-    adapterClass: "n.Adapter",
-    codecClass: "n.Codec",
-    maximumFrameBytes: "0x1000000",
-    maximumFrameHeader: '"frame-limit"',
-  });
+  const namespace = { WebSocketTransport };
+  const source = sharedTransportClassSource("n.WebSocketTransport");
   const context = {
     n: namespace,
     process,
@@ -714,7 +698,7 @@ function loadInjectedTransport({ spawnImpl, WebSocketImpl = null, fsImpl = fs, t
       super(socketPath, getConfigOverrides);
     }
   }
-  return { InjectedTransport, Transport, namespace };
+  return { InjectedTransport, Transport };
 }
 
 async function listenUnix(socketPath) {
@@ -866,22 +850,6 @@ function stopOrphanAuthority(orphan) {
 // Mirrors the rspack/SWC-minified 26.1027 main-process chunk: double-quoted
 // strings, literal-first comparisons, `(0,ns.fn)(...)` calls, and handshake
 // constants inlined into the SSH method.
-function syntheticBundle() {
-  return [
-    'class gC{options;kind="websocket";logger=(0,i.i)("AppServerTransportSshWebsocket");proxyStreams=new Set;hasConnected=!1;supportsReconnect(){return!0}',
-    'async connectToRemoteAppServer(e,t){return this.runWithSshStartupGate(async()=>{let t={current:null},h=(0,n.hd)(),r=new w.kn("ws://codex-app-server/rpc",{perMessageDeflate:!1,headers:h,createConnection:()=>',
-    "(t.current=this.createSshProxyStream(),t.current)}),o={current:null},a=e=>{o.current=o.current??e};r.on(\"error\",a);",
-    'let s=64;r.once("upgrade",e=>{let t=Number(e.headers["frame-limit"]);Number.isSafeInteger(t)&&t>0&&(s=t)});let c=new n.Codec(r,null!=h);r.once("close",()=>{t.current?.destroy()});',
-    "try{if(await opened(r),null!=o.current)throw o.current}catch(e){throw t.current?.destroy(),r.terminate(),e}",
-    'let i=new n.On(r,void 0,s,c);return r.off("error",a),this.logger.info("app_server_connection.compression_negotiated",{safe:{compression:c.compression}}),(0,n.Dn)(r,{onPongTimeout:()=>{i.terminationReason="pong_timeout",r.terminate()}}),this.hasConnected=!0,i})}}',
-    'let v5=(0,i.i)("WindowContext");function b5(e){let t=_C(e.hostConfig);if(t)return v5.info("[ssh-websocket-v0] selected app-server transport"),new gC(t);',
-    'if("remote-control"===e.transportKind)return new Remote(e);',
-    'if((0,n.no)(e.hostConfig))return new hoe({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator});',
-    'let r=x5(e.hostConfig);if(r){e.desktopAuthAppServerClient;let t=vbe(e.hostConfig,r);return new n.Tn({hostConfig:e.hostConfig,websocketUrl:r,getWebsocketProtocols:void 0,...null==t?{}:{socksProxyUrl:t}})}',
-    'return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:async()=>[...await Ope(e)]})}function afterFactory(){}',
-  ].join("");
-}
-
 test("shared-app-server-socket stays disabled until explicitly enabled", () => {
   withFeatureConfig([], (featuresRoot) => {
     assert.deepEqual(loadLinuxFeaturePatchDescriptors({ featuresRoot }), []);
@@ -1749,384 +1717,273 @@ test("attached CLI verifier preserves stock exec and signals", async () => {
   }
 });
 
-test("patch selects the bridge only for the local host and is idempotent", () => {
-  const source = syntheticBundle();
-  const patched = applySharedAppServerSocketPatch(source);
-  assert.notEqual(patched, source);
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(" "));
-  try {
-    assert.equal(applySharedAppServerSocketPatch(patched), patched);
-  } finally {
-    console.warn = originalWarn;
-  }
-  assert.deepEqual(warnings, [], "an already applied patch must not report drift");
-  assert.match(patched, /CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET/);
-  assert.match(patched, /hostConfig\.kind===`local`/);
-  assert.match(
-    patched,
-    /CodexLinuxSharedAppServerSocketTransport\(process\.env\.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async\(\)=>\[\.\.\.await Ope\(e\)\]\)/,
-  );
-  assert.match(patched, /app-server`,\s*`proxy`,\s*`--sock`/);
-  assert.match(patched, /flatMap\(e=>\[`-c`,e\]\).*app-server`,\s*`--listen`,\s*`unix:\/\//);
-  assert.doesNotMatch(patched, /mcp_servers\.codex_app/);
-  assert.match(patched, /await this\.ensureAuthority\(\)/);
-  assert.match(patched, /e\.once\(`close`,t\);try\{e\.kill\(\)/);
-  assert.match(patched, /openSync\(this\.lockPath,`wx`,384\)/);
-  assert.match(patched, /\/proc\/\$\{e\}\/stat/);
-  assert.match(patched, /reclaimStaleLock/);
-  assert.match(patched, /this\.sameIdentity\(this\.socketIdentity,e\)/);
-  assert.match(patched, /requires CODEX_CLI_PATH/);
-  assert.match(patched, /WebSocket:w\.kn,MessageCodec:n\.Codec,ConnectionAdapter:n\.On,keepAlive:n\.Dn,url:"ws:\/\/codex-app-server\/rpc",maximumFrameBytes:64,maximumFrameHeader:"frame-limit"/);
-  assert.match(patched, /new w\.kn\("ws:\/\/codex-app-server\/rpc",/);
-  assert.match(patched, /new n\.On\(/);
-  assert.match(patched, /supportsReconnect\(\)\{return!0\}/);
-
-  const negotiated = source.replace(
-    'return r.off("error",a),this.logger.info("app_server_connection.compression_negotiated",',
-    'return this.logger.info("app_server_connection.compression_negotiated",',
-  );
-  assert.notEqual(applySharedAppServerSocketPatch(negotiated), negotiated);
-});
-
-// Distinct codec and connection adapter mirror the current upstream contract.
-// The codec deliberately has no readyState or close method.
-async function connectPatchedBundle(source = syntheticBundle(), {
-  bindings = {},
-  handshakeHeaders = { "frame-limit": "32" },
-  afterOpen = () => {},
-  diagnostics = {},
-} = {}) {
-  let socket;
-  let pongTimeout;
-  const stream = new PassThrough();
-  class WebSocket extends EventEmitter {
-    readyState = 0;
-    constructor(_url, options) {
-      super();
-      socket = this;
-      options.createConnection();
-      queueMicrotask(() => {
-        try {
-          this.emit("upgrade", { headers: handshakeHeaders });
-          this.readyState = 1;
-          this.emit("open");
-          afterOpen(this);
-        } catch (error) {
-          // Keep a broken generated handler from escaping the test runner.
-          // The public connect result must still reject the original error.
-          diagnostics.unhandledError = error;
-          this.terminate();
-        }
-      });
-    }
-    send(data) { this.sent = data; }
-    close(code, reason) {
-      this.readyState = 3;
-      this.emit("close", code, Buffer.from(reason));
-    }
-    terminate() { this.close(1006, "terminated"); }
-  }
-  class Codec {
-    constructor(ws, compressionOffered = false) {
-      this.compressionOffered = compressionOffered;
-      ws.on("upgrade", () => { this.sawUpgrade = true; });
-      this.ws = ws;
-      ws.on("message", data => this.handler?.(data));
-    }
-    setMessageHandler(handler) { this.handler = handler; }
-    send(data) { this.ws.send(data); }
-    finishSending() { return Promise.resolve(); }
-    finishReceiving() { return Promise.resolve(); }
-  }
-  class Adapter {
-    constructor(ws, _principal, maximumFrameBytes, codec) {
-      this.readyState = ws.readyState;
-      this.ws = ws;
-      this.maximumFrameBytes = maximumFrameBytes;
-      this.codec = codec;
-      codec.setMessageHandler(data => this.onmessage?.({ type: "message", data }));
-      ws.on("close", (code, reason) => {
-        codec.finishReceiving().then(() => {
-          this.readyState = ws.readyState;
-          this.onclose?.({ code, reason: reason.toString(), failureReason: this.terminationReason });
-        });
-      });
-    }
-    send(data) {
-      if (Buffer.byteLength(data) > this.maximumFrameBytes) throw new Error("frame too large");
-      this.codec.send(data);
-    }
-    close(code, reason) { return this.codec.finishSending().then(() => this.ws.close(code, reason)); }
-  }
-  const patched = applySharedAppServerSocketPatch(source);
-  assert.notEqual(patched, source);
-  const injected = patched.slice(patched.indexOf("class CodexLinuxSharedAppServerSocketTransport"), patched.indexOf("function b5(e)"));
-  const context = {
-    w: { kn: WebSocket },
-    n: { Codec, On: Adapter, Dn(ws, options) {
-      assert.equal(ws, socket, "keepalive must use the connection WebSocket");
-      diagnostics.keepAliveStarted = true;
-      pongTimeout = options.onPongTimeout;
-    } },
-    process, require, console, setTimeout, clearTimeout,
-  };
-  context["n$"] = context.n;
-  context["w$"] = context.w;
-  Object.assign(context, bindings);
-  diagnostics.stream = stream;
-  vm.runInNewContext(`${injected};globalThis.Transport=CodexLinuxSharedAppServerSocketTransport`, context);
-  const transport = new context.Transport("/unused/socket", async () => []);
-  transport.ensureAuthority = async () => {};
-  transport.createProxyStream = () => stream;
-  const connection = await transport.connect();
-  return { connection, socket, stream, pongTimeout };
+function syntheticCurrentBundle() {
+  return [
+    '(()=>{var modules={',
+    '1(e,t,r){"use strict";r.d(t,{Local:()=>NativeLocal});var n=r(4);',
+    'class NativeLocal{connect(){',
+    'return new n.Cn({hostConfig:this.options.hostConfig,',
+    'websocketUrl:"ws://localhost/rpc",createConnection:()=>null}).connect();}',
+    'constructor(options){this.options=options}}},',
+    '2(e,t,r){"use strict";r.d(t,{Ctor:()=>native.Local});var native=r(1);},',
+    '3(e,t,r){var local=r(2);globalThis.create=function(e,h,o){let{isPackaged:p=!1,...rest}=e.options;',
+    'return new local.Ctor({...rest,hostConfig:h,getConfigOverrides:async()=>{',
+    'let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}},',
+    '4(e,t){t.Cn=FakeWebSocketTransport}',
+    '};function load(id){const exports={};modules[id]({},exports,load);return exports}',
+    'load.d=(exports,getters)=>{for(const [key,get] of Object.entries(getters))',
+    'Object.defineProperty(exports,key,{get})};load(3)})();',
+  ].join("");
 }
 
-test("patched current bundle returns an open connection adapter with codec message and close lifecycle", async () => {
-  const { connection, socket, stream } = await connectPatchedBundle();
-  assert.equal(connection.readyState, 1, "startup needs the returned connection to be open");
-  assert.equal(typeof connection.close, "function", "startup failure cleanup needs a connection close method");
-  assert.equal(connection.codec.compressionOffered, false);
-  assert.equal(connection.codec.sawUpgrade, true, "the codec must observe the handshake before open");
-  assert.equal(connection.maximumFrameBytes, 32, "preserve the proxy's advertised frame limit");
-  let received;
-  connection.onmessage = event => { received = event.data; };
-  socket.emit("message", "initialized");
-  assert.equal(received, "initialized");
-  connection.send("initialize");
-  assert.equal(socket.sent, "initialize");
-  assert.throws(() => connection.send("x".repeat(33)), /frame too large/);
-  const closed = new Promise(resolve => { connection.onclose = resolve; });
-  await connection.close(1000, "finished");
-  const event = await closed;
-  assert.equal(event.code, 1000);
-  assert.equal(connection.readyState, 3);
-  assert.equal(stream.destroyed, true);
-});
+function writeHostBundles(t, chunks) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-bundles-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const buildDir = path.join(root, ".vite", "build");
+  fs.mkdirSync(buildDir, { recursive: true });
+  for (const [name, source] of Object.entries(chunks)) {
+    fs.writeFileSync(path.join(buildDir, name), source);
+  }
+  return { root, buildDir };
+}
 
-test("patched connection reports pong timeout while releasing the proxy stream", async () => {
-  const { connection, stream, pongTimeout } = await connectPatchedBundle();
-  assert.equal(typeof connection.close, "function", "keepalive must target a connection adapter");
-  const closed = new Promise(resolve => { connection.onclose = resolve; });
-  pongTimeout();
-  assert.equal((await closed).failureReason, "pong_timeout");
-  assert.equal(stream.destroyed, true);
-});
-
-test("patch follows renamed minified bindings containing dollar signs", async () => {
-  const renamed = syntheticBundle().replace(/\b(n|w|r|i|s|c)\b/g, "$&$");
-  const { connection } = await connectPatchedBundle(renamed);
-  assert.equal(connection.readyState, 1);
-  await connection.close(1000, "finished");
-});
-
-test("handoff errors reject the connection before keepalive and release the proxy", async () => {
-  const failure = new Error("codec receive buffer failed");
-  const diagnostics = {};
-  await assert.rejects(
-    connectPatchedBundle(syntheticBundle(), {
-      diagnostics,
-      afterOpen(socket) { socket.emit("error", failure); },
-    }),
-    error => error === failure,
-  );
-  assert.equal(diagnostics.unhandledError, undefined);
-  assert.equal(diagnostics.keepAliveStarted, undefined);
-  assert.equal(diagnostics.stream.destroyed, true);
-});
-
-for (const { label, headers, expectedLimit } of [
-  { label: "inlined default frame limit", headers: {}, expectedLimit: 64 },
-  { label: "inlined frame header", headers: { "frame-limit": "32" }, expectedLimit: 32 },
-]) {
-  test(`generated transport preserves the ${label}`, async () => {
-    const { connection } = await connectPatchedBundle(syntheticBundle(), { handshakeHeaders: headers });
-    assert.equal(connection.readyState, 1);
-    connection.send("x".repeat(expectedLimit));
-    assert.throws(() => connection.send("x".repeat(expectedLimit + 1)), /frame too large/);
-    await connection.close(1000, "finished");
+test("descriptor patches a renamed host bundle and reuses the native transport across module scopes", async (t) => {
+  const current = syntheticCurrentBundle();
+  const unrelated = current.replace("isPackaged:p", "packed:p");
+  const { root, buildDir } = writeHostBundles(t, {
+    "early-bootstrap-1-aabb.js": unrelated,
+    "renamed-host.js": current,
   });
-}
-
-test("patch rejects handshake values held in method-local bindings", () => {
-  // A method-local name would not resolve from the injected class, so only
-  // inlined literals are accepted for the URL, frame limit, and header.
-  const cases = [
-    syntheticBundle().replace('new w.kn("ws://codex-app-server/rpc",', "new w.kn(url,"),
-    syntheticBundle().replace("let s=64;", "let s=limit;"),
-    syntheticBundle().replace('e.headers["frame-limit"]', "e.headers[header]"),
-  ];
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(" "));
-  try {
-    for (const unsupported of cases) {
-      assert.notEqual(unsupported, syntheticBundle());
-      assert.equal(applySharedAppServerSocketPatch(unsupported), unsupported);
-    }
-  } finally {
-    console.warn = originalWarn;
-  }
-  assert.equal(warnings.length, cases.length);
-  assert.match(warnings.join("\n"), /SSH WebSocket transport/);
-});
-
-test("patch rejects ambiguous or disconnected codec and adapter lifecycles", () => {
-  const source = syntheticBundle();
-  const codec = "let c=new n.Codec(r,null!=h);";
-  const cases = [
-    source.replace(codec, `${codec}${codec}`),
-    source.replace(codec, "let c=new n.Codec(otherSocket,null!=h);"),
-    source.replace("new n.On(r,void 0,s,c)", "new n.On(r,void 0,s,otherCodec)"),
-    source.replace("this.hasConnected=!0,i})", "this.hasConnected=!0,c})"),
-    source.replace('i.terminationReason="pong_timeout"', 'otherAdapter.terminationReason="pong_timeout"'),
-  ];
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(" "));
-  try {
-    for (const unsupported of cases) {
-      assert.notEqual(unsupported, source, "each case must change the upstream contract");
-      assert.equal(applySharedAppServerSocketPatch(unsupported), unsupported);
-    }
-  } finally {
-    console.warn = originalWarn;
-  }
-  assert.equal(warnings.length, cases.length);
-});
-
-test("durable hosts retain their upstream transport even when kind is local", () => {
-  const patched = applySharedAppServerSocketPatch(syntheticBundle());
-  const factory = patched.slice(patched.indexOf("function b5(e)"), patched.indexOf("function afterFactory"));
-  class Bridge {}
-  class Cloud {}
-  class Local {}
-  const context = {
-    process: { env: { CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET: "/test/socket" } },
-    CodexLinuxSharedAppServerSocketTransport: Bridge,
-    _C: () => null,
-    n: { no: () => false, Tn: Cloud, Cn: Local },
-    x5: config => config.id === "durable" ? "wss://example.test" : null,
-    vbe: () => null,
-  };
-  vm.runInNewContext(`${factory};globalThis.create=b5`, context);
-  assert.ok(context.create({ hostConfig: { kind: "local", id: "local" } }) instanceof Bridge);
-  assert.ok(context.create({ hostConfig: { kind: "local", id: "durable" } }) instanceof Cloud);
-  assert.ok(context.create({ hostConfig: { kind: "local", id: "other" } }) instanceof Local);
-});
-
-test("patch rejects retired, duplicate, and mixed transport layouts", () => {
-  const current = syntheticBundle();
-  const patched = applySharedAppServerSocketPatch(current);
-  const retired = current.replace(
-    "let i=new n.On(r,void 0,s,c);",
-    "let i=new n.On(r,void 0,s);",
-  );
-
-  for (const source of [retired, current + current, current + patched, patched + patched]) {
-    const warnings = [];
-    const originalWarn = console.warn;
-    console.warn = (...args) => warnings.push(args.join(" "));
-    try {
-      assert.equal(applySharedAppServerSocketPatch(source), source);
-    } finally {
-      console.warn = originalWarn;
-    }
-  }
-});
-
-test("current-shape idempotence rejects partial, duplicate, and mixed insertions", () => {
-  const current = 'class NativeLocal{connect(){return new n.Cn({hostConfig:this.options.hostConfig,' +
-    'websocketUrl:"ws://localhost/rpc",createConnection:()=>stream})}}' +
-    'const create=function(e,h,o){let{isPackaged:p=!1,...r}=e.options;return new n.Cn({' +
-    'getConfigOverrides:async()=>{let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}';
-  const patched = applySharedAppServerSocketPatch(current);
+  const [{ apply }] = descriptors;
+  assert.deepEqual(apply(root), { changed: true });
+  const host = path.join(buildDir, "renamed-host.js");
+  const patched = fs.readFileSync(host, "utf8");
   assert.notEqual(patched, current);
-  assert.equal(applySharedAppServerSocketPatch(patched), patched);
-  const branchStart = patched.indexOf("if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET");
-  const branchEnd = patched.indexOf("return new n.Cn(", branchStart);
-  assert.ok(branchStart >= 0 && branchEnd > branchStart);
-  const branch = patched.slice(branchStart, branchEnd);
+  assert.deepEqual(apply(root), { changed: false });
+  assert.equal(fs.readFileSync(host, "utf8"), patched);
+  assert.equal(fs.readFileSync(path.join(buildDir, "early-bootstrap-1-aabb.js"), "utf8"), unrelated);
+
+  const socketPath = "/test/socket";
+  const overrides = ["feature=true"];
+  const connection = {};
+  class FakeWebSocketTransport {
+    constructor(options) {
+      assert.equal(options.hostConfig.id, "local");
+      assert.equal(options.websocketUrl, "ws://localhost/rpc");
+      assert.equal(options.createConnection(), connection);
+    }
+
+    async connect() {
+      return connection;
+    }
+  }
+  const context = {
+    FakeWebSocketTransport,
+    process: { env: { CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET: socketPath } },
+    x: { y(root) { assert.equal(root, "/test/framework"); } },
+  };
+  vm.runInNewContext(patched, context);
+
+  const options = { options: { extraOption: 42 } };
+  const configure = async () => ({ overrides, windowsFrameworkRoot: "/test/framework" });
+  const shared = context.create(options, { kind: "local", id: "local" }, configure);
+  assert.equal(shared.kind, "websocket");
+  assert.equal(shared.socketPath, socketPath);
+  assert.equal(await shared.getConfigOverrides(), overrides);
+  shared.ensureAuthority = async () => {};
+  shared.createProxyStream = () => connection;
+  assert.equal(await shared.connect(), connection);
+  const durableHost = { kind: "local", id: "durable" };
+  const durable = context.create(options, durableHost, configure);
+  assert.equal(durable.constructor.name, "NativeLocal");
+  assert.equal(durable.options.extraOption, 42);
+  assert.equal(durable.options.hostConfig, durableHost);
+  assert.equal(await durable.options.getConfigOverrides(), overrides);
+
+  delete context.process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET;
+  const hostConfig = { kind: "local", id: "local" };
+  const native = context.create(options, hostConfig, configure);
+  assert.equal(native.constructor.name, "NativeLocal");
+  assert.equal(native.options.hostConfig, hostConfig);
+  assert.equal(await native.options.getConfigOverrides(), overrides);
+});
+
+test("descriptor rejects missing and ambiguous host bundles without changing them", (t) => {
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, { "early-bootstrap.js": "unrelated" });
+  assert.throws(() => apply(root), {
+    name: "Error",
+    message: /Expected one shared app-server socket host bundle, found 0/,
+  });
+  assert.equal(fs.readFileSync(path.join(buildDir, "early-bootstrap.js"), "utf8"), "unrelated");
+
+  const source = syntheticCurrentBundle();
+  for (const name of ["first.js", "second.js"]) {
+    fs.writeFileSync(path.join(buildDir, name), source);
+  }
+  assert.throws(() => apply(root), {
+    name: "Error",
+    message: /Expected one shared app-server socket host bundle, found 2/,
+  });
+  for (const name of ["first.js", "second.js"]) {
+    assert.equal(fs.readFileSync(path.join(buildDir, name), "utf8"), source);
+  }
+});
+
+test("descriptor rejects incomplete or drifted insertions without changing the host", (t) => {
+  const current = syntheticCurrentBundle();
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, { "host.js": current });
+  const host = path.join(buildDir, "host.js");
+  apply(root);
+  const patched = fs.readFileSync(host, "utf8");
+  const patchedCall = "return local.Ctor.createLinuxSharedSocket(";
+  assert.ok(patched.includes(patchedCall));
   const cases = [
-    patched.slice(0, branchStart) + patched.slice(branchEnd),
+    current + current,
+    current.replace("getConfigOverrides:", "renamedField:"),
+    current.replace('websocketUrl:"ws://localhost/rpc"', 'websocketUrl:"ws://different/rpc"'),
+    current.replace("Ctor:()=>native.Local", "Ctor:()=>function(options){return new native.Local(options)}"),
+    current.replace("Local:()=>NativeLocal", "Local:()=>function(options){return new NativeLocal(options)}"),
+    patched.replace(patchedCall, "return new local.Ctor("),
     patched.replace("class CodexLinuxSharedAppServerSocketTransport", "class IncompleteTransport"),
+    patched.replace("static createLinuxSharedSocket", "static incompleteMethod"),
     `${patched}class CodexLinuxSharedAppServerSocketTransport{}`,
-    patched.slice(0, branchEnd) + branch + patched.slice(branchEnd),
+    patched.replace(patchedCall, `${patchedCall}${patchedCall}`),
     current + patched,
   ];
   for (const source of cases) {
-    const warnings = [];
-    const originalWarn = console.warn;
-    console.warn = (...args) => warnings.push(args.join(" "));
-    try {
-      assert.equal(applySharedAppServerSocketPatch(source), source);
-    } finally {
-      console.warn = originalWarn;
-    }
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /incomplete or ambiguous current shared app-server socket patch state/i);
+    fs.writeFileSync(host, source);
+    assert.throws(() => apply(root), {
+      name: "Error",
+      message: /Could not patch host\.js:/,
+    });
+    assert.equal(fs.readFileSync(host, "utf8"), source);
   }
 });
 
-test("patch leaves unsupported bundle shapes unchanged", () => {
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(" "));
-  try {
-    assert.equal(applySharedAppServerSocketPatch("unrelated bundle"), "unrelated bundle");
-  } finally {
-    console.warn = originalWarn;
+test("descriptor leaves factory options and WebSocket connection drift unchanged", (t) => {
+  const current = syntheticCurrentBundle();
+  const wrapperHost = current.replace("hostConfig:h,", "hostConfig:h.hostConfig,");
+  const nestedCallback = current
+    .replace("getConfigOverrides:async", "...function(o){return{getConfigOverrides:async")
+    .replace("return(0,x.y)(b),a}})}},",
+      'return(0,x.y)(b),a}}}(async()=>{const v=await o();return{...v,overrides:[...v.overrides,"native-extra"]}})})}},');
+  const adapterContext = current
+    .replace("connect(){return new n.Cn", "connect(context){return new n.Cn")
+    .replace("}).connect();", "}).connect(context);");
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, {});
+  const host = path.join(buildDir, "host.js");
+  const cases = [
+    [wrapperHost, /local transport options do not match the current factory/],
+    [nestedCallback, /local transport options do not match the current factory/],
+    [adapterContext, /native WebSocket adapter does not use the expected connect call/],
+  ];
+  for (const [source, message] of cases) {
+    assert.notEqual(source, current);
+    assert.doesNotThrow(() => new vm.Script(source));
+    fs.writeFileSync(host, source);
+    assert.throws(() => apply(root), { name: "Error", message });
+    assert.equal(fs.readFileSync(host, "utf8"), source);
   }
-  assert.deepEqual(warnings, []);
 });
 
-test("patch rejects a current transport whose semantic SSH anchor is missing", () => {
-  const source = syntheticBundle().replace(
-    'class gC{options;kind="websocket";logger=(0,i.i)("AppServerTransportSshWebsocket");',
-    'class gC{kind="websocket";',
+test("descriptor leaves a parseable class-expression host unchanged", (t) => {
+  const source = syntheticCurrentBundle().replace("class NativeLocal{", "const NativeLocal=class NativeLocal{");
+  assert.doesNotThrow(() => new vm.Script(source));
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, { "host.js": source });
+  assert.throws(() => apply(root), {
+    name: "Error",
+    message: /local transport or WebSocket adapter is outside its expected module scope/,
+  });
+  assert.equal(fs.readFileSync(path.join(buildDir, "host.js"), "utf8"), source);
+});
+
+test("descriptor rejects method-local, shadowed, and reassigned transport bindings", (t) => {
+  const current = syntheticCurrentBundle();
+  const adapterMovedIntoMethod = current.replace(
+    "var n=r(4);class NativeLocal{connect(){",
+    "class NativeLocal{connect(){var n=r(4);",
   );
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(" "));
-  try {
-    assert.equal(applySharedAppServerSocketPatch(source), source);
-  } finally {
-    console.warn = originalWarn;
-  }
-  assert.deepEqual(warnings, []);
-});
-
-test("patch leaves a current transport with no config override callback byte-identical", () => {
-  const source = syntheticBundle().replace(
-    ",getConfigOverrides:async()=>[...await Ope(e)]",
-    "",
+  const adapterShadowedByParameter = current.replace(
+    "class NativeLocal{connect(){",
+    "class NativeLocal{connect(n=r(4)){",
   );
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(" "));
-  try {
-    assert.equal(applySharedAppServerSocketPatch(source), source);
-  } finally {
-    console.warn = originalWarn;
+  const factoryShadowedByParameter = current
+    .replace("globalThis.create=function", "register(local);function register(local){globalThis.create=function")
+    .replace("return(0,x.y)(b),a}})}},", "return(0,x.y)(b),a}})}}},");
+  const barrelBindingReassigned = current.replace("var native=r(1);", "var native=r(1);native=r(1);");
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, {});
+  const host = path.join(buildDir, "host.js");
+  for (const source of [
+    adapterMovedIntoMethod,
+    adapterShadowedByParameter,
+    factoryShadowedByParameter,
+    barrelBindingReassigned,
+  ]) {
+    assert.notEqual(source, current);
+    assert.doesNotThrow(() => new vm.Script(source));
+    fs.writeFileSync(host, source);
+    assert.throws(() => apply(root), {
+      name: "Error",
+      message: /local transport or WebSocket adapter is outside its expected module scope/,
+    });
+    assert.equal(fs.readFileSync(host, "utf8"), source);
   }
-  assert.match(warnings.join("\n"), /config override callback.*found 0/i);
 });
 
-test("patch leaves an ambiguous config override callback byte-identical", () => {
-  const callbackTransport =
-    "return new n.Cn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator,getConfigOverrides:async()=>[...await Ope(e)]})";
-  const source = syntheticBundle().replace(callbackTransport, `${callbackTransport};${callbackTransport}`);
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(" "));
-  try {
-    assert.equal(applySharedAppServerSocketPatch(source), source);
-  } finally {
-    console.warn = originalWarn;
-  }
-  assert.match(warnings.join("\n"), /config override callback.*found 2/i);
+test("descriptor leaves the host unchanged when a temporary write fails partway", (t) => {
+  const source = syntheticCurrentBundle();
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, { "host.js": source });
+  const writeFileSync = fs.writeFileSync;
+  t.mock.method(fs, "writeFileSync", (file, bytes, options) => {
+    assert.equal(typeof file, "number");
+    writeFileSync(file, bytes.slice(0, 100), options);
+    throw new Error("simulated partial write");
+  });
+
+  assert.throws(() => apply(root), { name: "Error", message: "simulated partial write" });
+  assert.deepEqual(fs.readdirSync(buildDir), ["host.js"]);
+  assert.equal(fs.readFileSync(path.join(buildDir, "host.js"), "utf8"), source);
+});
+
+test("optional socket drift lets later patches run and fails enabled-feature acceptance", (t) => {
+  const featureId = "shared-app-server-socket";
+  const enabledFeatureIds = [featureId];
+  const [descriptor] = loadLinuxFeaturePatchDescriptors({ enabledFeatureIds });
+  const { root } = writeHostBundles(t, { "early-bootstrap.js": "unrelated" });
+  const followup = {
+    id: "followup",
+    phase: descriptor.phase,
+    ciPolicy: "optional",
+    apply: () => ({ changed: true }),
+  };
+  const report = createPatchReport();
+  report.enabledFeatures = enabledFeatureIds;
+  applyExtractedAppPatchDescriptors(
+    root,
+    [descriptor, followup],
+    { enabledFeatureIds },
+    report,
+    descriptor.phase,
+  );
+
+  assert.deepEqual(report.patches.map(({ name, status }) => [name, status]), [
+    [descriptor.id, "skipped-optional"],
+    [followup.id, "applied"],
+  ]);
+  assert.deepEqual(criticalFailuresFromReport(report), []);
+  assert.deepEqual(enabledFeatureFailuresFromReport(report), [{
+    name: descriptor.id,
+    status: "skipped-optional",
+    reason: report.patches[0].reason,
+    featureId,
+  }]);
+  assert.match(report.patches[0].reason, /Expected one shared app-server socket host bundle, found 0/);
 });
 
 test("injected transport requires the captured config override callback", () => {
@@ -2138,45 +1995,34 @@ test("injected transport requires the captured config override callback", () => 
 });
 
 test(
-  "patch applies to exactly one current signed main-process chunk",
+  "descriptor patches exactly one current signed main-process chunk",
   { skip: process.env.CODEX_SIGNED_EXTRACTED_APP == null },
-  () => {
-    const buildDir = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
-    const chunks = fs.readdirSync(buildDir)
-      .filter((name) => /^early-bootstrap(?:-\d+-[0-9a-f]{16})?\.js$/.test(name) || name === "app-server-host.js");
-    assert.ok(chunks.length > 0);
-    const results = [];
-    const originalWarn = console.warn;
-    console.warn = () => {};
-    try {
-      for (const name of chunks) {
-        const source = fs.readFileSync(path.join(buildDir, name), "utf8");
-        const patched = applySharedAppServerSocketPatch(source);
-        if (patched !== source) results.push({ name, patched });
-      }
-    } finally {
-      console.warn = originalWarn;
-    }
-    assert.equal(results.length, 1);
-    const [{ patched }] = results;
-    const warnings = [];
-    console.warn = (...args) => warnings.push(args.join(" "));
-    try {
-      assert.equal(applySharedAppServerSocketPatch(patched), patched);
-    } finally {
-      console.warn = originalWarn;
-    }
-    assert.deepEqual(warnings, []);
+  (t) => {
+    const signedBuild = path.join(process.env.CODEX_SIGNED_EXTRACTED_APP, ".vite", "build");
+    const chunks = Object.fromEntries(
+      fs.readdirSync(signedBuild)
+        .filter((name) => name.endsWith(".js"))
+        .map((name) => [name, fs.readFileSync(path.join(signedBuild, name), "utf8")]),
+    );
+    const { root, buildDir } = writeHostBundles(t, chunks);
+    const [{ apply }] = descriptors;
+    assert.deepEqual(apply(root), { changed: true });
+    const changed = Object.keys(chunks).filter(
+      (name) => fs.readFileSync(path.join(buildDir, name), "utf8") !== chunks[name],
+    );
+    assert.equal(changed.length, 1);
+    const [name] = changed;
+    const patched = fs.readFileSync(path.join(buildDir, name), "utf8");
     assert.match(patched, /class CodexLinuxSharedAppServerSocketTransport/);
-    assert.match(patched, /CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET/);
-    new vm.Script(patched, { filename: "patched-chunk.js" });
+    new vm.Script(patched, { filename: name });
+    assert.deepEqual(apply(root), { changed: false });
   },
 );
 
-test("descriptor is optional and targets the main bundle", () => {
+test("descriptor stays optional and targets the extracted app", () => {
   assert.deepEqual(
     descriptors.map(({ id, phase, ciPolicy }) => [id, phase, ciPolicy]),
-    [["main-process-shared-app-server-socket", "main-bundle", "optional"]],
+    [["main-process-shared-app-server-socket", "extracted-app:pre-webview", "optional"]],
   );
 });
 
@@ -3319,17 +3165,17 @@ test("asynchronous cleanup failures warn instead of escaping Electron callbacks"
 
 test("injected transport connects through its proxy and disposes the proxy stream", async () => {
   const proxy = fakeChild();
-  const { Transport, namespace } = loadInjectedTransport({ spawnImpl: () => proxy });
+  const { Transport } = loadInjectedTransport({ spawnImpl: () => proxy });
   const transport = new Transport("/unused/socket");
   transport.ensureAuthority = async () => {};
   const originalCli = process.env.CODEX_CLI_PATH;
   process.env.CODEX_CLI_PATH = "/fake/codex";
   try {
-    const adapter = await transport.connect();
-    assert.equal(adapter instanceof namespace.Adapter, true);
+    const { stream } = await transport.connect();
     assert.equal(transport.proxyStreams.size, 1);
-    adapter.socket.emit("close");
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const closed = once(stream, "close");
+    stream.destroy();
+    await closed;
     assert.equal(proxy.killed, true);
     assert.equal(transport.proxyStreams.size, 0);
   } finally {
@@ -3337,47 +3183,6 @@ test("injected transport connects through its proxy and disposes the proxy strea
     else process.env.CODEX_CLI_PATH = originalCli;
   }
 });
-
-for (const failure of ["error", "timeout"]) {
-  test(`injected transport cleans up proxy and WebSocket on pre-open ${failure}`, async () => {
-    let socket;
-    class FailingWebSocket extends EventEmitter {
-      constructor(_url, options) {
-        super();
-        socket = this;
-        this.stream = options.createConnection();
-        if (failure === "error") queueMicrotask(() => this.emit("error", new Error("open failed")));
-      }
-
-      terminate() {
-        this.terminated = true;
-        this.stream.destroy();
-      }
-    }
-    const proxy = fakeChild();
-    const { Transport } = loadInjectedTransport({
-      spawnImpl: () => proxy,
-      WebSocketImpl: FailingWebSocket,
-      timeoutCapMs: 10,
-    });
-    const transport = new Transport("/unused/socket");
-    transport.ensureAuthority = async () => {};
-    const originalCli = process.env.CODEX_CLI_PATH;
-    process.env.CODEX_CLI_PATH = "/fake/codex";
-    try {
-      await assert.rejects(
-        transport.connect(),
-        failure === "error" ? /open failed/ : /open timed out/,
-      );
-      assert.equal(socket.terminated, true);
-      assert.equal(proxy.killed, true);
-      assert.equal(transport.proxyStreams.size, 0);
-    } finally {
-      if (originalCli == null) delete process.env.CODEX_CLI_PATH;
-      else process.env.CODEX_CLI_PATH = originalCli;
-    }
-  });
-}
 
 test("socket environment hook shell syntax is valid", () => {
   const result = spawnSync("bash", ["-n", socketEnvHook], { encoding: "utf8" });
