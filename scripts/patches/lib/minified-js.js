@@ -157,7 +157,7 @@ function startsExpression(previous, source, next) {
   if (["return", "throw", "yield"].includes(previous.value)) {
     return !/[\r\n\u2028\u2029]/u.test(source.slice(previous.end, next));
   }
-  return !["case", "do", "else"].includes(previous.value);
+  return !["do", "else"].includes(previous.value);
 }
 
 function slashStartsRegex(previous) {

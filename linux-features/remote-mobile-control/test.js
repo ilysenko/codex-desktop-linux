@@ -2260,6 +2260,7 @@ test("Linux remote-control settings UX handles division around the settings code
     "let first=async function(){}/2,r=/}/;",
     "let first=class{}/2,r=/}/;",
     "let first=1>{}/2,r=/}/;",
+    "switch(x){case {}/2:break;case /}/:break;}",
     'let first=function(){label:{}/}/.test("}");};',
   ]) {
     const source = prefix + syntheticCurrentOutboundConnectionsBundle() + "let last=1/3;";
@@ -2277,6 +2278,7 @@ test("Linux remote-control settings UX patch warns on settings gate drift even w
     original.replace("connectionFlags.shared", "connectionFlags.unrelated"),
     original.replace('let flag="782640499";', 'let flag="782640499";flag="other";'),
     original.replace("tab,authorized){", "tab,authorized,connectionFlags){"),
+    original.replace('connectionFlags=n("side");', 'connectionFlags=n("side");[connectionFlags.shared,x]=["other",0];'),
     original.replace("(connectionFlags.shared);", "(connectionFlags.shared);loader=otherFlag;"),
     original.replace('loader=(0,flags.read)(connectionFlags.shared);',
       'loader=otherFlag;{let local=0,loader=(0,flags.read)(connectionFlags.shared);local=loader}'),

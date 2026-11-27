@@ -897,8 +897,11 @@ function matchesOutboundLoaderFlag(source, tokens, body, owner, loader, declarat
   for (const { index } of source.matchAll(importReferences)) {
     if (index >= scope.end) break;
     if (index === binding.index || !tokens.has(index)) continue;
+    const prefix = source.slice(index - 3, index);
     const suffix = source.slice(index + flagRead.groups.imported.length);
-    if (!/^\.[A-Za-z_$][\w$]*(?=\(|\)|,)/u.test(suffix)) return false;
+    const methodRead = prefix === "(0," && /^\.[A-Za-z_$][\w$]*\)\(/u.test(suffix);
+    const flagArgument = index === owner.start + flagRead.index + flagRead[0].lastIndexOf(flagRead.groups.imported);
+    if (!methodRead && !flagArgument) return false;
   }
   return true;
 }
