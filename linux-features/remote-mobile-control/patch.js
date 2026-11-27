@@ -35,6 +35,7 @@ function deviceKeyProviderPattern(flags = "u") {
   );
 }
 const REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER = "codexLinuxRemoteControlOutboundTabGate";
+const REMOTE_CONTROL_OUTBOUND_SETTINGS_GATE_MARKER = "codexLinuxRemoteControlOutboundSettingsGate";
 const REMOTE_CONNECTIONS_REFRESH_MARKER = "codexLinuxRemoteConnectionsRefreshNow";
 const REMOTE_CONTROL_LOAD_GATE_MARKER = "codexLinuxRemoteControlLoadGateEnabled";
 const REMOTE_CONTROL_FEATURE_SYNC_MARKER = "codexLinuxRemoteControlFeatureSyncEnabled";
@@ -760,83 +761,329 @@ function applyLinuxRemoteControlCopyPatch(source) {
 }
 
 function applyLinuxRemoteControlSettingsUxPatch(source) {
-  let patched = replaceLinuxRemoteControlCopy(source).patched;
-  patched = applyLinuxRemoteControlOutboundTabGatePatch(patched);
-  patched = applyLinuxRemoteControlOutboundSettingsPagePatch(patched);
-
-  return patched;
-}
-
-// Settings renders its own tab list and uses the same outbound condition
-// for the tab and its panels. The loader opt-in makes the negated gate false.
-function applyLinuxRemoteControlOutboundSettingsPagePatch(source) {
-  const panels = [...source.matchAll(
-    /(?<gate>[A-Za-z_$][\w$]*)&&"access-other-devices"===[A-Za-z_$][\w$]*&&!?[A-Za-z_$][\w$]*\?/gu,
-  )];
-  const gates = new Set(panels.map((match) => match.groups.gate));
-  if (gates.size !== 1) return source;
-
-  const [gate] = gates;
-  const tab = new RegExp(
-    `\\b[A-Za-z_$][\\w$]*=${escapeRegExp(gate)}&&\\([A-Za-z_$][\\w$]*\\|\\|!1\\)`,
-    "u",
-  );
-  const tabMatch = tab.exec(source);
-  if (!tabMatch) return source;
-  const tabVisibility = tabMatch[0].split("=")[0];
-  const tabPush = new RegExp(
-    `\\b${escapeRegExp(tabVisibility)}&&[A-Za-z_$][\\w$]*\\.push\\("access-other-devices"\\)`,
-    "u",
-  );
-  if (!tabPush.test(source)) return source;
-
-  const declaration = new RegExp(
-    `([,;]${escapeRegExp(gate)}=)!([A-Za-z_$][\\w$]*)(?=[,;])`,
-    "gu",
-  );
-  if ([...source.matchAll(declaration)].length !== 1) return source;
-  return source.replace(
-    declaration,
-    '$1(navigator.userAgent.includes("Linux")||!$2)',
-  );
+  return applyLinuxRemoteControlOutboundTabGatePatch(replaceLinuxRemoteControlCopy(source).patched);
 }
 
 function applyLinuxRemoteControlOutboundTabGatePatch(source) {
+  const patched = applyLinuxRemoteControlOutboundSidebarGatePatch(source);
+  return applyLinuxRemoteControlOutboundSettingsGatePatch(patched);
+}
+
+function applyLinuxRemoteControlOutboundSidebarGatePatch(source) {
   if (source.includes(REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER)) {
     return source;
   }
 
-  const gates = [...source.matchAll(/([A-Za-z_$][\w$]*)=\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\("782640499"\)/gu)];
-  const currentGate = /(?<state>[A-Za-z_$][\w$]*)&&!?(?<getter>[A-Za-z_$][\w$]*)\((?<gate>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*),(?<id>[A-Za-z_$][\w$]*)\)&&(?<items>[A-Za-z_$][\w$]*)\.push\((?<route>[A-Za-z_$][\w$]*)\("access-other-devices",(?<platform>[A-Za-z_$][\w$]*)\)\)/gu;
-  const current = [...source.matchAll(currentGate)].filter((match) =>
-    source.includes(`let ${match.groups.id}="782640499"`),
+  const pattern = /(?<state>[A-Za-z_$][\w$]*)&&!(?<getter>[A-Za-z_$][\w$]*)\((?<gate>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*),(?<id>[A-Za-z_$][\w$]*)\)&&(?<items>[A-Za-z_$][\w$]*)\.push\((?<route>[A-Za-z_$][\w$]*)\("access-other-devices",(?<platform>[A-Za-z_$][\w$]*)\)\)/gu;
+  const tokens = outboundCodeTokens(source);
+  const matches = [...source.matchAll(pattern)].filter(
+    (match) => tokens.has(match.index) && matchesOutboundSidebarFlag(source, tokens, match),
   );
-  if (gates.length === 0 && current.length === 1) {
-    const match = current[0];
-    const g = match.groups;
-    return source.slice(0, match.index) +
-      `${g.state}&&/*${REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER}*/(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)||!${g.getter}(${g.gate},${g.id}))&&${g.items}.push(${g.route}("access-other-devices",${g.platform}))` +
-      source.slice(match.index + match[0].length);
-  }
-  if (gates.length !== 1) {
-    console.warn("WARN: Could not find unique remote-control outbound tab gate - skipping Linux outbound tab gate patch");
+  if (matches.length !== 1) {
+    console.warn("WARN: Could not find unique remote-control outbound sidebar gate - skipping Linux outbound sidebar gate patch");
     return source;
   }
 
-  const [, hiddenGateVar] = gates[0];
-  const negatedGate = new RegExp(
-    `([A-Za-z_$][\\w$]*)=!${escapeRegExp(hiddenGateVar)}(?=,[A-Za-z_$][\\w$]*=null==[A-Za-z_$][\\w$]*[,;])`,
+  const match = matches[0];
+  const g = match.groups;
+  return source.slice(0, match.index) +
+    `${g.state}&&/*${REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER}*/(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)||!${g.getter}(${g.gate},${g.id}))&&${g.items}.push(${g.route}("access-other-devices",${g.platform}))` +
+    source.slice(match.index + match[0].length);
+}
+
+function matchesOutboundSidebarFlag(source, tokens, match) {
+  const id = escapeRegExp(match.groups.id);
+  const declarationPattern = new RegExp(`(?<=[{;])let ${id}="782640499"(?=[,;])`, "gu");
+  const declarations = [...source.matchAll(declarationPattern)].flatMap((declaration) => {
+    if (declaration.index >= match.index || !tokens.has(declaration.index)) return [];
+    const block = enclosingOutboundFlagBlock(source, declaration.index, tokens);
+    return block != null && block.end > match.index ? [{ declaration, block }] : [];
+  });
+  if (declarations.length !== 1) return false;
+  const [{ declaration, block }] = declarations;
+  const blockEnd = block.end;
+
+  const declarationId = declaration.index + "let ".length;
+  const getterId = match.index + match[0].indexOf(`,${match.groups.id})&&`) + 1;
+  const exports = /[A-Za-z_$][\w$]*\.d\([A-Za-z_$][\w$]*,\{\},\{(?:[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*,)*[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*\}\)$/u
+    .exec(source.slice(block.index + 1, blockEnd));
+  const exportsStart = exports == null ? blockEnd : block.index + 1 + exports.index;
+  const references = new RegExp(`(?<![\\w$])${id}(?![\\w$])`, "gu");
+  references.lastIndex = block.index + 1;
+  for (const { index } of source.matchAll(references)) {
+    if (index >= exportsStart) break;
+    if (index !== declarationId && index !== getterId && tokens.has(index)) return false;
+  }
+  return true;
+}
+
+function enclosingOutboundFlagBlock(source, index, tokens) {
+  const braces = [...source.slice(0, index).matchAll(/\{/gu)].reverse();
+  for (const brace of braces) {
+    if (!tokens.has(brace.index)) continue;
+    const end = findMatchingBrace(source, brace.index);
+    if (end > index) return { index: brace.index, end };
+  }
+  return null;
+}
+
+function matchesOutboundLoaderFlag(source, tokens, body, owner, loader, declaration, separators) {
+  const flagExports = [];
+  for (const declaration of source.matchAll(/(?<=[{;])let (?<flag>[A-Za-z_$][\w$]*)="782640499"(?=[,;])/gu)) {
+    if (!tokens.has(declaration.index)) continue;
+    const block = enclosingOutboundFlagBlock(source, declaration.index, tokens);
+    if (block == null) continue;
+    const factory = outboundFactoryHeader(source, block.index);
+    if (factory == null) continue;
+    const blockBody = source.slice(block.index + 1, block.end);
+    const exports = new RegExp(
+      `${escapeRegExp(factory.require)}\\.d\\(${DEVICE_KEY_IDENT},\\{\\},\\{(?<entries>[^{}]+)\\}\\)$`,
+      "u",
+    ).exec(blockBody);
+    if (exports == null) continue;
+    const slots = exports.groups.entries.split(",")
+      .filter((entry) => entry.endsWith(`:${declaration.groups.flag}`));
+    if (slots.length !== 1) continue;
+
+    const flag = escapeRegExp(declaration.groups.flag);
+    const flagReferences = new RegExp(`(?<![\\w$])${flag}(?![\\w$])`, "gu");
+    const flagStart = declaration.index - block.index - 1 + "let ".length;
+    const unchangedFlag = [...blockBody.matchAll(flagReferences)].every(({ index }) =>
+      index === flagStart || index >= exports.index || !tokens.has(block.index + 1 + index) ||
+      (blockBody[index - 1] === "," && /^\)\)?&&/.test(blockBody.slice(index + declaration.groups.flag.length))),
+    );
+    if (unchangedFlag) flagExports.push({ module: factory.module, slot: slots[0].split(":")[0] });
+  }
+  if (flagExports.length !== 1) return false;
+  const [{ module, slot }] = flagExports;
+  const read = new RegExp(
+    `(?<![\\w$.])${escapeRegExp(loader)}=\\(0,${DEVICE_KEY_IDENT}\\.${DEVICE_KEY_IDENT}\\)\\(` +
+    `(?<imported>${DEVICE_KEY_IDENT})\\.${escapeRegExp(slot)}\\)(?=[,;])`,
     "gu",
   );
-  const consumers = [...source.matchAll(negatedGate)];
-  if (consumers.length !== 1) {
-    console.warn("WARN: Could not find remote-control outbound tab gate consumer - skipping Linux outbound tab gate patch");
+  const reads = [...body.slice(0, declaration.index).matchAll(read)].filter(
+    ({ index }) => tokens.has(owner.start + index) && separators.has(index - 1),
+  );
+  if (reads.length !== 1) return false;
+  const [flagRead] = reads;
+  const gateOperand = declaration.index + declaration[0].length - loader.length;
+  const references = new RegExp(`(?<![\\w$])${escapeRegExp(loader)}(?![\\w$])`, "gu");
+  for (const { index } of body.matchAll(references)) {
+    if (index !== flagRead.index && index !== gateOperand && tokens.has(owner.start + index)) return false;
+  }
+  const imported = escapeRegExp(flagRead.groups.imported);
+  const scope = enclosingOutboundFlagBlock(source, owner.start - 1, tokens);
+  if (scope == null) return false;
+  const factory = outboundFactoryHeader(source, scope.index);
+  if (factory == null) return false;
+
+  const importPattern = new RegExp(
+    `(?<![\\w$.])${imported}=${escapeRegExp(factory.require)}\\("${escapeRegExp(module)}"\\)(?=[,;])`,
+    "gu",
+  );
+  const imports = [...source.matchAll(importPattern)].filter(({ index }) =>
+    index > scope.index && index < owner.start && tokens.has(index),
+  );
+  if (imports.length !== 1) return false;
+  const [binding] = imports;
+  let importedAtModuleLevel = false;
+  findMatchingBrace(source, scope.index, (index, depth, expressionDepth) => {
+    if (index === binding.index) importedAtModuleLevel = depth === 1 && expressionDepth === 0;
+  });
+  if (!importedAtModuleLevel) return false;
+
+  const importReferences = new RegExp(`(?<![\\w$])${imported}(?![\\w$])`, "gu");
+  importReferences.lastIndex = scope.index + 1;
+  for (const { index } of source.matchAll(importReferences)) {
+    if (index >= scope.end) break;
+    if (index === binding.index || !tokens.has(index)) continue;
+    const suffix = source.slice(index + flagRead.groups.imported.length);
+    if (!/^\.[A-Za-z_$][\w$]*(?=\(|\)|,)/u.test(suffix)) return false;
+  }
+  return true;
+}
+
+function outboundFactoryHeader(source, open) {
+  return /(?:\{|,)(?<module>[A-Za-z0-9_$]+)\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*,(?<require>[A-Za-z_$][\w$]*)\)$/u
+    .exec(source.slice(Math.max(0, open - 200), open))?.groups ?? null;
+}
+
+function outboundCodeTokens(source) {
+  const tokens = new Set();
+  const wrapped = `{\n${source}\n}`;
+  const end = findMatchingBrace(wrapped, 0, (index) => tokens.add(index - 2));
+  return end === wrapped.length - 1 ? tokens : new Set();
+}
+
+// Settings uses a shared loader gate for its tab and both authorization panels.
+function applyLinuxRemoteControlOutboundSettingsGatePatch(source) {
+  if (source.includes(REMOTE_CONTROL_OUTBOUND_SETTINGS_GATE_MARKER)) {
     return source;
   }
-  return source.replace(
-    negatedGate,
-    `$1=/*${REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER}*/(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)||!${hiddenGateVar})`,
+
+  const declaration = findRemoteControlOutboundSettingsGate(source);
+  if (declaration == null) {
+    console.warn("WARN: Could not find unique remote-control outbound settings gate - skipping Linux outbound settings gate patch");
+    return source;
+  }
+
+  const { prefix, loader } = declaration;
+  const replacement =
+    `${prefix}/*${REMOTE_CONTROL_OUTBOUND_SETTINGS_GATE_MARKER}*/(typeof navigator!="undefined"&&navigator.userAgent.includes("Linux")||!${loader})`;
+  return source.slice(0, declaration.start) + replacement + source.slice(declaration.end);
+}
+
+function findRemoteControlOutboundSettingsGate(source) {
+  const tokens = outboundCodeTokens(source);
+  const panels = [...source.matchAll(
+    /(?<=[=,\[])(?<gate>[A-Za-z_$][\w$]*)&&"access-other-devices"===(?<tab>[A-Za-z_$][\w$]*)&&(?<negated>!?)(?<authorized>[A-Za-z_$][\w$]*)\?/gu,
+  )].filter((panel) => tokens.has(panel.index));
+  if (panels.length !== 2) return null;
+
+  const [first, second] = panels.map((match) => match.groups);
+  if (first.gate !== second.gate || first.tab !== second.tab ||
+      first.authorized !== second.authorized || first.negated === second.negated) {
+    return null;
+  }
+
+  // Both panels and the tab share the settings component's local gate.
+  const callables = [...source.matchAll(/\bfunction(?: [A-Za-z_$][\w$]*)?\([^)]*\)\{|=>\{/gu)]
+    .filter((header) => tokens.has(header.index) && tokens.has(header.index + header[0].length - 1));
+  const owner = enclosingOutboundSettingsCallable(source, panels[0].index, callables);
+  if (owner == null || panels[1].index >= owner.end) return null;
+
+  const body = source.slice(owner.start, owner.end);
+  const tokenDepths = new Map();
+  const declarationSeparators = new Set();
+  let inDeclaration = false;
+  let previousTopLevelToken = owner.start;
+  findMatchingBrace(source, owner.start - 1, (index, depth, expressionDepth) => {
+    const offset = index - owner.start;
+    tokenDepths.set(offset, depth);
+    if (depth !== 1 || expressionDepth !== 0) return;
+    if (source[index] === ";" || /[\r\n\u2028\u2029]/u.test(source.slice(previousTopLevelToken, index))) {
+      inDeclaration = false;
+    }
+    previousTopLevelToken = index;
+    if ((source[index - 1] === "{" || source[index - 1] === ";") &&
+        /^(?:let|const|var)(?: |\[|\{)/.test(source.slice(index, index + 6))) inDeclaration = true;
+    if (inDeclaration && source[index] === ",") declarationSeparators.add(offset);
+  });
+  if (panels.some((match) => tokenDepths.get(match.index - owner.start) !== 1)) return null;
+
+  const gate = escapeRegExp(first.gate);
+  const tabs = [...body.matchAll(new RegExp(
+    `(?<![\\w$.])(?<visible>[A-Za-z_$][\\w$]*)=${gate}&&\\([A-Za-z_$][\\w$]*\\|\\|!1\\)(?=[,;])`,
+    "gu",
+  ))].filter(({ index, groups: { visible } }) => {
+    if (tokenDepths.get(index) !== 1 || !declarationSeparators.has(index - 1)) return false;
+    const binding = escapeRegExp(visible);
+    const pushIndex = findOutboundTabListPush(body, tokenDepths, binding);
+    if (pushIndex <= index) return false;
+
+    // The compiler reads visibility in the render-cache comparison before
+    // pushing the tab. Other references could write or shadow the binding.
+    const references = new RegExp(`(?<![\\w$])${binding}(?![\\w$])`, "gu");
+    return [...body.matchAll(references)].every(({ index: reference }) =>
+      reference === index || reference === pushIndex || !tokenDepths.has(reference) ||
+      (reference > index &&
+        ((body.slice(reference - 3, reference) === "!==" &&
+          body.startsWith("||", reference + visible.length)) ||
+         (body.slice(reference - 2, reference) === "]=" &&
+          body.startsWith(",", reference + visible.length)))),
+    );
+  });
+  if (tabs.length !== 1) return null;
+
+  const assignments = [...body.matchAll(new RegExp(
+    `(?<![\\w$.])${gate}=(?!=|>)`,
+    "gu",
+  ))].filter(({ index }) => tokenDepths.has(index));
+  if (assignments.length !== 1) return null;
+
+  const declarationIndex = assignments[0].index - 1;
+  if (!declarationSeparators.has(declarationIndex) || declarationIndex >= tabs[0].index) return null;
+  const declaration = new RegExp(
+    `(?<prefix>,${gate}=)!(?<loader>[A-Za-z_$][\\w$]*)(?=[,;])`,
+    "uy",
   );
+  declaration.lastIndex = declarationIndex;
+  const match = declaration.exec(body);
+  if (match == null || !matchesOutboundLoaderFlag(source, tokens, body, owner, match.groups.loader, match, declarationSeparators)) {
+    return null;
+  }
+
+  // Outside the three consumers, the stable build reads the gate for render
+  // caching, settings context, and action guards. Reject other references:
+  // compound assignments and destructuring can also change the binding.
+  const tabRead = tabs[0].index + tabs[0].groups.visible.length + 1;
+  const gateReads = new Set([tabRead, ...panels.map((panel) => panel.index - owner.start)]);
+  const contextPattern = new RegExp(
+    `\\(0,[A-Za-z_$][\\w$]*\\.[A-Za-z_$][\\w$]*\\)\\(\\{selectedConnectionsTab:[^,]+,showControlOtherDevices:${gate},showControlThisMacTab:`,
+    "gu",
+  );
+  for (const context of body.matchAll(contextPattern)) {
+    const open = context.index + context[0].indexOf("{");
+    const close = findMatchingBrace(body, open);
+    if (tokenDepths.has(context.index) && close !== -1 && body[close + 1] === ")") {
+      gateReads.add(context.index + context[0].indexOf("showControlOtherDevices:") + "showControlOtherDevices:".length);
+    }
+  }
+
+  const references = new RegExp(`(?<![\\w$])${gate}(?![\\w$])`, "gu");
+  for (const { index } of body.matchAll(references)) {
+    if (!tokenDepths.has(index) || index === assignments[0].index || gateReads.has(index)) continue;
+    const before = body.slice(Math.max(0, index - 3), index);
+    const after = body.slice(index + first.gate.length, index + first.gate.length + 3);
+    if (before.endsWith("!==") && /^(?:\|\||\?\()/.test(after)) continue;
+    if (before.endsWith("!") && after.startsWith("||") && after !== "||=") continue;
+    if (before.endsWith("]=") && after.startsWith(",")) continue;
+    if ((before.endsWith("&&") || before.endsWith("=")) && after.startsWith("&&") && after !== "&&=") continue;
+    if (before.endsWith("=") && after.startsWith("?(")) continue;
+    return null;
+  }
+
+  const start = owner.start + match.index;
+  return { ...match.groups, start, end: start + match[0].length };
+}
+
+function findOutboundTabListPush(body, tokenDepths, visibility) {
+  const id = "[A-Za-z_$][\\w$]*";
+  const list = new RegExp(
+    `if\\((?<cache>${id})\\[\\d+\\]!==${id}(?:\\|\\|\\k<cache>\\[\\d+\\]!==${id})*\\)\\{` +
+    `let (?<items>${id})=\\[\\];${id}&&\\k<items>\\.push\\("control-this-mac"\\),` +
+    `${visibility}&&\\k<items>\\.push\\("access-other-devices"\\),\\k<items>\\.push\\("ssh"\\)`,
+    "gu",
+  );
+  const lists = [...body.matchAll(list)].filter(({ index }) => tokenDepths.get(index) === 1);
+  if (lists.length !== 1) return -1;
+  const [match] = lists;
+  const open = match.index + match[0].indexOf("{");
+  const close = findMatchingBrace(body, open);
+  if (close < 0) return -1;
+  const { cache, items } = match.groups;
+  const mapped = new RegExp(
+    `,(?<tabs>${id})=${escapeRegExp(items)}\\.map\\(`,
+    "gu",
+  );
+  const maps = [...body.slice(match.index + match[0].length, close).matchAll(mapped)];
+  if (maps.length !== 1) return -1;
+  const tabs = escapeRegExp(maps[0].groups.tabs);
+  const cached = new RegExp(`${escapeRegExp(cache)}\\[(\\d+)\\]=${tabs}\\}else ${tabs}=${escapeRegExp(cache)}\\[\\1\\]`, "uy");
+  const cacheWrite = body.lastIndexOf(`${cache}[`, close);
+  cached.lastIndex = cacheWrite;
+  if (cacheWrite <= open || !cached.test(body)) return -1;
+  return match.index + match[0].indexOf(`,${visibility}&&`) + 1;
+}
+
+function enclosingOutboundSettingsCallable(source, index, callables) {
+  for (const header of callables.slice().reverse()) {
+    if (header.index >= index) continue;
+    const open = header.index + header[0].length - 1;
+    const end = findMatchingBrace(source, open);
+    if (end > index) return { start: open + 1, end };
+  }
+  return null;
 }
 
 // The settings page polls remote connections every 15s from an effect

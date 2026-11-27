@@ -406,9 +406,14 @@ function loadRevokeSettings(patched, data) {
   return { handler, query, writes };
 }
 
-// The outbound tab gate of the remote connections settings page.
-function syntheticOutboundTabGateBundle() {
-  return 'function Uo(){let l=(0,G.Zj)("782640499"),u=(0,G.Zj)(on),z=Ge(),B=!l,Se=null==f,Ce=null==p;return B&&z}';
+function syntheticCurrentOutboundSidebarBundle() {
+  return 'function sidebar(state,get,gate,route,platform){let id="782640499",items=[];state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform));return items}';
+}
+
+function syntheticCurrentOutboundConnectionsBundle() {
+  return syntheticCurrentOutboundSidebarBundle() +
+    'const modules={side(e,t,n){let flag="782640499";n.d(t,{},{shared:flag})},page(e,t,n){let connectionFlags=n("side");' +
+    'function settings(remoteEnabled,enabled,tab,authorized){let flags={read:()=>remoteEnabled},loader=(0,flags.read)(connectionFlags.shared);let[rendered]=[[]],gate=!loader,visible=gate&&(enabled||!1),cache=[];if(cache[0]!==enabled||cache[1]!==visible||cache[2]!==enabled){let tabs=[];enabled&&tabs.push("control-this-mac"),visible&&tabs.push("access-other-devices"),tabs.push("ssh"),rendered=tabs.map(e=>e),cache[3]=rendered}else rendered=cache[3];return [rendered,gate&&"access-other-devices"===tab&&authorized?"devices":null,gate&&"access-other-devices"===tab&&!authorized?"authorize":null]}globalThis.settings=settings}};function load(){let t={};modules.side(null,t,{d:(t,u,e)=>Object.assign(t,e)});return t}modules.page(null,null,load);';
 }
 
 function syntheticCurrentAppServerManagerSignalsBundle() {
@@ -1050,7 +1055,7 @@ function writeRspackRemoteMobileApp(tempApp, overrides = {}) {
     visibility: syntheticCurrentUsePluginVisibilityBundle(),
     visibilityCopy: syntheticCurrentUsePluginVisibilityBundle().replace("slingshotEnabled:t}){return t&&", "slingshotEnabled:n}){return n&&"),
     settings: syntheticCurrentRevokeSetupResetBundle() + syntheticRemoteConnectionsSettingsCopyBundle() +
-      syntheticOutboundTabGateBundle() + syntheticCurrentSettingsRefreshBundle(),
+      syntheticCurrentOutboundConnectionsBundle() + syntheticCurrentSettingsRefreshBundle(),
     mobileSetup: syntheticMobileSetupDialogCopyBundle() + syntheticMobileSetupDialogComputerUseBundle(),
     bridge: syntheticCurrentAppMainEnablementBridgeBundle(),
     activeStatus: syntheticAppMainActiveStatusBundle(),
@@ -1098,7 +1103,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
       "linux-remote-control-load-gate": syntheticRemoteConnectionVisibilityBundle(),
       "linux-remote-control-visibility": syntheticCurrentUsePluginVisibilityBundle(),
       "linux-remote-control-copy": syntheticMobileSetupDialogCopyBundle(),
-      "linux-remote-control-settings-ux": syntheticOutboundTabGateBundle() + syntheticCurrentSettingsRefreshBundle(),
+      "linux-remote-control-settings-ux": syntheticCurrentOutboundConnectionsBundle() + syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-control-client-revoke-setup-reset": syntheticCurrentRevokeSetupResetBundle(),
       "linux-remote-connections-refresh": syntheticCurrentSettingsRefreshBundle(),
       "linux-remote-mobile-reasoning-summary-none": syntheticCurrentReasoningSummaryTurnStartBundle(),
@@ -2168,36 +2173,55 @@ test("Linux remote-control settings UX preserves the retired upstream SSH instal
   assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
 });
 
-test("Linux remote-control settings UX patch bypasses outbound tab hide gate on Linux", () => {
-  const source = [
-    "function $n(e,t){return e.displayName.localeCompare(t.displayName)}",
-    'function Uo(){let l=(0,G.Zj)("782640499"),u=(0,G.Zj)(on),z=Ge(),B=!l,Se=null==f,Ce=null==p,Ke=z&&!0,qe=B&&(z||!1),Je=z&&!0;return qe}',
-  ].join("");
-  const patched = applyLinuxRemoteControlSettingsUxPatch(source);
+test("Linux remote-control settings UX patch preserves the sidebar connection state", () => {
+  const source = syntheticCurrentOutboundConnectionsBundle();
+  const { result: patched, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  assert.deepEqual(warnings, []);
 
-  assert.notEqual(patched, source);
-  assert.match(patched, /codexLinuxRemoteControlOutboundTabGate/);
-  assert.match(patched, /B=\/\*codexLinuxRemoteControlOutboundTabGate\*\/\(typeof navigator!=`undefined`&&navigator\.userAgent\.includes\(`Linux`\)\|\|!l\)/);
-  assert.doesNotMatch(patched, /B=!l/);
-  assert.equal(applyLinuxRemoteControlSettingsUxPatch(patched), patched);
+  function render(userAgent, state, hidden) {
+    const sidebar = vm.runInNewContext(`${patched};sidebar`, { navigator: { userAgent } });
+    return [...sidebar(state, () => hidden, {}, (route) => route, userAgent)];
+  }
 
-  const context = {
-    Ge: () => true,
-    G: { Zj: () => true },
-    f: [],
-    navigator: { userAgent: "Linux" },
-    on: "gate",
-    p: [],
-  };
-  vm.runInNewContext(`${patched};globalThis.__visible=Uo();`, context);
-  assert.equal(context.__visible, true);
+  assert.deepEqual(render("Linux", true, true), ["access-other-devices"]);
+  assert.deepEqual(render("Linux", false, true), []);
+  assert.deepEqual(render("Windows", true, true), []);
+  assert.deepEqual(render("Windows", true, false), ["access-other-devices"]);
+});
+
+test("Linux remote-control settings UX accepts flag names reused in sibling functions", () => {
+  const source = 'function unrelated(){let id="782640499";return id}' + syntheticCurrentOutboundConnectionsBundle();
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  assert.match(result, /codexLinuxRemoteControlOutboundTabGate/);
+  assert.deepEqual(warnings, []);
+});
+
+test("Linux remote-control settings UX rejects a shadowed sidebar flag", () => {
+  const original = syntheticCurrentOutboundConnectionsBundle();
+  for (const sidebar of [
+    'function unrelated(){let id="782640499";return id}function sidebar(state,get,gate,route,platform,id){let items=[];state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform));return items}',
+    'function sidebar(state,get,gate,route,platform,id){for(let id="782640499";false;){}let items=[];state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform));return items}',
+    'function sidebar(state,get,gate,route,platform){let id="782640499",items=[];[false].forEach(id=>{state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform))});return items}',
+    'function sidebar(state,get,gate,route,platform){let id="782640499",items=[];(()=>{state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform));var id})();return items}',
+  ]) {
+    const source = original.replace(syntheticCurrentOutboundSidebarBundle(), sidebar);
+    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+    assert.doesNotMatch(result, /codexLinuxRemoteControlOutboundTabGate/);
+    assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /^WARN: .*unique remote-control outbound sidebar gate/);
+  }
 });
 
 test("Linux remote-control settings page keeps its outbound tab and panels reachable", () => {
-  const source = 'function settings(loader,enabled,tab,authorized){let tabs=[],gate=!loader,visible=gate&&(enabled||!1);visible&&tabs.push("access-other-devices");return [tabs,gate&&"access-other-devices"===tab&&authorized?"devices":null,gate&&"access-other-devices"===tab&&!authorized?"authorize":null]}';
-  const { result: patched } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  const source = syntheticCurrentOutboundConnectionsBundle();
+  const { result: patched, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
   assert.notEqual(patched, source);
-  assert.equal(captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(patched)).result, patched);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(patched)), {
+    result: patched,
+    warnings: [],
+  });
 
   function render(platform, loader, enabled, authorized) {
     const context = vm.createContext({ navigator: { userAgent: platform } });
@@ -2205,7 +2229,8 @@ test("Linux remote-control settings page keeps its outbound tab and panels reach
       `${patched};JSON.stringify(settings(${loader},${enabled},"access-other-devices",${authorized}))`,
       context,
     );
-    return JSON.parse(result);
+    const [tabs, ...panels] = JSON.parse(result);
+    return [tabs.filter((id) => id === "access-other-devices"), ...panels];
   }
 
   assert.deepEqual(render("Linux", true, true, true), [["access-other-devices"], "devices", null]);
@@ -2215,12 +2240,83 @@ test("Linux remote-control settings page keeps its outbound tab and panels reach
   assert.deepEqual(render("Windows", false, true, true), [["access-other-devices"], "devices", null]);
 });
 
-test("Linux remote-control settings UX patch warns when outbound tab gate consumer drifts", () => {
-  const source = 'function Uo(){let l=(0,G.Zj)("782640499"),u=(0,G.Zj)(on),z=Ge(),B=l,Se=null==f;return B&&z}';
+test("Linux remote-control settings UX ignores callable syntax in literals and comments", () => {
+  const source = syntheticCurrentOutboundConnectionsBundle().replace(
+    "return [rendered", 'let unused=/=>{/;/* ()=>{ ,gate&&"access-other-devices"===tab&&authorized? */return [rendered',
+  );
   const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
+  assert.deepEqual(warnings, []);
+});
 
-  assert.equal(result, source);
-  assert.ok(warnings.some((warning) => warning.includes("outbound tab gate consumer")));
+test("Linux remote-control settings UX handles division around the settings code", () => {
+  for (const prefix of [
+    "let first={}/2;",
+    "let first=true?{}/2:0,r=/}/;",
+    "let first=true?0:{}/2,r=/}/;",
+    "let first={a:{}/2,b:/}/};",
+    "function prefix(){return{}/2,r=/}/;}",
+    "let first=function(){}/2,r=/}/;",
+    "let first=async function(){}/2,r=/}/;",
+    "let first=class{}/2,r=/}/;",
+    "let first=1>{}/2,r=/}/;",
+    'let first=function(){label:{}/}/.test("}");};',
+  ]) {
+    const source = prefix + syntheticCurrentOutboundConnectionsBundle() + "let last=1/3;";
+    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+    assert.match(result, /codexLinuxRemoteControlOutboundTabGate/);
+    assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
+    assert.deepEqual(warnings, []);
+  }
+});
+
+test("Linux remote-control settings UX patch warns on settings gate drift even when the sidebar patches", () => {
+  const original = syntheticCurrentOutboundConnectionsBundle();
+  for (const source of [
+    original.replace("gate=!loader", "gate=loader"),
+    original.replace("connectionFlags.shared", "connectionFlags.unrelated"),
+    original.replace('let flag="782640499";', 'let flag="782640499";flag="other";'),
+    original.replace("tab,authorized){", "tab,authorized,connectionFlags){"),
+    original.replace("(connectionFlags.shared);", "(connectionFlags.shared);loader=otherFlag;"),
+    original.replace('loader=(0,flags.read)(connectionFlags.shared);',
+      'loader=otherFlag;{let local=0,loader=(0,flags.read)(connectionFlags.shared);local=loader}'),
+    original.replace('visible&&tabs.push("access-other-devices")', 'tabs.push("access-other-devices")'),
+    original.replace('tab&&!authorized?', 'tab&&authorized?'),
+    original.replace("gate=!loader", "gate=loader") +
+      "function unrelated(flag){let other=0,gate=!flag;return gate}",
+    original.replace("gate=!loader,visible=", "gate=loader;{let other=0,gate=!loader;other=gate}let visible="),
+    original.replace("gate=!loader,visible=", "gate=!loader;{let gate=loader,visible=")
+      .replace("}globalThis.settings", "}}globalThis.settings"),
+    original.replace("gate=!loader,visible=", 'gate=loader,text=";gate=!loader;",visible='),
+    original.replace("gate=!loader,visible=", "gate=loader;record(0,gate=!loader,0);gate=loader;let visible="),
+    original.replace('visible&&tabs.push("access-other-devices")',
+      '[false].forEach(visible=>{let item="access-other-devices";visible&&tabs.push("access-other-devices")})'),
+    original.replaceAll('gate&&"access-other-devices"', 'state.gate&&"access-other-devices"'),
+    original.replace('visible&&tabs.push', 'if(loader){gate=!loader};visible&&tabs.push'),
+    original.replace('visible&&tabs.push("access-other-devices")',
+      '{let[visible]=[false];visible&&tabs.push("access-other-devices")}'),
+    original.replace('gate&&"access-other-devices"', '!gate&&"access-other-devices"'),
+    original.replace("visible=gate&&(enabled||!1)", "visible=!1;state.visible=gate&&(enabled||!1)"),
+    original.replace('visible&&tabs.push', 'gate&&=enabled;visible&&tabs.push'),
+    original.replace('visible&&tabs.push', '[gate]=[false];visible&&tabs.push'),
+    original.replace('return [rendered', '({x:gate,y:enabled}={x:false,y:true});return [rendered'),
+    original.replace("visible=gate&&(enabled||!1)", "visible=gate&&(enabled||!1)&&!1"),
+    original.replace("let[rendered]", "let hide=()=>{visible=!1},[rendered]")
+      .replace("visible&&tabs.push", "hide();visible&&tabs.push"),
+    original.replace("let[rendered]=[[]],gate=", "let[rendered]=[[]];cache.let[0],gate="),
+    original.replace("authorized){", "authorized,gate,visible){")
+      .replace("let[rendered]=[[]],gate=", "let[rendered]=[[]]\nnoop(),gate="),
+    original.replace('visible&&tabs.push("access-other-devices")', '(!1&&visible&&tabs.push("access-other-devices"))'),
+    original.replace('visible&&tabs.push("access-other-devices")', 'visible&&temporary.push("access-other-devices")'),
+  ]) {
+    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+
+    assert.match(result, /codexLinuxRemoteControlOutboundTabGate/);
+    assert.equal(result.slice(result.indexOf("function settings")), source.slice(source.indexOf("function settings")));
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /^WARN: .*unique remote-control outbound settings gate/);
+    assert.deepEqual(captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(result)), { result, warnings });
+  }
 });
 
 test("Linux remote-connections refresh patch shortens polling and refreshes on resume signals", () => {
@@ -2576,7 +2672,7 @@ test("Linux remote-control status wait rejects duplicate, missing, and partial t
 });
 
 test("Linux remote-control settings UX patch does not require retired SSH installer anchors", () => {
-  const source = syntheticRemoteConnectionsSettingsCopyBundle() + syntheticOutboundTabGateBundle();
+  const source = syntheticRemoteConnectionsSettingsCopyBundle() + syntheticCurrentOutboundConnectionsBundle();
   const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
 
   assert.notEqual(result, source);
@@ -3585,6 +3681,7 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         }
         const settings = readAsset("settings");
         assert.match(settings, /codexLinuxRemoteControlOutboundTabGate/);
+        assert.match(settings, /codexLinuxRemoteControlOutboundSettingsGate/);
         assert.match(settings, /codexLinuxRemoteControlResetMobileSetupAfterRevoke/);
         assert.match(settings, /codexLinuxRemoteConnectionsRefreshNow/);
         assert.match(settings, /window\.setInterval\(\(\)=>\{n\(\)\},5e3\)/);
