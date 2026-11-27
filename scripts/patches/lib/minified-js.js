@@ -83,6 +83,10 @@ const REGEX_PREFIX_KEYWORDS = new Set([
 ]);
 
 const CONDITION_KEYWORDS = new Set(["for", "if", "while", "with"]);
+const OBJECT_EXPRESSION_PREFIXES = new Set([
+  "=", "(", "[", ",", "?", "ternary:", "property:", "+", "-", "*", "/", "%",
+  "&", "|", "^", "~", "!", "<", ">", "${",
+]);
 
 function isLineTerminator(char) {
   return char === "\n" || char === "\r" || char === " " || char === " ";
@@ -147,6 +151,16 @@ function regexLiteralEnd(source, openIndex) {
   return -1;
 }
 
+function startsExpression(previous, source, next, insideFor) {
+  if (previous.kind === "punct") return OBJECT_EXPRESSION_PREFIXES.has(previous.value);
+  if (previous.kind !== "word" || previous.property || !REGEX_PREFIX_KEYWORDS.has(previous.value)) return false;
+  if (previous.value === "of") return insideFor;
+  if (["return", "throw", "yield", "await"].includes(previous.value)) {
+    return !/[\r\n\u2028\u2029]/u.test(source.slice(previous.end, next));
+  }
+  return !["do", "else"].includes(previous.value);
+}
+
 function slashStartsRegex(previous) {
   if (previous.kind === "word") {
     return !previous.property && REGEX_PREFIX_KEYWORDS.has(previous.value);
@@ -161,16 +175,30 @@ function slashStartsRegex(previous) {
 // literals (including nested substitutions), comments, and regular expression
 // literals, whose quotes and braces are not code. Minified bundles contain
 // regexes such as /[`"']+/ that a quote-only scanner misreads.
-function findMatchingBrace(source, openIndex) {
+// visitToken receives each token start, brace depth, and parenthesis/bracket
+// depth before processing the token. Literals and comments are visited only at
+// their opening token.
+function findMatchingBrace(source, openIndex, visitToken) {
   if (!Number.isInteger(openIndex) || openIndex < 0) {
     return -1;
   }
   let depth = 0;
   const templateDepths = [];
-  // One entry per open parenthesis: whether it holds an if/while/for/with
-  // condition, after which a slash starts a regex rather than a division.
+  const expressionBraceDepths = new Set();
+  const objectLiteralDepths = new Map();
+  const functionExpressions = new Set();
+  let pendingFunctionExpression = false;
+  let pendingClassExpression;
+  const ternaryConditions = [];
+  // One entry per open parenthesis. A condition's keyword distinguishes
+  // statement conditions from calls and identifies the scope of for…of.
   const parenthesesAreConditions = [];
+  let bracketDepth = 0;
   let previous = { kind: "punct", value: "{" };
+  const insideForHeader = () => {
+    const condition = parenthesesAreConditions.at(-1);
+    return condition?.keyword === "for" && condition.depth === depth;
+  };
 
   const enterTemplateChunk = (startIndex) => {
     const chunk = templateChunkEnd(source, startIndex);
@@ -180,7 +208,7 @@ function findMatchingBrace(source, openIndex) {
     if (chunk.substitution) {
       templateDepths.push(depth);
       depth += 1;
-      previous = { kind: "punct", value: "{" };
+      previous = { kind: "punct", value: "${" };
     } else {
       previous = { kind: "value" };
     }
@@ -192,6 +220,7 @@ function findMatchingBrace(source, openIndex) {
     if (isWhitespace(char)) {
       continue;
     }
+    visitToken?.(i, depth, parenthesesAreConditions.length + bracketDepth);
 
     if (char === "'" || char === '"') {
       i = quotedStringEnd(source, i);
@@ -205,9 +234,26 @@ function findMatchingBrace(source, openIndex) {
         return -1;
       }
     } else if (char === "{") {
+      const expression = startsExpression(previous, source, i, insideForHeader());
       depth += 1;
+      // A slash after an object literal divides its value. A slash after a
+      // statement block can begin the next statement's regex literal.
+      if (expression) {
+        objectLiteralDepths.set(depth, parenthesesAreConditions.length + bracketDepth);
+        expressionBraceDepths.add(depth);
+      }
+      if (previous.value === "function-expression)") {
+        expressionBraceDepths.add(depth);
+      } else if (pendingClassExpression?.depth === depth - 1 &&
+                 pendingClassExpression.parentheses === parenthesesAreConditions.length &&
+                 pendingClassExpression.brackets === bracketDepth) {
+        expressionBraceDepths.add(depth);
+        pendingClassExpression = undefined;
+      }
       previous = { kind: "punct", value: "{" };
     } else if (char === "}") {
+      const closesExpression = expressionBraceDepths.delete(depth);
+      objectLiteralDepths.delete(depth);
       depth -= 1;
       if (templateDepths.length > 0 && templateDepths[templateDepths.length - 1] === depth) {
         templateDepths.pop();
@@ -220,7 +266,7 @@ function findMatchingBrace(source, openIndex) {
       if (depth === 0) {
         return i;
       }
-      previous = { kind: "punct", value: "}" };
+      previous = closesExpression ? { kind: "value" } : { kind: "punct", value: "}" };
     } else if (char === "/" && source[i + 1] === "/") {
       while (i + 1 < source.length && !isLineTerminator(source[i + 1])) {
         i += 1;
@@ -249,16 +295,52 @@ function findMatchingBrace(source, openIndex) {
       }
       const property = previous.kind === "punct" && previous.value === "." &&
         source[start - 2] !== ".";
-      previous = { kind: "word", value: source.slice(start, i + 1), property };
+      const value = source.slice(start, i + 1);
+      const objectKey = objectLiteralDepths.get(depth) === parenthesesAreConditions.length + bracketDepth &&
+        previous.kind === "punct" && (previous.value === "{" || previous.value === ",");
+      const expressionContext = !objectKey && startsExpression(previous, source, start, insideForHeader());
+      const followsAsync = previous.asyncExpression &&
+        !/[\r\n\u2028\u2029]/u.test(source.slice(previous.end, start));
+      if (value === "function" && !property && (expressionContext || followsAsync)) {
+        pendingFunctionExpression = true;
+      }
+      if (value === "class" && !property && expressionContext) {
+        pendingClassExpression = { depth, parentheses: parenthesesAreConditions.length, brackets: bracketDepth };
+      }
+      previous = { kind: "word", value, property, end: i + 1, asyncExpression: value === "async" && expressionContext };
     } else if (char === "(") {
       parenthesesAreConditions.push(
-        previous.kind === "word" && !previous.property && CONDITION_KEYWORDS.has(previous.value),
+        previous.kind === "word" && !previous.property && CONDITION_KEYWORDS.has(previous.value)
+          ? { keyword: previous.value, depth } : null,
       );
+      if (pendingFunctionExpression) {
+        functionExpressions.add(parenthesesAreConditions.length);
+        pendingFunctionExpression = false;
+      }
       previous = { kind: "punct", value: "(" };
     } else if (char === ")") {
-      previous = parenthesesAreConditions.pop()
-        ? { kind: "punct", value: "condition)" }
-        : { kind: "punct", value: ")" };
+      const closesFunctionExpression = functionExpressions.delete(parenthesesAreConditions.length);
+      const closesCondition = parenthesesAreConditions.pop();
+      previous = { kind: "punct", value: closesFunctionExpression ? "function-expression)" : closesCondition ? "condition)" : ")" };
+    } else if (char === "[" || char === "]") {
+      bracketDepth += char === "[" ? 1 : -1;
+      previous = { kind: "punct", value: char };
+    } else if (char === "?" && source[i - 1] !== "?" && !["?", "."].includes(source[i + 1])) {
+      ternaryConditions.push({ depth, parentheses: parenthesesAreConditions.length, brackets: bracketDepth });
+      previous = { kind: "punct", value: "?" };
+    } else if (char === ":") {
+      if (previous.kind === "word" && previous.value === "function") pendingFunctionExpression = false;
+      if (previous.kind === "word" && previous.value === "class") pendingClassExpression = undefined;
+      const condition = ternaryConditions.at(-1);
+      if (condition?.depth === depth && condition.parentheses === parenthesesAreConditions.length &&
+          condition.brackets === bracketDepth) {
+        ternaryConditions.pop();
+        previous = { kind: "punct", value: "ternary:" };
+      } else {
+        previous = { kind: "punct", value: objectLiteralDepths.has(depth) ? "property:" : ":" };
+      }
+    } else if (char === ">" && source[i - 1] === "=" && previous.value === "=" && source[i - 2] !== ">") {
+      previous = { kind: "punct", value: "=>" };
     } else if ((char === "+" || char === "-") && source[i - 1] === char && previous.value === char) {
       // A postfix ++/-- ends an operand, so a following slash divides.
       previous = { kind: "value" };

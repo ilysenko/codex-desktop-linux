@@ -88,3 +88,12 @@ test("findMatchingBrace reports a missing opening brace as not found", () => {
   const source = "{a}";
   assert.strictEqual(findMatchingBrace(source, source.indexOf("{", 1)), -1);
 });
+
+test("findMatchingBrace keeps reserved object keys out of expression tracking", () => {
+  for (const key of ["function", "class"]) {
+    for (const declaration of [`let x={a:0,${key}:1}`, `let{a,${key}:g}=x`]) {
+      const source = `function f(){${declaration};if(1){}/}/.test("}")}`;
+      assert.strictEqual(findMatchingBrace(source, source.indexOf("{")), source.length - 1);
+    }
+  }
+});
