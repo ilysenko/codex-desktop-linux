@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Synchronize the embedded Computer Use backend to standalone v0.7.65. The
+  crate is 0.7.65. Screenshots come from `grim` ahead of the DBus routes on a
+  Wayland session whose compositor implements wlr-screencopy (Sway, Hyprland,
+  niri, river, labwc) when grim is installed;
+  `CODEX_COMPUTER_USE_SCREENSHOT_BACKEND=grim` (standalone alias
+  `COMPUTER_USE_LINUX_SCREENSHOT_BACKEND`) forces it and `doctor` reports it
+  as a screenshot route. `press_key` chords reach wtype when the portal
+  answers `CreateSession` with response code 2 before any consent dialog and
+  ydotool is absent; a cancelled portal dialog stays final. The server tries
+  the activity indicator again on a later action when its binary was missing.
 - Synchronize the embedded Computer Use backend to standalone v0.7.64 (including
   the v0.7.63 test fixture fix). The crate is 0.7.64. `type_text` takes an
   opt-in `paste_fallback` on GNOME Wayland: it tries verified AT-SPI insertion

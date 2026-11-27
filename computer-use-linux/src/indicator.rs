@@ -268,9 +268,20 @@ fn shown_text(text: &str, mask: bool) -> String {
 enum Overlay {
     NotStarted,
     Started(Instant),
-    /// No Wayland session, no binary, or the overlay could not start (for
-    /// example GNOME, which has no layer-shell). Not retried by this server.
+    /// No Wayland session, or the overlay could not start (for example
+    /// GNOME, which has no layer-shell). Not retried by this server.
     Unavailable,
+}
+
+/// The overlay state after a failed spawn. A missing binary can still arrive:
+/// the plugin launcher starts the server before the overlay has downloaded,
+/// so a later action tries again. Other spawn errors are final.
+fn after_spawn_error(error: &std::io::Error) -> Overlay {
+    if error.kind() == ErrorKind::NotFound {
+        Overlay::NotStarted
+    } else {
+        Overlay::Unavailable
+    }
 }
 
 /// Server-side sender. Action reports are cheap no-ops when disabled;
@@ -599,10 +610,12 @@ impl Indicator {
                 Overlay::Started(at) if at.elapsed() < SPAWN_WAIT => return false,
                 _ => {}
             }
-            if (!is_gnome_session() && env::var_os("WAYLAND_DISPLAY").is_none())
-                || spawn_overlay().is_err()
-            {
+            if !is_gnome_session() && env::var_os("WAYLAND_DISPLAY").is_none() {
                 *overlay = Overlay::Unavailable;
+                return false;
+            }
+            if let Err(error) = spawn_overlay() {
+                *overlay = after_spawn_error(&error);
                 return false;
             }
             *overlay = Overlay::Started(Instant::now());
@@ -710,6 +723,14 @@ fn spawn_overlay() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_overlay_binary_is_retried() {
+        let missing = std::io::Error::from(ErrorKind::NotFound);
+        assert_eq!(after_spawn_error(&missing), Overlay::NotStarted);
+        let denied = std::io::Error::from(ErrorKind::PermissionDenied);
+        assert_eq!(after_spawn_error(&denied), Overlay::Unavailable);
+    }
 
     #[test]
     fn agent_override_reads_the_codex_name_and_its_standalone_alias() {

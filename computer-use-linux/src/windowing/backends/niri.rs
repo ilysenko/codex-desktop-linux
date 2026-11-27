@@ -147,7 +147,9 @@ impl NiriCaptureLayout {
         Some(Self {
             origin_x: outputs.values().map(|geometry| geometry.x).min()?,
             origin_y: outputs.values().map(|geometry| geometry.y).min()?,
-            scale: first.scale,
+            // Screenshots on niri come from grim or niri's own integer-scale
+            // capture, neither of which goes below scale 1.
+            scale: first.scale.max(1.0),
         })
     }
 
@@ -737,6 +739,37 @@ mod tests {
         // pixels, so the bounds must describe a 3072x1816 rect.
         let bounds = zen.bounds.as_ref().expect("size is always reported");
         assert_eq!((bounds.width, bounds.height), (3072, 1816));
+    }
+
+    #[test]
+    fn bounds_never_shrink_below_scale_one() {
+        // At output scale 0.75 the capture is still rendered at scale 1, so
+        // logical bounds map one to one; unclamped they would be 75% sized.
+        let geometries = [(
+            "DP-1".to_string(),
+            NiriOutputGeometry {
+                x: 0,
+                y: 0,
+                scale: 0.75,
+            },
+        )]
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        let layout = NiriOutputLayout {
+            capture: NiriCaptureLayout::from_outputs(&geometries),
+            geometries,
+            workspace_outputs: [(6, "DP-1".to_string())].into_iter().collect(),
+        };
+        assert_eq!(layout.capture.unwrap().scale, 1.0);
+
+        let windows = parse_windows(
+            r#"[{"id":1,"app_id":"a","workspace_id":6,
+                 "layout":{"window_size":[100,100],"window_offset_in_tile":[0.0,0.0],"tile_pos_in_workspace_view":[10.0,20.0]}}]"#,
+            &layout,
+        );
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.width, bounds.height), (100, 100));
+        assert_eq!((bounds.x, bounds.y), (Some(10), Some(20)));
     }
 
     #[test]

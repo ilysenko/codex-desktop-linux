@@ -166,10 +166,12 @@ impl HyprlandCaptureLayout {
                 .map(|monitor| monitor.y)
                 .min()
                 .unwrap_or(first.y),
+            // Screenshots on Hyprland come from grim or its screencopy
+            // portal, which never capture below scale 1.
             scale: monitors
                 .iter()
-                .map(|monitor| monitor.scale)
-                .fold(first.scale, f64::max),
+                .map(|monitor| monitor.scale.max(1.0))
+                .fold(1.0, f64::max),
         })
     }
 
@@ -808,6 +810,24 @@ mod tests {
         let bounds = windows[0].bounds.as_ref().unwrap();
         assert_eq!((bounds.x, bounds.y), (Some(240), Some(200)));
         assert_eq!((bounds.width, bounds.height), (1200, 800));
+    }
+
+    #[test]
+    fn bounds_never_shrink_below_scale_one() {
+        // At monitor scale 0.75 the capture is still rendered at scale 1, so a
+        // 100x100 logical window keeps 100x100 capture pixels.
+        let clients = r#"[{
+            "address":"0x1234",
+            "at":[0,0],
+            "size":[100,100],
+            "monitor":0,
+            "class":"foot",
+            "title":"Shell"
+        }]"#;
+        let monitors = br#"[{"id":0,"x":0,"y":0,"scale":0.75}]"#;
+        let windows = parse_hyprland_clients_with_monitors(clients, monitors).unwrap();
+        let bounds = windows[0].bounds.as_ref().unwrap();
+        assert_eq!((bounds.width, bounds.height), (100, 100));
     }
 
     #[test]

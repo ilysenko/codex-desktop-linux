@@ -294,11 +294,13 @@ impl ScreenshotPayloadOptions {
 
 /// Environment variable forcing a single capture backend, skipping the
 /// fallback chain. Accepts `gnome-shell`, `gnome-extension`, `portal`, `x11`,
-/// `gnome-screenshot`, `dms`, or `pixelflux`.
+/// `gnome-screenshot`, `dms`, `grim`, or `pixelflux`.
 const SCREENSHOT_BACKEND_ENV: &str = "CODEX_COMPUTER_USE_SCREENSHOT_BACKEND";
 /// Standalone computer-use-linux name for [`SCREENSHOT_BACKEND_ENV`], read
 /// when the Codex name is unset or blank.
 const SCREENSHOT_BACKEND_ENV_STANDALONE: &str = "COMPUTER_USE_LINUX_SCREENSHOT_BACKEND";
+/// How long grim may take to answer; a hung capture must not block the tool.
+const GRIM_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScreenshotBackend {
@@ -308,6 +310,7 @@ enum ScreenshotBackend {
     X11,
     GnomeScreenshot,
     Dms,
+    Grim,
     Pixelflux,
 }
 
@@ -320,6 +323,7 @@ impl ScreenshotBackend {
             "x11" | "x11-native" | "x11_native" | "xgetimage" => Some(Self::X11),
             "gnome-screenshot" | "gnome_screenshot" => Some(Self::GnomeScreenshot),
             "dms" | "dms-screenshot" | "dms_screenshot" => Some(Self::Dms),
+            "grim" => Some(Self::Grim),
             "pixelflux" => Some(Self::Pixelflux),
             _ => None,
         }
@@ -333,6 +337,7 @@ impl ScreenshotBackend {
             Self::X11 => capture_with_x11().await,
             Self::GnomeScreenshot => capture_with_gnome_screenshot().await,
             Self::Dms => capture_with_dms().await,
+            Self::Grim => capture_with_grim().await,
             Self::Pixelflux => {
                 let config = crate::pixelflux::PixelfluxConfig::from_env()
                     .context("PIXELFLUX_CU and PIXELFLUX_CU_TOKEN are required")?;
@@ -427,6 +432,19 @@ async fn capture_screenshot_raw_unrecorded() -> Result<RawScreenshotCapture> {
         None
     };
 
+    // grim reads wlr-screencopy directly on the compositors that implement it,
+    // the ones wtype works on: no consent dialog, nothing written to disk, and
+    // exact at fractional scales where older niri DBus paths are not. Elsewhere
+    // it is not tried, and a grim that fails hands over to the DBus routes.
+    let grim_error = if grim_preferred_now() {
+        match capture_with_grim().await {
+            Ok(capture) => return Ok(capture),
+            Err(error) => Some(error),
+        }
+    } else {
+        None
+    };
+
     // The Shell and portal DBus paths can fail for background processes (systemd
     // user services, non-interactive parent shells): GNOME Shell's
     // DBusSenderChecker rejects unknown bus names, and a portal consent dialog
@@ -460,13 +478,75 @@ async fn capture_screenshot_raw_unrecorded() -> Result<RawScreenshotCapture> {
     let dms_error = dms_error
         .map(|error| format!("dms screenshot failed: {error:#}; "))
         .unwrap_or_default();
+    let grim_error = grim_error
+        .map(|error| format!("grim screenshot failed: {error:#}; "))
+        .unwrap_or_default();
     Err(anyhow!(
-        "{dms_error}GNOME Shell screenshot failed: {gnome_error:#}; \
+        "{dms_error}{grim_error}GNOME Shell screenshot failed: {gnome_error:#}; \
          GNOME Shell extension screenshot failed: {extension_error:#}; \
          XDG portal screenshot failed: {portal_error:#}; \
          native X11 screenshot failed: {x11_error:#}; \
          gnome-screenshot fallback failed: {cli_error:#}"
     ))
+}
+
+/// Whether grim is tried ahead of the DBus routes: a Wayland session on a
+/// compositor that implements wlr-screencopy, with grim installed.
+fn grim_preferred(is_wayland: bool, compatible_desktop: bool, available: bool) -> bool {
+    is_wayland && compatible_desktop && available
+}
+
+fn grim_preferred_now() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    grim_preferred(
+        crate::server::session_is_wayland(
+            std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
+            std::env::var("WAYLAND_DISPLAY").ok().as_deref(),
+        ),
+        crate::diagnostics::wtype_compatible_wayland_desktop(
+            std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+        ),
+        grim_available(),
+    )
+}
+
+/// True when PATH holds an executable `grim`.
+fn grim_available() -> bool {
+    std::env::var_os("PATH").is_some_and(|path| crate::server::executable_in(&path, "grim"))
+}
+
+async fn capture_with_grim() -> Result<RawScreenshotCapture> {
+    capture_with_grim_at(Path::new("grim")).await
+}
+
+/// `grim -` writes every output, at its physical scale, as one PNG to stdout:
+/// no file on disk, no clipboard, no consent dialog.
+async fn capture_with_grim_at(program: &Path) -> Result<RawScreenshotCapture> {
+    let mut command = Command::new(program);
+    command.arg("-");
+    // The frame is the whole screenshot, so stdout gets the screenshot source
+    // limit the file-based routes use, not the command runner's cap.
+    let output = crate::command_runner::output_with_limit(
+        command,
+        "grim screenshot",
+        GRIM_TIMEOUT,
+        MAX_SCREENSHOT_SOURCE_BYTES as usize,
+    )
+    .await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        bail!("grim exited with {}: {stderr}", output.status);
+    }
+    let (width, height) = png_dimensions(&output.stdout).context("grim did not write a PNG")?;
+    Ok(RawScreenshotCapture {
+        mime_type: "image/png".to_string(),
+        bytes: output.stdout,
+        source: "grim".to_string(),
+        width,
+        height,
+    })
 }
 
 /// `GetImage` on the root window of a native X11 session. Pixels are device
@@ -525,7 +605,7 @@ fn forced_backend() -> Result<Option<ScreenshotBackend>> {
                 return ScreenshotBackend::parse(&value).map(Some).ok_or_else(|| {
                     anyhow!(
                         "{key}={value:?} is not a recognized backend \
-                         (expected gnome-shell, gnome-extension, portal, x11, gnome-screenshot, dms, or pixelflux)"
+                         (expected gnome-shell, gnome-extension, portal, x11, gnome-screenshot, dms, grim, or pixelflux)"
                     )
                 });
             }
@@ -1239,6 +1319,7 @@ fn unique_suffix() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn test_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -1352,6 +1433,143 @@ mod tests {
             Some(ScreenshotBackend::X11)
         );
         assert_eq!(ScreenshotBackend::parse("nonsense"), None);
+        assert_eq!(
+            ScreenshotBackend::parse(" Grim "),
+            Some(ScreenshotBackend::Grim)
+        );
+    }
+
+    #[test]
+    fn grim_runs_ahead_of_the_dbus_routes_only_where_wlr_screencopy_exists() {
+        // (is_wayland, compatible_desktop, available)
+        assert!(grim_preferred(true, true, true));
+        // X11 has no wlr-screencopy, GNOME, KDE and COSMIC do not implement it.
+        assert!(!grim_preferred(false, true, true));
+        assert!(!grim_preferred(true, false, true));
+        // Without grim the chain is unchanged.
+        assert!(!grim_preferred(true, true, false));
+    }
+
+    #[tokio::test]
+    async fn grim_capture_reads_the_png_from_stdout() {
+        use image::ImageEncoder;
+        let script = test_path("grim-stdout");
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[0u8; 24], 3, 2, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' '{}' | base64 -d\n",
+                STANDARD.encode(png)
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let capture = capture_with_grim_at(&script).await.unwrap();
+        std::fs::remove_file(&script).unwrap();
+        assert_eq!(capture.source, "grim");
+        assert_eq!(capture.mime_type, "image/png");
+        assert_eq!((capture.width, capture.height), (3, 2));
+        assert_eq!(png_dimensions(&capture.bytes).unwrap(), (3, 2));
+    }
+
+    #[tokio::test]
+    async fn grim_capture_accepts_a_frame_over_the_command_output_cap() {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[0u8; 24], 3, 2, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        // A text chunk after IHDR pads the frame past the command runner's
+        // 8 MiB cap; the screenshot source limit is 64 MiB.
+        const PADDED_BYTES: usize = 8 * 1024 * 1024 + 1024;
+        let ihdr_end = 8 + 12 + u32::from_be_bytes(png[8..12].try_into().unwrap()) as usize;
+        let mut data = b"Comment\0".to_vec();
+        data.resize(PADDED_BYTES - 12 - ihdr_end, b'x');
+        let mut chunk = Vec::with_capacity(data.len() + 12);
+        chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let mut typed = b"tEXt".to_vec();
+        typed.extend_from_slice(&data);
+        chunk.extend_from_slice(&typed);
+        chunk.extend_from_slice(&crc32(&typed).to_be_bytes());
+        let mut padded = png[..ihdr_end].to_vec();
+        padded.extend_from_slice(&chunk);
+        padded.extend_from_slice(&png[ihdr_end..]);
+        assert!(padded.len() > PADDED_BYTES - 1024);
+
+        let frame = test_path("grim-frame.png");
+        let script = test_path("grim-large");
+        std::fs::write(&frame, &padded).unwrap();
+        std::fs::write(&script, format!("#!/bin/sh\ncat '{}'\n", frame.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let capture = capture_with_grim_at(&script).await.unwrap();
+        std::fs::remove_file(&script).unwrap();
+        std::fs::remove_file(&frame).unwrap();
+        assert_eq!((capture.width, capture.height), (3, 2));
+        assert_eq!(capture.bytes.len(), padded.len());
+    }
+
+    #[tokio::test]
+    async fn grim_capture_drains_a_flooding_stderr() {
+        use image::ImageEncoder;
+        // Inherited WAYLAND_DEBUG=1 tracing can fill stderr before the frame
+        // ends; a reader that waits for stdout first would deadlock.
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[0u8; 24], 3, 2, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let frame = test_path("grim-frame.png");
+        let script = test_path("grim-stderr");
+        std::fs::write(&frame, &png).unwrap();
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nyes 'wayland debug trace line padding padding padding' | head -c 200000 >&2\ncat '{}'\n",
+                frame.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let capture = capture_with_grim_at(&script).await.unwrap();
+        std::fs::remove_file(&script).unwrap();
+        std::fs::remove_file(&frame).unwrap();
+        assert_eq!((capture.width, capture.height), (3, 2));
+        assert_eq!(capture.bytes, png);
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0_u32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    #[tokio::test]
+    async fn grim_failure_names_its_stderr() {
+        let script = test_path("grim-fail");
+        std::fs::write(&script, "#!/bin/sh\necho 'no outputs' >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let error = capture_with_grim_at(&script)
+            .await
+            .expect_err("a failing grim reports no capture");
+        std::fs::remove_file(&script).unwrap();
+        let message = format!("{error:#}");
+        assert!(message.contains("grim exited with"), "{message}");
+        assert!(message.contains("no outputs"), "{message}");
     }
 
     #[test]

@@ -145,6 +145,11 @@ pub struct PlatformReport {
     pub xdg_runtime_dir: Option<String>,
     pub gnome_shell_version: Check,
     pub gnome_screenshot: Check,
+    /// `grim` in PATH. On a Wayland session whose compositor implements
+    /// wlr-screencopy (the wtype compositors) it is tried ahead of the DBus
+    /// routes: no consent dialog, nothing written to disk, exact at fractional
+    /// scales.
+    pub grim: Check,
     /// The DMS shell's `dms screenshot all` route, tried first on Umbriel
     /// sessions because their portal captures one output.
     pub dms_screenshot: Check,
@@ -236,7 +241,7 @@ pub enum ScreenshotCaptureStatus {
     Failed,
 }
 
-const SCREENSHOT_UNAVAILABLE: &str = "No screenshot route was detected: GNOME Shell is absent, the XDG portal does not export org.freedesktop.portal.Screenshot, this is not a native X11 session, and gnome-screenshot is not installed. get_app_state and screenshot return no image; element-aware actions from the accessibility tree still work.";
+const SCREENSHOT_UNAVAILABLE: &str = "No screenshot route was detected: GNOME Shell is absent, the XDG portal does not export org.freedesktop.portal.Screenshot, grim is not installed (it captures Sway, Hyprland, niri, river and labwc directly), this is not a native X11 session, and gnome-screenshot is not installed. get_app_state and screenshot return no image; element-aware actions from the accessibility tree still work.";
 const SCREENSHOT_UNVERIFIED: &str = "Screenshot routes were detected, but capture is unverified. Doctor does not take a screenshot or check screenshot consent. GNOME Shell can reject callers, and a portal may require consent for the caller's app ID. Call screenshot or get_app_state to verify capture.";
 const SCREENSHOT_MISSING_GNOME_FALLBACK: &str = "gnome-screenshot is not installed. On GNOME it provides a fallback when Shell or portal calls are denied; install it or inspect the desktop portal logs and screenshot permissions for the actual caller.";
 const SCREENSHOT_FAILED: &str = "Screenshot capture failed for this request. Inspect screenshot_error for the full backend errors; accessibility-tree actions still work.";
@@ -868,6 +873,7 @@ fn platform_report() -> PlatformReport {
         xdg_runtime_dir: xdg_runtime_dir().map(|path| path.display().to_string()),
         gnome_shell_version: command_check("gnome-shell", &["--version"]),
         gnome_screenshot: command_check("gnome-screenshot", &["--version"]),
+        grim: command_path_check("grim"),
         dms_screenshot: dms_screenshot_check(),
         x11_display: x11_display_check(),
     }
@@ -1080,6 +1086,12 @@ fn screenshot_backends(
     if platform.dms_screenshot.ok {
         backends.push("dms".to_string());
     }
+    if platform.grim.ok
+        && platform_is_wayland(platform)
+        && wtype_compatible_wayland_desktop(platform.xdg_current_desktop.as_deref())
+    {
+        backends.push("grim".to_string());
+    }
     if platform.gnome_shell_version.ok {
         backends.push("gnome_shell".to_string());
     }
@@ -1172,7 +1184,7 @@ fn readiness_report_with_portal_keyboard(
         "Enable a keyboard-capable input backend: enable the XDG RemoteDesktop portal or install wtype on compatible Wayland compositors, install xdotool for X11, or start ydotoold with a socket accessible to this desktop user."
             .to_string()
     } else if !screenshot_routes_detected {
-        "Enable a screenshot route: install an XDG desktop portal backend that implements Screenshot for this desktop, or install gnome-screenshot. Accessibility-tree actions work meanwhile."
+        "Enable a screenshot route: install grim on Sway, Hyprland, niri, river or labwc, install an XDG desktop portal backend that implements Screenshot for this desktop, or install gnome-screenshot. Accessibility-tree actions work meanwhile."
             .to_string()
     } else {
         "AT-SPI tree support, window targeting, and a Linux input backend are available. Call screenshot or get_app_state to verify screenshot capture."
@@ -2056,6 +2068,7 @@ pub(crate) mod tests {
             xdg_runtime_dir: Some("/run/user/1000".to_string()),
             gnome_shell_version: Check::ok("GNOME Shell 46.0"),
             gnome_screenshot: Check::ok("gnome-screenshot 41.0"),
+            grim: Check::fail("No such file or directory (os error 2)"),
             dms_screenshot: Check::fail("not an Umbriel session"),
             x11_display: Check::fail("not a native X11 session"),
         }
@@ -2833,6 +2846,40 @@ pub(crate) mod tests {
             ScreenshotCaptureStatus::Unverified
         );
         assert!(readiness.blockers.is_empty());
+    }
+
+    #[test]
+    fn grim_is_a_screenshot_route_ahead_of_the_dbus_routes_on_wtype_compositors() {
+        let mut platform = platform_report();
+        platform.xdg_current_desktop = Some("sway".to_string());
+        platform.grim = Check::ok("/usr/bin/grim");
+        let portals = portal_report(Check::fail("missing"));
+        let accessibility = accessibility_report(Check::ok("bus"), Check::ok("true"));
+        let windowing = windowing_report(true, true);
+        let input = input_report(true);
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+        assert_eq!(
+            capabilities.screenshot,
+            ["grim", "gnome_shell", "gnome_screenshot"]
+        );
+        assert_eq!(capabilities.preferred.screenshot.as_deref(), Some("grim"));
+
+        // GNOME implements no wlr-screencopy: an installed grim stays unused there.
+        platform.xdg_current_desktop = Some("GNOME".to_string());
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+        assert_eq!(capabilities.screenshot, ["gnome_shell", "gnome_screenshot"]);
+
+        // Only a Wayland session, and only with grim installed.
+        platform.xdg_current_desktop = Some("sway".to_string());
+        platform.xdg_session_type = Some("x11".to_string());
+        platform.wayland_display = None;
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+        assert_eq!(capabilities.screenshot, ["gnome_shell", "gnome_screenshot"]);
+        platform.xdg_session_type = Some("wayland".to_string());
+        platform.wayland_display = Some("wayland-1".to_string());
+        platform.grim = Check::fail("No such file or directory (os error 2)");
+        let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+        assert_eq!(capabilities.screenshot, ["gnome_shell", "gnome_screenshot"]);
     }
 
     #[test]
