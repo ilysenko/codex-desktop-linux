@@ -2300,6 +2300,7 @@ test("Linux remote-control settings UX handles division around the settings code
     "let first=1>{}/2,r=/}/;",
     "switch(x){case {}/2:break;case /}/:break;}",
     "for(const x of {}/2||[]){};let r=/}/;",
+    'let first=`a${{}/2}`,r=/}/;',
     'let of=0;of\n{}/}/.test("}");',
     'for(;()=>{of\n{}/}/.test("}")};)break;',
     'let first=function(){label:{}/}/.test("}");};',

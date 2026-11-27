@@ -85,7 +85,7 @@ const REGEX_PREFIX_KEYWORDS = new Set([
 const CONDITION_KEYWORDS = new Set(["for", "if", "while", "with"]);
 const OBJECT_EXPRESSION_PREFIXES = new Set([
   "=", "(", "[", ",", "?", "ternary:", "property:", "+", "-", "*", "/", "%",
-  "&", "|", "^", "~", "!", "<", ">",
+  "&", "|", "^", "~", "!", "<", ">", "${",
 ]);
 
 function isLineTerminator(char) {
@@ -208,7 +208,7 @@ function findMatchingBrace(source, openIndex, visitToken) {
     if (chunk.substitution) {
       templateDepths.push(depth);
       depth += 1;
-      previous = { kind: "punct", value: "{" };
+      previous = { kind: "punct", value: "${" };
     } else {
       previous = { kind: "value" };
     }
