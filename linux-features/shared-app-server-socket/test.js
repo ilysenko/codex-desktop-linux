@@ -1720,13 +1720,14 @@ test("attached CLI verifier preserves stock exec and signals", async () => {
 function syntheticCurrentBundle() {
   return [
     '(()=>{var modules={',
-    '1(e,t,r){"use strict";r.d(t,{Local:()=>NativeLocal});const n={Cn:FakeWebSocketTransport};',
+    '1(e,t,r){"use strict";r.d(t,{Local:()=>NativeLocal});var n=r(4);',
     'class NativeLocal{connect(){return new n.Cn({hostConfig:this.options.hostConfig,',
     'websocketUrl:"ws://localhost/rpc",createConnection:()=>null})}}},',
     '2(e,t,r){"use strict";r.d(t,{Ctor:()=>native.Local});var native=r(1);},',
     '3(e,t,r){var local=r(2);globalThis.create=function(e,h,o){let{isPackaged:p=!1,...rest}=e.options;',
     'return new local.Ctor({getConfigOverrides:async()=>{',
-    'let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}}',
+    'let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}},',
+    '4(e,t){t.Cn=FakeWebSocketTransport}',
     '};function load(id){const exports={};modules[id]({},exports,load);return exports}',
     'load.d=(exports,getters)=>{for(const [key,get] of Object.entries(getters))',
     'Object.defineProperty(exports,key,{get})};load(3)})();',
@@ -1852,16 +1853,50 @@ test("descriptor rejects incomplete or drifted insertions without changing the h
   }
 });
 
-test("descriptor leaves a parseable class-expression host unchanged if the patch would break its syntax", (t) => {
+test("descriptor leaves a parseable class-expression host unchanged", (t) => {
   const source = syntheticCurrentBundle().replace("class NativeLocal{", "const NativeLocal=class NativeLocal{");
   assert.doesNotThrow(() => new vm.Script(source));
   const [{ apply }] = descriptors;
   const { root, buildDir } = writeHostBundles(t, { "host.js": source });
   assert.throws(() => apply(root), {
     name: "Error",
-    message: /Shared app-server socket patch would break JavaScript syntax in host\.js/,
+    message: /local transport or WebSocket adapter is outside its expected module scope/,
   });
   assert.equal(fs.readFileSync(path.join(buildDir, "host.js"), "utf8"), source);
+});
+
+test("descriptor rejects method-local, shadowed, and reassigned transport bindings", (t) => {
+  const current = syntheticCurrentBundle();
+  const adapterMovedIntoMethod = current.replace(
+    "var n=r(4);class NativeLocal{connect(){",
+    "class NativeLocal{connect(){var n=r(4);",
+  );
+  const adapterShadowedByParameter = current.replace(
+    "class NativeLocal{connect(){",
+    "class NativeLocal{connect(n=r(4)){",
+  );
+  const factoryShadowedByParameter = current
+    .replace("globalThis.create=function", "register(local);function register(local){globalThis.create=function")
+    .replace("return(0,x.y)(b),a}})}},", "return(0,x.y)(b),a}})}}},");
+  const barrelBindingReassigned = current.replace("var native=r(1);", "var native=r(1);native=r(1);");
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, {});
+  const host = path.join(buildDir, "host.js");
+  for (const source of [
+    adapterMovedIntoMethod,
+    adapterShadowedByParameter,
+    factoryShadowedByParameter,
+    barrelBindingReassigned,
+  ]) {
+    assert.notEqual(source, current);
+    assert.doesNotThrow(() => new vm.Script(source));
+    fs.writeFileSync(host, source);
+    assert.throws(() => apply(root), {
+      name: "Error",
+      message: /local transport or WebSocket adapter is outside its expected module scope/,
+    });
+    assert.equal(fs.readFileSync(host, "utf8"), source);
+  }
 });
 
 test("descriptor leaves the host unchanged when a temporary write fails partway", (t) => {

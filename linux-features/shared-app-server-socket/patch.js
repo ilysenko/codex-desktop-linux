@@ -70,14 +70,48 @@ function readRspackModules(source) {
   return null;
 }
 
-function importedModuleId(source, owner, binding) {
+function isAtModuleScope(source, owner, offset) {
+  // A closing brace at this position must close the module, not an inner scope.
+  const prefix = source.slice(owner.start - 1, offset) + "}";
+  return findMatchingBrace(prefix, 0) === prefix.length - 1;
+}
+
+function findModuleImport(source, owner, binding) {
   if (owner.requireName == null) return null;
   const pattern = new RegExp(
     `(?:^|[;}])var ${escapeRegExp(binding)}=${escapeRegExp(owner.requireName)}\\((\\d+)\\)(?=[,;])`,
     "gu",
   );
   const matches = [...source.slice(owner.start, owner.end).matchAll(pattern)];
-  return matches.length === 1 ? matches[0][1] : null;
+  if (matches.length !== 1) return null;
+  const [match] = matches;
+  const varOffset = owner.start + match.index + match[0].indexOf("var ");
+  if (!isAtModuleScope(source, owner, varOffset)) return null;
+  return { id: match[1], bindingOffset: varOffset + "var ".length };
+}
+
+function bareBindingOffsets(source, start, end, binding) {
+  const pattern = new RegExp(
+    `(?<![\\w$])${escapeRegExp(binding)}(?![\\w$.])`,
+    "gu",
+  );
+  const offsets = [];
+  for (const match of source.slice(start, end).matchAll(pattern)) {
+    const offset = start + match.index;
+    const preceding = source[offset - 1];
+    const following = source[offset + binding.length];
+    if (preceding === following && (preceding === "'" || preceding === '"' || preceding === "`")) {
+      continue;
+    }
+    offsets.push(offset);
+  }
+  return offsets;
+}
+
+function hasOtherModuleBindingUses(source, owner, binding, declarationOffset) {
+  return bareBindingOffsets(source, owner.start, owner.end, binding).some(
+    (offset) => offset !== declarationOffset && isAtModuleScope(source, owner, offset),
+  );
 }
 
 function exportedBinding(source, owner, name) {
@@ -95,21 +129,41 @@ function exportedBinding(source, owner, name) {
 }
 
 // Follow both export getters to find the class constructed by the factory.
-function factoryImportsNativeClass(source, factoryOffset, constructorRef, classOffset, className) {
+function factoryImportsNativeClass(source, factoryOffset, constructorRef, nativeClass, webSocketRef) {
   const modules = readRspackModules(source);
   if (modules == null) return false;
   const factoryModule = [...modules.values()].find(({ start, end }) => start <= factoryOffset && factoryOffset < end);
   if (factoryModule == null) return false;
-  const [factoryImport, reexportName] = constructorRef.split(".");
-  const reexportModule = modules.get(importedModuleId(source, factoryModule, factoryImport));
+  const [factoryBinding, reexportName] = constructorRef.split(".");
+  const factoryImport = findModuleImport(source, factoryModule, factoryBinding);
+  if (factoryImport == null) return false;
+  // The current namespace is used only as a qualified reference after import.
+  // Another bare occurrence can introduce a shadow binding around the factory.
+  const factoryUses = bareBindingOffsets(source, factoryModule.start, factoryModule.end, factoryBinding);
+  if (factoryUses.length !== 1 || factoryUses[0] !== factoryImport.bindingOffset) return false;
+  const reexportModule = modules.get(factoryImport.id);
   if (reexportModule == null) return false;
   const reexport = exportedBinding(source, reexportModule, reexportName);
   if (reexport == null) return false;
-  const [nativeImport, nativeExport] = reexport.split(".");
+  const [nativeBinding, nativeExport] = reexport.split(".");
   if (nativeExport == null) return false;
-  const nativeModule = modules.get(importedModuleId(source, reexportModule, nativeImport));
-  return nativeModule != null && nativeModule.start <= classOffset && classOffset < nativeModule.end &&
-    exportedBinding(source, nativeModule, nativeExport) === className;
+  const nativeImport = findModuleImport(source, reexportModule, nativeBinding);
+  if (nativeImport == null ||
+      hasOtherModuleBindingUses(source, reexportModule, nativeBinding, nativeImport.bindingOffset)) {
+    return false;
+  }
+  const nativeModule = modules.get(nativeImport.id);
+  if (nativeModule == null || nativeClass.start < nativeModule.start || nativeClass.end >= nativeModule.end ||
+      !isAtModuleScope(source, nativeModule, nativeClass.start) ||
+      exportedBinding(source, nativeModule, nativeExport) !== nativeClass.name ||
+      hasOtherModuleBindingUses(source, nativeModule, nativeClass.name, nativeClass.start + "class ".length)) {
+    return false;
+  }
+  const [webSocketBinding] = webSocketRef.split(".");
+  const webSocketImport = findModuleImport(source, nativeModule, webSocketBinding);
+  return webSocketImport != null && modules.has(webSocketImport.id) &&
+    !hasOtherModuleBindingUses(source, nativeModule, webSocketBinding, webSocketImport.bindingOffset) &&
+    bareBindingOffsets(source, nativeClass.start, nativeClass.end, webSocketBinding).length === 0;
 }
 
 function sharedAppServerSocketContract(source) {
@@ -124,7 +178,8 @@ function sharedAppServerSocketContract(source) {
   const classAnchor = source.lastIndexOf("class ", daemon.index);
   const classHeader = classAnchor < 0 ? null : source.slice(classAnchor).match(/^class ([A-Za-z_$][\w$]*)\{/);
   const classBody = classAnchor + (classHeader?.[0].length ?? 0);
-  if (classHeader == null || findMatchingBrace(source, classBody - 1) <= daemon.index) {
+  const classEnd = classHeader == null ? -1 : findMatchingBrace(source, classBody - 1);
+  if (classEnd <= daemon.index) {
     return { state: "drifted", reason: "local transport class not found" };
   }
 
@@ -138,8 +193,9 @@ function sharedAppServerSocketContract(source) {
   if (nativeConstructor == null) {
     return { state: "drifted", reason: "local transport constructor not found" };
   }
-  if (!factoryImportsNativeClass(source, factory.index, nativeConstructor[1], classAnchor, classHeader[1])) {
-    return { state: "drifted", reason: "local transport constructor does not import the native transport class" };
+  const nativeClass = { start: classAnchor, end: classEnd, name: classHeader[1] };
+  if (!factoryImportsNativeClass(source, factory.index, nativeConstructor[1], nativeClass, daemon[1])) {
+    return { state: "drifted", reason: "local transport or WebSocket adapter is outside its expected module scope" };
   }
   const configures = [...factoryTail.matchAll(CURRENT_CONFIGURE_PATTERN)];
   if (configures.length !== 1 || configures[0][3] !== factory.groups.overrides) {
