@@ -1719,11 +1719,17 @@ test("attached CLI verifier preserves stock exec and signals", async () => {
 
 function syntheticCurrentBundle() {
   return [
-    'const local=(()=>{const n={Cn:FakeWebSocketTransport};',
+    '(()=>{var modules={',
+    '1(e,t,r){"use strict";r.d(t,{Local:()=>NativeLocal});const n={Cn:FakeWebSocketTransport};',
     'class NativeLocal{connect(){return new n.Cn({hostConfig:this.options.hostConfig,',
-    'websocketUrl:"ws://localhost/rpc",createConnection:()=>null})}}return{NativeLocal}})();',
-    'globalThis.create=function(e,h,o){let{isPackaged:p=!1,...r}=e.options;return new local.NativeLocal({',
-    'getConfigOverrides:async()=>{let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}',
+    'websocketUrl:"ws://localhost/rpc",createConnection:()=>null})}}},',
+    '2(e,t,r){"use strict";r.d(t,{Ctor:()=>native.Local});var native=r(1);},',
+    '3(e,t,r){var local=r(2);globalThis.create=function(e,h,o){let{isPackaged:p=!1,...rest}=e.options;',
+    'return new local.Ctor({getConfigOverrides:async()=>{',
+    'let{overrides:a,windowsFrameworkRoot:b}=await o();return(0,x.y)(b),a}})}}',
+    '};function load(id){const exports={};modules[id]({},exports,load);return exports}',
+    'load.d=(exports,getters)=>{for(const [key,get] of Object.entries(getters))',
+    'Object.defineProperty(exports,key,{get})};load(3)})();',
   ].join("");
 }
 
@@ -1740,7 +1746,7 @@ function writeHostBundles(t, chunks) {
 
 test("descriptor patches a renamed host bundle and reuses the native transport across module scopes", async (t) => {
   const current = syntheticCurrentBundle();
-  const unrelated = current.slice(0, current.indexOf("globalThis.create="));
+  const unrelated = current.replace("isPackaged:p", "packed:p");
   const { root, buildDir } = writeHostBundles(t, {
     "early-bootstrap-1-aabb.js": unrelated,
     "renamed-host.js": current,
@@ -1820,13 +1826,15 @@ test("descriptor rejects incomplete or drifted insertions without changing the h
   apply(root);
   const patched = fs.readFileSync(host, "utf8");
   const branchStart = patched.indexOf("if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET");
-  const branchEnd = patched.indexOf("return new local.NativeLocal(", branchStart);
+  const branchEnd = patched.indexOf("return new local.Ctor(", branchStart);
   assert.ok(branchStart >= 0 && branchEnd > branchStart);
   const branch = patched.slice(branchStart, branchEnd);
   const cases = [
     current + current,
     current.replace("getConfigOverrides:", "renamedField:"),
     current.replace('websocketUrl:"ws://localhost/rpc"', 'websocketUrl:"ws://different/rpc"'),
+    current.replace("Ctor:()=>native.Local", "Ctor:()=>function(options){return new native.Local(options)}"),
+    current.replace("Local:()=>NativeLocal", "Local:()=>function(options){return new NativeLocal(options)}"),
     patched.slice(0, branchStart) + patched.slice(branchEnd),
     patched.replace("class CodexLinuxSharedAppServerSocketTransport", "class IncompleteTransport"),
     patched.replace("static createLinuxSharedSocket", "static incompleteMethod"),
@@ -1842,6 +1850,34 @@ test("descriptor rejects incomplete or drifted insertions without changing the h
     });
     assert.equal(fs.readFileSync(host, "utf8"), source);
   }
+});
+
+test("descriptor leaves a parseable class-expression host unchanged if the patch would break its syntax", (t) => {
+  const source = syntheticCurrentBundle().replace("class NativeLocal{", "const NativeLocal=class NativeLocal{");
+  assert.doesNotThrow(() => new vm.Script(source));
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, { "host.js": source });
+  assert.throws(() => apply(root), {
+    name: "Error",
+    message: /Shared app-server socket patch would break JavaScript syntax in host\.js/,
+  });
+  assert.equal(fs.readFileSync(path.join(buildDir, "host.js"), "utf8"), source);
+});
+
+test("descriptor leaves the host unchanged when a temporary write fails partway", (t) => {
+  const source = syntheticCurrentBundle();
+  const [{ apply }] = descriptors;
+  const { root, buildDir } = writeHostBundles(t, { "host.js": source });
+  const writeFileSync = fs.writeFileSync;
+  t.mock.method(fs, "writeFileSync", (file, bytes, options) => {
+    assert.equal(typeof file, "number");
+    writeFileSync(file, bytes.slice(0, 100), options);
+    throw new Error("simulated partial write");
+  });
+
+  assert.throws(() => apply(root), { name: "Error", message: "simulated partial write" });
+  assert.deepEqual(fs.readdirSync(buildDir), ["host.js"]);
+  assert.equal(fs.readFileSync(path.join(buildDir, "host.js"), "utf8"), source);
 });
 
 test("optional socket drift lets later patches run and fails enabled-feature acceptance", (t) => {

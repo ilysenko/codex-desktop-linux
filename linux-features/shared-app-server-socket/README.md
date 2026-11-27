@@ -176,8 +176,10 @@ CODEX_CLI_PATH="/absolute/path/to/real/codex" node --test linux-features/shared-
 The feature depends on upstream's current local transport factory, WebSocket
 adapter, configuration-override callback, and `app-server proxy` command. The
 descriptor finds the host bundle from the factory's code in the extracted app.
-With the feature enabled, the build rejects a missing, ambiguous, or incomplete
-match before writing a patched bundle.
+It follows the factory's module imports to the native transport and checks the
+patched JavaScript before replacing the bundle. A failed match leaves the
+original bundle intact and records an optional skip. Build acceptance then fails
+if the feature was enabled.
 
 ## Catalog subfeatures
 

@@ -1,10 +1,12 @@
 "use strict";
 
+const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { readDirectoryNames } = require("../../scripts/patches/lib/assets.js");
+const { javascriptSourceParses } = require("../../scripts/patches/lib/javascript-syntax.js");
 const { readSocketPath } = require("./socket-path.js");
-const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
 function sharedTransportClassSource(webSocketTransport) {
   return (
@@ -39,6 +41,76 @@ const CURRENT_CONFIGURE_PATTERN = /getConfigOverrides:async\(\)=>\{let\{override
 
 const TRANSPORT_MARKER = "class CodexLinuxSharedAppServerSocketTransport";
 const FACTORY_METHOD = "createLinuxSharedSocket";
+const IDENTIFIER = "[A-Za-z_$][\\w$]*";
+const MODULE_TABLE_HEADER = new RegExp(
+  `^\\(\\(\\)=>\\{var (?:${IDENTIFIER},)*${IDENTIFIER}=\\{`,
+);
+
+// Match the current Rspack module table. Braces inside minified strings and
+// regular expressions must not change the module boundaries.
+function readRspackModules(source) {
+  const table = MODULE_TABLE_HEADER.exec(source);
+  if (table == null) return null;
+  const header = new RegExp(`(\\d+)\\(((?:${IDENTIFIER}(?:,${IDENTIFIER}){0,2})?)\\)\\{`, "y");
+  const modules = new Map();
+  let index = table[0].length;
+  while (index < source.length) {
+    header.lastIndex = index;
+    const match = header.exec(source);
+    if (match == null || modules.has(match[1])) return null;
+    const start = header.lastIndex;
+    const end = findMatchingBrace(source, start - 1);
+    if (end < 0) return null;
+    const [, exportsName, requireName] = match[2].split(",");
+    modules.set(match[1], { start, end, exportsName, requireName });
+    if (source[end + 1] === "}") return modules;
+    if (source[end + 1] !== ",") return null;
+    index = end + 2;
+  }
+  return null;
+}
+
+function importedModuleId(source, owner, binding) {
+  if (owner.requireName == null) return null;
+  const pattern = new RegExp(
+    `(?:^|[;}])var ${escapeRegExp(binding)}=${escapeRegExp(owner.requireName)}\\((\\d+)\\)(?=[,;])`,
+    "gu",
+  );
+  const matches = [...source.slice(owner.start, owner.end).matchAll(pattern)];
+  return matches.length === 1 ? matches[0][1] : null;
+}
+
+function exportedBinding(source, owner, name) {
+  if (owner.requireName == null || owner.exportsName == null) return null;
+  const registration = new RegExp(
+    `^"use strict";(?:let ${IDENTIFIER}(?:,${IDENTIFIER})*;)?` +
+    `${escapeRegExp(owner.requireName)}\\.d\\(${escapeRegExp(owner.exportsName)},\\{([^{}]*)\\}\\)`,
+  );
+  const exports = registration.exec(source.slice(owner.start, owner.end));
+  if (exports == null) return null;
+  const getters = exports[1].split(",").filter((entry) => entry.startsWith(`${name}:`));
+  if (getters.length !== 1) return null;
+  const binding = new RegExp(`^\\(\\)=>(${IDENTIFIER}(?:\\.${IDENTIFIER})?)$`);
+  return binding.exec(getters[0].slice(name.length + 1))?.[1] ?? null;
+}
+
+// Follow both export getters to find the class constructed by the factory.
+function factoryImportsNativeClass(source, factoryOffset, constructorRef, classOffset, className) {
+  const modules = readRspackModules(source);
+  if (modules == null) return false;
+  const factoryModule = [...modules.values()].find(({ start, end }) => start <= factoryOffset && factoryOffset < end);
+  if (factoryModule == null) return false;
+  const [factoryImport, reexportName] = constructorRef.split(".");
+  const reexportModule = modules.get(importedModuleId(source, factoryModule, factoryImport));
+  if (reexportModule == null) return false;
+  const reexport = exportedBinding(source, reexportModule, reexportName);
+  if (reexport == null) return false;
+  const [nativeImport, nativeExport] = reexport.split(".");
+  if (nativeExport == null) return false;
+  const nativeModule = modules.get(importedModuleId(source, reexportModule, nativeImport));
+  return nativeModule != null && nativeModule.start <= classOffset && classOffset < nativeModule.end &&
+    exportedBinding(source, nativeModule, nativeExport) === className;
+}
 
 function sharedAppServerSocketContract(source) {
   const daemons = [...source.matchAll(CURRENT_DAEMON_PATTERN)];
@@ -50,7 +122,7 @@ function sharedAppServerSocketContract(source) {
   const [daemon] = daemons;
   const [factory] = factories;
   const classAnchor = source.lastIndexOf("class ", daemon.index);
-  const classHeader = classAnchor < 0 ? null : source.slice(classAnchor).match(/^class [A-Za-z_$][\w$]*\{/);
+  const classHeader = classAnchor < 0 ? null : source.slice(classAnchor).match(/^class ([A-Za-z_$][\w$]*)\{/);
   const classBody = classAnchor + (classHeader?.[0].length ?? 0);
   if (classHeader == null || findMatchingBrace(source, classBody - 1) <= daemon.index) {
     return { state: "drifted", reason: "local transport class not found" };
@@ -65,6 +137,9 @@ function sharedAppServerSocketContract(source) {
   const nativeConstructor = factoryTail.match(/return new ([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\(\{/);
   if (nativeConstructor == null) {
     return { state: "drifted", reason: "local transport constructor not found" };
+  }
+  if (!factoryImportsNativeClass(source, factory.index, nativeConstructor[1], classAnchor, classHeader[1])) {
+    return { state: "drifted", reason: "local transport constructor does not import the native transport class" };
   }
   const configures = [...factoryTail.matchAll(CURRENT_CONFIGURE_PATTERN)];
   if (configures.length !== 1 || configures[0][3] !== factory.groups.overrides) {
@@ -105,6 +180,25 @@ function insertSharedTransport(source, contract) {
   return source;
 }
 
+function replaceHostBundle(file, source) {
+  // An optional write failure must leave the bundle intact for later descriptors.
+  const temporaryFile = `${file}.${randomUUID()}.tmp`;
+  const mode = fs.statSync(file).mode & 0o777;
+  const fd = fs.openSync(temporaryFile, "wx", mode);
+  try {
+    try {
+      fs.writeFileSync(fd, source, "utf8");
+      fs.fchmodSync(fd, mode);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(temporaryFile, file);
+  } catch (error) {
+    fs.rmSync(temporaryFile, { force: true });
+    throw error;
+  }
+}
+
 function patchAppServerHost(extractedDir) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   const candidates = [];
@@ -133,7 +227,10 @@ function patchAppServerHost(extractedDir) {
   if (sharedAppServerSocketContract(patched).state !== "patched") {
     throw new Error(`Incomplete shared app-server socket patch in ${path.basename(file)}`);
   }
-  fs.writeFileSync(file, patched, "utf8");
+  if (!javascriptSourceParses(patched)) {
+    throw new Error(`Shared app-server socket patch would break JavaScript syntax in ${path.basename(file)}`);
+  }
+  replaceHostBundle(file, patched);
   return { changed: true };
 }
 
