@@ -2239,10 +2239,27 @@ test("Linux remote-control settings UX rejects a shadowed sidebar flag", () => {
   for (const sidebar of [
     'function unrelated(){let id="782640499";return id}function sidebar(state,get,gate,route,platform,id){let items=[];state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform));return items}',
     'function sidebar(state,get,gate,route,platform,id){for(let id="782640499";false;){}let items=[];state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform));return items}',
+    syntheticCurrentOutboundSidebarBundle().replace("state&&!get", "!state&&!get"),
     'function sidebar(state,get,gate,route,platform){let id="782640499",items=[];[false].forEach(id=>{state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform))});return items}',
     'function sidebar(state,get,gate,route,platform){let id="782640499",items=[];(()=>{state&&!get(gate.enabled,id)&&items.push(route("access-other-devices",platform));var id})();return items}',
   ]) {
     const source = original.replace(syntheticCurrentOutboundSidebarBundle(), sidebar);
+    const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+    assert.doesNotMatch(result, /codexLinuxRemoteControlOutboundTabGate/);
+    assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /^WARN: .*unique remote-control outbound sidebar gate/);
+  }
+});
+
+test("Linux remote-control settings UX accepts an intact settings gate after sidebar-only drift", () => {
+  for (const sidebar of [
+    'state&&!get(gate.enabled,flag)||items.push(route("access-other-devices",platform))',
+    'state&&!get(flag,gate.enabled)&&items.push(route("access-other-devices",platform))',
+  ]) {
+    const source = syntheticCurrentOutboundConnectionsBundle()
+      .replace(syntheticCurrentOutboundSidebarBundle(), "")
+      .replace('let flag="782640499";n.d', `let flag="782640499",items=[];${sidebar};n.d`);
     const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
     assert.doesNotMatch(result, /codexLinuxRemoteControlOutboundTabGate/);
     assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
@@ -2326,6 +2343,8 @@ test("Linux remote-control settings UX patch warns on settings gate drift even w
       'loader=otherFlag;{let local=0,loader=(0,flags.read)(connectionFlags.shared);local=loader}'),
     original.replace('visible&&tabs.push("access-other-devices")', 'tabs.push("access-other-devices")'),
     original.replace('tab&&!authorized?', 'tab&&authorized?'),
+    original.replace('authorized?"devices":null', 'authorized?.devices')
+      .replace('!authorized?"authorize":null', '!authorized?.authorize'),
     original.replace("gate=!loader", "gate=loader") +
       "function unrelated(flag){let other=0,gate=!flag;return gate}",
     original.replace("gate=!loader,visible=", "gate=loader;{let other=0,gate=!loader;other=gate}let visible="),
@@ -2375,6 +2394,17 @@ test("Linux remote-control settings UX warns when a marked gate has changed", ()
   assert.equal(result, drifted);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /^WARN: .*unique remote-control outbound settings gate/);
+});
+
+test("Linux remote-control settings UX warns when the marked sidebar state guard changes", () => {
+  const original = syntheticCurrentOutboundConnectionsBundle();
+  const patched = applyLinuxRemoteControlSettingsUxPatch(original);
+  const drifted = patched.replace("state&&/*codexLinuxRemoteControlOutboundTabGate*/", "state||/*codexLinuxRemoteControlOutboundTabGate*/");
+  assert.notEqual(drifted, patched);
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(drifted));
+  assert.equal(result, drifted);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^WARN: .*unique remote-control outbound sidebar gate/);
 });
 
 test("Linux remote-connections refresh patch shortens polling and refreshes on resume signals", () => {

@@ -770,25 +770,36 @@ function applyLinuxRemoteControlOutboundTabGatePatch(source) {
 }
 
 function applyLinuxRemoteControlOutboundSidebarGatePatch(source) {
-  if (source.includes(REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER)) {
+  const warning = "WARN: Could not find unique remote-control outbound sidebar gate - skipping Linux outbound sidebar gate patch";
+  const hasMarker = source.includes(REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER);
+  const markedExpression = /\/\*codexLinuxRemoteControlOutboundTabGate\*\/\(typeof navigator!=`undefined`&&navigator\.userAgent\.includes\(`Linux`\)\|\|(?<flagRead>![A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\))\)/gu;
+  const marked = [...source.matchAll(markedExpression)];
+  if (hasMarker && marked.length !== 1) {
+    console.warn(warning);
     return source;
   }
+  const pristine = hasMarker ? source.replace(markedExpression, "$<flagRead>") : source;
 
-  const pattern = /(?<state>[A-Za-z_$][\w$]*)&&!(?<getter>[A-Za-z_$][\w$]*)\((?<gate>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*),(?<id>[A-Za-z_$][\w$]*)\)&&(?<items>[A-Za-z_$][\w$]*)\.push\((?<route>[A-Za-z_$][\w$]*)\("access-other-devices",(?<platform>[A-Za-z_$][\w$]*)\)\)/gu;
-  const tokens = outboundCodeTokens(source);
-  const matches = [...source.matchAll(pattern)].filter(
-    (match) => tokens.has(match.index) && matchesOutboundSidebarFlag(source, tokens, match),
+  const pattern = /(?<=[;{,(])(?!(?:true|false|null|undefined)\b)(?<state>[A-Za-z_$][\w$]*)&&!(?<getter>[A-Za-z_$][\w$]*)\((?<gate>[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*),(?<id>[A-Za-z_$][\w$]*)\)&&(?<items>[A-Za-z_$][\w$]*)\.push\((?<route>[A-Za-z_$][\w$]*)\("access-other-devices",(?<platform>[A-Za-z_$][\w$]*)\)\)/gu;
+  const tokens = outboundCodeTokens(pristine);
+  const matches = [...pristine.matchAll(pattern)].filter(
+    (match) => tokens.has(match.index) && matchesOutboundSidebarFlag(pristine, tokens, match),
   );
   if (matches.length !== 1) {
-    console.warn("WARN: Could not find unique remote-control outbound sidebar gate - skipping Linux outbound sidebar gate patch");
+    console.warn(warning);
     return source;
   }
 
   const match = matches[0];
   const g = match.groups;
-  return source.slice(0, match.index) +
+  const patched = pristine.slice(0, match.index) +
     `${g.state}&&/*${REMOTE_CONTROL_OUTBOUND_TAB_GATE_MARKER}*/(typeof navigator!=\`undefined\`&&navigator.userAgent.includes(\`Linux\`)||!${g.getter}(${g.gate},${g.id}))&&${g.items}.push(${g.route}("access-other-devices",${g.platform}))` +
-    source.slice(match.index + match[0].length);
+    pristine.slice(match.index + match[0].length);
+  if (hasMarker && patched !== source) {
+    console.warn(warning);
+    return source;
+  }
+  return patched;
 }
 
 function matchesOutboundSidebarFlag(source, tokens, match) {
@@ -844,9 +855,15 @@ function matchesOutboundLoaderFlag(source, tokens, body, owner, loader, declarat
     const flag = escapeRegExp(declaration.groups.flag);
     const flagReferences = new RegExp(`(?<![\\w$])${flag}(?![\\w$])`, "gu");
     const flagStart = declaration.index - block.index - 1 + "let ".length;
+    const argument = `${DEVICE_KEY_IDENT}(?:\\.${DEVICE_KEY_IDENT})?`;
+    const calls = new RegExp(
+      `(?<=[!&|,;=(])(?!function\\b)${DEVICE_KEY_IDENT}\\((?:${argument},)*?(?<flag>${flag})(?=[,)])`,
+      "dgu",
+    );
+    const flagReads = new Set([...blockBody.matchAll(calls)].map((call) => call.indices.groups.flag[0]));
     const unchangedFlag = [...blockBody.matchAll(flagReferences)].every(({ index }) =>
       index === flagStart || index >= exports.index || !tokens.has(block.index + 1 + index) ||
-      (blockBody[index - 1] === "," && /^\)\)?&&/.test(blockBody.slice(index + declaration.groups.flag.length))),
+      flagReads.has(index),
     );
     if (unchangedFlag) flagExports.push({ module: factory.module, slot: slots[0].split(":")[0] });
   }
@@ -955,7 +972,7 @@ function applyLinuxRemoteControlOutboundSettingsGatePatch(source) {
 function findRemoteControlOutboundSettingsGate(source) {
   const tokens = outboundCodeTokens(source);
   const panels = [...source.matchAll(
-    /(?<=[,\[]|(?<![=!<>+\-*/%&|^?])=)(?<gate>[A-Za-z_$][\w$]*)&&"access-other-devices"===(?<tab>[A-Za-z_$][\w$]*)&&(?<negated>!?)(?<authorized>[A-Za-z_$][\w$]*)\?/gu,
+    /(?<=[,\[]|(?<![=!<>+\-*/%&|^?])=)(?<gate>[A-Za-z_$][\w$]*)&&"access-other-devices"===(?<tab>[A-Za-z_$][\w$]*)&&(?<negated>!?)(?<authorized>[A-Za-z_$][\w$]*)\?(?![?.])/gu,
   )].filter((panel) => tokens.has(panel.index));
   if (panels.length !== 2) return null;
 
