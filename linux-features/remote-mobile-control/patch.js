@@ -859,7 +859,7 @@ function matchesOutboundLoaderFlag(source, tokens, body, owner, loader, declarat
   const read = new RegExp(
     `(?<![\\w$.])${escapeRegExp(loader)}=\\(0,${DEVICE_KEY_IDENT}\\.${DEVICE_KEY_IDENT}\\)\\(` +
     `(?<imported>${DEVICE_KEY_IDENT})\\.${escapeRegExp(slot)}\\)(?=[,;])`,
-    "gu",
+    "dgu",
   );
   const reads = [...body.slice(0, declaration.index).matchAll(read)].filter(
     ({ index }) => tokens.has(owner.start + index) && separators.has(index - 1),
@@ -900,7 +900,7 @@ function matchesOutboundLoaderFlag(source, tokens, body, owner, loader, declarat
     const prefix = source.slice(index - 3, index);
     const suffix = source.slice(index + flagRead.groups.imported.length);
     const methodRead = prefix === "(0," && /^\.[A-Za-z_$][\w$]*\)\(/u.test(suffix);
-    const flagArgument = index === owner.start + flagRead.index + flagRead[0].lastIndexOf(flagRead.groups.imported);
+    const flagArgument = index === owner.start + flagRead.indices.groups.imported[0];
     if (!methodRead && !flagArgument) return false;
   }
   return true;
@@ -943,7 +943,7 @@ function applyLinuxRemoteControlOutboundSettingsGatePatch(source) {
 function findRemoteControlOutboundSettingsGate(source) {
   const tokens = outboundCodeTokens(source);
   const panels = [...source.matchAll(
-    /(?<=[=,\[])(?<gate>[A-Za-z_$][\w$]*)&&"access-other-devices"===(?<tab>[A-Za-z_$][\w$]*)&&(?<negated>!?)(?<authorized>[A-Za-z_$][\w$]*)\?/gu,
+    /(?<=[,\[]|(?<![=!<>+\-*/%&|^?])=)(?<gate>[A-Za-z_$][\w$]*)&&"access-other-devices"===(?<tab>[A-Za-z_$][\w$]*)&&(?<negated>!?)(?<authorized>[A-Za-z_$][\w$]*)\?/gu,
   )].filter((panel) => tokens.has(panel.index));
   if (panels.length !== 2) return null;
 
@@ -985,7 +985,7 @@ function findRemoteControlOutboundSettingsGate(source) {
   ))].filter(({ index, groups: { visible } }) => {
     if (tokenDepths.get(index) !== 1 || !declarationSeparators.has(index - 1)) return false;
     const binding = escapeRegExp(visible);
-    const pushIndex = findOutboundTabListPush(body, tokenDepths, binding);
+    const pushIndex = findOutboundTabListPush(body, tokenDepths, visible);
     if (pushIndex <= index) return false;
 
     // The compiler reads visibility in the render-cache comparison before
@@ -1059,8 +1059,8 @@ function findOutboundTabListPush(body, tokenDepths, visibility) {
   const list = new RegExp(
     `if\\((?<cache>${id})\\[\\d+\\]!==${id}(?:\\|\\|\\k<cache>\\[\\d+\\]!==${id})*\\)\\{` +
     `let (?<items>${id})=\\[\\];${id}&&\\k<items>\\.push\\("control-this-mac"\\),` +
-    `${visibility}&&\\k<items>\\.push\\("access-other-devices"\\),\\k<items>\\.push\\("ssh"\\)`,
-    "gu",
+    `(?<push>${escapeRegExp(visibility)})&&\\k<items>\\.push\\("access-other-devices"\\),\\k<items>\\.push\\("ssh"\\)`,
+    "dgu",
   );
   const lists = [...body.matchAll(list)].filter(({ index }) => tokenDepths.get(index) === 1);
   if (lists.length !== 1) return -1;
@@ -1082,7 +1082,7 @@ function findOutboundTabListPush(body, tokenDepths, visibility) {
   const cacheWrite = body.lastIndexOf(`${cache}[`, close);
   cached.lastIndex = cacheWrite;
   if (cacheWrite <= open || !cached.test(body)) return -1;
-  return match.index + match[0].indexOf(`,${visibility}&&`) + 1;
+  return match.indices.groups.push[0];
 }
 
 function enclosingOutboundSettingsCallable(source, index, callables) {

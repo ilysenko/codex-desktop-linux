@@ -2196,6 +2196,24 @@ test("Linux remote-control settings UX accepts flag names reused in sibling func
   assert.deepEqual(warnings, []);
 });
 
+test("Linux remote-control settings UX accepts an import alias that overlaps its flag slot", () => {
+  const source = syntheticCurrentOutboundConnectionsBundle().replaceAll("connectionFlags", "ared");
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
+  assert.deepEqual(warnings, []);
+});
+
+test("Linux remote-control settings UX accepts dollar signs in minified bindings", () => {
+  const source = syntheticCurrentOutboundConnectionsBundle().replace(
+    /\b(?:id|flag|connectionFlags|shared|loader|gate|visible|cache|rendered|tabs|authorized)\b/g,
+    (name) => `$${name}`,
+  );
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  assert.match(result, /codexLinuxRemoteControlOutboundTabGate/);
+  assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
+  assert.deepEqual(warnings, []);
+});
+
 test("Linux remote-control settings UX rejects a shadowed sidebar flag", () => {
   const original = syntheticCurrentOutboundConnectionsBundle();
   for (const sidebar of [
@@ -2296,6 +2314,7 @@ test("Linux remote-control settings UX patch warns on settings gate drift even w
     original.replace('visible&&tabs.push("access-other-devices")',
       '[false].forEach(visible=>{let item="access-other-devices";visible&&tabs.push("access-other-devices")})'),
     original.replaceAll('gate&&"access-other-devices"', 'state.gate&&"access-other-devices"'),
+    original.replaceAll('gate&&"access-other-devices"', 'false===gate&&"access-other-devices"'),
     original.replace('visible&&tabs.push', 'if(loader){gate=!loader};visible&&tabs.push'),
     original.replace('visible&&tabs.push("access-other-devices")',
       '{let[visible]=[false];visible&&tabs.push("access-other-devices")}'),

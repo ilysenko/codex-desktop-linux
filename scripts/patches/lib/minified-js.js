@@ -185,7 +185,7 @@ function findMatchingBrace(source, openIndex, visitToken) {
   let depth = 0;
   const templateDepths = [];
   const expressionBraceDepths = new Set();
-  const objectLiteralDepths = new Set();
+  const objectLiteralDepths = new Map();
   const functionExpressions = new Set();
   let pendingFunctionExpression = false;
   let pendingClassExpression;
@@ -238,7 +238,7 @@ function findMatchingBrace(source, openIndex, visitToken) {
       // A slash after an object literal divides its value. A slash after a
       // statement block can begin the next statement's regex literal.
       if (startsExpression(previous, source, i, insideForHeader())) {
-        objectLiteralDepths.add(depth);
+        objectLiteralDepths.set(depth, parenthesesAreConditions.length + bracketDepth);
         expressionBraceDepths.add(depth);
       }
       if (previous.value === "function-expression)") {
@@ -295,7 +295,9 @@ function findMatchingBrace(source, openIndex, visitToken) {
       const property = previous.kind === "punct" && previous.value === "." &&
         source[start - 2] !== ".";
       const value = source.slice(start, i + 1);
-      const expressionContext = startsExpression(previous, source, start, insideForHeader());
+      const objectKey = objectLiteralDepths.get(depth) === parenthesesAreConditions.length + bracketDepth &&
+        previous.kind === "punct" && (previous.value === "{" || previous.value === ",");
+      const expressionContext = !objectKey && startsExpression(previous, source, start, insideForHeader());
       const followsAsync = previous.asyncExpression &&
         !/[\r\n\u2028\u2029]/u.test(source.slice(previous.end, start));
       if (value === "function" && !property && (expressionContext || followsAsync)) {
@@ -326,6 +328,8 @@ function findMatchingBrace(source, openIndex, visitToken) {
       ternaryConditions.push({ depth, parentheses: parenthesesAreConditions.length, brackets: bracketDepth });
       previous = { kind: "punct", value: "?" };
     } else if (char === ":") {
+      if (previous.kind === "word" && previous.value === "function") pendingFunctionExpression = false;
+      if (previous.kind === "word" && previous.value === "class") pendingClassExpression = undefined;
       const condition = ternaryConditions.at(-1);
       if (condition?.depth === depth && condition.parentheses === parenthesesAreConditions.length &&
           condition.brackets === bracketDepth) {
