@@ -1,139 +1,13 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+const { PatchIntegrityError } = require("../../scripts/patches/integrity-error.js");
+const { readDirectoryNames } = require("../../scripts/patches/lib/assets.js");
 const { readSocketPath } = require("./socket-path.js");
-const { escapeRegExp, findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
+const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
 
-const IDENT = "[A-Za-z_$][\\w$]*";
-
-const MEMBER = `${IDENT}\\.${IDENT}`;
-// Upstream inlines these handshake values as literals in the SSH method; the
-// generated transport receives the literal itself, never a method-local name.
-const LITERAL = `(?:"[^"\\\\\\n]*"|0x[0-9a-fA-F]+|\\d+(?:e\\d+)?)`;
-
-function findTransportSymbols(source) {
-  const classMatches = [...source.matchAll(
-    new RegExp(
-      `class (${IDENT})\\{options;kind="websocket";logger=\\(0,${MEMBER}\\)\\("AppServerTransportSshWebsocket"\\)`,
-      "g",
-    ),
-  )];
-  const selectionLogIndex = source.indexOf("selected app-server transport");
-  if (classMatches.length !== 1 || selectionLogIndex < 0 ||
-      classMatches[0].index >= selectionLogIndex) return null;
-  const [classMatch] = classMatches;
-
-  const sshRegion = source.slice(classMatch.index, selectionLogIndex);
-  const connectMatches = [...sshRegion.matchAll(
-    new RegExp(`async connectToRemoteAppServer\\(${IDENT},${IDENT}\\)\\{`, "g"),
-  )];
-  if (connectMatches.length !== 1) return null;
-  const connectStart = connectMatches[0].index;
-  const connectEnd = findMatchingBrace(sshRegion, sshRegion.indexOf("{", connectStart));
-  if (connectEnd < 0) return null;
-  // Keep injected transports and unrelated methods out of uniqueness checks.
-  const sshClassSource = sshRegion.slice(connectStart, connectEnd + 1);
-  const webSocketMatches = [...sshClassSource.matchAll(
-    new RegExp(`(${IDENT})=new (${MEMBER})\\((${LITERAL}),\\{perMessageDeflate:!1,[^}]{0,160}createConnection:`, "g"),
-  )];
-  if (webSocketMatches.length !== 1) return null;
-  const [, socket, webSocketClass, webSocketUrl] = webSocketMatches[0];
-
-  // Follow the returned connection and its codec, rather than selecting the
-  // first WebSocket wrapper. Upstream constructs the codec before opening and
-  // logs compression between constructing the adapter and starting keepalive.
-  const adapterMatches = [...sshClassSource.matchAll(
-    new RegExp(`let (${IDENT})=new (${MEMBER})\\(${escapeRegExp(socket)},void 0,(${IDENT}),(${IDENT})\\);return `, "g"),
-  )];
-  if (adapterMatches.length !== 1) return null;
-  const [, adapter, adapterClass, frameLimit, codec] = adapterMatches[0];
-  const codecMatches = [...sshClassSource.matchAll(
-    new RegExp(`let ${escapeRegExp(codec)}=new (${MEMBER})\\(${escapeRegExp(socket)},null!=${IDENT}\\);`, "g"),
-  )];
-  const keepAliveMatches = [...sshClassSource.matchAll(
-    new RegExp(`\\(0,(${MEMBER})\\)\\(${escapeRegExp(socket)},\\{onPongTimeout:\\(\\)=>\\{${escapeRegExp(adapter)}\\.terminationReason="pong_timeout",${escapeRegExp(socket)}\\.terminate\\(\\)\\}\\}\\),this\\.hasConnected=!0,${escapeRegExp(adapter)}(?=[})])`, "g"),
-  )];
-  const frameLimitMatches = [...sshClassSource.matchAll(
-    new RegExp(`let ${escapeRegExp(frameLimit)}=(${LITERAL});${escapeRegExp(socket)}\\.once\\("upgrade",(${IDENT})=>\\{let (${IDENT})=Number\\(\\2\\.headers\\[(${LITERAL})\\]\\);Number\\.isSafeInteger\\(\\3\\)&&\\3>0&&\\(${escapeRegExp(frameLimit)}=\\3\\)\\}\\);`, "g"),
-  )];
-  if (codecMatches.length !== 1 || keepAliveMatches.length !== 1 || frameLimitMatches.length !== 1 ||
-      webSocketMatches[0].index >= frameLimitMatches[0].index ||
-      frameLimitMatches[0].index >= codecMatches[0].index ||
-      codecMatches[0].index >= adapterMatches[0].index ||
-      adapterMatches[0].index >= keepAliveMatches[0].index) return null;
-
-  return {
-    webSocketClass,
-    webSocketUrl,
-    codecClass: codecMatches[0][1],
-    adapterClass,
-    keepAlive: keepAliveMatches[0][1],
-    maximumFrameBytes: frameLimitMatches[0][1],
-    maximumFrameHeader: frameLimitMatches[0][4],
-  };
-}
-
-// Serialized into the app bundle. Dependencies are passed by the outer method
-// so minified upstream bindings cannot be captured by this function's locals.
-async function connectSharedSocket({
-  WebSocket, MessageCodec, ConnectionAdapter, keepAlive,
-  url, maximumFrameBytes, maximumFrameHeader,
-}) {
-  await this.ensureAuthority();
-  let proxyStream = null;
-  const socket = new WebSocket(url, {
-    perMessageDeflate: false,
-    createConnection: () => (proxyStream = this.createProxyStream()),
-  });
-  let firstError = null;
-  const recordError = error => { firstError ??= error; };
-  socket.on("error", recordError);
-  socket.once("close", () => {
-    proxyStream?.destroy();
-    socket.off("error", recordError);
-  });
-  try {
-    socket.once("upgrade", response => {
-      const limit = Number(response.headers[maximumFrameHeader]);
-      if (Number.isSafeInteger(limit) && limit > 0) maximumFrameBytes = limit;
-    });
-    const messages = new MessageCodec(socket, false);
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => onError(Error("shared app-server websocket open timed out")), 30e3);
-      timer.unref();
-      const cleanup = () => {
-        clearTimeout(timer);
-        socket.off("open", onOpen);
-        socket.off("error", onError);
-        socket.off("close", onClose);
-      };
-      const onOpen = () => { cleanup(); resolve(); };
-      const onError = error => { cleanup(); reject(error); };
-      const onClose = () => onError(Error("shared app-server websocket closed before opening"));
-      socket.once("open", onOpen);
-      socket.once("error", onError);
-      socket.once("close", onClose);
-    });
-    // The codec and WebSocket can fail after open but before this continuation.
-    // Keep the recorder until the adapter has installed its own error handler.
-    if (firstError != null) throw firstError;
-    const connection = new ConnectionAdapter(socket, undefined, maximumFrameBytes, messages);
-    socket.off("error", recordError);
-    keepAlive(socket, {
-      onPongTimeout: () => {
-        connection.terminationReason = "pong_timeout";
-        socket.terminate();
-      },
-    });
-    return connection;
-  } catch (error) {
-    proxyStream?.destroy();
-    socket.terminate();
-    await new Promise(resolve => setTimeout(resolve, 0));
-    throw error;
-  }
-}
-
-function sharedTransportClassSource(symbols) {
+function sharedTransportClassSource(webSocketTransport) {
   return (
     "class CodexLinuxSharedAppServerSocketTransport{" +
     "kind=`websocket`;proxyStreams=new Set;authority=null;authorityError=null;authorityReady=null;lockIdentity=null;ownerStartTime=null;socketIdentity=null;disposed=!1;" +
@@ -154,167 +28,124 @@ function sharedTransportClassSource(symbols) {
     "async ensureAuthority(){if(this.disposed)throw Error(`shared app-server socket transport is disposed`);if(this.authorityReady)return this.authorityReady;if(this.authority&&this.authority.exitCode==null&&this.authority.signalCode==null){if(this.authorityError)throw this.authorityError;return}let e=this.startAuthority();this.authorityReady=e;try{return await e}finally{this.authorityReady===e&&(this.authorityReady=null)}}" +
     "async startAuthority(){let e=process.env.CODEX_CLI_PATH;if(!e)throw Error(`shared app-server socket requires CODEX_CLI_PATH`);this.authorityError=null;let t=await this.getConfigOverrides();if(this.disposed)throw Error(`shared app-server socket transport was disposed during startup`);if(!Array.isArray(t)||t.some(e=>typeof e!==`string`))throw Error(`shared app-server socket received invalid config overrides`);await this.acquireOwnership();if(this.disposed){this.releaseOwnedPaths(!0);throw Error(`shared app-server socket transport was disposed during startup`)}let n=require(`node:fs`),r;try{r=require(`node:child_process`).spawn(e,[...t.flatMap(e=>[`-c`,e]),`app-server`,`--listen`,`unix://${this.socketPath}`],{env:process.env,stdio:`ignore`}),this.authority=r}catch(e){this.releaseOwnedPaths();throw e}try{this.recordAuthorityIdentity(r),await new Promise((e,t)=>{let i=!1,a,o=()=>{clearTimeout(a),clearTimeout(u),r.off(`error`,s),r.off(`exit`,l),r.off(`close`,l)},c=(n,u)=>{if(i)return;i=!0,o(),n?t(n):e(u)},s=e=>{this.authorityError=e,c(e)},l=()=>c(Error(`shared app-server authority exited before socket creation`)),h=()=>{if(i)return;try{let s=this.readSocketPath(),e=s.identity;if(s.target){if(typeof process.getuid==`function`&&e.uid!==process.getuid())return c(Error(`shared app-server socket has unexpected owner`));this.socketIdentity={dev:e.dev,ino:e.ino};return c(null)}}catch(e){if(e?.code!==`ENOENT`)return c(e)}a=setTimeout(h,100),a.unref?.()},u=setTimeout(()=>c(Error(`shared app-server socket creation timed out`)),1e4);r.once(`error`,s),r.once(`exit`,l),r.once(`close`,l),h(),u.unref?.()}),this.publishAttachedCliRecord(r,e),r.on(`error`,e=>{this.authorityError=e;for(let t of this.proxyStreams)t.destroy(e)}),r.once(`exit`,()=>{this.authority===r&&(this.authority=null,this.releaseOwnedPaths(!0))})}catch(e){this.authority=null;(await this.stopAuthority(r))&&this.releaseOwnedPaths();throw e}}" +
     "createProxyStream(){let c=process.env.CODEX_CLI_PATH;if(!c)throw Error(`shared app-server socket requires CODEX_CLI_PATH`);let e=require(`node:child_process`).spawn(c,[`app-server`,`proxy`,`--sock`,this.socketPath],{env:process.env,stdio:[`pipe`,`pipe`,`pipe`]}),t=e.stdin,n=e.stdout,r=e.stderr;if(t==null||n==null||r==null)throw e.kill(),Error(`shared app-server proxy stdio was unavailable`);let i=``;r.on(`data`,e=>{i=`${i}${e.toString(`utf8`)}`.slice(-4000)});let a=new(require(`node:stream`).Duplex)({read(){n.resume()},write(e,n,r){t.write(e,n,r)},final(e){t.end(),e()},destroy(t,n){e.kill(),n(t)}});Object.assign(a,{setKeepAlive:()=>a,setNoDelay:()=>a,setTimeout:()=>a});let o=e=>a.destroy(e);t.on(`error`,o),n.on(`data`,e=>{a.push(e)||n.pause()}),n.on(`end`,()=>a.push(null)),e.on(`error`,o),e.on(`close`,(e,n)=>{t.removeListener(`error`,o),e===0?a.push(null):a.destroy(Error(`shared app-server proxy exited (${e??n??`unknown`}): ${i.trim()}`))}),this.proxyStreams.add(a),a.once(`close`,()=>this.proxyStreams.delete(a));return a}" +
-    `connect(){return (${connectSharedSocket.toString()}).call(this,{WebSocket:${symbols.webSocketClass},MessageCodec:${symbols.codecClass},ConnectionAdapter:${symbols.adapterClass},keepAlive:${symbols.keepAlive},url:${symbols.webSocketUrl},maximumFrameBytes:${symbols.maximumFrameBytes},maximumFrameHeader:${symbols.maximumFrameHeader}})}}`
-  );
-}
-
-function currentSharedTransportClassSource(webSocketTransport) {
-  const legacy = sharedTransportClassSource({
-    webSocketClass: "unusedWebSocket",
-    codecClass: "unusedCodec",
-    adapterClass: "unusedAdapter",
-    keepAlive: "unusedKeepAlive",
-    webSocketUrl: '"ws://localhost/rpc"',
-    maximumFrameBytes: "0x1000000",
-    maximumFrameHeader: '"x-codex-websocket-max-unfragmented-message-bytes"',
-  });
-  const connect = legacy.lastIndexOf("connect(){");
-  if (connect < 0 || !legacy.endsWith("}}")) throw Error("Shared transport template has no connect method");
-  return legacy.slice(0, connect) +
     `connect(){return this.ensureAuthority().then(()=>new ${webSocketTransport}({` +
-    `hostConfig:{kind:\`local\`,id:\`local\`},websocketUrl:\`ws://localhost/rpc\`,` +
-    `createConnection:()=>this.createProxyStream()}).connect())}}`;
+    "hostConfig:{kind:`local`,id:`local`},websocketUrl:`ws://localhost/rpc`," +
+    "createConnection:()=>this.createProxyStream()}).connect())}}"
+  );
 }
 
 const CURRENT_DAEMON_PATTERN = /new ([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\(\{hostConfig:this\.options\.hostConfig,websocketUrl:"ws:\/\/localhost\/rpc",createConnection:/gu;
 const CURRENT_FACTORY_PATTERN = /function\((?<options>[A-Za-z_$][\w$]*),(?<host>[A-Za-z_$][\w$]*),(?<overrides>[A-Za-z_$][\w$]*)\)\{let\{isPackaged:(?<packaged>[A-Za-z_$][\w$]*)=!1,\.\.\.(?<rest>[A-Za-z_$][\w$]*)\}=\k<options>\.options;/gu;
 const CURRENT_CONFIGURE_PATTERN = /getConfigOverrides:async\(\)=>\{let\{overrides:([A-Za-z_$][\w$]*),windowsFrameworkRoot:([A-Za-z_$][\w$]*)\}=await ([A-Za-z_$][\w$]*)\(\);return\(0,([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\)\(\2\),\1\}/gu;
 
-function currentSharedAppServerSocketContract(source) {
+const TRANSPORT_MARKER = "class CodexLinuxSharedAppServerSocketTransport";
+const FACTORY_METHOD = "createLinuxSharedSocket";
+
+function sharedAppServerSocketContract(source) {
   const daemons = [...source.matchAll(CURRENT_DAEMON_PATTERN)];
   const factories = [...source.matchAll(CURRENT_FACTORY_PATTERN)];
-  const markerCount = source.split("class CodexLinuxSharedAppServerSocketTransport").length - 1;
-  if (daemons.length === 0 && factories.length === 0) return { state: "absent" };
+  const markerCount = source.split(TRANSPORT_MARKER).length - 1;
   if (daemons.length !== 1 || factories.length !== 1) {
     return { state: "drifted", reason: `found ${daemons.length} local transports and ${factories.length} factories` };
   }
   const [daemon] = daemons;
   const [factory] = factories;
-  const configures = [...source.slice(factory.index).matchAll(CURRENT_CONFIGURE_PATTERN)];
+  const classAnchor = source.lastIndexOf("class ", daemon.index);
+  const classHeader = classAnchor < 0 ? null : source.slice(classAnchor).match(/^class [A-Za-z_$][\w$]*\{/);
+  const classBody = classAnchor + (classHeader?.[0].length ?? 0);
+  if (classHeader == null || findMatchingBrace(source, classBody - 1) <= daemon.index) {
+    return { state: "drifted", reason: "local transport class not found" };
+  }
+
+  const factoryBody = factory.index + factory[0].length;
+  const factoryEnd = findMatchingBrace(source, source.indexOf("{", factory.index));
+  if (factoryEnd < factoryBody) {
+    return { state: "drifted", reason: "local transport factory body not found" };
+  }
+  const factoryTail = source.slice(factoryBody, factoryEnd);
+  const nativeConstructor = factoryTail.match(/return new ([A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*)\(\{/);
+  if (nativeConstructor == null) {
+    return { state: "drifted", reason: "local transport constructor not found" };
+  }
+  const configures = [...factoryTail.matchAll(CURRENT_CONFIGURE_PATTERN)];
   if (configures.length !== 1 || configures[0][3] !== factory.groups.overrides) {
     return { state: "drifted", reason: `config override callback found ${configures.length}` };
   }
   const [configure] = configures;
-  const classSource = currentSharedTransportClassSource(daemon[1]);
+  const configCallback = configure[0].slice("getConfigOverrides:".length);
+  const classSource = sharedTransportClassSource(daemon[1]);
+  // The factory and native class can live in separate bundled modules.
+  const method = `static ${FACTORY_METHOD}(e,t){return new CodexLinuxSharedAppServerSocketTransport(e,t)}`;
   const branch = `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&${factory.groups.host}.kind===\`local\`&&${factory.groups.host}.id===\`local\`)` +
-    `return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,async()=>{` +
-    `let{overrides:e,windowsFrameworkRoot:t}=await ${factory.groups.overrides}();return(0,${configure[4]})(t),e});`;
+    `return ${nativeConstructor[1]}.${FACTORY_METHOD}(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${configCallback});`;
   const classCount = source.split(classSource).length - 1;
+  const methodCount = source.split(FACTORY_METHOD).length - 1;
   const branchCount = source.split(branch).length - 1;
-  const factoryTail = source.slice(factory.index + factory[0].length);
-  if (markerCount === 0 && classCount === 0 && branchCount === 0 && factoryTail.startsWith("return new ")) {
-    return { state: "current", daemon, factory, classSource, branch };
+  if (markerCount === 0 && methodCount === 0 && branchCount === 0 && nativeConstructor.index === 0) {
+    return { state: "current", classAnchor, classBody, factoryBody, classSource, method, branch };
   }
-  if (markerCount === 1 && classCount === 1 && branchCount === 1 &&
-      factoryTail.startsWith(`${branch}return new `)) {
-    return { state: "patched", daemon, factory, classSource, branch };
+  if (markerCount === 1 && classCount === 1 && methodCount === 2 && branchCount === 1 &&
+      source.slice(classAnchor - classSource.length, classAnchor) === classSource &&
+      source.startsWith(method, classBody) &&
+      nativeConstructor.index === branch.length && factoryTail.startsWith(branch)) {
+    return { state: "patched" };
   }
-  return { state: "drifted", reason: `found markers ${markerCount}, complete classes ${classCount}, and branches ${branchCount}` };
+  return { state: "drifted", reason: `found markers ${markerCount}, complete classes ${classCount}, factory method references ${methodCount}, and branches ${branchCount}` };
 }
 
-function applyCurrentSharedAppServerSocketPatch(source, contract = currentSharedAppServerSocketContract(source)) {
-  if (contract.state === "absent" || contract.state === "patched") return source;
+function insertSharedTransport(source, contract) {
+  const { classAnchor, classBody, factoryBody, classSource, method, branch } = contract;
+  const insertions = [
+    [classAnchor, classSource],
+    [classBody, method],
+    [factoryBody, branch],
+  ];
+  for (const [index, insertion] of insertions.sort(([a], [b]) => b - a)) {
+    source = source.slice(0, index) + insertion + source.slice(index);
+  }
+  return source;
+}
+
+function patchAppServerHost(extractedDir) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  const candidates = [];
+  for (const name of readDirectoryNames(buildDir).filter((name) => name.endsWith(".js")).sort()) {
+    const file = path.join(buildDir, name);
+    const source = fs.readFileSync(file, "utf8");
+    if (source.search(CURRENT_FACTORY_PATTERN) >= 0 ||
+        source.includes(TRANSPORT_MARKER) || source.includes(FACTORY_METHOD)) {
+      candidates.push({ file, source });
+    }
+  }
+  if (candidates.length !== 1) {
+    throw new PatchIntegrityError(
+      `Expected one shared app-server socket host bundle, found ${candidates.length}`,
+    );
+  }
+
+  const [{ file, source }] = candidates;
+  const contract = sharedAppServerSocketContract(source);
+  if (contract.state === "patched") return { changed: false };
   if (contract.state !== "current") {
-    console.warn(`WARN: Found incomplete or ambiguous current shared app-server socket patch state: ${contract.reason}`);
-    return source;
-  }
-  const { daemon, factory, classSource, branch } = contract;
-  const classAnchor = source.lastIndexOf("class ", daemon.index);
-  if (classAnchor < 0) {
-    console.warn("WARN: Could not find the current local app-server transport class");
-    return source;
-  }
-  const insertAt = factory.index + factory[0].length;
-  const withBranch = source.slice(0, insertAt) + branch + source.slice(insertAt);
-  return withBranch.slice(0, classAnchor) + classSource + withBranch.slice(classAnchor);
-}
-
-function applySharedAppServerSocketPatch(source) {
-  const currentContract = currentSharedAppServerSocketContract(source);
-  if (currentContract.state !== "absent") {
-    return applyCurrentSharedAppServerSocketPatch(source, currentContract);
-  }
-  if (!source.includes("selected app-server transport") || !source.includes("AppServerTransportSshWebsocket")) {
-    return source;
-  }
-  const markerCount = source.split("class CodexLinuxSharedAppServerSocketTransport").length - 1;
-  const symbols = findTransportSymbols(source);
-  if (markerCount === 1 && symbols != null) return source;
-  if (markerCount !== 0) {
-    console.warn("WARN: Found incomplete or ambiguous shared app-server socket patch state");
-    return source;
-  }
-  if (symbols == null) {
-    console.warn("WARN: Could not find SSH WebSocket transport for shared app-server socket patch");
-    return source;
+    throw new PatchIntegrityError(`Could not patch ${path.basename(file)}: ${contract.reason}`);
   }
 
-  const selectionLogIndex = source.indexOf("selected app-server transport");
-  const factoryStart = source.lastIndexOf("function ", selectionLogIndex);
-  const factoryHead = factoryStart < 0
-    ? null
-    : source.slice(factoryStart).match(new RegExp(`^function ${IDENT}\\((${IDENT})\\)\\{`));
-  const factoryEnd = factoryHead == null
-    ? -1
-    : findMatchingBrace(source, factoryStart + factoryHead[0].length - 1) + 1;
-  if (selectionLogIndex < 0 || factoryHead == null || factoryEnd <= selectionLogIndex) {
-    console.warn("WARN: Could not find local transport factory for shared app-server socket patch");
-    return source;
+  const patched = insertSharedTransport(source, contract);
+  if (sharedAppServerSocketContract(patched).state !== "patched") {
+    throw new PatchIntegrityError(`Incomplete shared app-server socket patch in ${path.basename(file)}`);
   }
-  const options = escapeRegExp(factoryHead[1]);
-  const factorySource = source.slice(factoryStart, factoryEnd);
-  const optionFields =
-    `\\{hostConfig:${options}\\.hostConfig,repoRoot:${options}\\.repoRoot,` +
-    `resourcesPath:${options}\\.resourcesPath,defaultOriginator:${options}\\.defaultOriginator`;
-  const insertionPattern = new RegExp(
-    `(if\\(\\(0,${MEMBER}\\)\\(${options}\\.hostConfig\\)\\)return new ${IDENT}\\(${optionFields}\\}\\);)` +
-      `(?=let (${IDENT})=${IDENT}\\(${options}\\.hostConfig\\);if\\(\\2\\)\\{)`,
-    "g",
-  );
-  const insertionMatches = [...factorySource.matchAll(insertionPattern)];
-  if (insertionMatches.length !== 1) {
-    console.warn(
-      `WARN: Expected one local transport insertion point for shared app-server socket patch, found ${insertionMatches.length}`,
-    );
-    return source;
-  }
-  const configOverridesPattern = new RegExp(
-    `return new ${MEMBER}\\(${optionFields},getConfigOverrides:(async\\(\\)=>\\[[\\s\\S]{1,2000}?\\])\\}\\)`,
-    "g",
-  );
-  const configOverridesMatches = [...factorySource.matchAll(configOverridesPattern)];
-  if (configOverridesMatches.length !== 1) {
-    console.warn(
-      `WARN: Expected one local transport config override callback for shared app-server socket patch, found ${configOverridesMatches.length}`,
-    );
-    return source;
-  }
-  const [insertionMatch] = insertionMatches;
-  const getConfigOverrides = configOverridesMatches[0][1];
-
-  const classSource = sharedTransportClassSource(symbols);
-
-  const insertionIndex = insertionMatch.index + insertionMatch[0].length;
-  const patchedFactory =
-    factorySource.slice(0, insertionIndex) +
-    `if(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET&&${factoryHead[1]}.hostConfig.kind===\`local\`&&${factoryHead[1]}.hostConfig.id===\`local\`)return new CodexLinuxSharedAppServerSocketTransport(process.env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET,${getConfigOverrides});` +
-    factorySource.slice(insertionIndex);
-  return source.slice(0, factoryStart) + classSource + patchedFactory + source.slice(factoryEnd);
+  fs.writeFileSync(file, patched, "utf8");
+  return { changed: true };
 }
 
 const descriptors = [
   {
     id: "main-process-shared-app-server-socket",
-    phase: "main-bundle",
+    phase: "extracted-app:pre-webview",
     order: 140,
     ciPolicy: "optional",
-    apply: applySharedAppServerSocketPatch,
+    apply: patchAppServerHost,
   },
 ];
 
-module.exports = {
-  applySharedAppServerSocketPatch,
-  descriptors,
-  findTransportSymbols,
-  sharedTransportClassSource,
-};
+module.exports = { descriptors, sharedTransportClassSource };
