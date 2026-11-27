@@ -2262,6 +2262,7 @@ test("Linux remote-control settings UX handles division around the settings code
     "let first=1>{}/2,r=/}/;",
     "switch(x){case {}/2:break;case /}/:break;}",
     'let of=0;of\n{}/}/.test("}");',
+    'for(;()=>{of\n{}/}/.test("}")};)break;',
     'let first=function(){label:{}/}/.test("}");};',
   ]) {
     const source = prefix + syntheticCurrentOutboundConnectionsBundle() + "let last=1/3;";
@@ -2311,6 +2312,7 @@ test("Linux remote-control settings UX patch warns on settings gate drift even w
       .replace("let[rendered]=[[]],gate=", "let[rendered]=[[]]\nnoop(),gate="),
     original.replace('visible&&tabs.push("access-other-devices")', '(!1&&visible&&tabs.push("access-other-devices"))'),
     original.replace('visible&&tabs.push("access-other-devices")', 'visible&&temporary.push("access-other-devices")'),
+    original.replace("rendered=tabs.map(e=>e)", "rendered=[]/*,rendered=tabs.map(*/"),
   ]) {
     const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
 
@@ -2320,6 +2322,18 @@ test("Linux remote-control settings UX patch warns on settings gate drift even w
     assert.match(warnings[0], /^WARN: .*unique remote-control outbound settings gate/);
     assert.deepEqual(captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(result)), { result, warnings });
   }
+});
+
+test("Linux remote-control settings UX warns when a marked gate has changed", () => {
+  const original = syntheticCurrentOutboundConnectionsBundle();
+  const patched = applyLinuxRemoteControlSettingsUxPatch(original);
+  const drifted = patched.replace('/*codexLinuxRemoteControlOutboundSettingsGate*/(typeof navigator!="undefined"&&navigator.userAgent.includes("Linux")||!loader)',
+    '/*codexLinuxRemoteControlOutboundSettingsGate*/loader');
+  assert.notEqual(drifted, patched);
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(drifted));
+  assert.equal(result, drifted);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^WARN: .*unique remote-control outbound settings gate/);
 });
 
 test("Linux remote-connections refresh patch shortens polling and refreshes on resume signals", () => {

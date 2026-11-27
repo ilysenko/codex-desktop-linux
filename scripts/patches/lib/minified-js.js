@@ -195,6 +195,10 @@ function findMatchingBrace(source, openIndex, visitToken) {
   const parenthesesAreConditions = [];
   let bracketDepth = 0;
   let previous = { kind: "punct", value: "{" };
+  const insideForHeader = () => {
+    const condition = parenthesesAreConditions.at(-1);
+    return condition?.keyword === "for" && condition.depth === depth;
+  };
 
   const enterTemplateChunk = (startIndex) => {
     const chunk = templateChunkEnd(source, startIndex);
@@ -233,7 +237,7 @@ function findMatchingBrace(source, openIndex, visitToken) {
       depth += 1;
       // A slash after an object literal divides its value. A slash after a
       // statement block can begin the next statement's regex literal.
-      if (startsExpression(previous, source, i, parenthesesAreConditions.at(-1) === "for")) {
+      if (startsExpression(previous, source, i, insideForHeader())) {
         objectLiteralDepths.add(depth);
         expressionBraceDepths.add(depth);
       }
@@ -291,7 +295,7 @@ function findMatchingBrace(source, openIndex, visitToken) {
       const property = previous.kind === "punct" && previous.value === "." &&
         source[start - 2] !== ".";
       const value = source.slice(start, i + 1);
-      const expressionContext = startsExpression(previous, source, start, parenthesesAreConditions.at(-1) === "for");
+      const expressionContext = startsExpression(previous, source, start, insideForHeader());
       const followsAsync = previous.asyncExpression &&
         !/[\r\n\u2028\u2029]/u.test(source.slice(previous.end, start));
       if (value === "function" && !property && (expressionContext || followsAsync)) {
@@ -304,7 +308,7 @@ function findMatchingBrace(source, openIndex, visitToken) {
     } else if (char === "(") {
       parenthesesAreConditions.push(
         previous.kind === "word" && !previous.property && CONDITION_KEYWORDS.has(previous.value)
-          ? previous.value : null,
+          ? { keyword: previous.value, depth } : null,
       );
       if (pendingFunctionExpression) {
         functionExpressions.add(parenthesesAreConditions.length);

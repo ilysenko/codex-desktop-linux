@@ -920,12 +920,16 @@ function outboundCodeTokens(source) {
 
 // Settings uses a shared loader gate for its tab and both authorization panels.
 function applyLinuxRemoteControlOutboundSettingsGatePatch(source) {
-  if (source.includes(REMOTE_CONTROL_OUTBOUND_SETTINGS_GATE_MARKER)) {
+  const markedExpression = /\/\*codexLinuxRemoteControlOutboundSettingsGate\*\/\(typeof navigator!="undefined"&&navigator\.userAgent\.includes\("Linux"\)\|\|!(?<loader>[A-Za-z_$][\w$]*)\)/gu;
+  const marked = [...source.matchAll(markedExpression)];
+  const hasMarker = source.includes(REMOTE_CONTROL_OUTBOUND_SETTINGS_GATE_MARKER);
+  const pristine = marked.length === 1 ? source.replace(markedExpression, "!$<loader>") : source;
+  const declaration = findRemoteControlOutboundSettingsGate(pristine);
+  if (hasMarker && declaration != null && marked.length === 1 &&
+      marked[0].index === declaration.start + declaration.prefix.length) {
     return source;
   }
-
-  const declaration = findRemoteControlOutboundSettingsGate(source);
-  if (declaration == null) {
+  if (declaration == null || hasMarker) {
     console.warn("WARN: Could not find unique remote-control outbound settings gate - skipping Linux outbound settings gate patch");
     return source;
   }
@@ -1069,7 +1073,9 @@ function findOutboundTabListPush(body, tokenDepths, visibility) {
     `,(?<tabs>${id})=${escapeRegExp(items)}\\.map\\(`,
     "gu",
   );
-  const maps = [...body.slice(match.index + match[0].length, close).matchAll(mapped)];
+  const afterList = match.index + match[0].length;
+  const maps = [...body.slice(afterList, close).matchAll(mapped)]
+    .filter((entry) => tokenDepths.get(afterList + entry.index) === 2);
   if (maps.length !== 1) return -1;
   const tabs = escapeRegExp(maps[0].groups.tabs);
   const cached = new RegExp(`${escapeRegExp(cache)}\\[(\\d+)\\]=${tabs}\\}else ${tabs}=${escapeRegExp(cache)}\\[\\1\\]`, "uy");
