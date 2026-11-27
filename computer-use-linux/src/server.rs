@@ -16,7 +16,7 @@ use crate::remote_desktop::{
     click as portal_click, drag as portal_drag, keysyms_for_text, press_key_chord,
     press_keycode_chord, scroll as portal_scroll, start_portal_keyboard_session,
     start_portal_pointer_session, type_text_with_keysyms, InputOperationGuard, PointerButton,
-    PortalKey, PortalKeyboardSession, PortalPointerSession, ScrollDirection,
+    PortalKey, PortalKeyboardSession, PortalPointerSession, PortalRefusal, ScrollDirection,
 };
 use crate::screenshot::{
     capture_screenshot_raw, prepare_screenshot_payload, RawScreenshotCapture, ScreenshotCapture,
@@ -67,6 +67,8 @@ use tokio::{
 };
 use xkeysym::key as xkey;
 use zbus::{Connection as ZbusConnection, Proxy as ZbusProxy};
+
+mod gnome_clipboard;
 
 const INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 // Linux limits each exec argument (including its NUL) to 32 pages, at least
@@ -306,6 +308,8 @@ pub struct ComputerUseLinux {
     snapshot_ids: Arc<SnapshotIds>,
     portal_pointer_session: Arc<Mutex<Option<PortalPointerSession>>>,
     portal_keyboard_session: Arc<Mutex<Option<PortalKeyboardSession>>>,
+    portal_clipboard_session:
+        Arc<tokio::sync::Mutex<Option<crate::remote_desktop::PortalClipboardSession>>>,
     /// Lazily-created uinput absolute pointer (preferred coordinate backend).
     abs_pointer: Arc<Mutex<Option<crate::abs_pointer::AbsPointer>>>,
     portal_session_init_lock: Arc<tokio::sync::Mutex<()>>,
@@ -3521,7 +3525,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "press_key",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Press a key or key-combination on the keyboard, optionally after focusing a target window or terminal selector. Key grammar (case-insensitive; hyphens/spaces ignored): combos join with '+', e.g. Ctrl+L or Ctrl+Shift+T. Modifiers: ctrl/control, alt/option, shift, meta/super/cmd/command. Named keys: enter/return, kp_enter (keypad Enter), escape/esc, tab, backspace, delete/del, space, home, end, pageup, pagedown, arrowleft/left, arrowright/right, arrowup/up, arrowdown/down, f1-f12. Plus single US letters a-z and digits 0-9. Anything else returns an error (never silently dropped). With PIXELFLUX_CU and PIXELFLUX_CU_TOKEN set, chords go to pixelflux. An unreachable pixelflux falls through to the routes below; a pixelflux error does not. On X11, chords go through xdotool (XTEST), or ydotool when xdotool is missing or cannot start. On Wayland, chords are sent through an active remote desktop portal keyboard session when one is available (or when ydotool is absent), falling back to ydotool otherwise. When ydotool is absent and the session has no RemoteDesktop portal (for example wlroots compositors), chords go through wtype instead. Portal chords send modifiers and named keys as keysyms so remapped keys (e.g. Caps Lock swapped with Control) follow the active keymap; letters and digits are physical US positions. On KDE Plasma every key in a portal chord is a physical keycode. Note: compositor-level shortcuts (e.g. Super+Up) may be consumed by GNOME before reaching the app. Pass delivery=\"background\" (the default when an element or browser_tab is named) to leave the user's keyboard focus alone: input goes to a named element through AT-SPI, to a browser tab over a DevTools port the user opened (CODEX_COMPUTER_USE_DEVTOOLS), or to a terminal's program through tmux; when no route serves the target (the reason says which setting or desktop would open one), the first such call in a server session sends nothing and returns a notice (background.retry_to_continue=true); repeating it, and every later such call, goes through normal focused input and reports background.used=false. The result's background field names the route used. On an element, only keys that mean an action map (Enter or space on a button or menu item, space on a check box, radio button or toggle, Enter on a link or a single-line field with an activate action); others have no route there. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Press a key or key-combination on the keyboard, optionally after focusing a target window or terminal selector. Key grammar (case-insensitive; hyphens/spaces ignored): combos join with '+', e.g. Ctrl+L or Ctrl+Shift+T. Modifiers: ctrl/control, alt/option, shift, meta/super/cmd/command. Named keys: enter/return, kp_enter (keypad Enter), escape/esc, tab, backspace, delete/del, space, home, end, pageup, pagedown, arrowleft/left, arrowright/right, arrowup/up, arrowdown/down, f1-f12. Plus single US letters a-z and digits 0-9. Anything else returns an error (never silently dropped). With PIXELFLUX_CU and PIXELFLUX_CU_TOKEN set, chords go to pixelflux. An unreachable pixelflux falls through to the routes below; a pixelflux error does not. On X11, chords go through xdotool (XTEST), or ydotool when xdotool is missing or cannot start. On Wayland, chords are sent through an active remote desktop portal keyboard session when one is available (or when ydotool is absent), falling back to ydotool otherwise. When ydotool is absent and the session has no RemoteDesktop portal (for example wlroots compositors) or CreateSession fails before any consent dialog, chords go through wtype instead; a request the user cancels in the portal dialog is never replayed. Portal chords send modifiers and named keys as keysyms so remapped keys (e.g. Caps Lock swapped with Control) follow the active keymap; letters and digits are physical US positions. On KDE Plasma every key in a portal chord is a physical keycode. Note: compositor-level shortcuts (e.g. Super+Up) may be consumed by GNOME before reaching the app. Pass delivery=\"background\" (the default when an element or browser_tab is named) to leave the user's keyboard focus alone: input goes to a named element through AT-SPI, to a browser tab over a DevTools port the user opened (CODEX_COMPUTER_USE_DEVTOOLS), or to a terminal's program through tmux; when no route serves the target (the reason says which setting or desktop would open one), the first such call in a server session sends nothing and returns a notice (background.retry_to_continue=true); repeating it, and every later such call, goes through normal focused input and reports background.used=false. The result's background field names the route used. On an element, only keys that mean an action map (Enter or space on a button or menu item, space on a check box, radio button or toggle, Enter on a link or a single-line field with an activate action); others have no route there. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -3614,6 +3618,57 @@ impl ComputerUseLinux {
         .await
     }
 
+    /// The wtype half of `press_key`. The route chosen up front and the
+    /// replay of a chord whose portal session could not start both end here;
+    /// `portal_failure` names that failure in a successful result.
+    async fn press_key_through_wtype(
+        &self,
+        key: &str,
+        input_guard: InputOperationGuard,
+        received: Option<serde_json::Value>,
+        focus: Option<WindowFocusResult>,
+        portal_failure: Option<String>,
+    ) -> Json<ActionOutput> {
+        let Some(args) = wtype_key_args(key) else {
+            return Json(ActionOutput {
+                ok: false,
+                implemented: true,
+                action: "press_key".to_string(),
+                message: "Unsupported key. Use names like Enter, Escape, Tab, ArrowLeft, Super, Ctrl+L, or a single US keyboard letter/digit.".to_string(),
+                received,
+            });
+        };
+        let (input_guard, result) =
+            run_cancellation_safe_input(input_guard, async move { run_wtype_key(&args).await })
+                .await;
+        let _input_guard = input_guard;
+        let output = match result {
+            Ok(()) => {
+                let mut output = successful_action_with_focus(
+                    "press_key",
+                    "Action sent through wtype (Wayland virtual-keyboard protocol).",
+                    received,
+                    focus.clone(),
+                );
+                if let Some(failure) = portal_failure {
+                    output.message = format!(
+                        "{} The remote desktop portal did not send it: {failure}.",
+                        output.message
+                    );
+                }
+                output
+            }
+            Err(error) => {
+                action_result_with_focus("press_key", Err(error), received, focus.clone())
+            }
+        };
+        if output.ok && focus.is_some() {
+            let notes = self.input_landing_notes(focus.as_ref(), false).await;
+            return Json(with_notes(output, notes));
+        }
+        Json(output)
+    }
+
     async fn dispatch_press_key(&self, params: PressKeyParams) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params.clone()));
         let input_guard =
@@ -3679,35 +3734,9 @@ impl ComputerUseLinux {
 
         let route = self.chord_route().await;
         if route == ChordRoute::Wtype {
-            let Some(args) = wtype_key_args(&params.key) else {
-                return Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "press_key".to_string(),
-                    message: "Unsupported key. Use names like Enter, Escape, Tab, ArrowLeft, Super, Ctrl+L, or a single US keyboard letter/digit.".to_string(),
-                    received,
-                });
-            };
-            let (input_guard, result) =
-                run_cancellation_safe_input(input_guard, async move { run_wtype_key(&args).await })
-                    .await;
-            let _input_guard = input_guard;
-            let output = match result {
-                Ok(()) => successful_action_with_focus(
-                    "press_key",
-                    "Action sent through wtype (Wayland virtual-keyboard protocol).",
-                    received,
-                    focus.clone(),
-                ),
-                Err(error) => {
-                    action_result_with_focus("press_key", Err(error), received, focus.clone())
-                }
-            };
-            if output.ok && focus.is_some() {
-                let notes = self.input_landing_notes(focus.as_ref(), false).await;
-                return Json(with_notes(output, notes));
-            }
-            return Json(output);
+            return self
+                .press_key_through_wtype(&params.key, input_guard, received, focus, None)
+                .await;
         }
         if route == ChordRoute::Portal {
             let portal_target = match self
@@ -3771,7 +3800,41 @@ impl ComputerUseLinux {
                     }
                 }
                 Ok(None) => {}
-                Err(error) => return Json(portal_start_error("press_key", error, received)),
+                Err(error) => {
+                    // A portal that answers CreateSession with code 2 serves no
+                    // RemoteDesktop session (as on niri) and reads as absent; a
+                    // cancellation, or a failure after a consent dialog, is final.
+                    let refusal = error.downcast_ref::<PortalRefusal>().copied();
+                    let pinned = env_flag_enabled_any(&[
+                        "COMPUTER_USE_LINUX_FORCE_PORTAL_KEYBOARD",
+                        "CODEX_COMPUTER_USE_FORCE_PORTAL_KEYBOARD",
+                    ]);
+                    if wtype_replays_failed_portal_chord(
+                        refusal,
+                        pinned,
+                        self.should_prefer_wtype_keyboard(),
+                    ) {
+                        // The target is verified again, as the portal path does
+                        // after consent, so the chord lands on the same window.
+                        let focus = match self.focus_target_for_input(&portal_target).await {
+                            Ok(focus) => focus,
+                            Err(message) => {
+                                return Json(action_result("press_key", Err(message), received))
+                            }
+                        };
+                        let failure = format!("{error:#}");
+                        return self
+                            .press_key_through_wtype(
+                                &params.key,
+                                input_guard,
+                                received,
+                                focus,
+                                Some(failure),
+                            )
+                            .await;
+                    }
+                    return Json(portal_start_error("press_key", error, received));
+                }
             }
         }
         let Some(key_events) = key_sequence(&params.key) else {
@@ -3852,7 +3915,7 @@ impl ComputerUseLinux {
     #[tool(
         name = "type_text",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ActionToolOutput>(),
-        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector. Keyboard success confirms dispatch, not field-content verification; re-observe the target before retrying. On GNOME, when a configured keyboard layout group cannot type a character of the text, the text goes into the focused editable field of the verified target window through AT-SPI EditableText instead: inserted at the caret, replacing a selection, and reported as ok only when the field reads it back with the rest unchanged. Password fields, text with a newline, tab or other control character, and focus outside an editable field of that active window keep the refusal. Pass delivery=\"background\" (the default when an element or browser_tab is named) to leave the user's keyboard focus alone: input goes to a named element through AT-SPI, to a browser tab over a DevTools port the user opened (CODEX_COMPUTER_USE_DEVTOOLS), or to a terminal's program through tmux; when no route serves the target (the reason says which setting or desktop would open one), the first such call in a server session sends nothing and returns a notice (background.retry_to_continue=true); repeating it, and every later such call, goes through normal focused input and reports background.used=false. The result's background field names the route used. Into a named element the text goes in at its caret (or end) and must read back; a password field is filled unverified. X11 xdotool can silently substitute symbols under non-US or changing XKB layouts; inspect the text before pressing Enter or submitting it. The wtype backend rejects NUL and text over 131071 UTF-8 bytes before focus or indicators. On Hyprland, confirmed password fields are rejected, and ambiguous fields and terminals use private stdin for at most 100 Unicode characters per call. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
+        description = "Type literal text using keyboard input, optionally after focusing a target window or terminal selector. Keyboard success confirms dispatch, not field-content verification; re-observe the target before retrying. On GNOME, when a configured keyboard layout group cannot type a character of the text, the text goes into the focused editable field of the verified target window through AT-SPI EditableText instead: inserted at the caret, replacing a selection, and reported as ok only when the field reads it back with the rest unchanged. Password fields, text with a newline, tab or other control character, and focus outside an editable field of that active window keep the refusal. Pass paste_fallback=true on GNOME Wayland to try AT-SPI first and use portal clipboard paste when no AT-SPI edit is possible; every offered clipboard MIME type is restored, a newer owner is left unchanged, and paste success confirms dispatch only. Pass delivery=\"background\" (the default when an element or browser_tab is named) to leave the user's keyboard focus alone: input goes to a named element through AT-SPI, to a browser tab over a DevTools port the user opened (CODEX_COMPUTER_USE_DEVTOOLS), or to a terminal's program through tmux; when no route serves the target (the reason says which setting or desktop would open one), the first such call in a server session sends nothing and returns a notice (background.retry_to_continue=true); repeating it, and every later such call, goes through normal focused input and reports background.used=false. The result's background field names the route used. Into a named element the text goes in at its caret (or end) and must read back; a password field is filled unverified. X11 xdotool can silently substitute symbols under non-US or changing XKB layouts; inspect the text before pressing Enter or submitting it. The wtype backend rejects NUL and text over 131071 UTF-8 bytes before focus or indicators. On Hyprland, confirmed password fields are rejected, and ambiguous fields and terminals use private stdin for at most 100 Unicode characters per call. Pass screenshot_after (true, \"screen\", or \"window\") or include_tree=true to return post-action observation in the same result.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -3952,22 +4015,30 @@ impl ComputerUseLinux {
     }
 
     /// GNOME's portal route refused the text because a layout group lacks a
-    /// character. Insert it into the target's focused field through AT-SPI
-    /// EditableText instead, and succeed only when the field reads it back.
-    /// Every other case keeps the portal refusal.
+    /// character, or the caller opted into `paste_fallback`. Insert it into
+    /// the target's focused field through AT-SPI EditableText first, and
+    /// succeed only when the field reads it back. When `paste_fallback` is
+    /// set and no AT-SPI edit was attempted, fall back to portal clipboard
+    /// paste. Every other case keeps the refusal.
+    #[allow(clippy::too_many_arguments)]
     async fn type_text_through_atspi(
         &self,
         text: &str,
         portal_target: &WindowTarget,
-        missing: crate::keyboard_keymap::MissingLayoutKeysym,
+        missing: Option<crate::keyboard_keymap::MissingLayoutKeysym>,
         refusal: String,
         received: Option<serde_json::Value>,
         input_guard: InputOperationGuard,
+        paste_fallback: bool,
     ) -> ActionOutput {
         if let Some(key) = key_press_character(text) {
             return action_result(
                 "type_text",
-                Err(type_text_control_character_refusal(&refusal, key)),
+                Err(type_text_control_character_refusal_for_fallbacks(
+                    &refusal,
+                    key,
+                    paste_fallback,
+                )),
                 received,
             );
         }
@@ -3990,19 +4061,27 @@ impl ComputerUseLinux {
         });
         let title = window.and_then(|window| window.title.clone());
         let Some(pid) = window.and_then(|window| window.pid) else {
-            return action_result_with_focus(
-                "type_text",
-                Err(format!(
-                    "{refusal} No AT-SPI text fallback: the target window has no process id to find its focused field."
-                )),
-                received,
-                focus,
+            let reason = format!(
+                "{refusal} No AT-SPI text fallback: the target window has no process id to find its focused field."
             );
+            if paste_fallback {
+                return self
+                    .type_text_through_gnome_clipboard(
+                        text,
+                        portal_target,
+                        focus,
+                        received,
+                        input_guard,
+                        reason,
+                    )
+                    .await;
+            }
+            return action_result_with_focus("type_text", Err(reason), received, focus);
         };
         // A selection replace is DeleteText then InsertText. Finish both even
         // if this call is cancelled, and hold the input lock until they end.
         let owned_text = text.to_string();
-        let (_guard, insert) = run_cancellation_safe_guarded(input_guard, async move {
+        let (input_guard, insert) = run_cancellation_safe_guarded(input_guard, async move {
             crate::atspi_tree::insert_text_at_focus(pid, title.as_deref(), &owned_text).await
         })
         .await;
@@ -4012,6 +4091,22 @@ impl ComputerUseLinux {
                 may_have_changed: true,
             })
         });
+        let can_fallback_to_clipboard =
+            paste_fallback && gnome_clipboard::atspi_outcome_allows_clipboard_fallback(&insert);
+        if can_fallback_to_clipboard {
+            let refusal = type_text_atspi_result(&refusal, missing, text, insert)
+                .expect_err("a no-edit AT-SPI outcome is an error");
+            return self
+                .type_text_through_gnome_clipboard(
+                    text,
+                    portal_target,
+                    focus,
+                    received,
+                    input_guard.expect("AT-SPI completion returned its input guard"),
+                    refusal,
+                )
+                .await;
+        }
         match type_text_atspi_result(&refusal, missing, text, insert) {
             Ok(message) => successful_action_with_focus("type_text", &message, received, focus),
             Err(message) => action_result_with_focus("type_text", Err(message), received, focus),
@@ -4187,6 +4282,37 @@ impl ComputerUseLinux {
                 Err(error) => return Json(portal_start_error("type_text", error, received)),
             }
         }
+        if params.paste_fallback
+            && self.is_gnome_wayland_session()
+            && self.should_prefer_portal_text_backend()
+        {
+            let portal_target = match self
+                .portal_keyboard_target(&window_target, focus.as_ref())
+                .await
+            {
+                Ok(target) => target,
+                Err(error) => {
+                    return Json(action_result_with_focus(
+                        "type_text",
+                        Err(format!("{error:#}")),
+                        received,
+                        focus,
+                    ))
+                }
+            };
+            return Json(
+                self.type_text_through_atspi(
+                    &params.text,
+                    &portal_target,
+                    None,
+                    "Literal text was not sent through GNOME portal keysyms.".to_string(),
+                    received,
+                    input_guard,
+                    true,
+                )
+                .await,
+            );
+        }
         if self.should_prefer_portal_text_backend() {
             let mut focus = focus;
             let mut layout_refusal = None;
@@ -4229,10 +4355,11 @@ impl ComputerUseLinux {
                     self.type_text_through_atspi(
                         &params.text,
                         &portal_target,
-                        missing,
+                        Some(missing),
                         refusal,
                         received,
                         input_guard,
+                        params.paste_fallback,
                     )
                     .await,
                 );
@@ -4454,7 +4581,7 @@ impl ComputerUseLinux {
     }
 }
 
-const DEFAULT_SERVER_INSTRUCTIONS_BODY: &str = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot; grim in Hyprland background mode), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text goes into the target's focused editable field through AT-SPI EditableText and must read back, and otherwise can use set_value on an editable field. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes, optional screenshot_file_path (an absolute path to a new file, stdio only, refused over HTTP) to save the screenshot there instead of returning image content, and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result through a keyboard backend confirms dispatch only and leaves field contents unverified; only the GNOME AT-SPI fallback reads the field back. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes, with accessibility_tree_partial=true, plus accessibility_tree_spill.path (absent when the file could not be written), a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval.";
+const DEFAULT_SERVER_INSTRUCTIONS_BODY: &str = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If readiness reports can_query_windows or can_focus_windows false on GNOME, call setup_window_targeting to install the GNOME Shell extension, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend captures size-bounded screenshots (pixelflux when configured, grim where the compositor implements wlr-screencopy, GNOME Shell, the Codex GNOME Shell extension, the XDG portal, native X11, gnome-screenshot), reads AT-SPI trees with action/value metadata, invokes native AT-SPI actions, sets AT-SPI values or editable text, lists and focuses compositor windows through registered Linux window backends when the session permits it, and attaches best-effort terminal tty/process metadata to terminal windows. Click, scroll and drag try pixelflux when configured, xdotool on native X11, the uinput pointer, the RemoteDesktop portal (an open portal session, or when ydotool is absent, on COSMIC, or when forced), then ydotool outside Wayland. On Wayland a point never goes through ydotool: without uinput or the portal a coordinate action is refused; a coordinate scroll sends the move and the wheel through the uinput pointer, and an untargeted scroll sends the wheel through ydotool, or the portal without its daemon. The uinput pointer is sized to the latest full screenshot; take a new one after the desktop size changes. type_text sends literal text through pixelflux when configured (an unreachable pixelflux falls through), KDE clipboard paste on Plasma Wayland (raw ydotool when Klipper cannot be read), wtype on compatible Wayland compositors, portal keysyms on other Wayland sessions, or xdotool on X11. Portal text startup or conversion failures return an error without replaying through ydotool. GNOME preflights the complete text against every configured keyboard layout group because the background reader cannot establish the active group; rejected text goes into the target's focused editable field through AT-SPI EditableText and must read back, and otherwise can use set_value on an editable field or paste_fallback=true on GNOME Wayland to paste through the portal clipboard and restore its previous contents. Raw ydotool text is limited to printable ASCII, tab and newline, uses US physical key positions, and requires checking the resulting field contents under the active layout. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Mutating tools (click, type_text, press_key, scroll, drag, perform_action, set_value, activate_window, move_window, resize_window) accept optional screenshot_after (true, \"screen\", or \"window\") with format/quality/scale/max_width/max_height/max_bytes, optional screenshot_file_path (an absolute path to a new file, stdio only, refused over HTTP) to save the screenshot there instead of returning image content, and optional include_tree=true to return post-action observation in the same tool call. A failed action returns no observation, except set_value with verified=false. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. Pass that result's snapshot_id with the index or selector: each get_app_state or include_tree tree replaces the cached one, and a call naming a replaced snapshot is refused before any input. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified. After targeted keyboard input, results append focused-element feedback from AT-SPI (role, name, editable); type_text also warns when a concrete non-terminal focus is not editable. Exact window focus alone does not suppress a missing-focus warning; only a complete scoped tree containing window/menu chrome without content makes it informational. Terminals accept keyboard input without an EditableText interface. On Hyprland, wtype passes classified nonsecret text as one literal argument after -- to avoid stdin keymap-refresh corruption; that text is visible in process arguments, so confirmed password fields are rejected (use set_value), and terminals and ambiguous fields, with or without AT-SPI, use private stdin for at most 100 Unicode characters per call (split larger input or expose accessibility). Input classification has its own 1500 ms budget, independent of the 250 ms cosmetic indicator timeout. Other compatible compositors retain stdin. The wtype path rejects NUL and more than 131071 UTF-8 bytes before focus or indicators. X11 xdotool can silently substitute symbols under non-US XKB layouts (reported with br/ABNT2) or changing keymap state; inspect the text before pressing Enter or submitting it. A successful type_text result through a keyboard backend confirms dispatch only and leaves field contents unverified; only the GNOME AT-SPI fallback reads the field back. Re-observe the target before retrying. Screenshot, keyboard and move/resize results warn when the target window is partly or fully off-screen; click, scroll and drag results warn when a coordinate is off the screenshot or between monitors (not through pixelflux, and not for KWin element clicks, which KWin maps onto an output). move_window and resize_window, which bring a window back on-screen, work only through the GNOME Shell extension or X11/EWMH (wmctrl). scroll accepts the same window targeting and relative coordinates as click; on both, a window target is raised and focused first, and nothing is sent when focus cannot be verified. get_app_state returns a compact readiness block and compact tree nodes (null, empty and default fields left out, actions listed by name) by default; pass verbose=true for the full diagnostics dump and full nodes. Pass interactive_only=true to get only nodes with an action, editable text or a value, plus headings, status/live regions, windows and dialogs; containers are collapsed and element_index values match the full tree. A title or window_id target narrows an app that exposes several windows under one AT-SPI application root (Chromium) to that window's subtree, keeping the app's popups and dialogs. Scope get_app_state with app_name_or_bundle_identifier or a window target (window_id, pid, app_id, wm_class, title); without one it returns the whole desktop AT-SPI tree, reports tree_scoped=false, and warns in message, which can flood context. accessibility_tree_truncated=true means the node, depth, read, or time budget stopped traversal with unread elements left; recover by scoping to a narrower app or window target and raising max_nodes or max_depth (hard caps 10000 and 64), not by lowering max_nodes. A compacted tree too large to return inline comes back as its leading nodes, with accessibility_tree_partial=true, plus accessibility_tree_spill.path (absent when the file could not be written), a private JSON file with the whole tree and the same element_index values; search that file instead of requesting the tree again, or page through it with get_tree_page when files are not readable. Electron apps with only window/menu chrome may need --force-renderer-accessibility to expose renderer content. run_shell is absent unless CODEX_COMPUTER_USE_ENABLE_SHELL=1 or the standalone COMPUTER_USE_LINUX_ENABLE_SHELL=1 compatibility alias; when enabled it is same-user arbitrary host execution, not a sandbox, and hosts should require explicit approval.";
 
 const REPL_ONLY_SERVER_INSTRUCTIONS: &str = "Control Linux desktop apps through the persistent desktop JavaScript REPL (`js` / `js_reset`). Start with `await desktop.getState()` or `const win = await desktop.window(titleOrApp)`. Use `win.summary()` for a compact interactive AT-SPI listing, `win.find(matcher)` / `win.clickAll(...)` / `win.waitFor(...)` / `win.type(...)` / `win.hotkey(...)` / `win.screenshot()` for multi-step workflows, `desktop.setupAccessibility()` / `desktop.setupWindowTargeting()` if diagnostics report missing setup, and `desktop.help()` for the full handle API. Tools with readOnlyHint=false may mutate local desktop or application state; hosts should require approval for actions that can submit, delete, send, purchase, or overwrite data.";
 
@@ -6614,6 +6741,10 @@ struct TypeTextParams {
     /// match outside a terminal match, the first wins.
     #[serde(default)]
     title: Option<String>,
+    /// On GNOME Wayland, use portal clipboard paste when verified AT-SPI
+    /// cannot insert the text. The previous clipboard is restored afterwards.
+    #[serde(default)]
+    paste_fallback: bool,
     #[serde(flatten)]
     background: BackgroundKeyboardParams,
     #[serde(flatten)]
@@ -6737,9 +6868,23 @@ fn key_press_character(text: &str) -> Option<char> {
     text.chars().find(|ch| ch.is_control())
 }
 
+#[cfg(test)]
 fn type_text_control_character_refusal(refusal: &str, key: char) -> String {
+    type_text_control_character_refusal_for_fallbacks(refusal, key, false)
+}
+
+fn type_text_control_character_refusal_for_fallbacks(
+    refusal: &str,
+    key: char,
+    paste_fallback: bool,
+) -> String {
+    let fallback_label = if paste_fallback {
+        "The AT-SPI and clipboard text fallbacks were not used"
+    } else {
+        "The AT-SPI text fallback was not used"
+    };
     format!(
-        "{refusal} The AT-SPI text fallback was not used: the text contains U+{:04X}, which typing sends as a key press such as Enter or Tab, and inserting it is not the same. Type the text without it, then send the key with press_key.",
+        "{refusal} {fallback_label}: the text contains U+{:04X}, which typing sends as a key press such as Enter or Tab, and inserting it is not the same. Type the text without it, then send the key with press_key.",
         key as u32
     )
 }
@@ -6748,12 +6893,15 @@ fn type_text_control_character_refusal(refusal: &str, key: char) -> String {
 /// success message.
 fn type_text_atspi_result(
     refusal: &str,
-    missing: crate::keyboard_keymap::MissingLayoutKeysym,
+    missing: Option<crate::keyboard_keymap::MissingLayoutKeysym>,
     text: &str,
     insert: Result<FocusedTextInsert>,
 ) -> std::result::Result<String, String> {
     const MAY_HAVE_CHANGED: &str = "The field may have changed; re-observe it before retrying.";
-    let because = format!("because GNOME {}", missing.summary());
+    let because = match missing {
+        Some(missing) => format!("because GNOME {}", missing.summary()),
+        None => "for the GNOME paste fallback".to_string(),
+    };
     let route = format!("{TYPE_TEXT_ATSPI_ROUTE} {because}");
     let unverified = format!("{TYPE_TEXT_ATSPI_UNVERIFIED}: the text was sent {because}");
     match insert {
@@ -11187,7 +11335,10 @@ fn data_url_payload(data_url: &str) -> String {
         .to_string()
 }
 
-fn session_is_wayland(session_type: Option<&str>, wayland_display: Option<&str>) -> bool {
+pub(crate) fn session_is_wayland(
+    session_type: Option<&str>,
+    wayland_display: Option<&str>,
+) -> bool {
     match session_type
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -14913,7 +15064,9 @@ enum ChordRoute {
 
 /// wtype replaces the portal only when the session has no RemoteDesktop
 /// portal at all, and the portal is neither forced nor already holding the
-/// user's consent. Wherever the portal exists it stays preferred.
+/// user's consent. Wherever the portal exists it stays preferred; a portal
+/// that then fails to serve the request may still replay the chord through
+/// wtype, see `wtype_replays_failed_portal_chord`.
 fn chord_route_from(
     prefer_portal: bool,
     portal_pinned: bool,
@@ -14927,6 +15080,20 @@ fn chord_route_from(
     } else {
         ChordRoute::Portal
     }
+}
+
+/// Whether a chord whose portal session could not start goes through wtype
+/// instead. Only a `CreateSession` failure qualifies: no consent dialog has
+/// run, and code 2 there means that no backend serves the request. A
+/// cancellation is the user's answer, a failure at a later step may follow a
+/// dialog, and a portal that is forced keeps its own error, as one does when
+/// wtype cannot replace it.
+fn wtype_replays_failed_portal_chord(
+    refusal: Option<PortalRefusal>,
+    portal_pinned: bool,
+    wtype: bool,
+) -> bool {
+    refusal.is_some_and(|refusal| refusal.failed_before_dialog()) && !portal_pinned && wtype
 }
 
 /// wtype arguments for a chord: hold each modifier with `-M`, tap the key by
@@ -15060,7 +15227,7 @@ fn which_in_path(binary: &str) -> bool {
 
 /// True when a directory of `path` (a `PATH` value) holds an executable
 /// `binary`.
-fn executable_in(path: &std::ffi::OsStr, binary: &str) -> bool {
+pub(crate) fn executable_in(path: &std::ffi::OsStr, binary: &str) -> bool {
     env::split_paths(path).any(|dir| executable_file(&dir.join(binary)))
 }
 
@@ -17664,6 +17831,52 @@ esac
             chord_route_from(false, false, true, true),
             ChordRoute::Command
         );
+    }
+
+    #[test]
+    fn wtype_replays_only_a_failed_unpinned_portal_chord() {
+        use crate::remote_desktop::PortalStep;
+        let create_session = Some(PortalRefusal::Failed {
+            step: PortalStep::CreateSession,
+        });
+        // (refusal, portal_pinned, wtype)
+        assert!(wtype_replays_failed_portal_chord(
+            create_session,
+            false,
+            true
+        ));
+        // The user's cancellation is final.
+        assert!(!wtype_replays_failed_portal_chord(
+            Some(PortalRefusal::Cancelled),
+            false,
+            true
+        ));
+        // A later step may have shown a consent dialog; its code 2 stays final.
+        for step in [
+            PortalStep::SelectDevices,
+            PortalStep::SelectSources,
+            PortalStep::Start,
+        ] {
+            assert!(!wtype_replays_failed_portal_chord(
+                Some(PortalRefusal::Failed { step }),
+                false,
+                true
+            ));
+        }
+        // An error without a portal response code, such as a timeout.
+        assert!(!wtype_replays_failed_portal_chord(None, false, true));
+        // A forced portal keeps its own error.
+        assert!(!wtype_replays_failed_portal_chord(
+            create_session,
+            true,
+            true
+        ));
+        // Without wtype nothing can replay the chord.
+        assert!(!wtype_replays_failed_portal_chord(
+            create_session,
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -27800,7 +28013,7 @@ mod type_text_atspi_fallback_tests {
     };
 
     fn result(insert: Result<FocusedTextInsert>) -> std::result::Result<String, String> {
-        type_text_atspi_result(REFUSAL, MISSING, "/home/x", insert)
+        type_text_atspi_result(REFUSAL, Some(MISSING), "/home/x", insert)
     }
 
     #[test]
@@ -27817,6 +28030,25 @@ mod type_text_atspi_fallback_tests {
         assert!(message.contains("reads back the text"), "{message}");
         assert!(message.contains("replaced the selection"), "{message}");
         assert!(!message.contains("caret"), "{message}");
+    }
+
+    #[test]
+    fn optional_layout_reason_names_the_paste_fallback() {
+        let message = type_text_atspi_result(
+            REFUSAL,
+            None,
+            "/home/x",
+            Ok(FocusedTextInsert::Verified {
+                role: "text".to_string(),
+                replaced_selection: false,
+                caret_after_text: true,
+            }),
+        )
+        .unwrap();
+        assert!(
+            message.contains("for the GNOME paste fallback"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -27876,7 +28108,7 @@ mod type_text_atspi_fallback_tests {
         };
         let error = type_text_atspi_result(
             REFUSAL,
-            unreachable,
+            Some(unreachable),
             "/home/x",
             Ok(FocusedTextInsert::ReadbackFailed),
         )
@@ -27930,7 +28162,7 @@ mod type_text_atspi_fallback_tests {
             "/home/x",
         )
         .await;
-        let message = type_text_atspi_result(&refusal, missing, "/home/x", insert).unwrap();
+        let message = type_text_atspi_result(&refusal, Some(missing), "/home/x", insert).unwrap();
         assert!(message.starts_with(TYPE_TEXT_ATSPI_ROUTE), "{message}");
         assert!(message.contains("group 2 lacks U+0068"), "{message}");
         assert_eq!(running.take_state(0).contents, "/home/x");
