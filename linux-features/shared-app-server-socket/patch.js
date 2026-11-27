@@ -2,7 +2,6 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { PatchIntegrityError } = require("../../scripts/patches/integrity-error.js");
 const { readDirectoryNames } = require("../../scripts/patches/lib/assets.js");
 const { readSocketPath } = require("./socket-path.js");
 const { findMatchingBrace } = require("../../scripts/patches/lib/minified-js.js");
@@ -118,7 +117,7 @@ function patchAppServerHost(extractedDir) {
     }
   }
   if (candidates.length !== 1) {
-    throw new PatchIntegrityError(
+    throw new Error(
       `Expected one shared app-server socket host bundle, found ${candidates.length}`,
     );
   }
@@ -127,12 +126,12 @@ function patchAppServerHost(extractedDir) {
   const contract = sharedAppServerSocketContract(source);
   if (contract.state === "patched") return { changed: false };
   if (contract.state !== "current") {
-    throw new PatchIntegrityError(`Could not patch ${path.basename(file)}: ${contract.reason}`);
+    throw new Error(`Could not patch ${path.basename(file)}: ${contract.reason}`);
   }
 
   const patched = insertSharedTransport(source, contract);
   if (sharedAppServerSocketContract(patched).state !== "patched") {
-    throw new PatchIntegrityError(`Incomplete shared app-server socket patch in ${path.basename(file)}`);
+    throw new Error(`Incomplete shared app-server socket patch in ${path.basename(file)}`);
   }
   fs.writeFileSync(file, patched, "utf8");
   return { changed: true };

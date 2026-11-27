@@ -18,6 +18,12 @@ const {
   stageEnabledLinuxFeatureInstall,
 } = require("../../scripts/lib/linux-features.js");
 const {
+  createPatchReport,
+  criticalFailuresFromReport,
+  enabledFeatureFailuresFromReport,
+} = require("../../scripts/lib/patch-report.js");
+const { applyExtractedAppPatchDescriptors } = require("../../scripts/patches/engine.js");
+const {
   descriptors,
   sharedTransportClassSource,
 } = require("./patch.js");
@@ -1787,14 +1793,20 @@ test("descriptor patches a renamed host bundle and reuses the native transport a
 test("descriptor rejects missing and ambiguous host bundles without changing them", (t) => {
   const [{ apply }] = descriptors;
   const { root, buildDir } = writeHostBundles(t, { "early-bootstrap.js": "unrelated" });
-  assert.throws(() => apply(root), /Expected one shared app-server socket host bundle, found 0/);
+  assert.throws(() => apply(root), {
+    name: "Error",
+    message: /Expected one shared app-server socket host bundle, found 0/,
+  });
   assert.equal(fs.readFileSync(path.join(buildDir, "early-bootstrap.js"), "utf8"), "unrelated");
 
   const source = syntheticCurrentBundle();
   for (const name of ["first.js", "second.js"]) {
     fs.writeFileSync(path.join(buildDir, name), source);
   }
-  assert.throws(() => apply(root), /Expected one shared app-server socket host bundle, found 2/);
+  assert.throws(() => apply(root), {
+    name: "Error",
+    message: /Expected one shared app-server socket host bundle, found 2/,
+  });
   for (const name of ["first.js", "second.js"]) {
     assert.equal(fs.readFileSync(path.join(buildDir, name), "utf8"), source);
   }
@@ -1824,9 +1836,47 @@ test("descriptor rejects incomplete or drifted insertions without changing the h
   ];
   for (const source of cases) {
     fs.writeFileSync(host, source);
-    assert.throws(() => apply(root), /Could not patch host\.js:/);
+    assert.throws(() => apply(root), {
+      name: "Error",
+      message: /Could not patch host\.js:/,
+    });
     assert.equal(fs.readFileSync(host, "utf8"), source);
   }
+});
+
+test("optional socket drift lets later patches run and fails enabled-feature acceptance", (t) => {
+  const featureId = "shared-app-server-socket";
+  const enabledFeatureIds = [featureId];
+  const [descriptor] = loadLinuxFeaturePatchDescriptors({ enabledFeatureIds });
+  const { root } = writeHostBundles(t, { "early-bootstrap.js": "unrelated" });
+  const followup = {
+    id: "followup",
+    phase: descriptor.phase,
+    ciPolicy: "optional",
+    apply: () => ({ changed: true }),
+  };
+  const report = createPatchReport();
+  report.enabledFeatures = enabledFeatureIds;
+  applyExtractedAppPatchDescriptors(
+    root,
+    [descriptor, followup],
+    { enabledFeatureIds },
+    report,
+    descriptor.phase,
+  );
+
+  assert.deepEqual(report.patches.map(({ name, status }) => [name, status]), [
+    [descriptor.id, "skipped-optional"],
+    [followup.id, "applied"],
+  ]);
+  assert.deepEqual(criticalFailuresFromReport(report), []);
+  assert.deepEqual(enabledFeatureFailuresFromReport(report), [{
+    name: descriptor.id,
+    status: "skipped-optional",
+    reason: report.patches[0].reason,
+    featureId,
+  }]);
+  assert.match(report.patches[0].reason, /Expected one shared app-server socket host bundle, found 0/);
 });
 
 test("injected transport requires the captured config override callback", () => {
