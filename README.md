@@ -276,6 +276,7 @@ requirements, known limitations, configuration, and tests.
 | `agent-workspace` | Agent-workspace settings and bridge for hidden desktop environments | [Docs](linux-features/agent-workspace/README.md) |
 | `api-key-model-visibility` | Show models reported by API-key authenticated compatible providers | [Docs](linux-features/api-key-model-visibility/README.md) |
 | `api-key-service-tier` | Fast/service-tier UI for API-key authenticated compatible providers | [Docs](linux-features/api-key-service-tier/README.md) |
+| `app-server-main-process` | Allow authorized sudo in Full access by launching the local app-server from the main process | [Docs](linux-features/app-server-main-process/README.md) |
 | `appshots` | Capture and crop the focused Linux window from the composer | [Docs](linux-features/appshots/README.md) |
 | `authored-message-visibility` | Keep assistant and user messages visible after tool activity collapses | [Docs](linux-features/authored-message-visibility/README.md) |
 | `authenticated-proxy` | Username/password support for HTTP proxies | [Docs](linux-features/authenticated-proxy/README.md) |
