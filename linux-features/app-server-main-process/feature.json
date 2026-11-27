@@ -1,0 +1,11 @@
+{
+  "id": "app-server-main-process",
+  "title": "Local App Server Privileges",
+  "description": "Let the local app-server inherit the main process privileges while retaining Codex session sandboxing.",
+  "defaultEnabled": false,
+  "entrypoints": { "patchDescriptors": "./patch.js" },
+  "resources": [
+    { "source": "bridge-main.js", "target": ".codex-linux/features/app-server-main-process/bridge-main.js", "mode": "0644" },
+    { "source": "bridge-utility.js", "target": ".codex-linux/features/app-server-main-process/bridge-utility.js", "mode": "0644" }
+  ]
+}
