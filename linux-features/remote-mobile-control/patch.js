@@ -805,9 +805,9 @@ function matchesOutboundSidebarFlag(source, tokens, match) {
 
   const declarationId = declaration.index + "let ".length;
   const getterId = match.index + match[0].indexOf(`,${match.groups.id})&&`) + 1;
-  const exports = /[A-Za-z_$][\w$]*\.d\([A-Za-z_$][\w$]*,\{\},\{(?:[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*,)*[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*\}\)$/u
-    .exec(source.slice(block.index + 1, blockEnd));
-  const exportsStart = exports == null ? blockEnd : block.index + 1 + exports.index;
+  const bodyStart = block.index + 1;
+  const exports = findOutboundValueExports(source.slice(bodyStart, blockEnd), DEVICE_KEY_IDENT);
+  const exportsStart = exports == null ? blockEnd : bodyStart + exports.index;
   const references = new RegExp(`(?<![\\w$])${id}(?![\\w$])`, "gu");
   references.lastIndex = block.index + 1;
   for (const { index } of source.matchAll(references)) {
@@ -836,13 +836,9 @@ function matchesOutboundLoaderFlag(source, tokens, body, owner, loader, declarat
     const factory = outboundFactoryHeader(source, block.index);
     if (factory == null) continue;
     const blockBody = source.slice(block.index + 1, block.end);
-    const exports = new RegExp(
-      `${escapeRegExp(factory.require)}\\.d\\(${DEVICE_KEY_IDENT},\\{\\},\\{(?<entries>[^{}]+)\\}\\)$`,
-      "u",
-    ).exec(blockBody);
+    const exports = findOutboundValueExports(blockBody, escapeRegExp(factory.require));
     if (exports == null) continue;
-    const slots = exports.groups.entries.split(",")
-      .filter((entry) => entry.endsWith(`:${declaration.groups.flag}`));
+    const slots = exports.entries.filter((entry) => entry.endsWith(`:${declaration.groups.flag}`));
     if (slots.length !== 1) continue;
 
     const flag = escapeRegExp(declaration.groups.flag);
@@ -904,6 +900,22 @@ function matchesOutboundLoaderFlag(source, tokens, body, owner, loader, declarat
     if (!methodRead && !flagArgument) return false;
   }
   return true;
+}
+
+function findOutboundValueExports(body, requirePattern) {
+  const id = DEVICE_KEY_IDENT;
+  const call = new RegExp(`(?<![\\w$.])${requirePattern}\\.d\\(${id},\\{`, "gu");
+  const values = new RegExp(`,\\{(?<entries>${id}:${id}(?:,${id}:${id})*)\\}\\)$`, "uy");
+  for (const candidate of body.matchAll(call)) {
+    const live = findMatchingBrace(body, candidate.index + candidate[0].length - 1);
+    if (live === -1) continue;
+    values.lastIndex = live + 1;
+    const match = values.exec(body);
+    if (match?.index + match?.[0].length === body.length) {
+      return { index: live + 1, entries: match.groups.entries.split(",") };
+    }
+  }
+  return null;
 }
 
 function outboundFactoryHeader(source, open) {
@@ -995,7 +1007,7 @@ function findRemoteControlOutboundSettingsGate(source) {
       reference === index || reference === pushIndex || !tokenDepths.has(reference) ||
       (reference > index &&
         ((body.slice(reference - 3, reference) === "!==" &&
-          body.startsWith("||", reference + visible.length)) ||
+          (body.startsWith("||", reference + visible.length) || body.startsWith("){", reference + visible.length))) ||
          (body.slice(reference - 2, reference) === "]=" &&
           body.startsWith(",", reference + visible.length)))),
     );

@@ -2214,6 +2214,26 @@ test("Linux remote-control settings UX accepts dollar signs in minified bindings
   assert.deepEqual(warnings, []);
 });
 
+test("Linux remote-control settings UX accepts a flag exported beside live exports", () => {
+  const source = syntheticCurrentOutboundConnectionsBundle().replace(
+    'let flag="782640499";n.d(t,{},{shared:flag})',
+    'let flag="782640499",extra=1;n.d(t,{extra:()=>{return extra}},{shared:flag})',
+  );
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
+  assert.deepEqual(warnings, []);
+});
+
+test("Linux remote-control settings UX accepts visibility as the last cache comparison", () => {
+  const source = syntheticCurrentOutboundConnectionsBundle().replace(
+    "cache[1]!==visible||cache[2]!==enabled",
+    "cache[2]!==enabled||cache[1]!==visible",
+  );
+  const { result, warnings } = captureWarnings(() => applyLinuxRemoteControlSettingsUxPatch(source));
+  assert.match(result, /codexLinuxRemoteControlOutboundSettingsGate/);
+  assert.deepEqual(warnings, []);
+});
+
 test("Linux remote-control settings UX rejects a shadowed sidebar flag", () => {
   const original = syntheticCurrentOutboundConnectionsBundle();
   for (const sidebar of [
@@ -2279,6 +2299,7 @@ test("Linux remote-control settings UX handles division around the settings code
     "let first=class{}/2,r=/}/;",
     "let first=1>{}/2,r=/}/;",
     "switch(x){case {}/2:break;case /}/:break;}",
+    "for(const x of {}/2||[]){};let r=/}/;",
     'let of=0;of\n{}/}/.test("}");',
     'for(;()=>{of\n{}/}/.test("}")};)break;',
     'let first=function(){label:{}/}/.test("}");};',

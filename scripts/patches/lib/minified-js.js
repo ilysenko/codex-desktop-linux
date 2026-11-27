@@ -234,10 +234,11 @@ function findMatchingBrace(source, openIndex, visitToken) {
         return -1;
       }
     } else if (char === "{") {
+      const expression = startsExpression(previous, source, i, insideForHeader());
       depth += 1;
       // A slash after an object literal divides its value. A slash after a
       // statement block can begin the next statement's regex literal.
-      if (startsExpression(previous, source, i, insideForHeader())) {
+      if (expression) {
         objectLiteralDepths.set(depth, parenthesesAreConditions.length + bracketDepth);
         expressionBraceDepths.add(depth);
       }
